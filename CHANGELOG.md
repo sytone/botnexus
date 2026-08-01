@@ -5,6 +5,289 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.0] - 2026-07-31
+
+### ✨ Features
+
+- **#2385:** Badge conversation origin and add the origin filter facet (#2610)
+
+### 🐛 Bug Fixes
+
+- **#2409:** Classify worktree lock owner liveness before giving up (#2602)
+- **#2104:** Stop docs teaching unguarded worktree branch deletion (#2596)
+- Decode all powershell encoded-command spellings (#2607)
+- **#2415:** Explain edit.edits parse failures in validator errors (#2598)
+- **#2407:** Unwrap exec dispatch carriers and widen env blocklist (#2595)
+- **#2476:** Fail closed on ambiguous approval verdicts (#2597)
+- Fail closed in portal renderMarkdown (#2618)
+- **#2522:** Write provider prompt tokens onto the session (#2603)
+- **#2439:** Give the pending follow-up chip a real lifecycle (#2601)
+- **#2134:** Serialize config writes across processes (#2590)
+
+### 🧪 Testing
+
+- **#2086:** Fence concrete channel knowledge out of gateway orchestration (#2587)
+- **#2588:** Fence fingerprint member list against silent staleness (#2592)
+- **#2586:** Inject delay seam so DelayToolTests stop racing wall clock (#2589)
+
+## [0.38.1] - 2026-07-31
+
+### 🐛 Bug Fixes
+
+- **agent:** Bound BeforeToolCall hook with fail-closed timeout (#2547)
+- **#2548:** Wire agent-core diagnostics into the host logger (#2551)
+- **#2552:** Reject webhook URLs with credentials or bad schemes (#2558)
+- **#2388:** Queue inbound message when the agent is mid-turn (#2570)
+- **#2564:** Reset SSE reconnect counter only on delivered events (#2569)
+- **#2320:** Snapshot store collections before mobile chat render (#2567)
+- **gateway:** Skip fan-out stream events to targets that cannot satisfy preconditions (#2559) (#2563)
+- Produce SummarizationFailed skip reason on provider failure (#2562)
+- **#2493:** Skip no-op update rebuild and narrow build scope (#2502)
+- **#2555:** Bound response body reads with idle chunk timeout (#2579)
+- **#2553:** Sanitise cron job name before display (#2578)
+- **#2521:** Confirm tree kill before releasing process slot (#2577)
+- **#2554:** Clamp missed-run scan to schedule activation (#2576)
+- **#2528:** Stop activity table overflowing and derive row labels (#2581)
+- **#2415:** Accept valid boxings for timeout_seconds and exec env (#2574)
+- **#2417:** Preflight inline python -c and nested pwsh quoting (#2573)
+- **#2568:** Inline textual attachment payloads (#2571)
+- **#2383:** Apply agent fileaccess changes on config hot-reload (#2565)
+
+### 📖 Documentation
+
+- Daily documentation grooming 2026-07-30 (#2561)
+- **#2580:** Document installing the cli without nuget.org access (#2582)
+
+### 🔨 Refactor
+
+- **#2575:** Replace BotNexus.Deploy.proj with Traversal dirs.proj (#2585)
+
+### Wip
+
+- **#2416:** Default exec working directory to agent workspace (#2549)
+- **#2421:** Apply edit on unambiguous whitespace-normalized match (#2550)
+
+## [0.38.0] - 2026-07-30
+
+### ✨ Features
+
+- **#2372:** Verify downloaded payloads before execution (#2377)
+- **#2327:** Group the mobile conversation picker like the sidebar (#2360)
+- **channels:** Add channel-neutral conversation event contracts and publication seam (#2364)
+- **#2340:** Add first-class conversation visibility (#2343)
+- **#2374:** Add opus 5 and parse model versions for gating (#2381)
+- **agents:** Suggest nearest schema property on unknown tool arg (#2472)
+- **#2037:** Add portal landing page with start-conversation controls (#2367)
+- **#2385:** Badge conversation origin on the Activity dashboard (#2496)
+- **#2106:** Add embedding abstraction and hybrid memory retrieval (#2356)
+- **#2441:** Reclaim portal space with top-bar identity and density (#2445)
+- **#2449:** Add submitToAgent canvas bridge verb (#2454)
+
+### 🐛 Bug Fixes
+
+- **#2392:** Restrict config and credential files to owner-only (#2399)
+- **#1430:** Strip delimited runtime-context on user-visible channels (#2355)
+- **gateway:** Add askFallback posture so approval-required tools no longer fail open (#2397)
+- **gateway:** Feed recent-log store from the Serilog pipeline (#2403)
+- **container:** Ship first-party extensions in the published image (#2398)
+- **#2400:** Make pre-commit self-test independent of ambient validation env (#2401)
+- **gateway:** Re-anchor grep result paths to the requested prefix (#2402)
+- **scripts:** Resolve repo root from PSScriptRoot in ci-pr-sync-main (#2451)
+- **#2406:** Resolve symlinks before sandbox containment check (#2448)
+- **#2413:** Emit cache validators on revalidated portal assets (#2422)
+- **#2415:** Accept boxed integer tool arguments before rejecting (#2446)
+- **#2365:** Declare entryAssembly and extensionTypes on three manifests (#2366)
+- **#2447:** Retry channel adapter start with bounded backoff (#2450)
+- **#2373:** Preflight and classify cron model overrides (#2378)
+- **gateway:** Prune extension services the host container cannot activate (#2453)
+- **extensions:** Preserve real process exit codes in exec tool (#2459)
+- **#2395:** Skip session cleanup while an agent run is in flight (#2456)
+- **scripts:** Reap stranded validation locks by owner liveness (#2457)
+- **#2438:** Queue hub follow-up until the run settles (#2458)
+- **#2387:** Central request-cancellation seam returns 499 not 500 (#2474)
+- **recover:** Use interactive copilot session and prime with topology (#2470)
+- **cron:** Reap orphaned running cron runs (#2473)
+- **#2357:** Replace config.json via file.replace with bounded retry (#2464)
+- **#2386:** Bound retry storms in service bus and telegram loops (#2467)
+- **#2131:** Guard conversation saves with optimistic concurrency (#2471)
+- **#2460:** Log a structured reason when compaction aborts (#2465)
+- **#2389:** Support command jobs in the cron tool and optional rest id (#2461)
+- **providers:** Warn instead of silently dropping images (#2490)
+- **#2484:** Carry draft attachments through steer, redirect, follow-up (#2494)
+- **#2411:** Paginate GET /api/sessions and bound ListSummariesAsync (#2468)
+- **#2499:** Page session loading in the portal registry (#2503)
+- **#2478:** Abort before draining follow-ups on a cancelled run (#2508)
+- **tests:** Implement DraftAttachment overloads on canvas test stub (#2514)
+- **portal:** Treat agent-minted user conversations as writable (#2527)
+- **#2481:** Unify extension ALC on host-shipped assemblies (#2512)
+- **#2462:** Gate cron command firing through exec tool policy (#2505)
+- **#2134:** Mutate config sections under the writer lock (#2504)
+- **compaction:** Measure provider vs estimator tokens on abort (#2531)
+- **#2477:** Make missed-run detection idempotent across restarts (#2497)
+- **#2479:** Honor cancellation immediately before process start (#2501)
+- **#2495:** Report vision payload drop on non-in-process handles (#2506)
+- **#2487:** Re-initialize expired mcp http session (#2516)
+- **#2530:** Stop agent ids becoming external channel addresses (#2538)
+- **#2529:** Stop proactive sends inheriting an unrelated conversation (#2534)
+- **portal:** Add home entry to the left nav (#2537)
+- **update:** Pre-flight dirty-repo check and classified pull failures (#2498)
+- **#2418:** Guide agents off blocked loopback fetches (#2517)
+- **#2520:** Redactor fails closed on malformed runtime markers (#2540)
+- **#2532:** Page sessions by the filtered set, not the global list (#2543)
+- **#2539:** Document scope default truthfully and pin it (#2542)
+- **servicebus:** Renew SB lock, split ack failure from handler failure (#2546)
+
+### 📖 Documentation
+
+- **channels:** Add Teams<->BotNexus Service Bus Logic App examples (#1914)
+- **#221:** Add code standards guide for xml comments and testing (#2353)
+- **#219:** Add signalr hub, agents, and sessions api reference (#2354)
+- **cron:** Reconcile cron tool actions with the live input schema (#2466)
+- Daily documentation grooming 2026-07-25/29 (cron config, hub methods, releases) (#2380)
+- **#2544:** Add issue templates and issue conventions (#2545)
+
+### 🔨 Refactor
+
+- **#2489:** Move compaction skip reasons to a smart enum (#2507)
+- **#2442:** Centralise the actor pseudonym behind one primitive (#2515)
+
+### 🧪 Testing
+
+- **#2066:** Add physical-file config mutation e2e matrix (#2363)
+- **#2404:** Audit path-returning tools for symlink display paths (#2469)
+- **#2404:** Pin requested-prefix display paths through symlinks (#2509)
+
+### Wip
+
+- **#2475:** Block BASH_FUNC_ prefix and toolchain selectors in exec env, pin blocklist baseline (#2510)
+- **#2486:** Follow tools/list nextCursor pagination in McpClient (#2511)
+
+## [0.37.0] - 2026-07-26
+
+### ✨ Features
+
+- **#2132:** Add atomic session metadata and lifecycle mutations (#2351)
+- **#2123:** Serialize webhook deliveries per canonical conversation (#2359)
+
+### 🐛 Bug Fixes
+
+- **#2368:** Link pr template by absolute url for vitepress (#2371)
+- **#2349:** Make Remove-Worktree tests execute inside It blocks (#2350)
+- **#2330:** Refuse to rebase a worktree with uncommitted work (#2361)
+- **#2369:** Verify gateway process identity before killing a pid (#2382)
+- **scripts:** Scope pre-commit hook to impacted projects with bounded steps (#2348)
+- **#2358:** Validate config on reload and keep last-known-good on failure (#2362)
+- **#2057:** Mutate raw config paths instead of typed root rewrites (#2352)
+- **#2370:** Bound sqlite -wal growth with journal_size_limit (#2375)
+
+### 🔧 CI/Build
+
+- Add warning-first pr conventions guard with ui evidence check (#2318)
+
+## [0.36.0] - 2026-07-25
+
+### ✨ Features
+
+- **memory:** Disable qmd extension by default (#2274)
+- **cli:** Reconcile persistent agent folders during doctor (#2279)
+- **portal:** Render tools nav section from tools api (#2281)
+- **gateway:** Make sub-agent workspace root configurable (#2282)
+- **portal:** Add tools iframe host route with sandbox and embed-refusal fallback (#2283)
+- **portal:** Add sidebar nav ordering model with server-side overrides (#2298)
+- **#2300:** Add write-once ConversationSource across domain, persistence and DTOs (#2308)
+- **portal:** Add start-conversation orchestration with persisted model override (#2314)
+- **#2304:** Add immutable client ConversationState.Source and render projections (#2315)
+- **#2235:** Add portal tools add/edit/remove management ui (#2341)
+- **#2338:** Give sub-agent runs their own conversation id (#2342)
+
+### 🐛 Bug Fixes
+
+- **portal:** Make active view route-owned for deep-link and history survival (#2275)
+- **gateway:** Recursively validate annotations across the config object graph (#2276)
+- **gateway:** Make agent create/edit a lossless platform config round trip (#2278)
+- **gateway:** Make conversation metadata and binding updates transactional (#2280)
+- **#2284:** Use external GitHub URLs for AGENTS.md links breaking docs deploy (#2287)
+- **security:** Redact aws secret access key value (#2291)
+- **#2293:** Latch route-selection guard to stop Home.razor recursion loop (#2295)
+- **#2294:** Deliver paperclip file attachments to agent message payload (#2296)
+- **#2248:** Derive read-only from selection source and immutable agent kind, decouple roster from session-type mutation (#2299)
+- **security:** Add GitLab token-prefix redaction patterns (#2297)
+- **gateway:** Abort ask_user cleanly on argument validation failure (#2155)
+- **#2324:** Add assign affordance for conversation sections (#2332)
+- **#2345:** Allowlist the zero-dependency wire assembly in wasm fence (#2346)
+- **#2333:** Skip vanished entries when building workspace tree (#2336)
+
+### 📖 Documentation
+
+- **#219:** Add REST API reference index and grounded controller pages (#2272)
+- **architecture:** Add arc42 overview, C4 diagrams, and seed ADRs (#2288)
+- **development:** Add debugging guide for gateway, extensions, and webui (#2289)
+- Daily documentation grooming 2026-07-24 (#2292)
+- Standardise pr body and squash-commit templates (#2313)
+
+### 🔨 Refactor
+
+- **#2316:** Enforce write-once immutability on domain identity properties (#2319)
+- **#2310:** Add single conversation-creation seam (#2321)
+- **#2300:** Delete virtual-session inference and fence conversation provenance (#2328)
+- **#2322:** Normalize ask_user into a channel-agnostic gateway seam (#2334)
+
+### 🧪 Testing
+
+- **extensions:** Add gateway boot smoke gate with full extension set deployed (#2277)
+- **#2249:** Architecture + seam guardrails enforcing single-writer view selection (#2307)
+
+### ⚙️ Miscellaneous
+
+- **#2311:** Add legacy shim audit telemetry and lifecycle convention (#2337)
+
+### Build
+
+- **#2329:** Add guard preventing server-side dependencies in Blazor WASM payload (#2335)
+- **deps-dev:** Bump postcss from 8.5.15 to 8.5.23 (#2339)
+
+## [0.35.0] - 2026-07-24
+
+### ✨ Features
+
+- **#2237:** Add age-based sweep for completed sub-agent workspace directories (#2240)
+- **#453:** Add provider-level HTTP request/response auditing (#2241)
+- **tools:** Preflight-parse powershell shell and exec commands before execution (#2250)
+- **cli:** Make bare doctor run the complete diagnostic suite (#2257)
+- **gateway:** Detect and auto-heal session consistency discrepancies (#2258)
+- **build:** Reuse content-addressed validation receipts in pre-commit (#2264)
+- **security:** Redact action-required secrets before cron external delivery (#2266)
+- **channels:** Preserve typed sub-agent response kind through persistence and delivery (#2267)
+- **gateway:** Add webhook-specific conversation retention policy (#2268)
+- **portal:** Add user-defined conversation sections (#2269)
+- **channels:** Reload late-loaded channel options on config change (#2270)
+
+### 🐛 Bug Fixes
+
+- **#2243:** Prevent sub-agent virtual session from hijacking active view (#2244)
+- **extensions:** Unify extension assembly resolution against host-loaded assemblies (#2251)
+- **gateway:** Reactivate archived conversations before internal message dispatch (#2252)
+- **tooling:** Handle windows worktree locks without retry storms or branch deletion (#2253)
+- **#2243:** Mark sub-agents at spawn so active-view guard survives registration race (#2254)
+- **config:** Register JsonStringEnumConverter so schema emits string enums (#2256)
+- **portal:** Support lossless config list and dictionary lifecycle editing (#2262)
+- **gateway:** Deduplicate signalr stream delivery for internal turns with observer bindings (#2263)
+- **cron:** Split cron definition updates from scheduler runtime state (#2265)
+- **agents:** Make agent lifecycle persistence and registry changes atomic (#2271)
+
+### 📖 Documentation
+
+- **#221:** Add CONTRIBUTING.md and enhance root README (#2242)
+- **#220:** Add arc42-lite architecture overview and ADR foundation (#2259)
+
+### 🔨 Refactor
+
+- **#2246:** Replace ActiveAgentId setter with single SelectView(source) seam (#2261)
+
+### 🧪 Testing
+
+- **#2226:** Add cross-store cache-capacity parity guard for list completeness (#2260)
+
 ## [0.34.0] - 2026-07-23
 
 ### ✨ Features
@@ -3275,6 +3558,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session log for loop alignment & UI fix
 - Log session-switching design review orchestration, decisions, and session metadata
 
+[0.39.0]: https://github.com/sytone/botnexus/compare/v0.38.1...v0.39.0
+[0.38.1]: https://github.com/sytone/botnexus/compare/v0.38.0...v0.38.1
+[0.38.0]: https://github.com/sytone/botnexus/compare/v0.37.0...v0.38.0
+[0.37.0]: https://github.com/sytone/botnexus/compare/v0.36.0...v0.37.0
+[0.36.0]: https://github.com/sytone/botnexus/compare/v0.35.0...v0.36.0
+[0.35.0]: https://github.com/sytone/botnexus/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/sytone/botnexus/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/sytone/botnexus/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/sytone/botnexus/compare/v0.31.0...v0.32.0

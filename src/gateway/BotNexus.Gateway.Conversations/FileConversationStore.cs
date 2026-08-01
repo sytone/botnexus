@@ -499,7 +499,9 @@ public sealed class FileConversationStore : IConversationStore
             c.Participants.Select(p => new ParticipantSummary(
                 p.CitizenId.Kind.ToString(),
                 p.CitizenId.Value,
-                p.Role)).ToList());
+                p.Role)).ToList(),
+            // #2121: SourceId travels with Source everywhere Source is projected.
+            c.SourceId);
 
     // ── Canvas State ───────────────────────────────────────────────────────
     // The file store persists canvas state in the CanvasState property of the Conversation

@@ -199,6 +199,14 @@ public interface IClientStateStore
 
     /// <summary>Get the pending steering queue for a conversation.</summary>
     IReadOnlyList<SteeringEntry> GetSteeringQueue(string conversationId);
+
+    /// <summary>
+    /// Drop every entry from a conversation's steering queue (#2439).
+    /// Used by the defensive clear paths — run settled, session reset, abort, conversation
+    /// switch, reconnect — where a pending indicator can no longer be verified and therefore
+    /// must not persist. Idempotent and safe for unknown conversation ids.
+    /// </summary>
+    void ClearSteeringQueue(string conversationId);
 }
 
 /// <summary>Agent-level state for the portal sidebar and chat panel.</summary>

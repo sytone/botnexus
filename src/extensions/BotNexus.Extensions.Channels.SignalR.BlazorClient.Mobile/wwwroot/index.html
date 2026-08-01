@@ -27,7 +27,15 @@
     <script src="js/chatScroll.js"></script>
     <script src="js/canvasBridge.js"></script>
     <script src="js/appResume.js"></script>
+    <script src="js/swUpdate.js"></script>
     <script src="_framework/blazor.webassembly.js"></script>
-    <script> if ('serviceWorker' in navigator) { navigator.serviceWorker.register('service-worker.js'); } </script>
+    <script>
+        // #2591: registration alone let a cached worker pin a stale bundle forever. BotNexusSwUpdate
+        // registers with updateViaCache:'none', re-checks on foreground return, and reloads when a
+        // new worker takes control. The published build swaps service-worker.js ->
+        // service-worker.published.js via the csproj <ServiceWorker> item, so this URL is correct
+        // for both dev and published.
+        window.BotNexusSwUpdate.register('service-worker.js');
+    </script>
 </body>
 </html>

@@ -153,7 +153,9 @@ public sealed class ConversationsController : ControllerBase
             c.Participants.Select(p => new ParticipantSummary(
                 p.CitizenId.Kind.ToString(),
                 p.CitizenId.Value,
-                p.Role)).ToList());
+                p.Role)).ToList(),
+            // #2121: SourceId travels with Source everywhere Source is projected.
+            c.SourceId);
 
     /// <summary>
     /// Gets a specific conversation by ID, including all channel bindings.

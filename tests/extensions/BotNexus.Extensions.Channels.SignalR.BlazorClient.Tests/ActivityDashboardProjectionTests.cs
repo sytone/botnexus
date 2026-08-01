@@ -462,4 +462,184 @@ public sealed class ActivityDashboardProjectionTests
         Assert.Throws<ArgumentNullException>(() => ActivityDashboardProjection.OriginLabel(null!));
         Assert.Throws<ArgumentNullException>(() => ActivityDashboardProjection.OriginModifier(null!));
     }
+    // ── Origin facet (#2385) ───────────────────────────────────────────────
+
+    private static ConversationSummaryDto OriginConv(string id, string source, string kind = "HumanAgent",
+        string status = "Active", DateTimeOffset? updatedAt = null) =>
+        Conv(id, source: source, kind: kind, status: status, updatedAt: updatedAt);
+
+    /// <summary>
+    /// The default facet must be a no-op: adding Origin to the filter record cannot change what the
+    /// existing landing view shows.
+    /// </summary>
+    [Fact]
+    public void Origin_facet_defaults_to_all_and_changes_nothing()
+    {
+        Assert.Equal(ActivityOriginFilter.All, new ActivityDashboardFilter().Origin);
+
+        var conversations = new[]
+        {
+            OriginConv("c1", "Channel"),
+            OriginConv("c2", "Webhook"),
+            OriginConv("c3", "Agent", "AgentSubAgent"),
+            OriginConv("c4", "Agent", "AgentAgent"),
+            OriginConv("c5", "Agent")
+        };
+
+        var rows = ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(), Now);
+
+        Assert.Equal(5, rows.Count);
+    }
+
+    [Theory]
+    [InlineData(ActivityOriginFilter.Human, new[] { "c1" })]
+    [InlineData(ActivityOriginFilter.Webhook, new[] { "c2" })]
+    [InlineData(ActivityOriginFilter.SubAgent, new[] { "c3" })]
+    [InlineData(ActivityOriginFilter.AgentToAgent, new[] { "c4" })]
+    [InlineData(ActivityOriginFilter.Agent, new[] { "c5" })]
+    public void Origin_facet_selects_exactly_the_matching_rows(
+        ActivityOriginFilter origin, string[] expected)
+    {
+        var conversations = new[]
+        {
+            OriginConv("c1", "Channel"),
+            OriginConv("c2", "Webhook"),
+            OriginConv("c3", "Agent", "AgentSubAgent"),
+            OriginConv("c4", "Agent", "AgentAgent"),
+            OriginConv("c5", "Agent")
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Origin: origin), Now);
+
+        Assert.Equal(expected, rows.Select(r => r.ConversationId).OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// The facet keys off the same classifier the badge renders, so a channel-sourced conversation
+    /// with a sub-agent pairing (badged "Sub-agent") filters as a sub-agent - the filter cannot
+    /// disagree with what the reader sees.
+    /// </summary>
+    [Fact]
+    public void Origin_facet_agrees_with_the_rendered_badge_for_kind_carried_rows()
+    {
+        var conversations = new[]
+        {
+            OriginConv("channel-plain", "Channel"),
+            OriginConv("channel-sub", "Channel", "AgentSubAgent")
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Origin: ActivityOriginFilter.SubAgent), Now);
+
+        Assert.Single(rows);
+        Assert.Equal("channel-sub", rows[0].ConversationId);
+        Assert.Equal("subagent", ActivityDashboardProjection.OriginModifier(rows[0]));
+    }
+
+    /// <summary>
+    /// Origin does NOT override the cron default-exclude: selecting the scheduled origin without the
+    /// cron toggle still yields nothing, because the facets compose rather than replace each other.
+    /// </summary>
+    [Fact]
+    public void Origin_scheduled_still_respects_the_cron_default_exclude()
+    {
+        var conversations = new[] { OriginConv("c1", "Channel"), OriginConv("cron1", "Cron") };
+
+        var excluded = ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Origin: ActivityOriginFilter.Scheduled), Now);
+        Assert.Empty(excluded);
+
+        var included = ActivityDashboardProjection.Project(
+            conversations,
+            new ActivityDashboardFilter(IncludeCron: true, Origin: ActivityOriginFilter.Scheduled),
+            Now);
+        Assert.Single(included);
+        Assert.Equal("cron1", included[0].ConversationId);
+    }
+
+    [Fact]
+    public void Origin_facet_composes_with_the_status_facet_rather_than_replacing_it()
+    {
+        var conversations = new[]
+        {
+            OriginConv("hook-active", "Webhook"),
+            OriginConv("hook-archived", "Webhook", status: "Archived"),
+            OriginConv("chat-archived", "Channel", status: "Archived")
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations,
+            new ActivityDashboardFilter(Status: ActivityStatusFilter.Archived,
+                                        Origin: ActivityOriginFilter.Webhook),
+            Now);
+
+        Assert.Single(rows);
+        Assert.Equal("hook-archived", rows[0].ConversationId);
+    }
+
+    [Fact]
+    public void Origin_facet_composes_with_the_recency_facet_rather_than_replacing_it()
+    {
+        var conversations = new[]
+        {
+            OriginConv("hook-recent", "Webhook", updatedAt: Now.AddDays(-2)),
+            OriginConv("hook-stale", "Webhook", updatedAt: Now.AddDays(-40)),
+            OriginConv("chat-recent", "Channel", updatedAt: Now.AddDays(-2))
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations,
+            new ActivityDashboardFilter(Recency: ActivityRecencyWindow.Week,
+                                        Origin: ActivityOriginFilter.Webhook),
+            Now);
+
+        Assert.Single(rows);
+        Assert.Equal("hook-recent", rows[0].ConversationId);
+    }
+
+    [Fact]
+    public void Origin_facet_composes_with_the_agent_facet_rather_than_replacing_it()
+    {
+        var conversations = new[]
+        {
+            Conv("hook-alpha", agentId: "alpha", source: "Webhook"),
+            Conv("hook-beta", agentId: "beta", source: "Webhook")
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations,
+            new ActivityDashboardFilter(AgentId: "beta", Origin: ActivityOriginFilter.Webhook),
+            Now);
+
+        Assert.Single(rows);
+        Assert.Equal("hook-beta", rows[0].ConversationId);
+    }
+
+    /// <summary>Sad path: a facet with no matching rows yields an empty projection, not everything.</summary>
+    [Fact]
+    public void Origin_facet_with_no_matching_rows_yields_an_empty_projection()
+    {
+        var conversations = new[] { OriginConv("c1", "Channel"), OriginConv("c2", "Channel") };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Origin: ActivityOriginFilter.Webhook), Now);
+
+        Assert.Empty(rows);
+    }
+
+    /// <summary>
+    /// An unknown wire source degrades to the unbadged Channel default, so it must be reachable via
+    /// the Human facet and invisible to every badged facet - never silently dropped from all of them.
+    /// </summary>
+    [Fact]
+    public void Unknown_wire_source_filters_as_the_unbadged_human_origin()
+    {
+        var conversations = new[] { OriginConv("mystery", "SomethingNewerServerSide", "AlsoBrandNew") };
+
+        Assert.Single(ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Origin: ActivityOriginFilter.Human), Now));
+        Assert.Empty(ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Origin: ActivityOriginFilter.Agent), Now));
+    }
 }

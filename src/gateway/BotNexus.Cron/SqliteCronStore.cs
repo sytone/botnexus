@@ -68,7 +68,9 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     metadata_json TEXT NULL,
                     conversation_id TEXT NULL,
                     delete_after_run INTEGER NOT NULL DEFAULT 0,
-                    schedule_activated_at TEXT NULL
+                    schedule_activated_at TEXT NULL,
+                    failure_alerts_enabled INTEGER NOT NULL DEFAULT 0,
+                    failure_alert_conversation_id TEXT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled_next_run_at
@@ -171,6 +173,27 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             try { await migrateScheduleActivatedAt.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
             catch (SqliteException) { /* column already exists */ }
 
+            // Migrate existing databases: add the #2557 failure-alert columns if missing.
+            // Both are written so that a row predating them reads as "alerts off, no target":
+            // failure_alerts_enabled defaults to 0 and failure_alert_conversation_id to NULL.
+            // The read path must never treat unwritten state as opt-in - a new column the read
+            // path trusts but existing rows never wrote is a recurring defect family here
+            // (#2488, #2324, #2340, #2548, #2556), and here it would mean spamming a conversation
+            // that was never configured.
+            await using var migrateFailureAlertsEnabled = connection.CreateCommand();
+            migrateFailureAlertsEnabled.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN failure_alerts_enabled INTEGER NOT NULL DEFAULT 0;
+                """;
+            try { await migrateFailureAlertsEnabled.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
+            await using var migrateFailureAlertConversationId = connection.CreateCommand();
+            migrateFailureAlertConversationId.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN failure_alert_conversation_id TEXT NULL;
+                """;
+            try { await migrateFailureAlertConversationId.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
             _initialized = true;
         }
         finally
@@ -209,11 +232,13 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             command.CommandText = """
                 INSERT INTO cron_jobs (
                     id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at
+                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
+                    failure_alerts_enabled, failure_alert_conversation_id
                 )
                 VALUES (
                     $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
-                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId, $deleteAfterRun, $scheduleActivatedAt
+                    $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId, $deleteAfterRun, $scheduleActivatedAt,
+                    $failureAlertsEnabled, $failureAlertConversationId
                 )
                 """;
             BindJob(command, created);
@@ -241,7 +266,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at
+                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
+                   failure_alerts_enabled, failure_alert_conversation_id
             FROM cron_jobs
             WHERE id = $id
             """;
@@ -262,7 +288,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
-                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at
+                   enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
+                   failure_alerts_enabled, failure_alert_conversation_id
             FROM cron_jobs
             WHERE $agentId IS NULL OR agent_id = $agentId
             ORDER BY created_at DESC
@@ -317,6 +344,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     time_zone = $timeZone,
                     created_by = $createdBy,
                     delete_after_run = $deleteAfterRun,
+                    failure_alerts_enabled = $failureAlertsEnabled,
+                    failure_alert_conversation_id = $failureAlertConversationId,
                     metadata_json = $metadataJson,
                     -- #2554: schedule_activated_at is STORE-owned. The inbound record's value is
                     -- never bound; instead it is re-stamped in SQL, atomically with the write,
@@ -686,6 +715,10 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.Parameters.AddWithValue("$timeZone", (object?)job.TimeZone ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdBy", (object?)job.CreatedBy ?? DBNull.Value);
         command.Parameters.AddWithValue("$deleteAfterRun", job.DeleteAfterRun ? 1 : 0);
+        command.Parameters.AddWithValue("$failureAlertsEnabled", job.FailureAlertsEnabled ? 1 : 0);
+        command.Parameters.AddWithValue(
+            "$failureAlertConversationId",
+            job.FailureAlertConversationId.HasValue ? (object)job.FailureAlertConversationId.Value.Value : DBNull.Value);
         command.Parameters.AddWithValue("$metadataJson", SerializeMetadata(job.Metadata));
     }
 
@@ -715,6 +748,10 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.Parameters.AddWithValue("$conversationId", job.ConversationId.HasValue ? (object)job.ConversationId.Value.Value : DBNull.Value);
         command.Parameters.AddWithValue("$deleteAfterRun", job.DeleteAfterRun ? 1 : 0);
         command.Parameters.AddWithValue("$scheduleActivatedAt", ToNullableString(job.ScheduleActivatedAt));
+        command.Parameters.AddWithValue("$failureAlertsEnabled", job.FailureAlertsEnabled ? 1 : 0);
+        command.Parameters.AddWithValue(
+            "$failureAlertConversationId",
+            job.FailureAlertConversationId.HasValue ? (object)job.FailureAlertConversationId.Value.Value : DBNull.Value);
     }
 
     private CronJob ReadJob(SqliteDataReader reader)
@@ -752,7 +789,13 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             // the scheduling inputs). It stays null rather than being coerced to a default so the
             // missed-run clamp degrades to today's exact behaviour instead of silently suppressing
             // legitimate missed runs.
-            ScheduleActivatedAt = reader.IsDBNull(23) ? null : ParseDate(reader.GetString(23))
+            ScheduleActivatedAt = reader.IsDBNull(23) ? null : ParseDate(reader.GetString(23)),
+
+            // #2557: NULL/absent means "alerts off". A row written before these columns existed
+            // must never read as opt-in, or upgrading would start delivering alerts nobody asked
+            // for (to a conversation that is also NULL). Both defaults are the disabled state.
+            FailureAlertsEnabled = !reader.IsDBNull(24) && reader.GetInt32(24) != 0,
+            FailureAlertConversationId = reader.IsDBNull(25) ? null : ConversationId.From(reader.GetString(25))
         };
     }
 

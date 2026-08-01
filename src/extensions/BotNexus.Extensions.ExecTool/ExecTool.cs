@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
@@ -134,6 +135,14 @@ public sealed class ExecTool : IAgentTool
         {
             throw new ArgumentOutOfRangeException(nameof(arguments), "noOutputTimeoutMs must be >= 1.");
         }
+
+        // #2407: reject escaped-newline shell words before anything is spawned.
+        foreach (var segment in command)
+        {
+            ValidateCommandText(segment);
+        }
+
+        ValidateCommandText(string.Join(' ', command));
 
         var input = ReadOptionalString(arguments, "input");
         var background = ReadOptionalBool(arguments, "background") ?? false;
@@ -780,7 +789,7 @@ public sealed class ExecTool : IAgentTool
     /// <item><c>*_BASE_URL</c>, <c>*_API_HOST</c>, <c>*_ENDPOINT</c> — endpoint-redirection variables that can point a subprocess's API calls at an attacker-controlled host (credential exfiltration)</item>
     /// </list>
     /// </summary>
-    public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_", "CLOUDSDK_", "BASH_FUNC_"];
+    public static readonly string[] BlockedEnvPrefixes = ["LD_", "DYLD_", "CLOUDSDK_", "BASH_FUNC_", "AWS_", "BOTNEXUS_"];
     public static readonly string[] BlockedEnvExact = ["PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "CC", "CXX", "CPP", "CXXCPP", "LD", "AR"];
     public static readonly string[] BlockedEnvSuffixes = ["_BASE_URL", "_API_HOST", "_ENDPOINT"];
 
@@ -819,6 +828,222 @@ public sealed class ExecTool : IAgentTool
                     $"Environment variable '{key}' cannot be overridden via the exec env parameter. " +
                     $"*{suffix} variables can redirect a subprocess's API endpoint to an attacker-controlled host (credential exfiltration).");
             }
+        }
+
+        // #2407: token-sequence matching. Prefix/suffix rules cannot express "turn the safety off"
+        // names such as FOO_DISABLE_TLS_VERIFY or CLIENT_SKIP_EXTRA_AUTH, because the dangerous part
+        // sits in the middle. We split on '_' and look for an ORDERED subsequence of whole tokens, so
+        // AUTH_DISABLE_MODE (wrong order) and DISABLED_AUTHORITY (substring, not a token) stay legal.
+        var tokens = key.Split('_', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var sequence in BlockedEnvTokenSequences)
+        {
+            if (ContainsTokenSequence(tokens, sequence))
+            {
+                throw new ArgumentException(
+                    $"Environment variable '{key}' cannot be overridden via the exec env parameter. " +
+                    $"Names containing the token sequence '{string.Join("_", sequence)}' disable authentication, " +
+                    "certificate, signature or transport-security checks in the child process.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ordered whole-token subsequences that mark an environment variable as a safety-disabling
+    /// switch. A key is rejected when its '_'-separated tokens contain one of these sequences in
+    /// order (case-insensitive); intervening tokens are permitted, reordering is not.
+    /// </summary>
+    public static readonly string[][] BlockedEnvTokenSequences =
+    [
+        ["DANGEROUSLY"],
+        ["DISABLE", "AUTH"],
+        ["DISABLE", "CERT"],
+        ["DISABLE", "SIGNATURE"],
+        ["DISABLE", "SSL"],
+        ["DISABLE", "TLS"],
+        ["SKIP", "AUTH"],
+    ];
+
+    private static bool ContainsTokenSequence(string[] tokens, string[] sequence)
+    {
+        var next = 0;
+        foreach (var token in tokens)
+        {
+            if (string.Equals(token, sequence[next], StringComparison.OrdinalIgnoreCase))
+            {
+                next++;
+                if (next == sequence.Length)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Transparent dispatch carriers: programs whose entire job is to launch another program with
+    /// modified process attributes. A policy keyed on argv[0] sees the carrier, not the payload, so
+    /// <c>proxychains curl ...</c> would present as "proxychains" while running curl. Resolving
+    /// through this table first is what makes any future allowlist (see #2391) meaningful.
+    /// </summary>
+    public static readonly string[] DispatchWrappers =
+    [
+        "sudo", "nohup", "setsid", "nice", "ionice", "time", "timeout", "env", "stdbuf",
+        "catchsegv", "linux32", "linux64", "numactl", "proxychains", "proxychains4",
+        "setarch", "torify", "torsocks", "unbuffer", "xargs",
+    ];
+
+    /// <summary>Short options of the wrapper table that consume the following token as their value.</summary>
+    private static readonly string[] WrapperValueOptions = ["-u", "-g", "-p", "-n", "-c", "-s", "-k", "-i", "-o", "-e", "-C"];
+
+    private static readonly Regex DurationLikeArgument = new(@"^\d+(\.\d+)?[smhd]?$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Word-boundary escaped newline. The prior guard only caught a line continuation at program
+    /// level; this catches a backslash immediately after a newline anywhere in the command text,
+    /// which splices a following word into the previous one and hides the real payload.
+    /// </summary>
+    private static readonly Regex EscapedNewlineWord = new(@"(?:\r\n|[\r\n])\\", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Returns the effective executable for <paramref name="command"/> by peeling off any
+    /// transparent dispatch carriers (see <see cref="DispatchWrappers"/>) and their options, so a
+    /// caller reasoning about "what will actually run" is not fooled by a carrier prefix.
+    /// Pure and side-effect free; the returned value is the program's base name with any Windows
+    /// executable extension removed, in its original casing.
+    /// </summary>
+    /// <param name="command">Full command text, e.g. <c>timeout 30s proxychains4 curl https://x</c>.</param>
+    /// <returns>The unwrapped program name, or an empty string when there is no program.</returns>
+    public static string ResolveEffectiveExecutable(string command)
+    {
+        var tokens = TokenizeCommand(command);
+        if (tokens.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var index = 0;
+        while (index < tokens.Count)
+        {
+            var program = NormalizeProgramName(tokens[index]);
+            if (!DispatchWrappers.Contains(program, StringComparer.OrdinalIgnoreCase))
+            {
+                return program;
+            }
+
+            // The carrier itself is the answer when it wraps nothing.
+            var wrapperIndex = index;
+            index++;
+            while (index < tokens.Count && IsWrapperArgument(tokens[index]))
+            {
+                if (tokens[index].StartsWith('-') && WrapperValueOptions.Contains(tokens[index], StringComparer.Ordinal))
+                {
+                    index++;
+                }
+
+                index++;
+            }
+
+            if (index >= tokens.Count)
+            {
+                return NormalizeProgramName(tokens[wrapperIndex]);
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsWrapperArgument(string token)
+        => token.StartsWith('-') || token.Contains('=', StringComparison.Ordinal) || DurationLikeArgument.IsMatch(token);
+
+    private static string NormalizeProgramName(string token)
+    {
+        var name = token.Replace('\\', '/');
+        var slash = name.LastIndexOf('/');
+        if (slash >= 0)
+        {
+            name = name[(slash + 1)..];
+        }
+
+        foreach (var extension in new[] { ".exe", ".cmd", ".bat", ".com" })
+        {
+            if (name.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+            {
+                return name[..^extension.Length];
+            }
+        }
+
+        return name;
+    }
+
+    private static List<string> TokenizeCommand(string command)
+    {
+        var tokens = new List<string>();
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return tokens;
+        }
+
+        var current = new StringBuilder();
+        var quote = '\0';
+        foreach (var c in command)
+        {
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+            else if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (char.IsWhiteSpace(c))
+            {
+                if (current.Length > 0)
+                {
+                    tokens.Add(current.ToString());
+                    current.Clear();
+                }
+            }
+            else
+            {
+                current.Append(c);
+            }
+        }
+
+        if (current.Length > 0)
+        {
+            tokens.Add(current.ToString());
+        }
+
+        return tokens;
+    }
+
+    /// <summary>
+    /// Rejects command text containing an escaped newline at a word boundary (#2407). Such a splice
+    /// lets a reviewer or a policy check see one word while the shell executes another.
+    /// </summary>
+    /// <exception cref="ArgumentException">The command contains a newline followed by a backslash.</exception>
+    public static void ValidateCommandText(string command)
+    {
+        if (string.IsNullOrEmpty(command))
+        {
+            return;
+        }
+
+        if (EscapedNewlineWord.IsMatch(command))
+        {
+            throw new ArgumentException(
+                "Command contains an escaped newline (a backslash immediately following a line break). " +
+                "This splices words together and hides the executed program from review. " +
+                "Put the command on a single line, or write a script file and execute it.");
         }
     }
 

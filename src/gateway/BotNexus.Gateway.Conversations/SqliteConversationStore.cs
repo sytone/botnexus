@@ -1008,13 +1008,16 @@ public sealed class SqliteConversationStore : IConversationStore
                 -- reported Source=Channel regardless of what was stored). Projecting both makes the
                 -- summary honest and is what lets a client filter hidden rows from a typed field.
                 c.source,
+                -- #2121: the minting registration / cron job id, so a client can attribute a listed
+                -- conversation without an extra per-feature list call.
+                c.source_id,
                 c.visibility,
                 c.is_pinned,
                 c.pinned_at
             FROM conversations c
             LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
             WHERE c.status = 'Active' AND c.parent_conversation_id IS NULL
-            GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind, c.source, c.visibility, c.is_pinned, c.pinned_at
+            GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind, c.source, c.source_id, c.visibility, c.is_pinned, c.pinned_at
             ORDER BY c.is_pinned DESC, c.pinned_at DESC, c.updated_at DESC
             """;
 
@@ -1223,6 +1226,10 @@ public sealed class SqliteConversationStore : IConversationStore
         // #2300/#2301 origination trigger: nullable so existing rows migrate without a rewrite;
         // NULL maps to ConversationSource.Channel on load (the back-compat default).
         ("source", "ALTER TABLE conversations ADD COLUMN source TEXT;"),
+        // #2121 originator identity: nullable so existing rows migrate without a rewrite. NULL
+        // maps to Conversation.SourceId = null on load ("originator not recorded"), which is what
+        // every pre-existing row - including pre-existing cron/webhook conversations - becomes.
+        ("source_id", "ALTER TABLE conversations ADD COLUMN source_id TEXT;"),
         // #2340 visibility axis: nullable so existing rows migrate without a rewrite; NULL maps to
         // ConversationVisibility.UserFacing on load (the back-compat default), so an upgrade never
         // hides a conversation the user could previously see.
@@ -1404,7 +1411,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version
             FROM conversations
             WHERE id = $id
             """;
@@ -1513,7 +1520,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var inClause = BuildIdInClause(command, ids);
             command.CommandText = $"""
-                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version
+                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version
                 FROM conversations
                 WHERE id IN ({inClause})
                 """;
@@ -1694,8 +1701,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId, 1)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $sourceId, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId, 1)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -1725,8 +1732,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 RETURNING version
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId, 1)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $sourceId, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId, 1)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -1743,6 +1750,10 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$initiator", (object?)SerializeInitiator(conversation.Initiator) ?? DBNull.Value);
         conversationCommand.Parameters.AddWithValue("$kind", conversation.Kind.ToString());
         conversationCommand.Parameters.AddWithValue("$source", conversation.Source.ToString());
+        // #2121: deliberately absent from the upsert's DO UPDATE SET list, exactly like the #2338
+        // parent edge - SourceId is an init-only creation fact, so a later SaveAsync must never be
+        // able to re-attribute a persisted conversation to a different registration or job.
+        conversationCommand.Parameters.AddWithValue("$sourceId", conversation.SourceId is null ? (object)DBNull.Value : conversation.SourceId);
         conversationCommand.Parameters.AddWithValue("$visibility", conversation.Visibility.ToString());
         conversationCommand.Parameters.AddWithValue("$worldId", conversation.WorldId ?? string.Empty);
         conversationCommand.Parameters.AddWithValue("$isPinned", conversation.IsPinned ? 1 : 0);

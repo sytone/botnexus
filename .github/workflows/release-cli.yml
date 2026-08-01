@@ -28,6 +28,7 @@ jobs:
       packages: write   # required to publish packages
       id-token: write   # enable GitHub OIDC token issuance for NuGet login
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

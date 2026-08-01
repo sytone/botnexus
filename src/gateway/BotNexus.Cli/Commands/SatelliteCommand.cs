@@ -100,7 +100,7 @@ internal sealed class SatelliteCommand
             .AddColumn("Display Name")
             .AddColumn("Platform")
             .AddColumn("Owner")
-            .AddColumn("Capabilities")
+            .AddColumn("Capabilities (display-only)")
             .AddColumn("Enabled");
 
         foreach (var (id, sat) in satellites.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))

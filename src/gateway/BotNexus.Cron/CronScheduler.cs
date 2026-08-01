@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Cronos;
 using Microsoft.Extensions.DependencyInjection;
@@ -322,6 +323,7 @@ public sealed class CronScheduler(
             _logger.LogError(ex, "Cron job execution failed. JobId: {JobId}, ActionType: {ActionType}", job.Id, job.ActionType);
             await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, ex.Message, ct: ct).ConfigureAwait(false);
             await FinalizeRunAsync(job.Id, job, triggeredAt, CronRunStatus.Error, ex.ToString(), ct: ct).ConfigureAwait(false);
+            await MaybeSendFailureAlertAsync(job, triggeredAt, ex.Message, ct).ConfigureAwait(false);
             return run with { Status = CronRunStatus.Error, CompletedAt = DateTimeOffset.UtcNow, Error = ex.Message };
         }
         finally
@@ -329,6 +331,133 @@ public sealed class CronScheduler(
             jobLock.Release();
         }
     }
+
+    /// <summary>
+    /// Opt-in per-job failure alerting (#2557). Called on the run's transition to
+    /// <see cref="CronRunStatus.Error"/>, after the terminal run row has been written so the
+    /// consecutive-error streak can be derived from the existing run history rather than from a
+    /// second counter column that could drift from it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Delivery is best-effort and <b>never</b> fails the cron run: the run's own terminal state
+    /// has already been persisted by the time this runs, and every exception out of the sink is
+    /// caught and logged (AC7). A broken alert channel must not convert a job failure into a
+    /// second, different failure.
+    /// </para>
+    /// <para>
+    /// Error text crosses an external-delivery boundary, so it is routed through
+    /// <see cref="CronExternalDeliveryRedactor.RedactSummary"/> - the redaction seam that already
+    /// existed for exactly this purpose.
+    /// </para>
+    /// </remarks>
+    private async Task MaybeSendFailureAlertAsync(
+        CronJob job,
+        DateTimeOffset scheduledRunTime,
+        string? error,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Re-read so an alert opt-in toggled between trigger and failure is honoured, and so
+            // a job deleted mid-run does not alert at all.
+            var latest = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false);
+            if (latest is null || !latest.FailureAlertsEnabled)
+                return;
+
+            if (latest.FailureAlertConversationId is not { } conversationId)
+            {
+                _logger.LogWarning(
+                    "Cron failure alert skipped: job '{JobId}' has alerts enabled but no FailureAlertConversationId configured.",
+                    job.Id);
+                return;
+            }
+
+            var consecutiveErrors = await CountConsecutiveErrorsAsync(job.Id, ct).ConfigureAwait(false);
+            if (!ShouldAlertForStreakPosition(consecutiveErrors))
+                return;
+
+            using var scope = _scopeFactory.CreateScope();
+            var sink = scope.ServiceProvider.GetService<ICronFailureAlertSink>();
+            if (sink is null)
+            {
+                _logger.LogWarning(
+                    "Cron failure alert skipped: no ICronFailureAlertSink is registered (job '{JobId}').",
+                    job.Id);
+                return;
+            }
+
+            var redactor = scope.ServiceProvider.GetService<ISecretRedactor>();
+            var redactedError = redactor is null
+                ? null
+                : CronExternalDeliveryRedactor.RedactSummary(redactor, error);
+
+            var alert = new CronFailureAlert(
+                JobId: latest.Id,
+                JobName: latest.Name,
+                ScheduledRunTime: scheduledRunTime,
+                AttemptedAt: DateTimeOffset.UtcNow,
+                ConsecutiveErrorCount: consecutiveErrors,
+                Error: redactedError);
+
+            await sink.SendAsync(conversationId, alert, ct).ConfigureAwait(false);
+            _logger.LogInformation(
+                "Cron failure alert delivered for job '{JobId}' (consecutiveErrors={ConsecutiveErrors}).",
+                latest.Id, consecutiveErrors);
+        }
+        catch (Exception alertEx)
+        {
+            // AC7: never let alert delivery fail the run. The run is already finalized above.
+            _logger.LogError(
+                alertEx,
+                "Cron failure alert delivery failed for job '{JobId}'. The cron run itself is unaffected.",
+                job.Id);
+        }
+    }
+
+    /// <summary>
+    /// Length of the current unbroken error streak, derived from the newest run-history rows.
+    /// Returns at least 1 when called immediately after an error row was written.
+    /// </summary>
+    private async Task<int> CountConsecutiveErrorsAsync(JobId jobId, CancellationToken ct)
+    {
+        var history = await _cronStore.GetRunHistoryAsync(jobId, FailureAlertHistoryWindow, ct).ConfigureAwait(false);
+        var streak = 0;
+        foreach (var entry in history)
+        {
+            // History is newest-first; a non-error terminal outcome ends the streak. Rows still
+            // stamped Running are in-flight concurrent runs and are skipped rather than treated
+            // as a break, so a parallel run cannot silently reset the backoff.
+            if (string.Equals(entry.Status, CronRunStatus.Running, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!string.Equals(entry.Status, CronRunStatus.Error, StringComparison.OrdinalIgnoreCase))
+                break;
+            streak++;
+        }
+
+        return streak == 0 ? 1 : streak;
+    }
+
+    /// <summary>
+    /// Backoff schedule (AC5): alert on the FIRST failure of a streak, then on positions that are
+    /// exact powers of two (1, 2, 4, 8, 16, ...). Without this a job failing every minute would
+    /// deliver an alert every minute - becoming the noise the alert was meant to detect.
+    /// </summary>
+    private static bool ShouldAlertForStreakPosition(int consecutiveErrors)
+    {
+        if (consecutiveErrors <= 1)
+            return true;
+
+        // Power-of-two test: exactly one bit set.
+        return (consecutiveErrors & (consecutiveErrors - 1)) == 0;
+    }
+
+    /// <summary>
+    /// How far back the streak scan reads. Bounded so a job failing for months does not pull an
+    /// unbounded history; beyond this the streak simply saturates, which only makes the backoff
+    /// more conservative.
+    /// </summary>
+    private const int FailureAlertHistoryWindow = 64;
 
     /// <summary>
     /// Executes the action under its per-job timeout, discriminating a <i>timeout</i> from a
@@ -944,6 +1073,10 @@ public sealed class CronScheduler(
                     Enabled = configuredJob.Enabled,
                     System = configuredJob.System,
                     DeleteAfterRun = configuredJob.DeleteAfterRun,
+                FailureAlertsEnabled = configuredJob.FailureAlertsEnabled,
+                FailureAlertConversationId = string.IsNullOrWhiteSpace(configuredJob.FailureAlertConversationId)
+                    ? null
+                    : ConversationId.From(configuredJob.FailureAlertConversationId),
                     TimeZone = configuredJob.TimeZone,
                     CreatedBy = configuredJob.CreatedBy,
                     CreatedAt = DateTimeOffset.UtcNow,
@@ -968,6 +1101,10 @@ public sealed class CronScheduler(
                 Enabled = configuredJob.Enabled,
                 System = configuredJob.System,
                 DeleteAfterRun = configuredJob.DeleteAfterRun,
+                FailureAlertsEnabled = configuredJob.FailureAlertsEnabled,
+                FailureAlertConversationId = string.IsNullOrWhiteSpace(configuredJob.FailureAlertConversationId)
+                    ? null
+                    : ConversationId.From(configuredJob.FailureAlertConversationId),
                 TimeZone = configuredJob.TimeZone ?? existing.TimeZone,
                 CreatedBy = configuredJob.CreatedBy ?? existing.CreatedBy,
                 Metadata = configuredJob.Metadata ?? existing.Metadata

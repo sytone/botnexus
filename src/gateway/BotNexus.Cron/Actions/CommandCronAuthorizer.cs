@@ -18,17 +18,28 @@ public sealed record CommandAuthorizationDecision(bool Allowed, string Reason)
 }
 
 /// <summary>
-/// Authorization seam consulted before a cron <c>command</c> job spawns a shell subprocess (issue #2462).
+/// Authorization seam consulted before a cron <c>command</c> job spawns a shell subprocess, and
+/// before such a job is stored (issue #2462).
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What is gated:</b> this seam gates <b>FIRING</b> - every scheduled or manual execution of a
-/// command job, immediately before <c>Process.Start()</c>. It deliberately does <b>not</b> gate
-/// <b>AUTHORING</b> (creating or updating a job that carries a <c>shellCommand</c> via the cron tool
-/// or HTTP API): authoring is unchanged by this change, and a job whose command is denied can still
-/// be created - it will simply fail every run with a recorded, logged denial rather than executing.
-/// Gating firing is the security-relevant boundary because a stored command can be executed long
-/// after, and repeatedly, by the gateway identity.
+/// <b>What is gated:</b> BOTH halves of the lifecycle, deliberately and distinctly.
+/// </para>
+/// <list type="bullet">
+///   <item><b>FIRING</b> (<see cref="AuthorizeFiring"/>) - every scheduled or manual execution of a
+///     command job, immediately before <c>Process.Start()</c>. This is the security-critical
+///     boundary: a stored command can be executed long after authoring, repeatedly, with the
+///     gateway process identity.</item>
+///   <item><b>AUTHORING</b> (<see cref="AuthorizeAuthoring"/>) - creating or updating a job that
+///     carries a <c>shellCommand</c> through the model-facing <c>cron</c> tool. Gating authoring
+///     refuses a denied command at the point the model asks for it, with an immediate error the
+///     model can react to, instead of silently persisting a job that would fail every run forever;
+///     it also keeps a denied command out of the store entirely.</item>
+/// </list>
+/// <para>
+/// Both phases share one classification, so the two answers can never disagree. Authoring is not a
+/// substitute for the firing gate: policy can tighten after a job is stored (and jobs can arrive
+/// through paths other than the tool), so firing is always re-evaluated independently.
 /// </para>
 /// <para>
 /// <b>Vocabulary reuse:</b> this seam does not invent a second policy model. It delegates to the
@@ -49,6 +60,14 @@ public interface ICommandCronAuthorizer
     /// <param name="job">The job about to fire.</param>
     /// <param name="command">The raw shell command string that would be passed to the shell.</param>
     CommandAuthorizationDecision AuthorizeFiring(CronJob job, string command);
+
+    /// <summary>
+    /// Decides whether a cron command job carrying <paramref name="command"/> may be <b>stored</b>
+    /// (created or updated). Same fail-closed contract as <see cref="AuthorizeFiring"/>.
+    /// </summary>
+    /// <param name="job">The job as it would be persisted.</param>
+    /// <param name="command">The raw shell command string the job would carry.</param>
+    CommandAuthorizationDecision AuthorizeAuthoring(CronJob job, string command);
 }
 
 /// <summary>
@@ -56,8 +75,8 @@ public interface ICommandCronAuthorizer
 /// existing <see cref="IToolPolicyProvider"/> exec-tool policy, failing closed at every ambiguity.
 /// </summary>
 /// <remarks>
-/// Decision order (firing only - see <see cref="ICommandCronAuthorizer"/> for the
-/// authoring/firing distinction):
+/// Decision order (identical for authoring and firing - see <see cref="ICommandCronAuthorizer"/>
+/// for the phase distinction):
 /// <list type="number">
 ///   <item>Extract the leading executable token. If none can be extracted the command is
 ///     <b>unclassifiable</b> and is denied (fail closed, criterion 4).</item>
@@ -99,6 +118,13 @@ public sealed class ToolPolicyCommandCronAuthorizer : ICommandCronAuthorizer
 
     /// <inheritdoc />
     public CommandAuthorizationDecision AuthorizeFiring(CronJob job, string command)
+        => Authorize(job, command, "firing");
+
+    /// <inheritdoc />
+    public CommandAuthorizationDecision AuthorizeAuthoring(CronJob job, string command)
+        => Authorize(job, command, "authoring");
+
+    private CommandAuthorizationDecision Authorize(CronJob job, string command, string phase)
     {
         ArgumentNullException.ThrowIfNull(job);
 
@@ -136,10 +162,10 @@ public sealed class ToolPolicyCommandCronAuthorizer : ICommandCronAuthorizer
         }
 
         _logger?.LogInformation(
-            "CommandCronAuthorizer: allowing unattended command '{Executable}' for job '{JobId}' under "
-            + "exec-tool approval fallback '{Fallback}' (risk={Risk}). Set askFallback='deny' for agent "
-            + "'{AgentId}' to close this path.",
-            executable, job.Id, fallback, risk, agentId ?? "(none)");
+            "CommandCronAuthorizer: allowing {Phase} of unattended command '{Executable}' for job "
+            + "'{JobId}' under exec-tool approval fallback '{Fallback}' (risk={Risk}). Set "
+            + "askFallback='deny' for agent '{AgentId}' to close this path.",
+            phase, executable, job.Id, fallback, risk, agentId ?? "(none)");
 
         return CommandAuthorizationDecision.Allow(
             $"exec-tool approval fallback is '{fallback}' (risk={risk}); allowed with audit record");

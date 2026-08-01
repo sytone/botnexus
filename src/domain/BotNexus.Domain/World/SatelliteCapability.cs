@@ -1,7 +1,10 @@
 namespace BotNexus.Domain.World;
 
 /// <summary>
-/// Capabilities a satellite node can perform. Each must be explicitly granted during registration.
+/// Capabilities a satellite node advertises.
+///
+/// <para><b>These are descriptive labels, not grants (#2606).</b> The gateway does not read them to
+/// permit or refuse anything - there is no satellite dispatch surface for them to gate.</para>
 /// </summary>
 public enum SatelliteCapability
 {

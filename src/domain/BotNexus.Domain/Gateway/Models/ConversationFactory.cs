@@ -94,12 +94,20 @@ public static class ConversationFactory
     /// <param name="agentId">Agent that owns the conversation.</param>
     /// <param name="title">Human-readable title; blank values normalise to <c>"New conversation"</c>.</param>
     /// <param name="initiator">Citizen credited with the scheduled run.</param>
+    /// <param name="sourceId">
+    /// The cron job id that owns this run (#2121), stamped into <see cref="Conversation.SourceId"/>
+    /// so a client can attribute the conversation to a specific job rather than merely to "a
+    /// schedule". Optional because not every schedule-driven mint has a job id in hand - the
+    /// heartbeat tick is a schedule, not a cron job - and a null is an honest "originator not
+    /// recorded" rather than a fabricated identifier.
+    /// </param>
     /// <param name="timestamp">Creation clock reading; defaults to <see cref="DateTimeOffset.UtcNow"/>.</param>
     public static Conversation CreateForCron(
         ConversationId conversationId,
         AgentId agentId,
         string? title = null,
         CitizenId? initiator = null,
+        string? sourceId = null,
         DateTimeOffset? timestamp = null)
         => Create(
             ConversationSource.Cron,
@@ -112,7 +120,8 @@ public static class ConversationFactory
             purpose: null,
             instructions: null,
             isDefault: false,
-            timestamp);
+            timestamp,
+            sourceId: sourceId);
 
     /// <summary>
     /// Mints a webhook-originated conversation: an external system POSTed to a webhook registration and
@@ -124,12 +133,19 @@ public static class ConversationFactory
     /// <param name="agentId">Agent that owns the conversation.</param>
     /// <param name="title">Human-readable title; blank values normalise to <c>"New conversation"</c>.</param>
     /// <param name="initiator">Citizen credited with the delivery (typically the receiving agent).</param>
+    /// <param name="sourceId">
+    /// The webhook registration id that minted this conversation (#2121), stamped into
+    /// <see cref="Conversation.SourceId"/>. This is what lets source-specific retention and the
+    /// portal identify the owning registration from the conversation itself instead of matching on
+    /// the title text.
+    /// </param>
     /// <param name="timestamp">Creation clock reading; defaults to <see cref="DateTimeOffset.UtcNow"/>.</param>
     public static Conversation CreateForWebhook(
         ConversationId conversationId,
         AgentId agentId,
         string? title = null,
         CitizenId? initiator = null,
+        string? sourceId = null,
         DateTimeOffset? timestamp = null)
         => Create(
             ConversationSource.Webhook,
@@ -142,7 +158,8 @@ public static class ConversationFactory
             purpose: null,
             instructions: null,
             isDefault: false,
-            timestamp);
+            timestamp,
+            sourceId: sourceId);
 
     /// <summary>
     /// Mints an agent-originated conversation: the <c>conversation_new</c> tool, an agent-to-agent
@@ -262,7 +279,8 @@ public static class ConversationFactory
         bool isDefault,
         DateTimeOffset? timestamp,
         ConversationId? parentConversationId = null,
-        string? spawningToolCallId = null)
+        string? spawningToolCallId = null,
+        string? sourceId = null)
     {
         // One clock read for both stamps: CreatedAt and UpdatedAt must never disagree at birth.
         var now = timestamp ?? DateTimeOffset.UtcNow;
@@ -281,6 +299,9 @@ public static class ConversationFactory
             Initiator = initiator,
             Kind = kind,
             Source = source,
+            // #2121: the second half of the provenance pair. Null for the origins where no minting
+            // registry exists (channel / agent), so it is never a fabricated value.
+            SourceId = sourceId,
             ParentConversationId = parentConversationId,
             SpawningToolCallId = spawningToolCallId,
             Visibility = visibility

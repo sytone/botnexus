@@ -44,8 +44,14 @@ public sealed class SatelliteConfig
     public string? ApiKey { get; set; }
 
     /// <summary>
-    /// Capabilities this satellite is allowed to perform.
+    /// Capabilities this satellite advertises.
     /// Valid values: <c>notify</c>, <c>canvas</c>, <c>exec</c>.
+    ///
+    /// <para><b>DISPLAY-ONLY - this is NOT an authorization control (#2606).</b> Setting a narrow
+    /// list here does NOT restrict what the satellite may be asked to do: nothing in the gateway
+    /// reads this list to permit or refuse an operation, and there is no satellite dispatch surface
+    /// for it to gate. An empty list means "no capabilities declared" and behaves identically to a
+    /// fully populated one. Use <see cref="Enabled"/> to actually stop a satellite connecting.</para>
     /// </summary>
     public List<string>? Capabilities { get; set; }
 

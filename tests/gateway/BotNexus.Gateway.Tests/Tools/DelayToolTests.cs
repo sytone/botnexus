@@ -18,42 +18,56 @@ public sealed class DelayToolTests
         tool.Label.ShouldBe("Delay / Wait");
     }
 
+    /// <summary>
+    /// The one deliberately real-time test: the default (production) construction must actually wait
+    /// at least the requested duration. Lower bound only - <see cref="Task.Delay(TimeSpan, CancellationToken)"/>
+    /// makes no upper-bound promise, so no upper bound is asserted here or anywhere in this file.
+    /// </summary>
     [Fact]
-    public async Task DelayTool_WaitsSpecifiedDuration()
+    public async Task DelayTool_WaitsAtLeastRequestedDuration_UsingRealClock()
     {
-        var tool = CreateDelayTool();
+        var tool = CreateRealDelayTool();
         var stopwatch = Stopwatch.StartNew();
 
-        await ExecuteAsync(tool, new Dictionary<string, object?> { ["seconds"] = 2 });
+        await ExecuteAsync(tool, new Dictionary<string, object?> { ["seconds"] = 1 });
 
-        stopwatch.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(1900);
+        stopwatch.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(900);
+    }
+
+    [Fact]
+    public async Task DelayTool_RequestsExactRequestedDurationFromClock()
+    {
+        var recorder = new DelayRecorder();
+        var tool = CreateDelayTool(delay: recorder.DelayAsync);
+
+        await ExecuteAsync(tool, new Dictionary<string, object?> { ["seconds"] = 7 });
+
+        recorder.Requested.ShouldBe([TimeSpan.FromSeconds(7)]);
     }
 
     [Fact]
     public async Task DelayTool_ClampsToMaxDelay()
     {
-        var tool = CreateDelayTool(maxDelaySeconds: 2);
-        var stopwatch = Stopwatch.StartNew();
+        var recorder = new DelayRecorder();
+        var tool = CreateDelayTool(maxDelaySeconds: 2, delay: recorder.DelayAsync);
 
         var result = await ExecuteAsync(tool, new Dictionary<string, object?> { ["seconds"] = 9999 });
 
-        stopwatch.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(1900);
-        stopwatch.ElapsedMilliseconds.ShouldBeLessThan(4000);
+        recorder.Requested.ShouldBe([TimeSpan.FromSeconds(2)]);
         ReadText(result).ShouldContain("Waited 2 seconds");
     }
 
     [Fact]
     public async Task DelayTool_ClampsMinimumToOneSecond()
     {
-        var tool = CreateDelayTool();
-
         foreach (var seconds in new[] { 0, -5 })
         {
-            var stopwatch = Stopwatch.StartNew();
+            var recorder = new DelayRecorder();
+            var tool = CreateDelayTool(delay: recorder.DelayAsync);
+
             var result = await ExecuteAsync(tool, new Dictionary<string, object?> { ["seconds"] = seconds });
 
-            stopwatch.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(900);
-            stopwatch.ElapsedMilliseconds.ShouldBeLessThan(3000);
+            recorder.Requested.ShouldBe([TimeSpan.FromSeconds(1)]);
             ReadText(result).ShouldContain("Waited 1 seconds");
         }
     }
@@ -61,7 +75,7 @@ public sealed class DelayToolTests
     [Fact]
     public async Task DelayTool_ReturnsSuccessMessage()
     {
-        var tool = CreateDelayTool();
+        var tool = CreateDelayTool(delay: NoOpDelay);
 
         var result = await ExecuteAsync(tool, new Dictionary<string, object?> { ["seconds"] = 1 });
 
@@ -71,9 +85,9 @@ public sealed class DelayToolTests
     [Fact]
     public async Task DelayTool_CancellationReturnsInfoNotError()
     {
-        var tool = CreateDelayTool();
+        var tool = CreateDelayTool(delay: static (duration, token) => Task.Delay(duration, token));
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(500));
+        cts.CancelAfter(TimeSpan.FromMilliseconds(50));
 
         var result = await ExecuteAsync(
             tool,
@@ -86,7 +100,7 @@ public sealed class DelayToolTests
     [Fact]
     public async Task DelayTool_IncludesReasonInResult()
     {
-        var tool = CreateDelayTool();
+        var tool = CreateDelayTool(delay: NoOpDelay);
 
         var result = await ExecuteAsync(tool, new Dictionary<string, object?>
         {
@@ -100,13 +114,12 @@ public sealed class DelayToolTests
     [Fact]
     public async Task DelayTool_RespectsConfiguredMax()
     {
-        var tool = CreateDelayTool(maxDelaySeconds: 3);
-        var stopwatch = Stopwatch.StartNew();
+        var recorder = new DelayRecorder();
+        var tool = CreateDelayTool(maxDelaySeconds: 3, delay: recorder.DelayAsync);
 
         var result = await ExecuteAsync(tool, new Dictionary<string, object?> { ["seconds"] = 30 });
 
-        stopwatch.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(2900);
-        stopwatch.ElapsedMilliseconds.ShouldBeLessThan(5000);
+        recorder.Requested.ShouldBe([TimeSpan.FromSeconds(3)]);
         ReadText(result).ShouldContain("Waited 3 seconds");
     }
 
@@ -120,6 +133,23 @@ public sealed class DelayToolTests
         await act.ShouldThrowAsync<ArgumentException>();
     }
 
+    private sealed class DelayRecorder
+    {
+        private readonly List<TimeSpan> _requested = [];
+
+        public IReadOnlyList<TimeSpan> Requested => _requested;
+
+        public Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _requested.Add(duration);
+            return Task.CompletedTask;
+        }
+    }
+
+    private static Task NoOpDelay(TimeSpan duration, CancellationToken cancellationToken)
+        => Task.CompletedTask;
+
     private static async Task<AgentToolResult> ExecuteAsync(
         IAgentTool tool,
         IReadOnlyDictionary<string, object?> args,
@@ -129,7 +159,12 @@ public sealed class DelayToolTests
         return await tool.ExecuteAsync("call-delay-test", prepared, cancellationToken);
     }
 
-    private static IAgentTool CreateDelayTool(int? maxDelaySeconds = null)
+    private static IAgentTool CreateDelayTool(int? maxDelaySeconds = null, DelayAsync? delay = null)
+        => new DelayTool(
+            Options.Create(new DelayToolOptions { MaxDelaySeconds = maxDelaySeconds ?? 1800 }),
+            delay ?? NoOpDelay);
+
+    private static IAgentTool CreateRealDelayTool(int? maxDelaySeconds = null)
         => new DelayTool(Options.Create(new DelayToolOptions
         {
             MaxDelaySeconds = maxDelaySeconds ?? 1800

@@ -246,6 +246,10 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<AgentsMdPromptHookHandler>();
         services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 
+        // #2557: opt-in cron failure alerts delivered into a configured conversation. Registered
+        // here (not in AddBotNexusCron) because the delivery seam lives in the gateway assembly.
+        services.TryAddSingleton<BotNexus.Cron.ICronFailureAlertSink, BotNexus.Gateway.Cron.ConversationCronFailureAlertSink>();
+
         // Trusted security-event sink (#1532, #1645): captures approval/auth/tool boundary
         // decisions for the future trusted diagnostics surface. Deliberately a separate bounded
         // ring buffer so these never leak onto the public diagnostic stream.
@@ -300,6 +304,10 @@ public static class GatewayServiceCollectionExtensions
         // Live-turn tracker for write-time self-heal of orphaned crash sentinels (#2030).
         // Singleton so GatewayHost shares one view of which sessions have a turn in flight.
         services.TryAddSingleton<Sessions.ISessionTurnTracker, Sessions.SessionTurnTracker>();
+
+        // #2447: startup outcomes are published into a singleton report so the API layer can
+        // answer "which configured adapters actually started" without reaching into the host.
+        services.TryAddSingleton<BotNexus.Gateway.Channels.Startup.ChannelStartupReport>();
 
         // Gateway host
         services.TryAddSingleton<GatewayHost>();
@@ -438,6 +446,16 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IConfigSchemaContributor, SessionStoreSchemaContributor>();
         services.AddSingleton<IConfigSchemaContributor, RateLimitSchemaContributor>();
         services.AddHostedService<ConfigHydrationService>();
+
+        // #2635: additively reconcile the bundled agent catalog into config.json. Registered
+        // HERE, ahead of AgentConfigurationHostedService below, so an entry inserted on this
+        // startup is visible to the config agent source in the same startup rather than only
+        // after the next restart. Hosted services start in registration order, so this ordering
+        // is the mechanism, not a comment about one.
+        services.AddHostedService(serviceProvider => PlatformAgentReconciliationService.Create(
+            serviceProvider.GetRequiredService<BotNexusHome>(),
+            serviceProvider.GetRequiredService<IFileSystem>(),
+            serviceProvider.GetRequiredService<ILogger<PlatformAgentReconciliationService>>()));
 
         // #2136: the six worker archetypes (researcher, coder, planner, reviewer, writer, analyst)
         // are no longer registered as named conversational agents. They are resolved at spawn time

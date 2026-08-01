@@ -179,7 +179,10 @@ public sealed class TodoTool(
             });
         }
 
-        await SaveListAsync(conversation, items, cancellationToken).ConfigureAwait(false);
+        // 'write' replaces the whole list, so the desired items do not depend on prior todo state.
+        // The recompute delegate still receives the fresh aggregate so a retry rebases onto whatever
+        // else a concurrent writer committed (#2131).
+        await SaveListAsync(conversation, _ => items, cancellationToken).ConfigureAwait(false);
         return Text($"Todo list set with {items.Count} item(s).\n{Render(items)}");
     }
 
@@ -214,7 +217,8 @@ public sealed class TodoTool(
                 CreatedAt = now,
                 UpdatedAt = now,
             });
-            await SaveListAsync(conversation, items, cancellationToken).ConfigureAwait(false);
+            await SaveListAsync(conversation, source => AppendItem(source, id, newText, newStatusRaw, now), cancellationToken)
+                .ConfigureAwait(false);
             return Text($"Appended new todo item '{id}'.\n{Render(items)}");
         }
 
@@ -224,7 +228,8 @@ public sealed class TodoTool(
             existing.Status = NormalizeStatus(newStatusRaw);
         existing.UpdatedAt = now;
 
-        await SaveListAsync(conversation, items, cancellationToken).ConfigureAwait(false);
+        await SaveListAsync(conversation, source => ApplyUpdate(source, id, newText, newStatusRaw, now), cancellationToken)
+            .ConfigureAwait(false);
         return Text($"Updated todo item '{id}'.\n{Render(items)}");
     }
 
@@ -248,20 +253,76 @@ public sealed class TodoTool(
         if (conversation is null)
             return Text("Conversation not found.");
 
-        await SaveListAsync(conversation, [], cancellationToken).ConfigureAwait(false);
+        await SaveListAsync(conversation, _ => [], cancellationToken).ConfigureAwait(false);
         return Text("Todo list cleared.");
     }
 
-    private async Task SaveListAsync(Conversation conversation, IReadOnlyList<TodoItem> items, CancellationToken cancellationToken)
+    /// <summary>
+    /// Re-applies the caller's 'update' intent to whatever todo list is currently committed. Used as
+    /// the recompute delegate so a concurrency retry re-derives the item set from fresh state rather
+    /// than replaying the snapshot the tool originally read (#2131).
+    /// </summary>
+    private static List<TodoItem> ApplyUpdate(Conversation source, string id, string? newText, string? newStatusRaw, DateTimeOffset now)
     {
-        var json = items.Count == 0
-            ? null
-            : JsonSerializer.Serialize(new TodoDocument { Items = [.. items] }, TodoJsonOptions);
+        var items = Parse(source.TodoJson);
+        var existing = items.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.Ordinal));
+        if (existing is null)
+            return AppendItem(source, id, newText, newStatusRaw, now);
 
-        // Persist via SaveAsync, which holds the store's per-conversation write lock -- the existing
-        // write protection. Use a record `with` so the cached/loaded instance is not mutated in place.
-        var updated = conversation with { TodoJson = json };
-        await _conversationStore!.SaveAsync(updated, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrEmpty(newText))
+            existing.Text = newText;
+        if (!string.IsNullOrWhiteSpace(newStatusRaw))
+            existing.Status = NormalizeStatus(newStatusRaw);
+        existing.UpdatedAt = now;
+        return items;
+    }
+
+    /// <summary>
+    /// Re-applies the caller's 'append a new item' intent onto the currently committed todo list.
+    /// </summary>
+    private static List<TodoItem> AppendItem(Conversation source, string id, string? newText, string? newStatusRaw, DateTimeOffset now)
+    {
+        var items = Parse(source.TodoJson);
+        if (items.Any(i => string.Equals(i.Id, id, StringComparison.Ordinal)))
+            return ApplyUpdate(source, id, newText, newStatusRaw, now);
+
+        items.Add(new TodoItem
+        {
+            Id = id,
+            Text = newText ?? string.Empty,
+            Status = NormalizeStatus(newStatusRaw),
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        return items;
+    }
+
+    private async Task SaveListAsync(
+        Conversation conversation,
+        Func<Conversation, IReadOnlyList<TodoItem>> recompute,
+        CancellationToken cancellationToken)
+    {
+        string? json = null;
+
+        // Persist via SaveAsync, which holds the store's per-conversation write lock. Since #2471
+        // that save is also compare-and-swap guarded, so it can lose a race with a concurrent
+        // narrow write (a pin, a canvas key). Route through the shared bounded retry helper, which
+        // re-reads and re-runs `recompute` against the FRESH aggregate -- replaying the stale one
+        // would clobber the other writer's columns. Use a record `with` so the cached/loaded
+        // instance is never mutated in place.
+        _ = await ConversationSaveRetry.SaveWithRetryAsync(
+            _conversationStore!,
+            _conversationId!.Value,
+            conversation,
+            source =>
+            {
+                var items = recompute(source);
+                json = items.Count == 0
+                    ? null
+                    : JsonSerializer.Serialize(new TodoDocument { Items = [.. items] }, TodoJsonOptions);
+                return source with { TodoJson = json };
+            },
+            cancellationToken).ConfigureAwait(false);
 
         // Fan the change out to live transports (e.g. the portal Todo panel) after the write commits.
         // Best-effort: a broadcast failure must not fail the tool call. Mirrors the canvas notify path.

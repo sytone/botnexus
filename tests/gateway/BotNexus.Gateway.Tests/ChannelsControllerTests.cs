@@ -125,7 +125,7 @@ public sealed class ChannelsControllerTests
     {
         var manager = new Mock<IChannelManager>();
         manager.SetupGet(value => value.Adapters).Returns(adapters);
-        return new ChannelsController(manager.Object);
+        return new ChannelsController(manager.Object, new BotNexus.Gateway.Channels.Startup.ChannelStartupReport());
     }
 
     private static IChannelAdapter CreateAdapter(

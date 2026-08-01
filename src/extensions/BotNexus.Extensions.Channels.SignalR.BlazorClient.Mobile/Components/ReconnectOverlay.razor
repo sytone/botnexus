@@ -31,19 +31,38 @@
 }
 
 @code {
-    // Blazor's default reconnect budget gives up after ~15s; this overlay retries indefinitely on
-    // an exponential backoff (2s -> 30s cap) so a returning backgrounded PWA self-heals.
+    // #2625: the retry cadence lives in MobileReconnectLoop, not in this component. Two things
+    // changed. First, the loop keeps retrying until PortalLoad.IsSignalRConnected is genuinely true
+    // -- the old code treated "ResumeAsync did not throw" as progress and relied on a re-entrant
+    // timer chain that a swallowed exception could silently break. Second, the attempt counter is
+    // never reset mid-outage, including on a "Retry now" tap, so the 30s ceiling cannot be held
+    // inert at the base interval by repeated taps (#2564 shape).
     private bool _visible;
     private bool _retrying;
     // Only surface the overlay for a *re*connect: a connection must have been live at least once
     // before a drop is treated as reconnectable. This prevents flashing the overlay during the
     // initial connect handshake, which is "connecting", not "reconnecting".
     private bool _everConnected;
-    private int _attempt;
-    private Timer? _retryTimer;
+    private MobileReconnectLoop? _loop;
+
+    /// <summary>
+    /// Delay seam forwarded to the retry loop. Tests set it before first render so they can assert
+    /// the requested backoff durations without sleeping; null uses the real clock.
+    /// </summary>
+    [Parameter]
+    public Func<TimeSpan, CancellationToken, Task>? DelayOverride { get; set; }
+
+    /// <summary>Exposed for tests to assert schedule and attempt-counter behaviour.</summary>
+    public MobileReconnectLoop Loop => _loop!;
 
     protected override void OnInitialized()
     {
+        _loop = new MobileReconnectLoop(
+            resumeAsync: ResumeOnceAsync,
+            isConnected: () => PortalLoad.IsSignalRConnected,
+            delayAsync: DelayOverride);
+        _loop.OnRetryStateChanged += HandleConnectionStateChanged;
+
         PortalLoad.OnConnectionStateChanged += HandleConnectionStateChanged;
         SyncState();
     }
@@ -55,7 +74,7 @@
             StateHasChanged();
         });
 
-    // Reconcile visibility + the auto-retry timer with the current connection state.
+    // Reconcile visibility + the auto-retry loop with the current connection state.
     private void SyncState()
     {
         if (PortalLoad.IsSignalRConnected)
@@ -63,10 +82,10 @@
             _everConnected = true;
             if (_visible)
             {
-                // Live again -- self-dismiss and reset the backoff for any future drop.
+                // Live again -- self-dismiss and stop the loop, which resets the backoff for any
+                // future drop.
                 _visible = false;
-                _attempt = 0;
-                StopTimer();
+                _ = _loop!.StopAsync();
             }
             return;
         }
@@ -76,16 +95,14 @@
         if (_everConnected && !_visible)
         {
             _visible = true;
-            _attempt = 0;
-            ScheduleNextRetry();
+            _loop!.Start();
         }
     }
 
     /// <summary>
-    /// One auto-retry tick: while still disconnected, drive a liveness-verified resume (#1838) and
-    /// schedule the next attempt on the widened backoff. A no-op once the hub is live again so a
-    /// stale timer callback cannot trigger a spurious resume. Public so the retry cadence is unit
-    /// testable without real timers.
+    /// One auto-retry tick, retained so the existing component-level tests keep exercising the same
+    /// entry point. Delegates to the loop's manual-retry path, which performs a resume and reports
+    /// whether the connection was genuinely restored.
     /// </summary>
     public async Task RetryTickAsync()
     {
@@ -95,71 +112,42 @@
             return;
         }
 
-        await ResumeOnceAsync();
-
-        // If the resume did not restore the connection, back off and try again.
-        if (!PortalLoad.IsSignalRConnected)
-        {
-            _attempt++;
-            ScheduleNextRetry();
-        }
+        await _loop!.RetryNowAsync();
     }
 
-    // Manual "Retry now" tap: same liveness-verified path, but resets the backoff so the next
-    // automatic attempt starts fresh rather than at the current (possibly long) interval.
-    private async Task RetryNowAsync()
-    {
-        _attempt = 0;
-        StopTimer();
-        await ResumeOnceAsync();
-        if (!PortalLoad.IsSignalRConnected)
-            ScheduleNextRetry();
-    }
+    // Manual "Retry now" tap: same liveness-verified path, out of band with the backoff. It does
+    // NOT reset the attempt counter -- see MobileReconnectLoop.RetryNowAsync.
+    private async Task RetryNowAsync() => await _loop!.RetryNowAsync();
 
-    private async Task ResumeOnceAsync()
+    private async Task ResumeOnceAsync(CancellationToken cancellationToken)
     {
-        if (_retrying)
-            return;
         _retrying = true;
-        StateHasChanged();
+        await InvokeAsync(StateHasChanged);
         try
         {
             // #1838: probe-then-rebuild; never a bare RefreshAsync that trusts a zombie socket.
-            await PortalLoad.ResumeAsync();
-        }
-        catch
-        {
-            // A failed resume is expected while the network is still down -- the backoff loop will
-            // try again. Genuine unrecoverable failures are still reported by errorReporting.js.
+            // Exceptions propagate to the loop, which treats them as a failed attempt and backs off
+            // rather than ending recovery.
+            await PortalLoad.ResumeAsync(cancellationToken);
         }
         finally
         {
             _retrying = false;
-            SyncState();
-            StateHasChanged();
+            await InvokeAsync(() =>
+            {
+                SyncState();
+                StateHasChanged();
+            });
         }
-    }
-
-    private void ScheduleNextRetry()
-    {
-        StopTimer();
-        if (PortalLoad.IsSignalRConnected)
-            return;
-
-        var delay = MobileReconnectBackoff.GetDelay(_attempt);
-        // One-shot timer; RetryTickAsync reschedules the next tick so the interval widens each time.
-        _retryTimer = new Timer(_ => _ = InvokeAsync(RetryTickAsync), null, delay, Timeout.InfiniteTimeSpan);
-    }
-
-    private void StopTimer()
-    {
-        _retryTimer?.Dispose();
-        _retryTimer = null;
     }
 
     public void Dispose()
     {
         PortalLoad.OnConnectionStateChanged -= HandleConnectionStateChanged;
-        StopTimer();
+        if (_loop is not null)
+        {
+            _loop.OnRetryStateChanged -= HandleConnectionStateChanged;
+            _ = _loop.DisposeAsync();
+        }
     }
 }

@@ -278,10 +278,12 @@ git branch -d squad/{issue-number}-{slug}
 ```
 
 **Worktree cleanup (future, #525):**
-```bash
+```powershell
 cd {original-cwd}
-git worktree remove ../worktrees/{issue-number}
+pwsh -NoProfile -File scripts/repo/Remove-Worktree.ps1 -WorktreePath ../worktrees/{issue-number} -DeleteBranch
 ```
+
+Use the hardened helper `scripts/repo/Remove-Worktree.ps1`: it retries boundedly, returns a structured `locked` outcome when Windows file locks hold the directory, and never deletes the branch unless removal succeeded (issue #2104). Never chain `git worktree remove ...` straight into `git branch -d/-D ...` - on a failed removal that orphans the directory and strands the commits.
 
 ## Spawn Prompt Additions for Issue Work
 

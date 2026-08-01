@@ -33,6 +33,13 @@ public interface IPortalLoadService
     /// </summary>
     HubConnectionTuning? Tuning { get; set; }
 
+    /// <summary>
+    /// True while the portal is actively re-dialling after SignalR's automatic-reconnect budget was
+    /// exhausted and the connection reached its terminal <c>Closed</c> state (#2624). Lets the UI
+    /// show "Reconnecting" during a gateway restart instead of a bare, terminal "Disconnected".
+    /// </summary>
+    bool IsReconnecting { get; }
+
     /// <summary>Raised when <see cref="IsReady"/>, <see cref="IsLoading"/>, or <see cref="LoadError"/> changes.</summary>
     event Action? OnReadyChanged;
 

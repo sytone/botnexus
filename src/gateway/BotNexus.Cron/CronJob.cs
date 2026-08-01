@@ -78,4 +78,26 @@ public sealed record CronJob
     /// retroactively suppress legitimate missed runs for pre-existing jobs.
     /// </summary>
     public DateTimeOffset? ScheduleActivatedAt { get; init; }
+
+    /// <summary>
+    /// Opt-in per-job failure alerting (#2557). When <c>true</c> and
+    /// <see cref="FailureAlertConversationId"/> is set, a run that terminates as
+    /// <see cref="CronRunStatus.Error"/> delivers a <see cref="CronFailureAlert"/> to that
+    /// conversation - on the FIRST failure of a streak and then on a doubling backoff, never on
+    /// every run (a job failing every minute would otherwise become the noise it was meant to
+    /// detect).
+    ///
+    /// <b>Off by default.</b> Rows written before this column existed read as <c>false</c>, which
+    /// is byte-identical to today's behaviour: no delivery at all.
+    /// </summary>
+    public bool FailureAlertsEnabled { get; init; }
+
+    /// <summary>
+    /// Conversation that failure alerts for this job are delivered to. <c>null</c> means no
+    /// target configured, which disables delivery regardless of
+    /// <see cref="FailureAlertsEnabled"/> - there is deliberately no implicit fallback to
+    /// <see cref="ConversationId"/>, so enabling alerts can never retarget a job's own
+    /// long-lived run conversation by accident.
+    /// </summary>
+    public ConversationId? FailureAlertConversationId { get; init; }
 }

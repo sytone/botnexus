@@ -43,7 +43,20 @@ internal static class CliConfigMutation
     {
         var writer = CreateWriter(configPath);
 
-        var errors = await writer.MutateValidatedAsync(mutation, reason, cancellationToken);
+        IReadOnlyList<string> errors;
+        try
+        {
+            errors = await writer.MutateValidatedAsync(mutation, reason, cancellationToken);
+        }
+        catch (PlatformConfigLockTimeoutException ex)
+        {
+            // #2134: another BotNexus process (a second CLI invocation, or the running gateway) is
+            // inside the config critical section. Report the conflict explicitly and exit non-zero
+            // rather than writing without the lock - a silently lost config edit is the defect.
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(ex.Message)}");
+            return 1;
+        }
+
         if (errors.Count > 0)
         {
             AnsiConsole.MarkupLine("[red]Config validation failed; the existing config was not modified:[/]");

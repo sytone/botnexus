@@ -18,6 +18,13 @@ namespace BotNexus.Gateway.Configuration;
 /// of the process (#2383). Keeping the field list here, and only here, makes that class of drift
 /// impossible to reintroduce independently.
 /// </para>
+/// <para>
+/// The list is <b>fenced</b>: <c>AgentDescriptorFingerprintFenceArchitectureTests</c> reflects
+/// over every settable public property of <see cref="AgentDescriptor"/> and fails the build if
+/// one is not referenced by <c>AppendDescriptor</c> (#2588). Adding a descriptor property
+/// without appending it here is therefore a build error, not a silent loss of change detection.
+/// If a new member genuinely must not participate - a secret or a volatile value; the descriptor
+/// graph has neither today - exclude it deliberately in that fence, with a written reason.
 /// </summary>
 internal static class AgentDescriptorFingerprint
 {

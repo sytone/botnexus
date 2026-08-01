@@ -29,6 +29,7 @@ jobs:
   guard:
     name: Sensitive File Guard
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # On comment events, only run for PR comments that contain the approval command.
     if: >
       github.event_name == 'pull_request_target' ||
