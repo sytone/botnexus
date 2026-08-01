@@ -132,7 +132,8 @@ public sealed class SubAgentModelsTests
             SubAgentStatus.Completed,
             SubAgentStatus.Failed,
             SubAgentStatus.Killed,
-            SubAgentStatus.TimedOut });
+            SubAgentStatus.TimedOut,
+            SubAgentStatus.BudgetExhausted });
     }
 
     [Fact]
@@ -143,6 +144,9 @@ public sealed class SubAgentModelsTests
         ((int)SubAgentStatus.Failed).ShouldBe(2);
         ((int)SubAgentStatus.Killed).ShouldBe(3);
         ((int)SubAgentStatus.TimedOut).ShouldBe(4);
+
+        // Appended last so every pre-existing wire value is unchanged (#2656).
+        ((int)SubAgentStatus.BudgetExhausted).ShouldBe(5);
     }
 
     [Fact]
