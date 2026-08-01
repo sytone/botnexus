@@ -267,7 +267,7 @@ public sealed class ConfigFieldCoverageFenceArchitectureTests
     private static HashSet<string> LoadBaseline()
     {
         var assemblyDir = Path.GetDirectoryName(typeof(ConfigFieldCoverageFenceArchitectureTests).Assembly.Location)!;
-        var path = Path.Combine(assemblyDir, "ConfigFieldCoverageBaseline.txt");
+        var path = Path.Combine(assemblyDir, "ConfigFieldCoverageBaseline.baseline");
 
         if (!File.Exists(path))
             throw new FileNotFoundException(
