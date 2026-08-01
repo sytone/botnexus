@@ -166,6 +166,11 @@ public sealed class ConversationGroupingTests : IDisposable
     [Fact]
     public void ServerSuppliedWebhookSource_IsBadgedFromTheImmutableSignal()
     {
+        // #2122 gave webhook runs their own Automated section, which - like Scheduled - starts
+        // collapsed. Seed it expanded so the badged item is actually rendered. Every assertion
+        // below is unchanged; only the group's visibility fixture is seeded.
+        _ctx.JSInterop.Setup<string?>("localStorage.getItem", "botnexus-webhook-collapsed").SetResult("false");
+
         SeedAgentWithConversations(
             new ConversationSummaryDto("c-1", "a-1", "Webhook Run", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "HumanAgent", "Webhook"),
             new ConversationSummaryDto("c-2", "a-1", "Normal Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
@@ -241,8 +246,10 @@ public sealed class ConversationGroupingTests : IDisposable
 
         var cut = RenderLayout();
 
-        // Find the count badge
-        var countBadge = cut.Find(".conversation-group-count");
+        // Find the Scheduled group's count badge. #2122 added count badges to Pinned,
+        // Conversations and Webhooks too, so the bare class selector is no longer unique -
+        // this now targets the SAME badge by its own test id. The asserted value is unchanged.
+        var countBadge = cut.Find("[data-testid='cron-group-count']");
         Assert.Equal("2", countBadge.TextContent.Trim());
     }
 
