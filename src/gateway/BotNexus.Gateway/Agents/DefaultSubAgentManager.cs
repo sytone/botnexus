@@ -605,7 +605,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (info.ParentSessionId != requestingSessionId)
             return false;
 
-        if (info.Status is SubAgentStatus.Completed or SubAgentStatus.Failed or SubAgentStatus.Killed or SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted)
+        if (SubAgentStatusPolicy.IsTerminal(info.Status))
             return false;
 
         record.CancelTimeout();
