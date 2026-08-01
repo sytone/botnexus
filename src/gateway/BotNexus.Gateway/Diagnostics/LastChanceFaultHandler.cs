@@ -76,7 +76,11 @@ public sealed class LastChanceFaultHandler
         Emit("ProcessExit", detail: null, isTerminating: true, force: false);
     }
 
-    private void Emit(string reason, string? detail, bool isTerminating, bool force)
+    /// <summary>
+    /// Emits the fault breadcrumb. Internal rather than private so the severity policy
+    /// (#2633) is directly unit-testable without provoking a real process fault.
+    /// </summary>
+    internal void Emit(string reason, string? detail, bool isTerminating, bool force)
     {
         try
         {
