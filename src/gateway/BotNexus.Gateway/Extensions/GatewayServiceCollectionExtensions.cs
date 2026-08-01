@@ -129,11 +129,12 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IMemoryStoreFactory>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
             return new MemoryStoreFactory(agentId =>
             {
                 var agentDirectory = home.GetAgentDirectory(agentId);
                 return Path.Combine(agentDirectory, "data", "memory.sqlite");
-            });
+            }, fileSystem);
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
