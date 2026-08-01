@@ -8,6 +8,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Xunit.SkippableFact" />
     <PackageReference Include="NetArchTest.Rules" />
     <PackageReference Include="Vogen" />
   </ItemGroup>

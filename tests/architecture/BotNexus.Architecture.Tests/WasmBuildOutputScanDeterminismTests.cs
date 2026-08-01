@@ -205,9 +205,9 @@ public sealed class WasmBuildOutputScanDeterminismTests : IDisposable
             "currency of the artifact is the build's responsibility, not this scan's.");
         result.AssembliesScanned.ShouldBe(1);
 
-        WasmPayloadDependencyArchitectureTests.StalenessScopeStatement.ShouldContain(
-            "stale",
-            "The limitation must be stated in words the failure/skip output carries, so nobody reads " +
-            "a green here as 'the payload matches this commit'.");
+        // The limitation must be stated in words the failure output carries, so nobody reads a green
+        // here as "the payload matches this commit".
+        WasmPayloadDependencyArchitectureTests.StalenessScopeStatement.ShouldContain("stale");
+        WasmPayloadDependencyArchitectureTests.StalenessScopeStatement.ShouldContain("out of scope");
     }
 }
