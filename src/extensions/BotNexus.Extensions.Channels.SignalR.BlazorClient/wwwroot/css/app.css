@@ -5712,6 +5712,22 @@ h3.conversation-title.editable:hover {
     opacity: 0.9;
 }
 
+/*
+ * Pin badge and pinned row treatment (#2619). Pinning is the only USER-authored priority signal on
+ * the dashboard - every other badge is machine-derived - so it gets a warm accent that sits outside
+ * the origin palette rather than another shade of it, and the row itself carries a leading rule so
+ * the pinned block at the top of the table reads as a group at a glance. Unpinned rows are left
+ * entirely untouched, keeping the marks that do appear meaningful.
+ */
+.activity-badge-pinned {
+    background: var(--accent-pinned, #8a6b2f);
+    color: #fff;
+}
+
+.activity-row-pinned {
+    box-shadow: inset 3px 0 0 var(--accent-pinned, #8a6b2f);
+}
+
 
 /* Cron Jobs single-page selector and editor */
 .cron-selector-section {

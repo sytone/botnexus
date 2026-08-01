@@ -71,6 +71,23 @@ public enum ActivityOriginFilter
 }
 
 /// <summary>
+/// Pin facet for the dashboard filter (#2619). Tri-state rather than a one-way "pinned only"
+/// toggle so the complement ("what have I not marked as mattering?") stays reachable, and so the
+/// facet is inert by default like every other facet.
+/// </summary>
+public enum ActivityPinFilter
+{
+    /// <summary>No pin constraint - every row matches. The default, so the landing view is unchanged.</summary>
+    All,
+
+    /// <summary>Only conversations the user has explicitly pinned.</summary>
+    Pinned,
+
+    /// <summary>Only conversations the user has not pinned.</summary>
+    Unpinned
+}
+
+/// <summary>
 /// Immutable, composable filter for the Home / Activity dashboard. Each facet is independent so new
 /// facets can be added without changing existing call sites, and the whole record is cheap to copy
 /// with <c>with</c> when a single facet changes from the filter bar.
@@ -92,12 +109,20 @@ public enum ActivityOriginFilter
 /// notably it does not override <paramref name="IncludeCron"/>, so selecting
 /// <see cref="ActivityOriginFilter.Scheduled"/> still shows nothing until cron is revealed.
 /// </param>
+/// <param name="Pinned">
+/// Which pin state to include (#2619). Defaults to <see cref="ActivityPinFilter.All"/>, so the
+/// facet is inert unless the user selects one. Like <paramref name="Origin"/> it <em>composes</em>
+/// with the other facets and overrides none of them - notably a pinned cron conversation stays
+/// hidden until <paramref name="IncludeCron"/> reveals it, because pinning is a priority signal,
+/// not a visibility override.
+/// </param>
 public sealed record ActivityDashboardFilter(
     bool IncludeCron = false,
     string? AgentId = null,
     ActivityStatusFilter Status = ActivityStatusFilter.Active,
     ActivityRecencyWindow Recency = ActivityRecencyWindow.Any,
-    ActivityOriginFilter Origin = ActivityOriginFilter.All);
+    ActivityOriginFilter Origin = ActivityOriginFilter.All,
+    ActivityPinFilter Pinned = ActivityPinFilter.All);
 
 /// <summary>
 /// A single projected row on the Home / Activity dashboard: one active conversation plus the derived
@@ -124,6 +149,16 @@ public sealed record ActivityDashboardFilter(
 /// <paramref name="Source"/>; together they disambiguate every origination case, which is what the
 /// row badge renders.
 /// </param>
+/// <param name="IsPinned">
+/// Whether the user has explicitly pinned this conversation (#2619). Carried straight through from
+/// the server-stamped <see cref="ConversationSummaryDto.IsPinned"/> rather than inferred, so the
+/// dashboard and the sidebar cannot disagree about what is pinned. This is the only
+/// <em>user-authored</em> priority signal on the row - every other signal is machine-derived.
+/// </param>
+/// <param name="PinnedAt">
+/// When the pin was stamped, or <see langword="null"/> when the conversation is not pinned. Carried
+/// so a later surface can explain or order pins by age without a second round trip.
+/// </param>
 public sealed record ActivityRow(
     string ConversationId,
     string OwningAgentId,
@@ -133,7 +168,9 @@ public sealed record ActivityRow(
     IReadOnlyList<string> InvolvedAgents,
     int ChannelCount,
     ConversationSource Source,
-    ConversationKind Kind)
+    ConversationKind Kind,
+    bool IsPinned = false,
+    DateTimeOffset? PinnedAt = null)
 {
     /// <summary>
     /// Whether this is a cron/scheduled conversation. Computed from <see cref="Source"/> rather than
@@ -250,7 +287,13 @@ public static class ActivityDashboardProjection
                         x.Agents.Contains(filter.AgentId, StringComparer.Ordinal))
             .Where(x => MatchesRecency(x.Dto.UpdatedAt, filter.Recency, now))
             .Where(x => MatchesOrigin(x.Source, x.Kind, filter.Origin))
-            .OrderByDescending(x => x.Dto.UpdatedAt)
+            .Where(x => MatchesPinned(x.Dto.IsPinned, filter.Pinned))
+            // Pinned-first is a GROUPING key applied ahead of the existing ordering keys, mirroring
+            // ConversationsController's pinned-first list ordering rather than inventing a second
+            // rule. The UpdatedAt-descending / ConversationId-ordinal contract is untouched and
+            // still decides the order *within* each group.
+            .OrderByDescending(x => x.Dto.IsPinned)
+            .ThenByDescending(x => x.Dto.UpdatedAt)
             .ThenBy(x => x.Dto.ConversationId, StringComparer.Ordinal)
             .Select(x => new ActivityRow(
                 x.Dto.ConversationId,
@@ -261,7 +304,9 @@ public static class ActivityDashboardProjection
                 x.Agents,
                 x.Dto.BindingCount,
                 x.Source,
-                x.Kind))
+                x.Kind,
+                x.Dto.IsPinned,
+                x.Dto.IsPinned ? x.Dto.PinnedAt : null))
             .ToList();
     }
 
@@ -383,6 +428,15 @@ public static class ActivityDashboardProjection
     // filter costs nothing per row on the common unfiltered landing view.
     private static bool MatchesOrigin(ConversationSource source, ConversationKind kind, ActivityOriginFilter filter) =>
         filter == ActivityOriginFilter.All || ClassifyOrigin(source, kind) == filter;
+
+    // All short-circuits rather than comparing, so the default filter costs nothing per row on the
+    // common unfiltered landing view - the same shape as MatchesOrigin.
+    private static bool MatchesPinned(bool isPinned, ActivityPinFilter filter) => filter switch
+    {
+        ActivityPinFilter.Pinned => isPinned,
+        ActivityPinFilter.Unpinned => !isPinned,
+        _ => true
+    };
 
     private static bool MatchesStatus(string status, ActivityStatusFilter filter) => filter switch
     {

@@ -97,6 +97,14 @@
             <option value="@ActivityOriginFilter.SubAgent">Sub-agent</option>
             <option value="@ActivityOriginFilter.AgentToAgent">Agent-to-agent</option>
         </select>
+        <select class="activity-filter-select" data-testid="activity-filter-pinned"
+                aria-label="Filter by pin state"
+                value="@_filter.Pinned"
+                @onchange="OnPinFilterChanged">
+            <option value="@ActivityPinFilter.All">Any pin state</option>
+            <option value="@ActivityPinFilter.Pinned">Pinned only</option>
+            <option value="@ActivityPinFilter.Unpinned">Unpinned only</option>
+        </select>
     </div>
 
     @if (_isLoading && _rows is null)
@@ -129,7 +137,7 @@
             <tbody>
                 @foreach (var row in rows)
                 {
-                    <tr class="activity-row @(row.IsCron ? "activity-row-cron" : "")"
+                    <tr class="activity-row @(row.IsCron ? "activity-row-cron" : "") @(row.IsPinned ? "activity-row-pinned" : "")"
                         data-testid="activity-row"
                         data-conversation-id="@row.ConversationId"
                         tabindex="0"
@@ -138,6 +146,13 @@
                         @onkeydown="e => OnRowKeyDown(e, row)">
                         <td class="activity-cell-title">
                             <span class="activity-conversation-title" title="@row.Title">@DisplayTitle(row)</span>
+                            @if (row.IsPinned)
+                            {
+                                <span class="activity-badge activity-badge-pinned"
+                                      data-testid="activity-pin-badge"
+                                      title="@PinTooltip(row)"
+                                      aria-label="Pinned">&#x1F4CC; Pinned</span>
+                            }
                             @if (ActivityDashboardProjection.OriginLabel(row) is { } originLabel)
                             {
                                 <span class="activity-badge activity-badge-@ActivityDashboardProjection.OriginModifier(row)"
@@ -300,6 +315,27 @@
             return ApplyFilterAsync(_filter with { Origin = origin });
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Applies the pin facet (#2619). Mirrors the origin/status/recency handlers exactly - it swaps
+    /// one facet on the existing immutable filter and re-projects, rather than introducing a second
+    /// query path. An unparseable value is ignored so a stale DOM value cannot blank the table.
+    /// </summary>
+    private Task OnPinFilterChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<ActivityPinFilter>(e.Value?.ToString(), out var pinned))
+            return ApplyFilterAsync(_filter with { Pinned = pinned });
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Hover detail behind the pin badge: when the pin was stamped, so the badge stays a one-glance
+    /// mark while the underlying server value remains inspectable without lengthening the row.
+    /// </summary>
+    private static string PinTooltip(ActivityRow row) =>
+        row.PinnedAt is { } pinnedAt
+            ? $"Pinned {pinnedAt:o}"
+            : "Pinned";
 
     private void NavigateToConversation(ActivityRow row) =>
         Nav.NavigateTo(
