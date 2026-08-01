@@ -24,7 +24,7 @@
 
     @foreach (var (section, index) in _sections.Select((s, i) => (s, i)))
     {
-        <div class="conversation-section" data-testid="conversation-section" data-section-id="@section.SectionId">
+        <div class="conversation-section" data-testid="conversation-section" data-section-id="@(section.SectionId)">
             <div class="conversation-section-header">
                 <button class="section-collapse-toggle" data-testid="section-collapse-toggle"
                         title="@(section.IsCollapsed ? "Expand" : "Collapse")"
@@ -41,7 +41,7 @@
                 }
                 else
                 {
-                    <span class="conversation-section-name" data-testid="section-name">@section.Name</span>
+                    <span class="conversation-section-name" data-testid="section-name">@(section.Name)</span>
                     <div class="conversation-section-actions">
                         <button class="section-move-up-btn" data-testid="section-move-up"
                                 disabled="@(index == 0)"

@@ -32,6 +32,13 @@ public static class CronRunStatus
     public const string Running = "running";
 
     /// <summary>
+    /// A fire that was suppressed before the action was invoked because the job is past its
+    /// <c>ExpiresAt</c> instant (#2634). Returned to the caller for visibility; deliberately NOT
+    /// written to run history, because a suppressed fire is the absence of a run, not a run.
+    /// </summary>
+    public const string Skipped = "skipped";
+
+    /// <summary>
     /// A scheduled occurrence that elapsed while the gateway was down and was never executed.
     /// Written only by startup missed-run detection, which stamps the row with the scheduled
     /// occurrence instant so the (job, occurrence) pair is a stable identity across restarts.

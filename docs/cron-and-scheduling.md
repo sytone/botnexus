@@ -13,9 +13,9 @@
 3. [Configuration](#configuration)
 4. [Cron Schedule Syntax](#cron-schedule-syntax)
 5. [Agent Session Modes](#agent-session-modes)
-6. [Channel Output Routing](#channel-output-routing)
-7. [Built-in System Actions](#built-in-system-actions)
-8. [Built-in Maintenance Actions](#built-in-maintenance-actions)
+6. [Output Routing](#output-routing)
+7. [Built-in Actions](#built-in-actions)
+8. [Action Reference](#action-reference)
 9. [CronTool — Runtime Job Management](#crontool--runtime-job-management)
 10. [REST API Endpoints](#rest-api-endpoints)
 11. [Migration from HeartbeatService](#migration-from-heartbeatservice)
@@ -27,13 +27,13 @@
 
 ## 1. Overview
 
-BotNexus provides a **centralized cron service** (`ICronService`) that schedules and executes jobs on a fixed tick interval. Unlike per-agent scheduling (legacy `AgentConfig.CronJobs`), all jobs are registered in a single, global configuration section: `BotNexus.Cron.Jobs`.
+BotNexus provides a **centralized cron service** (`CronScheduler`) that schedules and executes jobs on a fixed tick interval. Unlike per-agent scheduling (legacy `AgentConfig.CronJobs`), all jobs are registered in a single, global configuration section: the `cron` section of `config.json`.
 
 ### Key Characteristics
 
-- **Centralized**: All scheduled jobs in one place (`Cron.Jobs` config dict)
-- **Three job types**: Agent (LLM prompts), System (non-LLM actions), Maintenance (internal tasks)
-- **Tickless evaluation**: Service wakes every N seconds (default 10) and checks which jobs are due
+- **Centralized**: All config-defined jobs in one place (`cron.jobs`), merged at runtime with jobs created through the `cron` tool and the REST API
+- **One field selects the behaviour**: a job's `actionType` decides what happens when it fires (see [Job Types](#job-types))
+- **Tickless evaluation**: Service wakes every N seconds (default 60) and checks which jobs are due
 - **Non-blocking execution**: Jobs run concurrently; the scheduler does not wait for completion
 - **Async-first**: All job execution is fully asynchronous
 - **Correlated logging**: Every job execution gets a unique correlation ID for tracing
@@ -43,139 +43,117 @@ BotNexus provides a **centralized cron service** (`ICronService`) that schedules
 
 ```text
 ┌──────────────────────┐
-│   CronService        │
+│   CronScheduler      │
 │  (Background Svc)    │
 └──────┬───────────────┘
-       │ (every 10s tick)
+       │ (every tickIntervalSeconds)
        ▼
    Check due jobs
    │
-   ├─→ Agent job → AgentRunner → LLM prompt → Route output to channels
-   ├─→ System job → ISystemAction → Execute action → Route output
-   └─→ Maintenance job → Cleanup/consolidation tasks
+   └─→ Dispatch to the ICronAction whose ActionType matches the job's actionType
 ```
+
+Each action is a registered `ICronAction` implementation (see
+`CronServiceCollectionExtensions.AddBotNexusCron`). Adding a new action type means registering a
+new `ICronAction`; there is no separate system/maintenance registry.
 
 ---
 
 ## 2. Job Types
 
-### 2.1 Agent Jobs (`type: "agent"`)
+A job's behaviour is selected by a single `actionType` field. There is no `type` field and no
+separate agent/system/maintenance job taxonomy - every job is dispatched to the registered
+`ICronAction` whose `ActionType` matches.
 
-Execute a prompt through the agent runner pipeline. Output is routed to channels.
+| `actionType` | What it does when it fires | Required fields | Cost |
+|---|---|---|---|
+| `agent-prompt` (default) | Sends a prompt to the target agent through the agent runner | `agentId` + (`message` **or** `templateName`) | One full model turn per fire |
+| `command` | Runs `shellCommand` as a script | `shellCommand` | No tokens unless the script escalates |
+| `webhook` | POSTs to `webhookUrl` | `webhookUrl` | None |
+| `memory-dreaming` | LLM memory consolidation pass (see [8.4](#_8-4-memory-dreaming)) | `agentId` | One model turn per fire |
+| `skill-review` | LLM skill-review pass (see [8.7](#_8-7-skill-review)) | `agentId` | One model turn per fire |
+| `agent-converse` | Scheduled agent-to-agent conversation (see [8.6](#_8-6-agent-converse)) | `agentId` + metadata | One or more model turns |
+| `heartbeat` | System-provisioned agent heartbeat | `agentId` | One model turn per fire |
 
-**Configuration Properties:**
-- `Type`: `"agent"` (required)
-- `Agent`: Agent name to run (required)
-- `Prompt`: Prompt text to send to the agent (required)
-- `Schedule`: Cron expression (required)
-- `Session`: Session mode (`new`, `persistent`, or `named:<key>`; default: `new`)
-- `Timezone`: Timezone ID for schedule evaluation (optional; default: UTC)
-- `OutputChannels`: List of channel names to route agent response to (optional)
-- `Enabled`: Whether job is active (optional; default: `true`)
+`heartbeat` and `skill-review` jobs are **auto-provisioned** by the gateway per user-defined agent
+and are marked `system` - they are hidden from `cron` tool `list` output unless `includeSystem` is
+set.
+
+### 2.1 Agent prompt jobs (`actionType: "agent-prompt"`)
+
+Execute a prompt through the agent runner pipeline. This is the default when `actionType` is
+omitted.
 
 **Example:**
 ```json
 {
-  "BotNexus": {
-    "Cron": {
-      "Jobs": {
-        "morning-briefing": {
-          "Type": "agent",
-          "Schedule": "0 9 * * *",
-          "Agent": "analyst",
-          "Prompt": "Generate a morning briefing on recent alerts.",
-          "Session": "persistent",
-          "Timezone": "America/New_York",
-          "OutputChannels": ["slack", "email"],
-          "Enabled": true
-        }
+  "cron": {
+    "jobs": {
+      "morning-briefing": {
+        "name": "Morning briefing",
+        "schedule": "0 9 * * *",
+        "actionType": "agent-prompt",
+        "agentId": "analyst",
+        "message": "Generate a morning briefing on recent alerts.",
+        "timeZone": "America/New_York",
+        "enabled": true
       }
     }
   }
 }
 ```
 
-### 2.2 System Jobs (`type: "system"`)
+Instead of a literal `message`, a job may name a prompt template declared under
+`cron.promptTemplates` and supply `templateParameters`.
 
-Execute a built-in or custom system action. Output is routed to channels.
+### 2.2 Command jobs (`actionType: "command"`)
 
-**Configuration Properties:**
-- `Type`: `"system"` (required)
-- `Action`: System action name (required; see [Built-in System Actions](#built-in-system-actions))
-- `Schedule`: Cron expression (required)
-- `Timezone`: Timezone ID for schedule evaluation (optional; default: UTC)
-- `OutputChannels`: List of channel names to route action output to (optional)
-- `Enabled`: Whether job is active (optional; default: `true`)
+Run a shell script with no model turn.
 
-**Example:**
 ```json
 {
-  "BotNexus": {
-    "Cron": {
-      "Jobs": {
-        "weekly-health-check": {
-          "Type": "system",
-          "Schedule": "0 0 * * 0",
-          "Action": "health-audit",
-          "Timezone": "UTC",
-          "OutputChannels": ["slack"],
-          "Enabled": true
-        }
+  "cron": {
+    "jobs": {
+      "disk-space-check": {
+        "name": "Disk space check",
+        "schedule": "0 * * * *",
+        "actionType": "command",
+        "shellCommand": "pwsh -NoProfile -File ./scripts/check-disk.ps1"
       }
     }
   }
 }
 ```
 
-### 2.3 Maintenance Jobs (`type: "maintenance"`)
+`shellCommand` is an arbitrary-execution surface. Firing is gated through the `exec` tool policy,
+and authoring a command job through the `cron` tool is authorized at create/update time as well as
+at fire time - see [Shell Execution](./features/shell-execution.md).
 
-Execute maintenance tasks: memory consolidation, session cleanup, log rotation.
+### 2.3 Webhook jobs (`actionType: "webhook"`)
 
-**Configuration Properties:**
-- `Type`: `"maintenance"` (required)
-- `Action`: Maintenance action name (required; see [Built-in Maintenance Actions](#built-in-maintenance-actions))
-- `Schedule`: Cron expression (required)
-- `Timezone`: Timezone ID for schedule evaluation (optional; default: UTC)
-- `Agents`: List of agent names for consolidation (required for `consolidate-memory`)
-- `SessionCleanupDays`: Sessions older than N days are deleted (default: 30)
-- `LogRetentionDays`: Logs older than N days are archived (default: 30)
-- `LogsPath`: Path to logs directory (optional; default: `~/.botnexus/logs`)
-- `Enabled`: Whether job is active (optional; default: `true`)
+POST to an external URL on a schedule.
 
-**Example:**
 ```json
 {
-  "BotNexus": {
-    "Cron": {
-      "Jobs": {
-        "nightly-consolidation": {
-          "Type": "maintenance",
-          "Schedule": "0 2 * * *",
-          "Action": "consolidate-memory",
-          "Agents": ["analyst", "planner", "writer"],
-          "Timezone": "America/Los_Angeles",
-          "Enabled": true
-        },
-        "cleanup-old-sessions": {
-          "Type": "maintenance",
-          "Schedule": "0 3 * * 0",
-          "Action": "cleanup-sessions",
-          "SessionCleanupDays": 30,
-          "Enabled": true
-        },
-        "rotate-logs": {
-          "Type": "maintenance",
-          "Schedule": "0 4 * * *",
-          "Action": "rotate-logs",
-          "LogRetentionDays": 30,
-          "LogsPath": "~/.botnexus/logs",
-          "Enabled": true
-        }
+  "cron": {
+    "jobs": {
+      "ping-monitor": {
+        "name": "Ping monitor",
+        "schedule": "*/15 * * * *",
+        "actionType": "webhook",
+        "webhookUrl": "https://example.com/hooks/botnexus"
       }
     }
   }
 }
 ```
+
+`webhookUrl` is validated at a single shared boundary (`CronWebhookUrl`) on both the config-declared
+and API paths. It must be an **absolute `http` or `https` URL carrying no embedded credentials** -
+`file:`, `ftp:` and every other scheme are rejected, as is `https://user:pass@host/hook`. A rejected
+URL fails the request with
+`WebhookUrl must be an absolute http or https URL and must not contain embedded credentials.`
+and leaves no row in the store.
 
 ---
 
@@ -211,9 +189,10 @@ Execute maintenance tasks: memory consolidation, session cleanup, log rotation.
 | `templateName` | string | `null` | Named prompt template to use instead of a literal `message` |
 | `templateParameters` | dict | `{}` | Parameter values for `templateName` |
 | `model` | string | `null` | Model override for agent-prompt jobs |
-| `webhookUrl` | string | (webhook jobs only) | URL invoked by a webhook job |
+| `webhookUrl` | string | (webhook jobs only) | URL invoked by a webhook job. Must be an absolute `http`/`https` URL with no embedded credentials - see [2.3](#_2-3-webhook-jobs-actiontype-webhook). |
 | `shellCommand` | string | (command jobs only) | Script run by a `command` job. Firing is gated through the `exec` tool policy — see [Shell Execution](./features/shell-execution.md). |
 | `enabled` | bool | `true` | Whether the job is active |
+| `system` | bool | `false` | Marks a job as system-provisioned (e.g. `heartbeat`, `skill-review`). System jobs are hidden from `cron` tool `list` output unless `includeSystem` is set. |
 | `timeZone` | string | `null` | IANA timezone the schedule is evaluated in (UTC when omitted) |
 | `createdBy` | string | `null` | Provenance marker for who created the job |
 | `metadata` | dict | `{}` | Free-form metadata carried with the job |
@@ -223,36 +202,35 @@ Execute maintenance tasks: memory consolidation, session cleanup, log rotation.
 
 ```json
 {
-  "BotNexus": {
-    "Cron": {
-      "Enabled": true,
-      "TickIntervalSeconds": 10,
-      "ExecutionHistorySize": 100,
-      "Jobs": {
-        "morning-briefing": {
-          "Type": "agent",
-          "Schedule": "0 9 * * *",
-          "Agent": "analyst",
-          "Prompt": "Generate a morning briefing.",
-          "Session": "persistent",
-          "Timezone": "America/New_York",
-          "OutputChannels": ["slack"],
-          "Enabled": true
+  "cron": {
+    "enabled": true,
+    "tickIntervalSeconds": 60,
+    "jobs": {
+      "morning-briefing": {
+        "name": "Morning briefing",
+        "schedule": "0 9 * * *",
+        "actionType": "agent-prompt",
+        "agentId": "analyst",
+        "message": "Generate a morning briefing.",
+        "timeZone": "America/New_York",
+        "enabled": true
+      },
+      "disk-space-check": {
+        "name": "Disk space check",
+        "schedule": "0 * * * *",
+        "actionType": "command",
+        "shellCommand": "pwsh -NoProfile -File ./scripts/check-disk.ps1",
+        "enabled": true
+      },
+      "nightly-dreaming": {
+        "name": "Nightly memory consolidation",
+        "schedule": "0 2 * * *",
+        "actionType": "memory-dreaming",
+        "agentId": "analyst",
+        "metadata": {
+          "lookbackDays": "14"
         },
-        "weekly-health-check": {
-          "Type": "system",
-          "Schedule": "0 0 * * 0",
-          "Action": "health-audit",
-          "OutputChannels": ["slack"],
-          "Enabled": true
-        },
-        "nightly-consolidation": {
-          "Type": "maintenance",
-          "Schedule": "0 2 * * *",
-          "Action": "consolidate-memory",
-          "Agents": ["analyst", "planner"],
-          "Enabled": true
-        }
+        "enabled": true
       }
     }
   }
@@ -323,297 +301,120 @@ This job runs at 9:00 AM **Eastern Time**, not UTC.
 
 ## 5. Agent Session Modes
 
-Agent jobs can operate in different session modes, controlling whether output is accumulated or isolated.
+Agent-prompt jobs run in a session derived from the job, not from a configurable `session` field
+(there is no such field on a cron job). The scheduler resolves the job's session and conversation
+deterministically:
 
-### Mode: `new` (Default)
+- Sessions created for a job are **`cron:`-prefixed** and carry the job id slug
+  (`cron:{jobIdSlug}:...`), which is what lets the scheduler re-bind a job's prior sessions onto its
+  canonical conversation and what scopes cleanup.
+- A job's canonical conversation is titled `cron:{jobId}`; every `cron:*` session for that agent is
+  rebound onto it, so a job's history accumulates in one place across runs.
+- Setting `deleteAfterRun` to `true` deletes the run's session and transcript after the run
+  completes (success, timeout, error or abort), but **only** when the session id begins with
+  `cron:` - so a misconfigured flag cannot remove an unrelated long-lived session.
 
-Create a new session for each job execution. Output is **isolated**.
-
-```json
-{
-  "Session": "new"
-}
-```
-
-Resulting session key: `cron:{jobname}:{yyyyMMddHHmmss}`
-
-**Use case:** One-off reports, independent prompts, no conversation history.
-
-### Mode: `persistent`
-
-Reuse the same session across all job executions. Output is **accumulated**.
-
-```json
-{
-  "Session": "persistent"
-}
-```
-
-Resulting session key: `cron:{jobname}`
-
-**Use case:** Multi-turn conversations, iterative refinement, conversation history matters.
-
-### Mode: `named:<key>`
-
-Use a custom session key.
-
-```json
-{
-  "Session": "named:my-custom-key"
-}
-```
-
-Resulting session key: `my-custom-key`
-
-**Use case:** Shared sessions, referencing a session created elsewhere.
+Leave `deleteAfterRun` off for long-lived reporting jobs that intentionally accumulate context
+across runs; use compaction for those instead.
 
 ---
 
-## 6. Channel Output Routing
+## 6. Output Routing
 
-Agent and system jobs can route their output to one or more channels.
+There is no `outputChannels` field on a cron job. A job's output goes wherever its action sends it:
 
-**Configuration:**
-```json
-{
-  "OutputChannels": ["slack", "discord", "email"]
-}
-```
+- **`agent-prompt`** - the agent's response is delivered through the agent's own channel bindings
+  and appears in the job's canonical `cron:{jobId}` conversation.
+- **`webhook`** - the payload is POSTed to `webhookUrl`.
+- **`command`** - stdout/stderr are captured into the run record; nothing is sent to a channel.
 
-The cron service will attempt to send the output to each named channel if it is registered and running.
-
-### Supported Channels (Built-in)
-
-- `slack` — Slack messaging
-- `discord` — Discord messaging
-- `telegram` — Telegram messaging
-- `email` — Email (if configured)
-- Custom channels from extensions
-
-### No Output Routing
-
-If `OutputChannels` is empty or null, output is **logged only** and not routed to channels.
-
-```json
-{
-  "OutputChannels": []
-}
-```
+Run output and errors are always recorded on the run record regardless of action type, and are
+readable via `GET /api/cron/{jobId}/runs` and the `cron` tool's `history` action.
 
 ---
 
-## 7. Built-in System Actions
+## 7. Built-in Actions
 
-System jobs execute pluggable system actions via the `ISystemActionRegistry`.
+Every action is a registered `ICronAction`. The complete set registered by
+`AddBotNexusCron` is:
 
-### 7.1 `check-updates`
+| `actionType` | Implementation | Notes |
+|---|---|---|
+| `agent-prompt` | `AgentPromptAction` | Default action; sends a prompt to the target agent |
+| `command` | `CommandCronAction` | Shell script; authorized through the `exec` tool policy |
+| `webhook` | `WebhookAction` | POSTs to the validated `webhookUrl` |
+| `heartbeat` | `HeartbeatAction` | Auto-provisioned per agent (system job) |
+| `memory-dreaming` | `MemoryDreamingCronAction` | See [8.4](#_8-4-memory-dreaming) |
+| `skill-review` | `SkillReviewCronAction` | Auto-provisioned per agent (system job); see [8.7](#_8-7-skill-review) |
+| `agent-converse` | `AgentConverseCronAction` | See [8.6](#_8-6-agent-converse) |
 
-**Name:** `check-updates`  
-**Description:** Reports the currently running assembly version.
+Two background services run alongside the scheduler and are **not** cron jobs - they need no job
+definition and cannot be scheduled:
 
-Checks the entry assembly version and returns the version number. External update feed integration is pending.
-
-**Configuration:**
-```json
-{
-  "Type": "system",
-  "Action": "check-updates",
-  "Schedule": "0 0 * * 0"
-}
-```
-
-**Output:**
-```text
-[check-updates] BotNexus is running version 1.0.0.0. External update feed integration is pending.
-```
-
-### 7.2 `health-audit`
-
-**Name:** `health-audit`  
-**Description:** Runs internal health checks and reports status.
-
-Executes all registered `HealthCheck` services and summarizes their status.
-
-**Configuration:**
-```json
-{
-  "Type": "system",
-  "Action": "health-audit",
-  "Schedule": "0 0 * * 0",
-  "OutputChannels": ["slack"]
-}
-```
-
-**Output:**
-```text
-[health-audit] Overall status: Healthy. Checks: database: Healthy, services: Healthy, memory: Healthy
-```
-
-### 7.3 `extension-scan`
-
-**Name:** `extension-scan`  
-**Description:** Lists dynamically loaded extensions and their registration status.
-
-Reports all loaded extensions, organized by service type.
-
-**Configuration:**
-```json
-{
-  "Type": "system",
-  "Action": "extension-scan",
-  "Schedule": "0 0 * * 0",
-  "OutputChannels": ["slack"]
-}
-```
-
-**Output:**
-```text
-[extension-scan] Registered extension services: 5
-- IChannel: discord, slack, telegram
-- ISystemAction: health-audit, check-updates
-Load contexts: 3
-```
+- **`CronRunRetentionHostedService`** - purges completed/failed/timed-out run records older than
+  `RetentionDays` (default 30), checking every `CheckInterval` (default 1 hour). Bound from
+  `CronRunRetentionOptions`. Prevents unbounded growth of `cron.sqlite`.
+- **`MissedRunDetectionService`** - see [8.8](#_8-8-missed-run-detection).
 
 ---
 
-## 8. Built-in Maintenance Actions
+## 8. Action Reference
 
-Maintenance jobs perform internal housekeeping tasks.
+### 8.1 `agent-prompt`
 
-### 8.1 `consolidate-memory`
+**Name:** `agent-prompt`
+**Description:** The default action. Sends a prompt to the target agent through the agent runner.
 
-**Name:** `consolidate-memory`  
-**Description:** Consolidates daily memory files into a single consolidated entry per agent.
+**Job fields:**
+- `agentId`: Target agent (required)
+- `message`: Prompt text, **or** `templateName` + `templateParameters`
+- `model`: Optional model override, validated against the model registry at create/update time
 
-Processes each agent's memory directory and combines daily entries into a consolidated memory file for more efficient storage and retrieval.
+### 8.2 `command`
 
-**Configuration Properties:**
-- `Action`: `"consolidate-memory"`
-- `Agents`: List of agent names to consolidate (required)
+**Name:** `command`
+**Description:** Runs `shellCommand` as a script, costing no model turn.
 
-**Configuration:**
-```json
-{
-  "Type": "maintenance",
-  "Action": "consolidate-memory",
-  "Schedule": "0 2 * * *",
-  "Agents": ["analyst", "planner", "writer"]
-}
-```
+**Job fields:**
+- `shellCommand`: Script to run (required)
 
-**Output:**
-```text
-analyst: success=true, files=5, entries=120
-planner: success=true, files=3, entries=87
-writer: success=false, files=0, entries=0
-```
+Authorization runs at **both** authoring time (create/update through the `cron` tool) and firing
+time, both routed through the same `exec` tool policy via `ICommandCronAuthorizer`, so a job that
+would be refused at fire time cannot be stored silently.
 
-**Metadata:**
-```json
-{
-  "agentsProcessed": 3,
-  "agentsSucceeded": 2,
-  "dailyFilesProcessed": 8,
-  "entriesConsolidated": 207
-}
-```
+### 8.3 `webhook`
 
-### 8.2 `cleanup-sessions`
+**Name:** `webhook`
+**Description:** POSTs to `webhookUrl` on the schedule.
 
-**Name:** `cleanup-sessions`  
-**Description:** Deletes sessions older than the specified retention period.
-
-Iterates all stored sessions and deletes those whose last activity is older than `SessionCleanupDays`.
-
-**Configuration Properties:**
-- `Action`: `"cleanup-sessions"`
-- `SessionCleanupDays`: Retention period in days (default: 30)
-
-**Configuration:**
-```json
-{
-  "Type": "maintenance",
-  "Action": "cleanup-sessions",
-  "Schedule": "0 3 * * 0",
-  "SessionCleanupDays": 30
-}
-```
-
-**Output:**
-```text
-Deleted 42 sessions older than 30 days.
-```
-
-**Metadata:**
-```json
-{
-  "sessionsChecked": 157,
-  "sessionsDeleted": 42,
-  "retentionDays": 30
-}
-```
-
-### 8.3 `rotate-logs`
-
-**Name:** `rotate-logs`  
-**Description:** Archives log files older than the specified retention period.
-
-Moves old log files to an `archive/` subdirectory within the logs path.
-
-**Configuration Properties:**
-- `Action`: `"rotate-logs"`
-- `LogRetentionDays`: Retention period in days (default: 30)
-- `LogsPath`: Override logs directory (default: `~/.botnexus/logs`)
-
-**Configuration:**
-```json
-{
-  "Type": "maintenance",
-  "Action": "rotate-logs",
-  "Schedule": "0 4 * * *",
-  "LogRetentionDays": 30,
-  "LogsPath": "~/.botnexus/logs"
-}
-```
-
-**Output:**
-```text
-Archived 8 log files older than 30 days.
-```
-
-**Metadata:**
-```json
-{
-  "archivedFiles": 8,
-  "retentionDays": 30,
-  "logsPath": "/home/user/.botnexus/logs"
-}
-```
+**Job fields:**
+- `webhookUrl`: Absolute `http`/`https` URL with no embedded credentials (required) - see
+  [2.3](#_2-3-webhook-jobs-actiontype-webhook)
 
 ### 8.4 `memory-dreaming`
 
 **Name:** `memory-dreaming`  
 **Description:** Periodic memory consolidation via LLM — reads recent daily notes, builds a consolidation prompt, and dispatches a session to update `MEMORY.md` with distilled insights.
 
-Unlike `consolidate-memory` (which merges files mechanically), memory dreaming uses an LLM to extract patterns, decisions, and knowledge from daily notes and weave them into the agent's long-term memory.
+Unlike a mechanical file merge, memory dreaming uses an LLM to extract patterns, decisions, and knowledge from daily notes and weave them into the agent's long-term memory.
 
-**Configuration Properties:**
-- `Action`: `"memory-dreaming"`
+**Job fields:**
+- `actionType`: `"memory-dreaming"`
+- `agentId`: Agent whose memory is consolidated (required)
 - `lookbackDays` (in job metadata): Number of days of daily notes to read (default: 14)
 - `maxContentChars` (in job metadata): Maximum characters of source material (default: 50000)
 
 **Configuration:**
 ```json
 {
-  "Type": "maintenance",
-  "Action": "memory-dreaming",
-  "Schedule": "0 3 * * 0",
-  "Agent": "my-agent",
-  "Metadata": {
-    "lookbackDays": 14,
-    "maxContentChars": 50000
+  "actionType": "memory-dreaming",
+  "schedule": "0 3 * * 0",
+  "agentId": "my-agent",
+  "metadata": {
+    "lookbackDays": "14",
+    "maxContentChars": "50000"
   },
-  "Enabled": true
+  "enabled": true
 }
 ```
 
@@ -625,36 +426,20 @@ Unlike `consolidate-memory` (which merges files mechanically), memory dreaming u
 
 **Use case:** Keep an agent's long-term memory fresh and relevant without manual curation. Schedule weekly during off-hours.
 
-### 8.5 `cron-run-retention`
+### 8.5 Cron run retention (background service, not a job)
 
-**Name:** `cron-run-retention`  
+**Type:** `CronRunRetentionHostedService` / `CronRunRetentionOptions`
 **Description:** Purges old completed cron run history records to prevent unbounded database growth.
 
 Periodically sweeps the cron run store and deletes records with status `Completed`, `Failed`, or `Timeout` that are older than the configured retention period.
 
-**Configuration Properties:**
-- `Action`: `"cron-run-retention"`
-- `RetentionDays`: Number of days to keep run records (default: 30)
-- `CheckIntervalMinutes`: How often the service checks for expired records (default: 60)
+This is a **hosted background service**, not a cron action - it runs automatically and has no job
+definition, no `actionType` and no schedule. It is configured from `CronRunRetentionOptions`:
 
-**Configuration:**
-```json
-{
-  "Type": "maintenance",
-  "Action": "cron-run-retention",
-  "Schedule": "0 4 * * *",
-  "Metadata": {
-    "RetentionDays": 30,
-    "CheckIntervalMinutes": 60
-  },
-  "Enabled": true
-}
-```
-
-**Output:**
-```text
-Purged 156 cron run records older than 30 days.
-```
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `RetentionDays` | int | `30` | Number of days to retain completed/failed run records |
+| `CheckInterval` | TimeSpan | `01:00:00` | How often the service checks for expired runs |
 
 **Use case:** Prevent the cron SQLite database from growing indefinitely on long-running instances.
 
@@ -674,22 +459,21 @@ Delegates to `IAgentExchangeService.ConverseAsync` — the same pathway used by 
 **Configuration:**
 ```json
 {
-  "Type": "system",
-  "Action": "agent-converse",
-  "Schedule": "0 9 * * 1-5",
-  "Agent": "coordinator",
-  "Metadata": {
+  "actionType": "agent-converse",
+  "schedule": "0 9 * * 1-5",
+  "agentId": "coordinator",
+  "metadata": {
     "targetAgentId": "reporter",
     "message": "Generate the morning status report.",
     "objective": "Get daily status",
-    "maxTurns": 5
+    "maxTurns": "5"
   }
 }
 ```
 
 **Behavior:**
 - Subject to exchange budget enforcement — skipped if pair is in cooldown or at daily cap
-- The initiating agent is the one specified in the job's `Agent` field
+- The initiating agent is the one specified in the job's `agentId` field
 - Results are logged; output channels can route the response
 
 **Use case:** Schedule recurring agent check-ins, status syncs, or delegation workflows on a fixed schedule.
@@ -714,17 +498,16 @@ A default-enabled `skill-review` job is **auto-provisioned at startup for every 
 **Configuration:**
 ```json
 {
-  "Type": "maintenance",
-  "Action": "skill-review",
-  "Schedule": "0 4 * * *",
-  "Agent": "my-agent",
-  "System": true,
-  "Enabled": true,
-  "Metadata": {
-    "enabled": true,
-    "minToolCalls": 5,
-    "lookbackHours": 24,
-    "maxSessions": 50
+  "actionType": "skill-review",
+  "schedule": "0 4 * * *",
+  "agentId": "my-agent",
+  "system": true,
+  "enabled": true,
+  "metadata": {
+    "enabled": "true",
+    "minToolCalls": "5",
+    "lookbackHours": "24",
+    "maxSessions": "50"
   }
 }
 ```
@@ -1090,18 +873,15 @@ The legacy `HeartbeatService` and `AgentConfig.CronJobs` have been replaced by t
 
 ```json
 {
-  "BotNexus": {
-    "Cron": {
-      "Jobs": {
-        "analyst-morning-briefing": {
-          "Type": "agent",
-          "Schedule": "0 9 * * *",
-          "Agent": "analyst",
-          "Prompt": "Generate a morning briefing.",
-          "Session": "persistent",
-          "OutputChannels": ["slack"],
-          "Enabled": true
-        }
+  "cron": {
+    "jobs": {
+      "analyst-morning-briefing": {
+        "name": "Morning briefing",
+        "schedule": "0 9 * * *",
+        "actionType": "agent-prompt",
+        "agentId": "analyst",
+        "message": "Generate a morning briefing.",
+        "enabled": true
       }
     }
   }
@@ -1110,12 +890,16 @@ The legacy `HeartbeatService` and `AgentConfig.CronJobs` have been replaced by t
 
 ### Migration Path
 
-1. **Move all `AgentConfig.CronJobs` to `Cron.Jobs`**:
+1. **Move all `AgentConfig.CronJobs` to `cron.jobs`**:
    - Flatten the per-agent structure into a centralized dictionary
    - Each key should be a unique job identifier (e.g., `{agent}-{job-type}`)
 
-2. **Keep the same properties**:
-   - `Type`, `Schedule`, `Agent`, `Prompt`, `Session`, `Timezone`, `OutputChannels` map directly
+2. **Map the legacy properties onto the current ones**:
+   - `Type: "agent"` -> `actionType: "agent-prompt"`
+   - `Agent` -> `agentId`, `Prompt` -> `message`, `Timezone` -> `timeZone`
+   - `Session` and `OutputChannels` have **no equivalent** - sessions are derived from the job
+     (see [Agent Session Modes](#agent-session-modes)) and output routing follows the action
+     (see [Output Routing](#output-routing))
 
 3. **Disable old jobs**:
    - Set `CronJobs` to empty array in agent configs or remove entirely
@@ -1317,19 +1101,16 @@ Run an analyst agent every weekday at 9:00 AM to generate a morning briefing.
 
 ```json
 {
-  "BotNexus": {
-    "Cron": {
-      "Jobs": {
-        "morning-briefing": {
-          "Type": "agent",
-          "Schedule": "0 9 * * MON-FRI",
-          "Agent": "analyst",
-          "Prompt": "Generate a concise morning briefing on recent alerts and incidents.",
-          "Session": "persistent",
-          "Timezone": "America/New_York",
-          "OutputChannels": ["slack"],
-          "Enabled": true
-        }
+  "cron": {
+    "jobs": {
+      "morning-briefing": {
+        "name": "Morning briefing",
+        "schedule": "0 9 * * MON-FRI",
+        "actionType": "agent-prompt",
+        "agentId": "analyst",
+        "message": "Generate a concise morning briefing on recent alerts and incidents.",
+        "timeZone": "America/New_York",
+        "enabled": true
       }
     }
   }
@@ -1337,30 +1118,27 @@ Run an analyst agent every weekday at 9:00 AM to generate a morning briefing.
 ```
 
 **Behavior:**
-- Runs at 9:00 AM Monday–Friday (Eastern Time)
-- Reuses the same session (`persistent`), so briefings build on history
-- Agent output is sent to Slack
-- Session key: `cron:morning-briefing`
+- Runs at 9:00 AM Monday-Friday (Eastern Time)
+- Runs in the job's canonical `cron:morning-briefing` conversation, so briefings build on history
+- Agent output is delivered through the agent's own channel bindings
 
 ---
 
-### Example 2: Weekly Health Check System Job
+### Example 2: Zero-Token Command Job
 
-Run a system action every Sunday at midnight to audit system health.
+Run a shell script every hour with no model turn.
 
 ```json
 {
-  "BotNexus": {
-    "Cron": {
-      "Jobs": {
-        "weekly-health-check": {
-          "Type": "system",
-          "Schedule": "0 0 * * 0",
-          "Action": "health-audit",
-          "Timezone": "UTC",
-          "OutputChannels": ["slack", "email"],
-          "Enabled": true
-        }
+  "cron": {
+    "jobs": {
+      "disk-space-check": {
+        "name": "Disk space check",
+        "schedule": "0 * * * *",
+        "actionType": "command",
+        "shellCommand": "pwsh -NoProfile -File ./scripts/check-disk.ps1",
+        "timeZone": "UTC",
+        "enabled": true
       }
     }
   }
@@ -1368,45 +1146,31 @@ Run a system action every Sunday at midnight to audit system health.
 ```
 
 **Behavior:**
-- Runs every Sunday at midnight UTC
-- Executes the `health-audit` system action
-- Output is sent to Slack and email
-- No agent involvement; just a built-in action
+- Runs hourly on the hour, UTC
+- Costs no tokens; stdout/stderr are captured on the run record
+- Authorized through the `exec` tool policy at both authoring and firing time
 
 ---
 
-### Example 3: Nightly Memory Consolidation & Cleanup
+### Example 3: Nightly Memory Consolidation
 
-Consolidate memory and clean up old sessions every night.
+Run an LLM memory-consolidation pass every night.
 
 ```json
 {
-  "BotNexus": {
-    "Cron": {
-      "Jobs": {
-        "nightly-consolidation": {
-          "Type": "maintenance",
-          "Schedule": "0 2 * * *",
-          "Action": "consolidate-memory",
-          "Agents": ["analyst", "planner", "writer"],
-          "Timezone": "America/Los_Angeles",
-          "Enabled": true
+  "cron": {
+    "jobs": {
+      "nightly-dreaming": {
+        "name": "Nightly memory consolidation",
+        "schedule": "0 2 * * *",
+        "actionType": "memory-dreaming",
+        "agentId": "analyst",
+        "timeZone": "America/Los_Angeles",
+        "metadata": {
+          "lookbackDays": "14",
+          "maxContentChars": "50000"
         },
-        "cleanup-old-sessions": {
-          "Type": "maintenance",
-          "Schedule": "0 3 * * 0",
-          "Action": "cleanup-sessions",
-          "SessionCleanupDays": 30,
-          "Enabled": true
-        },
-        "rotate-logs": {
-          "Type": "maintenance",
-          "Schedule": "0 4 * * *",
-          "Action": "rotate-logs",
-          "LogRetentionDays": 30,
-          "LogsPath": "~/.botnexus/logs",
-          "Enabled": true
-        }
+        "enabled": true
       }
     }
   }
@@ -1414,9 +1178,10 @@ Consolidate memory and clean up old sessions every night.
 ```
 
 **Behavior:**
-- **2:00 AM** (Pacific): Consolidate memory for three agents
-- **3:00 AM** (Pacific, Sunday only): Delete sessions older than 30 days
-- **4:00 AM** (Pacific, daily): Archive log files older than 30 days
+- **2:00 AM** (Pacific, daily): reads the agent's last 14 days of daily notes and writes distilled
+  insights back to `MEMORY.md`
+- Skips execution if no daily notes exist in the lookback window
+- Old run records are purged automatically by the cron run retention service - no cleanup job needed
 
 ---
 
@@ -1512,25 +1277,26 @@ response modes and signing details, and the
          │            │            │
          ▼            ▼            ▼
     ┌─────────┐  ┌─────────┐  ┌──────────┐
-    │  Agent  │  │ System  │  │ Maintenance
-    │  Job    │  │  Job    │  │  Job
-    │         │  │         │  │
+    │ agent-  │  │ command │  │ webhook  │
+    │ prompt  │  │         │  │          │
+    │         │  │         │  │          │
     └────┬────┘  └────┬────┘  └────┬─────┘
          │            │            │
          ▼            ▼            ▼
-    AgentRunner   ISystemAction   Consolidate-Memory
-    (LLM prompt)   health-audit   Cleanup-Sessions
-                   check-updates  Rotate-Logs
-                   extension-scan
+    AgentRunner    Shell script   HTTP POST
+    (LLM prompt)   (exec policy)  (webhookUrl)
+
+    plus memory-dreaming / skill-review /
+    agent-converse / heartbeat actions
          │            │            │
          └────────────┼────────────┘
                       │
          ┌────────────┴────────────┐
          │                         │
          ▼                         ▼
-    IChannel                   Activity Stream
-    (Slack, Discord,           (Correlation ID,
-     Telegram, Email)           Event Type,
+    Run record                 Activity Stream
+    (output, error,            (Correlation ID,
+     status)                    Event Type,
                                 Metadata)
 ```
 
@@ -1540,27 +1306,27 @@ response modes and signing details, and the
 
 ### Job Not Running
 
-1. **Check if cron service is enabled**: `"Cron.Enabled": true` in config
-2. **Check if job is enabled**: `"Enabled": true` in job config
+1. **Check if cron service is enabled**: `cron.enabled` is `true` in `config.json`
+2. **Check if job is enabled**: `enabled` is `true` in the job definition
 3. **Check cron expression**: Use [crontab.guru](https://crontab.guru) to validate
-4. **Check timezone**: If job is timezone-aware, ensure the timezone ID is valid (e.g., `"America/New_York"`)
+4. **Check timezone**: If the job sets `timeZone`, ensure the IANA id is valid (e.g., `"America/New_York"`)
 5. **Check logs**: Look for `"Registered cron job"` on startup; verify schedule format
 
-### Output Not Reaching Channel
+### Output Not Where Expected
 
-1. **Check channel name**: Ensure channel name matches registered channel (case-insensitive)
-2. **Check channel status**: Verify channel is running (`channel.IsRunning == true`)
-3. **Check output routing**: Job config has non-empty `OutputChannels` list
-4. **Check job output**: Verify the job produced output (not empty/null)
-5. **Check logs**: Look for warnings like `"channel '{ChannelName}' was not found"`
+1. **Check the action type**: output routing follows the action - see [Output Routing](#output-routing)
+2. **For `agent-prompt`**: the response lands in the job's `cron:{jobId}` conversation and the agent's own channel bindings
+3. **For `command`**: stdout/stderr are on the run record, not on a channel
+4. **For `webhook`**: confirm `webhookUrl` passed validation (absolute `http`/`https`, no credentials)
+5. **Check the run record**: `GET /api/cron/{jobId}/runs` or the `cron` tool's `history` action
 
 ### Job Failing
 
 1. **Check error logs**: Look for `"Cron job '{JobName}' failed"` with exception details
-2. **Check execution history**: `ICronService.GetHistory(jobName)` shows recent failures
+2. **Check execution history**: `GET /api/cron/{jobId}/runs` shows recent failures
 3. **Check correlation ID**: Use correlation ID to trace through activity stream
-4. **For agent jobs**: Check if agent is configured and available
-5. **For system jobs**: Verify system action is registered (e.g., `health-audit`)
+4. **For `agent-prompt` jobs**: Check if the agent is configured and available
+5. **For `command` jobs**: Verify the command is permitted by the `exec` tool policy
 
 ---
 
