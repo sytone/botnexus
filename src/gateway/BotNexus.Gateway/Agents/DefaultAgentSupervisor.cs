@@ -108,6 +108,15 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
         {
             lock (_sync) _pendingCreates.Remove(key);
             creationCompletion.SetException(ex);
+
+            // #2633: when no concurrent caller was waiting on this pending create, the faulted
+            // TaskCompletionSource task is never awaited by anyone. Reading Task.Exception marks
+            // it observed so it cannot resurface on the finalizer thread as an
+            // UnobservedTaskException long after the real failure was already thrown to the
+            // caller below - which is what made a simple unregistered-model spawn look like a
+            // process-level fault.
+            _ = creationCompletion.Task.Exception;
+
             throw;
         }
     }

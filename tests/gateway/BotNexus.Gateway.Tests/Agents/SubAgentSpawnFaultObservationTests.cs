@@ -113,7 +113,7 @@ public sealed class SubAgentSpawnFaultObservationTests
 
         var text = string.Concat(result.Content
             .Where(c => c.Type == AgentToolContentType.Text)
-            .Select(c => c.Text));
+            .Select(c => c.Value));
 
         // Anti-vacuous: the message must name BOTH the model and the provider, not merely fail.
         text.ShouldContain("gpt-4.1");
