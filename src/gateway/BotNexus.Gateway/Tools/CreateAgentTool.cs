@@ -22,7 +22,6 @@ public sealed class CreateAgentTool(
     IEnumerable<IAgentChangeNotifier> changeNotifiers,
     BotNexusHome botNexusHome,
     IOptions<PlatformConfig>? platformConfigOptions = null,
-    ApiProviderRegistry? apiProviderRegistry = null,
     ModelRegistry? modelRegistry = null) : IAgentTool
 {
     private static readonly Regex IdPattern = new(@"^[a-z0-9][a-z0-9-]*[a-z0-9]$", RegexOptions.Compiled);
@@ -57,11 +56,11 @@ public sealed class CreateAgentTool(
                 },
                 "modelId": {
                   "type": "string",
-                  "description": "The LLM model identifier (e.g., 'claude-sonnet-4-20250514')."
+                  "description": "The LLM model identifier (e.g., 'claude-sonnet-4-20250514'). Must be registered for the chosen apiProvider. Persisted as 'model' in config.json."
                 },
                 "apiProvider": {
                   "type": "string",
-                  "description": "The API provider key (e.g., 'anthropic', 'openai', 'copilot')."
+                  "description": "Provider instance key as registered in the model registry (e.g., 'github-copilot', 'anthropic') - NOT an API contract name such as 'github-copilot-messages'. Persisted as 'provider' in config.json and resolved with modelId at spawn time."
                 },
                 "systemPrompt": {
                   "type": "string",
@@ -126,8 +125,12 @@ public sealed class CreateAgentTool(
         if (string.IsNullOrWhiteSpace(apiProvider))
             return Error("Parameter 'apiProvider' is required.");
 
-        if (apiProviderRegistry is not null && apiProviderRegistry.Get(apiProvider) is null)
-            return Error($"Unknown API provider '{apiProvider}'. Available providers: {string.Join(", ", apiProviderRegistry.GetAll().Select(p => p.Api))}.");
+        // #2649: validate against the MODEL registry - the namespace InProcessIsolationStrategy
+        // resolves descriptor.ApiProvider against at spawn time - not the API-contract registry.
+        // Checking the contract registry rejected the only values that work ('github-copilot') and
+        // accepted values that persisted a permanently unspawnable agent ('github-copilot-messages').
+        if (BotNexus.Gateway.Agents.AgentModelPreflight.ValidateResolvable(apiProvider, modelId, modelRegistry) is { } preflightError)
+            return Error(preflightError);
 
         var agentId = AgentId.From(id);
         if (agentRegistry.Contains(agentId))

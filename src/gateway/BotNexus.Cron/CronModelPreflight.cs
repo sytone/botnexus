@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.RegularExpressions;
 using BotNexus.Agent.Providers.Core.Registry;
 
@@ -102,8 +101,8 @@ public static class CronModelPreflight
         var separator = raw.LastIndexOf('/');
 
         return separator > 0 && separator < raw.Length - 1
-            ? ResolveQualified(registry!, providers, raw, raw[..separator], raw[(separator + 1)..])
-            : ResolveBare(registry!, providers, raw);
+            ? ResolveQualified(registry!, raw, raw[..separator], raw[(separator + 1)..])
+            : ResolveBare(registry!, raw);
     }
 
     /// <summary>
@@ -151,100 +150,63 @@ public static class CronModelPreflight
         return Truncate(redacted);
     }
 
+    // Cron-specific wording layered over the shared classification (#2649). The platform has
+    // exactly one routine that decides whether a (provider, model) pair resolves - ModelPreflight -
+    // so cron and the agent tools cannot develop different notions of "valid provider". Only the
+    // operator-facing phrasing, which names the cron override explicitly, lives here.
     private static CronModelPreflightResult ResolveQualified(
         ModelRegistry registry,
-        IReadOnlyList<string> providers,
         string raw,
         string provider,
         string modelId)
     {
-        // GetModel applies the registry's provider aliases (e.g. "copilot" -> "github-copilot"),
-        // so a successful lookup is authoritative even when `provider` is not a canonical key.
-        var resolved = registry.GetModel(provider, modelId);
-        if (resolved is not null)
-            return new CronModelPreflightResult(CronModelPreflightKind.Resolved, resolved.Provider, resolved.Id, null);
+        var result = ModelPreflight.Resolve(registry, provider, modelId);
 
-        // Distinguish "the provider does not exist" from "the provider exists but not this model":
-        // GetModels also alias-resolves, so a non-empty list means the provider is real.
-        var knownModels = registry.GetModels(provider);
-        if (knownModels.Count == 0)
+        return result.Kind switch
         {
-            return new CronModelPreflightResult(
-                CronModelPreflightKind.UnknownProvider,
-                null,
-                null,
-                Truncate(
-                    $"Cron model override '{raw}' names unknown provider '{provider}'. Known providers: ",
-                    providers.Order(StringComparer.OrdinalIgnoreCase),
-                    "."));
-        }
+            ModelPreflightKind.Resolved =>
+                new CronModelPreflightResult(CronModelPreflightKind.Resolved, result.Provider, result.ModelId, null),
 
-        return new CronModelPreflightResult(
-            CronModelPreflightKind.UnknownModel,
-            null,
-            null,
-            Truncate(
-                $"Cron model override '{raw}' is not a registered model for provider '{provider}'. Available: ",
-                knownModels.Select(m => m.Id).Order(StringComparer.OrdinalIgnoreCase),
-                "."));
+            ModelPreflightKind.UnknownProvider =>
+                new CronModelPreflightResult(
+                    CronModelPreflightKind.UnknownProvider,
+                    null,
+                    null,
+                    ModelPreflight.FormatList(
+                        $"Cron model override '{raw}' names unknown provider '{provider}'. Known providers: ",
+                        result.AvailableProviders,
+                        ".",
+                        MaxReasonLength)),
+
+            _ =>
+                new CronModelPreflightResult(
+                    CronModelPreflightKind.UnknownModel,
+                    null,
+                    null,
+                    ModelPreflight.FormatList(
+                        $"Cron model override '{raw}' is not a registered model for provider '{provider}'. Available: ",
+                        result.AvailableModels,
+                        ".",
+                        MaxReasonLength))
+        };
     }
 
-    private static CronModelPreflightResult ResolveBare(
-        ModelRegistry registry,
-        IReadOnlyList<string> providers,
-        string raw)
+    private static CronModelPreflightResult ResolveBare(ModelRegistry registry, string raw)
     {
-        foreach (var provider in providers.Order(StringComparer.OrdinalIgnoreCase))
-        {
-            var resolved = registry.GetModel(provider, raw);
-            if (resolved is not null)
-                return new CronModelPreflightResult(CronModelPreflightKind.Resolved, resolved.Provider, resolved.Id, null);
-        }
+        var result = ModelPreflight.ResolveBare(registry, raw);
 
-        var qualified = providers
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .SelectMany(provider => registry.GetModels(provider).Select(m => $"{provider}/{m.Id}"));
+        if (result.Kind == ModelPreflightKind.Resolved)
+            return new CronModelPreflightResult(CronModelPreflightKind.Resolved, result.Provider, result.ModelId, null);
 
         return new CronModelPreflightResult(
             CronModelPreflightKind.UnknownModel,
             null,
             null,
-            Truncate(
+            ModelPreflight.FormatList(
                 $"Cron model override '{raw}' is not a registered model for any provider. Available: ",
-                qualified,
-                "."));
-    }
-
-    // Builds "<prefix><a>, <b>, ... (N more)<suffix>" while guaranteeing the whole string stays
-    // within MaxReasonLength. The "(N more)" tail is what tells an operator the list was elided
-    // rather than that the registry only holds a handful of models.
-    private static string Truncate(string prefix, IEnumerable<string> items, string suffix)
-    {
-        var all = items.ToList();
-        var builder = new StringBuilder(prefix);
-        var written = 0;
-
-        foreach (var item in all)
-        {
-            var candidate = written == 0 ? item : ", " + item;
-            // Reserve room for the worst-case elision tail plus the suffix.
-            var reserve = $", ... ({all.Count} more)".Length + suffix.Length;
-            if (builder.Length + candidate.Length + reserve > MaxReasonLength)
-                break;
-
-            builder.Append(candidate);
-            written++;
-        }
-
-        if (written < all.Count)
-        {
-            if (written > 0)
-                builder.Append(", ");
-            builder.Append("... (").Append(all.Count - written).Append(" more)");
-        }
-
-        builder.Append(suffix);
-        return Truncate(builder.ToString())!;
+                result.AvailableModels,
+                ".",
+                MaxReasonLength));
     }
 
     private static string? Truncate(string? value)
