@@ -1,4 +1,4 @@
-using BotNexus.Agent.Core;
+﻿using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
@@ -116,8 +116,7 @@ public sealed class SubAgentModelOverrideTests
             SubAgentArchetype.General,
             new EmbodyCustomizations { ModelOverride = "gpt-5.6-sol" }))));
 
-        ex.Message.ShouldContain("gpt-5.6-sol",
-            "#2647 clause 4: the failure must name the requested value, not fall back silently.");
+        ex.Message.ShouldContain("gpt-5.6-sol");
         registry.GetAll().Select(d => d.AgentId.Value).ShouldBe(before, ignoreOrder: true,
             "#2647 clause 4: no child descriptor may be registered for a spawn that cannot resolve.");
         (await manager.ListAsync(SessionId.From("parent-session"))).ShouldBeEmpty(

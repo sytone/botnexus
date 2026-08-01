@@ -1,4 +1,4 @@
-using BotNexus.Gateway.Abstractions.Sessions;
+﻿using BotNexus.Gateway.Abstractions.Sessions;
 using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -10,7 +10,9 @@ using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Resolution;
+using BotNexus.Cron;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
@@ -38,6 +40,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     // from the row not being written - the id is still minted so the child never shares the
     // parent's SignalR group.
     private readonly IConversationStore? _conversationStore;
+    // #2647: model registry used to preflight a requested model/provider override BEFORE any child
+    // session, descriptor or record exists. Optional: a host without a populated registry classifies
+    // as RegistryUnavailable and the spawn proceeds exactly as before (never a false rejection).
+    private readonly ModelRegistry? _modelRegistry;
     // Trusted-only security-event sink (#1647). Optional: null behaves exactly as before (no
     // emission). Spawn and kill each emit one SecurityEvent so the sandbox boundary is recorded
     // to the trusted sink and never the public activity/diagnostic stream.
@@ -73,7 +79,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         ISessionStore? sessionStore = null,
         TimeProvider? timeProvider = null,
         ISecurityEventSink? securityEvents = null,
-        IConversationStore? conversationStore = null)
+        IConversationStore? conversationStore = null,
+        ModelRegistry? modelRegistry = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -87,6 +94,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _timeProvider = timeProvider ?? TimeProvider.System;
         _securityEvents = securityEvents;
         _conversationStore = conversationStore;
+        _modelRegistry = modelRegistry;
     }
 
     /// <summary>
@@ -219,6 +227,51 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // BuildChildFileAccessPolicy.
         var childFileAccess = BuildChildFileAccessPolicy(request);
 
+        // #2647: ONE resolution, consumed by both the descriptor the child actually runs on and the
+        // SubAgentInfo reporting record below. Computing it twice is exactly how "what runs" and
+        // "what is reported" drifted: the record was populated from a resolution that nothing ever
+        // wrote through to the descriptor, so list_subagents corroborated a model the child never used.
+        //
+        // The agent layer (the configured sub-agent DefaultModel) is deliberately gated on Embody.
+        // Mirror is strict pass-through of the TARGET descriptor (#562 / #1565) - letting the
+        // platform-wide sub-agent default apply there would silently re-point a mirrored agent at a
+        // different model than the one it is registered with.
+        var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.CurrentValue.SubAgents.DefaultModel)
+            ? null
+            : _options.CurrentValue.SubAgents.DefaultModel;
+        var agentLayerModel = request.Mode is Embody ? configuredDefaultModel : null;
+
+        var effectiveModel = ModelOverrideResolver.Resolve(
+            modelDefaults: new ModelOverrideLayer(Model: baseDescriptor.ModelId),
+            agent: new ModelOverrideLayer(Model: agentLayerModel),
+            conversation: new ModelOverrideLayer(Model: modelOverride)).Model;
+        var effectiveProvider = plan.ApiProviderOverride ?? baseDescriptor.ApiProvider;
+
+        // Preflight the REQUESTED pair before anything is created. Only runs when the caller actually
+        // asked for an override - the parent's own already-running model is not ours to second-guess.
+        if (!string.IsNullOrWhiteSpace(plan.ModelOverride) || !string.IsNullOrWhiteSpace(plan.ApiProviderOverride))
+        {
+            var requested = string.IsNullOrWhiteSpace(plan.ApiProviderOverride)
+                ? effectiveModel
+                : $"{plan.ApiProviderOverride}/{effectiveModel}";
+
+            var preflight = CronModelPreflight.Resolve(_modelRegistry, requested);
+            if (preflight.IsRejection)
+            {
+                // Fail loudly naming the requested value. Silent substitution of a different model is
+                // never acceptable: it fabricates the results of every model comparison run through
+                // spawn_subagent. Thrown here, so no session, descriptor or record is created.
+                throw new InvalidOperationException(
+                    $"Sub-agent spawn requested model '{requested}' which cannot be resolved. {preflight.Reason}");
+            }
+
+            if (preflight.Kind == CronModelPreflightKind.Resolved)
+            {
+                effectiveModel = preflight.ModelId;
+                effectiveProvider = preflight.Provider ?? effectiveProvider;
+            }
+        }
+
         if (!_registry.Contains(childAgentId))
         {
             _registry.Register(baseDescriptor with
@@ -232,6 +285,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 SystemPrompt = string.IsNullOrWhiteSpace(plan.SystemPromptOverride)
                     ? baseDescriptor.SystemPrompt
                     : plan.SystemPromptOverride,
+                // #2647: the authoritative state the child dispatches against. Sourced from the single
+                // resolution above - the same values the SubAgentInfo record reports.
+                ModelId = effectiveModel ?? baseDescriptor.ModelId,
+                ApiProvider = effectiveProvider,
                 FileAccess = childFileAccess ?? baseDescriptor.FileAccess
             });
         }
@@ -244,10 +301,6 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
-        var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.CurrentValue.SubAgents.DefaultModel)
-            ? null
-            : _options.CurrentValue.SubAgents.DefaultModel;
-
         var info = new SubAgentInfo
         {
             SubAgentId = subAgentId,
@@ -258,10 +311,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             ParentAgentId = request.ParentAgentId.Value,
             ChildAgentId = childAgentId.Value,
             Task = request.Task,
-            Model = ModelOverrideResolver.Resolve(
-                modelDefaults: new ModelOverrideLayer(Model: baseDescriptor.ModelId),
-                agent: new ModelOverrideLayer(Model: configuredDefaultModel),
-                conversation: new ModelOverrideLayer(Model: modelOverride)).Model,
+            // #2647: reported value is the SAME single resolution written onto the descriptor above.
+            Model = effectiveModel,
             Archetype = archetype,
             Status = SubAgentStatus.Running,
             StartedAt = DateTimeOffset.UtcNow,
