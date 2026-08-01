@@ -76,9 +76,19 @@ public sealed record AgentDescriptor : ICitizen
     public required string ModelId { get; init; }
 
     /// <summary>
-    /// The API provider key (e.g., "anthropic", "openai", "copilot").
-    /// Resolved through <c>ApiProviderRegistry</c> at runtime.
+    /// The provider <b>instance</b> key this agent's model is registered under (e.g.
+    /// "github-copilot", "anthropic"), NOT an API contract name such as
+    /// "github-copilot-messages".
     /// </summary>
+    /// <remarks>
+    /// #2649: this field is resolved against <c>ModelRegistry</c> - <c>InProcessIsolationStrategy</c>
+    /// calls <c>GetModel(descriptor.ApiProvider, modelId)</c> at spawn - and is <b>not</b> an
+    /// <c>ApiProviderRegistry</c> key; the API contract lives on <c>LlmModel.Api</c> instead. The
+    /// two namespaces overlap in shape but not in content, and validating writes against the
+    /// contract registry while reads went to the model registry is what allowed unspawnable agents
+    /// to be persisted. Serialises to <c>agents.&lt;id&gt;.provider</c> in config.json (paired with
+    /// <see cref="ModelId"/> as <c>model</c>).
+    /// </remarks>
     public required string ApiProvider { get; init; }
 
     /// <summary>System prompt template for the agent.</summary>
