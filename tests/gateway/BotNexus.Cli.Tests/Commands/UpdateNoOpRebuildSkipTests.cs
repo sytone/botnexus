@@ -120,7 +120,7 @@ public sealed class UpdateNoOpRebuildSkipTests
 
     private static string RunGit(string repoRoot, string arguments)
     {
-        var psi = new ProcessStartInfo("git", arguments)
+        var psi = new ProcessStartInfo("git", $"{IdentityFlags} {arguments}")
         {
             WorkingDirectory = repoRoot,
             RedirectStandardOutput = true,
@@ -131,7 +131,7 @@ public sealed class UpdateNoOpRebuildSkipTests
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();
-        process.ExitCode.ShouldBe(0, $"git {arguments} failed: {stderr}");
+        process.ExitCode.ShouldBe(0, $"git {IdentityFlags} {arguments} failed: {stderr}");
         return stdout;
     }
 
@@ -146,8 +146,8 @@ public sealed class UpdateNoOpRebuildSkipTests
         Directory.CreateDirectory(root);
 
         RunGit(root, "init --initial-branch=main");
-        RunGit(root, "config user.email test@example.com");
-        RunGit(root, "config user.name Test");
+        RunGit(root, $"config user.email {SentinelEmail}");
+        RunGit(root, $"config user.name {SentinelName}");
         RunGit(root, "config commit.gpgsign false");
 
         foreach (var relative in TrackedBuildInputs)

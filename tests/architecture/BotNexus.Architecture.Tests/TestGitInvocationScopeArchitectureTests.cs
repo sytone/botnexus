@@ -70,12 +70,15 @@ public sealed class TestGitInvocationScopeArchitectureTests
     /// Git subcommands that can modify a repository. <c>config</c> is included only in its
     /// assigning form (<c>config key value</c>); <c>config --get key</c> is read-only.
     /// </summary>
+    // The character classes deliberately exclude newlines. A ""[^""]*"" class spans line breaks and
+    // will happily swallow an entire XML doc-comment block that merely MENTIONS a git command,
+    // producing false positives on the sibling fences' own documentation.
     private static readonly Regex MutatingGitVerb = new(
-        @"""(?:[^""]*\s)?(?:init|add|commit|checkout|reset|clean|push|merge|rebase|stash|branch\s+-[dD]|worktree\s+add)\b[^""]*""",
+        @"""(?:[^""\r\n]*\s)?(?:init|add|commit|checkout|reset|clean|push|merge|rebase|stash|branch\s+-[dD]|worktree\s+add)\b[^""\r\n]*""",
         RegexOptions.Compiled);
 
     private static readonly Regex AssigningGitConfig = new(
-        @"""(?:[^""]*\s)?config\s+(?!--get\b|--list\b)[^""]*\s+[^""\s]+""",
+        @"""(?:[^""\r\n]*\s)?config\s+(?!--get\b|--list\b)[^""\r\n]*\s+[^""\r\n\s]+""",
         RegexOptions.Compiled);
 
     /// <summary>
@@ -180,6 +183,8 @@ public sealed class TestGitInvocationScopeArchitectureTests
     /// </summary>
     internal static string? Inspect(string content)
     {
+        content = StripNonExecutableLines(content);
+
         var pathMatch = RepoDerivedPath.Match(content);
         if (!pathMatch.Success)
         {
@@ -199,6 +204,30 @@ public sealed class TestGitInvocationScopeArchitectureTests
 
         return $"derives a git path from '{pathMatch.Value}' and runs the mutating command " +
                $"{Truncate(verbMatch.Value)}";
+    }
+
+    /// <summary>
+    /// Removes lines that cannot possibly BE a git invocation: comments (including XML doc
+    /// comments) and <c>[InlineData(...)]</c> attribute rows. Sibling architecture fences pin
+    /// their own detectors with literal command strings such as
+    /// <c>[InlineData("git worktree remove ... ; git branch -D ...")]</c>, and they locate the
+    /// repository root only to run a strictly read-only <c>git ls-files</c> sweep. Scanning those
+    /// rows as if they were call sites reports the fence's own test data as an offender. Only
+    /// executable statements can actually launch a process, so only those are inspected.
+    /// </summary>
+    private static string StripNonExecutableLines(string content)
+    {
+        var kept = content
+            .Split('\n')
+            .Where(line =>
+            {
+                var trimmed = line.TrimStart();
+                return !trimmed.StartsWith("//", StringComparison.Ordinal)
+                    && !trimmed.StartsWith("*", StringComparison.Ordinal)
+                    && !trimmed.StartsWith("[InlineData", StringComparison.Ordinal);
+            });
+
+        return string.Join('\n', kept);
     }
 
     private static IEnumerable<(string Relative, string Content)> EnumerateTrackedTestSources()

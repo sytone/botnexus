@@ -124,7 +124,9 @@ public sealed class UpdateFixtureAmbientWorktreeIsolationTests
         var fixtureRoot = UpdateNoOpRebuildSkipTests.CreateFixtureRepositoryForIsolationPin();
         try
         {
-            var author = ReadGit(fixtureRoot, "log -1 --format=%an <%ae>");
+            // The format string MUST be quoted: unquoted, git parses '<%ae>' as redirection /
+            // argument syntax and the call fails, which would redden this pin for the wrong reason.
+            var author = ReadGit(fixtureRoot, "log -1 --format=\"%an <%ae>\"");
 
             author.ShouldBe(
                 "botnexus-test <botnexus-test@invalid.local>",
