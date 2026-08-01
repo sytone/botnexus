@@ -1059,6 +1059,110 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         return toolCalls;
     }
 
+    /// <summary>
+    /// Projects a blocking-run timeline into the shared <see cref="ToolInvocationRecord"/> shape
+    /// (issue #2613). One record per requested call, in execution order, with contiguous
+    /// <see cref="ToolInvocationRecord.OrderIndex"/> values, the arguments the model supplied, the
+    /// result content and error state, and the start/completion timestamps carried by the timeline
+    /// messages. A call whose id has no result row was interrupted mid-flight and is emitted as an
+    /// incomplete record with its arguments intact and no completion timestamp.
+    /// </summary>
+    /// <remarks>
+    /// This is the blocking-path half of the #2613 parity pair; the streaming half lives in
+    /// <see cref="BotNexus.Gateway.Streaming.StreamingSessionHelper"/>. Both project into the SAME
+    /// record type through the SAME <see cref="ToolInvocationRecordPolicy"/>, which is what makes
+    /// the two boundaries observably equivalent rather than merely similar.
+    /// </remarks>
+    /// <param name="messages">The run timeline (assistant tool-call requests plus tool results).</param>
+    /// <param name="pendingToolCallIds">Ids still in flight at interruption, or null.</param>
+    /// <param name="policy">Redaction/truncation policy; defaults to <see cref="ToolInvocationRecordPolicy.Default"/>.</param>
+    /// <returns>The ordered tool invocation records for the run.</returns>
+    internal static IReadOnlyList<ToolInvocationRecord> BuildToolInvocations(
+        IEnumerable<AgentMessage> messages,
+        ISet<string>? pendingToolCallIds,
+        ToolInvocationRecordPolicy? policy = null)
+    {
+        policy ??= ToolInvocationRecordPolicy.Default;
+        var timeline = messages as IReadOnlyList<AgentMessage> ?? messages.ToList();
+
+        // Result rows are keyed by tool call id; first result wins for a given id.
+        var resultsById = new Dictionary<string, ToolResultAgentMessage>(StringComparer.Ordinal);
+        foreach (var result in timeline.OfType<ToolResultAgentMessage>())
+        {
+            resultsById.TryAdd(result.ToolCallId, result);
+        }
+
+        var records = new List<ToolInvocationRecord>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var message in timeline)
+        {
+            if (message is not AssistantAgentMessage assistant || assistant.ToolCalls is null)
+                continue;
+
+            foreach (var call in assistant.ToolCalls)
+            {
+                if (!seen.Add(call.Id))
+                    continue;
+
+                var arguments = call.Arguments is { Count: > 0 }
+                    ? JsonSerializer.Serialize(call.Arguments)
+                    : null;
+
+                if (resultsById.TryGetValue(call.Id, out var result))
+                {
+                    records.Add(policy.Create(
+                        orderIndex: records.Count,
+                        toolCallId: call.Id,
+                        toolName: call.Name,
+                        rawArguments: arguments,
+                        rawResultContent: result.Result.Content.FirstOrDefault()?.Value,
+                        isError: result.IsError,
+                        isIncomplete: false,
+                        startedAt: assistant.Timestamp,
+                        completedAt: result.Timestamp ?? assistant.Timestamp));
+                }
+                else
+                {
+                    // No result row: the call was either still in flight at cancellation or never
+                    // completed. Either way it is an incomplete/interrupted call.
+                    var incomplete = pendingToolCallIds?.Contains(call.Id) ?? true;
+                    records.Add(policy.Create(
+                        orderIndex: records.Count,
+                        toolCallId: call.Id,
+                        toolName: call.Name,
+                        rawArguments: arguments,
+                        rawResultContent: null,
+                        isError: incomplete,
+                        isIncomplete: incomplete,
+                        startedAt: assistant.Timestamp,
+                        completedAt: null));
+                }
+            }
+        }
+
+        // Defensive: surface any orphan result whose request never appeared on an assistant
+        // message, so the timeline stays lossless.
+        foreach (var result in timeline.OfType<ToolResultAgentMessage>())
+        {
+            if (seen.Add(result.ToolCallId))
+            {
+                records.Add(policy.Create(
+                    orderIndex: records.Count,
+                    toolCallId: result.ToolCallId,
+                    toolName: result.ToolName,
+                    rawArguments: null,
+                    rawResultContent: result.Result.Content.FirstOrDefault()?.Value,
+                    isError: result.IsError,
+                    isIncomplete: false,
+                    startedAt: result.Timestamp,
+                    completedAt: result.Timestamp));
+            }
+        }
+
+        return records;
+    }
+
     /// <inheritdoc />
     public IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, CancellationToken cancellationToken = default)
         => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
