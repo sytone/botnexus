@@ -18,7 +18,8 @@ public sealed class CronController(
     ICronStore store,
     CronScheduler scheduler,
     IOptionsMonitor<CronOptions> cronOptions,
-    ILogger<CronController> logger) : ControllerBase
+    ILogger<CronController> logger,
+    ICronAlertTargetResolver? alertTargetResolver = null) : ControllerBase
 {
     // The year 9000 is chosen as a practical "absurdly far future" ceiling.
     // DateTimeOffset.MaxValue is year 9999, but any NextRunAt beyond year 9000
@@ -122,6 +123,18 @@ public sealed class CronController(
         if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl))
             return BadRequest(CronWebhookUrl.RejectionMessage);
 
+        // #2671: validate the failure-alert target at the authoring seam, through the SAME shared
+        // validator the update path uses, so the two seams cannot drift. This does not replace the
+        // fire-time guard in the scheduler - a conversation can be deleted after the job is stored.
+        var createAlertTarget = await CronAlertTarget.ValidateAsync(
+            alertTargetResolver,
+            string.IsNullOrWhiteSpace(request.FailureAlertConversationId)
+                ? null
+                : ConversationId.From(request.FailureAlertConversationId),
+            cancellationToken);
+        if (!createAlertTarget.IsValid)
+            return BadRequest(createAlertTarget.Error);
+
         // #2389: the id is generated here when the caller omits one (see CronJobCreateRequest),
         // matching the existing server-side defaulting of CreatedAt and normalization of ActionType.
         var toCreate = request.ToCronJob() with
@@ -153,6 +166,12 @@ public sealed class CronController(
         // #2552: same shared boundary on the update path.
         if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl))
             return BadRequest(CronWebhookUrl.RejectionMessage);
+
+        // #2671: same shared validator on the update seam (clause 2).
+        var updateAlertTarget = await CronAlertTarget.ValidateAsync(
+            alertTargetResolver, request.FailureAlertConversationId, cancellationToken);
+        if (!updateAlertTarget.IsValid)
+            return BadRequest(updateAlertTarget.Error);
 
         var typedJobId = JobId.From(jobId);
         var existing = await store.GetAsync(typedJobId, cancellationToken);

@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tests;
 
-public sealed class CronControllerTests
+public sealed partial class CronControllerTests
 {
     [Fact]
     public async Task List_ReturnsAllJobs()
@@ -476,7 +476,11 @@ public sealed class CronControllerTests
         Metadata = job.Metadata
     };
 
-    private static CronController CreateController(FakeCronStore store, ICronAction action, CronOptions options)
+    private static CronController CreateController(
+        FakeCronStore store,
+        ICronAction action,
+        CronOptions options,
+        ICronAlertTargetResolver? alertTargetResolver = null)
     {
         var scheduler = new CronScheduler(
             store,
@@ -484,7 +488,12 @@ public sealed class CronControllerTests
             new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
             new StaticOptionsMonitor<CronOptions>(new CronOptions()),
             NullLogger<CronScheduler>.Instance);
-        return new CronController(store, scheduler, new StaticOptionsMonitor<CronOptions>(options), NullLogger<CronController>.Instance);
+        return new CronController(
+            store,
+            scheduler,
+            new StaticOptionsMonitor<CronOptions>(options),
+            NullLogger<CronController>.Instance,
+            alertTargetResolver);
     }
 
     private static CronJob CreateJob(string id, string actionType = "agent-prompt")

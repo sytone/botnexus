@@ -1133,6 +1133,40 @@ public sealed class CronScheduler(
         return options.DefaultJobTimeoutSeconds > 0 ? options.DefaultJobTimeoutSeconds : 3600;
     }
 
+    /// <summary>
+    /// Config-sourced half of the #2671 alert-target gate. Routes through the SAME
+    /// <see cref="CronAlertTarget.ValidateAsync"/> as the API seam so the three authoring paths
+    /// cannot answer "is this target reachable?" differently, but downgrades the outcome from
+    /// rejection to a warning: config jobs load at boot, where there is no operator to correct a
+    /// payload and a hard failure would take the whole scheduler down.
+    /// </summary>
+    /// <param name="jobIdString">Configured job id, named in the warning so it is actionable.</param>
+    /// <param name="configuredTarget">Raw configured target, or null/blank when alerting is off.</param>
+    /// <param name="ct">The cancellation token.</param>
+    private async Task WarnIfConfiguredAlertTargetUnresolvableAsync(
+        string jobIdString,
+        string? configuredTarget,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(configuredTarget))
+            return;
+
+        using var scope = _scopeFactory.CreateScope();
+        var resolver = scope.ServiceProvider.GetService<ICronAlertTargetResolver>();
+        var validation = await CronAlertTarget
+            .ValidateAsync(resolver, ConversationId.From(configuredTarget), ct)
+            .ConfigureAwait(false);
+        if (validation.IsValid)
+            return;
+
+        _logger.LogWarning(
+            "Configured cron job '{JobId}' has an unresolvable failureAlertConversationId '{ConversationId}'. "
+            + "The job still loads, but its failure alerts cannot be delivered. {Reason}",
+            jobIdString,
+            configuredTarget,
+            validation.Error);
+    }
+
     private async Task SyncConfiguredJobsAsync(CronOptions options, CancellationToken ct)
     {
         if (options.Jobs is null || options.Jobs.Count == 0)
@@ -1183,6 +1217,15 @@ public sealed class CronScheduler(
             }
 
             var jobId = JobId.From(jobIdString);
+
+            // #2671 clause 5: a config-declared job whose failure-alert target does not resolve is
+            // WARNED about and still loaded. Refusing to boot the scheduler because one job's alert
+            // target went stale would be a strictly worse failure than the one being fixed - the
+            // deliberate asymmetry with the API seam, which rejects because a human is present to
+            // read the error and correct the payload.
+            await WarnIfConfiguredAlertTargetUnresolvableAsync(jobIdString, configuredJob.FailureAlertConversationId, ct)
+                .ConfigureAwait(false);
+
             var agentId = string.IsNullOrWhiteSpace(configuredJob.AgentId)
                 ? (AgentId?)null
                 : AgentId.From(configuredJob.AgentId);
