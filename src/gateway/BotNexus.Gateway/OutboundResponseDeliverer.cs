@@ -38,11 +38,13 @@ internal sealed class OutboundResponseDeliverer(
         NonDeliverableChannels.Contains(channelType.Value);
 
     /// <summary>
-    /// The portal/SignalR channel key. SignalR is deliberately NOT a competitor in the binding
+    /// The portal/observer channel. SignalR is deliberately NOT a competitor in the binding
     /// candidate set: it is a channel-agnostic observer that must see every turn regardless of
     /// which channel originated it or which channels also receive it (#2631).
+    /// The concrete key lives on <see cref="ChannelKey.Observer"/> so this orchestration-adjacent
+    /// file carries no channel-key literal (#2086 R2).
     /// </summary>
-    internal static readonly ChannelKey SignalRChannel = ChannelKey.From("signalr");
+    internal static ChannelKey SignalRChannel => ChannelKey.Observer;
 
     /// <inheritdoc />
     public async Task FanOutAsync(
@@ -58,7 +60,13 @@ internal sealed class OutboundResponseDeliverer(
         if (string.IsNullOrEmpty(content))
             return;
 
-        var deliveredToSignalR = primaryDeliveredToSignalR;
+        // The primary (pre-fan-out) send in the orchestrator targets source.ChannelType. When the
+        // inbound channel IS the observer channel, the reply already reached the portal, so the
+        // sink must not emit it again. Derived HERE rather than passed in from GatewayHost: the
+        // ChannelKnowledgeFence architecture rules forbid orchestration naming a concrete channel
+        // key or resolving the observer channel (R2/R3), and deriving it also means the two paths
+        // cannot drift the way a stored "already sent" flag would.
+        var deliveredToSignalR = primaryDeliveredToSignalR || source.ChannelType == SignalRChannel;
 
         try
         {

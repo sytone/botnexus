@@ -21,6 +21,15 @@ public readonly record struct ChannelKey : IComparable<ChannelKey>, IEquatable<C
     /// </summary>
     public string Value { get; }
 
+    /// <summary>
+    /// The portal/web-chat channel, which acts as the platform's channel-agnostic OBSERVER: it is
+    /// expected to see every turn regardless of which channel originated it or which channels also
+    /// receive it (#2631). Named here on the domain primitive that already owns this string in its
+    /// alias table, so gateway orchestration never has to spell a concrete channel key and the
+    /// ChannelKnowledgeFence rules (#2086 R2/R3) stay intact.
+    /// </summary>
+    public static ChannelKey Observer { get; } = From("signalr");
+
     public ChannelKey(string value)
     {
         Value = Normalize(value);
