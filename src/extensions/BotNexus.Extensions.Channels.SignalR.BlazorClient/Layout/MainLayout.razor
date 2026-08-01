@@ -172,6 +172,20 @@
     private bool _sectionsGroupCollapsed = true;
     private const string SectionsCollapsedKey = "botnexus-sections-collapsed";
 
+    // #2122: Webhooks is its own section, and Pinned / Conversations became collapsible. All three
+    // reuse the exact Scheduled-group persistence pattern (a "true"/"false" string under a
+    // botnexus-*-collapsed localStorage key) rather than introducing a second mechanism.
+    //
+    // Defaults differ deliberately by intent: Webhooks is unattended machine traffic so it starts
+    // collapsed like Scheduled, while Pinned and Conversations are the user's own attended lists
+    // and start expanded - collapsing them is opt-in.
+    private bool _webhookGroupCollapsed = true;
+    private const string WebhookCollapsedKey = "botnexus-webhook-collapsed";
+    private bool _pinnedGroupCollapsed;
+    private const string PinnedCollapsedKey = "botnexus-pinned-collapsed";
+    private bool _conversationsGroupCollapsed;
+    private const string ConversationsCollapsedKey = "botnexus-conversations-collapsed";
+
     /// <summary>
     /// Density preset emitted as <c>data-density</c> on the app shell, driving the
     /// <c>--density-*</c> token set for the whole portal (#2441).
@@ -385,25 +399,54 @@
                                 .ToList();
                             var pinnedConversations = allUserConversations.Where(IsPinnedConversation).ToList();
                             var cronConversations = allUserConversations.Where(IsCronConversation).ToList();
+                            @* #2122: webhook-originated runs get their own section. Membership comes
+                               from the SAME typed projection that already computes
+                               ConversationListGroup.Automated - no second classifier, no heuristic.
+                               Pinned still wins over source, and cron is subtracted first so a
+                               conversation can never appear in two groups. *@
+                            var webhookConversations = allUserConversations
+                                .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && IsWebhookConversation(c))
+                                .ToList();
                             var normalConversations = allUserConversations
-                                .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c))
+                                .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && !IsWebhookConversation(c))
                                 .Where(MatchesActivityFilter)
                                 .ToList();
 
                             @if (pinnedConversations.Count > 0)
                             {
                                 <div class="conversation-group conversation-group-pinned" data-testid="conversation-group-pinned">
-                                    <div class="conversation-group-header">
+                                    <button class="conversation-group-header conversation-group-header-toggle"
+                                            data-testid="pinned-group-toggle"
+                                            aria-expanded="@(!_pinnedGroupCollapsed ? "true" : "false")"
+                                            title="@(_pinnedGroupCollapsed ? "Expand pinned" : "Collapse pinned")"
+                                            @onclick="TogglePinnedGroup">
+                                        <span class="group-chevron @(!_pinnedGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
                                         <span class="conversation-group-label">&#x1F4CC; Pinned</span>
-                                    </div>
-                                    @foreach (var conversation in pinnedConversations)
+                                        <span class="conversation-group-count" data-testid="pinned-group-count">@pinnedConversations.Count</span>
+                                    </button>
+                                    @if (!_pinnedGroupCollapsed)
                                     {
-                                        @RenderConversationItem(activeAgent, conversation)
+                                        @foreach (var conversation in pinnedConversations)
+                                        {
+                                            @RenderConversationItem(activeAgent, conversation)
+                                        }
                                     }
                                 </div>
                             }
 
                             <div class="conversation-group conversation-group-conversations" data-testid="conversation-group-conversations">
+                                @* #2122: the header intentionally does NOT use the .conversation-group-label
+                                   class - #2441 replaced the redundant inner "Conversations" heading with the
+                                   filter bar and a test guards that class's absence here. The collapse
+                                   affordance is a real <button> so keyboard activation is native. *@
+                                <button class="conversation-group-header conversation-group-header-toggle"
+                                        data-testid="conversations-group-toggle"
+                                        aria-expanded="@(!_conversationsGroupCollapsed ? "true" : "false")"
+                                        title="@(_conversationsGroupCollapsed ? "Expand conversations" : "Collapse conversations")"
+                                        @onclick="ToggleConversationsGroup">
+                                    <span class="group-chevron @(!_conversationsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                                    <span class="conversation-group-count" data-testid="conversations-group-count">@normalConversations.Count</span>
+                                </button>
                                 <div class="conversation-filter-bar" role="group" aria-label="Filter conversations by recent activity" data-testid="conversation-filter-bar">
                                     <button type="button"
                                             class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.None ? "active" : "")"
@@ -424,13 +467,16 @@
                                             title="Conversations updated in the last 7 days"
                                             @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.ThisWeek)">This Week</button>
                                 </div>
-                                @if (normalConversations.Count == 0 && _activityFilter != ConversationActivityFilter.None)
+                                @if (!_conversationsGroupCollapsed)
                                 {
-                                    <div class="conversation-list-empty" data-testid="conversation-filter-empty">No conversations in this range.</div>
-                                }
-                                @foreach (var conversation in normalConversations)
-                                {
-                                    @RenderConversationItem(activeAgent, conversation)
+                                    @if (normalConversations.Count == 0 && _activityFilter != ConversationActivityFilter.None)
+                                    {
+                                        <div class="conversation-list-empty" data-testid="conversation-filter-empty">No conversations in this range.</div>
+                                    }
+                                    @foreach (var conversation in normalConversations)
+                                    {
+                                        @RenderConversationItem(activeAgent, conversation)
+                                    }
                                 }
                             </div>
 
@@ -440,11 +486,36 @@
                                     <button class="conversation-group-header conversation-group-header-toggle" data-testid="cron-group-toggle" @onclick="ToggleCronGroup">
                                         <span class="group-chevron @(!_cronGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
                                         <span class="conversation-group-label">&#x23F0; Scheduled</span>
-                                        <span class="conversation-group-count">@cronConversations.Count</span>
+                                        <span class="conversation-group-count" data-testid="cron-group-count">@cronConversations.Count</span>
                                     </button>
                                     @if (!_cronGroupCollapsed)
                                     {
                                         @foreach (var conversation in cronConversations)
+                                        {
+                                            @RenderConversationItem(activeAgent, conversation)
+                                        }
+                                    }
+                                </div>
+                            }
+
+                            @* #2122: Automated (webhook) runs are their own 4th section rather than
+                               being folded in with Scheduled. Same pattern as the Scheduled group:
+                               real <button> header, own localStorage key, collapsed by default. *@
+                            @if (webhookConversations.Count > 0)
+                            {
+                                <div class="conversation-group conversation-group-automated" data-testid="conversation-group-automated">
+                                    <button class="conversation-group-header conversation-group-header-toggle"
+                                            data-testid="webhook-group-toggle"
+                                            aria-expanded="@(!_webhookGroupCollapsed ? "true" : "false")"
+                                            title="@(_webhookGroupCollapsed ? "Expand webhooks" : "Collapse webhooks")"
+                                            @onclick="ToggleWebhookGroup">
+                                        <span class="group-chevron @(!_webhookGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                                        <span class="conversation-group-label">&#x1F517; Webhooks</span>
+                                        <span class="conversation-group-count" data-testid="webhook-group-count">@webhookConversations.Count</span>
+                                    </button>
+                                    @if (!_webhookGroupCollapsed)
+                                    {
+                                        @foreach (var conversation in webhookConversations)
                                         {
                                             @RenderConversationItem(activeAgent, conversation)
                                         }
@@ -579,6 +650,14 @@
             _sidebarOpen = stored == "true";
             var cronStored = await JS.InvokeAsync<string?>("localStorage.getItem", CronCollapsedKey);
             _cronGroupCollapsed = cronStored != "false";
+            // Absent key -> collapsed, matching the Scheduled group's first-run behaviour.
+            var webhookStored = await JS.InvokeAsync<string?>("localStorage.getItem", WebhookCollapsedKey);
+            _webhookGroupCollapsed = webhookStored != "false";
+            // Absent key -> expanded: these are the user's attended lists, so collapsing is opt-in.
+            var pinnedStored = await JS.InvokeAsync<string?>("localStorage.getItem", PinnedCollapsedKey);
+            _pinnedGroupCollapsed = pinnedStored == "true";
+            var conversationsStored = await JS.InvokeAsync<string?>("localStorage.getItem", ConversationsCollapsedKey);
+            _conversationsGroupCollapsed = conversationsStored == "true";
             var toolsStored = await JS.InvokeAsync<string?>("localStorage.getItem", ToolsCollapsedKey);
             _toolsGroupCollapsed = toolsStored != "false";
             var sectionsStored = await JS.InvokeAsync<string?>("localStorage.getItem", SectionsCollapsedKey);
@@ -791,12 +870,35 @@
         c.Project(Store.ActiveSelectionSource).Group == ConversationListGroup.Scheduled ||
         _cronConversationIds.Contains(c.ConversationId);
 
+    // #2122: webhook membership reads the SAME typed projection as the cron check above. There is
+    // one classifier (ConversationRenderProjection) and this is a read of it, not a copy of it.
+    private bool IsWebhookConversation(ConversationState c) =>
+        c.Project(Store.ActiveSelectionSource).Group == ConversationListGroup.Automated;
+
     private static bool IsPinnedConversation(ConversationState c) => c.IsPinned;
 
     private async Task ToggleCronGroup()
     {
         _cronGroupCollapsed = !_cronGroupCollapsed;
         await JS.InvokeVoidAsync("localStorage.setItem", CronCollapsedKey, _cronGroupCollapsed ? "true" : "false");
+    }
+
+    private async Task ToggleWebhookGroup()
+    {
+        _webhookGroupCollapsed = !_webhookGroupCollapsed;
+        await JS.InvokeVoidAsync("localStorage.setItem", WebhookCollapsedKey, _webhookGroupCollapsed ? "true" : "false");
+    }
+
+    private async Task TogglePinnedGroup()
+    {
+        _pinnedGroupCollapsed = !_pinnedGroupCollapsed;
+        await JS.InvokeVoidAsync("localStorage.setItem", PinnedCollapsedKey, _pinnedGroupCollapsed ? "true" : "false");
+    }
+
+    private async Task ToggleConversationsGroup()
+    {
+        _conversationsGroupCollapsed = !_conversationsGroupCollapsed;
+        await JS.InvokeVoidAsync("localStorage.setItem", ConversationsCollapsedKey, _conversationsGroupCollapsed ? "true" : "false");
     }
 
     private async Task ToggleToolsGroup()
