@@ -105,6 +105,27 @@ public sealed class UpdateCommandGitRunnerTests : IDisposable
     }
 
     [Fact]
+    public void SandboxGuard_Throws_ForPathOutsideTempRoot()
+    {
+        var outside = Path.Combine(AppContext.BaseDirectory, "not-a-sandbox");
+
+        var ex = Should.Throw<InvalidOperationException>(() => AssertSandboxRepoPath(outside));
+
+        ex.Message.ShouldContain("not under the temp sandbox root");
+    }
+
+    [Fact]
+    public void SandboxGuard_Throws_ForRepositoryRootOfCallerWorktree()
+    {
+        // The #2632 failure mode: the harness targeting a live worktree root.
+        Should.Throw<InvalidOperationException>(() => AssertSandboxRepoPath(Path.GetPathRoot(AppContext.BaseDirectory)!));
+    }
+
+    [Fact]
+    public void SandboxGuard_Allows_PathUnderTempRoot()
+        => Should.NotThrow(() => AssertSandboxRepoPath(Path.Combine(Path.GetTempPath(), "botnexus-guard-probe")));
+
+    [Fact]
     public async Task CountCommitsBetween_ReturnsZero_WhenCancelled()
     {
         if (!_gitAvailable)
@@ -120,8 +141,28 @@ public sealed class UpdateCommandGitRunnerTests : IDisposable
         count.ShouldBe(0);
     }
 
+    /// <summary>
+    /// Guard (#2632): a repo-creating harness must never stage or commit outside its sandbox root.
+    /// A harness interrupted mid-flight previously left an `add --all` / `commit` pointed at a live
+    /// worktree and corrupted the caller's branch. Every git call that can author a commit asserts
+    /// its target path is under <see cref="Path.GetTempPath"/> first.
+    /// </summary>
+    internal static string AssertSandboxRepoPath(string repo)
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repo));
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, comparison))
+            throw new InvalidOperationException(
+                $"Sandbox guard: refusing git write against '{full}' because it is not under the temp sandbox root '{root}'.");
+        return full;
+    }
+
     private bool TryInitRepoWithTwoCommits(string repo)
     {
+        // Fail loudly rather than silently degrading: an out-of-sandbox target must never be
+        // swallowed by the catch below and reported as "git unavailable".
+        AssertSandboxRepoPath(repo);
         try
         {
             if (RunGit(repo, "init -q") != 0) return false;
@@ -136,10 +177,12 @@ public sealed class UpdateCommandGitRunnerTests : IDisposable
             // Distinct seed filenames (not a.txt/b.txt) so any stray that DOES escape is
             // immediately traceable to this fixture rather than masquerading as host content.
             File.WriteAllText(Path.Combine(repo, "seed1.txt"), "1");
+            AssertSandboxRepoPath(repo);
             RunGit(repo, "add seed1.txt");
             if (RunGit(repo, "commit -q -m \"first commit\"") != 0) return false;
 
             File.WriteAllText(Path.Combine(repo, "seed2.txt"), "2");
+            AssertSandboxRepoPath(repo);
             RunGit(repo, "add seed2.txt");
             if (RunGit(repo, "commit -q -m \"second commit\"") != 0) return false;
 
