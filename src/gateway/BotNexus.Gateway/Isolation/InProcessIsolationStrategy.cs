@@ -1270,6 +1270,36 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
+    public IDisposable? ObserveTurns(Action onTurnCompleted)
+    {
+        ArgumentNullException.ThrowIfNull(onTurnCompleted);
+
+        // TurnEndEvent is the agent loop's own per-turn boundary (one model call plus its tool
+        // cycle) — the same event that drives RunMetricsAccumulator.IncrementTurns. Projecting it
+        // here means a turn-budget caller counts exactly what the loop counts (#2656).
+        return _agent.Subscribe((agentEvent, _) =>
+        {
+            if (agentEvent is TurnEndEvent)
+            {
+                try
+                {
+                    onTurnCompleted();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Turn observer threw for '{AgentId}' session '{SessionId}'.",
+                        AgentId,
+                        SessionId);
+                }
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <inheritdoc />
     public async Task AbortAsync(CancellationToken cancellationToken = default)
     {
         await _agent.AbortAsync();
