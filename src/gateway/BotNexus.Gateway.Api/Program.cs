@@ -421,7 +421,8 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                         modelId,
                         declaredReasoning: providerConfig.Reasoning,
                         declaredExtraHighThinking: providerConfig.SupportsExtraHighThinking,
-                        declaredExtendedContext: providerConfig.SupportsExtendedContextWindow);
+                        declaredExtendedContext: providerConfig.SupportsExtendedContextWindow,
+                        declaredInput: providerConfig.Input);
                     models.Register(providerName, new LlmModel(
                         Id: modelId,
                         Name: modelId,
@@ -429,7 +430,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                         Provider: providerName,
                         BaseUrl: providerConfig.BaseUrl ?? string.Empty,
                         Reasoning: caps.Reasoning,
-                        Input: ["text"],
+                        Input: caps.Input,
                         Cost: new ModelCost(0, 0, 0, 0),
                         ContextWindow: providerConfig.ContextWindow ?? 128000,
                         MaxTokens: 32000,
@@ -464,7 +465,8 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                 agentConfig.Model,
                 declaredReasoning: agentProvider.Reasoning,
                 declaredExtraHighThinking: agentProvider.SupportsExtraHighThinking,
-                declaredExtendedContext: agentProvider.SupportsExtendedContextWindow);
+                declaredExtendedContext: agentProvider.SupportsExtendedContextWindow,
+                declaredInput: agentProvider.Input);
             models.Register(agentConfig.Provider, new LlmModel(
                 Id: agentConfig.Model,
                 Name: agentConfig.Model,
@@ -472,7 +474,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                 Provider: agentConfig.Provider,
                 BaseUrl: agentProvider.BaseUrl ?? string.Empty,
                 Reasoning: agentModelCaps.Reasoning,
-                Input: ["text"],
+                Input: agentModelCaps.Input,
                 Cost: new ModelCost(0, 0, 0, 0),
                 ContextWindow: agentProvider.ContextWindow ?? 128000,
                 MaxTokens: 32000,

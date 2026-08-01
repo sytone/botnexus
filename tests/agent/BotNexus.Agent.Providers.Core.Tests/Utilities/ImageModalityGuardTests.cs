@@ -15,6 +15,7 @@ namespace BotNexus.Agent.Providers.Core.Tests.Utilities;
 /// drop is reported with a specific, structured warning naming the model and the dropped count, and
 /// that a vision-capable model still passes images through untouched.
 /// </summary>
+[Collection(BotNexus.Agent.Providers.Core.Tests.Diagnostics.ProviderDiagnosticsCollection.Name)]
 public class ImageModalityGuardTests : IDisposable
 {
     private readonly RecordingLoggerFactory _factory = new();

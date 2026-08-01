@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Providers.Core.Registry;
 
@@ -24,14 +26,58 @@ public sealed class ModelRegistry
     private const int ExtendedContextWindow = 1_000_000;
 
     /// <summary>
-    /// Executes register.
+    /// The exact warning template emitted when a re-registration narrows a model's declared input
+    /// modalities. Public so tests assert this specific diagnostic rather than "a warning happened".
+    /// </summary>
+    public const string NarrowingWarningTemplate =
+        "Model {ModelId} (provider {Provider}) was re-registered with narrower input modalities: " +
+        "[{PreviousModalities}] -> [{NewModalities}]. Modalities lost: [{LostModalities}]. " +
+        "Content of the lost modality will be discarded before the request is sent.";
+
+    /// <summary>
+    /// Registers (or replaces) a model for a provider.
+    /// <para>
+    /// Re-registration is normal - composition roots register built-ins, then config-declared and
+    /// discovered models over the top. What is <em>not</em> normal is a re-registration that
+    /// silently removes an input modality the previous entry declared: that is how a vision model
+    /// turns into a text-only model at runtime and starts discarding images with nothing anywhere
+    /// to explain it (#2485). The narrowing is still honoured - the later registration wins, as it
+    /// always has - but it is now reported as a warning naming both modality sets.
+    /// </para>
     /// </summary>
     /// <param name="provider">The provider.</param>
     /// <param name="model">The model.</param>
     public void Register(string provider, LlmModel model)
     {
+        ArgumentNullException.ThrowIfNull(model);
+
         var models = _registry.GetOrAdd(provider, _ => new ConcurrentDictionary<string, LlmModel>());
+        if (models.TryGetValue(model.Id, out var previous))
+            WarnIfModalitiesNarrowed(provider, previous, model);
+
         models[model.Id] = model;
+    }
+
+    /// <summary>
+    /// Emits the narrowing warning when <paramref name="replacement"/> declares strictly fewer input
+    /// modalities than <paramref name="previous"/>. A widening or an unchanged set is silent.
+    /// </summary>
+    private static void WarnIfModalitiesNarrowed(string provider, LlmModel previous, LlmModel replacement)
+    {
+        var lost = previous.Input
+            .Where(m => !replacement.Input.Contains(m, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        if (lost.Count == 0)
+            return;
+
+        ProviderDiagnostics.CreateLogger(nameof(ModelRegistry)).LogWarning(
+            NarrowingWarningTemplate,
+            replacement.Id,
+            provider,
+            string.Join(",", previous.Input),
+            string.Join(",", replacement.Input),
+            string.Join(",", lost));
     }
 
     /// <summary>
