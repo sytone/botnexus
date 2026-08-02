@@ -2,6 +2,7 @@ using System.Text;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Audit;
 using BotNexus.Gateway.Sessions;
 
 namespace BotNexus.Gateway.Streaming;
@@ -39,6 +40,10 @@ public static class StreamingSessionHelper
         CancellationToken cancellationToken = default)
     {
         options ??= new StreamingSessionOptions();
+        // #2614: every tool history row this delivery-layer helper persists is rendered by the ONE
+        // execution-layer audit sink the blocking PromptAsync callers also write through. The helper
+        // no longer owns a tool-entry format of its own.
+        var auditSink = options.ToolAuditSink ?? DefaultToolAuditSink.Instance;
         // #2149: the orthogonal typed kind to stamp on assistant entries this run produces. The
         // default (MessageKind.Message) stores as null so ordinary streamed responses are
         // unchanged; a subagent-response run carries the distinct kind through every flush path so
@@ -89,16 +94,12 @@ public static class StreamingSessionHelper
                     ProviderTokenUsageRecorder.Record(session, evt.Usage);
                     break;
                 case AgentStreamEventType.ToolStart when evt.ToolCallId is not null || evt.ToolName is not null:
-                    var startEntry = new SessionEntry
-                    {
-                        Role = MessageRole.Tool,
-                        Content = $"Tool '{evt.ToolName ?? "unknown"}' started.",
-                        ToolName = evt.ToolName,
-                        ToolCallId = evt.ToolCallId,
-                        ToolArgs = evt.ToolArgs is { Count: > 0 }
+                    var startEntry = auditSink.ProjectStart(
+                        evt.ToolCallId,
+                        evt.ToolName,
+                        evt.ToolArgs is { Count: > 0 }
                             ? System.Text.Json.JsonSerializer.Serialize(evt.ToolArgs)
-                            : null
-                    };
+                            : null);
                     var alreadyPersisted = evt.ToolCallId is not null
                         && session.GetHistorySnapshot().Any(entry =>
                             entry.ToolCallId == evt.ToolCallId && entry.ToolArgs is not null);
@@ -149,18 +150,14 @@ public static class StreamingSessionHelper
                     }
                     break;
                 case AgentStreamEventType.ToolEnd when evt.ToolCallId is not null || evt.ToolName is not null:
-                    var toolEndContent = evt.ToolResult ?? (evt.ToolIsError == true ? "Tool execution failed." : "Tool execution completed.");
-                    // Cap oversized tool results at write time (#1598) so the full blob never
-                    // lands in session_history nor gets re-sent to the model on the next turn.
-                    toolEndContent = TruncateToolResult(toolEndContent, options.MaxPersistedToolResultBytes);
-                    streamedHistory.Add(new SessionEntry
-                    {
-                        Role = MessageRole.Tool,
-                        Content = toolEndContent,
-                        ToolName = evt.ToolName,
-                        ToolCallId = evt.ToolCallId,
-                        ToolIsError = evt.ToolIsError == true
-                    });
+                    // #2614: the sink renders the result row and applies the write-time #1598 cap,
+                    // so the streamed and blocking boundaries cannot drift in format.
+                    streamedHistory.Add(auditSink.ProjectResult(
+                        evt.ToolCallId,
+                        evt.ToolName,
+                        evt.ToolResult,
+                        evt.ToolIsError == true,
+                        options.MaxPersistedToolResultBytes));
                     allHistoryEntries.Add(streamedHistory[^1]);
                     if (evt.ToolCallId is not null)
                         toolEndIds.Add(evt.ToolCallId);
@@ -253,14 +250,7 @@ public static class StreamingSessionHelper
             var toolName = toolStartEntries.TryGetValue(orphanId, out var entry)
                 ? entry.ToolName ?? "unknown"
                 : "unknown";
-            var orphanEntry = new SessionEntry
-            {
-                Role = MessageRole.Tool,
-                Content = $"Tool '{toolName}' did not complete — result synthesized for transcript consistency.",
-                ToolName = toolName,
-                ToolCallId = orphanId,
-                ToolIsError = true
-            };
+            var orphanEntry = auditSink.ProjectIncomplete(orphanId, toolName);
             streamedHistory.Add(orphanEntry);
             allHistoryEntries.Add(orphanEntry);
         }
@@ -406,7 +396,8 @@ public sealed record StreamingSessionOptions(
     Func<AgentStreamEvent, CancellationToken, ValueTask>? OnEventAsync = null,
     ProviderStallWatchdog? StallWatchdog = null,
     int MaxPersistedToolResultBytes = 0,
-    MessageKind? AssistantMessageKind = null);
+    MessageKind? AssistantMessageKind = null,
+    IToolAuditSink? ToolAuditSink = null);
 
 /// <summary>
 /// Represents the accumulated results of stream processing.

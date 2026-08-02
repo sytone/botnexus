@@ -143,6 +143,12 @@ public static class GatewayServiceCollectionExtensions
          services.AddSingleton<ICitizenRegistry, DefaultCitizenRegistry>();
          services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
+        // #2614: the ONE execution-layer tool-audit sink, registered once. Both the streaming
+        // delivery path and every blocking PromptAsync caller render their durable tool history
+        // through this single implementation, so the audit guarantee no longer depends on which
+        // transport the caller picked.
+        services.TryAddSingleton<BotNexus.Gateway.Audit.IToolAuditSink>(
+            _ => BotNexus.Gateway.Audit.DefaultToolAuditSink.Instance);
         services.AddSingleton<AgentExchangeBudgetTracker>();
         // #1542: the shared turn loop and cross-world federation routing are their own
         // single-responsibility collaborators, injected into AgentExchangeService.
