@@ -244,6 +244,14 @@ public sealed class EditTool : IAgentTool
                 message += $" {alreadySatisfied.Count} edit(s) were already present (indices: {indices}).";
             }
 
+            // Issue #2690: ANSI escapes in oldText already match via the fuzzy path, but silently.
+            // Saying so turns an invisible rescue into a signal the caller can act on next time.
+            if (edits.Any(edit => edit.OldText.Contains('\u001b')))
+            {
+                message += " oldText carried ANSI escape sequences; they were normalized away"
+                           + " before matching. Send plain text to avoid relying on fuzzy matching.";
+            }
+
             message += $"\n{diff}";
 
             var details = new EditResultDetails(true, alreadySatisfied);
@@ -288,7 +296,9 @@ public sealed class EditTool : IAgentTool
             return element.EnumerateArray().Select(ParseEditElement).ToList();
         }
 
-        if (value is IEnumerable<object?> enumerable and not string)
+        // A string is IEnumerable<char>, not IEnumerable<object?>, so it correctly falls through
+        // to the wrong-shape diagnostic below rather than being enumerated character by character.
+        if (value is IEnumerable<object?> enumerable)
         {
             return enumerable.Select(ParseEditObject).ToList();
         }
