@@ -136,7 +136,7 @@ public sealed class LlmSessionCompactorPreservedTurnScalingTests
         // provider context is far larger than the estimate. With the budget normalised to provider
         // units the split becomes viable and the session actually sheds context.
         var session = CreateFourTurnSession();
-        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = 400;
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = 800;
 
         var logger = new ListLogger<LlmSessionCompactor>();
         var compactor = CreateCompactor(logger);
@@ -186,7 +186,7 @@ public sealed class LlmSessionCompactorPreservedTurnScalingTests
     private static CompactionOptions FourTurnOptions() => new()
     {
         PreservedTurns = 4,
-        ContextWindowTokens = 1_000_000,
+        ContextWindowTokens = 1_000,
         TokenThresholdRatio = 0.5,
         SummarizationModel = TestModel.Id
     };
@@ -194,7 +194,7 @@ public sealed class LlmSessionCompactorPreservedTurnScalingTests
     private static CompactionOptions TwoTurnOptions() => new()
     {
         PreservedTurns = 3,
-        ContextWindowTokens = 1_000_000,
+        ContextWindowTokens = 1_000,
         TokenThresholdRatio = 0.5,
         SummarizationModel = TestModel.Id
     };
