@@ -154,6 +154,21 @@ Spawns a new background sub-agent session.
 }
 ```
 
+**On a spawn failure (#2633):** a spawn that fails for a configuration reason — most commonly
+the descriptor naming a `model` that is not registered for its `apiProvider` — is returned to the
+calling agent as a tool error rather than escaping as a host fault:
+
+```json
+{
+  "error": "Model 'gpt-4.1' for provider 'github-copilot-messages' is not registered",
+  "Status": "failed"
+}
+```
+
+The underlying message names both the model and the provider, so the requesting agent can correct
+the override and retry. Cancellation is *not* treated as a failure — it keeps propagating so the
+executor can unwind the turn.
+
 **Example — spawn a research agent on a cheaper model:**
 
 ```json
