@@ -1142,6 +1142,49 @@ When an agent's extension configuration is merged with world defaults:
 
 - **Objects merge recursively** — Keys from both default and agent are combined, with agent values taking precedence on conflicts
 - **Scalars and arrays are replaced wholesale** — If an agent provides a scalar or array value, it completely replaces the default (no partial merging)
+- **Inheritance is tri-state** - each key in an agent's extension configuration is in exactly one of three states:
+
+| Agent-side shape | Meaning | Merged result |
+| --- | --- | --- |
+| Key absent | Inherit | The world-level default value |
+| Key present with explicit `null` | Suppress | The key is **removed** - it does not appear in the merged output at all |
+| Key present with a value | Override | The agent's value |
+
+This matches the semantics of agent configuration sections (`memory`, `search`, `heartbeat`, and friends), so `null`
+means the same thing everywhere: *do not inherit this*. It never means "set this to null".
+
+```json
+{
+  "gateway": {
+    "extensions": {
+      "defaults": {
+        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20, "skillsPath": "~/.botnexus/skills" }
+      }
+    }
+  },
+  "agents": {
+    "my-agent": {
+      "extensions": {
+        "botnexus-skills": {
+          "maxLoadedSkills": 30,
+          "skillsPath": null
+        }
+      }
+    }
+  }
+}
+```
+
+`my-agent` resolves to `{ "enabled": true, "maxLoadedSkills": 30 }` - `enabled` is inherited, `maxLoadedSkills` is
+overridden, and `skillsPath` is suppressed so the extension falls back to its own built-in default.
+
+Suppression works at every depth, including the extension id itself. Setting `"botnexus-skills": null` on an agent
+drops that extension's inherited configuration entirely. An explicit `null` for a key that has no world-level
+counterpart is a no-op rather than a null leaf.
+
+> **Extension authors:** because `null` is reserved for suppression, a bare JSON `null` will never reach your
+> configuration binder. If your extension needs to persist a genuine null-valued setting, model it explicitly
+> (for example as an object with a discriminator) instead of relying on `null` surviving the merge.
 - **Missing agent config inherits defaults** — Agents without an `extensions` block receive all world defaults unchanged
 - **Explicit disabling** — An agent can disable a world-default extension by setting `"enabled": false`
 - **Null overrides** — An explicit `null` from an agent removes a value from the merged result

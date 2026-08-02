@@ -135,7 +135,7 @@ internal static class ExtensionConfigMerger
 
         foreach (var (key, value) in world)
         {
-            if (value is null || value.GetValueKind() == JsonValueKind.Null)
+            if (value is null)
                 continue;
             merged[key] = value.DeepClone();
         }
@@ -144,7 +144,7 @@ internal static class ExtensionConfigMerger
         {
             // Tri-state (#2706): an explicit JSON null on the agent side suppresses the
             // inherited key instead of writing a null leaf. Removing an absent key is a no-op.
-            if (agentValue is null || agentValue.GetValueKind() == JsonValueKind.Null)
+            if (agentValue is null)
             {
                 merged.Remove(key);
                 continue;
