@@ -214,6 +214,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // resolved from Mode, not a deleted top-level request field. See ValidateToolGrants.
         ValidateToolGrants(request, toolIds);
 
+        // #2650: fail fast on a write-capable child that was handed read-only granted paths.
+        WarnOnUnwritableGrantedPaths(request, toolIds);
+
         // Build file access policy for workspace isolation. Null means "fully isolated" -
         // the child falls back to the base descriptor's FileAccess below. See
         // BuildChildFileAccessPolicy.
@@ -497,12 +500,55 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     /// <summary>
+    /// Emits a spawn-time diagnostic when a write-capable child is handed granted paths but no
+    /// writable location (#2650). Reuses the pre-flight seam alongside
+    /// <see cref="ValidateToolGrants"/> so the caller learns before the child burns budget and
+    /// discovers the refusal at its first <c>write</c>/<c>edit</c>.
+    /// </summary>
+    /// <remarks>
+    /// Warns (does not throw): a read-only delegation to a write-capable archetype is a legitimate
+    /// request, it is only the silent mid-run failure that is the defect. A child is treated as
+    /// write-capable when its resolved toolset contains <c>write</c> or <c>edit</c>, or when no
+    /// toolset restriction was resolved at all (the child then inherits the parent's tools, which
+    /// normally include writing). Nothing is emitted when the spawn already has a writable
+    /// location - <see cref="SubAgentSpawnRequest.ShareWorkspace"/> or
+    /// <see cref="SubAgentSpawnRequest.GrantedWritePaths"/>.
+    /// </remarks>
+    /// <param name="request">The spawn request carrying granted paths and the share-workspace flag.</param>
+    /// <param name="toolIds">The resolved tools the child would be granted, or <c>null</c>/empty.</param>
+    internal void WarnOnUnwritableGrantedPaths(SubAgentSpawnRequest request, IReadOnlyList<string>? toolIds)
+    {
+        if (request.GrantedPaths is not { Count: > 0 })
+            return;
+
+        if (request.ShareWorkspace || request.GrantedWritePaths is { Count: > 0 })
+            return;
+
+        var writeCapable = toolIds is not { Count: > 0 }
+            || toolIds.Any(t =>
+                string.Equals(t, "write", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(t, "edit", StringComparison.OrdinalIgnoreCase));
+        if (!writeCapable)
+            return;
+
+        _logger.LogWarning(
+            "Sub-agent spawn for parent '{ParentAgentId}' grants write-capable tools with grantedPaths "
+            + "[{GrantedPaths}] but no writable location: grantedPaths are read-only. Use "
+            + "grantedWritePaths for a specific writable directory, or shareWorkspace for the parent "
+            + "workspace, otherwise every write/edit outside the child workspace will be refused.",
+            request.ParentAgentId.Value,
+            string.Join(", ", request.GrantedPaths));
+    }
+
+    /// <summary>
     /// Composes the child's <see cref="FileAccessPolicy"/> for workspace isolation, or returns
     /// <c>null</c> when the child should stay fully isolated (the caller then falls back to the
     /// base descriptor's <see cref="AgentDescriptor.FileAccess"/>). By default a sub-agent can only
     /// reach its own temporary workspace; <see cref="SubAgentSpawnRequest.ShareWorkspace"/> adds
-    /// read+write access to the parent's workspace, and <see cref="SubAgentSpawnRequest.GrantedPaths"/>
-    /// adds read-only access to specific directories.
+    /// read+write access to the parent's workspace, <see cref="SubAgentSpawnRequest.GrantedPaths"/>
+    /// adds read-only access to specific directories, and
+    /// <see cref="SubAgentSpawnRequest.GrantedWritePaths"/> adds read+write access to specific
+    /// directories (#2650).
     /// </summary>
     /// <remarks>
     /// Returns <c>null</c> (not an empty policy) when neither <c>ShareWorkspace</c> nor any granted
@@ -517,7 +563,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// <returns>The composed policy, or <c>null</c> when the child stays fully isolated.</returns>
     internal FileAccessPolicy? BuildChildFileAccessPolicy(SubAgentSpawnRequest request)
     {
-        if (!request.ShareWorkspace && request.GrantedPaths is not { Count: > 0 })
+        if (!request.ShareWorkspace
+            && request.GrantedPaths is not { Count: > 0 }
+            && request.GrantedWritePaths is not { Count: > 0 })
             return null;
 
         var allowedRead = new List<string>();
@@ -536,6 +584,22 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             {
                 if (!string.IsNullOrWhiteSpace(grantedPath))
                     allowedRead.Add(Path.GetFullPath(grantedPath));
+            }
+        }
+
+        // #2650: granted WRITE paths are the explicit write grant - they appear in both lists so a
+        // sub-agent can produce files in a specific directory without ShareWorkspace handing it the
+        // whole parent workspace. Plain GrantedPaths remain read-only.
+        if (request.GrantedWritePaths is { Count: > 0 })
+        {
+            foreach (var grantedWritePath in request.GrantedWritePaths)
+            {
+                if (string.IsNullOrWhiteSpace(grantedWritePath))
+                    continue;
+
+                var resolved = Path.GetFullPath(grantedWritePath);
+                allowedRead.Add(resolved);
+                allowedWrite.Add(resolved);
             }
         }
 
