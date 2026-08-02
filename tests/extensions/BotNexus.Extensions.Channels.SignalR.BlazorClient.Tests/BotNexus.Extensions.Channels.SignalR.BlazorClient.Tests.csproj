@@ -21,6 +21,7 @@
          namespace (e.g. SubAgentInfo) do not collide with the client's own models. -->
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationSource" Alias="ConversationSource" />
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationKind" Alias="ConversationKind" />
+    <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationVisibility" Alias="ConversationVisibility" />
   </ItemGroup>
 
   <ItemGroup>

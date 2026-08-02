@@ -23,7 +23,9 @@ public sealed class ActivityDashboardProjectionTests
         // #2305 (epic #2300): cron-ness comes from the SERVER-stamped source field, never from a
         // `cron:`-prefixed session id. Fixtures set it explicitly.
         string source = "Channel",
-        string kind = "HumanAgent") =>
+        string kind = "HumanAgent",
+        // #2692: visibility is server-stamped and already on the wire; fixtures set it explicitly.
+        string visibility = "UserFacing") =>
         new(
             ConversationId: id,
             AgentId: agentId,
@@ -36,6 +38,7 @@ public sealed class ActivityDashboardProjectionTests
             UpdatedAt: updatedAt ?? Now,
             Source: source,
             Kind: kind,
+            Visibility: visibility,
             Participants: participants);
 
     // ── Cron detection ─────────────────────────────────────────────────────
@@ -884,5 +887,128 @@ public sealed class ActivityDashboardProjectionTests
             Now);
 
         Assert.Equal(new[] { "pinned-today" }, rows.Select(r => r.ConversationId));
+    }
+
+    // ── Visibility (#2692) ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// AC1: the row carries the typed visibility parsed via the existing
+    /// <see cref="ConversationOrigin.ParseVisibility"/>.
+    /// </summary>
+    [Fact]
+    public void Project_carries_typed_visibility_on_the_row()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", visibility: "InspectableReadOnly")],
+            new ActivityDashboardFilter(),
+            Now);
+
+        Assert.Equal(ConversationVisibility.InspectableReadOnly, Assert.Single(rows).Visibility);
+    }
+
+    /// <summary>
+    /// AC1: unknown / empty wire values degrade to <c>UserFacing</c>, never to hidden. Failing OPEN
+    /// matters here: silently hiding a user's conversation is far worse than showing an
+    /// unclassified one.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("SomethingFromANewerServer")]
+    public void Project_unknown_visibility_degrades_to_user_facing_and_is_kept(string wire)
+    {
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", visibility: wire)],
+            new ActivityDashboardFilter(),
+            Now);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(ConversationVisibility.UserFacing, row.Visibility);
+        Assert.Equal("c1", row.ConversationId);
+    }
+
+    /// <summary>AC2: InternalHidden rows are dropped unconditionally.</summary>
+    [Fact]
+    public void Project_excludes_internal_hidden_conversations()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1"), Conv("c2", visibility: "InternalHidden")],
+            new ActivityDashboardFilter(),
+            Now);
+
+        Assert.Equal(["c1"], rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>
+    /// AC2: no facet combination can reveal a hidden row. The enum's contract is "never rendered to
+    /// a user", so exclusion is unconditional rather than a toggle.
+    /// </summary>
+    [Fact]
+    public void Project_no_filter_combination_reveals_internal_hidden()
+    {
+        var hidden = Conv("h1", visibility: "InternalHidden");
+
+        foreach (var status in Enum.GetValues<ActivityStatusFilter>())
+        foreach (var recency in Enum.GetValues<ActivityRecencyWindow>())
+        foreach (var origin in Enum.GetValues<ActivityOriginFilter>())
+        foreach (var pinned in Enum.GetValues<ActivityPinFilter>())
+        foreach (var includeCron in new[] { true, false })
+        {
+            var rows = ActivityDashboardProjection.Project(
+                [hidden],
+                new ActivityDashboardFilter(includeCron, null, status, recency, origin, pinned),
+                Now);
+
+            Assert.Empty(rows);
+        }
+    }
+
+    /// <summary>AC3: InspectableReadOnly rows are retained (they are not InternalHidden).</summary>
+    [Fact]
+    public void Project_retains_inspectable_read_only_conversations()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", visibility: "InspectableReadOnly")],
+            new ActivityDashboardFilter(),
+            Now);
+
+        Assert.Equal(["c1"], rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>AC3: the marker fires for InspectableReadOnly only, so it carries signal.</summary>
+    [Fact]
+    public void ReadOnlyLabel_marks_inspectable_and_leaves_user_facing_unmarked()
+    {
+        var inspectable = ActivityDashboardProjection.Project(
+            [Conv("c1", visibility: "InspectableReadOnly")], new ActivityDashboardFilter(), Now)[0];
+        var userFacing = ActivityDashboardProjection.Project(
+            [Conv("c2")], new ActivityDashboardFilter(), Now)[0];
+
+        Assert.Equal("Read-only", ActivityDashboardProjection.ReadOnlyLabel(inspectable));
+        Assert.Null(ActivityDashboardProjection.ReadOnlyLabel(userFacing));
+    }
+
+    /// <summary>
+    /// AC4: the strip and the table agree, because Summarize derives from the already-filtered row
+    /// set. A hidden cron conversation must not inflate any of the three counts.
+    /// </summary>
+    [Fact]
+    public void Summary_excludes_internal_hidden_rows_and_agrees_with_table()
+    {
+        var conversations = new[]
+        {
+            Conv("c1", agentId: "alpha"),
+            Conv("h1", agentId: "ghost", visibility: "InternalHidden"),
+            Conv("h2", agentId: "phantom", source: "Cron", visibility: "InternalHidden")
+        };
+
+        var rows = ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(IncludeCron: true), Now);
+        var summary = ActivityDashboardProjection.Summarize(rows);
+
+        Assert.Equal(rows.Count, summary.ConversationCount);
+        Assert.Equal(1, summary.ConversationCount);
+        Assert.Equal(1, summary.AgentCount);
+        Assert.Equal(0, summary.ScheduledCount);
     }
 }

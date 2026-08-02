@@ -153,6 +153,15 @@
                                       title="@PinTooltip(row)"
                                       aria-label="Pinned">&#x1F4CC; Pinned</span>
                             }
+                            @if (ActivityDashboardProjection.ReadOnlyLabel(row) is { } readOnlyLabel)
+                            {
+                                @* #2692: InspectableReadOnly rows are kept but marked, so the reader can
+                                   tell an observer/audit row from one they own. Reuses .activity-badge. *@
+                                <span class="activity-badge activity-badge-readonly"
+                                      data-testid="activity-readonly-badge"
+                                      title="Read-only: you can inspect this conversation but not participate in it."
+                                      aria-label="Read-only">@readOnlyLabel</span>
+                            }
                             @if (ActivityDashboardProjection.OriginLabel(row) is { } originLabel)
                             {
                                 <span class="activity-badge activity-badge-@ActivityDashboardProjection.OriginModifier(row)"
