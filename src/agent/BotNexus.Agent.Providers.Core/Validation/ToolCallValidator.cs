@@ -421,7 +421,12 @@ public static class ToolCallValidator
             ? $" You supplied: {string.Join(", ", supplied)}."
             : string.Empty;
 
-        return $"{clause} This tool's required: {string.Join(", ", required)}.";
+        // Issue #2690: a missing 'path' was 37 of the 449 measured `edit` failures. Naming the
+        // required properties still leaves the caller to infer the shape, so show a minimal
+        // payload skeleton built from the schema's own required list.
+        var skeleton = string.Join(", ", required.Select(name => $"\"{name}\": ..."));
+        return $"{clause} This tool's required: {string.Join(", ", required)}."
+               + $" Minimal valid payload: {{ {skeleton} }}.";
     }
 
     private static void ValidateTopLevelProperties(JsonElement arguments, JsonElement schema, ICollection<string> errors)
@@ -621,6 +626,14 @@ public static class ToolCallValidator
         if (parseFailure is not null)
         {
             message += $" It was a string and is not valid JSON: {parseFailure}";
+
+            // Issue #2690: 'edits' arriving stringified was 28 of the 449 measured `edit`
+            // failures. A well-formed JSON string is already coerced upstream (#1738/#2415), so
+            // anything reaching here is a stringified structure that could NOT be recovered.
+            // Naming the wrapper - rather than only the type mismatch - tells the caller the
+            // payload was right and only the quoting was wrong, which is the one-shot fix.
+            message += $" It appears to be a stringified {allowedTypes[0]}."
+                       + $" Send '{argumentProperty.Name}' as a JSON {allowedTypes[0]} value, not as a quoted string.";
         }
 
         errors.Add(message);

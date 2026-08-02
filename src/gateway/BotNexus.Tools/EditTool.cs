@@ -281,18 +281,19 @@ public sealed class EditTool : IAgentTool
         {
             if (element.ValueKind != JsonValueKind.Array)
             {
-                throw new ArgumentException("Argument 'edits' must be an array.");
+                throw new ArgumentException(DescribeEditsShapeError(
+                    element.ValueKind == JsonValueKind.String ? element.GetString() : null));
             }
 
             return element.EnumerateArray().Select(ParseEditElement).ToList();
         }
 
-        if (value is IEnumerable<object?> enumerable)
+        if (value is IEnumerable<object?> enumerable and not string)
         {
             return enumerable.Select(ParseEditObject).ToList();
         }
 
-        throw new ArgumentException("Argument 'edits' must be an array.");
+        throw new ArgumentException(DescribeEditsShapeError(value as string));
     }
 
     private static EditEntry ParseEditObject(object? value)
@@ -398,7 +399,8 @@ public sealed class EditTool : IAgentTool
                 {
                     throw new InvalidOperationException(
                         $"Expected exactly one match for edits[].oldText, but found {exactMatchCount}."
-                        + DescribeMatchLines(normalizedOriginal, normalizedOld));
+                        + DescribeMatchLines(normalizedOriginal, normalizedOld)
+                        + DescribeClosestText(normalizedOriginal, normalizedOld));
                 }
 
                 if (exactMatchCount == 1)
@@ -419,7 +421,8 @@ public sealed class EditTool : IAgentTool
                 {
                     throw new InvalidOperationException(
                         $"Expected exactly one match for edits[].oldText, but found {fuzzyMatchCount}."
-                        + DescribeFuzzyMatchLines(normalizedOriginal, normalizedForFuzzy, fuzzyOld));
+                        + DescribeFuzzyMatchLines(normalizedOriginal, normalizedForFuzzy, fuzzyOld)
+                        + DescribeClosestText(normalizedOriginal, normalizedOld));
                 }
 
                 var fuzzyStart = normalizedForFuzzy.Normalized.IndexOf(fuzzyOld, StringComparison.Ordinal);
@@ -493,6 +496,41 @@ public sealed class EditTool : IAgentTool
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Builds the wrong-shape message for <c>edits</c> (issue #2690). When the value is a string
+    /// that parses as a JSON array, the caller stringified a payload that was otherwise exactly
+    /// right, so the message names the stringification explicitly instead of restating the type.
+    /// The edit is still rejected either way: per the #2415 precedent, silently unwrapping a
+    /// malformed payload risks fabricating an edit against a user's file.
+    /// </summary>
+    private static string DescribeEditsShapeError(string? stringValue)
+    {
+        const string baseMessage = "Argument 'edits' must be an array.";
+
+        if (stringValue is { Length: > 0 } text && text.AsSpan().TrimStart().StartsWith("["))
+        {
+            try
+            {
+                using var probe = JsonDocument.Parse(text);
+                if (probe.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    return baseMessage
+                           + " It arrived as a JSON string containing the array (a stringified"
+                           + " 'edits'), so it was rejected rather than unwrapped - guessing at a"
+                           + " quoted payload risks applying an edit you did not intend."
+                           + " Send 'edits' as a real JSON array."
+                           + ShapeHint;
+                }
+            }
+            catch (JsonException)
+            {
+                // Not recoverable JSON; fall through to the generic message.
+            }
+        }
+
+        return baseMessage + ShapeHint;
     }
 
     // Correct-shape example mirrored in the tool description so a malformed-entry error tells the
@@ -662,6 +700,44 @@ public sealed class EditTool : IAgentTool
         }
 
         return message;
+    }
+
+    /// <summary>
+    /// Issue #2690: the ambiguous (found N&gt;1) cases reported only line numbers, while the
+    /// 0-match diagnostic already gave the caller the closest text. 114 of the 449 measured
+    /// `edit` failures were the bare count form. This appends the same closest-line excerpt so
+    /// every non-unique/zero-match failure carries both the count and an excerpt to anchor on.
+    /// </summary>
+    private static string DescribeClosestText(string normalizedOriginal, string normalizedOld)
+    {
+        var anchor = FirstNonEmptyLine(normalizedOld);
+        if (anchor is null)
+        {
+            return string.Empty;
+        }
+
+        var fileLines = normalizedOriginal.Split('\n');
+        var anchorTrimmed = anchor.Trim();
+
+        var bestIndex = -1;
+        var bestScore = -1.0;
+        for (var i = 0; i < fileLines.Length; i++)
+        {
+            var score = LineSimilarity(anchorTrimmed, fileLines[i].Trim());
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestIndex = i;
+            }
+        }
+
+        if (bestIndex < 0 || bestScore <= 0)
+        {
+            return string.Empty;
+        }
+
+        return $" The closest text in the file is at line {bestIndex + 1}:"
+               + $" \u00AB{Truncate(fileLines[bestIndex], 200)}\u00BB.";
     }
 
     private static string? FirstNonEmptyLine(string text)
