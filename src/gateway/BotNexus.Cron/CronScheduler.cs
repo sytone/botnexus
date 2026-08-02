@@ -225,21 +225,37 @@ public sealed class CronScheduler(
         if (dueJobs.Count == 0)
             return;
 
-        // Phase 2 (concurrent): execute all due jobs in parallel so a long-running
-        // agent prompt for one job does not delay other due jobs or user-facing sessions.
-        var runTasks = dueJobs.Select(async entry =>
+        // Phase 2 (bounded-concurrent): execute due jobs in parallel so a long-running agent prompt for
+        // one job does not delay other due jobs or user-facing sessions -- but bounded by an aggregate
+        // cap (#2670) so a synchronised tick cannot fan out an unbounded burst of billed model turns and
+        // provider connections. The remainder queue and run as slots free; NOTHING is dropped.
+        //
+        // This bound is deliberately independent of the per-job _jobLocks semaphore, which answers a
+        // different question (serialising repeat runs of ONE job).
+        var maxConcurrency = _optionsMonitor.CurrentValue.MaxConcurrentJobs;
+        if (maxConcurrency <= 0)
         {
-            var (job, expression) = entry;
-            var tz = ResolveTimeZone(job);
-            await RunActionAsync(job, CronTriggerType.Scheduled, now, ct).ConfigureAwait(false);
+            _logger.LogDebug(
+                "Cron MaxConcurrentJobs was {Configured}; falling back to the default of {Default}.",
+                maxConcurrency,
+                CronOptions.DefaultMaxConcurrentJobs);
+            maxConcurrency = CronOptions.DefaultMaxConcurrentJobs;
+        }
 
-            // #2133: reschedule via the narrow next_run_at write. RunActionAsync already
-            // persisted the run's terminal LastRun* bookkeeping and any conversation pin
-            // through their own narrow writes, so no whole-record round-trip is needed here.
-            await _cronStore.SetNextRunAtAsync(job.Id, expression.GetNextOccurrence(now, tz), ct).ConfigureAwait(false);
-        });
+        await Parallel.ForEachAsync(
+            dueJobs,
+            new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = ct },
+            async (entry, _) =>
+            {
+                var (job, expression) = entry;
+                var tz = ResolveTimeZone(job);
+                await RunActionAsync(job, CronTriggerType.Scheduled, now, ct).ConfigureAwait(false);
 
-        await Task.WhenAll(runTasks).ConfigureAwait(false);
+                // #2133: reschedule via the narrow next_run_at write. RunActionAsync already
+                // persisted the run's terminal LastRun* bookkeeping and any conversation pin
+                // through their own narrow writes, so no whole-record round-trip is needed here.
+                await _cronStore.SetNextRunAtAsync(job.Id, expression.GetNextOccurrence(now, tz), ct).ConfigureAwait(false);
+            }).ConfigureAwait(false);
     }
 
     private async Task<CronRun> RunActionAsync(CronJob job, CronTriggerType triggerType, DateTimeOffset triggeredAt, CancellationToken ct)
