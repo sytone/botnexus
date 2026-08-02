@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
@@ -61,7 +61,7 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
     /// <inheritdoc />
     public Tool Definition => new(
         Name,
-        "Fetch a URL and return content as readable text or raw HTML. Supports pagination.",
+        ToolDescription,
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -148,8 +148,30 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
     internal const string LoopbackGuidance =
         " web_fetch is a generic OUTBOUND fetch tool and cannot be used to inspect this gateway "
         + "or other services on this machine, so retrying this URL will always fail. To inspect "
-        + "the local gateway (for example /health or /api/logs/recent), use a sanctioned local "
-        + "mechanism instead: issue the request from the shell/exec tool against the local API.";
+        + "the local gateway (for example /health or /api/logs/recent), " + LocalEndpointRemedy;
+
+    /// <summary>
+    /// The single canonical wording of the supported path to local endpoints. Issue #2691 AC1:
+    /// the restriction must be knowable from the tool description, not only at call time, so this
+    /// sentence is shared by <see cref="LoopbackGuidance"/> and <see cref="ToolDescription"/>.
+    /// Keeping one constant is deliberate - two hand-written copies of the same advice drift.
+    /// </summary>
+    internal const string LocalEndpointRemedy =
+        "use a sanctioned local mechanism instead: issue the request from the shell/exec tool "
+        + "against the local API.";
+
+    /// <summary>
+    /// Tool description surfaced in the schema. Issue #2691: 99.2% of this tool's failures were
+    /// the loopback SSRF refusal discovered at call time, because nothing in the schema said the
+    /// restriction existed. The restriction and its remedy are stated up front so the cost is
+    /// paid at decision time rather than one burned turn at a time. Behaviour is unchanged.
+    /// </summary>
+    internal const string ToolDescription =
+        "Fetch a URL and return content as readable text or raw HTML. Supports pagination. "
+        + "Outbound public hosts only: loopback/localhost targets (localhost, 127.0.0.0/8, ::1) "
+        + "and private-range, link-local, and cloud-metadata addresses are refused by the SSRF "
+        + "guard, so this gateway and other services on this machine cannot be reached here - "
+        + LocalEndpointRemedy;
 
     /// <summary>
     /// Runs the shared SSRF policy and, when the rejected host is loopback, appends actionable
