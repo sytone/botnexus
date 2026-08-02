@@ -17,6 +17,12 @@ namespace BotNexus.Agent.Providers.Core.Logging;
 /// <item>Request/response bodies and the rendered header string are additionally passed through
 /// an injected secret redactor delegate (the gateway's shared secret-shaped-value redactor) so
 /// any API key or token that leaks into a body is scrubbed too.</item>
+/// <item>Request <b>URLs</b> are redacted by query-parameter name before the URI is ever formatted
+/// into a log message: the values of <c>sig</c>, <c>key</c>, <c>api_key</c>, <c>apikey</c>,
+/// <c>access_token</c>, <c>token</c>, <c>password</c>, <c>secret</c> and any parameter whose name
+/// begins with <c>x-</c> are replaced with <c>[REDACTED]</c>, while scheme, host and path are
+/// preserved verbatim so the log stays diagnostically useful. Remaining parameter values are also
+/// passed through the injected secret redactor.</item>
 /// </list>
 /// <para>
 /// For streaming responses (<c>text/event-stream</c>) the body is <b>never</b> buffered — doing so
@@ -45,6 +51,91 @@ public sealed class ProviderLoggingHandler(
     /// </summary>
     private string Scrub(string text) => secretRedactor is null ? text : secretRedactor(text);
 
+    /// <summary>
+    /// Query-parameter names whose values are always replaced with <c>[REDACTED]</c> in logged URLs.
+    /// Matching is on the parameter <i>name</i>, never on the value: a base64 SAS signature has no
+    /// distinguishing shape, so value-sniffing would both miss real secrets and mangle innocent
+    /// parameters. Any name beginning with <c>x-</c> is additionally treated as sensitive.
+    /// </summary>
+    private static readonly HashSet<string> SensitiveQueryParameters = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "sig",
+        "key",
+        "api_key",
+        "apikey",
+        "access_token",
+        "token",
+        "password",
+        "secret",
+    };
+
+    private static bool IsSensitiveQueryParameter(string name) =>
+        SensitiveQueryParameters.Contains(name) ||
+        name.StartsWith("x-", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Redacts credential-bearing query-string parameters from a request URI before it is logged.
+    /// Scheme, host, path and fragment are preserved verbatim; a <see langword="null"/> URI and a URI
+    /// with no query string both round-trip unchanged. Never throws: a logging handler that fails
+    /// while logging an error is strictly worse than the leak it was added to prevent.
+    /// </summary>
+    private string? ScrubUrl(Uri? uri)
+    {
+        if (uri is null)
+            return null;
+
+        try
+        {
+            var original = uri.OriginalString;
+            var queryStart = original.IndexOf('?');
+            if (queryStart < 0)
+                return original;
+
+            var prefix = original[..queryStart];
+            var rest = original[(queryStart + 1)..];
+
+            var fragment = string.Empty;
+            var fragmentStart = rest.IndexOf('#');
+            if (fragmentStart >= 0)
+            {
+                fragment = rest[fragmentStart..];
+                rest = rest[..fragmentStart];
+            }
+
+            if (rest.Length == 0)
+                return original;
+
+            var parts = rest.Split('&');
+            for (var i = 0; i < parts.Length; i++)
+            {
+                var part = parts[i];
+                if (part.Length == 0)
+                    continue;
+
+                var eq = part.IndexOf('=');
+                if (eq < 0)
+                {
+                    // Valueless flag - nothing to leak, but the name itself may be secret-shaped.
+                    parts[i] = IsSensitiveQueryParameter(part) ? part : Scrub(part);
+                    continue;
+                }
+
+                var name = part[..eq];
+                var value = part[(eq + 1)..];
+                parts[i] = IsSensitiveQueryParameter(Uri.UnescapeDataString(name))
+                    ? string.Concat(name, "=[REDACTED]")
+                    : string.Concat(name, "=", Scrub(value));
+            }
+
+            return string.Concat(prefix, "?", string.Join("&", parts), fragment);
+        }
+        catch
+        {
+            // Redaction must never break logging; fail closed rather than emitting the raw URL.
+            return "[REDACTED-URL]";
+        }
+    }
+
     /// <inheritdoc/>
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
@@ -58,7 +149,7 @@ public sealed class ProviderLoggingHandler(
         logger.LogDebug(
             "Provider HTTP request: {Method} {Url} | Headers: {Headers} | Body: {Body}",
             request.Method,
-            request.RequestUri,
+            ScrubUrl(request.RequestUri),
             redactedHeaders,
             requestBody);
 
@@ -75,7 +166,7 @@ public sealed class ProviderLoggingHandler(
                 "Provider HTTP error after {ElapsedMs}ms: {Method} {Url} - {Error}",
                 sw.ElapsedMilliseconds,
                 request.Method,
-                request.RequestUri,
+                ScrubUrl(request.RequestUri),
                 ex.Message);
             throw;
         }
@@ -90,7 +181,7 @@ public sealed class ProviderLoggingHandler(
             logger.LogDebug(
                 "Provider HTTP response: {Method} {Url} | Status: {Status} | Streaming | ElapsedMs: {ElapsedMs}",
                 request.Method,
-                request.RequestUri,
+                ScrubUrl(request.RequestUri),
                 (int)response.StatusCode,
                 sw.ElapsedMilliseconds);
         }
@@ -102,7 +193,7 @@ public sealed class ProviderLoggingHandler(
             logger.LogDebug(
                 "Provider HTTP response: {Method} {Url} | Status: {Status} | ElapsedMs: {ElapsedMs} | Usage: {Usage} | Body: {Body}",
                 request.Method,
-                request.RequestUri,
+                ScrubUrl(request.RequestUri),
                 (int)response.StatusCode,
                 sw.ElapsedMilliseconds,
                 usage,

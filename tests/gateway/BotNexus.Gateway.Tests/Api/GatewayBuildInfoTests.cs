@@ -9,6 +9,7 @@ using Microsoft.Extensions.Hosting;
 
 namespace BotNexus.Gateway.Tests.Api;
 
+[Collection("IntegrationTests")]
 public sealed class GatewayBuildInfoTests
 {
     [Fact]

@@ -141,6 +141,15 @@ public sealed class ProviderConfig
     public List<string>? Models { get; set; }
 
     /// <summary>
+    /// Explicit input modalities (for example <c>["text","image"]</c>) for models registered from
+    /// this provider's <see cref="Models"/> list. When null or empty the modalities are inferred
+    /// from each model's family; an explicit declaration always wins. Previously these models were
+    /// hardcoded to text-only, so a vision-capable local model silently discarded every image it
+    /// was handed (#2485).
+    /// </summary>
+    public List<string>? Input { get; set; }
+
+    /// <summary>
     /// Optional API identifier used when registering models from this provider's <see cref="Models"/>
     /// list. Defaults to <c>"openai-completions"</c> for backward compatibility with config-driven
     /// OpenAI-compatible endpoints (Ollama, LM Studio, etc.). Set to <c>"integration-mock"</c> or

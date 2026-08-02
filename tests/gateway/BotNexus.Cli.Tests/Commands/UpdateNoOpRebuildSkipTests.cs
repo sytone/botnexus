@@ -96,9 +96,31 @@ public sealed class UpdateNoOpRebuildSkipTests
         return data;
     }
 
+    /// <summary>
+    /// Sandbox identity for the throwaway fixture repository. It is deliberately synthetic and
+    /// unroutable, so a commit that ever escapes this fixture is immediately traceable to it
+    /// rather than masquerading as a legitimate author. A generic <c>Test &lt;test@example.com&gt;</c>
+    /// identity is indistinguishable from a real one, which is exactly the hazard issue #2651
+    /// describes. This matches the sentinel already used by <c>UpdateCommandGitRunnerTests</c> -
+    /// one convention, not two.
+    /// </summary>
+    private const string SentinelName = "botnexus-test";
+
+    /// <summary>Unroutable sentinel address paired with <see cref="SentinelName"/>.</summary>
+    private const string SentinelEmail = "botnexus-test@invalid.local";
+
+    /// <summary>
+    /// Per-invocation identity flags. Passing <c>-c</c> on the command line - rather than relying
+    /// on a repo-local <c>git config</c> having already run - means no git call this fixture makes
+    /// can inherit the ambient user identity, regardless of statement ordering or of a
+    /// <c>config</c> step failing.
+    /// </summary>
+    private static readonly string IdentityFlags =
+        $"-c user.name={SentinelName} -c user.email={SentinelEmail} -c commit.gpgsign=false";
+
     private static string RunGit(string repoRoot, string arguments)
     {
-        var psi = new ProcessStartInfo("git", arguments)
+        var psi = new ProcessStartInfo("git", $"{IdentityFlags} {arguments}")
         {
             WorkingDirectory = repoRoot,
             RedirectStandardOutput = true,
@@ -109,7 +131,7 @@ public sealed class UpdateNoOpRebuildSkipTests
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();
-        process.ExitCode.ShouldBe(0, $"git {arguments} failed: {stderr}");
+        process.ExitCode.ShouldBe(0, $"git {IdentityFlags} {arguments} failed: {stderr}");
         return stdout;
     }
 
@@ -124,8 +146,8 @@ public sealed class UpdateNoOpRebuildSkipTests
         Directory.CreateDirectory(root);
 
         RunGit(root, "init --initial-branch=main");
-        RunGit(root, "config user.email test@example.com");
-        RunGit(root, "config user.name Test");
+        RunGit(root, $"config user.email {SentinelEmail}");
+        RunGit(root, $"config user.name {SentinelName}");
         RunGit(root, "config commit.gpgsign false");
 
         foreach (var relative in TrackedBuildInputs)
@@ -144,6 +166,20 @@ public sealed class UpdateNoOpRebuildSkipTests
 
         return root;
     }
+
+    /// <summary>
+    /// Exposes the fixture builder to <c>UpdateFixtureAmbientWorktreeIsolationTests</c>, which pins
+    /// (issue #2651) that constructing this repository leaves the ambient worktree's HEAD, status
+    /// and git identity untouched, and that it commits under the synthetic sentinel identity.
+    /// </summary>
+    internal static string CreateFixtureRepositoryForIsolationPin()
+        => CreateCleanRepoWithGatewayBinary();
+
+    /// <summary>
+    /// Companion teardown for <see cref="CreateFixtureRepositoryForIsolationPin"/>.
+    /// </summary>
+    internal static void DeleteFixtureRepositoryForIsolationPin(string root)
+        => DeleteRepo(root);
 
     private static void DeleteRepo(string root)
     {

@@ -55,6 +55,12 @@ public static class StreamingSessionHelper
         var toolStartIds = new HashSet<string>(StringComparer.Ordinal);
         var toolEndIds = new HashSet<string>(StringComparer.Ordinal);
         var toolStartEntries = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
+        // #2613: the streaming half of the shared tool-invocation timeline. Records are appended in
+        // ToolStart order (so OrderIndex is execution order) and completed in place on ToolEnd, then
+        // surfaced on StreamingSessionResult so this boundary and the blocking PromptAsync boundary
+        // hand back the SAME record shape produced by the SAME policy.
+        var toolInvocationBuilders = new List<ToolInvocationBuilder>();
+        var toolInvocationIndex = new Dictionary<string, ToolInvocationBuilder>(StringComparer.Ordinal);
 
         // Apply stall watchdog if configured — wraps the stream with inactivity timeout.
         var effectiveStream = options.StallWatchdog is not null
@@ -107,6 +113,23 @@ public static class StreamingSessionHelper
                         toolStartEntries[evt.ToolCallId] = startEntry;
                     }
 
+                    // #2613: open a record for this call at its start, capturing the arguments and
+                    // the observed start time. A duplicate ToolStart for the same id does not open
+                    // a second record - ordering is defined by first observation.
+                    var startKey = evt.ToolCallId ?? evt.ToolName ?? "unknown";
+                    if (!toolInvocationIndex.ContainsKey(startKey))
+                    {
+                        var builder = new ToolInvocationBuilder
+                        {
+                            ToolCallId = startKey,
+                            ToolName = evt.ToolName ?? "unknown",
+                            Arguments = startEntry.ToolArgs,
+                            StartedAt = evt.Timestamp
+                        };
+                        toolInvocationBuilders.Add(builder);
+                        toolInvocationIndex[startKey] = builder;
+                    }
+
                     // Write-ahead: persist tool start immediately so the entry
                     // survives browser refresh or session stall (#1052).
                     session.AddEntries(streamedHistory.ToList());
@@ -141,6 +164,36 @@ public static class StreamingSessionHelper
                     allHistoryEntries.Add(streamedHistory[^1]);
                     if (evt.ToolCallId is not null)
                         toolEndIds.Add(evt.ToolCallId);
+
+                    // #2613: close the matching record with the raw result and error state. The
+                    // record's own byte budget and secret sweep are applied by the policy at
+                    // construction time, independently of the history write-time cap above.
+                    var endKey = evt.ToolCallId ?? evt.ToolName ?? "unknown";
+                    if (toolInvocationIndex.TryGetValue(endKey, out var endBuilder))
+                    {
+                        endBuilder.ResultContent = evt.ToolResult;
+                        endBuilder.IsError = evt.ToolIsError == true;
+                        endBuilder.CompletedAt = evt.Timestamp;
+                        endBuilder.Completed = true;
+                    }
+                    else
+                    {
+                        // Defensive: a ToolEnd with no observed ToolStart still belongs on the
+                        // timeline rather than being silently dropped.
+                        var orphan = new ToolInvocationBuilder
+                        {
+                            ToolCallId = endKey,
+                            ToolName = evt.ToolName ?? "unknown",
+                            ResultContent = evt.ToolResult,
+                            IsError = evt.ToolIsError == true,
+                            StartedAt = evt.Timestamp,
+                            CompletedAt = evt.Timestamp,
+                            Completed = true
+                        };
+                        toolInvocationBuilders.Add(orphan);
+                        toolInvocationIndex[endKey] = orphan;
+                    }
+
                     break;
                 case AgentStreamEventType.Error when options.IncludeErrorsInHistory && !string.IsNullOrWhiteSpace(evt.ErrorMessage):
                     streamedHistory.Add(new SessionEntry
@@ -256,7 +309,22 @@ public static class StreamingSessionHelper
                 cancellationToken);
         }
 
-        return new StreamingSessionResult(streamedContent.ToString(), allHistoryEntries);
+        // #2613: materialise the tool timeline through the single shared policy, so the streaming
+        // boundary hands back exactly the record shape the blocking boundary produces.
+        var toolInvocations = toolInvocationBuilders
+            .Select((builder, index) => ToolInvocationRecordPolicy.Default.Create(
+                orderIndex: index,
+                toolCallId: builder.ToolCallId,
+                toolName: builder.ToolName,
+                rawArguments: builder.Arguments,
+                rawResultContent: builder.ResultContent,
+                isError: builder.Completed ? builder.IsError : true,
+                isIncomplete: !builder.Completed,
+                startedAt: builder.StartedAt,
+                completedAt: builder.Completed ? builder.CompletedAt : null))
+            .ToList();
+
+        return new StreamingSessionResult(streamedContent.ToString(), allHistoryEntries, toolInvocations);
     }
 
     /// <summary>
@@ -345,6 +413,38 @@ public sealed record StreamingSessionOptions(
 /// </summary>
 /// <param name="AssistantContent">The full assistant response assembled from deltas.</param>
 /// <param name="HistoryEntries">The history entries generated from stream events.</param>
+/// <param name="ToolInvocations">
+/// The run's tool timeline in execution order (issue #2613). Same record type, produced by the
+/// same <see cref="ToolInvocationRecordPolicy"/>, as the blocking <c>PromptAsync</c> boundary
+/// projects - so a streamed run and a blocking run of the same tool sequence are observably
+/// equivalent rather than two parallel shapes.
+/// </param>
 public sealed record StreamingSessionResult(
     string AssistantContent,
-    IReadOnlyList<SessionEntry> HistoryEntries);
+    IReadOnlyList<SessionEntry> HistoryEntries,
+    IReadOnlyList<ToolInvocationRecord>? ToolInvocations = null)
+{
+    /// <summary>
+    /// The run's tool timeline in execution order; never null, empty when the run used no tools.
+    /// </summary>
+    public IReadOnlyList<ToolInvocationRecord> ToolInvocations { get; init; } = ToolInvocations ?? [];
+}
+
+/// <summary>
+/// Mutable in-flight accumulator for one streamed tool call. A stream reveals a call's arguments
+/// at <c>ToolStart</c> and its result at <c>ToolEnd</c>, so the record cannot be built in one shot;
+/// this holds the halves until the run settles, at which point every entry is materialised through
+/// <see cref="ToolInvocationRecordPolicy"/>. Internal by design - it is scaffolding, not a second
+/// public tool-timeline shape (#2613 AC3).
+/// </summary>
+internal sealed class ToolInvocationBuilder
+{
+    public required string ToolCallId { get; init; }
+    public required string ToolName { get; init; }
+    public string? Arguments { get; init; }
+    public string? ResultContent { get; set; }
+    public bool IsError { get; set; }
+    public DateTimeOffset? StartedAt { get; init; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public bool Completed { get; set; }
+}

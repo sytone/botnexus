@@ -98,6 +98,7 @@ Or add it manually to the `providers` section. `config.json` is a flat top-level
 | `baseUrl` | `string?` | Base URL override for OpenAI-compatible endpoints, or catalog file path for `integration-mock`. |
 | `defaultModel` | `string?` | Default model id used when an agent does not specify one. |
 | `models` | `string[]?` | Allowed model ids. `null` means all registered models; `[]` means none. |
+| `input` | `string[]?` | Explicit input modalities (e.g. `["text","image"]`) for models registered from `models`. `null`/`[]` infers modalities from the model family; an explicit declaration always wins. Previously these models were hardcoded text-only, so a vision-capable local model silently discarded every image (#2485). |
 | `api` | `string?` | Wire-contract identifier. One of `openai-completions` (default), `openai-responses`, `anthropic-messages`, `integration-mock`. Required when the provider speaks a non-OpenAI-completions contract. |
 
 ---

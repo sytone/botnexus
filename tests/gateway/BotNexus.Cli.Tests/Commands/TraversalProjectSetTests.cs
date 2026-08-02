@@ -193,6 +193,109 @@ public sealed class TraversalProjectSetTests
     }
 
     /// <summary>
+    /// Writes a control traversal next to the real one, identical except that it has NO Exclude,
+    /// evaluates both, and returns (withExclude, withoutExclude).
+    ///
+    /// The control file must live in the SAME directory as the real one, because the glob is
+    /// anchored on <c>$(MSBuildThisFileDirectory)</c>. It is a <c>.proj</c>, not a <c>.csproj</c>,
+    /// so it can never enter the set it is measuring.
+    /// </summary>
+    private static (IReadOnlyList<string> WithExclude, IReadOnlyList<string> WithoutExclude)
+        EvaluateWithAndWithoutBinObjExclude(string repoRoot, string dir)
+    {
+        var control = Path.Combine(repoRoot, dir, "dirs.binobj-control.tmp.proj");
+        File.WriteAllText(control,
+            "<Project Sdk=\"Microsoft.Build.Traversal\">\n"
+            + "  <ItemGroup>\n"
+            + "    <ProjectReference Include=\"$(MSBuildThisFileDirectory)**\\*.csproj\" />\n"
+            + "  </ItemGroup>\n"
+            + "</Project>\n");
+        try
+        {
+            return (EvaluateProjectReferences(repoRoot, $"{dir}/dirs.proj"),
+                    EvaluateProjectReferences(repoRoot, $"{dir}/dirs.binobj-control.tmp.proj"));
+        }
+        finally
+        {
+            File.Delete(control);
+        }
+    }
+
+    /// <summary>
+    /// #2666. The bin/obj Exclude added to <c>tests/dirs.proj</c> is a pure walk-narrowing: it
+    /// removes thousands of concurrently-churning <c>bin/</c> and <c>obj/</c> directories from
+    /// MSBuild's recursive directory walk, and it must NOT remove a single project.
+    ///
+    /// Asserted by differential evaluation against a control traversal that has no Exclude, so
+    /// the test cannot pass by re-implementing the glob. Both directions are asserted: an
+    /// Exclude that dropped a real project, or one that somehow ADDED one, fails here.
+    /// </summary>
+    [Fact]
+    public void TestsTraversal_BinObjExclude_DoesNotChangeTheEvaluatedSet()
+    {
+        var repoRoot = FindRepoRoot();
+
+        var (withExclude, withoutExclude) = EvaluateWithAndWithoutBinObjExclude(repoRoot, "tests");
+
+        withoutExclude.ShouldNotBeEmpty("the control traversal must find projects at all");
+        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ShouldBe(withoutExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase),
+                "the bin/obj exclude must be a strict no-op on the evaluated set: no .csproj is "
+                + "ever emitted into bin/ or obj/, so excluding those directories may only remove "
+                + "racing directories from the walk, never a project");
+
+        // Anchors the set to what is actually on disk, so the equality above cannot be satisfied
+        // by both sides being empty (the exact #2666 failure mode).
+        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ShouldBe(ProjectsOnDisk(Path.Combine(repoRoot, "tests")));
+    }
+
+    /// <summary>
+    /// #2666, the <c>src/</c> half. Same invariant, and additionally proves the Exclude composes
+    /// with the existing <c>SkipCli</c> Remove rather than colliding with it.
+    /// </summary>
+    [Fact]
+    public void SrcTraversal_BinObjExclude_DoesNotChangeTheEvaluatedSet()
+    {
+        var repoRoot = FindRepoRoot();
+
+        var (withExclude, withoutExclude) = EvaluateWithAndWithoutBinObjExclude(repoRoot, "src");
+
+        withoutExclude.ShouldNotBeEmpty("the control traversal must find projects at all");
+        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ShouldBe(withoutExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase),
+                "the bin/obj exclude must be a strict no-op on the deployment closure");
+
+        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ShouldBe(ProjectsOnDisk(Path.Combine(repoRoot, "src")));
+    }
+
+    /// <summary>
+    /// #2666 regression fence on the FILES, not just the evaluated set. <c>ProjectReference</c> is
+    /// an explicit item, so <c>DefaultItemExcludes</c> does not apply to it: if someone deletes
+    /// the Exclude the glob silently goes back to walking every bin/obj directory and the
+    /// intermittent empty-set failure returns. That regression is invisible to a set assertion on
+    /// a quiescent dev machine, so it is pinned textually here.
+    /// </summary>
+    [Fact]
+    public void BothDirectoryTraversals_ExcludeBinAndObjFromTheProjectGlob()
+    {
+        var repoRoot = FindRepoRoot();
+
+        foreach (var rel in new[] { "src/dirs.proj", "tests/dirs.proj" })
+        {
+            var text = File.ReadAllText(Path.Combine(repoRoot, rel));
+
+            text.Contains("Exclude=", StringComparison.Ordinal)
+                .ShouldBeTrue($"{rel} must exclude bin/obj from the ProjectReference glob (#2666)");
+            text.Contains(@"**\bin\**\*.csproj", StringComparison.Ordinal)
+                .ShouldBeTrue($"{rel} must exclude bin/ from the ProjectReference glob (#2666)");
+            text.Contains(@"**\obj\**\*.csproj", StringComparison.Ordinal)
+                .ShouldBeTrue($"{rel} must exclude obj/ from the ProjectReference glob (#2666)");
+        }
+    }
+
+    /// <summary>
     /// AC1. All three traversal files must actually use the Traversal SDK - not a hand-rolled
     /// Project that happens to be named dirs.proj.
     /// </summary>

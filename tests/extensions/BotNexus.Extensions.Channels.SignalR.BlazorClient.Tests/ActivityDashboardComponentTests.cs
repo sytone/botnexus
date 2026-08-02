@@ -564,4 +564,116 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         Assert.Equal(nameof(ActivityOriginFilter.All),
             cut.Find("[data-testid='activity-filter-origin']").GetAttribute("value"));
     }
+
+    // ---- Pin state (#2619) ------------------------------------------------
+
+    private static ConversationSummaryDto PinnedConv(
+        string id,
+        bool isPinned,
+        DateTimeOffset updatedAt,
+        string title = "Chat") =>
+        new(id, "alpha", title, false, "Active", null, 0,
+            updatedAt.AddMinutes(-5), updatedAt, Kind: "HumanAgent", Source: "Channel",
+            IsPinned: isPinned, PinnedAt: isPinned ? updatedAt : null, Participants: null);
+
+    /// <summary>
+    /// AC4: the pin indicator renders in the pinned row's DOM and is absent from the unpinned row's
+    /// DOM. Scoped per row rather than to the whole markup so the filter chrome cannot satisfy it.
+    /// </summary>
+    [Fact]
+    public void Pin_indicator_renders_on_pinned_rows_only()
+    {
+        var now = DateTimeOffset.UtcNow;
+        SetupConversations(
+            PinnedConv("pinned", isPinned: true, updatedAt: now.AddHours(-4), title: "Pinned chat"),
+            PinnedConv("loose", isPinned: false, updatedAt: now, title: "Loose chat"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
+
+        var rows = cut.FindAll("[data-testid='activity-row']");
+        var pinnedRow = rows.Single(r => r.GetAttribute("data-conversation-id") == "pinned");
+        var looseRow = rows.Single(r => r.GetAttribute("data-conversation-id") == "loose");
+
+        Assert.Single(pinnedRow.QuerySelectorAll("[data-testid='activity-pin-badge']"));
+        Assert.Empty(looseRow.QuerySelectorAll("[data-testid='activity-pin-badge']"));
+        Assert.Contains("activity-row-pinned", pinnedRow.GetAttribute("class"));
+        Assert.DoesNotContain("activity-row-pinned", looseRow.GetAttribute("class") ?? string.Empty);
+    }
+
+    /// <summary>
+    /// AC2 at the rendered-DOM layer: the pinned row is painted above a newer unpinned row.
+    /// </summary>
+    [Fact]
+    public void Pinned_row_renders_above_a_newer_unpinned_row()
+    {
+        var now = DateTimeOffset.UtcNow;
+        SetupConversations(
+            PinnedConv("loose", isPinned: false, updatedAt: now),
+            PinnedConv("pinned", isPinned: true, updatedAt: now.AddDays(-3)));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
+
+        Assert.Equal(new[] { "pinned", "loose" }, RowIds(cut));
+    }
+
+    /// <summary>The pin facet is present in the filter bar and defaults to the inert All choice.</summary>
+    [Fact]
+    public void Renders_pin_filter_defaulted_to_all()
+    {
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        var select = cut.Find("[data-testid='activity-filter-pinned']");
+        Assert.Equal(nameof(ActivityPinFilter.All), select.GetAttribute("value"));
+    }
+
+    /// <summary>
+    /// AC5 at the DOM layer: selecting the pinned facet narrows the table to the pinned rows, and it
+    /// composes with the cron toggle rather than overriding it.
+    /// </summary>
+    [Fact]
+    public void Pin_filter_narrows_the_table_and_composes_with_cron()
+    {
+        var now = DateTimeOffset.UtcNow;
+        SetupConversations(
+            PinnedConv("pinned", isPinned: true, updatedAt: now),
+            PinnedConv("loose", isPinned: false, updatedAt: now),
+            new("pinned-cron", "alpha", "Cron chat", false, "Active", null, 0,
+                now.AddMinutes(-5), now, Kind: "HumanAgent", Source: "Cron",
+                IsPinned: true, PinnedAt: now, Participants: null));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
+
+        cut.Find("[data-testid='activity-filter-pinned']").Change(nameof(ActivityPinFilter.Pinned));
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "pinned" }, RowIds(cut)));
+
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
+        Assert.Contains("pinned-cron", RowIds(cut));
+        Assert.DoesNotContain("loose", RowIds(cut));
+    }
+
+    /// <summary>Clearing filters must reset the pin facet too - a filter reset cannot miss one.</summary>
+    [Fact]
+    public void Clearing_filters_resets_the_pin_facet_too()
+    {
+        var now = DateTimeOffset.UtcNow;
+        SetupConversations(
+            PinnedConv("pinned", isPinned: true, updatedAt: now),
+            PinnedConv("loose", isPinned: false, updatedAt: now));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
+
+        cut.Find("[data-testid='activity-filter-pinned']").Change(nameof(ActivityPinFilter.Pinned));
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+
+        cut.Find("[data-testid='activity-summary-conversations']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
+        Assert.Equal(nameof(ActivityPinFilter.All),
+            cut.Find("[data-testid='activity-filter-pinned']").GetAttribute("value"));
+    }
 }

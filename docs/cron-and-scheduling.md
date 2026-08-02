@@ -197,6 +197,8 @@ and leaves no row in the store.
 | `createdBy` | string | `null` | Provenance marker for who created the job |
 | `metadata` | dict | `{}` | Free-form metadata carried with the job |
 | `deleteAfterRun` | bool | `false` | Opt-in cleanup for ephemeral jobs: when `true`, the scheduler deletes the run's agent session and its transcript after the run completes (across success / timeout / error / abort), provided the run produced a cron-scoped (`cron:`) session. Prevents run-scoped sessions from accumulating transcript entries indefinitely. Leave off for long-lived reporting jobs that intentionally persist context across runs — use compaction for those. Only ever deletes `cron:`-prefixed sessions, so a misconfigured flag cannot remove an unrelated long-lived session. |
+| `deleteJobAfterRun` | bool | `false` | Opt-in **job-level** one-shot disposition: when `true`, the scheduler deletes the **job itself** after its first terminal run - success, timeout, error, or host abort alike - from the same post-run teardown that already owns the run. Deliberately **not** `deleteAfterRun`, which removes the run's ephemeral *session* and leaves the job scheduled forever; the two compose. Use this instead of writing "delete this cron job after running" into the prompt: a prompt instruction has no enforcement and no retry if the turn ends early, this flag does. Off by default, and rows written before the column existed read `false`, so nothing is ever removed without an explicit opt-in. |
+| `expiresAt` | string (ISO-8601) | `null` | Optional hard expiry instant. Once `now >= expiresAt` the job **stops executing**: the scheduler suppresses the fire and never invokes the action. Expiry **suppresses only** - it does not delete or disable the row, so the job stays visible with its history intact for a human to inspect and extend. Checked at both schedule time (cheap early-out) and fire time (the authoritative gate, so a past-due job or a manual run cannot leak through). `null` means no expiry - exactly today's behaviour. Pair with `deleteJobAfterRun` if removal is actually wanted. |
 
 ### 3.3 Complete Configuration Example
 
@@ -635,6 +637,16 @@ Creates a new job.
 - `agentId`: Target agent (optional; defaults to the calling agent)
 - `model`: Model override - `agent-prompt` jobs only (optional)
 - `enabled`: Whether the job is enabled (optional; default `true`)
+- `deleteAfterRun`: Delete the run's ephemeral cron-scoped **session** and transcript after each run (optional; default `false`)
+- `deleteJobAfterRun`: One-shot lifecycle - the scheduler deletes the **job itself** after its first terminal run (optional; default `false`)
+- `expiresAt`: ISO-8601 instant (e.g. `"2026-12-31T00:00:00Z"`) after which the job stops firing (optional; omit for no expiry)
+
+::: tip Prefer `deleteJobAfterRun` over a self-delete prompt
+Writing "delete this cron job after running" into a job's prompt is a request with no
+enforcement: if the turn ends early the job survives and keeps firing forever. Set
+`deleteJobAfterRun: true` instead - the scheduler performs the deletion itself from the
+post-run teardown, so it happens on every terminal outcome including timeout and abort.
+:::
 
 **Example - a zero-token command job:**
 ```json
@@ -658,6 +670,9 @@ current value.
 - `action` = `"update"`
 - `jobId`: Job identifier (required)
 - Any of the `create` fields above
+
+Passing an **empty string** for `expiresAt` clears an existing expiry; omitting the field
+leaves the current expiry untouched.
 
 Updating prompt-irrelevant fields (`schedule`, `timeZone`, `name`, `enabled`) on a
 `command` job does **not** require a `message` or `templateName`, and preserves the

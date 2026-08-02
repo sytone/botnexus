@@ -251,7 +251,7 @@ Lists persisted sub-agent runs across **all** parent sessions, newest-started fi
 
 | Parameter | In | Type | Default | Notes |
 |-----------|----|------|---------|-------|
-| `status` | query | string | — | Case-insensitive status filter, e.g. `Active`, `Completed`, `Failed`, `Killed`, `TimedOut`. Omit for all statuses. |
+| `status` | query | string | - | Case-insensitive status filter, e.g. `Active`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`. Omit for all statuses. |
 | `limit` | query | int | `200` | Must be `> 0`; values above `500` are clamped to `500`. |
 
 Returns `200 OK` with `SubAgentSessionSummary[]`, or `400 Bad Request` with

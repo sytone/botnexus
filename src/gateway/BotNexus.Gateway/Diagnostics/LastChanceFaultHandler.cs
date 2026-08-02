@@ -76,7 +76,11 @@ public sealed class LastChanceFaultHandler
         Emit("ProcessExit", detail: null, isTerminating: true, force: false);
     }
 
-    private void Emit(string reason, string? detail, bool isTerminating, bool force)
+    /// <summary>
+    /// Emits the fault breadcrumb. Internal rather than private so the severity policy
+    /// (#2633) is directly unit-testable without provoking a real process fault.
+    /// </summary>
+    internal void Emit(string reason, string? detail, bool isTerminating, bool force)
     {
         try
         {
@@ -97,7 +101,15 @@ public sealed class LastChanceFaultHandler
             if (force)
             {
                 Interlocked.Exchange(ref _emitted, 1);
-                _logger.LogCritical("{FaultBreadcrumb}", line);
+
+                // #2633: severity keys off whether the process is actually dying, not merely off
+                // the force latch. An unobserved task exception on an otherwise healthy gateway is
+                // a real fault worth an Error record, but logging it Critical made [FTL]-keyed
+                // monitoring page for a process that is still serving traffic.
+                if (isTerminating)
+                    _logger.LogCritical("{FaultBreadcrumb}", line);
+                else
+                    _logger.LogError("{FaultBreadcrumb}", line);
             }
             else
             {
