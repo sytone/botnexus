@@ -131,7 +131,7 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
         => new()
         {
             Role = MessageRole.Tool,
-            Content = $"Tool '{toolName}' did not complete - result synthesized for transcript consistency.",
+            Content = $"Tool '{toolName}' did not complete — result synthesized for transcript consistency.",
             ToolName = toolName,
             ToolCallId = toolCallId,
             ToolIsError = true
