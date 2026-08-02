@@ -142,6 +142,33 @@ Spawns a new background sub-agent session.
 | `systemPrompt` | string | No | parent's system prompt | Override system prompt instructions |
 | `maxTurns` | integer | No | `30` | Maximum conversation turns before auto-stop |
 | `timeoutSeconds` | integer | No | `600` | Timeout in seconds |
+| `shareWorkspace` | boolean | No | `false` | Grants the sub-agent **read and write** access to the parent agent's whole workspace |
+| `grantedPaths` | string[] | No | — | Grants **read-only** access to specific absolute paths beyond the sub-agent's own workspace. Writes and edits to these paths are refused |
+| `grantedWritePaths` | string[] | No | — | Grants **read and write** access to specific absolute paths beyond the sub-agent's own workspace |
+
+#### File access: which parameter confers write?
+
+A sub-agent can always read and write inside its own temporary workspace. Beyond that:
+
+| Grant | Read | Write | Scope |
+|---|:---:|:---:|---|
+| `grantedPaths` | Yes | **No** | The listed paths only |
+| `grantedWritePaths` | Yes | **Yes** | The listed paths only |
+| `shareWorkspace: true` | Yes | Yes | The parent agent's entire workspace |
+
+Use `grantedWritePaths` when the sub-agent must produce files in a specific directory (for
+example a git worktree) — it is narrower than `shareWorkspace`, which hands over the whole
+parent workspace. Handing a write-capable sub-agent only `grantedPaths` logs a warning at
+spawn time, because every `write`/`edit` outside its own workspace would otherwise be
+refused mid-run (#2650).
+
+#### Archetypes and shell access
+
+Archetypes carry different toolsets. Notably, `coder` includes `shell`, `exec` and `process`;
+`writer` deliberately does **not** — it has `read`, `write`, `edit`, `glob`, `grep`,
+`web_search`, `web_fetch` and `memory_search` only. Delegating work that needs to run
+commands (git, builds, test runs) to a `writer` will fail for lack of those tools regardless
+of the file grants; use `coder`, or pass an explicit `tools` allowlist.
 
 **Returns:**
 
