@@ -5724,6 +5724,14 @@ h3.conversation-title.editable:hover {
     color: #fff;
 }
 
+/* #2692: read-only marker for InspectableReadOnly rows. Muted/outlined rather than a
+   colour-shouting fill, because it reports a capability limit, not urgency. */
+.activity-badge-readonly {
+    background: transparent;
+    color: var(--text-muted, #8b93a1);
+    border: 1px solid var(--text-muted, #8b93a1);
+}
+
 .activity-row-pinned {
     box-shadow: inset 3px 0 0 var(--accent-pinned, #8a6b2f);
 }
