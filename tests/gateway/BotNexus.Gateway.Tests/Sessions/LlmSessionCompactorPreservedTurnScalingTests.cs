@@ -95,8 +95,13 @@ public sealed class LlmSessionCompactorPreservedTurnScalingTests
         var clamped = new LlmSessionCompactor.CompactionTokenMeasurement(
             2, 2 * (int)LlmSessionCompactor.MaxProviderRatioScale, LlmSessionCompactor.MaxProviderRatioScale);
 
-        LlmSessionCompactor.ScalePreservedTurns(24, measurement)
-            .ShouldBe(LlmSessionCompactor.ScalePreservedTurns(24, clamped));
+        // #2522: assert the ABSOLUTE clamped result, not merely that the two calls agree. Comparing
+        // two ScalePreservedTurns outputs to each other passes whenever scaling is disabled entirely
+        // (both sides return the request unchanged), so the relative form could never fail for the
+        // reason this test exists. Pinning ceil(24 / MaxProviderRatioScale) makes it able to fail.
+        var expected = (int)Math.Ceiling(24 / LlmSessionCompactor.MaxProviderRatioScale);
+        LlmSessionCompactor.ScalePreservedTurns(24, measurement).ShouldBe(expected);
+        LlmSessionCompactor.ScalePreservedTurns(24, clamped).ShouldBe(expected);
     }
 
     [Fact]
