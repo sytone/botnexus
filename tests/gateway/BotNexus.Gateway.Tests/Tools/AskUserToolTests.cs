@@ -276,6 +276,61 @@ public sealed class AskUserToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_OnShutdownCancellation_PreservesDurableCheckpoint()
+    {
+        // #2047: a graceful gateway shutdown cancels the caller token mid-wait. The durable prompt
+        // must be PRESERVED (not cleared) so a restarted gateway can resume it - unlike an explicit
+        // user cancel, which is terminal and clears it.
+        var registry = new AskUserResponseRegistry();
+        var store = new InMemoryConversationStore();
+        await SeedConversationAsync(store, "conversation-1");
+        var tool = CreateTool(registry, "conversation-1", store);
+        var updates = new List<AgentToolResult>();
+        var arguments = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "Survive a restart?"
+        });
+
+        using var shutdown = new CancellationTokenSource();
+        var executionTask = tool.ExecuteAsync("call-ask-user", arguments, shutdown.Token, updates.Add);
+        var request = await WaitForRequestAsync(updates);
+        await WaitForPendingJsonAsync(store, request.ConversationId, expectPresent: true);
+
+        shutdown.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(async () => await executionTask);
+
+        // The checkpoint is intentionally still present after a shutdown-driven cancellation.
+        var loaded = await store.GetAsync(request.ConversationId);
+        loaded!.PendingAskUserJson.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithNoTimeoutArgument_HasNoHardExpiry()
+    {
+        // #2047: without an explicit timeout_seconds the prompt no longer defaults to 300s; it stays
+        // pending well beyond the former default until the user answers.
+        var registry = new AskUserResponseRegistry();
+        var tool = CreateTool(registry, "conversation-1");
+        var updates = new List<AgentToolResult>();
+        var arguments = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "No expiry"
+        });
+
+        var executionTask = tool.ExecuteAsync("call-ask-user", arguments, onUpdate: updates.Add);
+        var request = await WaitForRequestAsync(updates);
+
+        // The emitted request advertises no timeout policy.
+        request.Timeout.ShouldBeNull();
+        // Give the former default a chance to fire; it must not.
+        await Task.Delay(200);
+        executionTask.IsCompleted.ShouldBeFalse();
+
+        registry.TryComplete(request.ConversationId, request.RequestId, CreateResponse(request.RequestId, freeFormText: "late but fine")).ShouldBeTrue();
+        ReadText(await executionTask).ShouldContain("late but fine");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WithoutStore_DoesNotThrow()
     {
         // The conversation store is optional; the prompt must still work with no durability wired.

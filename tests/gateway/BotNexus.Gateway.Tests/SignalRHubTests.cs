@@ -535,6 +535,69 @@ public sealed class SignalRHubTests
         response.FreeFormText.ShouldBe("staging");
     }
 
+    [Fact]
+    public async Task GatewayHub_RespondToAskUser_ResumesFromDurableCheckpoint_AfterRestart()
+    {
+        // #2047: after a restart there is no live waiter, but the durable checkpoint on the
+        // conversation row lets the response resume the conversation via the checkpoint service.
+        var registry = new AskUserResponseRegistry();
+        var conversationStore = new InMemoryConversationStore();
+        var conversation = await conversationStore.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From("conversation-restart"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "ask user restart",
+            ChannelBindings =
+            [
+                new ChannelBinding
+                {
+                    ChannelType = ChannelKey.From("signalr"),
+                    ChannelAddress = ChannelAddress.From("agent-a")
+                }
+            ],
+            PendingAskUserJson = System.Text.Json.JsonSerializer.Serialize(new AskUserRequest
+            {
+                RequestId = "req-restart",
+                ConversationId = ConversationId.From("conversation-restart"),
+                SessionId = SessionId.From("session-old"),
+                AgentId = AgentId.From("agent-a"),
+                Prompt = "Resume me"
+            }, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase })
+        });
+
+        var resumed = new List<AskUserRequest>();
+        var resumer = new DelegatingResumer((req, _) => { resumed.Add(req); return Task.CompletedTask; });
+
+        // The #2322 resolver is the front door for every channel; with no live waiter it reports
+        // NoPendingPrompt, which is precisely what makes the hub fall through to the durable
+        // checkpoint path being exercised here.
+        var resolver = new AskUserPromptResolver(registry, NullLogger<AskUserPromptResolver>.Instance);
+        var checkpointService = new AskUserCheckpointService(
+            resolver, conversationStore, NullLogger<AskUserCheckpointService>.Instance, resumer);
+
+        var hub = CreateHub(
+            conversationStore: conversationStore,
+            askUserPromptResolver: resolver,
+            askUserCheckpointService: checkpointService);
+
+        await hub.RespondToAskUser(conversation.ConversationId.Value, "req-restart", "resumed answer", null, cancelled: false);
+
+        resumed.Count.ShouldBe(1);
+        resumed[0].RequestId.ShouldBe("req-restart");
+        (await conversationStore.GetAsync(conversation.ConversationId))!.PendingAskUserJson.ShouldBeNull();
+
+        // Idempotent: a duplicate submission for the already-claimed checkpoint does not throw or
+        // resume a second time.
+        await hub.RespondToAskUser(conversation.ConversationId.Value, "req-restart", "resumed answer", null, cancelled: false);
+        resumed.Count.ShouldBe(1);
+    }
+
+    private sealed class DelegatingResumer(Func<AskUserRequest, AskUserResponse, Task> onResume) : IAskUserCheckpointResumer
+    {
+        public Task ResumeAsync(AskUserRequest request, AskUserResponse response, CancellationToken cancellationToken = default)
+            => onResume(request, response);
+    }
+
     // GatewayHub_SendMessage_DefaultAgentId_ThrowsHubException was removed: AgentId is now a Vogen
     // value object and `default(AgentId)` is rejected by the analyser (VOG009). The hub method
     // signature `SendMessage(AgentId agentId, ...)` cannot receive a default instance from any
@@ -1151,6 +1214,7 @@ public sealed class SignalRHubTests
         IConversationDispatcher? conversationDispatcher = null,
         IConversationStore? conversationStore = null,
         IAskUserPromptResolver? askUserPromptResolver = null,
+        IAskUserCheckpointService? askUserCheckpointService = null,
         IConversationResetService? resetService = null,
         string connectionId = "conn-test",
         string? userIdentifier = "user",
@@ -1197,7 +1261,8 @@ public sealed class SignalRHubTests
             app,
             logger ?? NullLogger<GatewayHub>.Instance,
             convStore,
-            askUserPromptResolver)
+            askUserPromptResolver,
+            askUserCheckpointService)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),
