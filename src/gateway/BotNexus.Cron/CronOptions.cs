@@ -15,6 +15,20 @@ public sealed class CronOptions
     /// treats a still-<c>running</c> row as orphaned and stamps it as an error (#2410). Default: 24h.
     /// </summary>
     public int OrphanedRunThresholdSeconds { get; set; } = 86400;
+
+    /// <summary>
+    /// Default aggregate cap applied when <see cref="MaxConcurrentJobs"/> is absent or non-positive.
+    /// Mirrors <c>SubAgentOptions.MaxConcurrentPerSession</c> as the naming/defaulting precedent (#2670).
+    /// </summary>
+    public const int DefaultMaxConcurrentJobs = 5;
+
+    /// <summary>
+    /// #2670: maximum number of due jobs the scheduler tick executes concurrently. The remainder queue
+    /// and run as slots free; nothing is dropped. A non-positive value degrades to
+    /// <see cref="DefaultMaxConcurrentJobs"/> rather than to unbounded fan-out. Independent of the
+    /// per-job lock, which serialises repeat runs of a single job.
+    /// </summary>
+    public int MaxConcurrentJobs { get; set; } = DefaultMaxConcurrentJobs;
     public Dictionary<string, ConfiguredCronJob>? Jobs { get; set; }
     public Dictionary<string, ConfiguredPromptTemplate>? PromptTemplates { get; set; }
 }

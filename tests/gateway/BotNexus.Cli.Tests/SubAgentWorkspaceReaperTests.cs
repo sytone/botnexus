@@ -153,6 +153,104 @@ public sealed class SubAgentWorkspaceReaperTests
         SubAgentWorkspaceReaper.SanitizeAgentDirectoryName(" agent--subagent--coder--abc ")
             .ShouldBe("agent--subagent--coder--abc");
     }
+
+    /// <summary>
+    /// #2677 AC3. A sub-agent that ended by exhausting its turn budget (#2656) is dead: its
+    /// workspace must be Terminal and prunable exactly like Completed/Failed/Killed/TimedOut.
+    /// Before the shared predicate existed, the reaper's own four-element string set omitted
+    /// BudgetExhausted, so these workspaces were reported Running and accumulated forever.
+    /// </summary>
+    [Fact]
+    public void BuildPlan_BudgetExhaustedRecord_IsTerminalAndPrunable()
+    {
+        var fs = NewFsWithDirs("agent--subagent--coder--budget");
+        var reaper = new SubAgentWorkspaceReaper(fs);
+
+        var plan = reaper.BuildPlan(Root, new Dictionary<string, string>
+        {
+            ["agent--subagent--coder--budget"] = "BudgetExhausted"
+        });
+
+        var entry = plan.ShouldHaveSingleItem();
+        entry.Disposition.ShouldBe(
+            SubAgentWorkspaceDisposition.Terminal,
+            "A budget-exhausted sub-agent has ended; classifying it Running leaks its workspace "
+            + "forever (#2677).");
+        entry.IsPrunable.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// #2677 AC3, the end-to-end half: the directory is actually reclaimed by a real prune.
+    /// </summary>
+    [Fact]
+    public void Prune_BudgetExhaustedWorkspace_IsDeleted()
+    {
+        var fs = NewFsWithDirs("agent--subagent--coder--budget");
+        var reaper = new SubAgentWorkspaceReaper(fs);
+
+        var plan = reaper.BuildPlan(Root, new Dictionary<string, string>
+        {
+            ["agent--subagent--coder--budget"] = "BudgetExhausted"
+        });
+
+        reaper.Prune(plan, dryRun: false).ShouldBe(1);
+        fs.Directory.Exists(fs.Path.Combine(Root, "agent--subagent--coder--budget")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The persisted status is matched case-insensitively, as the previous string set was, so a
+    /// differently-cased writer does not silently become unprunable.
+    /// </summary>
+    [Theory]
+    [InlineData("budgetexhausted")]
+    [InlineData("BUDGETEXHAUSTED")]
+    [InlineData("completed")]
+    public void BuildPlan_TerminalStatus_IsMatchedCaseInsensitively(string status)
+    {
+        var fs = NewFsWithDirs("agent--subagent--coder--abc");
+        var reaper = new SubAgentWorkspaceReaper(fs);
+
+        var plan = reaper.BuildPlan(Root, new Dictionary<string, string>
+        {
+            ["agent--subagent--coder--abc"] = status
+        });
+
+        plan.ShouldHaveSingleItem().Disposition.ShouldBe(SubAgentWorkspaceDisposition.Terminal);
+    }
+
+    /// <summary>
+    /// #2677 AC4 - fail-safe. A persisted status this binary cannot parse (a future writer, a
+    /// corrupted row, an empty string) must stay non-terminal. Deleting a workspace whose state
+    /// cannot be established is the one unrecoverable mistake the reaper can make.
+    /// </summary>
+    [Theory]
+    [InlineData("Active")]
+    [InlineData("SomeFutureStatus")]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("9")]
+    [InlineData("Completed,Failed")]
+    public void BuildPlan_UnparseableStatus_IsNotTerminalAndNotPruned(string status)
+    {
+        var fs = NewFsWithDirs("agent--subagent--coder--weird");
+        var reaper = new SubAgentWorkspaceReaper(fs);
+
+        var plan = reaper.BuildPlan(Root, new Dictionary<string, string>
+        {
+            ["agent--subagent--coder--weird"] = status
+        });
+
+        var entry = plan.ShouldHaveSingleItem();
+        entry.Disposition.ShouldBe(
+            SubAgentWorkspaceDisposition.Running,
+            $"'{status}' cannot be resolved to a terminal SubAgentStatus, so the workspace must "
+            + "be left alone (#2677 AC4).");
+        entry.IsPrunable.ShouldBeFalse();
+
+        reaper.Prune(plan, dryRun: false).ShouldBe(0);
+        fs.Directory.Exists(fs.Path.Combine(Root, "agent--subagent--coder--weird")).ShouldBeTrue();
+    }
+
 }
 
 /// <summary>
