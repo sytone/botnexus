@@ -249,8 +249,15 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
     /// because the contending builds live in DIFFERENT PROCESSES; an in-process lock
     /// cannot see them. The second holder finds the outputs already current and its
     /// build is a cheap no-op, so serialising costs one build, not two.
+    ///
+    /// The entire acquire/build/release cycle runs on ONE dedicated thread via
+    /// <see cref="Task.Run(Action)"/> because a Win32 mutex has THREAD AFFINITY: only
+    /// the thread that acquired it may release it. Awaiting the build inline resumed
+    /// the continuation on a different thread-pool thread, and ReleaseMutex then threw
+    /// "Object synchronization method was called from an unsynchronized block of code",
+    /// failing initialization outright. Do not re-inline this await.
     /// </summary>
-    private async Task<ProcessRunner.ProcessResult> EnsureSolutionBuiltAsync(string repoRoot)
+    private Task<ProcessRunner.ProcessResult> EnsureSolutionBuiltAsync(string repoRoot) => Task.Run(() =>
     {
         // "Global\" so the mutex is visible across sessions, not just the current one.
         using var mutex = new Mutex(initiallyOwned: false, name: @"Global\botnexus-e2e-prebuild");
@@ -278,18 +285,18 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             }
 
             Log.Add("[build] dotnet build BotNexus.slnx -c Release (prebuild, mutex held)");
-            return await ProcessRunner.RunAsync(
+            return ProcessRunner.RunAsync(
                 "dotnet",
                 "build BotNexus.slnx --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
                 workingDirectory: repoRoot,
                 environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
-                timeout: SolutionBuildTimeout);
+                timeout: SolutionBuildTimeout).GetAwaiter().GetResult();
         }
         finally
         {
             if (held) mutex.ReleaseMutex();
         }
-    }
+    });
 
     /// <summary>
     /// Invoke the installed CLI with a sandboxed environment so it cannot leak into
