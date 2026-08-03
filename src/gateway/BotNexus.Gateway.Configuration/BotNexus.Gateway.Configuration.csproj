@@ -27,5 +27,8 @@
     <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
     <InternalsVisibleTo Include="BotNexus.Gateway.Configuration.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Templates\*.md" />
+  </ItemGroup>
 
 </Project>
