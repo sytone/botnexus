@@ -29,6 +29,13 @@ namespace BotNexus.Agent.Core.Tools;
 ///   <item><c>Missing closing '}' ...</c> / <c>Unexpected token '}' ...</c> - unbalanced braces.</item>
 /// </list>
 /// </para>
+/// <para>
+/// <b>What this preflight deliberately does NOT do (issue #2757).</b> It never refuses a command on
+/// a heuristic that the real parser would accept. An earlier <c>Nested quoting detected</c> rule did
+/// exactly that - it flagged single-quoted argument values containing <c>"</c> or <c>$</c> - and was
+/// removed after a corpus replay showed 20 of 20 such rejections parsed cleanly. Any new rule added
+/// here must reproduce a signature <c>Parser.ParseInput</c> also produces.
+/// </para>
 /// </remarks>
 public static class PowerShellPreflight
 {
@@ -280,115 +287,31 @@ public static class PowerShellPreflight
                 lastOpenBrace < 0 ? n : lastOpenBrace);
         }
 
-        // The script is syntactically clean under the rules above; last, look for the *semantic*
-        // mistake behind most surviving ParserErrors - an argument value that carries its own
-        // quoting layer (issue #2417).
-        return DetectNestedQuoting(s);
-    }
-
-    // Flags whose VALUE is itself a script/filter/JSON payload. When such a value arrives
-    // single-quoted and still contains an unescaped '"' or '$', the agent has stacked quoting
-    // layers and the inner $variables will be eaten before the inner interpreter ever sees them.
-    private static readonly string[] NestedQuoteFlags = { "-c", "-command", "--jq", "-json" };
-
-    /// <summary>
-    /// Detects stacked quoting layers: a <c>-c</c>/<c>-Command</c>/<c>--jq</c>/<c>-Json</c> argument
-    /// whose single-quoted value still contains an unescaped <c>"</c> or <c>$</c>. Deliberately narrow -
-    /// a double-quoted value is left alone because <c>$</c> interpolation there is normal and
-    /// intentional, and a false rejection would break a working command.
-    /// </summary>
-    private static PreflightError? DetectNestedQuoting(string s)
-    {
-        var n = s.Length;
-        var i = 0;
-        var pendingFlagOffset = -1;
-
-        while (i < n)
-        {
-            while (i < n && char.IsWhiteSpace(s[i]))
-            {
-                i++;
-            }
-
-            if (i >= n)
-            {
-                break;
-            }
-
-            var tokenStart = i;
-
-            // A single-quoted token is read as one unit so its contents can be inspected.
-            if (s[i] == '\'')
-            {
-                var contentStart = i + 1;
-                i++;
-                while (i < n)
-                {
-                    if (s[i] == '\'')
-                    {
-                        if (i + 1 < n && s[i + 1] == '\'')
-                        {
-                            i += 2;
-                            continue;
-                        }
-
-                        break;
-                    }
-
-                    i++;
-                }
-
-                if (pendingFlagOffset >= 0 && i <= n)
-                {
-                    var inner = s.Substring(contentStart, Math.Min(i, n) - contentStart);
-                    if (inner.Contains('"') || inner.Contains('$'))
-                    {
-                        return new PreflightError(
-                            "Nested quoting detected: the value passed to "
-                            + $"'{s.Substring(pendingFlagOffset, TokenLength(s, pendingFlagOffset))}' "
-                            + "contains its own unescaped '\"' or '$', so an outer quoting layer will "
-                            + "consume it before the inner interpreter runs. Write a tmp/*.ps1 and pass "
-                            + "structured data via a file or -File instead of stacking quotes.",
-                            pendingFlagOffset);
-                    }
-                }
-
-                pendingFlagOffset = -1;
-                i++; // move past the closing quote
-                continue;
-            }
-
-            // Any other token: read to the next whitespace, skipping over double-quoted runs.
-            while (i < n && !char.IsWhiteSpace(s[i]))
-            {
-                if (s[i] == '"')
-                {
-                    i++;
-                    while (i < n && s[i] != '"')
-                    {
-                        i += s[i] == '`' ? 2 : 1;
-                    }
-                }
-
-                i++;
-            }
-
-            var token = s.Substring(tokenStart, Math.Min(i, n) - tokenStart);
-            pendingFlagOffset = NestedQuoteFlags.Contains(token.ToLowerInvariant()) ? tokenStart : -1;
-        }
-
+        // The script is syntactically clean under the rules above.
+        //
+        // Issue #2757: this is where a hand-rolled "Nested quoting detected" scan used to run. It
+        // flagged any single-quoted value passed to -c/-Command/--jq/-Json that contained a '"' or
+        // a '$', on the theory that an outer quoting layer would consume it. That premise is wrong
+        // by PowerShell's own language definition: inside a SINGLE-quoted string both characters
+        // are literal - no interpolation, no early termination - so nothing can be consumed. A
+        // 7-day forensic replay of every distinct command the rule rejected found 20 of 20 parsed
+        // with ZERO errors under
+        // [System.Management.Automation.Language.Parser]::ParseInput, and the rule was refusing the
+        // platform's own documented skill-wrapper convention,
+        //     pwsh -NoProfile -File scripts/<tool>.ps1 -Json '{"name":"value"}'
+        //
+        // The rule was DELETED rather than gated to double-quoted/unquoted contexts. Gating would
+        // have kept a second, independent notion of "valid" alongside the parser-backed rules, and
+        // that duplicate notion is exactly what drifted. Every surviving rule above reproduces a
+        // signature the real parser also produces, so the parser stays the single source of truth
+        // for what is refused. The genuinely-stacked-quoting advisory the deleted rule was reaching
+        // for belongs alongside an executed result as a warning, never as a pre-execution refusal
+        // (issue #2757, clause 3 of the proposed fix).
+        //
+        // The parser-backed rules - unterminated string, empty pipe element, missing closing brace,
+        // malformed ${...} - are NOT affected and continue to refuse; they were measured at
+        // ~69-100% true-positive over the same corpus.
         return null;
-    }
-
-    private static int TokenLength(string s, int start)
-    {
-        var i = start;
-        while (i < s.Length && !char.IsWhiteSpace(s[i]))
-        {
-            i++;
-        }
-
-        return i - start;
     }
 
     /// <summary>
