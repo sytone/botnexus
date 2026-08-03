@@ -185,7 +185,7 @@ internal sealed class AgentCommands
         foreach (var (agentId, agent) in config.Agents.OrderBy(a => a.Key, StringComparer.OrdinalIgnoreCase))
         {
             table.AddRow(
-                Markup.Escape(agentId),
+                CliText.SafeDisplay(agentId),
                 agent.Provider ?? "[dim](unset)[/]",
                 agent.Model ?? "[dim](unset)[/]",
                 agent.Enabled ? "[green]Yes[/]" : "[red]No[/]");
@@ -194,7 +194,7 @@ internal sealed class AgentCommands
         AnsiConsole.Write(table);
 
         if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Loaded from: {Markup.Escape(configPath)}[/]");
+            AnsiConsole.MarkupLine($"[dim]Loaded from: {CliText.SafeDisplay(configPath)}[/]");
 
         return 0;
     }
@@ -282,7 +282,7 @@ internal sealed class AgentCommands
         var botNexusHome = new BotNexusHome(homePath);
         botNexusHome.GetAgentDirectory(id);
 
-        AnsiConsole.MarkupLine($"[green]✓[/] Agent [green]{Markup.Escape(id)}[/] added successfully.");
+        AnsiConsole.MarkupLine($"[green]✓[/] Agent [green]{CliText.SafeDisplay(id)}[/] added successfully.");
         return 0;
     }
 
@@ -307,7 +307,7 @@ internal sealed class AgentCommands
         config.Agents ??= new Dictionary<string, AgentDefinitionConfig>(StringComparer.OrdinalIgnoreCase);
         if (ContainsDictionaryKey(config.Agents, id))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(id)}[/] already exists.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{CliText.SafeDisplay(id)}[/] already exists.");
             return 1;
         }
 
@@ -335,7 +335,7 @@ internal sealed class AgentCommands
         var botNexusHome = new BotNexusHome(homePath);
         botNexusHome.GetAgentDirectory(id);
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Added agent [green]{Markup.Escape(id)}[/].");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Added agent [green]{CliText.SafeDisplay(id)}[/].");
         return 0;
     }
 
@@ -356,7 +356,7 @@ internal sealed class AgentCommands
 
         if (config.Agents is null || !TryFindDictionaryKey(config.Agents, id, out var matchedId))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(id)}[/] was not found.");
+            AnsiConsole.MarkupLine(AgentNotFoundMessage(id));
             return 1;
         }
 
@@ -364,7 +364,7 @@ internal sealed class AgentCommands
         if (!string.IsNullOrWhiteSpace(defaultAgent) &&
             string.Equals(defaultAgent, matchedId, StringComparison.OrdinalIgnoreCase))
         {
-            AnsiConsole.MarkupLine($"[yellow]Warning:[/] Removing default agent [green]{Markup.Escape(matchedId)}[/]. Update gateway.defaultAgentId if needed.");
+            AnsiConsole.MarkupLine($"[yellow]Warning:[/] Removing default agent [green]{CliText.SafeDisplay(matchedId)}[/]. Update gateway.defaultAgentId if needed.");
         }
 
         var saveCode = await CliConfigMutation.ApplyAsync(
@@ -376,7 +376,7 @@ internal sealed class AgentCommands
         if (saveCode != 0)
             return saveCode;
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Removed agent [green]{Markup.Escape(matchedId)}[/].");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Removed agent [green]{CliText.SafeDisplay(matchedId)}[/].");
         return 0;
     }
 
@@ -394,7 +394,7 @@ internal sealed class AgentCommands
 
         if (config.Agents is null || !TryFindDictionaryKey(config.Agents, id, out var matchedId))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(id)}[/] was not found.");
+            AnsiConsole.MarkupLine(AgentNotFoundMessage(id));
             return 1;
         }
 
@@ -413,25 +413,49 @@ internal sealed class AgentCommands
         }
 
         var table = new Table().AddColumn("Field").AddColumn("Value");
-        table.AddRow("id", Markup.Escape(matchedId));
-        table.AddRow("displayName", Markup.Escape(agent.DisplayName ?? string.Empty));
-        table.AddRow("description", Markup.Escape(agent.Description ?? string.Empty));
-        table.AddRow("provider", Markup.Escape(agent.Provider ?? string.Empty));
-        table.AddRow("model", Markup.Escape(agent.Model ?? string.Empty));
-        table.AddRow("enabled", agent.Enabled ? "[green]Yes[/]" : "[red]No[/]");
-        if (agent.AllowedModels is { Count: > 0 })
-            table.AddRow("allowedModels", Markup.Escape(string.Join(", ", agent.AllowedModels)));
-        if (agent.SubAgents is { Count: > 0 })
-            table.AddRow("subAgents", Markup.Escape(string.Join(", ", agent.SubAgents)));
-        if (agent.Extensions is { Count: > 0 })
-            table.AddRow("extensions", Markup.Escape(string.Join(", ", agent.Extensions.Keys)));
+        foreach (var (field, value) in BuildShowRows(matchedId, agent))
+            table.AddRow(field, value);
         AnsiConsole.Write(table);
 
         if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Loaded from: {Markup.Escape(configPath)}[/]");
+            AnsiConsole.MarkupLine($"[dim]Loaded from: {CliText.SafeDisplay(configPath)}[/]");
 
         return 0;
     }
+
+    /// <summary>
+    /// Builds the field/value rows for <c>agent show</c>. Every value originates in the
+    /// on-disk config, which agents can write, so it is rendered through
+    /// <see cref="CliText.SafeDisplay"/> (issue #2722). Extracted so the sanitisation is
+    /// directly testable without a config file or a console.
+    /// </summary>
+    internal static List<(string Field, string Value)> BuildShowRows(string matchedId, AgentDefinitionConfig agent)
+    {
+        var rows = new List<(string, string)>
+        {
+            ("id", CliText.SafeDisplay(matchedId)),
+            ("displayName", CliText.SafeDisplay(agent.DisplayName)),
+            ("description", CliText.SafeDisplay(agent.Description)),
+            ("provider", CliText.SafeDisplay(agent.Provider)),
+            ("model", CliText.SafeDisplay(agent.Model)),
+            ("enabled", agent.Enabled ? "[green]Yes[/]" : "[red]No[/]")
+        };
+        if (agent.AllowedModels is { Count: > 0 })
+            rows.Add(("allowedModels", CliText.SafeDisplay(string.Join(", ", agent.AllowedModels))));
+        if (agent.SubAgents is { Count: > 0 })
+            rows.Add(("subAgents", CliText.SafeDisplay(string.Join(", ", agent.SubAgents))));
+        if (agent.Extensions is { Count: > 0 })
+            rows.Add(("extensions", CliText.SafeDisplay(string.Join(", ", agent.Extensions.Keys))));
+        return rows;
+    }
+
+    /// <summary>
+    /// The lookup-miss message. It echoes caller-supplied input straight back to the
+    /// terminal, so the id is sanitised here rather than at each of the three call sites
+    /// (issue #2722).
+    /// </summary>
+    internal static string AgentNotFoundMessage(string id)
+        => $"[red]Error:[/] Agent [green]{CliText.SafeDisplay(id)}[/] was not found.";
 
     public async Task<int> ExecuteExportAsync(string id, string configPath, string? outputPath, bool verbose, CancellationToken cancellationToken)
     {
@@ -447,7 +471,7 @@ internal sealed class AgentCommands
 
         if (config.Agents is null || !TryFindDictionaryKey(config.Agents, id, out var matchedId))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(id)}[/] was not found.");
+            AnsiConsole.MarkupLine(AgentNotFoundMessage(id));
             return 1;
         }
 
@@ -483,7 +507,7 @@ internal sealed class AgentCommands
 
         await File.WriteAllTextAsync(destination, json, cancellationToken);
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Exported agent [green]{Markup.Escape(matchedId)}[/] to [dim]{Markup.Escape(destination)}[/].");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Exported agent [green]{CliText.SafeDisplay(matchedId)}[/] to [dim]{CliText.SafeDisplay(destination)}[/].");
         if (verbose)
             AnsiConsole.MarkupLine($"[dim]Schema: {AgentTemplate.CurrentSchema}; requiredSecrets: {template.RequiredSecrets.Count}[/]");
 
@@ -550,7 +574,7 @@ internal sealed class AgentCommands
 
         if (!File.Exists(filePath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Template file not found at [dim]{Markup.Escape(filePath)}[/].");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Template file not found at [dim]{CliText.SafeDisplay(filePath)}[/].");
             return 1;
         }
 
@@ -562,7 +586,7 @@ internal sealed class AgentCommands
         }
         catch (System.Text.Json.JsonException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Template is not valid JSON: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Template is not valid JSON: {CliText.SafeDisplay(ex.Message)}");
             return 1;
         }
 
@@ -576,13 +600,13 @@ internal sealed class AgentCommands
         // template missing a field can still be completed at import time.
         if (!TryParseSets(sets, out var overrides, out var setError))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(setError)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(setError)}");
             return 1;
         }
 
         if (!TryApplyOverrides(template.Agent, overrides, out var applyError))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(applyError)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(applyError)}");
             return 1;
         }
 
@@ -591,7 +615,7 @@ internal sealed class AgentCommands
         {
             AnsiConsole.MarkupLine("[red]Error:[/] Template failed schema validation:");
             foreach (var error in schemaErrors)
-                AnsiConsole.MarkupLine($"  [red]\u2022[/] {Markup.Escape(error)}");
+                AnsiConsole.MarkupLine($"  [red]\u2022[/] {CliText.SafeDisplay(error)}");
             return 1;
         }
 
@@ -610,7 +634,7 @@ internal sealed class AgentCommands
 
         if (!System.Text.RegularExpressions.Regex.IsMatch(targetId, @"^[a-z0-9][a-z0-9\-_]*$"))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Invalid agent id [green]{Markup.Escape(targetId)}[/]. Use lowercase letters, digits, hyphens, or underscores.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Invalid agent id [green]{CliText.SafeDisplay(targetId)}[/]. Use lowercase letters, digits, hyphens, or underscores.");
             return 1;
         }
 
@@ -623,7 +647,7 @@ internal sealed class AgentCommands
         var exists = TryFindDictionaryKey(config.Agents, targetId, out var existingKey);
         if (exists && !overwrite)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(targetId)}[/] already exists. Pass [green]--overwrite[/] to replace it, or choose another id with [green]--id[/] / [green]--set id=<value>[/].");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{CliText.SafeDisplay(targetId)}[/] already exists. Pass [green]--overwrite[/] to replace it, or choose another id with [green]--id[/] / [green]--set id=<value>[/].");
             return 1;
         }
 
@@ -685,12 +709,12 @@ internal sealed class AgentCommands
         new BotNexusHome(homeDir).GetAgentDirectory(targetId);
 
         var verb = exists ? "Replaced" : "Imported";
-        AnsiConsole.MarkupLine($"[green]\u2713[/] {verb} agent [green]{Markup.Escape(targetId)}[/] from template [dim]{Markup.Escape(Path.GetFileName(filePath))}[/].");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] {verb} agent [green]{CliText.SafeDisplay(targetId)}[/] from template [dim]{CliText.SafeDisplay(Path.GetFileName(filePath))}[/].");
         if (template.RequiredSecrets is { Count: > 0 })
         {
             AnsiConsole.MarkupLine("[yellow]Required secrets to re-provide before this agent can run:[/]");
             foreach (var secret in template.RequiredSecrets)
-                AnsiConsole.MarkupLine($"  [yellow]\u2022[/] {Markup.Escape(secret.Provider)}.{Markup.Escape(secret.Key)}");
+                AnsiConsole.MarkupLine($"  [yellow]\u2022[/] {CliText.SafeDisplay(secret.Provider)}.{CliText.SafeDisplay(secret.Key)}");
         }
         if (verbose)
             AnsiConsole.MarkupLine($"[dim]Schema: {AgentTemplate.CurrentSchema}; overrides applied: {overrides.Count}[/]");
@@ -800,7 +824,7 @@ internal sealed class AgentCommands
     {
         if (!File.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/]. Run [green]botnexus init[/] first.");
             return null;
         }
 
@@ -810,7 +834,7 @@ internal sealed class AgentCommands
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {CliText.SafeDisplay(ex.Message)}");
             return null;
         }
     }
