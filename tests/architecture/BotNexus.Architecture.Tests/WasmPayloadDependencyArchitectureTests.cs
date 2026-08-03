@@ -246,49 +246,113 @@ public sealed class WasmPayloadDependencyArchitectureTests
             string.Join("; ", offenders));
     }
 
-    [Fact]
+    [SkippableFact]
     public void WasmBuildOutput_ContainsNoNonFrameworkLeakedAssemblies()
     {
-        var offenders = new List<string>();
-        var scannedAny = false;
+        var binRoots = WasmEntryPoints
+            .Select(entry => Path.Combine(ExtensionsRoot, entry, "bin"))
+            .ToList();
 
-        foreach (var entry in WasmEntryPoints)
+        var scan = ScanWasmBuildOutput(binRoots, dll => Path.GetRelativePath(RepoRoot, dll));
+
+        // #2707: a checkout in which no WASM entry point has ever been built has nothing for this
+        // fence to inspect. That is a fact about the machine, not about the source, so it must not
+        // be reported as a violated invariant - it SKIPS, naming the missing directories so the
+        // skip is visible in test output and a permanently-skipping fence cannot masquerade as a
+        // passing one.
+        Skip.If(
+            scan.State == WasmBuildOutputScanState.NoBuildOutput,
+            "SKIPPED (#2707): no Blazor WebAssembly build output exists in this checkout, so there " +
+            "is nothing to scan. This is not a payload violation - it means the WASM projects have " +
+            "not been built here. Run 'dotnet build BotNexus.slnx' and re-run to exercise this " +
+            "fence. Missing output directories: " + string.Join("; ", scan.MissingBinRoots));
+
+        // Anti-vacuity guard, PRESERVED (#2707 criterion 5) and now aimed at the case it was
+        // actually for: build output was expected - a bin directory exists - yet it holds no
+        // managed assemblies. That is a genuine anomaly, not a fresh checkout.
+        (scan.AssembliesScanned > 0).ShouldBeTrue(
+            "Blazor WebAssembly build output directories exist but contain no assemblies to scan. " +
+            "A payload fence that scans nothing guards nothing. This is NOT the fresh-checkout " +
+            "case (that skips explicitly); output was expected here and is missing or empty, which " +
+            "points at a broken or partial build. See #2329, #2707.\nDirectories present but " +
+            "empty of assemblies: " + string.Join("; ", scan.ScannedBinRoots));
+
+        scan.Offenders.ShouldBeEmpty(
+            "The following assemblies are present in Blazor WebAssembly build output but are " +
+            "neither .NET framework assemblies nor the BotNexus client assemblies. The browser " +
+            "downloads every one of them. This is the transitive backstop: it catches leaks the " +
+            "static csproj fences cannot see (a package that pulls another package, or an SDK " +
+            "decision to copy an asset). Track each one back to the reference that introduced it " +
+            "and remove or neutralise it. See #2329.\n" + StalenessScopeStatement + "\nOffenders: " +
+            string.Join("; ", scan.Offenders));
+    }
+
+    /// <summary>
+    /// The fence's stated position on staleness (#2707 acceptance criterion 4). It is carried in
+    /// the failure text so nobody can read a green from this fence as a claim that the payload on
+    /// disk corresponds to the current commit.
+    /// </summary>
+    public const string StalenessScopeStatement =
+        "Scope note (#2707): this fence inspects whatever build output is on disk. It CANNOT " +
+        "distinguish current output from stale output left by an earlier commit - detecting " +
+        "staleness is explicitly out of scope, and keeping the artifact current is the build's " +
+        "responsibility, not this scan's. Run a build before trusting a green from this fence.";
+
+    /// <summary>
+    /// Scans the given WASM <c>bin</c> roots for managed assemblies and classifies every one it
+    /// finds. Pure with respect to its inputs - the verdict is a function of what is on disk under
+    /// <paramref name="binRoots"/> and nothing else - which is what makes the fence give the same
+    /// answer in a fresh worktree and a previously-built checkout (#2707 criterion 1).
+    /// </summary>
+    /// <param name="binRoots">Candidate build-output roots, one per WASM entry point.</param>
+    /// <param name="relativise">
+    /// Formats an absolute dll path for display in offender messages.
+    /// </param>
+    public static WasmBuildOutputScanResult ScanWasmBuildOutput(
+        IEnumerable<string> binRoots,
+        Func<string, string> relativise)
+    {
+        ArgumentNullException.ThrowIfNull(binRoots);
+        ArgumentNullException.ThrowIfNull(relativise);
+
+        var offenders = new List<string>();
+        var present = new List<string>();
+        var missing = new List<string>();
+        var scanned = 0;
+
+        foreach (var binRoot in binRoots)
         {
-            var binRoot = Path.Combine(ExtensionsRoot, entry, "bin");
             if (!Directory.Exists(binRoot))
             {
+                missing.Add(binRoot);
                 continue;
             }
 
+            present.Add(binRoot);
+
             foreach (var dll in Directory.GetFiles(binRoot, "*.dll", SearchOption.AllDirectories))
             {
-                // Only the flat framework/app output matters; nested publish + staging folders
-                // repeat the same set.
-                scannedAny = true;
+                scanned++;
                 var name = Path.GetFileNameWithoutExtension(dll);
                 if (IsExpectedWasmOutputAssembly(name))
                 {
                     continue;
                 }
 
-                var relative = Path.GetRelativePath(RepoRoot, dll);
-                offenders.Add($"{name}.dll ({relative})");
+                offenders.Add($"{name}.dll ({relativise(dll)})");
             }
         }
 
-        scannedAny.ShouldBeTrue(
-            "No Blazor WebAssembly build output was found to scan. Build the solution " +
-            "(dotnet build BotNexus.slnx) before running this fence - a payload fence that scans " +
-            "nothing guards nothing. See #2329.");
+        var state = present.Count == 0
+            ? WasmBuildOutputScanState.NoBuildOutput
+            : WasmBuildOutputScanState.Scanned;
 
-        offenders.Distinct().ShouldBeEmpty(
-            "The following assemblies are present in Blazor WebAssembly build output but are " +
-            "neither .NET framework assemblies nor the BotNexus client assemblies. The browser " +
-            "downloads every one of them. This is the transitive backstop: it catches leaks the " +
-            "static csproj fences cannot see (a package that pulls another package, or an SDK " +
-            "decision to copy an asset). Track each one back to the reference that introduced it " +
-            "and remove or neutralise it. See #2329.\nOffenders: " +
-            string.Join("; ", offenders.Distinct()));
+        return new WasmBuildOutputScanResult(
+            state,
+            scanned,
+            offenders.Distinct(StringComparer.Ordinal).ToList(),
+            present,
+            missing);
     }
 
     // ---- vacuity guards: the fence must be able to fail ----
@@ -561,3 +625,41 @@ public sealed class WasmPayloadDependencyArchitectureTests
         return current!.FullName;
     }
 }
+
+/// <summary>
+/// Whether the WASM build-output fence had anything to inspect (#2707). The two cases the original
+/// code conflated: nothing was ever produced here (honest skip) versus output was produced and was
+/// empty (real anti-vacuity failure).
+/// </summary>
+public enum WasmBuildOutputScanState
+{
+    /// <summary>
+    /// No WASM entry point has a build-output directory in this checkout. Nothing was produced to
+    /// inspect, so the fence skips with an explicit reason rather than failing.
+    /// </summary>
+    NoBuildOutput,
+
+    /// <summary>
+    /// At least one build-output directory exists and was walked. The anti-vacuity guard applies:
+    /// output was expected, so finding zero assemblies is a genuine failure.
+    /// </summary>
+    Scanned,
+}
+
+/// <summary>
+/// The outcome of scanning the Blazor WebAssembly build output (#2707).
+/// </summary>
+/// <param name="State">Whether there was any build output to inspect at all.</param>
+/// <param name="AssembliesScanned">How many managed assemblies were classified.</param>
+/// <param name="Offenders">Assemblies that belong to neither the framework nor the client payload.</param>
+/// <param name="ScannedBinRoots">Build-output roots that existed and were walked.</param>
+/// <param name="MissingBinRoots">
+/// Build-output roots that did not exist. Named in the skip message so the skip states which
+/// artifact is missing.
+/// </param>
+public sealed record WasmBuildOutputScanResult(
+    WasmBuildOutputScanState State,
+    int AssembliesScanned,
+    IReadOnlyList<string> Offenders,
+    IReadOnlyList<string> ScannedBinRoots,
+    IReadOnlyList<string> MissingBinRoots);

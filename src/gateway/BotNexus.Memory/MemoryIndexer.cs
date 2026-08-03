@@ -69,6 +69,19 @@ public sealed class MemoryIndexer(
 
         var sessionEvent = BuildSessionEvent(session, agentId, sessionId);
 
+        // #2608: a sub-agent workspace reaped by the sweeper (#2237) has no agent directory,
+        // so its memory store cannot exist. Opening it yields SQLITE_CANTOPEN, which is
+        // permanently unrecoverable — retrying it burns the budget and logs an unactionable
+        // [ERR]. Skip before SQLite is reached. This is deliberately narrow: a store whose
+        // location DOES exist but is corrupt or unreadable still fails loudly and still retries.
+        if (!_storeFactory.StoreLocationExists(agentId))
+        {
+            _logger.LogDebug(
+                "Skipping memory indexing for session '{SessionId}': agent '{AgentId}' has no memory store location (workspace already reclaimed).",
+                sessionId, agentId);
+            return;
+        }
+
         try
         {
             var agentMemory = _agentMemoryFactory.Create(agentId);
@@ -206,6 +219,16 @@ public sealed class MemoryIndexer(
             try
             {
                 var sessionEvent = BuildSessionEvent(session, agentId.Value, sessionId.Value);
+
+                // #2608: same skip as the live indexing path — a reaped agent directory is a
+                // normal outcome, not a backfill failure.
+                if (!storeFactory.StoreLocationExists(agentId.Value))
+                {
+                    logger.LogDebug(
+                        "Skipping backfill for session '{SessionId}': agent '{AgentId}' has no memory store location (workspace already reclaimed).",
+                        sessionId, agentId);
+                    continue;
+                }
 
                 try
                 {

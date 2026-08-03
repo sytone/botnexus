@@ -14,6 +14,14 @@ namespace BotNexus.Gateway.Tools;
 /// Allows an agent to pause mid-turn and request structured user input while preserving
 /// the active tool-call context.
 /// </summary>
+/// <remarks>
+/// As of issue #2047 the prompt is a durable, resumable checkpoint: it has no hard timeout by
+/// default and, crucially, is <em>not</em> cleared when the wait is cancelled by a graceful gateway
+/// shutdown or reload. The durable <see cref="Conversation.PendingAskUserJson"/> copy is cleared only
+/// when the prompt reaches an explicit terminal state (the user answers, the user cancels, or an
+/// optional caller-supplied timeout elapses). A shutdown mid-wait leaves the checkpoint intact so a
+/// restarted gateway can resume it via the durable checkpoint service.
+/// </remarks>
 public sealed class AskUserTool(
     IAskUserResponseRegistry responseRegistry,
     AgentId agentId,
@@ -31,7 +39,7 @@ public sealed class AskUserTool(
 
     public Tool Definition => new(
         Name,
-        "Pause execution and request user input before continuing.",
+        "Pause execution and request user input before continuing. The prompt is a durable checkpoint: it stays pending until the user answers or cancels, and survives gateway restarts.",
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -65,7 +73,7 @@ public sealed class AskUserTool(
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 3600,
-                  "description": "Seconds to wait before timing out (default 300)."
+                  "description": "Optional non-terminal reminder-style wait limit. Omit (the default) for a durable prompt with no expiry that stays pending until the user answers or cancels."
                 }
               },
               "required": ["prompt"]
@@ -97,10 +105,15 @@ public sealed class AskUserTool(
         var prompt = ReadRequiredString(arguments, "prompt");
         var inputType = ReadInputType(arguments);
         var choices = ReadChoices(arguments);
-        var timeoutSeconds = Math.Clamp(ReadInt(arguments, "timeout_seconds") ?? 300, 1, 3600);
+        // #2047: no default hard timeout. A prompt is durable until the user answers or cancels.
+        // A caller may still opt into an explicit reminder-style limit; when supplied it is clamped
+        // to [1, 3600] seconds, otherwise the wait has no expiry.
+        var timeoutSeconds = ReadInt(arguments, "timeout_seconds");
+        TimeSpan? timeout = timeoutSeconds is { } seconds
+            ? TimeSpan.FromSeconds(Math.Clamp(seconds, 1, 3600))
+            : null;
         var allowMultiple = ReadBool(arguments, "allow_multiple") ?? inputType == AskUserInputType.MultipleChoice;
         var allowFreeForm = inputType is AskUserInputType.FreeForm or AskUserInputType.ChoiceOrFreeForm;
-        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
         var registration = responseRegistry.Register(conversationId.Value, timeout);
 
         var request = new AskUserRequest
@@ -117,6 +130,10 @@ public sealed class AskUserTool(
             Timeout = timeout
         };
 
+        // Tracks whether the wait reached an explicit terminal state (answer / cancel / timeout).
+        // Only a terminal state clears the durable checkpoint; a shutdown-driven cancellation of the
+        // in-memory wait must leave the checkpoint intact so a restarted gateway can resume it.
+        var reachedTerminalState = false;
         try
         {
             // The registry entry above is live pending-input state. Any failure between here and
@@ -133,15 +150,22 @@ public sealed class AskUserTool(
             await PersistPendingPromptAsync(request, cancellationToken).ConfigureAwait(false);
 
             var response = await registration.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            reachedTerminalState = true;
             return TextResult(JsonSerializer.Serialize(response, JsonOptions));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            // Graceful shutdown / reload / conversation switch cancelled the live wait. Do NOT clear
+            // the durable checkpoint - it is intentionally preserved so the prompt survives the
+            // restart and resumes when the user answers (#2047). Drop the in-memory waiter only.
             responseRegistry.Cancel(registration.RequestId);
             throw;
         }
         catch (OperationCanceledException)
         {
+            // The registry cancelled the wait (explicit user cancel via CancelAllForConversation, or
+            // an archive/reset). This is a terminal state: clear the durable checkpoint below.
+            reachedTerminalState = true;
             return TextResult(JsonSerializer.Serialize(new AskUserResponse
             {
                 RequestId = registration.RequestId,
@@ -159,10 +183,13 @@ public sealed class AskUserTool(
         }
         finally
         {
-            // The wait has resolved by every path (answer, timeout, cancel, or exception) -- the
-            // prompt is no longer pending, so clear the durable copy. Using CancellationToken.None
-            // because the caller's token may already be cancelled and the clear must still run.
-            await ClearPendingPromptAsync(conversationId.Value, CancellationToken.None).ConfigureAwait(false);
+            if (reachedTerminalState)
+            {
+                // The prompt reached a terminal state, so clear the durable copy. Using
+                // CancellationToken.None because the caller's token may already be cancelled and the
+                // clear must still run.
+                await ClearPendingPromptAsync(conversationId.Value, CancellationToken.None).ConfigureAwait(false);
+            }
         }
     }
 

@@ -96,6 +96,40 @@ public sealed class AskUserResponseRegistryTests
             results[index].FreeFormText.ShouldBe($"response-{index}");
     }
 
+    [Fact]
+    public void Rehydrate_MakesConversationRequestIdDiscoverable()
+    {
+        using var registry = new AskUserResponseRegistry();
+        var conversationId = ConversationId.From("conversation-rehydrate");
+
+        registry.Rehydrate(conversationId, "req-rehydrated").ShouldBeTrue();
+
+        registry.TryGetPendingRequestId(conversationId, out var requestId).ShouldBeTrue();
+        requestId.ShouldBe("req-rehydrated");
+    }
+
+    [Fact]
+    public void Rehydrate_IsNotCompletable_SoDurableCheckpointOwnsResolution()
+    {
+        using var registry = new AskUserResponseRegistry();
+        var conversationId = ConversationId.From("conversation-rehydrate-2");
+        registry.Rehydrate(conversationId, "req-rehydrated");
+
+        // A rehydrated entry has no in-memory waiter; TryComplete must not resolve it (that would
+        // silently drop the answer instead of resuming from the durable checkpoint). #2047
+        registry.TryComplete(conversationId, "req-rehydrated", CreateResponse("req-rehydrated")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Rehydrate_IsIdempotent_WhenEntryAlreadyExists()
+    {
+        using var registry = new AskUserResponseRegistry();
+        var conversationId = ConversationId.From("conversation-rehydrate-3");
+        registry.Register(conversationId, timeout: null);
+
+        registry.Rehydrate(conversationId, "req-other").ShouldBeFalse();
+    }
+
     private static AskUserResponse CreateResponse(
         string requestId,
         string? freeFormText = "answer",
