@@ -88,9 +88,32 @@ public static class ConfigShadowDiff
         JsonObject? source,
         JsonObject? storeRoundTrip,
         TimeProvider? timeProvider = null)
+        => CompareEntries(
+            ConfigDocumentFlattener.Flatten(source),
+            ConfigDocumentFlattener.Flatten(storeRoundTrip),
+            timeProvider);
+
+    /// <summary>
+    /// Compares two already-flattened documents.
+    ///
+    /// <para>
+    /// <b>Why this overload exists and is public.</b> A store need not reconstruct a
+    /// <see cref="JsonObject"/> to be diffed - it can yield <see cref="ConfigEntry"/> values directly,
+    /// and a relational store naturally would. That path is the only one able to report
+    /// <see cref="ConfigValueState.Unset"/>, because JSON has no way to express "present and unset" and
+    /// so <see cref="ConfigDocumentFlattener"/> never emits it. Comparing state as well as value is
+    /// consequently redundant for document-to-document diffs and load-bearing here - and a store
+    /// mapping both unset and explicit-null onto a single relational NULL is precisely the collapse
+    /// this catches.
+    /// </para>
+    /// </summary>
+    public static ConfigShadowDiffReport CompareEntries(
+        IReadOnlyDictionary<string, ConfigEntry> sourceEntries,
+        IReadOnlyDictionary<string, ConfigEntry> storeEntries,
+        TimeProvider? timeProvider = null)
     {
-        var sourceEntries = ConfigDocumentFlattener.Flatten(source);
-        var storeEntries = ConfigDocumentFlattener.Flatten(storeRoundTrip);
+        ArgumentNullException.ThrowIfNull(sourceEntries);
+        ArgumentNullException.ThrowIfNull(storeEntries);
 
         var differences = new List<ConfigDiffEntry>();
 

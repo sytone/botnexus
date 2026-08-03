@@ -123,6 +123,63 @@ public sealed class ConfigShadowDiffTests
     }
 
     /// <summary>
+    /// AC4, and the assertion that makes state comparison load-bearing rather than redundant.
+    ///
+    /// <para>
+    /// A relational store reports its own states directly rather than reconstructing a JSON document,
+    /// and it is the only side able to say <see cref="ConfigValueState.Unset"/> - JSON cannot express
+    /// "present and unset", so the flattener never emits it. Here the store has mapped an explicit null
+    /// onto <c>Unset</c>, which is exactly what a nullable column does: both sides carry a null
+    /// <see cref="ConfigEntry.Value"/>, so a comparison on values alone finds them EQUAL and reports
+    /// clean. Only comparing state catches it.
+    /// </para>
+    ///
+    /// <para>
+    /// This is the failure that would silently hand every agent back a world default it had explicitly
+    /// declined, with no exception and no log line.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void StoreReportingUnsetWhereSourceIsExplicitNull_IsADifference()
+    {
+        var source = new Dictionary<string, ConfigEntry>(StringComparer.Ordinal)
+        {
+            ["agents.alpha.memory"] = new("agents.alpha.memory", ConfigValueState.ExplicitNull, Value: null),
+        };
+        var store = new Dictionary<string, ConfigEntry>(StringComparer.Ordinal)
+        {
+            ["agents.alpha.memory"] = new("agents.alpha.memory", ConfigValueState.Unset, Value: null),
+        };
+
+        var report = ConfigShadowDiff.CompareEntries(source, store);
+
+        report.IsClean.ShouldBeFalse(
+            "both sides carry a null value, so a value-only comparison finds them equal. Explicit-null " +
+            "suppresses an inherited value and unset inherits it - a store collapsing them onto one " +
+            "relational NULL must not diff clean.");
+
+        var diff = report.Differences.ShouldHaveSingleItem();
+        diff.Kind.ShouldBe(ConfigDiffKind.ValueDiffers);
+        diff.Source.State.ShouldBe(ConfigValueState.ExplicitNull);
+        diff.Store.State.ShouldBe(ConfigValueState.Unset);
+    }
+
+    /// <summary>
+    /// The negative control for the test above: identical states with identical values compare clean,
+    /// so the state check is discriminating rather than simply always reporting a difference.
+    /// </summary>
+    [Fact]
+    public void StoreReportingTheSameStateAndValue_ComparesClean()
+    {
+        var entries = new Dictionary<string, ConfigEntry>(StringComparer.Ordinal)
+        {
+            ["agents.alpha.memory"] = new("agents.alpha.memory", ConfigValueState.ExplicitNull, Value: null),
+        };
+
+        ConfigShadowDiff.CompareEntries(entries, entries).IsClean.ShouldBeTrue();
+    }
+
+    /// <summary>
     /// Arrays are leaves: configuration replaces them wholesale, so their identity is the whole value.
     /// </summary>
     [Fact]
