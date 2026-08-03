@@ -315,13 +315,13 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedResult = await _processManager.StopAsync(home, cancellationToken);
+                    capturedResult = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
                 });
             result = capturedResult;
         }
         else
         {
-            result = await _processManager.StopAsync(home, cancellationToken);
+            result = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
         }
 
         if (result.Success)
@@ -453,14 +453,14 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedStop = await _processManager.StopAsync(home, cancellationToken);
+                    capturedStop = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
                 });
             stopResult = capturedStop;
         }
         else
         {
             AnsiConsole.MarkupLine("[blue][[gateway]][/] Stopping gateway...");
-            stopResult = await _processManager.StopAsync(home, cancellationToken);
+            stopResult = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
         }
 
         if (stopResult.Success)

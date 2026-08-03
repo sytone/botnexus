@@ -161,52 +161,84 @@ internal class UpdateCommand
         // silent-failure class this repo has been fighting.
         if (await CanSkipRebuildAsync(repoRoot, cancellationToken))
         {
-            AnsiConsole.MarkupLine("[green]\u2713[/] Nothing to rebuild; gateway left running.");
-            return 0;
+            // #2772: the old code asserted "gateway left running" from control flow alone. Ask.
+            if (IsGatewayRunning(home, repoRoot))
+            {
+                AnsiConsole.MarkupLine("[green]\u2713[/] Nothing to rebuild; gateway left running.");
+                return 0;
+            }
+
+            AnsiConsole.MarkupLine("[yellow]\u26a0[/] Nothing to rebuild, but no gateway is running; starting it.");
+            return await RunRestartAsync(home, port, repoRoot, cancellationToken);
         }
 
         // Step 2: Stop gateway BEFORE building — releases file locks on Windows
+        var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
         GatewayStopResult stopResult;
         if (interactive)
         {
-            GatewayStopResult capturedStop = new(true, "skipped");
+            GatewayStopResult capturedStop = new(true, "skipped", GatewayStopOutcome.NotRunning);
             await AnsiConsole.Status()
                 .Spinner(Spinner.Known.Dots)
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedStop = await _processManager.StopAsync(home, cancellationToken);
+                    capturedStop = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
                 });
             stopResult = capturedStop;
         }
         else
         {
             AnsiConsole.MarkupLine("[blue][[update]][/] Stopping gateway...");
-            stopResult = await _processManager.StopAsync(home, cancellationToken);
+            stopResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
         }
 
-        stopResult ??= new GatewayStopResult(false, "no result");
+        stopResult ??= new GatewayStopResult(false, "no result", GatewayStopOutcome.Failed);
 
-        if (!stopResult.Success)
-            AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Could not stop gateway ({Markup.Escape(stopResult.Message ?? "not running")}). Continuing anyway.");
-        else
-            AnsiConsole.MarkupLine("[green]\u2713[/] Gateway stopped");
+        // #2772: render what was OBSERVED. "Stopped" is only printed when a live gateway process
+        // was found and then seen gone; "no gateway found" is a distinct, non-claiming line.
+        switch (stopResult.Outcome)
+        {
+            case GatewayStopOutcome.Stopped:
+                AnsiConsole.MarkupLine("[green]\u2713[/] Gateway stopped");
+                break;
+            case GatewayStopOutcome.NotRunning:
+                AnsiConsole.MarkupLine($"[dim]\u2013[/] No running gateway found ({Markup.Escape(stopResult.Message ?? "not running")}); nothing to stop.");
+                break;
+            default:
+                AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Could not stop gateway ({Markup.Escape(stopResult.Message ?? "unknown")}). Continuing anyway.");
+                break;
+        }
 
         // Wait for the port to be free — confirms the process has fully released file locks.
         // On Windows this can take several seconds after the process exits.
+        // #2772: a timeout here is NOT advisory. The port was held by the very process that then
+        // locked the DLLs, so proceeding burns a full Release build and fails with misleading
+        // guidance. Abort before the build instead.
+        bool portFree;
         if (interactive)
         {
+            var capturedFree = false;
             await AnsiConsole.Status()
                 .Spinner(Spinner.Known.Dots)
                 .SpinnerStyle(Style.Parse("dim"))
                 .StartAsync("Waiting for gateway to release file handles...", async ctx =>
                 {
-                    await WaitForPortFreeAsync(port, cancellationToken);
+                    capturedFree = await WaitForPortFreeAsync(port, cancellationToken);
                 });
+            portFree = capturedFree;
         }
         else
         {
-            await WaitForPortFreeAsync(port, cancellationToken);
+            portFree = await WaitForPortFreeAsync(port, cancellationToken);
+        }
+
+        if (!portFree)
+        {
+            AnsiConsole.MarkupLine($"[red]\u2717[/] Port {port} is still in use; something is still running the gateway.");
+            AnsiConsole.MarkupLine("[yellow]\u26a0[/] Update aborted before building - a build now would fail on locked files.");
+            AnsiConsole.MarkupLine("  [dim]Find the owning process and stop it, then re-run botnexus update.[/]");
+            return 1;
         }
 
         // Steps 3 & 4: Build and deploy (gateway is now stopped, no file locks)
@@ -382,7 +414,7 @@ internal class UpdateCommand
         return 0;
     }
 
-    private async Task<int> RunRestartAsync(string home, int port, string repoRoot, CancellationToken cancellationToken)
+    protected virtual async Task<int> RunRestartAsync(string home, int port, string repoRoot, CancellationToken cancellationToken)
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
@@ -1033,19 +1065,30 @@ internal class UpdateCommand
 
     /// <summary>
     /// Waits until the given port is available (process released it) or timeout elapses.
-    /// Polls every 250ms for up to 15 seconds.
+    /// Polls every 250ms for up to 15 seconds. Returns true when the port became free.
+    /// Protected virtual so tests can drive both outcomes without binding a real socket.
     /// </summary>
-    private static async Task WaitForPortFreeAsync(int port, CancellationToken cancellationToken)
+    protected virtual async Task<bool> WaitForPortFreeAsync(int port, CancellationToken cancellationToken)
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (DateTime.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
         {
             if (IsPortAvailable(port))
-                return;
+                return true;
             await Task.Delay(250, cancellationToken);
         }
-        // If still not free, proceed anyway — build may still succeed if it's a different process
+
+        return IsPortAvailable(port);
     }
+
+    /// <summary>
+    /// Whether a gateway is actually alive for this deployment. Consults the PID file first and
+    /// falls back to the same binary-path discovery <c>StopAsync</c> uses, so the skip path can
+    /// never claim "gateway left running" about a gateway that is not there (#2772).
+    /// Protected virtual so tests can state the answer without a live process.
+    /// </summary>
+    protected virtual bool IsGatewayRunning(string home, string repoRoot)
+        => _processManager.IsRunning(home, ResolveGatewayBinaryPath(repoRoot));
 
     /// <summary>
     /// Checks if a TCP port is available for binding before starting the new
