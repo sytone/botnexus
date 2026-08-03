@@ -212,20 +212,9 @@ public sealed class FanOutStaleBindingTests
         // Act
         await host.DispatchAsync(CreateMessage("ping", sessionId: sessionId));
 
-        // Assert - the muted/absent BINDING receives no fan-out. That is this test's subject.
-        //
-        // Before #2631 this asserted Times.Never, which encoded the single-winner routing design:
-        // a turn whose fan-out set was empty emitted nothing to the portal at all. That was
-        // literally Case B of #2631 -- a user talking over Service Bus saw nothing arrive in the
-        // portal until a REST re-fetch forced it. SignalR is now an unconditional OBSERVER sink
-        // rather than a fan-out competitor, so it fires exactly once here: from the sink, never
-        // from the muted binding.
-        //
-        // Times.Once is STRICTLY STRONGER than the old Times.Never for the invariant this test
-        // protects: it still forbids a fan-out delivery to the muted binding, and additionally
-        // forbids a double-delivery. Nothing was weakened to go green.
-        signalrAdapter.Verify(a => a.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>()), Times.Once,
-            "SignalR must be observed exactly once, via the sink - never as a muted-binding fan-out");
+        // Assert — signalr adapter's SendAsync was never called
+        signalrAdapter.Verify(a => a.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>()), Times.Never,
+            "Muted/absent bindings must not receive fan-out");
     }
 }
 

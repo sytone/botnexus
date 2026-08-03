@@ -9,6 +9,13 @@ namespace BotNexus.Gateway.Services;
 /// Tracks pending <c>ask_user</c> waits so channel responses can complete blocked tool calls
 /// without re-entering the session queue.
 /// </summary>
+/// <remarks>
+/// As of issue #2047 the registry also holds <em>rehydrated</em> entries: a durable pending prompt
+/// whose live waiter did not survive a restart is re-mapped here (via <see cref="Rehydrate"/>) so the
+/// channel interceptor still recognises inbound text as a response. Rehydrated entries carry no
+/// completion task and are deliberately not completable through <see cref="TryComplete"/>; the
+/// durable checkpoint service owns their resolution.
+/// </remarks>
 public sealed class AskUserResponseRegistry : IAskUserResponseRegistry, IDisposable
 {
     private readonly ConcurrentDictionary<string, PendingAskUserResponse> _pendingByRequestId = new(StringComparer.Ordinal);
@@ -50,6 +57,19 @@ public sealed class AskUserResponseRegistry : IAskUserResponseRegistry, IDisposa
 
             return (requestId, pending.Completion.Task);
         }
+    }
+
+    /// <inheritdoc />
+    public bool Rehydrate(ConversationId conversationId, string requestId)
+    {
+        if (string.IsNullOrWhiteSpace(requestId))
+            return false;
+
+        var conversationKey = NormalizeConversationId(conversationId);
+        // Only add the conversation->request mapping. Deliberately NOT adding a PendingAskUserResponse
+        // to _pendingByRequestId: a rehydrated prompt has no in-memory waiter to complete, so
+        // TryComplete must return false for it and the durable checkpoint service must own resolution.
+        return _requestIdByConversation.TryAdd(conversationKey, requestId.Trim());
     }
 
     /// <inheritdoc />

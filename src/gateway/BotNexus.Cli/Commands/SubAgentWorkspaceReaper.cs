@@ -1,4 +1,5 @@
 using System.IO.Abstractions;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Cli.Commands;
 
@@ -59,14 +60,6 @@ internal sealed record SubAgentWorkspaceEntry(
 /// </summary>
 internal sealed class SubAgentWorkspaceReaper
 {
-    private static readonly HashSet<string> TerminalStatuses = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Completed",
-        "Failed",
-        "Killed",
-        "TimedOut"
-    };
-
     private readonly IFileSystem _fileSystem;
 
     public SubAgentWorkspaceReaper(IFileSystem fileSystem)
@@ -126,7 +119,11 @@ internal sealed class SubAgentWorkspaceReaper
                 continue;
             }
 
-            var disposition = TerminalStatuses.Contains(status)
+            // Terminality is decided by the single shared predicate (#2677), never by a local
+            // list. The persisted value is text, so the string overload parses it and falls back
+            // to non-terminal for anything it cannot resolve - preserving the "never delete what
+            // you cannot identify" posture the previous HashSet miss had by accident.
+            var disposition = SubAgentStatusPolicy.IsTerminalStatusName(status)
                 ? SubAgentWorkspaceDisposition.Terminal
                 : SubAgentWorkspaceDisposition.Running;
             entries.Add(new SubAgentWorkspaceEntry(name, directory, disposition, status));
