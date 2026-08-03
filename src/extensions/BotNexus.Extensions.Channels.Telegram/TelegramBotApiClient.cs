@@ -257,17 +257,58 @@ public sealed class TelegramBotApiClient(
             allowMarkdownFallback: false);
 
     /// <summary>
-    /// Downloads a file from the Telegram CDN using the relative path returned by <see cref="GetFileAsync"/>.
-    /// Returns the raw binary content.
+    /// Downloads a file from the Telegram CDN using the relative path returned by
+    /// <see cref="GetFileAsync"/>, refusing to buffer more than <paramref name="maxBytes"/>.
     /// </summary>
-    public async Task<byte[]> DownloadFileAsync(string filePath, CancellationToken cancellationToken = default)
+    /// <param name="filePath">Relative CDN path from <see cref="GetFileAsync"/>.</param>
+    /// <param name="maxBytes">
+    /// Hard ceiling on the number of bytes buffered. The response body is read incrementally and the
+    /// transfer is abandoned as soon as this is exceeded, so a server that under-reports (or never
+    /// reports) its content length cannot make the gateway allocate without limit. This is the second
+    /// half of the defence: the caller also rejects attachments whose <i>advertised</i> size already
+    /// exceeds the cap, which avoids the network call entirely. The advertised size is remote-supplied
+    /// and therefore not authoritative, which is why the bound is re-checked here (issue #2724).
+    /// </param>
+    /// <param name="cancellationToken">
+    /// Should carry the caller's media-download timeout. A size cap alone cannot bound a slow-drip
+    /// response, so the time budget is the other required half.
+    /// </param>
+    /// <exception cref="TelegramMediaTooLargeException">
+    /// Thrown when the body exceeds <paramref name="maxBytes"/>. Callers treat this as "skip the
+    /// media, still deliver the message".
+    /// </exception>
+    public async Task<byte[]> DownloadFileAsync(string filePath, long maxBytes, CancellationToken cancellationToken = default)
     {
+        if (maxBytes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxBytes), maxBytes, "Media size cap must be positive.");
+
         var url = $"https://api.telegram.org/file/bot{_botToken}/{filePath}";
-        using var response = await _httpClient.GetAsync(url, cancellationToken);
+        using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException($"Failed to download Telegram file '{filePath}': {(int)response.StatusCode}");
 
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        // Trust the advertised Content-Length only to fail EARLY, never to allow a larger read.
+        if (response.Content.Headers.ContentLength is { } advertised && advertised > maxBytes)
+            throw new TelegramMediaTooLargeException(
+                $"Telegram file '{filePath}' advertises {advertised} bytes, above the {maxBytes}-byte cap.");
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk, cancellationToken);
+            if (read == 0)
+                break;
+
+            if (buffer.Length + read > maxBytes)
+                throw new TelegramMediaTooLargeException(
+                    $"Telegram file '{filePath}' exceeded the {maxBytes}-byte cap while downloading.");
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return buffer.ToArray();
     }
 
     private async Task<T> PostForResultAsync<T>(string methodName, object payload, CancellationToken cancellationToken, bool allowMarkdownFallback)
@@ -369,3 +410,10 @@ internal sealed class TelegramMarkdownParseException(string message) : Exception
 /// this as a benign no-op so streaming edits with unchanged text do not abort the turn.
 /// </summary>
 internal sealed class TelegramMessageNotModifiedException(string message) : Exception(message);
+
+/// <summary>
+/// Signals that an inbound media download hit the configured byte ceiling, either because the
+/// advertised size already exceeded it or because the body streamed past it. Callers must treat this
+/// as "skip the attachment, still deliver the message" - the fail-safe direction for issue #2724.
+/// </summary>
+internal sealed class TelegramMediaTooLargeException(string message) : Exception(message);

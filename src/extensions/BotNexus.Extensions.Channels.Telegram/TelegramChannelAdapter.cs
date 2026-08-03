@@ -28,6 +28,12 @@ public sealed class TelegramChannelAdapter(
 {
     private const int StreamingFlushThresholdChars = 100;
 
+    // Fallbacks used when a bot config carries a non-positive bound (misconfiguration must not mean
+    // "unbounded"). Rationale for the values lives on TelegramBotConfig.MaxMediaBytes and
+    // TelegramBotConfig.MediaDownloadTimeoutSeconds.
+    private const long DefaultMaxMediaBytes = 20L * 1024 * 1024;
+    private const int DefaultMediaDownloadTimeoutSeconds = 30;
+
     private readonly ILogger<TelegramChannelAdapter> _logger = logger;
     private readonly LateBoundChannelOptions<TelegramGatewayOptions> _optionsHolder =
         new(() => ResolveOptions(optionsAccessor, configuration), configuration);
@@ -501,18 +507,56 @@ public sealed class TelegramChannelAdapter(
         {
             // Telegram provides multiple resolutions; the last element is always the largest.
             var largestPhoto = message.Photo!.OrderByDescending(p => p.FileSize ?? 0).First();
-            try
+            var maxMediaBytes = runtime.Config.MaxMediaBytes > 0
+                ? runtime.Config.MaxMediaBytes
+                : DefaultMaxMediaBytes;
+
+            // Cheapest possible rejection first: if the sender's own advertised size already blows the
+            // cap, skip the media without spending a single Bot API call on it. The advertised value
+            // is remote-supplied, so it is trusted only to REJECT, never to admit - the client
+            // re-enforces the same ceiling while reading the body (issue #2724).
+            if (largestPhoto.FileSize is { } advertisedSize && advertisedSize > maxMediaBytes)
             {
-                var file = await runtime.ApiClient.GetFileAsync(largestPhoto.FileId, cancellationToken);
-                if (!string.IsNullOrWhiteSpace(file.FilePath))
-                {
-                    var imageBytes = await runtime.ApiClient.DownloadFileAsync(file.FilePath, cancellationToken);
-                    contentParts = [new BinaryContentPart { MimeType = "image/jpeg", Data = imageBytes }];
-                }
+                _logger.LogWarning(
+                    "bot '{BotName}' skipped photo for updateId={UpdateId}: advertised size {AdvertisedBytes} exceeds the {MaxMediaBytes}-byte cap; proceeding with caption only",
+                    runtime.BotName,
+                    update.UpdateId,
+                    advertisedSize,
+                    maxMediaBytes);
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogWarning(ex, "bot '{BotName}' failed to download photo for updateId={UpdateId}; proceeding with caption only", runtime.BotName, update.UpdateId);
+                // A size cap alone cannot bound a slow-drip response, so the download also gets a
+                // wall-clock budget. Linked (not standalone) so host shutdown still cancels promptly.
+                var timeoutSeconds = runtime.Config.MediaDownloadTimeoutSeconds > 0
+                    ? runtime.Config.MediaDownloadTimeoutSeconds
+                    : DefaultMediaDownloadTimeoutSeconds;
+                using var mediaCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                mediaCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+                try
+                {
+                    var file = await runtime.ApiClient.GetFileAsync(largestPhoto.FileId, mediaCts.Token);
+                    if (!string.IsNullOrWhiteSpace(file.FilePath))
+                    {
+                        var imageBytes = await runtime.ApiClient.DownloadFileAsync(file.FilePath, maxMediaBytes, mediaCts.Token);
+                        contentParts = [new BinaryContentPart { MimeType = "image/jpeg", Data = imageBytes }];
+                    }
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Media budget expired, not host shutdown. Fail safe: drop the attachment, keep
+                    // the message.
+                    _logger.LogWarning(
+                        "bot '{BotName}' photo download for updateId={UpdateId} exceeded the {TimeoutSeconds}s budget and was cancelled; proceeding with caption only",
+                        runtime.BotName,
+                        update.UpdateId,
+                        timeoutSeconds);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "bot '{BotName}' failed to download photo for updateId={UpdateId}; proceeding with caption only", runtime.BotName, update.UpdateId);
+                }
             }
         }
 

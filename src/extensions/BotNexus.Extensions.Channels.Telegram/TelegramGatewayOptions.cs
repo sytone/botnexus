@@ -205,6 +205,36 @@ public sealed class TelegramGatewayOptions
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "telegram", Order = 11)]
     public int ErrorCooldownMs { get; set; } = 60_000;
 
+    // ── Inbound media bounds (issue #2724) ────────────────────────────────────
+
+    /// <summary>
+    /// Hard ceiling, in bytes, on any single inbound media attachment for a single-bot deployment.
+    /// See <see cref="TelegramBotConfig.MaxMediaBytes"/> for why 20 MB and why the bound is applied
+    /// twice. Mirrored into the synthesised default bot.
+    /// </summary>
+    [Display(
+        Name = "Max media bytes",
+        Description = "Hard ceiling, in bytes, on any single inbound media attachment. Default 20 MB matches the Telegram Bot API download limit. Mirrored into the synthesised default bot.",
+        GroupName = "Telegram",
+        Order = 12)]
+    [DefaultValue(20L * 1024 * 1024)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "telegram", Order = 12)]
+    public long MaxMediaBytes { get; set; } = 20L * 1024 * 1024;
+
+    /// <summary>
+    /// Wall-clock budget, in seconds, for downloading a single inbound media attachment for a
+    /// single-bot deployment. See <see cref="TelegramBotConfig.MediaDownloadTimeoutSeconds"/> for the
+    /// reasoning. Mirrored into the synthesised default bot.
+    /// </summary>
+    [Display(
+        Name = "Media download timeout (seconds)",
+        Description = "Wall-clock budget, in seconds, for downloading a single inbound media attachment. Mirrored into the synthesised default bot.",
+        GroupName = "Telegram",
+        Order = 13)]
+    [DefaultValue(30)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "telegram", Order = 13)]
+    public int MediaDownloadTimeoutSeconds { get; set; } = 30;
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -231,7 +261,9 @@ public sealed class TelegramGatewayOptions
             ShowToolActivity = ShowToolActivity,
             MaxRichMessageLength = MaxRichMessageLength,
             ErrorCooldownMs = ErrorCooldownMs,
-            ProcessEditedMessages = ProcessEditedMessages
+            ProcessEditedMessages = ProcessEditedMessages,
+            MaxMediaBytes = MaxMediaBytes,
+            MediaDownloadTimeoutSeconds = MediaDownloadTimeoutSeconds
         };
         foreach (var id in AllowedChatIds)
             single.AllowedChatIds.Add(id);
