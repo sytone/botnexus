@@ -1117,20 +1117,11 @@ public sealed class CronScheduler(
         }
     }
 
+    // Delegates to CronTimeZoneResolver - see #2748. This used to be a second, weaker
+    // definition of resolution (no Windows/IANA translation), which made the next-run
+    // computation disagree with the actions that ran the job.
     private static TimeZoneInfo ResolveTimeZone(CronJob job)
-    {
-        if (string.IsNullOrWhiteSpace(job.TimeZone))
-            return TimeZoneInfo.Utc;
-
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(job.TimeZone);
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            return TimeZoneInfo.Utc;
-        }
-    }
+        => CronTimeZoneResolver.Resolve(job.TimeZone);
 
     private int ResolveJobTimeout(CronJob job)
     {

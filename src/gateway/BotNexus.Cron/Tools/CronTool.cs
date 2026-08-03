@@ -449,20 +449,11 @@ public sealed class CronTool(
     private static AgentToolResult TextResult(string text)
         => new([new AgentToolContent(AgentToolContentType.Text, text)]);
 
+    // Delegates to CronTimeZoneResolver - see #2748. The model-facing tool previously
+    // carried a third spelling of resolution, so a timezone the model set was validated
+    // and echoed differently from how the scheduler would interpret it.
     private static TimeZoneInfo ResolveTimeZone(string? timeZone)
-    {
-        if (string.IsNullOrWhiteSpace(timeZone))
-            return TimeZoneInfo.Utc;
-
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(timeZone);
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            return TimeZoneInfo.Utc;
-        }
-    }
+        => CronTimeZoneResolver.Resolve(timeZone);
 
     private static bool IsKnownAction(string action)
         => action.Equals("list", StringComparison.OrdinalIgnoreCase)

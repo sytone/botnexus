@@ -212,7 +212,7 @@ public sealed class HeartbeatAction : ICronAction
 
     private static bool IsInQuietHours(QuietHoursConfig config, string timezoneId)
     {
-        var tz = TimeZoneHelper.Resolve(timezoneId);
+        var tz = CronTimeZoneResolver.Resolve(timezoneId);
         var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, tz);
         var currentTime = localNow.TimeOfDay;
 

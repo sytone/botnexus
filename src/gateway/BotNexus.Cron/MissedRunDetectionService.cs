@@ -163,7 +163,7 @@ public sealed class MissedRunDetectionService(
             return [];
         }
 
-        var tz = TimeZoneHelper.Resolve(job.TimeZone);
+        var tz = CronTimeZoneResolver.Resolve(job.TimeZone);
         var missedRuns = new List<DateTimeOffset>();
 
         // Scan from the shared floor (#2554): max(lastRunAt, scheduleActivatedAt).
@@ -214,7 +214,7 @@ public sealed class MissedRunDetectionService(
             return false;
         }
 
-        var tz = TimeZoneHelper.Resolve(job.TimeZone);
+        var tz = CronTimeZoneResolver.Resolve(job.TimeZone);
 
         // Continue from the last recorded occurrence, which the shared floor already bounded
         // (#2554) — WasTruncated must never look at a window GetMissedRuns refused to scan.

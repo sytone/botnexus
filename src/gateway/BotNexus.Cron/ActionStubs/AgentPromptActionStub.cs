@@ -100,5 +100,5 @@ public sealed class AgentPromptAction : ICronAction
     }
 
     private static TimeZoneInfo ResolveTimeZone(string timezoneId)
-        => TimeZoneHelper.Resolve(timezoneId);
+        => CronTimeZoneResolver.Resolve(timezoneId);
 }
