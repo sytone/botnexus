@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>BotNexus.Gateway.Configuration</RootNamespace>
+    <Description>Configuration ownership - loading, typed access, canonical dotted-path resolution, merging, validation and secret handling for the BotNexus Gateway (#2765).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Telemetry.Abstractions\BotNexus.Gateway.Telemetry.Abstractions.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Copilot\BotNexus.Agent.Providers.Copilot.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NJsonSchema" />
+    <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Gateway" />
+    <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
+  </ItemGroup>
+
+</Project>
