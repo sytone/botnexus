@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NJsonSchema" />
+    <PackageReference Include="Microsoft.FeatureManagement" /><PackageReference Include="NJsonSchema" />
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
   </ItemGroup>
 
