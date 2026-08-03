@@ -223,46 +223,24 @@ public sealed class SqliteMemoryStore(
         {
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
-            await using var command = connection.CreateCommand();
 
-            var sql = new StringBuilder(
-                """
-                SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
-                       m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
-                       -bm25(memories_fts) AS bm25_rank,
-                       (julianday('now') - julianday(m.created_at)) AS age_days
-                FROM memories_fts
-                INNER JOIN memories m ON m.rowid = memories_fts.rowid
-                WHERE memories_fts MATCH $query
-                  AND m.is_archived = 0
-                """);
-
-            command.Parameters.AddWithValue("$query", sanitized);
-
-            // The raw string literal above has no trailing newline, so the next clause must
-            // start on a fresh line. Without this the unfiltered query emitted
-            // "AND m.is_archived = 0ORDER BY ..." - invalid SQL that threw and silently
-            // demoted every unfiltered search to the LIKE fallback.
-            sql.AppendLine();
-
-            AppendFilters(sql, command, filter);
-
-            sql.AppendLine("ORDER BY bm25_rank DESC LIMIT $limit");
-            command.Parameters.AddWithValue("$limit", limit * 5);
-            command.CommandText = sql.ToString();
-
+            // Two-pass by design (#2740). Pass one uses the explicit conjunction, which is
+            // the most precise reading of the caller's intent and preserves the exact top
+            // result for the short exact queries that already worked. Pass two only runs
+            // when the conjunction under-returns, and widens to a disjunction so a single
+            // rare term can no longer collapse an otherwise reasonable query to zero rows.
+            // The union is then ranked as one candidate set, so BM25 still rewards rows
+            // hitting more terms - the recall cliff disappears without inverting precedence.
             Dictionary<string, MemoryRankingCandidate> candidates = new(StringComparer.Ordinal);
-            await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
+            await ExecuteFtsMatchAsync(
+                connection, BuildFtsMatchExpression(sanitized, requireAllTerms: true), filter, limit, candidates, ct)
+                .ConfigureAwait(false);
+
+            if (candidates.Count < limit)
             {
-                while (await reader.ReadAsync(ct).ConfigureAwait(false))
-                {
-                    var entry = ReadMemory(reader);
-                    // bm25() is negative-is-better, so the query already negates it; clamp because
-                    // the ranker normalises by magnitude and a negative lexical score is meaningless.
-                    var bm25Rank = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
-                    var ageDays = reader.IsDBNull(13) ? 0d : Math.Max(0d, reader.GetDouble(13));
-                    candidates[entry.Id] = new MemoryRankingCandidate(entry, bm25Rank, Similarity: null, ageDays);
-                }
+                await ExecuteFtsMatchAsync(
+                    connection, BuildFtsMatchExpression(sanitized, requireAllTerms: false), filter, limit, candidates, ct)
+                    .ConfigureAwait(false);
             }
 
             await AugmentWithVectorCandidatesAsync(connection, query, candidates, filter, ct).ConfigureAwait(false);
@@ -353,6 +331,178 @@ public sealed class SqliteMemoryStore(
 
     private SqliteConnection CreateConnection()
         => SqliteConnectionFactory.Create(_connectionString);
+
+    /// <summary>
+    /// Runs one FTS <c>MATCH</c> pass and folds its rows into <paramref name="candidates"/>.
+    /// Rows already present keep their earlier (higher-precision) lexical score, so a later
+    /// widening pass can only add recall, never demote a precise hit.
+    /// </summary>
+    private async Task ExecuteFtsMatchAsync(
+        SqliteConnection connection,
+        string matchExpression,
+        MemorySearchFilter? filter,
+        int limit,
+        Dictionary<string, MemoryRankingCandidate> candidates,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(matchExpression))
+            return;
+
+        await using var command = connection.CreateCommand();
+        var sql = new StringBuilder(
+            """
+            SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
+                   m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
+                   -bm25(memories_fts) AS bm25_rank,
+                   (julianday('now') - julianday(m.created_at)) AS age_days
+            FROM memories_fts
+            INNER JOIN memories m ON m.rowid = memories_fts.rowid
+            WHERE memories_fts MATCH $query
+              AND m.is_archived = 0
+            """);
+
+        command.Parameters.AddWithValue("$query", matchExpression);
+
+        // The raw string literal above has no trailing newline, so the next clause must
+        // start on a fresh line. Without this the unfiltered query emitted
+        // "AND m.is_archived = 0ORDER BY ..." - invalid SQL that threw and silently
+        // demoted every unfiltered search to the LIKE fallback.
+        sql.AppendLine();
+
+        AppendFilters(sql, command, filter);
+
+        sql.AppendLine("ORDER BY bm25_rank DESC LIMIT $limit");
+        command.Parameters.AddWithValue("$limit", limit * 5);
+        command.CommandText = sql.ToString();
+
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var entry = ReadMemory(reader);
+            // bm25() is negative-is-better, so the query already negates it; clamp because
+            // the ranker normalises by magnitude and a negative lexical score is meaningless.
+            var bm25Rank = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
+            var ageDays = reader.IsDBNull(13) ? 0d : Math.Max(0d, reader.GetDouble(13));
+            if (!candidates.ContainsKey(entry.Id))
+                candidates[entry.Id] = new MemoryRankingCandidate(entry, bm25Rank, Similarity: null, ageDays);
+        }
+    }
+
+    /// <summary>
+    /// Builds the FTS5 <c>MATCH</c> expression explicitly instead of inheriting FTS5's
+    /// default, in which a bare space between terms means AND (issue #2740).
+    /// </summary>
+    /// <remarks>
+    /// Nothing in the original code expressed an intent to require every term; the
+    /// conjunction was simply the parser default, and it made recall fall off a cliff as
+    /// term count rose - one rare word was enough to guarantee zero rows. Each term is
+    /// quoted so it is treated as a literal string token rather than an operator, and the
+    /// terms are joined with an explicit <c>AND</c> or <c>OR</c> so the intent is visible in
+    /// the expression itself and can be varied per pass by <see cref="SearchAsync"/>.
+    /// </remarks>
+    /// <param name="sanitizedQuery">Query text already run through the FTS sanitizer.</param>
+    /// <param name="requireAllTerms">
+    /// <see langword="true"/> for the precise conjunction, <see langword="false"/> for the
+    /// wider disjunction used as the recall fallback.
+    /// </param>
+    internal static string BuildFtsMatchExpression(string sanitizedQuery, bool requireAllTerms)
+    {
+        var terms = SplitTerms(sanitizedQuery);
+        if (terms.Length == 0)
+            return string.Empty;
+
+        var op = requireAllTerms ? " AND " : " OR ";
+        return string.Join(op, terms.Select(term => $"\"{term}\""));
+    }
+
+    private static string[] SplitTerms(string sanitizedQuery)
+        => string.IsNullOrWhiteSpace(sanitizedQuery)
+            ? []
+            : sanitizedQuery
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+    /// <summary>
+    /// Explains what a query did or did not match, so an empty result set is diagnosable
+    /// rather than silently ambiguous (issue #2740, AC5). Reports the live row count, the
+    /// MATCH expression actually used, per-term hit counts, and how many rows the strict
+    /// conjunction would have matched - which is what distinguishes "nothing was ever
+    /// stored" from "this query could not match by construction".
+    /// </summary>
+    public async Task<MemorySearchDiagnostics> ExplainSearchAsync(
+        string query,
+        MemorySearchFilter? filter = null,
+        CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        var sanitized = SanitizeFtsQuery(query);
+        var terms = SplitTerms(sanitized);
+        var conjunction = BuildFtsMatchExpression(sanitized, requireAllTerms: true);
+        var disjunction = BuildFtsMatchExpression(sanitized, requireAllTerms: false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        var liveRows = await CountLiveRowsAsync(connection, filter, ct).ConfigureAwait(false);
+
+        List<MemoryTermHit> termHits = [];
+        foreach (var term in terms)
+        {
+            var hits = await CountMatchesAsync(connection, $"\"{term}\"", filter, ct).ConfigureAwait(false);
+            termHits.Add(new MemoryTermHit(term, hits));
+        }
+
+        var conjunctionRows = await CountMatchesAsync(connection, conjunction, filter, ct).ConfigureAwait(false);
+        var matchedRows = conjunctionRows > 0
+            ? conjunctionRows
+            : await CountMatchesAsync(connection, disjunction, filter, ct).ConfigureAwait(false);
+        var expressionUsed = conjunctionRows > 0 ? conjunction : disjunction;
+
+        return new MemorySearchDiagnostics(
+            query, expressionUsed, liveRows, termHits, conjunctionRows, matchedRows);
+    }
+
+    private static async Task<int> CountLiveRowsAsync(
+        SqliteConnection connection, MemorySearchFilter? filter, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        var sql = new StringBuilder(
+            """
+            SELECT COUNT(*)
+            FROM memories m
+            WHERE m.is_archived = 0
+            """);
+        sql.AppendLine();
+        AppendFilters(sql, command, filter);
+        command.CommandText = sql.ToString();
+        var result = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return result is null or DBNull ? 0 : Convert.ToInt32(result, CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<int> CountMatchesAsync(
+        SqliteConnection connection, string matchExpression, MemorySearchFilter? filter, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(matchExpression))
+            return 0;
+
+        await using var command = connection.CreateCommand();
+        var sql = new StringBuilder(
+            """
+            SELECT COUNT(*)
+            FROM memories_fts
+            INNER JOIN memories m ON m.rowid = memories_fts.rowid
+            WHERE memories_fts MATCH $query
+              AND m.is_archived = 0
+            """);
+        sql.AppendLine();
+        command.Parameters.AddWithValue("$query", matchExpression);
+        AppendFilters(sql, command, filter);
+        command.CommandText = sql.ToString();
+        var result = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return result is null or DBNull ? 0 : Convert.ToInt32(result, CultureInfo.InvariantCulture);
+    }
 
     private static string SanitizeFtsQuery(string query)
     {
