@@ -73,6 +73,11 @@ if (-not $lock.Acquired) {
 
 $testImpacted = Join-Path $PSScriptRoot 'test-impacted.ps1'
 $playwrightProject = Join-Path $repoRoot 'tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj'
+# The E2E run goes through Invoke-E2ETests.ps1 rather than bare `dotnet test` so a
+# run whose skip count meets or exceeds its passed count is reported as a FAILURE
+# instead of "Passed!" (issue #2739: the fixture prebuild race turned the whole
+# suite into 265 silent skips and the gate still exited 0).
+$e2eRunner = Join-Path $PSScriptRoot 'Invoke-E2ETests.ps1'
 $pwshPath = (Get-Process -Id $PID).Path
 
 try {
@@ -115,8 +120,8 @@ try {
                         -WorkingDirectory $repoRoot -TimeoutSeconds $TestTimeoutSeconds))
         }
         'playwright' {
-            $steps.Add((Invoke-BotNexusValidationStep -Name 'playwright end-to-end tests' -FilePath 'dotnet' `
-                        -Arguments @('test', $playwrightProject, '--nologo', '--tl:off', '-c', 'Debug', '--no-build') `
+            $steps.Add((Invoke-BotNexusValidationStep -Name 'playwright end-to-end tests' -FilePath $pwshPath `
+                        -Arguments @('-NoProfile', '-File', $e2eRunner, '-Project', $playwrightProject, '-Configuration', 'Debug', '-NoBuild') `
                         -WorkingDirectory $repoRoot -TimeoutSeconds $TestTimeoutSeconds))
         }
         default {
@@ -124,8 +129,8 @@ try {
                         -Arguments @('-NoProfile', '-File', $testImpacted, '-From', $BaseRef, '-NoBuild') `
                         -WorkingDirectory $repoRoot -TimeoutSeconds $TestTimeoutSeconds))
             if ($steps[-1].ExitCode -eq 0 -and $Mode -eq 'strict') {
-                $steps.Add((Invoke-BotNexusValidationStep -Name 'playwright end-to-end tests' -FilePath 'dotnet' `
-                            -Arguments @('test', $playwrightProject, '--nologo', '--tl:off', '-c', 'Debug', '--no-build') `
+                $steps.Add((Invoke-BotNexusValidationStep -Name 'playwright end-to-end tests' -FilePath $pwshPath `
+                            -Arguments @('-NoProfile', '-File', $e2eRunner, '-Project', $playwrightProject, '-Configuration', 'Debug', '-NoBuild') `
                             -WorkingDirectory $repoRoot -TimeoutSeconds $TestTimeoutSeconds))
             }
         }
