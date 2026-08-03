@@ -225,10 +225,10 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
             .Build();
     }
 
-    private static async Task<HubConnection> CreateStartedConnection(WebApplicationFactory<Program> factory, CancellationToken cancellationToken)
+    private static async Task<HubConnection> CreateStartedConnection(WebApplicationFactory<Program> factory, CancellationToken cancellationToken, [System.Runtime.CompilerServices.CallerMemberName] string testName = "")
     {
         var connection = CreateHubConnection(factory);
-        await connection.StartAsync(CancellationToken.None);
+        await HubFixtureGuard.StartGuardedAsync(connection, "SignalRConversationRoutingTests", cancellationToken, testName: testName);
         return connection;
     }
 

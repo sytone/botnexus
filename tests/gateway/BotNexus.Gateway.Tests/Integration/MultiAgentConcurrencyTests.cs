@@ -529,10 +529,10 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
     /// <summary>
     /// Creates and starts a SignalR hub connection for testing.
     /// </summary>
-    private static async Task<HubConnection> CreateStartedConnection(WebApplicationFactory<Program> factory, CancellationToken cancellationToken)
+    private static async Task<HubConnection> CreateStartedConnection(WebApplicationFactory<Program> factory, CancellationToken cancellationToken, [System.Runtime.CompilerServices.CallerMemberName] string testName = "")
     {
         var connection = CreateHubConnection(factory);
-        await connection.StartAsync(cancellationToken);
+        await HubFixtureGuard.StartGuardedAsync(connection, "MultiAgentConcurrencyTests", cancellationToken, testName: testName);
         return connection;
     }
 

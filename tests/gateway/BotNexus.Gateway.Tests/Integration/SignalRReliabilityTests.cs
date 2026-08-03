@@ -656,7 +656,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
                 });
             });
 
-    private static async Task<HubConnection> CreateStartedConnection(WebApplicationFactory<Program> factory, CancellationToken cancellationToken)
+    private static async Task<HubConnection> CreateStartedConnection(WebApplicationFactory<Program> factory, CancellationToken cancellationToken, [System.Runtime.CompilerServices.CallerMemberName] string testName = "")
     {
         var server = factory.Server;
         var handler = server.CreateHandler();
@@ -668,7 +668,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
             })
             .Build();
 
-        await connection.StartAsync(cancellationToken);
+        await HubFixtureGuard.StartGuardedAsync(connection, "SignalRReliabilityTests", cancellationToken, testName: testName);
         return connection;
     }
 

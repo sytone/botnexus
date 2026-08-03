@@ -397,10 +397,10 @@ public sealed class SessionResumeIntegrationTests : IDisposable
             .Build();
     }
 
-    private static async Task<HubConnection> CreateStartedConnection(WebApplicationFactory<Program> factory, CancellationToken cancellationToken)
+    private static async Task<HubConnection> CreateStartedConnection(WebApplicationFactory<Program> factory, CancellationToken cancellationToken, [System.Runtime.CompilerServices.CallerMemberName] string testName = "")
     {
         var connection = CreateHubConnection(factory);
-        await connection.StartAsync(cancellationToken);
+        await HubFixtureGuard.StartGuardedAsync(connection, "SessionResumeIntegrationTests", cancellationToken, testName: testName);
         return connection;
     }
 
