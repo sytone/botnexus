@@ -14,6 +14,7 @@ using BotNexus.Gateway.Abstractions.Media;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Channels.Startup;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -66,6 +67,13 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
     // against the built container and prune the un-activatable ones. See
     // PruneUnconstructableExtensionServices and issue #2220.
     private readonly List<(Type Contract, Type Implementation)> _registeredExtensionServices = [];
+
+    // #2731: channel-extension hosted services are registered as a concrete self-binding PLUS a
+    // barrier factory descriptor. The factory carries no ImplementationType, so the #2220 prune
+    // pass cannot find it by (contract, implementation) matching. Remember the exact descriptors
+    // so pruning can remove both - leaving the factory behind would make it resolve a type that
+    // is no longer registered and abort IEnumerable<IHostedService> resolution at host start.
+    private readonly Dictionary<Type, List<ServiceDescriptor>> _channelHostedServiceDescriptors = [];
 
     public AssemblyLoadContextExtensionLoader(
         IServiceCollection services,
@@ -165,7 +173,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
                     : " — no discoverable types found");
 
             var hookHandlerTypes = DiscoverHookHandlers(assembly);
-            var registeredServiceNames = RegisterServices(discoveredImplementations);
+            var registeredServiceNames = RegisterServices(discoveredImplementations, extension.Manifest);
             RegisterHookHandlers(hookHandlerTypes, registeredServiceNames);
             InvokeServiceContributors(assembly, registeredServiceNames);
 
@@ -386,9 +394,24 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         return implementations;
     }
 
-    private List<string> RegisterServices(IReadOnlyList<(Type ServiceContract, Type Implementation)> implementations)
+    /// <summary>
+    /// Registers the contracts discovered in an extension assembly.
+    /// </summary>
+    /// <remarks>
+    /// #2731: an <see cref="IHostedService"/> contributed by a CHANNEL extension is registered
+    /// behind <see cref="ChannelFaultBarrierHostedService"/> instead of with the container's
+    /// default hosted-service semantics. A channel is one optional ingress surface, so a missing
+    /// Telegram BotToken must cost that channel and nothing else. Hosted services from
+    /// NON-channel extensions keep the default <c>StopHost</c> behaviour deliberately - their
+    /// failure means the process is not fit to serve and must stop loudly.
+    /// </remarks>
+    private List<string> RegisterServices(
+        IReadOnlyList<(Type ServiceContract, Type Implementation)> implementations,
+        ExtensionManifest manifest)
     {
         List<string> registered = [];
+        var isChannelExtension = manifest.ExtensionTypes?.Any(
+            extensionType => extensionType.Equals("channel", StringComparison.OrdinalIgnoreCase)) is true;
         foreach (var (contract, implementation) in implementations)
         {
             if (contract == typeof(IAgentTool) && !HasAutoResolvableConstructor(implementation, out var skipReason))
@@ -404,6 +427,15 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
                     descriptor.ServiceType == contract &&
                     descriptor.ImplementationType == implementation))
             {
+                continue;
+            }
+
+            if (contract == typeof(IHostedService) && isChannelExtension)
+            {
+                _channelHostedServiceDescriptors[implementation] =
+                    [.. _services.AddChannelHostedService(implementation, manifest.Id)];
+                registered.Add($"{contract.Name}->{implementation.FullName} (channel fault barrier)");
+                _registeredExtensionServices.Add((contract, implementation));
                 continue;
             }
 
@@ -471,10 +503,14 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             if (HasContainerSatisfiableConstructor(implementation, isService))
                 continue;
 
+            _channelHostedServiceDescriptors.TryGetValue(implementation, out var channelDescriptors);
+
             for (var i = _services.Count - 1; i >= 0; i--)
             {
                 var descriptor = _services[i];
                 if (descriptor.ServiceType == contract && descriptor.ImplementationType == implementation)
+                    _services.RemoveAt(i);
+                else if (channelDescriptors?.Contains(descriptor) is true)
                     _services.RemoveAt(i);
             }
 

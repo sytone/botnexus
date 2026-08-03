@@ -142,16 +142,58 @@ public static class ChannelHostedServiceRegistrationExtensions
         where TService : class, IHostedService
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        AddChannelHostedService(services, typeof(TService), channelType);
+        return services;
+    }
+
+    /// <summary>
+    /// Non-generic form of <see cref="AddChannelHostedService{TService}"/> for composition roots
+    /// that only know the implementation type at runtime - notably the extension loader, which
+    /// discovers channel-extension hosted services by reflection (#2731).
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="implementationType">A concrete <see cref="IHostedService"/> implementation.</param>
+    /// <param name="channelType">Channel identity reported when a fault is contained.</param>
+    /// <returns>
+    /// The descriptors that were added, so a caller which later prunes an un-activatable
+    /// extension service can remove exactly what it registered.
+    /// </returns>
+    public static IReadOnlyList<ServiceDescriptor> AddChannelHostedService(
+        this IServiceCollection services,
+        Type implementationType,
+        string channelType)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(implementationType);
         ArgumentException.ThrowIfNullOrWhiteSpace(channelType);
 
+        if (!typeof(IHostedService).IsAssignableFrom(implementationType))
+        {
+            throw new ArgumentException(
+                $"Type '{implementationType.FullName}' does not implement IHostedService.",
+                nameof(implementationType));
+        }
+
         services.TryAddSingleton<ChannelStartupReport>();
-        services.TryAddSingleton<TService>();
-        services.AddSingleton<IHostedService>(sp => new ChannelFaultBarrierHostedService(
-            sp.GetRequiredService<TService>(),
+
+        var added = new List<ServiceDescriptor>();
+
+        if (!services.Any(descriptor => descriptor.ServiceType == implementationType))
+        {
+            var concrete = ServiceDescriptor.Singleton(implementationType, implementationType);
+            services.Add(concrete);
+            added.Add(concrete);
+        }
+
+        var barrier = ServiceDescriptor.Singleton<IHostedService>(sp => new ChannelFaultBarrierHostedService(
+            (IHostedService)sp.GetRequiredService(implementationType),
             channelType,
             sp.GetRequiredService<ChannelStartupReport>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<ChannelFaultBarrierHostedService>()));
+        services.Add(barrier);
+        added.Add(barrier);
 
-        return services;
+        return added;
     }
 }
