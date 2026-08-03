@@ -180,6 +180,37 @@ services.AddSingleton(botNexusConfig);
 
 ---
 
+### Cron: scheduler concurrency
+
+Each scheduler tick collects every due job and executes them concurrently. Because most schedules land on
+the hour, many jobs come due on the same tick, and every concurrent `agent-prompt` job is a billed model
+turn plus a provider HTTP connection. `cron.maxConcurrentJobs` bounds how many due jobs run at once (#2670).
+
+```json
+{
+  "cron": {
+    "enabled": true,
+    "tickIntervalSeconds": 60,
+    "maxConcurrentJobs": 5
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `cron.maxConcurrentJobs` | int | `5` | Maximum number of due jobs the scheduler executes concurrently on a single tick. Jobs beyond the cap **queue and run as slots free** - none are dropped. A value of `0` or less degrades to the default of `5` rather than to unbounded fan-out. |
+
+**Tradeoff.** A low cap protects provider rate limits, cost and box CPU on a saturated tick, but it also
+*delays* the later jobs on that tick: with 40 due jobs and a cap of 5, the last job does not start until
+seven earlier batches have finished. If your jobs are long-running and latency-sensitive, raise the cap;
+if you see provider `429`s or box contention around synchronised schedule boundaries, lower it.
+
+This aggregate cap is independent of the scheduler's per-job lock, which separately prevents two runs of
+the *same* job from overlapping. Raising `maxConcurrentJobs` never allows a single job to run twice
+concurrently.
+
+---
+
 ### Agents: AgentDefaults
 
 Default settings for all agents. Individual agents can override any property.
