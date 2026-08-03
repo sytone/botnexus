@@ -47,7 +47,12 @@ public sealed class SubAgentSpawnTool(
                 "grantedPaths": {
                   "type": "array",
                   "items": { "type": "string" },
-                  "description": "Optional list of absolute paths the sub-agent is granted read access to beyond its own workspace."
+                  "description": "Optional list of absolute paths the sub-agent is granted READ-ONLY access to beyond its own workspace. Writes and edits to these paths are refused. Use grantedWritePaths for a specific writable directory, or shareWorkspace for the whole parent workspace."
+                },
+                "grantedWritePaths": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Optional list of absolute paths the sub-agent is granted READ AND WRITE access to beyond its own workspace. Use this when the sub-agent must produce files in a specific directory (for example a git worktree) without granting the entire parent workspace."
                 }
               },
               "required": ["task"]
@@ -84,6 +89,7 @@ public sealed class SubAgentSpawnTool(
         var targetAgentId = ReadString(arguments, "targetAgentId");
         var shareWorkspace = ReadBool(arguments, "shareWorkspace");
         var grantedPaths = ReadStringArray(arguments, "grantedPaths");
+        var grantedWritePaths = ReadStringArray(arguments, "grantedWritePaths");
 
         // Phase 5 / F-6 step 3 (#562): Mode rejects mode-mixing.
         // When the caller asks to mirror an existing named agent, none of the
@@ -113,7 +119,8 @@ public sealed class SubAgentSpawnTool(
             SpawningToolCallId = toolCallId,
             Mode = mode,
             ShareWorkspace = shareWorkspace,
-            GrantedPaths = grantedPaths
+            GrantedPaths = grantedPaths,
+            GrantedWritePaths = grantedWritePaths
         };
 
         SubAgentInfo spawned;

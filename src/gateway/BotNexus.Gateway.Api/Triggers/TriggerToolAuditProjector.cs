@@ -1,54 +1,46 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Audit;
 
 namespace BotNexus.Gateway.Api.Triggers;
 
 /// <summary>
-/// Shared execution-layer projection of a blocking agent run's tool timeline into durable
-/// <see cref="MessageRole.Tool"/> session-history rows. This is the #2127 slice that moves the
-/// tool-audit projection off each individual trigger and into one shared sink, so every blocking
-/// <c>PromptAsync</c> caller (cron, soul, heartbeat) records the same audit rows the interactive
-/// streaming path persists.
+/// Thin adapter over the single execution-layer <see cref="IToolAuditSink"/> (issue #2614).
 /// </summary>
 /// <remarks>
-/// Historically only <c>CronTrigger</c> (issue #2118) projected the tool timeline; the soul and
-/// heartbeat blocking paths saved only user/assistant text, so a tool that ran during those turns
-/// left no durable audit record. Centralising the projection here removes that per-caller drift and
-/// makes the audit invariant independent of which trigger initiated the run.
+/// <para>
+/// This type used to BE the blocking-path projection - a second producer of the same concept the
+/// streaming helper produced, with its own format. #2614 collapses the two: the rendering now lives
+/// in <see cref="DefaultToolAuditSink"/>, which both <c>StreamAsync</c> and <c>PromptAsync</c>
+/// callers write through, and what remains here is a call-site-shaped adapter over that one sink.
+/// </para>
+/// <para>
+/// The rows are byte-identical to the pre-#2614 blocking projection (same count, same order, same
+/// text); the additive change is that arguments and results now pass through the shared
+/// <see cref="Abstractions.Models.ToolInvocationRecordPolicy"/> redaction + byte budget on the way.
+/// </para>
 /// </remarks>
 public static class TriggerToolAuditProjector
 {
     /// <summary>
     /// Projects the tool calls carried on an <see cref="AgentResponse"/> into ordered
-    /// <see cref="MessageRole.Tool"/> history entries, mirroring the tool rows the interactive
-    /// streaming path persists (issue #2118 / #2127). Each call yields a single row carrying the
-    /// tool call id, name, serialized arguments, result content, and error state. A call that never
-    /// completed (cancelled/timed-out mid-flight, <see cref="AgentToolCallInfo.IsIncomplete"/>) is
-    /// rendered with a synthesized "did not complete" body and an error flag so the transcript
-    /// stays consistent with the streaming orphan-synthesis behaviour.
+    /// <see cref="MessageRole.Tool"/> history entries by capturing the run's shared #2613 record
+    /// timeline and handing it to the sink. Removing this call from a blocking trigger removes that
+    /// trigger's only durable tool-audit record - the mutation #2614 AC5 pins.
     /// </summary>
     /// <param name="response">The blocking-run response whose <see cref="AgentResponse.ToolCalls"/> are projected.</param>
     /// <returns>Ordered tool-history entries, one per tool call, in execution order.</returns>
     public static IEnumerable<SessionEntry> ProjectToolEntries(AgentResponse response)
-    {
-        foreach (var call in response.ToolCalls)
-        {
-            var content = call.IsIncomplete
-                ? $"Tool '{call.ToolName}' did not complete - result synthesized for transcript consistency."
-                : call.ResultContent
-                    ?? (call.IsError ? "Tool execution failed." : "Tool execution completed.");
+        => ProjectToolEntries(response, DefaultToolAuditSink.Instance);
 
-            yield return new SessionEntry
-            {
-                Role = MessageRole.Tool,
-                Content = content,
-                ToolName = call.ToolName,
-                ToolCallId = call.ToolCallId,
-                ToolArgs = call.Arguments,
-                ToolIsError = call.IsError
-            };
-        }
-    }
+    /// <summary>
+    /// Sink-explicit overload used by composition-aware callers and tests.
+    /// </summary>
+    /// <param name="response">The blocking-run response.</param>
+    /// <param name="sink">The execution-layer tool-audit sink.</param>
+    /// <returns>Ordered tool-history entries, one per tool call, in execution order.</returns>
+    public static IReadOnlyList<SessionEntry> ProjectToolEntries(AgentResponse response, IToolAuditSink sink)
+        => sink.ProjectBlockingRun(sink.CaptureBlockingRun(response));
 
     /// <summary>
     /// True when the run executed at least one tool. Used by the heartbeat ack-prune guard so a

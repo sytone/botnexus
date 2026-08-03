@@ -30,19 +30,12 @@ public interface IOutboundResponseDeliverer
     /// <param name="content">The assistant reply to deliver. When null/empty there is nothing to fan out.</param>
     /// <param name="conversationId">The conversation id, used to demote stale bindings to Muted on self-heal.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <param name="primaryDeliveredToSignalR">
-    /// True when the primary (pre-fan-out) delivery path already emitted this reply to SignalR, so the
-    /// unconditional sink must not emit it a second time. The sink exists because SignalR/portal is a
-    /// channel-agnostic OBSERVER of every turn, not a competitor for delivery (#2631) — but observing
-    /// twice is as wrong as not observing at all.
-    /// </param>
     Task FanOutAsync(
         InboundMessage source,
         SessionId sessionId,
         string? content,
         ConversationId conversationId,
-        CancellationToken ct,
-        bool primaryDeliveredToSignalR = false);
+        CancellationToken ct);
 }
 
 /// <summary>
@@ -63,6 +56,5 @@ internal sealed class NullOutboundResponseDeliverer : IOutboundResponseDeliverer
         SessionId sessionId,
         string? content,
         ConversationId conversationId,
-        CancellationToken ct,
-        bool primaryDeliveredToSignalR = false) => Task.CompletedTask;
+        CancellationToken ct) => Task.CompletedTask;
 }

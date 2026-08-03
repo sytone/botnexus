@@ -54,6 +54,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IConversationRouter _conversationRouter;
     private readonly IConversationStore? _conversationStore;
     private readonly IAskUserPromptResolver? _askUserPromptResolver;
+    private readonly IAskUserCheckpointService? _askUserCheckpointService;
     private readonly IGatewayHubApplicationService _app;
     private readonly ILogger<GatewayHub> _logger;
     // Phase 2 (#568): optional so existing test hubs and any host that has not yet wired the
@@ -73,6 +74,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         ILogger<GatewayHub> logger,
         IConversationStore? conversationStore = null,
         IAskUserPromptResolver? askUserPromptResolver = null,
+        IAskUserCheckpointService? askUserCheckpointService = null,
         IUserRegistry? userRegistry = null,
         IWorldContext? worldContext = null)
     {
@@ -85,6 +87,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _logger = logger;
         _conversationStore = conversationStore;
         _askUserPromptResolver = askUserPromptResolver;
+        _askUserCheckpointService = askUserCheckpointService;
         _userRegistry = userRegistry;
         _worldContext = worldContext;
     }
@@ -259,12 +262,42 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             },
             Context.ConnectionAborted);
 
-        if (!result.Succeeded)
+        if (result.Succeeded)
+            return;
+
+        // #2047: the resolver only knows about live in-memory waiters. When it reports that nothing
+        // is pending, the prompt may still exist as a durable checkpoint whose waiter was destroyed
+        // by a gateway restart, reload, or conversation switch. Fall through to the checkpoint
+        // service so the response still resolves and resumes the conversation from persisted state.
+        // Validation failures are NOT retried here: an empty or malformed submission is rejected by
+        // the #2322 seam for every channel alike, restart or not.
+        if (result.Status == AskUserResolutionStatus.NoPendingPrompt && _askUserCheckpointService is not null)
         {
-            throw new HubException(result.Status == AskUserResolutionStatus.InvalidSubmission
-                ? result.FailureReason ?? "The ask_user response was rejected."
-                : "No matching ask_user request is pending for this conversation.");
+            var response = new AskUserResponse
+            {
+                RequestId = requestId,
+                FreeFormText = string.IsNullOrWhiteSpace(freeFormText) ? null : freeFormText.Trim(),
+                SelectedValues = selectedValues is { Length: > 0 }
+                    ? selectedValues.Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()).ToArray()
+                    : null,
+                WasCancelled = cancelled
+            };
+
+            var outcome = await _askUserCheckpointService.ResolveAsync(
+                normalizedConversationId, requestId, response, Context.ConnectionAborted);
+
+            if (outcome == AskUserResolveOutcome.RequestIdMismatch)
+                throw new HubException("This ask_user prompt is no longer the active prompt for the conversation.");
+
+            // ResumedFromCheckpoint resolved from persisted state. NoPendingCheckpoint means the
+            // prompt was already answered or cancelled - a duplicate or cross-client submission,
+            // which is an idempotent no-op and must not throw or double-resume.
+            return;
         }
+
+        throw new HubException(result.Status == AskUserResolutionStatus.InvalidSubmission
+            ? result.FailureReason ?? "The ask_user response was rejected."
+            : "No matching ask_user request is pending for this conversation.");
     }
 
     /// <summary>
