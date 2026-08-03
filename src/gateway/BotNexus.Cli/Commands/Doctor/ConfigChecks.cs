@@ -187,8 +187,8 @@ public sealed class CronCheck : IConfigCheck
 public sealed class CompactionModelCheck : IConfigCheck
 {
     public string Id => "compaction-model";
-    public string Description => "compaction.summarizationModel uses an expensive reasoning model — may fail or waste tokens.";
-    public string FixDescription => "Change compaction.summarizationModel to \"claude-haiku-4.5\" (fast, cheap, reliable for summarization)";
+    public string Description => "gateway.compaction.summarizationModel uses an expensive reasoning model — may fail or waste tokens.";
+    public string FixDescription => "Change gateway.compaction.summarizationModel to \"claude-haiku-4.5\" (fast, cheap, reliable for summarization)";
 
     private static readonly string[] ExpensiveModels =
     [
@@ -204,14 +204,15 @@ public sealed class CompactionModelCheck : IConfigCheck
     }
 
     public void Apply(JsonObject root)
-    {
-        var compaction = root["compaction"] as JsonObject ?? new JsonObject();
-        root["compaction"] = compaction;
-        compaction["summarizationModel"] = "claude-haiku-4.5";
-    }
+        => BoundConfigPath.WriteString(root, SummarizationModelPath, "claude-haiku-4.5");
 
+    // #2764: read through the bound path, never root["compaction"]. The setting binds at
+    // gateway.compaction, so the old root lookup was always null and this guard could never fire —
+    // a rule structurally incapable of firing reads exactly like a clean pass.
     private static string? GetSummarizationModel(JsonObject root)
-        => (root["compaction"] as JsonObject)?["summarizationModel"]?.GetValue<string>();
+        => BoundConfigPath.TryReadString(root, SummarizationModelPath, out var model) ? model : null;
+
+    internal const string SummarizationModelPath = "gateway.compaction.summarizationModel";
 }
 
 /// <summary>
@@ -222,23 +223,18 @@ public sealed class CompactionModelCheck : IConfigCheck
 public sealed class CompactionModelMissingCheck : IConfigCheck
 {
     public string Id => "compaction-model-missing";
-    public string Description => "compaction.summarizationModel is not configured — compactor will use default model waterfall.";
-    public string FixDescription => "Set compaction.summarizationModel to \"claude-haiku-4.5\"";
+    public string Description => "gateway.compaction.summarizationModel is not configured — compactor will use default model waterfall.";
+    public string FixDescription => "Set gateway.compaction.summarizationModel to \"claude-haiku-4.5\"";
 
+    // #2764: a root-level "compaction" block binds to nothing, so its presence is NOT evidence the
+    // model is configured. Only the bound path counts — otherwise this check reported a correctly
+    // configured platform as broken on every run.
     public bool IsApplicable(JsonObject root)
-    {
-        var compaction = root["compaction"] as JsonObject;
-        if (compaction is null) return true;
-        var model = compaction["summarizationModel"]?.GetValue<string>();
-        return string.IsNullOrWhiteSpace(model);
-    }
+        => !BoundConfigPath.TryReadString(root, CompactionModelCheck.SummarizationModelPath, out var model)
+           || string.IsNullOrWhiteSpace(model);
 
     public void Apply(JsonObject root)
-    {
-        var compaction = root["compaction"] as JsonObject ?? new JsonObject();
-        root["compaction"] = compaction;
-        compaction["summarizationModel"] = "claude-haiku-4.5";
-    }
+        => BoundConfigPath.WriteString(root, CompactionModelCheck.SummarizationModelPath, "claude-haiku-4.5");
 }
 
 /// <summary>
