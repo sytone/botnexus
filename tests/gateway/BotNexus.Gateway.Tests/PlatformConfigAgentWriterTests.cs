@@ -53,6 +53,42 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
         _fileSystem.File.Exists(Path.Combine(_home.AgentsPath, "test-agent", "workspace", "SOUL.md")).ShouldBeTrue();
     }
 
+    /// <summary>
+    /// #2649 guard for the reported "apiProvider/modelId serialise as null" premise. That premise
+    /// does NOT reproduce as data loss: <see cref="AgentDescriptor.ApiProvider"/> and
+    /// <see cref="AgentDescriptor.ModelId"/> are persisted under the config-file names
+    /// <c>provider</c> / <c>model</c> and read back into the same descriptor fields. What the
+    /// reporter saw was purely the name change across that boundary - looking for an
+    /// <c>apiProvider</c> key in config.json finds nothing, because the key is <c>provider</c>.
+    /// This test pins the round trip so a future rename cannot quietly turn the cosmetic
+    /// asymmetry into a real one.
+    /// </summary>
+    [Fact]
+    public async Task SaveAsync_RoundTripsProviderAndModel_UnderTheirConfigFileNames()
+    {
+        var writer = new PlatformConfigAgentWriter(new PlatformConfigWriter(_configPath, _fileSystem), _home);
+        await writer.SaveAsync(CreateDescriptor("roundtrip-agent"));
+
+        // Persisted under the config-file vocabulary, not the descriptor property names.
+        var root = await ReadConfigAsync();
+        var agent = root["agents"]!["roundtrip-agent"]!;
+        agent["provider"]!.GetValue<string>().ShouldBe("github-copilot");
+        agent["model"]!.GetValue<string>().ShouldBe("claude-sonnet-4.5");
+        agent["apiProvider"].ShouldBeNull();
+        agent["modelId"].ShouldBeNull();
+
+        // ...and read back into the descriptor fields with no loss, so the value the tool
+        // validated is the value the runtime later resolves.
+        var config = await PlatformConfigLoader.LoadAsync(
+            _configPath,
+            CancellationToken.None,
+            validateOnLoad: true,
+            fileSystem: _fileSystem);
+
+        config.Agents!["roundtrip-agent"].Provider.ShouldBe("github-copilot");
+        config.Agents["roundtrip-agent"].Model.ShouldBe("claude-sonnet-4.5");
+    }
+
     [Fact]
     public async Task SaveAsync_WithWireThinkingLevel_ProducesReloadableConfig()
     {

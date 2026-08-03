@@ -9,6 +9,9 @@
          token can be triggered deterministically (no file-watcher timing). -->
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <!-- #2731: the fault-barrier discrimination test builds a real generic host so it
+         asserts actual StopHost semantics, not a mock of them. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 
   <ItemGroup>

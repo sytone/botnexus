@@ -442,16 +442,41 @@ public sealed class AgentManagementToolTests
         savedDescriptor.Memory.Indexing.ShouldBe("auto");
     }
 
-    // --- Provider Validation Tests ---
+    // --- Provider Validation Tests (#2649: model registry, not the API-contract registry) ---
+
+    private static ModelRegistry MakeProviderRegistry()
+    {
+        var registry = new ModelRegistry();
+        registry.Register("anthropic", new LlmModel(
+            Id: "model",
+            Name: "Model",
+            Api: "anthropic-messages",
+            Provider: "anthropic",
+            BaseUrl: "https://example.invalid",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0m, 0m, 0m, 0m),
+            ContextWindow: 200_000,
+            MaxTokens: 32_000));
+        registry.Register("github-copilot", new LlmModel(
+            Id: "model",
+            Name: "Model",
+            Api: "github-copilot-messages",
+            Provider: "github-copilot",
+            BaseUrl: "https://example.invalid",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0m, 0m, 0m, 0m),
+            ContextWindow: 128_000,
+            MaxTokens: 16_000));
+        return registry;
+    }
 
     [Fact]
     public async Task CreateAgent_UnknownProvider_ReturnsError()
     {
         var (registry, writer, home, notifier) = MakeDeps();
-        var providerRegistry = new ApiProviderRegistry();
-        providerRegistry.Register(new FakeProvider("anthropic"));
-        providerRegistry.Register(new FakeProvider("copilot"));
-        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, providerRegistry);
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, MakeProviderRegistry());
 
         var result = await tool.ExecuteAsync("t1", Args(
             ("id", "bad-provider"),
@@ -469,9 +494,7 @@ public sealed class AgentManagementToolTests
     public async Task CreateAgent_ValidProvider_Succeeds()
     {
         var (registry, writer, home, notifier) = MakeDeps();
-        var providerRegistry = new ApiProviderRegistry();
-        providerRegistry.Register(new FakeProvider("anthropic"));
-        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, providerRegistry);
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, MakeProviderRegistry());
 
         var result = await tool.ExecuteAsync("t1", Args(
             ("id", "valid-provider"),
@@ -501,11 +524,10 @@ public sealed class AgentManagementToolTests
     [Fact]
     public async Task UpdateAgent_UnknownProvider_ReturnsError()
     {
-        var (registry, writer, _, notifier) = MakeDeps(agentExists: true, existingId: "update-test");
+        var existing = MakeDescriptor("update-test") with { ModelId = "model", ApiProvider = "anthropic" };
+        var (registry, writer, _, notifier) = MakeDeps(agentExists: true, existingId: "update-test", existingDescriptor: existing);
         registry.Setup(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>())).Returns(true);
-        var providerRegistry = new ApiProviderRegistry();
-        providerRegistry.Register(new FakeProvider("anthropic"));
-        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], providerRegistry);
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], MakeProviderRegistry());
 
         var result = await tool.ExecuteAsync("t1", Args(
             ("id", "update-test"),
@@ -519,15 +541,14 @@ public sealed class AgentManagementToolTests
     [Fact]
     public async Task UpdateAgent_ValidProvider_Succeeds()
     {
-        var (registry, writer, _, notifier) = MakeDeps(agentExists: true, existingId: "update-valid");
+        var existing = MakeDescriptor("update-valid") with { ModelId = "model", ApiProvider = "anthropic" };
+        var (registry, writer, _, notifier) = MakeDeps(agentExists: true, existingId: "update-valid", existingDescriptor: existing);
         registry.Setup(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>())).Returns(true);
-        var providerRegistry = new ApiProviderRegistry();
-        providerRegistry.Register(new FakeProvider("copilot"));
-        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], providerRegistry);
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], MakeProviderRegistry());
 
         var result = await tool.ExecuteAsync("t1", Args(
             ("id", "update-valid"),
-            ("apiProvider", "copilot")));
+            ("apiProvider", "github-copilot")));
 
         result.Content[0].Value.ShouldNotContain("error");
     }
@@ -571,7 +592,7 @@ public sealed class AgentManagementToolTests
     public async Task CreateAgent_WithSupportedThinkingAndContext_PersistsThem()
     {
         var (registry, writer, home, notifier) = MakeDeps();
-        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, null, MakeCapabilityRegistry());
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, MakeCapabilityRegistry());
 
         var result = await tool.ExecuteAsync("t1", Args(
             ("id", "thinky-agent"),
@@ -590,7 +611,7 @@ public sealed class AgentManagementToolTests
     public async Task CreateAgent_WithThinkingOnNonReasoningModel_ReturnsErrorAndDoesNotRegister()
     {
         var (registry, writer, home, notifier) = MakeDeps();
-        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, null, MakeCapabilityRegistry());
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, MakeCapabilityRegistry());
 
         var result = await tool.ExecuteAsync("t1", Args(
             ("id", "bad-agent"),
@@ -607,7 +628,7 @@ public sealed class AgentManagementToolTests
     public async Task CreateAgent_WithUnsupportedContextWindow_ReturnsErrorAndDoesNotRegister()
     {
         var (registry, writer, home, notifier) = MakeDeps();
-        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, null, MakeCapabilityRegistry());
+        var tool = new CreateAgentTool(registry.Object, writer.Object, [notifier.Object], home, null, MakeCapabilityRegistry());
 
         var result = await tool.ExecuteAsync("t1", Args(
             ("id", "bad-agent"),
@@ -625,7 +646,7 @@ public sealed class AgentManagementToolTests
     {
         var existing = MakeDescriptor("thinky-agent") with { ModelId = "claude-reasoning", ApiProvider = "anthropic" };
         var (registry, writer, home, notifier) = MakeDeps(agentExists: true, existingId: "thinky-agent", existingDescriptor: existing);
-        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], null, MakeCapabilityRegistry());
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], MakeCapabilityRegistry());
 
         var result = await tool.ExecuteAsync("t1", Args(
             ("id", "thinky-agent"),
@@ -641,7 +662,7 @@ public sealed class AgentManagementToolTests
     {
         var existing = MakeDescriptor("thinky-agent") with { ModelId = "claude-plain", ApiProvider = "anthropic" };
         var (registry, writer, home, notifier) = MakeDeps(agentExists: true, existingId: "thinky-agent", existingDescriptor: existing);
-        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], null, MakeCapabilityRegistry());
+        var tool = new UpdateAgentTool(registry.Object, writer.Object, [notifier.Object], MakeCapabilityRegistry());
 
         var result = await tool.ExecuteAsync("t1", Args(
             ("id", "thinky-agent"),
@@ -686,10 +707,4 @@ public sealed class AgentManagementToolTests
         notifier.Verify(n => n.NotifyAgentsChangedAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    private sealed class FakeProvider(string api) : IApiProvider
-    {
-        public string Api => api;
-        public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null) => throw new NotImplementedException();
-        public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null) => throw new NotImplementedException();
-    }
 }

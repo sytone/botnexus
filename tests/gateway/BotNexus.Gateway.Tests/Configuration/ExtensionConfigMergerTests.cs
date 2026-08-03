@@ -89,6 +89,78 @@ public sealed class ExtensionConfigMergerTests
         AssertJsonEquals(merged["ext"], """{"enabled":false,"x":1}""");
     }
 
+    // --- Issue #2706: tri-state inheritance (absent / explicit null / value) ---
+
+    [Fact]
+    public void Merge_TriState_KeyAbsentFromAgent_InheritsWorldValue()
+    {
+        var worldDefaults = BuildConfig("ext", """{"timeout":30,"other":1}""");
+        var agentOverrides = BuildConfig("ext", """{"other":2}""");
+
+        var merged = ExtensionConfigMerger.Merge(worldDefaults, agentOverrides);
+
+        AssertJsonEquals(merged["ext"], """{"timeout":30,"other":2}""");
+    }
+
+    [Fact]
+    public void Merge_TriState_KeyPresentAndNull_SuppressesInheritedWorldValue()
+    {
+        var worldDefaults = BuildConfig("ext", """{"timeout":30,"other":1}""");
+        var agentOverrides = BuildConfig("ext", """{"timeout":null}""");
+
+        var merged = ExtensionConfigMerger.Merge(worldDefaults, agentOverrides);
+
+        // Explicit null suppresses the inherited key entirely: it must not survive
+        // as a JSON null leaf, and must not retain the world value.
+        merged["ext"].TryGetProperty("timeout", out _).ShouldBeFalse();
+        AssertJsonEquals(merged["ext"], """{"other":1}""");
+    }
+
+    [Fact]
+    public void Merge_TriState_KeyPresentWithValue_AgentValueWins()
+    {
+        var worldDefaults = BuildConfig("ext", """{"timeout":30,"other":1}""");
+        var agentOverrides = BuildConfig("ext", """{"timeout":90}""");
+
+        var merged = ExtensionConfigMerger.Merge(worldDefaults, agentOverrides);
+
+        AssertJsonEquals(merged["ext"], """{"timeout":90,"other":1}""");
+    }
+
+    [Fact]
+    public void Merge_TriState_NestedExplicitNull_SuppressesNestedWorldKey()
+    {
+        var worldDefaults = BuildConfig("ext", """{"nested":{"x":1,"y":2}}""");
+        var agentOverrides = BuildConfig("ext", """{"nested":{"x":null}}""");
+
+        var merged = ExtensionConfigMerger.Merge(worldDefaults, agentOverrides);
+
+        AssertJsonEquals(merged["ext"], """{"nested":{"y":2}}""");
+    }
+
+    [Fact]
+    public void Merge_TriState_ExplicitNullWithNoWorldCounterpart_IsDropped()
+    {
+        var worldDefaults = BuildConfig("ext", """{"a":1}""");
+        var agentOverrides = BuildConfig("ext", """{"b":null}""");
+
+        var merged = ExtensionConfigMerger.Merge(worldDefaults, agentOverrides);
+
+        // Suppressing something never inherited is a no-op, not a null leaf.
+        AssertJsonEquals(merged["ext"], """{"a":1}""");
+    }
+
+    [Fact]
+    public void Merge_TriState_TopLevelExtensionIdNull_SuppressesWorldExtensionConfig()
+    {
+        var worldDefaults = BuildConfig("ext", """{"a":1}""");
+        var agentOverrides = BuildConfig("ext", "null");
+
+        var merged = ExtensionConfigMerger.Merge(worldDefaults, agentOverrides);
+
+        merged.ContainsKey("ext").ShouldBeFalse();
+    }
+
     private static Dictionary<string, JsonElement> BuildConfig(string extensionId, string json)
     {
         var element = JsonSerializer.Deserialize<JsonElement>(json);

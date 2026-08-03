@@ -128,6 +128,77 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         return new CompactionTokenMeasurement(estimatedTokens, provider, ratio);
     }
 
+    /// <summary>
+    /// #2522: minimum provider/estimate ratio that counts as a real UNIT MISMATCH rather than
+    /// estimator noise. The local chars/4 estimator is inherently approximate (tokenizer variance,
+    /// message framing overhead), so ratios in the 1.0-1.5 band are expected even when nothing is
+    /// missing from the estimator's view. Only above this do we treat the divergence as evidence
+    /// that the trigger fired on context the split walk cannot see, and normalise the cut plan.
+    /// </summary>
+    internal const double MinMaterialProviderRatio = 1.5;
+
+    /// <summary>
+    /// #2522: upper clamp on the provider/estimate ratio used to scale the keep-recent budget.
+    /// Rationale: the ratio is derived from the PREVIOUS turn's provider count, which can be a wild
+    /// outlier (a one-off giant tool schema payload, a workspace file injection that has since been
+    /// removed, or a provider that reports cache-read tokens in the prompt count). Letting an
+    /// unbounded ratio drive the cut plan would let one bad sample shred the retained tail. 4.0 is
+    /// chosen because it is roughly the worst plausible steady-state overhead of everything the
+    /// estimator cannot see (system prompt + tool schemas + injected workspace files) relative to
+    /// the visible transcript; beyond that the number is far more likely to be noise than signal.
+    /// </summary>
+    internal const double MaxProviderRatioScale = 4.0;
+
+    /// <summary>
+    /// #2522: floor on the SCALED keep-recent budget. Scaling must never collapse the retained tail
+    /// to nothing or to a single turn - the agent would lose the user's current request along with
+    /// the context it fired on, which is a worse failure than compacting slightly too little. Two
+    /// user turns is the smallest tail that still preserves a request plus its immediate predecessor.
+    /// The floor is only applied when the caller asked for MORE than the floor; a caller that
+    /// deliberately requested a 1-turn tail keeps it.
+    /// </summary>
+    internal const int MinScaledPreservedTurns = 2;
+
+    /// <summary>
+    /// #2522 unit normalisation: the compaction trigger fires in one unit (provider prompt tokens,
+    /// which include the system prompt, tool schemas and workspace-injected files) while the split
+    /// walk plans the retained tail in another (the local chars/4 estimate over LLM-visible entries).
+    /// When the measured provider/estimate ratio is materially above 1 the requested keep-recent
+    /// budget is divided by that ratio so the retained tail is sized in the units the trigger used.
+    ///
+    /// FAILS SAFE, NOT CLOSED: when no provider count is reachable the ratio is null and the
+    /// requested budget is returned UNCHANGED, so an unmeasurable session behaves exactly as it did
+    /// before this change. The scale is clamped by <see cref="MaxProviderRatioScale"/> and the result
+    /// floored by <see cref="MinScaledPreservedTurns"/>.
+    /// </summary>
+    /// <param name="requestedPreservedTurns">The configured keep-recent budget, in user turns.</param>
+    /// <param name="measurement">The measurement produced by <see cref="MeasureTokens"/>.</param>
+    /// <returns>The keep-recent budget to plan the cut with.</returns>
+    internal static int ScalePreservedTurns(int requestedPreservedTurns, CompactionTokenMeasurement measurement)
+    {
+        if (requestedPreservedTurns <= 0)
+        {
+            // A non-positive budget already means "summarize everything"; scaling is meaningless.
+            return requestedPreservedTurns;
+        }
+
+        var ratio = measurement.Ratio;
+        if (!ratio.HasValue || ratio.Value < MinMaterialProviderRatio)
+        {
+            // No provider measurement, or the divergence is within estimator noise: unchanged.
+            return requestedPreservedTurns;
+        }
+
+        var scale = Math.Min(ratio.Value, MaxProviderRatioScale);
+        // Round UP so normalisation never over-cuts by a fractional turn.
+        var scaled = (int)Math.Ceiling(requestedPreservedTurns / scale);
+
+        // Never grow the tail, and never drop below the floor (unless the caller was already below).
+        scaled = Math.Min(scaled, requestedPreservedTurns);
+        var floor = Math.Min(MinScaledPreservedTurns, requestedPreservedTurns);
+        return Math.Max(scaled, floor);
+    }
+
     private static int? ReadProviderPromptTokens(Session session)
     {
         if (session.Metadata is null ||
@@ -233,7 +304,29 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // must never be re-summarised. The visibility predicate is centralised in
         // SessionContextProjector (Phase 3b, #534).
         var visible = history.Where(SessionContextProjector.IsVisibleInLiveContext).ToList();
-        var (toSummarize, toPreserve) = SplitHistory(visible, options.PreservedTurns);
+
+        // #2522: normalise the keep-recent budget into the same units the trigger fired in. When no
+        // provider prompt-token count is reachable this returns options.PreservedTurns unchanged, so
+        // an unmeasurable session plans exactly the cut it planned before this change.
+        var planMeasurement = MeasureTokens(session.Session, EstimateVisibleTokenCountFromEntries(visible));
+        var effectivePreservedTurns = ScalePreservedTurns(options.PreservedTurns, planMeasurement);
+        if (effectivePreservedTurns != options.PreservedTurns)
+        {
+            _logger.LogInformation(
+                "Compaction keep-recent budget normalised for session {SessionId}: PreservedTurns {Requested} -> " +
+                "{Effective} (estimated {EstimatedTokens} tokens, providerPromptTokens {ProviderPromptTokens}, " +
+                "providerToEstimateRatio {TokenRatio}, maxScale {MaxScale}, floor {Floor}).",
+                session.SessionId,
+                options.PreservedTurns,
+                effectivePreservedTurns,
+                planMeasurement.EstimatedTokens,
+                planMeasurement.ProviderPromptTokensDisplay,
+                planMeasurement.RatioDisplay,
+                MaxProviderRatioScale,
+                MinScaledPreservedTurns);
+        }
+
+        var (toSummarize, toPreserve) = SplitHistory(visible, effectivePreservedTurns);
         if (toSummarize.Count == 0)
         {
             var visibleTokens = EstimateVisibleTokenCountFromEntries(history);
@@ -248,7 +341,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
             if (visibleTokens > threshold)
             {
-                for (var fallbackTurns = options.PreservedTurns - 1; fallbackTurns >= 1; fallbackTurns--)
+                for (var fallbackTurns = effectivePreservedTurns - 1; fallbackTurns >= 1; fallbackTurns--)
                 {
                     var (fallbackSummarize, fallbackPreserve) = SplitHistory(visible, fallbackTurns);
                     if (fallbackSummarize.Count > 0)

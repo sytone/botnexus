@@ -14,13 +14,42 @@ BeforeAll {
     $script:ModulePath = Join-Path (Split-Path $PSCommandPath -Parent) 'ValidationReceipt.psm1'
     Import-Module $script:ModulePath -Force
 
+    # Sandbox identity is intentionally generic and NON-conflicting with the developer's
+    # real identity. It must never resemble the #1602 pollution signature
+    # (user.email=test@example.com / user.name=test), so a leaked write cannot be mistaken
+    # for - or graft onto - the host repo. Same convention as UpdateCommandGitRunnerTests.cs.
+    # Passed as per-invocation -c flags on every commit-authoring git call (not only as
+    # repo-local config) so a call that somehow lands outside the sandbox still cannot
+    # author under the developer's identity.
+    $script:SandboxIdentityArgs = @('-c', 'user.name=botnexus-test', '-c', 'user.email=botnexus-test@invalid.local', '-c', 'commit.gpgsign=false')
+
+    function Assert-SandboxRepoPath {
+        <#
+        .SYNOPSIS
+            Guard: a repo-creating harness must never stage or commit outside its sandbox root.
+        .DESCRIPTION
+            Issue #2632: a harness interrupted mid-flight left an `add --all` / `commit` pointed
+            at a live worktree and corrupted the caller's branch. Every git call that can author
+            a commit asserts its target path is under [IO.Path]::GetTempPath() first.
+        #>
+        param([Parameter(Mandatory)][string]$Path)
+        $sep = [IO.Path]::DirectorySeparatorChar
+        $root = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd($sep, [IO.Path]::AltDirectorySeparatorChar)
+        $full = [IO.Path]::GetFullPath($Path).TrimEnd($sep, [IO.Path]::AltDirectorySeparatorChar)
+        $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+        if (-not $full.StartsWith(($root + $sep), $comparison)) {
+            throw "Sandbox guard: refusing git write against '$full' because it is not under the temp sandbox root '$root'."
+        }
+        return $full
+    }
+
     function New-ReceiptTestRepo {
         param([switch]$WithGlobalJson)
         $path = Join-Path ([IO.Path]::GetTempPath()) "botnexus-receipt-test-$([Guid]::NewGuid().ToString('N'))"
         New-Item -ItemType Directory -Path $path | Out-Null
         & git -c core.hooksPath= -C $path init --initial-branch main *> $null
-        & git -C $path config user.name 'test' *> $null
-        & git -C $path config user.email 'test@example.invalid' *> $null
+        & git -C $path config user.name 'botnexus-test' *> $null
+        & git -C $path config user.email 'botnexus-test@invalid.local' *> $null
         Set-Content (Join-Path $path 'candidate.txt') 'candidate' -Encoding utf8NoBOM
         # A stand-in policy input so policy-hash sensitivity can be exercised.
         New-Item -ItemType Directory -Path (Join-Path $path 'scripts/repo') -Force | Out-Null
@@ -28,8 +57,9 @@ BeforeAll {
         if ($WithGlobalJson) {
             Set-Content (Join-Path $path 'global.json') '{ "sdk": { "version": "10.0.204" } }' -Encoding utf8NoBOM
         }
-        & git -C $path add --all *> $null
-        & git -c core.hooksPath= -C $path commit -m 'initial' *> $null
+        Assert-SandboxRepoPath -Path $path | Out-Null
+        & git @script:SandboxIdentityArgs -C $path add --all *> $null
+        & git @script:SandboxIdentityArgs -c core.hooksPath= -C $path commit -m 'initial' *> $null
         & git -C $path branch 'origin/main' *> $null
         return $path
     }
@@ -37,7 +67,8 @@ BeforeAll {
     function Stage-Change {
         param([string]$Repo, [string]$Content)
         Set-Content (Join-Path $Repo 'candidate.txt') $Content -Encoding utf8NoBOM
-        & git -C $Repo add --all *> $null
+        Assert-SandboxRepoPath -Path $Repo | Out-Null
+        & git @script:SandboxIdentityArgs -C $Repo add --all *> $null
     }
 
     function Emit-Receipt {
@@ -60,6 +91,29 @@ AfterAll {
         Remove-Item $repo -Recurse -Force -ErrorAction SilentlyContinue
     }
     Remove-Module ValidationReceipt -ErrorAction SilentlyContinue
+}
+
+Describe 'Test harness sandbox guard (#2632)' {
+
+    It 'refuses a git write against a repo path outside the temp sandbox root' {
+        $outside = Join-Path ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))) 'not-a-sandbox'
+        { Assert-SandboxRepoPath -Path $outside } | Should -Throw '*not under the temp sandbox root*'
+    }
+
+    It 'refuses a git write against the caller live worktree root' {
+        { Assert-SandboxRepoPath -Path ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))) } | Should -Throw '*Sandbox guard*'
+    }
+
+    It 'allows a path under the temp sandbox root' {
+        $inside = Join-Path ([IO.Path]::GetTempPath()) 'botnexus-guard-probe'
+        { Assert-SandboxRepoPath -Path $inside } | Should -Not -Throw
+    }
+
+    It 'authors sandbox commits under the non-conflicting sentinel identity' {
+        $repo = New-ReceiptTestRepo; $script:TestRepos.Add($repo)
+        (& git -C $repo log -1 --format='%an').Trim() | Should -Be 'botnexus-test'
+        (& git -C $repo log -1 --format='%ae').Trim() | Should -Be 'botnexus-test@invalid.local'
+    }
 }
 
 Describe 'Content-addressed validation receipt' {

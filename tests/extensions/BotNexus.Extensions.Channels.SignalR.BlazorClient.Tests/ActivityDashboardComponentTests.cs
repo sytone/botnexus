@@ -46,9 +46,12 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         // #2305 (epic #2300): cron-ness is the SERVER-stamped source, never a `cron:` session-id
         // prefix. Fixtures set it explicitly.
         string source = "Channel",
-        string kind = "HumanAgent") =>
+        string kind = "HumanAgent",
+        // #2692: visibility is server-stamped and already on the wire; fixtures set it explicitly.
+        string visibility = "UserFacing") =>
         new(id, agentId, title, false, status, activeSessionId, bindingCount,
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, Kind: kind, Source: source, Participants: participants);
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, Kind: kind, Source: source,
+            Visibility: visibility, Participants: participants);
 
     private void SetupConversations(params ConversationSummaryDto[] conversations) =>
         _rest.GetAllConversationsAsync(Arg.Any<CancellationToken>())
@@ -675,5 +678,55 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
         Assert.Equal(nameof(ActivityPinFilter.All),
             cut.Find("[data-testid='activity-filter-pinned']").GetAttribute("value"));
+    }
+
+    // ── Visibility (#2692) ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// AC6: the rendered DOM contains no row for an InternalHidden conversation. Keyed on the row's
+    /// conversation id rather than a title substring, so unrelated copy cannot satisfy it.
+    /// </summary>
+    [Fact]
+    public void Internal_hidden_conversation_is_not_rendered()
+    {
+        SetupConversations(
+            Conv("c1", title: "Visible"),
+            Conv("h1", title: "Bookkeeping", visibility: "InternalHidden"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+        Assert.Equal(new[] { "c1" }, RowIds(cut));
+        Assert.DoesNotContain("Bookkeeping", cut.Find("[data-testid='activity-table']").TextContent);
+    }
+
+    /// <summary>
+    /// AC3/AC6: an InspectableReadOnly conversation IS rendered and carries the read-only marker,
+    /// while a UserFacing row stays unmarked so the marker carries signal.
+    /// </summary>
+    [Fact]
+    public void Inspectable_read_only_conversation_is_rendered_with_read_only_badge()
+    {
+        SetupConversations(
+            Conv("c1", title: "Mine"),
+            Conv("r1", title: "Observed", visibility: "InspectableReadOnly"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+        Assert.Contains("r1", RowIds(cut));
+
+        var badges = cut.FindAll("[data-testid='activity-readonly-badge']");
+        var badge = Assert.Single(badges);
+        Assert.Contains("activity-badge", badge.GetAttribute("class"));
+        Assert.Contains("Read-only", badge.TextContent);
+
+        var readOnlyRow = cut.FindAll("[data-testid='activity-row']")
+            .Single(r => r.GetAttribute("data-conversation-id") == "r1");
+        Assert.Single(readOnlyRow.QuerySelectorAll("[data-testid='activity-readonly-badge']"));
+
+        var userFacingRow = cut.FindAll("[data-testid='activity-row']")
+            .Single(r => r.GetAttribute("data-conversation-id") == "c1");
+        Assert.Empty(userFacingRow.QuerySelectorAll("[data-testid='activity-readonly-badge']"));
     }
 }

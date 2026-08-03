@@ -155,6 +155,14 @@ public sealed record ActivityDashboardFilter(
 /// dashboard and the sidebar cannot disagree about what is pinned. This is the only
 /// <em>user-authored</em> priority signal on the row - every other signal is machine-derived.
 /// </param>
+/// <param name="Visibility">
+/// The server-stamped render-visibility class (#2340). Carried as the typed enum, parsed via the
+/// existing <see cref="ConversationOrigin.ParseVisibility"/>, so the dashboard reads the modelled
+/// field instead of probing the conversation id for an <c>internal:</c> prefix. Unknown or empty
+/// wire values degrade to <see cref="ConversationVisibility.UserFacing"/>: the projection fails
+/// OPEN on display, because silently hiding a user's conversation is strictly worse than showing an
+/// unclassified one.
+/// </param>
 /// <param name="PinnedAt">
 /// When the pin was stamped, or <see langword="null"/> when the conversation is not pinned. Carried
 /// so a later surface can explain or order pins by age without a second round trip.
@@ -170,6 +178,7 @@ public sealed record ActivityRow(
     ConversationSource Source,
     ConversationKind Kind,
     bool IsPinned = false,
+    ConversationVisibility Visibility = ConversationVisibility.UserFacing,
     DateTimeOffset? PinnedAt = null)
 {
     /// <summary>
@@ -278,9 +287,14 @@ public static class ActivityDashboardProjection
                 Dto = c,
                 Source = ConversationOrigin.ParseSource(c.Source),
                 Kind = ConversationOrigin.ParseKind(c.Kind),
+                Visibility = ConversationOrigin.ParseVisibility(c.Visibility),
                 IsCron = IsCronConversation(c),
                 Agents = InvolvedAgents(c)
             })
+            // #2692: InternalHidden is excluded UNCONDITIONALLY and ahead of every facet. The enum's
+            // contract is "never rendered to a user", so this is not a facet - no filter combination
+            // can reveal these rows. Placed first so no later facet can be read as overriding it.
+            .Where(x => x.Visibility != ConversationVisibility.InternalHidden)
             .Where(x => filter.IncludeCron || !x.IsCron)
             .Where(x => MatchesStatus(x.Dto.Status, filter.Status))
             .Where(x => filter.AgentId is null ||
@@ -306,6 +320,7 @@ public static class ActivityDashboardProjection
                 x.Source,
                 x.Kind,
                 x.Dto.IsPinned,
+                x.Visibility,
                 x.Dto.IsPinned ? x.Dto.PinnedAt : null))
             .ToList();
     }
@@ -345,6 +360,25 @@ public static class ActivityDashboardProjection
             distinctAgents.Count,
             scheduled,
             latest == DateTimeOffset.MinValue ? null : latest);
+    }
+
+    /// <summary>
+    /// Renders the read-only marker for a row, or <see langword="null"/> when the row needs none
+    /// (#2692). Only <see cref="ConversationVisibility.InspectableReadOnly"/> is marked:
+    /// <c>UserFacing</c> is the overwhelmingly common case and stays unmarked so the marker carries
+    /// signal, and <c>InternalHidden</c> never reaches a row because <see cref="Project"/> drops it.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately shaped like <see cref="OriginLabel"/> - a nullable label the component renders
+    /// conditionally - so the dashboard has one badge idiom rather than two.
+    /// </remarks>
+    /// <param name="row">A projected dashboard row.</param>
+    /// <returns>The marker text, or <see langword="null"/> when no marker should render.</returns>
+    public static string? ReadOnlyLabel(ActivityRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+
+        return row.Visibility == ConversationVisibility.InspectableReadOnly ? "Read-only" : null;
     }
 
     /// <summary>

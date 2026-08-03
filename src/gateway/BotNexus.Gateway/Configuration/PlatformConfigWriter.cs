@@ -11,6 +11,25 @@ namespace BotNexus.Gateway.Configuration;
 /// Thread-safe writer for platform config JSON files.
 /// Performs atomic read-modify-write with file locking.
 /// </summary>
+/// <remarks>
+/// <para><b>Explicit-null semantics (#2705).</b> config.json has THREE distinct states per key:
+/// key absent, key present with value <c>null</c>, and key present with a value.
+/// <see cref="AgentConfigMerger" /> depends on that distinction in six places
+/// (<c>memory</c>, <c>search</c>, <c>temporalDecay</c>, <c>heartbeat</c>, <c>quietHours</c>,
+/// <c>fileAccess</c>): an explicit null means <em>suppress the inherited world default</em>,
+/// whereas absence means <em>inherit it</em>.</para>
+/// <para>The writer therefore guarantees that <b>an explicit null present in the document on disk
+/// survives a whole-document write</b>. This is a deliberate contract, not an implementation
+/// accident: the typed <see cref="PlatformConfig" /> graph cannot represent "present and null"
+/// (a null CLR property and an absent one are the same state), and the serializer's
+/// <see cref="JsonIgnoreCondition.WhenWritingNull" /> policy - chosen for output tidiness - would
+/// otherwise silently downgrade every explicit null to an absent key and invert the operator's
+/// intent on a write they did not initiate.</para>
+/// <para>The asymmetry is intentional: an explicit null can only be removed by an explicit
+/// raw-document edit (<see cref="MutateAsync(Action{JsonObject}, string, CancellationToken)" /> or
+/// <see cref="MutateValidatedAsync" />), never as a side effect of a typed whole-document replace.
+/// Any future configuration store (#2646) must reproduce this behaviour deliberately.</para>
+/// </remarks>
 public sealed class PlatformConfigWriter
 {
     private static readonly SemaphoreSlim WriteLock = new(1, 1);
@@ -156,6 +175,32 @@ public sealed class PlatformConfigWriter
 
             var serialized = JsonSerializer.Serialize(config, PlatformWriteOptions);
             var next = JsonNode.Parse(serialized)?.AsObject() ?? new JsonObject();
+
+            // #2705: re-apply the explicit nulls the operator wrote, BEFORE clearing the root.
+            //
+            // PlatformWriteOptions uses WhenWritingNull for output tidiness, and the typed
+            // PlatformConfig graph cannot represent "present and null" at all - a null property
+            // and an absent property are the same CLR state. So a whole-document write through
+            // the typed model erases every explicit null in config.json.
+            //
+            // That is not cosmetic. AgentConfigMerger treats absent / explicit-null / value as
+            // THREE distinct states in six places (memory, search, temporalDecay, heartbeat,
+            // quietHours, fileAccess): explicit null means "suppress the inherited default",
+            // absence means "inherit it". Erasing the null therefore flips the setting to the
+            // opposite of what the operator wrote, silently, on a write they did not initiate.
+            //
+            // Two rejected alternatives, recorded so they are not "simplified" back in:
+            //  - Dropping WhenWritingNull globally would spray nulls for every unset optional
+            //    property across the whole document - a far larger behaviour change than the
+            //    defect warrants, and it would not help the keys the merger reads anyway,
+            //    because the typed model cannot tell "operator wrote null" from "never set".
+            //  - Changing the merger's meaning of null is wrong: the merger is correct and six
+            //    call sites depend on it.
+            // Instead the preservation is scoped precisely to keys that were explicitly null in
+            // the SOURCE document, and only where the regenerated document left them absent - a
+            // real value in the new document always wins.
+            RestoreExplicitNulls(root, next);
+
             root.Clear();
             foreach (var kvp in next)
                 root[kvp.Key] = kvp.Value?.DeepClone();
@@ -212,6 +257,38 @@ public sealed class PlatformConfigWriter
             },
             reason,
             ct);
+    }
+
+    /// <summary>
+    /// Copies explicit JSON nulls from <paramref name="source" /> (the document as it exists on
+    /// disk) into <paramref name="target" /> (the regenerated document), at the same paths, but
+    /// only where <paramref name="target" /> has no key at all.
+    /// </summary>
+    /// <remarks>
+    /// #2705. Deliberately conservative:
+    /// <list type="bullet">
+    ///   <item>Only keys whose SOURCE value is JSON null are considered, so this never invents a
+    ///   null the operator did not write.</item>
+    ///   <item>A key the regenerated document supplies with a value is left alone, so a caller
+    ///   that genuinely sets a previously-null section still wins.</item>
+    ///   <item>Recursion descends only where BOTH sides still have an object, so a subtree the
+    ///   caller deleted wholesale (for example a removed agent) does not come back.</item>
+    /// </list>
+    /// </remarks>
+    private static void RestoreExplicitNulls(JsonObject source, JsonObject target)
+    {
+        foreach (var kvp in source)
+        {
+            if (kvp.Value is null)
+            {
+                if (!target.ContainsKey(kvp.Key))
+                    target[kvp.Key] = null;
+                continue;
+            }
+
+            if (kvp.Value is JsonObject childSource && target[kvp.Key] is JsonObject childTarget)
+                RestoreExplicitNulls(childSource, childTarget);
+        }
     }
 
     /// <summary>

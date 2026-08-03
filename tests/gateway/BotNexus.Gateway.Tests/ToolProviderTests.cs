@@ -208,7 +208,7 @@ public class ToolProviderTests
     [Fact]
     public void AgentManagementToolProvider_ExcludedWhenDependenciesMissing()
     {
-        new AgentManagementToolProvider(null, null, null, [], null, null,
+        new AgentManagementToolProvider(null, null, null, [], null,
             new BotNexus.Agent.Providers.Core.LlmClient(
                 new BotNexus.Agent.Providers.Core.Registry.ApiProviderRegistry(),
                 new BotNexus.Agent.Providers.Core.Registry.ModelRegistry()))

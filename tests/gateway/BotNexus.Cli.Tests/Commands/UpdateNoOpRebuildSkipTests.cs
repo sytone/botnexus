@@ -120,13 +120,10 @@ public sealed class UpdateNoOpRebuildSkipTests
 
     private static string RunGit(string repoRoot, string arguments)
     {
-        var psi = new ProcessStartInfo("git", $"{IdentityFlags} {arguments}")
-        {
-            WorkingDirectory = repoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
+        // Guard + ambient-redirect stripping both live in GitSandboxGuard so the invariant has one
+        // definition. See #2632: the hook environment exports GIT_DIR / GIT_WORK_TREE for the
+        // caller's live worktree, which silently retargeted this harness at the developer's branch.
+        var psi = GitSandboxGuard.CreateSandboxedGit(repoRoot, arguments);
         using var process = Process.Start(psi)!;
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
@@ -146,6 +143,10 @@ public sealed class UpdateNoOpRebuildSkipTests
         Directory.CreateDirectory(root);
 
         RunGit(root, "init --initial-branch=main");
+        // Sandbox identity is intentionally generic and NON-conflicting with the developer's
+        // real identity. It must never resemble the #1602 pollution signature
+        // (user.email=test@example.com / user.name=test), so a leaked write cannot be mistaken
+        // for - or graft onto - the host repo. Same convention as UpdateCommandGitRunnerTests.
         RunGit(root, $"config user.email {SentinelEmail}");
         RunGit(root, $"config user.name {SentinelName}");
         RunGit(root, "config commit.gpgsign false");
@@ -157,8 +158,9 @@ public sealed class UpdateNoOpRebuildSkipTests
             File.WriteAllText(full, "original\n");
         }
 
+        GitSandboxGuard.AssertSandboxRepoPath(root);
         RunGit(root, "add -A");
-        RunGit(root, "commit -m initial");
+        RunGit(root, "-c user.name=botnexus-test -c user.email=botnexus-test@invalid.local commit -m initial");
 
         var gatewayDll = UpdateCommand.ResolveGatewayBinaryPath(root);
         Directory.CreateDirectory(Path.GetDirectoryName(gatewayDll)!);

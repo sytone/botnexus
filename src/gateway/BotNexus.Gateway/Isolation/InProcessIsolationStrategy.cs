@@ -574,7 +574,6 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 _serviceProvider.GetService<IAgentConfigurationWriter>(),
                 _serviceProvider.GetService<BotNexusHome>(),
                 _serviceProvider.GetServices<IAgentChangeNotifier>(),
-                _serviceProvider.GetService<ApiProviderRegistry>(),
                 _serviceProvider.GetService<IOptions<PlatformConfig>>(),
                 _llmClient),
             new ToolProviders.CanvasToolProvider(

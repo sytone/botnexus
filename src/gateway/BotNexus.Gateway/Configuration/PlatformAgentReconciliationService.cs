@@ -181,9 +181,31 @@ public sealed class PlatformAgentReconciliationService : IHostedService
         => root["agents"] is JsonObject agents && agents.ContainsKey(agentId);
 
     private static JsonObject BuildEntry(JsonObject root, BundledAgentDefinition definition)
+        => BuildEntry(definition, ResolveProviderAndModel(root));
+
+    /// <summary>
+    /// Materialises the config entry for a bundled agent from its template and an already-resolved
+    /// provider/model pair.
+    /// </summary>
+    /// <remarks>
+    /// Issue #2636. This overload is the seam <see cref="FreshInstallAgentDefaults"/> uses so that
+    /// <c>botnexus init</c> emits byte-identical entries to the ones this service would insert.
+    /// Only the <em>resolution</em> of provider/model differs between the two callers - a fresh
+    /// install has no existing agent to copy from, so it supplies the fresh-install pair directly -
+    /// and the entry construction itself must never be duplicated.
+    /// </remarks>
+    /// <param name="definition">The bundled agent to materialise.</param>
+    /// <param name="resolved">
+    /// The provider/model to adopt, or <see langword="null"/> when none could be resolved, in which
+    /// case the entry is produced disabled with an actionable description.
+    /// </param>
+    internal static JsonObject BuildEntry(
+        BundledAgentDefinition definition,
+        (string Provider, string Model)? resolved)
     {
+        ArgumentNullException.ThrowIfNull(definition);
+
         var entry = definition.CreateTemplate();
-        var resolved = ResolveProviderAndModel(root);
 
         entry[BundledPlatformAgents.DefinitionVersionMetadataKey] = definition.DefinitionVersion;
 

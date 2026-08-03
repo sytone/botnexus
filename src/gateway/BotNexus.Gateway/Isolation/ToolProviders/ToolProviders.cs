@@ -488,7 +488,6 @@ internal sealed class AgentManagementToolProvider(
     IAgentConfigurationWriter? configurationWriter,
     BotNexusHome? botNexusHome,
     IEnumerable<IAgentChangeNotifier> changeNotifiers,
-    ApiProviderRegistry? apiProviderRegistry,
     IOptions<PlatformConfig>? platformConfigOptions,
     LlmClient llmClient) : IToolProvider
 {
@@ -505,13 +504,13 @@ internal sealed class AgentManagementToolProvider(
         {
             tools.Add(new CreateAgentTool(
                 agentRegistry!, configurationWriter!, changeNotifiers, botNexusHome!,
-                platformConfigOptions, apiProviderRegistry, llmClient.Models));
+                platformConfigOptions, llmClient.Models));
         }
 
         if (context.ToolAllowed("update_agent"))
         {
             tools.Add(new UpdateAgentTool(
-                agentRegistry!, configurationWriter!, changeNotifiers, apiProviderRegistry, llmClient.Models));
+                agentRegistry!, configurationWriter!, changeNotifiers, llmClient.Models));
         }
 
         return Task.FromResult<IReadOnlyList<IAgentTool>>(tools);
