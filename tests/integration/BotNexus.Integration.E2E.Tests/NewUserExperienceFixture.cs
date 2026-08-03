@@ -134,12 +134,18 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
 
             foreach (var id in AgentIds)
             {
-                // Add-if-absent: `init` already seeds the default "assistant" agent and
-                // `agent add` on an existing id exits 1 (issue #2491).
+                // Re-provision-if-present: `init` already seeds the default "assistant"
+                // agent and `agent add` on an existing id exits 1 (issue #2491).
+                //
+                // Skipping the add is NOT sufficient. init seeds "assistant" against the
+                // real default provider/model, but every E2E test drives the
+                // integration-mock provider, so a merely-skipped assistant is present in
+                // the agent list yet cannot answer a prompt. There is no `agent update`
+                // verb, so the only way to re-point an existing agent is remove-then-add.
                 if (await AgentExistsAsync(id))
                 {
-                    Log.Add($"[cli] agent add {id} skipped - already provisioned by init");
-                    continue;
+                    Log.Add($"[cli] agent {id} exists (seeded by init); re-provisioning onto integration-mock");
+                    await RunCliAsync("agent", $"remove {id} --target \"{Home}\"");
                 }
 
                 await RunCliAsync("agent",
