@@ -67,6 +67,81 @@ public sealed class CronWebhookUrlTests
         normalized.ShouldBeNull();
     }
 
+    // #2745 AC2: every blocked address class must be refused by the shared boundary, and a public
+    // https host must still round-trip byte-for-byte.
+    [Theory]
+    [InlineData("http://127.0.0.1/hook")]          // loopback
+    [InlineData("https://localhost/hook")]         // loopback by name
+    [InlineData("http://[::1]/hook")]              // IPv6 loopback
+    [InlineData("http://10.0.0.5/hook")]           // private RFC-1918
+    [InlineData("http://192.168.1.10/hook")]       // private RFC-1918
+    [InlineData("http://172.16.0.1/hook")]         // private RFC-1918
+    [InlineData("http://169.254.1.1/hook")]        // link-local
+    [InlineData("http://169.254.169.254/latest/meta-data/")] // cloud metadata (IMDS)
+    [InlineData("http://metadata.google.internal/computeMetadata/v1/")] // cloud metadata by name
+    public void TryNormalize_RejectsBlockedAddressClasses(string url)
+    {
+        CronWebhookUrl.TryNormalize(url, out var normalized).ShouldBeFalse();
+        normalized.ShouldBeNull();
+    }
+
+    [Fact]
+    public void TryNormalize_AcceptsPublicHttpsHostByteForByte()
+    {
+        const string url = "https://hooks.example.com/services/T000/B000?token=abc";
+        CronWebhookUrl.TryNormalize(url, out var normalized).ShouldBeTrue();
+        normalized.ShouldBe(url);
+    }
+
+    // #2745 AC5: an operator must be able to tell WHICH rule fired.
+    [Fact]
+    public void TryNormalize_BlockedAddressReasonDiffersFromSchemeAndUserInfoReason()
+    {
+        CronWebhookUrl.TryNormalize("http://169.254.169.254/latest/", out _, out var blockedReason).ShouldBeFalse();
+        CronWebhookUrl.TryNormalize("https://u:p@example.com/hook", out _, out var credentialReason).ShouldBeFalse();
+        CronWebhookUrl.TryNormalize("ftp://example.com/hook", out _, out var schemeReason).ShouldBeFalse();
+
+        blockedReason.ShouldBe(CronWebhookUrl.BlockedAddressRejectionMessage);
+        credentialReason.ShouldBe(CronWebhookUrl.RejectionMessage);
+        schemeReason.ShouldBe(CronWebhookUrl.RejectionMessage);
+        blockedReason.ShouldNotBe(credentialReason);
+    }
+
+    [Fact]
+    public void TryNormalize_SuccessReportsNoRejectionReason()
+    {
+        CronWebhookUrl.TryNormalize("https://example.com/hook", out var normalized, out var reason).ShouldBeTrue();
+        normalized.ShouldBe("https://example.com/hook");
+        reason.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task SyncConfiguredJobs_RejectsBlockedAddressClassWebhookUrl()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var logger = new ListLogger<CronScheduler>();
+        var options = new CronOptions
+        {
+            Enabled = true,
+            Jobs = new Dictionary<string, ConfiguredCronJob>
+            {
+                ["imds-webhook-job"] = new()
+                {
+                    Name = "IMDS webhook",
+                    Schedule = "*/5 * * * *",
+                    ActionType = "webhook",
+                    WebhookUrl = "http://169.254.169.254/latest/meta-data/"
+                }
+            }
+        };
+        var scheduler = CreateScheduler(context.Store, options, logger);
+
+        await InvokeSyncConfiguredJobsAsync(scheduler, options);
+
+        (await context.Store.GetAsync(JobId.From("imds-webhook-job"))).ShouldBeNull();
+        logger.Messages.ShouldContain(m => m.Contains(CronWebhookUrl.BlockedAddressRejectionMessage));
+    }
+
     // AC3: the config-declared surface must reject via the same helper, at materialisation.
     [Fact]
     public async Task SyncConfiguredJobs_RejectsCredentialBearingWebhookUrl_AndPersistsNothing()

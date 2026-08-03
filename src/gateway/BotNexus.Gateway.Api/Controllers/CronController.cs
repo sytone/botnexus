@@ -120,8 +120,10 @@ public sealed class CronController(
 
         // #2552: validate at the shared boundary BEFORE anything reaches the store, so a rejected
         // webhook target leaves no row behind.
-        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl))
-            return BadRequest(CronWebhookUrl.RejectionMessage);
+        // #2745: return the rule-specific reason so the caller can tell a blocked address class
+        // apart from a scheme/credentials rejection.
+        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl, out var webhookRejectionReason))
+            return BadRequest(webhookRejectionReason);
 
         // #2671: validate the failure-alert target at the authoring seam, through the SAME shared
         // validator the update path uses, so the two seams cannot drift. This does not replace the
@@ -164,8 +166,10 @@ public sealed class CronController(
             return BadRequest("NextRunAt timestamp is out of the valid range (1970-01-01 to 9000-01-01).");
 
         // #2552: same shared boundary on the update path.
-        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl))
-            return BadRequest(CronWebhookUrl.RejectionMessage);
+        // #2745: return the rule-specific reason so the caller can tell a blocked address class
+        // apart from a scheme/credentials rejection.
+        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl, out var webhookRejectionReason))
+            return BadRequest(webhookRejectionReason);
 
         // #2671: same shared validator on the update seam (clause 2).
         var updateAlertTarget = await CronAlertTarget.ValidateAsync(

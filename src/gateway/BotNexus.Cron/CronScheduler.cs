@@ -1223,12 +1223,14 @@ public sealed class CronScheduler(
             // #2552: the declarative surface goes through the same shared boundary as the API so
             // the two cannot drift. A config-declared job with a credential-bearing or non-http(s)
             // webhook URL is skipped loudly rather than materialised into the store.
-            if (!CronWebhookUrl.TryNormalize(configuredJob.WebhookUrl, out var normalizedWebhookUrl))
+            if (!CronWebhookUrl.TryNormalize(configuredJob.WebhookUrl, out var normalizedWebhookUrl, out var webhookRejectionReason))
             {
+                // #2745: log the rule-specific reason so an operator can tell a blocked address
+                // class apart from a scheme/credentials rejection without reading the source.
                 _logger.LogWarning(
                     "Skipping configured cron job '{JobId}' because its webhookUrl is invalid. {Reason}",
                     jobIdString,
-                    CronWebhookUrl.RejectionMessage);
+                    webhookRejectionReason);
                 continue;
             }
 
