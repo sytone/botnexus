@@ -17,6 +17,7 @@
     <ProjectReference Include="..\..\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Configuration\BotNexus.Gateway.Configuration.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Conversations\BotNexus.Gateway.Conversations.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Dispatching\BotNexus.Gateway.Dispatching.csproj" />
@@ -38,10 +39,6 @@
     <PackageReference Include="NJsonSchema" />
     <PackageReference Include="OpenTelemetry.Api" />
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="Templates\*.md" />
   </ItemGroup>
 
   <ItemGroup>

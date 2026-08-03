@@ -31,7 +31,7 @@ public sealed class SatelliteCapabilityEnforcementFenceTests
         // populate: SatelliteConfig -> SatelliteConnectionInfo
         Path.Combine("gateway", "BotNexus.Gateway", "Satellites", "InMemorySatelliteRegistry.cs"),
         // populate: SatelliteConfig -> Satellite (world descriptor)
-        Path.Combine("gateway", "BotNexus.Gateway", "Configuration", "WorldDescriptorBuilder.cs"),
+        Path.Combine("gateway", "BotNexus.Gateway.Configuration", "WorldDescriptorBuilder.cs"),
         // display: SatelliteConnectionInfo -> HTTP response DTO
         Path.Combine("gateway", "BotNexus.Gateway.Api", "Controllers", "SatellitesController.cs"),
         // display: SatelliteConfig -> CLI table cell
@@ -43,7 +43,7 @@ public sealed class SatelliteCapabilityEnforcementFenceTests
     [
         Path.Combine("domain", "BotNexus.Domain", "World", "Satellite.cs"),
         Path.Combine("gateway", "BotNexus.Gateway.Abstractions", "Satellites", "SatelliteConnectionInfo.cs"),
-        Path.Combine("gateway", "BotNexus.Gateway", "Configuration", "SatelliteConfig.cs"),
+        Path.Combine("gateway", "BotNexus.Gateway.Configuration", "SatelliteConfig.cs"),
     ];
 
     /// <summary>
