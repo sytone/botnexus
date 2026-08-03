@@ -225,21 +225,37 @@ public sealed class CronScheduler(
         if (dueJobs.Count == 0)
             return;
 
-        // Phase 2 (concurrent): execute all due jobs in parallel so a long-running
-        // agent prompt for one job does not delay other due jobs or user-facing sessions.
-        var runTasks = dueJobs.Select(async entry =>
+        // Phase 2 (bounded-concurrent): execute due jobs in parallel so a long-running agent prompt for
+        // one job does not delay other due jobs or user-facing sessions -- but bounded by an aggregate
+        // cap (#2670) so a synchronised tick cannot fan out an unbounded burst of billed model turns and
+        // provider connections. The remainder queue and run as slots free; NOTHING is dropped.
+        //
+        // This bound is deliberately independent of the per-job _jobLocks semaphore, which answers a
+        // different question (serialising repeat runs of ONE job).
+        var maxConcurrency = _optionsMonitor.CurrentValue.MaxConcurrentJobs;
+        if (maxConcurrency <= 0)
         {
-            var (job, expression) = entry;
-            var tz = ResolveTimeZone(job);
-            await RunActionAsync(job, CronTriggerType.Scheduled, now, ct).ConfigureAwait(false);
+            _logger.LogDebug(
+                "Cron MaxConcurrentJobs was {Configured}; falling back to the default of {Default}.",
+                maxConcurrency,
+                CronOptions.DefaultMaxConcurrentJobs);
+            maxConcurrency = CronOptions.DefaultMaxConcurrentJobs;
+        }
 
-            // #2133: reschedule via the narrow next_run_at write. RunActionAsync already
-            // persisted the run's terminal LastRun* bookkeeping and any conversation pin
-            // through their own narrow writes, so no whole-record round-trip is needed here.
-            await _cronStore.SetNextRunAtAsync(job.Id, expression.GetNextOccurrence(now, tz), ct).ConfigureAwait(false);
-        });
+        await Parallel.ForEachAsync(
+            dueJobs,
+            new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = ct },
+            async (entry, _) =>
+            {
+                var (job, expression) = entry;
+                var tz = ResolveTimeZone(job);
+                await RunActionAsync(job, CronTriggerType.Scheduled, now, ct).ConfigureAwait(false);
 
-        await Task.WhenAll(runTasks).ConfigureAwait(false);
+                // #2133: reschedule via the narrow next_run_at write. RunActionAsync already
+                // persisted the run's terminal LastRun* bookkeeping and any conversation pin
+                // through their own narrow writes, so no whole-record round-trip is needed here.
+                await _cronStore.SetNextRunAtAsync(job.Id, expression.GetNextOccurrence(now, tz), ct).ConfigureAwait(false);
+            }).ConfigureAwait(false);
     }
 
     private async Task<CronRun> RunActionAsync(CronJob job, CronTriggerType triggerType, DateTimeOffset triggeredAt, CancellationToken ct)
@@ -1133,6 +1149,40 @@ public sealed class CronScheduler(
         return options.DefaultJobTimeoutSeconds > 0 ? options.DefaultJobTimeoutSeconds : 3600;
     }
 
+    /// <summary>
+    /// Config-sourced half of the #2671 alert-target gate. Routes through the SAME
+    /// <see cref="CronAlertTarget.ValidateAsync"/> as the API seam so the three authoring paths
+    /// cannot answer "is this target reachable?" differently, but downgrades the outcome from
+    /// rejection to a warning: config jobs load at boot, where there is no operator to correct a
+    /// payload and a hard failure would take the whole scheduler down.
+    /// </summary>
+    /// <param name="jobIdString">Configured job id, named in the warning so it is actionable.</param>
+    /// <param name="configuredTarget">Raw configured target, or null/blank when alerting is off.</param>
+    /// <param name="ct">The cancellation token.</param>
+    private async Task WarnIfConfiguredAlertTargetUnresolvableAsync(
+        string jobIdString,
+        string? configuredTarget,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(configuredTarget))
+            return;
+
+        using var scope = _scopeFactory.CreateScope();
+        var resolver = scope.ServiceProvider.GetService<ICronAlertTargetResolver>();
+        var validation = await CronAlertTarget
+            .ValidateAsync(resolver, ConversationId.From(configuredTarget), ct)
+            .ConfigureAwait(false);
+        if (validation.IsValid)
+            return;
+
+        _logger.LogWarning(
+            "Configured cron job '{JobId}' has an unresolvable failureAlertConversationId '{ConversationId}'. "
+            + "The job still loads, but its failure alerts cannot be delivered. {Reason}",
+            jobIdString,
+            configuredTarget,
+            validation.Error);
+    }
+
     private async Task SyncConfiguredJobsAsync(CronOptions options, CancellationToken ct)
     {
         if (options.Jobs is null || options.Jobs.Count == 0)
@@ -1183,6 +1233,15 @@ public sealed class CronScheduler(
             }
 
             var jobId = JobId.From(jobIdString);
+
+            // #2671 clause 5: a config-declared job whose failure-alert target does not resolve is
+            // WARNED about and still loaded. Refusing to boot the scheduler because one job's alert
+            // target went stale would be a strictly worse failure than the one being fixed - the
+            // deliberate asymmetry with the API seam, which rejects because a human is present to
+            // read the error and correct the payload.
+            await WarnIfConfiguredAlertTargetUnresolvableAsync(jobIdString, configuredJob.FailureAlertConversationId, ct)
+                .ConfigureAwait(false);
+
             var agentId = string.IsNullOrWhiteSpace(configuredJob.AgentId)
                 ? (AgentId?)null
                 : AgentId.From(configuredJob.AgentId);

@@ -426,7 +426,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
             if (_pendingAskUserInterceptor is not null &&
                 session.ConversationId.IsInitialized() &&
-                _pendingAskUserInterceptor.TryIntercept(message, session.ConversationId))
+                await _pendingAskUserInterceptor.TryInterceptAsync(message, session.ConversationId, cancellationToken).ConfigureAwait(false))
             {
                 _logger.LogInformation(
                     "Captured ask_user response for conversation {ConversationId}; skipping normal agent dispatch.",
