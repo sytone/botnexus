@@ -183,13 +183,9 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             //     building them in Release from inside the test phase is pure waste. Release
             //     itself is load-bearing and must stay - GatewayCommand resolves the host from
             //     a hardcoded bin/Release path - so narrow the SET, never the CONFIGURATION.
-            Log.Add("[build] dotnet build src/dirs.proj -c Release (prebuild, deployment closure)");
-            var build = await ProcessRunner.RunAsync(
-                "dotnet",
-                "build src/dirs.proj --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
-                workingDirectory: repoRoot,
-                environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
-                timeout: SolutionBuildTimeout);
+            //     The build command itself now lives in EnsureSolutionBuiltAsync, which
+            //     serialises it behind a machine-wide mutex (#2739).
+            var build = await EnsureSolutionBuiltAsync(repoRoot);
             if (build.ExitCode != 0)
             {
                 Error = $"Solution prebuild exit {build.ExitCode}.\n{build.Combined}";
@@ -243,6 +239,63 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
         {
             // Best-effort cleanup. SQLite write-ahead files and locked .nupkg blobs on
             // Windows are not worth failing the suite for.
+        }
+    }
+
+    /// <summary>
+    /// Serialise the solution prebuild across every process on the machine (issue #2739).
+    ///
+    /// The prebuild writes the shared <c>bin/Release</c> and <c>obj</c> trees. When two
+    /// xUnit test hosts for this project run concurrently, both fixtures entered this
+    /// build at the same time and raced those outputs, producing CS2012 / MSB3883
+    /// file-lock failures, <c>Solution prebuild exit 1</c>, and - because every test
+    /// class guards on <c>Skip.IfNot(_fx.Succeeded, ...)</c> - a suite that degraded
+    /// into ~265 silent skips while still exiting 0. A vacuously green gate is worse
+    /// than a red one.
+    ///
+    /// A machine-wide named <see cref="Mutex"/> is used rather than an in-process lock
+    /// because the contending builds live in DIFFERENT PROCESSES; an in-process lock
+    /// cannot see them. The second holder finds the outputs already current and its
+    /// build is a cheap no-op, so serialising costs one build, not two.
+    /// </summary>
+    private async Task<ProcessRunner.ProcessResult> EnsureSolutionBuiltAsync(string repoRoot)
+    {
+        // "Global\" so the mutex is visible across sessions, not just the current one.
+        using var mutex = new Mutex(initiallyOwned: false, name: @"Global\botnexus-e2e-prebuild");
+        var held = false;
+        try
+        {
+            try
+            {
+                held = mutex.WaitOne(SolutionBuildTimeout);
+            }
+            catch (AbandonedMutexException)
+            {
+                // A previous holder died mid-build. We now own the mutex; the build
+                // below re-derives whatever that process left half-written.
+                held = true;
+            }
+
+            if (!held)
+            {
+                Log.Add($"[build] timed out after {SolutionBuildTimeout} waiting for the prebuild mutex");
+                return new ProcessRunner.ProcessResult(
+                    ExitCode: 1,
+                    StdOut: string.Empty,
+                    StdErr: $"Solution prebuild mutex not acquired within {SolutionBuildTimeout}.");
+            }
+
+            Log.Add("[build] dotnet build src/dirs.proj -c Release (prebuild, deployment closure, mutex held)");
+            return await ProcessRunner.RunAsync(
+                "dotnet",
+                "build src/dirs.proj --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
+                workingDirectory: repoRoot,
+                environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
+                timeout: SolutionBuildTimeout);
+        }
+        finally
+        {
+            if (held) mutex.ReleaseMutex();
         }
     }
 
