@@ -49,7 +49,7 @@ namespace BotNexus.Architecture.Tests;
 public sealed class AgentDescriptorFingerprintFenceArchitectureTests
 {
     private const string FingerprintSource =
-        "src/gateway/BotNexus.Gateway/Configuration/AgentDescriptorFingerprint.cs";
+        "src/gateway/BotNexus.Gateway.Configuration/AgentDescriptorFingerprint.cs";
 
     private const string AppendDescriptorSignature =
         "private static void AppendDescriptor(StringBuilder builder, AgentDescriptor d)";

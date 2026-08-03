@@ -1,9 +1,9 @@
+using BotNexus.Gateway.Agents;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
-using BotNexus.Gateway.Agents;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
