@@ -44,6 +44,8 @@ internal static class SqliteRetryHelper
         // 6 = SQLITE_LOCKED (table-level lock within same connection — rare for reads)
         // 10 = SQLITE_IOERR (I/O error — may be transient under heavy disk load)
         // 11 = SQLITE_CORRUPT is NOT transient
+        // 14 = SQLITE_CANTOPEN is NOT transient — a path whose parent directory does not
+        //      exist can never become openable by retrying (#2608).
         return ex.SqliteErrorCode is 5 or 6 or 10;
     }
 }

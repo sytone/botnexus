@@ -452,21 +452,54 @@ public sealed class ConversationState
     // List.FindIndex semantics so the lookup is behaviour-preserving.
     private readonly Dictionary<string, int> _messageIndex = new(StringComparer.Ordinal);
 
-    /// <summary>Messages in this conversation's timeline. Read-only view: mutate via
-    /// <see cref="AppendMessage"/>, <see cref="ReplaceMessageAt"/>, <see cref="PrependMessages"/>,
-    /// or <see cref="ClearMessages"/> so the id-&gt;index map stays consistent (#1622).</summary>
-    public IReadOnlyList<ChatMessage> Messages => _messages;
+    // #2712: every read of and mutation to the timeline (and the id->index map that must stay in step
+    // with it) is serialised on this gate. Before this, Messages handed out the LIVE backing List, so a
+    // caller's .ToArray() -- the #2320 fix applied at each call site -- raced a concurrent Add: ToArray
+    // reads Count, allocates, then CopyTo, and an Add landing in that window overran the destination
+    // with "ArgumentException: Destination array was not long enough". Guarding at the seam removes the
+    // unsynchronised access itself rather than moving the race one layer further out.
+    private readonly object _timelineGate = new();
+
+    // Immutable snapshots handed to readers, rebuilt lazily under the gate and dropped by every
+    // mutation. Lazy rather than eager so appends stay O(1) on the streaming hot path (#1620); the O(n)
+    // copy is paid only by a reader that actually observes a changed timeline, and repeat reads between
+    // mutations are free.
+    private ChatMessage[]? _messagesSnapshot;
+    private IReadOnlyDictionary<string, int>? _messageIndexSnapshot;
+
+    /// <summary>Messages in this conversation's timeline. Returns an immutable point-in-time snapshot
+    /// taken under the timeline lock (#2712), so a caller can enumerate, index or copy it without ever
+    /// observing a torn state. Mutate via <see cref="AppendMessage"/>, <see cref="ReplaceMessageAt"/>,
+    /// <see cref="PrependMessages"/>, or <see cref="ClearMessages"/> so the id-&gt;index map stays
+    /// consistent (#1622).</summary>
+    public IReadOnlyList<ChatMessage> Messages
+    {
+        get { lock (_timelineGate) { return _messagesSnapshot ??= _messages.ToArray(); } }
+    }
 
     /// <summary>O(1) id-&gt;index map over <see cref="Messages"/>. Each non-empty message id maps to the
     /// first index it appears at (matching <c>List.FindIndex</c>). Used by the ToolEnd handler to locate
     /// the message a tool result belongs to without a linear scan (#1622).</summary>
-    public IReadOnlyDictionary<string, int> MessageIndex => _messageIndex;
+    public IReadOnlyDictionary<string, int> MessageIndex
+    {
+        get
+        {
+            lock (_timelineGate)
+            {
+                return _messageIndexSnapshot ??= new Dictionary<string, int>(_messageIndex, StringComparer.Ordinal);
+            }
+        }
+    }
 
     /// <summary>Appends a message to the timeline and indexes it in O(1).</summary>
     public void AppendMessage(ChatMessage message)
     {
-        _messages.Add(message);
-        IndexMessageAt(_messages.Count - 1);
+        lock (_timelineGate)
+        {
+            _messages.Add(message);
+            IndexMessageAt(_messages.Count - 1);
+            InvalidateSnapshots();
+        }
     }
 
     /// <summary>Replaces the message at <paramref name="index"/> in place (used by the ToolEnd update
@@ -475,24 +508,29 @@ public sealed class ConversationState
     /// updated to point the new id at this slot.</summary>
     public void ReplaceMessageAt(int index, ChatMessage message)
     {
-        if (index < 0 || index >= _messages.Count)
-            return;
-
-        var previous = _messages[index];
-        _messages[index] = message;
-
-        // If the id changed, drop the old id's entry only when it pointed at this slot (a later
-        // duplicate may still own the old id), then index the slot under the new id.
-        if (!string.Equals(previous.Id, message.Id, StringComparison.Ordinal))
+        lock (_timelineGate)
         {
-            if (!string.IsNullOrEmpty(previous.Id)
-                && _messageIndex.TryGetValue(previous.Id, out var owned)
-                && owned == index)
+            if (index < 0 || index >= _messages.Count)
+                return;
+
+            var previous = _messages[index];
+            _messages[index] = message;
+
+            // If the id changed, drop the old id's entry only when it pointed at this slot (a later
+            // duplicate may still own the old id), then index the slot under the new id.
+            if (!string.Equals(previous.Id, message.Id, StringComparison.Ordinal))
             {
-                _messageIndex.Remove(previous.Id);
+                if (!string.IsNullOrEmpty(previous.Id)
+                    && _messageIndex.TryGetValue(previous.Id, out var owned)
+                    && owned == index)
+                {
+                    _messageIndex.Remove(previous.Id);
+                }
+
+                IndexMessageAt(index);
             }
 
-            IndexMessageAt(index);
+            InvalidateSnapshots();
         }
     }
 
@@ -500,15 +538,23 @@ public sealed class ConversationState
     /// the id-&gt;index map is rebuilt.</summary>
     public void PrependMessages(IEnumerable<ChatMessage> messages)
     {
-        _messages.InsertRange(0, messages);
-        RebuildMessageIndex();
+        lock (_timelineGate)
+        {
+            _messages.InsertRange(0, messages);
+            RebuildMessageIndex();
+            InvalidateSnapshots();
+        }
     }
 
     /// <summary>Clears the timeline and the id-&gt;index map.</summary>
     public void ClearMessages()
     {
-        _messages.Clear();
-        _messageIndex.Clear();
+        lock (_timelineGate)
+        {
+            _messages.Clear();
+            _messageIndex.Clear();
+            InvalidateSnapshots();
+        }
     }
 
     /// <summary>Resolves a message id to its index in O(1). Returns <see langword="false"/> for a
@@ -516,11 +562,21 @@ public sealed class ConversationState
     /// miss the previous <c>FindIndex(...) == -1</c> path produced (#1622).</summary>
     public bool TryGetMessageIndex(string? id, out int index)
     {
-        if (!string.IsNullOrEmpty(id) && _messageIndex.TryGetValue(id, out index))
-            return true;
+        lock (_timelineGate)
+        {
+            if (!string.IsNullOrEmpty(id) && _messageIndex.TryGetValue(id, out index))
+                return true;
+        }
 
         index = -1;
         return false;
+    }
+
+    // Drops the cached reader snapshots so the next read rebuilds them. Callers must hold _timelineGate.
+    private void InvalidateSnapshots()
+    {
+        _messagesSnapshot = null;
+        _messageIndexSnapshot = null;
     }
 
     // Indexes the message at the given slot under its id, keeping FIRST-occurrence-wins semantics so a

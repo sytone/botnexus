@@ -1,4 +1,4 @@
-using BotNexus.Gateway.Abstractions.Sessions;
+﻿using BotNexus.Gateway.Abstractions.Sessions;
 using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -10,7 +10,9 @@ using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Resolution;
+using BotNexus.Cron;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
@@ -38,6 +40,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     // from the row not being written - the id is still minted so the child never shares the
     // parent's SignalR group.
     private readonly IConversationStore? _conversationStore;
+    // #2647: model registry used to preflight a requested model/provider override BEFORE any child
+    // session, descriptor or record exists. Optional: a host without a populated registry classifies
+    // as RegistryUnavailable and the spawn proceeds exactly as before (never a false rejection).
+    private readonly ModelRegistry? _modelRegistry;
     // Trusted-only security-event sink (#1647). Optional: null behaves exactly as before (no
     // emission). Spawn and kill each emit one SecurityEvent so the sandbox boundary is recorded
     // to the trusted sink and never the public activity/diagnostic stream.
@@ -73,7 +79,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         ISessionStore? sessionStore = null,
         TimeProvider? timeProvider = null,
         ISecurityEventSink? securityEvents = null,
-        IConversationStore? conversationStore = null)
+        IConversationStore? conversationStore = null,
+        ModelRegistry? modelRegistry = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -87,6 +94,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _timeProvider = timeProvider ?? TimeProvider.System;
         _securityEvents = securityEvents;
         _conversationStore = conversationStore;
+        _modelRegistry = modelRegistry;
     }
 
     /// <summary>
@@ -214,10 +222,58 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // resolved from Mode, not a deleted top-level request field. See ValidateToolGrants.
         ValidateToolGrants(request, toolIds);
 
+        // #2650: fail fast on a write-capable child that was handed read-only granted paths.
+        WarnOnUnwritableGrantedPaths(request, toolIds);
+
         // Build file access policy for workspace isolation. Null means "fully isolated" -
         // the child falls back to the base descriptor's FileAccess below. See
         // BuildChildFileAccessPolicy.
         var childFileAccess = BuildChildFileAccessPolicy(request);
+
+        // #2647: ONE resolution, consumed by both the descriptor the child actually runs on and the
+        // SubAgentInfo reporting record below. Computing it twice is exactly how "what runs" and
+        // "what is reported" drifted: the record was populated from a resolution that nothing ever
+        // wrote through to the descriptor, so list_subagents corroborated a model the child never used.
+        //
+        // The agent layer (the configured sub-agent DefaultModel) is deliberately gated on Embody.
+        // Mirror is strict pass-through of the TARGET descriptor (#562 / #1565) - letting the
+        // platform-wide sub-agent default apply there would silently re-point a mirrored agent at a
+        // different model than the one it is registered with.
+        var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.CurrentValue.SubAgents.DefaultModel)
+            ? null
+            : _options.CurrentValue.SubAgents.DefaultModel;
+        var agentLayerModel = request.Mode is Embody ? configuredDefaultModel : null;
+
+        var effectiveModel = ModelOverrideResolver.Resolve(
+            modelDefaults: new ModelOverrideLayer(Model: baseDescriptor.ModelId),
+            agent: new ModelOverrideLayer(Model: agentLayerModel),
+            conversation: new ModelOverrideLayer(Model: modelOverride)).Model;
+        var effectiveProvider = plan.ApiProviderOverride ?? baseDescriptor.ApiProvider;
+
+        // Preflight the REQUESTED pair before anything is created. Only runs when the caller actually
+        // asked for an override - the parent's own already-running model is not ours to second-guess.
+        if (!string.IsNullOrWhiteSpace(plan.ModelOverride) || !string.IsNullOrWhiteSpace(plan.ApiProviderOverride))
+        {
+            var requested = string.IsNullOrWhiteSpace(plan.ApiProviderOverride)
+                ? effectiveModel
+                : $"{plan.ApiProviderOverride}/{effectiveModel}";
+
+            var preflight = CronModelPreflight.Resolve(_modelRegistry, requested);
+            if (preflight.IsRejection)
+            {
+                // Fail loudly naming the requested value. Silent substitution of a different model is
+                // never acceptable: it fabricates the results of every model comparison run through
+                // spawn_subagent. Thrown here, so no session, descriptor or record is created.
+                throw new InvalidOperationException(
+                    $"Sub-agent spawn requested model '{requested}' which cannot be resolved. {preflight.Reason}");
+            }
+
+            if (preflight.Kind == CronModelPreflightKind.Resolved)
+            {
+                effectiveModel = preflight.ModelId;
+                effectiveProvider = preflight.Provider ?? effectiveProvider;
+            }
+        }
 
         if (!_registry.Contains(childAgentId))
         {
@@ -232,6 +288,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 SystemPrompt = string.IsNullOrWhiteSpace(plan.SystemPromptOverride)
                     ? baseDescriptor.SystemPrompt
                     : plan.SystemPromptOverride,
+                // #2647: the authoritative state the child dispatches against. Sourced from the single
+                // resolution above - the same values the SubAgentInfo record reports.
+                ModelId = effectiveModel ?? baseDescriptor.ModelId,
+                ApiProvider = effectiveProvider,
                 FileAccess = childFileAccess ?? baseDescriptor.FileAccess
             });
         }
@@ -244,10 +304,6 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
-        var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.CurrentValue.SubAgents.DefaultModel)
-            ? null
-            : _options.CurrentValue.SubAgents.DefaultModel;
-
         var info = new SubAgentInfo
         {
             SubAgentId = subAgentId,
@@ -258,10 +314,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             ParentAgentId = request.ParentAgentId.Value,
             ChildAgentId = childAgentId.Value,
             Task = request.Task,
-            Model = ModelOverrideResolver.Resolve(
-                modelDefaults: new ModelOverrideLayer(Model: baseDescriptor.ModelId),
-                agent: new ModelOverrideLayer(Model: configuredDefaultModel),
-                conversation: new ModelOverrideLayer(Model: modelOverride)).Model,
+            // #2647: reported value is the SAME single resolution written onto the descriptor above.
+            Model = effectiveModel,
             Archetype = archetype,
             Status = SubAgentStatus.Running,
             StartedAt = DateTimeOffset.UtcNow,
@@ -497,12 +551,55 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     /// <summary>
+    /// Emits a spawn-time diagnostic when a write-capable child is handed granted paths but no
+    /// writable location (#2650). Reuses the pre-flight seam alongside
+    /// <see cref="ValidateToolGrants"/> so the caller learns before the child burns budget and
+    /// discovers the refusal at its first <c>write</c>/<c>edit</c>.
+    /// </summary>
+    /// <remarks>
+    /// Warns (does not throw): a read-only delegation to a write-capable archetype is a legitimate
+    /// request, it is only the silent mid-run failure that is the defect. A child is treated as
+    /// write-capable when its resolved toolset contains <c>write</c> or <c>edit</c>, or when no
+    /// toolset restriction was resolved at all (the child then inherits the parent's tools, which
+    /// normally include writing). Nothing is emitted when the spawn already has a writable
+    /// location - <see cref="SubAgentSpawnRequest.ShareWorkspace"/> or
+    /// <see cref="SubAgentSpawnRequest.GrantedWritePaths"/>.
+    /// </remarks>
+    /// <param name="request">The spawn request carrying granted paths and the share-workspace flag.</param>
+    /// <param name="toolIds">The resolved tools the child would be granted, or <c>null</c>/empty.</param>
+    internal void WarnOnUnwritableGrantedPaths(SubAgentSpawnRequest request, IReadOnlyList<string>? toolIds)
+    {
+        if (request.GrantedPaths is not { Count: > 0 })
+            return;
+
+        if (request.ShareWorkspace || request.GrantedWritePaths is { Count: > 0 })
+            return;
+
+        var writeCapable = toolIds is not { Count: > 0 }
+            || toolIds.Any(t =>
+                string.Equals(t, "write", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(t, "edit", StringComparison.OrdinalIgnoreCase));
+        if (!writeCapable)
+            return;
+
+        _logger.LogWarning(
+            "Sub-agent spawn for parent '{ParentAgentId}' grants write-capable tools with grantedPaths "
+            + "[{GrantedPaths}] but no writable location: grantedPaths are read-only. Use "
+            + "grantedWritePaths for a specific writable directory, or shareWorkspace for the parent "
+            + "workspace, otherwise every write/edit outside the child workspace will be refused.",
+            request.ParentAgentId.Value,
+            string.Join(", ", request.GrantedPaths));
+    }
+
+    /// <summary>
     /// Composes the child's <see cref="FileAccessPolicy"/> for workspace isolation, or returns
     /// <c>null</c> when the child should stay fully isolated (the caller then falls back to the
     /// base descriptor's <see cref="AgentDescriptor.FileAccess"/>). By default a sub-agent can only
     /// reach its own temporary workspace; <see cref="SubAgentSpawnRequest.ShareWorkspace"/> adds
-    /// read+write access to the parent's workspace, and <see cref="SubAgentSpawnRequest.GrantedPaths"/>
-    /// adds read-only access to specific directories.
+    /// read+write access to the parent's workspace, <see cref="SubAgentSpawnRequest.GrantedPaths"/>
+    /// adds read-only access to specific directories, and
+    /// <see cref="SubAgentSpawnRequest.GrantedWritePaths"/> adds read+write access to specific
+    /// directories (#2650).
     /// </summary>
     /// <remarks>
     /// Returns <c>null</c> (not an empty policy) when neither <c>ShareWorkspace</c> nor any granted
@@ -517,7 +614,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// <returns>The composed policy, or <c>null</c> when the child stays fully isolated.</returns>
     internal FileAccessPolicy? BuildChildFileAccessPolicy(SubAgentSpawnRequest request)
     {
-        if (!request.ShareWorkspace && request.GrantedPaths is not { Count: > 0 })
+        if (!request.ShareWorkspace
+            && request.GrantedPaths is not { Count: > 0 }
+            && request.GrantedWritePaths is not { Count: > 0 })
             return null;
 
         var allowedRead = new List<string>();
@@ -536,6 +635,22 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             {
                 if (!string.IsNullOrWhiteSpace(grantedPath))
                     allowedRead.Add(Path.GetFullPath(grantedPath));
+            }
+        }
+
+        // #2650: granted WRITE paths are the explicit write grant - they appear in both lists so a
+        // sub-agent can produce files in a specific directory without ShareWorkspace handing it the
+        // whole parent workspace. Plain GrantedPaths remain read-only.
+        if (request.GrantedWritePaths is { Count: > 0 })
+        {
+            foreach (var grantedWritePath in request.GrantedWritePaths)
+            {
+                if (string.IsNullOrWhiteSpace(grantedWritePath))
+                    continue;
+
+                var resolved = Path.GetFullPath(grantedWritePath);
+                allowedRead.Add(resolved);
+                allowedWrite.Add(resolved);
             }
         }
 
@@ -605,7 +720,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (info.ParentSessionId != requestingSessionId)
             return false;
 
-        if (info.Status is SubAgentStatus.Completed or SubAgentStatus.Failed or SubAgentStatus.Killed or SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted)
+        if (SubAgentStatusPolicy.IsTerminal(info.Status))
             return false;
 
         record.CancelTimeout();
@@ -738,7 +853,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 parentAgentId.Value,
                 $"Sub-agent '{subAgentId}' completed.");
         }
-        else if (updated.Status is SubAgentStatus.Failed or SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted)
+        else if (SubAgentStatusPolicy.IsUnsuccessfulTermination(updated.Status))
         {
             await PublishLifecycleActivityAsync(
                 GatewayActivityType.SubAgentFailed,

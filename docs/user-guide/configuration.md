@@ -389,6 +389,7 @@ Providers connect BotNexus to LLM APIs. Each provider has its own configuration 
 | `baseUrl` | string | (varies) | API base URL (provider-specific default if omitted) |
 | `defaultModel` | string | (varies) | Default model for agents using this provider |
 | `models` | array | `null` | Allowed models. `null` = all models, `[]` = none |
+| `input` | array | `null` | Explicit input modalities (e.g. `["text","image"]`) for models registered from `models`. `null`/`[]` infers from the model family; an explicit declaration always wins |
 | `api` | string | `openai-completions` | API format used when registering models from `models` for a custom provider |
 | `reasoning` | bool | `null` | Dynamic-model capability: whether these models support a thinking override. `null` = infer from the model family |
 | `supportsExtraHighThinking` | bool | `null` | Dynamic-model capability: whether these models support the `xhigh` / `max` thinking tiers. `null` = infer from the family |
