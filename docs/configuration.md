@@ -184,21 +184,18 @@ services.AddSingleton(botNexusConfig);
 
 Each scheduler tick collects every due job and executes them concurrently. Because most schedules land on
 the hour, many jobs come due on the same tick, and every concurrent `agent-prompt` job is a billed model
-turn plus a provider HTTP connection. `cron.maxConcurrentJobs` bounds how many due jobs run at once (#2670).
+turn plus a provider HTTP connection. `CronOptions.MaxConcurrentJobs` bounds how many due jobs run at once (#2670).
 
-```json
-{
-  "cron": {
-    "enabled": true,
-    "tickIntervalSeconds": 60,
-    "maxConcurrentJobs": 5
-  }
-}
-```
+> **Bound in code, not from `config.json`.** Only `enabled`, `tickIntervalSeconds` and `jobs` are
+> copied out of the `cron` section into the scheduler's options. `maxConcurrentJobs` is a
+> `CronOptions` value configured through the standard .NET options pipeline (environment variables
+> or an `appsettings` provider), so adding `"maxConcurrentJobs"` to the `cron` block of
+> `config.json` has no effect today. It is documented here because it governs observable
+> scheduler behaviour.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `cron.maxConcurrentJobs` | int | `5` | Maximum number of due jobs the scheduler executes concurrently on a single tick. Jobs beyond the cap **queue and run as slots free** - none are dropped. A value of `0` or less degrades to the default of `5` rather than to unbounded fan-out. |
+| `CronOptions.MaxConcurrentJobs` | int | `5` | Maximum number of due jobs the scheduler executes concurrently on a single tick. Jobs beyond the cap **queue and run as slots free** - none are dropped. A value of `0` or less degrades to the default of `5` rather than to unbounded fan-out. |
 
 **Tradeoff.** A low cap protects provider rate limits, cost and box CPU on a saturated tick, but it also
 *delays* the later jobs on that tick: with 40 due jobs and a cap of 5, the last job does not start until
@@ -206,7 +203,7 @@ seven earlier batches have finished. If your jobs are long-running and latency-s
 if you see provider `429`s or box contention around synchronised schedule boundaries, lower it.
 
 This aggregate cap is independent of the scheduler's per-job lock, which separately prevents two runs of
-the *same* job from overlapping. Raising `maxConcurrentJobs` never allows a single job to run twice
+the *same* job from overlapping. Raising `MaxConcurrentJobs` never allows a single job to run twice
 concurrently.
 
 ---

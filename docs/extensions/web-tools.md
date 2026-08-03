@@ -107,6 +107,14 @@ By default, the fetch tool blocks requests to:
 
 Set `allowPrivateNetworks: true` only for self-hosted deployments where agents legitimately need to reach internal services.
 
+#### Reaching this gateway from an agent
+
+The refusal covers the gateway's own loopback endpoints, so an agent **cannot** call
+`http://localhost:5005/health` or `/api/logs/recent` with `web_fetch`. As of #2691 this restriction
+is stated in the tool's own description rather than discovered at call time, so an agent can pick a
+working approach before burning a turn. The sanctioned alternative is to issue the request from the
+`shell`/`exec` tool against the local API.
+
 ### Host Blocking
 
 Use `additionalBlockedHosts` to block specific hostnames that resolve to public IPs but serve internal content:

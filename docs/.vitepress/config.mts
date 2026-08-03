@@ -141,6 +141,7 @@ export default defineConfig({
           { text: 'Channel Binding', link: '/architecture/channel-binding' },
           { text: 'Portal PWA Caching', link: '/architecture/portal-pwa-caching' },
           { text: 'Extension Guide', link: '/architecture/extension-guide' },
+          { text: 'Plugin Architecture', link: '/architecture/plugins' },
           { text: 'Principles', link: '/architecture/principles' },
           { text: 'System Flows', link: '/architecture/system-flows' },
           { text: 'Decision Records (ADRs)', link: '/architecture/adr/README' },
