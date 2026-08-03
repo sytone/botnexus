@@ -75,13 +75,31 @@ public sealed class ExecApprovalManager : IExecApprovalManager
         $@"(?i)(?:^|\s)(?:-|/)(?:{string.Join('|', EncodedCommandSpellings)})\s+([A-Za-z0-9+/]+=*)(?![A-Za-z0-9+/=])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private sealed record PendingApproval(string SessionId, string CanonicalCommand);
+    /// <summary>Default lifetime of an unanswered approval before it is pruned and refused.</summary>
+    public static readonly TimeSpan DefaultPendingTtl = TimeSpan.FromMinutes(15);
+
+    /// <summary>Default hard cap on concurrently pending approvals.</summary>
+    public const int DefaultMaxPending = 256;
+
+    /// <param name="SessionId">The session the token is bound to (invariant C).</param>
+    /// <param name="CanonicalCommand">The decoded command the token authorises (invariants A and B).</param>
+    /// <param name="IssuedAt">
+    /// The instant the approval was issued. An entry strictly older than the configured TTL is
+    /// never redeemable and is pruned opportunistically on the next <see cref="Issue"/> (#2746).
+    /// </param>
+    private sealed record PendingApproval(string SessionId, string CanonicalCommand, DateTimeOffset IssuedAt);
 
     private readonly ConcurrentDictionary<string, PendingApproval> _pending =
         new(StringComparer.Ordinal);
 
     private readonly ISecurityEventSink? _securityEvents;
     private readonly ILogger<ExecApprovalManager>? _logger;
+    private readonly TimeProvider _timeProvider;
+    private readonly TimeSpan _pendingTtl;
+    private readonly int _maxPending;
+
+    /// <summary>The number of approvals currently pending (expired-but-unpruned entries included).</summary>
+    public int PendingCount => _pending.Count;
 
     /// <summary>
     /// Creates an approval manager. When a trusted <paramref name="securityEvents"/> sink is
@@ -91,12 +109,26 @@ public sealed class ExecApprovalManager : IExecApprovalManager
     /// </summary>
     /// <param name="securityEvents">Trusted security-event sink, or null to disable emission.</param>
     /// <param name="logger">Optional logger for swallowed sink faults.</param>
+    /// <param name="timeProvider">Clock used to stamp and expire pending approvals; defaults to the system clock.</param>
+    /// <param name="pendingTtl">Lifetime of an unanswered approval; defaults to <see cref="DefaultPendingTtl"/>.</param>
+    /// <param name="maxPending">Hard cap on pending approvals; defaults to <see cref="DefaultMaxPending"/>.</param>
     public ExecApprovalManager(
         ISecurityEventSink? securityEvents = null,
-        ILogger<ExecApprovalManager>? logger = null)
+        ILogger<ExecApprovalManager>? logger = null,
+        TimeProvider? timeProvider = null,
+        TimeSpan? pendingTtl = null,
+        int? maxPending = null)
     {
+        if (pendingTtl is { } ttl && ttl <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(pendingTtl), ttl, "TTL must be positive.");
+        if (maxPending is { } cap && cap <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxPending), cap, "Cap must be positive.");
+
         _securityEvents = securityEvents;
         _logger = logger;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _pendingTtl = pendingTtl ?? DefaultPendingTtl;
+        _maxPending = maxPending ?? DefaultMaxPending;
     }
 
     /// <inheritdoc />
@@ -105,9 +137,21 @@ public sealed class ExecApprovalManager : IExecApprovalManager
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
 
+        var now = _timeProvider.GetUtcNow();
+
+        // Opportunistic sweep - no timer. Abandoned approvals are reclaimed on the next issuance.
+        PruneExpired(now);
+
+        if (_pending.Count >= _maxPending)
+        {
+            // Refusal is observable on the existing trusted sink rather than being silent growth.
+            EmitDecision("tool.execution.approval.refused", SecurityPolicyDecision.Deny, sessionId);
+            throw new ExecApprovalCapacityExceededException(_maxPending);
+        }
+
         var canonical = DecodeIfPowerShellEncoded(command);
         var tokenId = Guid.NewGuid().ToString("N");
-        _pending[tokenId] = new PendingApproval(sessionId, canonical);
+        _pending[tokenId] = new PendingApproval(sessionId, canonical, now);
 
         // An issued token defers to a human: an "ask" decision at the approval boundary.
         EmitDecision("tool.execution.approval.required", SecurityPolicyDecision.Ask, sessionId);
@@ -141,6 +185,10 @@ public sealed class ExecApprovalManager : IExecApprovalManager
         if (!_pending.TryRemove(tokenId, out var pending))
             return false;
 
+        // Expiry - an approval older than the configured TTL is never redeemable (#2746).
+        if (_timeProvider.GetUtcNow() - pending.IssuedAt > _pendingTtl)
+            return false;
+
         // Session binding check - token must be redeemed by the session that requested it (C).
         if (!string.Equals(pending.SessionId, sessionId, StringComparison.Ordinal))
             return false;
@@ -151,6 +199,19 @@ public sealed class ExecApprovalManager : IExecApprovalManager
             return false;
 
         return true;
+    }
+
+    /// <summary>
+    /// Removes every pending approval older than the configured TTL. Called opportunistically from
+    /// <see cref="Issue"/> so no background timer is required.
+    /// </summary>
+    private void PruneExpired(DateTimeOffset now)
+    {
+        foreach (var entry in _pending)
+        {
+            if (now - entry.Value.IssuedAt > _pendingTtl)
+                _pending.TryRemove(entry.Key, out _);
+        }
     }
 
     /// <summary>
