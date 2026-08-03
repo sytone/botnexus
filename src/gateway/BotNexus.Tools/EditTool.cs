@@ -287,6 +287,12 @@ public sealed class EditTool : IAgentTool
     {
         if (value is JsonElement element)
         {
+            if (element.ValueKind == JsonValueKind.String &&
+                TryParseStringifiedEdits(element.GetString(), out var coercedFromElement))
+            {
+                return coercedFromElement;
+            }
+
             if (element.ValueKind != JsonValueKind.Array)
             {
                 throw new ArgumentException(DescribeEditsShapeError(
@@ -294,6 +300,11 @@ public sealed class EditTool : IAgentTool
             }
 
             return element.EnumerateArray().Select(ParseEditElement).ToList();
+        }
+
+        if (value is string rawString && TryParseStringifiedEdits(rawString, out var coercedFromString))
+        {
+            return coercedFromString;
         }
 
         // A string is IEnumerable<char>, not IEnumerable<object?>, so it correctly falls through
@@ -515,6 +526,59 @@ public sealed class EditTool : IAgentTool
     /// The edit is still rejected either way: per the #2415 precedent, silently unwrapping a
     /// malformed payload risks fabricating an edit against a user's file.
     /// </summary>
+    /// <summary>
+    /// Issue #2759 (AC1): applies the #1562 losslessly-safe coercion at the tool boundary as well
+    /// as at the validator seam. When <c>edits</c> arrives as a string whose CONTENT is a
+    /// well-formed JSON array of <c>{oldText,newText}</c> objects, the payload is exactly right and
+    /// only the quoting was wrong, so it is unwrapped rather than rejected. Anything that does not
+    /// parse - or parses to a shape that is not an array of valid edit entries - returns
+    /// <c>false</c> so the caller falls through to the reject path; nothing is ever guessed at.
+    /// </summary>
+    private static bool TryParseStringifiedEdits(string? text, out List<EditEntry> edits)
+    {
+        edits = [];
+
+        if (text is not { Length: > 0 } || !text.AsSpan().TrimStart().StartsWith("["))
+        {
+            return false;
+        }
+
+        // Mirror the seam's DoS cap (#1738): a model-controlled string over the cap is not parsed.
+        if (text.Length > MaxJsonCoerceLength)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            edits = document.RootElement.EnumerateArray().Select(ParseEditElement).ToList();
+            return edits.Count > 0;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            // Parsed as JSON but an entry was not a valid edit: fall through to the reject path so
+            // the caller gets the shape diagnostic rather than a partially-applied batch.
+            edits = [];
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Cap on the synchronous in-process JSON parse of a model-controlled <c>edits</c> string,
+    /// matching <c>ToolCallValidator.MaxJsonCoerceLength</c> (issue #1738).
+    /// </summary>
+    private const int MaxJsonCoerceLength = 64 * 1024;
+
     private static string DescribeEditsShapeError(string? stringValue)
     {
         const string baseMessage = "Argument 'edits' must be an array.";
@@ -534,9 +598,18 @@ public sealed class EditTool : IAgentTool
                            + ShapeHint;
                 }
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
-                // Not recoverable JSON; fall through to the generic message.
+                // Issue #2759 (AC2): the caller stringified 'edits' and the string did NOT parse.
+                // Reporting a truncated preview implies truncation caused the failure; it did not.
+                // State the parse reason, the byte offset, and the FULL value length so the caller
+                // can see the value arrived whole and fix the actual syntax error.
+                return baseMessage
+                       + " It arrived as a JSON string containing the array, but that string is not"
+                       + $" valid JSON: {ex.Message} (position {ex.BytePositionInLine ?? 0},"
+                       + $" line {ex.LineNumber ?? 0}). The full value was {text.Length} characters"
+                       + " and was received complete - it was not truncated."
+                       + ShapeHint;
             }
         }
 
