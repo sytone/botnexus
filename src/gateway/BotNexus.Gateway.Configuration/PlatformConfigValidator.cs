@@ -539,7 +539,7 @@ public static class PlatformConfigValidator
 
             // #2136: the six built-in worker archetype ids are reserved for
             // spawn_subagent(archetype:...) and may not be defined/overridden as named agents.
-            if (Agents.BuiltInArchetypes.IsReserved(agentId))
+            if (BotNexus.Gateway.Agents.BuiltInArchetypes.IsReserved(agentId))
             {
                 errors.Add(
                     $"agents.{agentId} uses a reserved sub-agent archetype id and cannot be defined as a named agent. " +

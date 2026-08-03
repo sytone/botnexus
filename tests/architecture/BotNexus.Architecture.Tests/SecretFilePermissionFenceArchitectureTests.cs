@@ -29,7 +29,7 @@ public sealed class SecretFilePermissionFenceArchitectureTests
     private static string RepoRoot => FindRepoRoot();
 
     private const string SecureFilePermissionsSource =
-        "src/gateway/BotNexus.Gateway/Configuration/SecureFilePermissions.cs";
+        "src/gateway/BotNexus.Gateway.Configuration/SecureFilePermissions.cs";
 
     /// <summary>
     /// Source files that write a secret-bearing file and must therefore call the central helper.
@@ -38,13 +38,13 @@ public sealed class SecretFilePermissionFenceArchitectureTests
     private static readonly string[] SecretWritingSurfaces =
     {
         // Atomic temp-file + move rewrite of config.json (provider API keys, channel bot tokens).
-        "src/gateway/BotNexus.Gateway/Configuration/PlatformConfigWriter.cs",
+        "src/gateway/BotNexus.Gateway.Configuration/PlatformConfigWriter.cs",
         // Second atomic rewrite seam for the same config.json, at gateway startup.
-        "src/gateway/BotNexus.Gateway/Configuration/ConfigNormalisationHostedService.cs",
+        "src/gateway/BotNexus.Gateway.Configuration/ConfigNormalisationHostedService.cs",
         // Byte-for-byte backup copies of config.json, secrets included.
-        "src/gateway/BotNexus.Gateway/Configuration/ConfigBackupService.cs",
+        "src/gateway/BotNexus.Gateway.Configuration/ConfigBackupService.cs",
         // auth.json - OAuth refresh/access tokens (gateway side).
-        "src/gateway/BotNexus.Gateway/Configuration/GatewayAuthManager.cs",
+        "src/gateway/BotNexus.Gateway.Configuration/GatewayAuthManager.cs",
         // auth.json - OAuth token persist + refresh (CLI side).
         "src/gateway/BotNexus.Cli/Commands/ProviderCommand.cs",
         "src/gateway/BotNexus.Cli/Commands/Provider/CopilotAuthLoader.cs",
