@@ -36,12 +36,12 @@ Assert-True ($selected -contains $udpPromptRule.Name) 'AC3: ungrouped UDP Query 
 
 # --- AC4 (negative): nothing outside the repo/worktree roots may ever be pruned ---
 $outOfRootRules = @(
-    New-Rule 'TCP Query User{AAAA1111-0000-0000-0000-000000000001}C:\Program Files\Contoso\vpn.exe' '' 'C:\Program Files\Contoso\vpn.exe',
-    New-Rule 'TCP Query User{AAAA1111-0000-0000-0000-000000000002}D:\dev\other-repo\bin\testhost.exe' '' 'D:\dev\other-repo\bin\testhost.exe',
-    New-Rule 'Core Networking - DNS (UDP-Out)' '@FirewallAPI.dll,-25000' $null,
-    New-Rule 'Some rule with no program at all' '' '',
+    (New-Rule 'TCP Query User{AAAA1111-0000-0000-0000-000000000001}C:\Program Files\Contoso\vpn.exe' '' 'C:\Program Files\Contoso\vpn.exe'),
+    (New-Rule 'TCP Query User{AAAA1111-0000-0000-0000-000000000002}D:\dev\other-repo\bin\testhost.exe' '' 'D:\dev\other-repo\bin\testhost.exe'),
+    (New-Rule 'Core Networking - DNS (UDP-Out)' '@FirewallAPI.dll,-25000' $null),
+    (New-Rule 'Some rule with no program at all' '' ''),
     # a path that merely *starts with* a root's text but is a different directory
-    New-Rule 'TCP Query User{AAAA1111-0000-0000-0000-000000000003}Q:\repos\botnexus-other\bin\testhost.exe' '' 'Q:\repos\botnexus-other\bin\testhost.exe'
+    (New-Rule 'TCP Query User{AAAA1111-0000-0000-0000-000000000003}Q:\repos\botnexus-other\bin\testhost.exe' '' 'Q:\repos\botnexus-other\bin\testhost.exe')
 )
 $selectedOut = @(Select-OrphanedFirewallRuleName -Rule $outOfRootRules -RepoRoot $roots -PathExists $pathExists)
 foreach ($r in $outOfRootRules) {
@@ -52,8 +52,8 @@ Assert-True ($selectedOut.Count -eq 0) 'AC4: no out-of-root rule may be selected
 # --- AC4 (negative): a rule whose program still exists on disk survives ---
 # A live lease held by a running process always points at an existing binary.
 $liveRules = @(
-    New-Rule 'TCP Query User{BBBB2222-0000-0000-0000-000000000001}live' '' $livePaths[0],
-    New-Rule 'TCP Query User{BBBB2222-0000-0000-0000-000000000002}live' '' $livePaths[1]
+    (New-Rule 'TCP Query User{BBBB2222-0000-0000-0000-000000000001}live' '' $livePaths[0]),
+    (New-Rule 'TCP Query User{BBBB2222-0000-0000-0000-000000000002}live' '' $livePaths[1])
 )
 $selectedLive = @(Select-OrphanedFirewallRuleName -Rule $liveRules -RepoRoot $roots -PathExists $pathExists)
 Assert-True ($selectedLive.Count -eq 0) 'AC4: rules whose program path still exists on disk must survive the prune.'
@@ -85,6 +85,23 @@ Assert-True ($derived -contains 'Q:\repos\botnexus') 'Derived roots must include
 Assert-True ($derived -contains 'Q:\repos\botnexus-wt') 'Derived roots must include the worktree container so deleted worktrees are reachable.'
 Assert-True (-not ($derived -contains 'Q:\repos')) 'Derived roots must not widen to the whole repos parent directory.'
 Assert-True (-not ($derived -contains 'Q:\')) 'Derived roots must never include a drive root.'
+
+# --- root derivation must not widen when INVOKED FROM A WORKTREE (#2774) ---
+# Found by running the reclaim script from inside a worktree: `git rev-parse
+# --show-toplevel` returns the WORKTREE, so the old guard (compare each
+# container against the repository root's parent) compared `Q:\repos` against
+# `Q:\repos\botnexus-wt` and let `Q:\repos` through - putting every unrelated
+# repository on the drive in scope. Live evidence: the dry run offered to
+# remove BotNexus.Gateway and BotNexus.Probe rules under `Q:\repos\botnexus`
+# while the repository root was a worktree.
+$fromWorktree = @(Get-BotNexusFirewallRoot -RepositoryRoot 'Q:\repos\botnexus-wt\fix-2774-firewall-prune' -WorktreePath @(
+    'Q:\repos\botnexus',
+    'Q:\repos\botnexus-wt\fix-2774-firewall-prune',
+    'Q:\repos\botnexus-wt\other-worktree'
+))
+Assert-True (-not ($fromWorktree -contains 'Q:\repos')) 'Invoked from a worktree, derived roots must not widen to the repos parent directory.'
+Assert-True ($fromWorktree -contains 'Q:\repos\botnexus-wt') 'Invoked from a worktree, the worktree container must still be a root.'
+Assert-True (-not ($fromWorktree -contains 'Q:\')) 'Invoked from a worktree, derived roots must never include a drive root.'
 
 if ($failures.Count -gt 0) {
     $failures | ForEach-Object { Write-Error $_ -ErrorAction Continue }
