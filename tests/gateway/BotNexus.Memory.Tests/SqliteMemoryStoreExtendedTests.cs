@@ -148,11 +148,8 @@ public sealed class SqliteMemoryStoreExtendedTests : IDisposable
         // nothing for a reason unrelated to safety. With the MATCH expression now built
         // explicitly, the literal term "token" legitimately reaches "safe-content-token".
         // Asserting emptiness here would pin the recall cliff #2740 exists to remove.
-        results.ShouldAllBe(r => r.Id == "secure-1");
+        results.ShouldHaveSingleItem().Id.ShouldBe("secure-1");
         stats.EntryCount.ShouldBe(1);
-
-        // The SQL keywords must be inert FTS terms, not statements: the table is still queryable.
-        (await context.Store.GetStatsAsync()).EntryCount.ShouldBe(1);
     }
 
     [Fact]
