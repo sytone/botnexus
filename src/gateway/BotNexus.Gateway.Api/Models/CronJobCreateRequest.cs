@@ -73,6 +73,19 @@ public sealed record CronJobCreateRequest
     /// <summary>Arbitrary job metadata.</summary>
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }
 
+    /// <summary>
+    /// Opt-in per-job failure alerting (#2557). Mirrors <see cref="CronJob.FailureAlertsEnabled"/>.
+    /// </summary>
+    public bool FailureAlertsEnabled { get; init; }
+
+    /// <summary>
+    /// Conversation that failure alerts are delivered to (#2557). Validated at the authoring seam
+    /// by <see cref="BotNexus.Cron.CronAlertTarget"/> (#2671): an unresolvable target is rejected
+    /// rather than stored, because a job that cannot deliver its alert is worse than one with no
+    /// alerting at all - the operator believes they are covered.
+    /// </summary>
+    public string? FailureAlertConversationId { get; init; }
+
     // #2554: deliberately NO ScheduleActivatedAt member. That stamp is store-owned; accepting it
     // from a create payload would let an import or a crafted POST /api/cron spoof catch-up
     // ownership and force an immediate agent-prompt / shell execution on the next gateway start.
@@ -103,6 +116,10 @@ public sealed record CronJobCreateRequest
         CreatedBy = CreatedBy,
         CreatedAt = CreatedAt,
         NextRunAt = NextRunAt,
+        FailureAlertsEnabled = FailureAlertsEnabled,
+        FailureAlertConversationId = string.IsNullOrWhiteSpace(FailureAlertConversationId)
+            ? null
+            : ConversationId.From(FailureAlertConversationId),
         Metadata = Metadata
     };
 }
