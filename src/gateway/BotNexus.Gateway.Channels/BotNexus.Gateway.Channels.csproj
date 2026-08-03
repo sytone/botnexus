@@ -16,6 +16,9 @@
          channel extension options on config.json change. See issue #2010. -->
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <!-- #2731: the channel fault barrier is an IHostedService registered via DI. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="OpenTelemetry.Api" />
   </ItemGroup>
 

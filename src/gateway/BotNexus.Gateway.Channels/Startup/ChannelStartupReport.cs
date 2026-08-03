@@ -31,6 +31,33 @@ public sealed class ChannelStartupReport
     /// </summary>
     public bool AllStarted => _outcomes.Count > 0 && _outcomes.All(outcome => outcome.Started);
 
+    private readonly object _faultGate = new();
+    private volatile IReadOnlyList<ChannelServiceFault> _serviceFaults = [];
+
+    /// <summary>
+    /// Gets faults contained by <see cref="ChannelFaultBarrierHostedService"/> - channel-owned
+    /// background services that failed rather than adapters that failed to start (#2731).
+    /// </summary>
+    /// <remarks>
+    /// Before #2731 such a fault escalated to <c>StopHost</c> and the only trace was a fatal log
+    /// line in a process that was already exiting. Recording it here makes the degraded state
+    /// queryable for the life of the process.
+    /// </remarks>
+    public IReadOnlyList<ChannelServiceFault> ServiceFaults => _serviceFaults;
+
+    /// <summary>
+    /// Records a contained channel background-service fault.
+    /// </summary>
+    /// <param name="fault">The fault to publish.</param>
+    public void RecordServiceFault(ChannelServiceFault fault)
+    {
+        ArgumentNullException.ThrowIfNull(fault);
+        lock (_faultGate)
+        {
+            _serviceFaults = [.. _serviceFaults, fault];
+        }
+    }
+
     /// <summary>
     /// Records the results of the startup pass. Called once from <c>GatewayHost.ExecuteAsync</c>
     /// immediately after <see cref="ChannelStartupCoordinator.StartAllAsync"/> returns.
@@ -42,3 +69,11 @@ public sealed class ChannelStartupReport
         _outcomes = outcomes;
     }
 }
+
+/// <summary>
+/// A channel-owned background service fault contained by the #2731 fault barrier.
+/// </summary>
+/// <param name="ChannelType">The channel whose service faulted.</param>
+/// <param name="ServiceName">The CLR type name of the faulted hosted service.</param>
+/// <param name="Error">The exception that was contained.</param>
+public sealed record ChannelServiceFault(string ChannelType, string ServiceName, Exception Error);
