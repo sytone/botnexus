@@ -129,7 +129,7 @@ public sealed class ModelResolutionCentralizationArchitectureTests
         // model's capability set (supported thinking levels / context sizes) so it can REJECT
         // an agent-level thinking/context value the model does not support (PBI4, #1705). It
         // never resolves an effective turn model - that stays with ModelOverrideResolver.
-        Path.Combine("gateway", "BotNexus.Gateway", "Agents", "AgentDescriptorValidator.cs"),
+        Path.Combine("gateway", "BotNexus.Gateway.Configuration", "Validation", "AgentDescriptorValidator.cs"),
     };
 
     private static IEnumerable<string> EnumerateProductionCsFiles(string srcRoot)

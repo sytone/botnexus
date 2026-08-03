@@ -122,6 +122,7 @@
     <Project Path="tests/gateway/BotNexus.Gateway.Conversations.Tests/BotNexus.Gateway.Conversations.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Dispatching.Tests/BotNexus.Gateway.Dispatching.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Prompts.Tests/BotNexus.Gateway.Prompts.Tests.csproj" />
+    <Project Path="tests/gateway/BotNexus.Gateway.Configuration.Tests/BotNexus.Gateway.Configuration.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Sessions.Tests/BotNexus.Gateway.Sessions.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Telemetry.Tests/BotNexus.Gateway.Telemetry.Tests.csproj" />
