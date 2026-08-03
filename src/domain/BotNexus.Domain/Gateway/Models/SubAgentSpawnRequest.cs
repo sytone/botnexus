@@ -86,6 +86,17 @@ public sealed record SubAgentSpawnRequest
     /// <summary>
     /// Optional list of absolute paths the sub-agent is granted read access to,
     /// beyond its own workspace. Each entry is resolved and validated at spawn time.
+    /// This grant is <b>read-only</b>: use <see cref="GrantedWritePaths"/> (or
+    /// <see cref="ShareWorkspace"/>) when the sub-agent must also write (#2650).
     /// </summary>
     public IReadOnlyList<string>? GrantedPaths { get; init; }
+
+    /// <summary>
+    /// Optional list of absolute paths the sub-agent is granted read <b>and write</b> access to,
+    /// beyond its own workspace. Added in #2650 so a caller can hand a sub-agent a single writable
+    /// directory (for example a git worktree) without granting the whole parent workspace via
+    /// <see cref="ShareWorkspace"/>. Each entry is resolved at spawn time and appears in both the
+    /// read and the write allow-lists.
+    /// </summary>
+    public IReadOnlyList<string>? GrantedWritePaths { get; init; }
 }

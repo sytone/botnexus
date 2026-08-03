@@ -129,11 +129,12 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IMemoryStoreFactory>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
             return new MemoryStoreFactory(agentId =>
             {
                 var agentDirectory = home.GetAgentDirectory(agentId);
                 return Path.Combine(agentDirectory, "data", "memory.sqlite");
-            });
+            }, fileSystem);
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
@@ -143,6 +144,12 @@ public static class GatewayServiceCollectionExtensions
          services.AddSingleton<ICitizenRegistry, DefaultCitizenRegistry>();
          services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
+        // #2614: the ONE execution-layer tool-audit sink, registered once. Both the streaming
+        // delivery path and every blocking PromptAsync caller render their durable tool history
+        // through this single implementation, so the audit guarantee no longer depends on which
+        // transport the caller picked.
+        services.TryAddSingleton<BotNexus.Gateway.Audit.IToolAuditSink>(
+            _ => BotNexus.Gateway.Audit.DefaultToolAuditSink.Instance);
         services.AddSingleton<AgentExchangeBudgetTracker>();
         // #1542: the shared turn loop and cross-world federation routing are their own
         // single-responsibility collaborators, injected into AgentExchangeService.
@@ -197,6 +204,13 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
         services.TryAddSingleton<IAskUserResponseRegistry, AskUserResponseRegistry>();
         services.TryAddSingleton<IAskUserPromptResolver, AskUserPromptResolver>();
+        // #2047: durable ask_user checkpoint resolution + restart resume. The resumer dispatches a
+        // continuation turn through the router/orchestrator; the checkpoint service is the single
+        // source of truth for resolving a response against persisted state; the hosted reconciliation
+        // service rehydrates the in-memory interception map from durable checkpoints on startup.
+        services.TryAddSingleton<IAskUserCheckpointResumer, AskUserCheckpointResumer>();
+        services.TryAddSingleton<IAskUserCheckpointService, AskUserCheckpointService>();
+        services.AddHostedService<AskUserCheckpointReconciliationService>();
         services.TryAddSingleton<PendingAskUserInterceptor>();
         services.AddSingleton<InternalChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());

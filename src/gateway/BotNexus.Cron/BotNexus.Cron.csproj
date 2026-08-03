@@ -41,6 +41,7 @@
     <Compile Include="MissedRunDetectionService.cs" />
     <Compile Include="CronExternalDeliveryRedactor.cs" />
     <Compile Include="CronFailureAlert.cs" />
+    <Compile Include="CronAlertTarget.cs" />
     <Compile Include="CronModelPreflight.cs" />
   </ItemGroup>
 
