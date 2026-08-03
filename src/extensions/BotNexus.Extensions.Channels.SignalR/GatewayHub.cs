@@ -219,7 +219,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <remarks>
     /// Since #2322 the hub is one caller of <see cref="IAskUserPromptResolver"/> among several,
     /// not the owner of ask_user resolution. It keeps only the transport concerns that are
-    /// genuinely SignalR's - control-scope enforcement, the signalr-binding access check, and
+    /// genuinely SignalR's - control-scope enforcement and
     /// translating the shared outcome into a <see cref="HubException"/>. Response normalisation
     /// and the registry completion now live behind the resolver so every channel behaves alike.
     /// </remarks>
@@ -245,10 +245,14 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         if (conversation is null)
             throw new HubException($"Conversation '{normalizedConversationId.Value}' not found.");
 
-        var hasSignalRBinding = conversation.ChannelBindings.Any(binding =>
-            binding.ChannelType.Equals(ChannelKey.From("signalr")));
-        if (!hasSignalRBinding)
-            throw new HubException("Caller does not have access to this conversation.");
+        // #2654: there is deliberately NO channel-binding check here. Whether the conversation
+        // carries a `signalr` binding is a ROUTING property owned by fan-out, not a statement about
+        // who is calling, so gating on it made a prompt on a non-SignalR conversation permanently
+        // unanswerable from the portal (which is a channel-agnostic observer of every turn). The
+        // authorisation gate is EnsureControlScope(nameof(RespondToAskUser)) above (#1524); the
+        // not-found path above stays separately diagnosable. Do not reintroduce a binding predicate
+        // as an access check - SignalRHubTests.GatewayHub_RespondToAskUser_ReadOnlyScopedConnection_IsRejected
+        // is the test that keeps this removal a bugfix rather than a dropped security check.
 
         var result = await _askUserPromptResolver.ResolveAsync(
             new AskUserSubmission

@@ -592,6 +592,114 @@ public sealed class SignalRHubTests
         resumed.Count.ShouldBe(1);
     }
 
+    [Fact]
+    public async Task GatewayHub_RespondToAskUser_ConversationWithoutSignalRBinding_IsAccepted()
+    {
+        // #2654 AC1: the conversation's channel bindings describe ROUTING, not the caller's access.
+        // The portal is a channel-agnostic observer of every turn, so a control-scoped caller must be
+        // able to answer an ask_user prompt on a conversation bound to some other channel. Before the
+        // fix this threw HubException("Caller does not have access to this conversation.").
+        var registry = new AskUserResponseRegistry();
+        var conversationStore = new InMemoryConversationStore();
+        var conversation = await conversationStore.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From("conversation-no-signalr-binding"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "ask user on a telegram-bound conversation",
+            ChannelBindings =
+            [
+                new ChannelBinding
+                {
+                    ChannelType = ChannelKey.From("telegram"),
+                    ChannelAddress = ChannelAddress.From("12345")
+                }
+            ]
+        });
+
+        var (requestId, task) = registry.Register(conversation.ConversationId, TimeSpan.FromMinutes(1));
+        var hub = CreateHub(
+            conversationStore: conversationStore,
+            askUserPromptResolver: new AskUserPromptResolver(registry, NullLogger<AskUserPromptResolver>.Instance),
+            userScopes: [ControlScope]);
+
+        await hub.RespondToAskUser(conversation.ConversationId.Value, requestId, "staging", null, cancelled: false);
+
+        var response = await task;
+        response.RequestId.ShouldBe(requestId);
+        response.FreeFormText.ShouldBe("staging");
+    }
+
+    [Fact]
+    public async Task GatewayHub_RespondToAskUser_NoBindingsAtAll_IsAccepted()
+    {
+        // #2654 AC1 (boundary): a conversation with no bindings at all is still answerable. Binding
+        // state is owned by routing/fan-out; an unrelated binding change must not revoke the ability
+        // to answer a pending prompt.
+        var registry = new AskUserResponseRegistry();
+        var conversationStore = new InMemoryConversationStore();
+        var conversation = await conversationStore.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From("conversation-unbound"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "ask user unbound",
+            ChannelBindings = []
+        });
+
+        var (requestId, task) = registry.Register(conversation.ConversationId, TimeSpan.FromMinutes(1));
+        var hub = CreateHub(
+            conversationStore: conversationStore,
+            askUserPromptResolver: new AskUserPromptResolver(registry, NullLogger<AskUserPromptResolver>.Instance),
+            userScopes: [ControlScope]);
+
+        await hub.RespondToAskUser(conversation.ConversationId.Value, requestId, "yes", null, cancelled: false);
+
+        (await task).FreeFormText.ShouldBe("yes");
+    }
+
+    [Fact]
+    public async Task GatewayHub_RespondToAskUser_ReadOnlyScopedConnection_IsRejected()
+    {
+        // #2654 AC2 - LOAD-BEARING DISCRIMINATION TEST. Removing the signalr-binding check is only a
+        // bugfix if authorisation still bites somewhere. This test is what distinguishes "we deleted a
+        // misplaced routing predicate" from "we deleted the authorisation check". EnsureControlScope is
+        // the real gate (#1524): a read-only connection must still be rejected, and must be rejected
+        // BEFORE the conversation store is ever consulted. Do not delete or weaken this test; if it is
+        // ever removed, the binding-check removal becomes a silent security regression.
+        var conversationStore = new Mock<IConversationStore>(MockBehavior.Strict);
+        var hub = CreateHub(
+            conversationStore: conversationStore.Object,
+            askUserPromptResolver: new AskUserPromptResolver(
+                new AskUserResponseRegistry(), NullLogger<AskUserPromptResolver>.Instance),
+            connectionId: "conn-1",
+            userScopes: [ReadScope]);
+
+        Func<Task> act = () => hub.RespondToAskUser("conversation-any", "req-1", "staging", null, cancelled: false);
+
+        (await act.ShouldThrowAsync<HubException>())
+            .Message.ShouldContain("not authorized to invoke 'RespondToAskUser'");
+        // The rejection happened before any conversation lookup - the guard, not the binding, denied it.
+        conversationStore.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GatewayHub_RespondToAskUser_UnknownConversation_StillFailsWithNotFoundMessage()
+    {
+        // #2654 AC3: the not-found path stays separately diagnosable from the not-authorised path, so
+        // an investigator reading the message is pointed at conversation state, not at auth.
+        var conversationStore = new InMemoryConversationStore();
+        var hub = CreateHub(
+            conversationStore: conversationStore,
+            askUserPromptResolver: new AskUserPromptResolver(
+                new AskUserResponseRegistry(), NullLogger<AskUserPromptResolver>.Instance),
+            userScopes: [ControlScope]);
+
+        Func<Task> act = () => hub.RespondToAskUser("conversation-missing", "req-1", "staging", null, cancelled: false);
+
+        var ex = await act.ShouldThrowAsync<HubException>();
+        ex.Message.ShouldContain("not found");
+        ex.Message.ShouldNotContain("does not have access");
+    }
+
     private sealed class DelegatingResumer(Func<AskUserRequest, AskUserResponse, Task> onResume) : IAskUserCheckpointResumer
     {
         public Task ResumeAsync(AskUserRequest request, AskUserResponse response, CancellationToken cancellationToken = default)
