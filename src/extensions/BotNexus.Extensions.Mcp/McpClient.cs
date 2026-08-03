@@ -49,9 +49,11 @@ public sealed class McpClient : IAsyncDisposable
     public async Task InitializeAsync(CancellationToken ct = default)
     {
         await _protocolLock.WaitAsync(ct).ConfigureAwait(false);
+        var connected = false;
         try
         {
             await _transport.ConnectAsync(ct).ConfigureAwait(false);
+            connected = true;
 
             var initParams = new McpInitializeParams();
 
@@ -84,9 +86,38 @@ public sealed class McpClient : IAsyncDisposable
 
             _initialized = true;
         }
+        catch (Exception ex) when (connected)
+        {
+            // Issue #2723: the transport may already have spawned a child process. Tear it down
+            // before the handshake exception propagates, otherwise a failing server leaks one
+            // credential-holding process per attempt. Teardown must never mask the original error.
+            await TearDownAfterFailedHandshakeAsync(ex).ConfigureAwait(false);
+            throw;
+        }
         finally
         {
             _protocolLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Best-effort teardown of the transport after a failed initialize handshake.
+    /// Any teardown failure is logged and swallowed so the original handshake exception
+    /// reaches the caller unchanged.
+    /// </summary>
+    private async Task TearDownAfterFailedHandshakeAsync(Exception handshakeError)
+    {
+        try
+        {
+            await _transport.DisconnectAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception teardownError)
+        {
+            _logger.LogWarning(
+                teardownError,
+                "MCP server {ServerId}: failed to tear down transport after initialize failed ({HandshakeError}).",
+                _serverId,
+                handshakeError.Message);
         }
     }
 

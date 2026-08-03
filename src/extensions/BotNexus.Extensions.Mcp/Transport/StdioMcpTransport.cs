@@ -167,6 +167,12 @@ public sealed class StdioMcpTransport : IMcpTransport
         throw new InvalidOperationException("Response queue was signaled but no message available.");
     }
 
+    /// <summary>
+    /// Default grace window allowed for the child to exit after its stdin is closed,
+    /// before the process tree is force-killed.
+    /// </summary>
+    internal static readonly TimeSpan DefaultTerminationGrace = TimeSpan.FromSeconds(1);
+
     /// <inheritdoc />
     public async Task DisconnectAsync(CancellationToken ct = default)
     {
@@ -185,7 +191,52 @@ public sealed class StdioMcpTransport : IMcpTransport
             catch (OperationCanceledException) { }
         }
 
+        await TerminateProcessAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Terminates the spawned MCP server process using a bounded graceful-then-force sequence:
+    /// close stdin so a well-behaved server can exit on its own, wait at most
+    /// <paramref name="graceWindow"/>, then <c>Kill(entireProcessTree: true)</c>.
+    /// A child that ignores its stdin closing is therefore force-killed rather than leaked
+    /// (issue #2723). This method never throws.
+    /// </summary>
+    /// <param name="graceWindow">Grace period allowed after stdin close. Defaults to one second.</param>
+    public async Task TerminateProcessAsync(TimeSpan? graceWindow = null)
+    {
+        var process = _process;
+        if (process is null)
+        {
+            return;
+        }
+
+        // Graceful signal: closing stdin is how a well-behaved stdio MCP server learns to shut down.
+        try
+        {
+            _writer?.Close();
+        }
+        catch { }
+
+        var grace = graceWindow ?? DefaultTerminationGrace;
+        if (grace > TimeSpan.Zero)
+        {
+            try
+            {
+                using var graceCts = new CancellationTokenSource(grace);
+                await process.WaitForExitAsync(graceCts.Token).ConfigureAwait(false);
+            }
+            catch { }
+        }
+
         TryKillProcess();
+
+        // Bounded wait so callers observe a genuinely dead process rather than a pending kill.
+        try
+        {
+            using var killCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await process.WaitForExitAsync(killCts.Token).ConfigureAwait(false);
+        }
+        catch { }
     }
 
     /// <inheritdoc />
@@ -208,7 +259,7 @@ public sealed class StdioMcpTransport : IMcpTransport
             catch { }
         }
 
-        TryKillProcess();
+        await TerminateProcessAsync().ConfigureAwait(false);
         _readLoopCts?.Dispose();
         _process?.Dispose();
     }
