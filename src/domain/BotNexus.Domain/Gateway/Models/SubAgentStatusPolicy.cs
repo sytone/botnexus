@@ -43,6 +43,9 @@ public static class SubAgentStatusPolicy
             SubAgentStatus.Killed => true,
             SubAgentStatus.TimedOut => true,
             SubAgentStatus.BudgetExhausted => true,
+            // #2725: a spawn-only handoff has ended - the run delegated and stayed silent, and
+            // its resources are reclaimable exactly like any other finished run.
+            SubAgentStatus.HandedOff => true,
         };
 #pragma warning restore CS8524
 
@@ -74,6 +77,10 @@ public static class SubAgentStatusPolicy
             SubAgentStatus.Failed => true,
             SubAgentStatus.TimedOut => true,
             SubAgentStatus.BudgetExhausted => true,
+            // #2725: a handoff is a SUCCESS. The run delegated, the descendant's result was
+            // delivered, and no fault occurred. Classifying it here would re-redden every alert
+            // keyed on cron run status - which is the defect #2725 exists to remove.
+            SubAgentStatus.HandedOff => false,
         };
 #pragma warning restore CS8524
 

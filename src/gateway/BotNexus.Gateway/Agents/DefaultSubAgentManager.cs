@@ -844,7 +844,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // sync with the live entry the way the old separate _childAgentIds map could —
         // the synthetic-fallback workaround that drift required is no longer needed (#1385).
         var childAgentId = record.ChildAgentId;
-        if (updated.Status == SubAgentStatus.Completed)
+        // #2725: HandedOff is a success disposition, so it publishes the completed activity
+        // alongside Completed rather than falling through to no lifecycle event at all.
+        if (updated.Status is SubAgentStatus.Completed or SubAgentStatus.HandedOff)
         {
             await PublishLifecycleActivityAsync(
                 GatewayActivityType.SubAgentCompleted,
@@ -1002,9 +1004,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             }
             else if (string.IsNullOrWhiteSpace(response.Content))
             {
-                await CompleteFailedAsync(
-                    subAgentId,
-                    "Sub-agent failed because it returned an empty final response.");
+                // #2725: silence alone is not a failure. A run that ACCEPTED a spawn and then
+                // emitted nothing delegated and correctly stayed silent; a run that accepted no
+                // spawn genuinely produced nothing. Discriminate before reaching for the
+                // empty-response diagnostic.
+                await CompleteSilentRunAsync(subAgentId, record, timeoutCts.Token);
             }
             else
             {
@@ -1036,6 +1040,129 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             record.DisposeTimeout();
         }
     }
+
+    /// <summary>
+    /// Terminal classification for a run that produced no synthesized text of its own.
+    /// <para>
+    /// The predicate is the <b>spawn-only handoff</b>: the run accepted a session spawn AND
+    /// produced zero delivery payloads AND emitted no text. Only then does the run become
+    /// <see cref="SubAgentStatus.HandedOff"/>, carrying the descendant's result rather than a
+    /// diagnostic. The accepted-spawn signal is read from the existing parent-to-children index
+    /// keyed by the run's own child session - the same structure <c>ListAsync</c> already serves
+    /// from - rather than a second, separately-maintained flag that could drift out of sync with
+    /// the spawns that actually happened.
+    /// </para>
+    /// <para>
+    /// <b>The discrimination is the point.</b> A run with no accepted spawn still records the
+    /// empty-response diagnostic and still fails. A change that classified every silent run as a
+    /// handoff would be a suppression, not a fix: the operator would lose the ability to see a
+    /// genuinely mute agent at all.
+    /// </para>
+    /// <para>
+    /// A handoff whose descendant did not itself succeed is recorded as a FAILURE carrying the
+    /// descendant's own diagnostic. Delegation that ended badly must not be laundered into a
+    /// success merely because the delegation itself was well-formed.
+    /// </para>
+    /// </summary>
+    private async Task CompleteSilentRunAsync(
+        string subAgentId,
+        SubAgentRecord record,
+        CancellationToken ct)
+    {
+        const string emptyResponseDiagnostic =
+            "Sub-agent failed because it returned an empty final response.";
+
+        var descendants = GetAcceptedSpawns(record.Info.ChildSessionId);
+        if (descendants.Count == 0)
+        {
+            await CompleteFailedAsync(subAgentId, emptyResponseDiagnostic);
+            return;
+        }
+
+        var outcome = await AwaitDescendantOutcomeAsync(descendants, ct);
+        if (outcome is null)
+        {
+            // The descendants never settled within the run's own deadline. Nothing was delegated
+            // successfully and nothing can be delivered, so the original diagnostic stands.
+            await CompleteFailedAsync(subAgentId, emptyResponseDiagnostic);
+            return;
+        }
+
+        var summary = string.IsNullOrWhiteSpace(outcome.ResultSummary)
+            ? emptyResponseDiagnostic
+            : outcome.ResultSummary!;
+
+        if (SubAgentStatusPolicy.IsUnsuccessfulTermination(outcome.Status))
+        {
+            await CompleteFailedAsync(subAgentId, summary);
+            return;
+        }
+
+        await CompleteTerminalAsync(subAgentId, SubAgentStatus.HandedOff, summary);
+    }
+
+    /// <summary>
+    /// The accepted-spawn signal: the sub-agents this run spawned from its OWN child session.
+    /// A non-empty result means the run accepted at least one session spawn.
+    /// </summary>
+    private IReadOnlyList<string> GetAcceptedSpawns(SessionId childSessionId)
+        => _parentChildren.TryGetValue(childSessionId, out var ids)
+            ? [.. ids.Distinct(StringComparer.OrdinalIgnoreCase)]
+            : [];
+
+    /// <summary>
+    /// Waits for every descendant to reach a terminal state and returns the one whose disposition
+    /// the parent adopts: the first unsuccessful descendant if any failed, otherwise the last to
+    /// settle. Returns <see langword="null"/> if the wait is cancelled before they all settle,
+    /// which the caller treats as "nothing was delivered".
+    /// </summary>
+    private async Task<SubAgentInfo?> AwaitDescendantOutcomeAsync(
+        IReadOnlyList<string> descendantIds,
+        CancellationToken ct)
+    {
+        var settled = new List<SubAgentInfo>(descendantIds.Count);
+
+        foreach (var descendantId in descendantIds)
+        {
+            while (true)
+            {
+                if (ct.IsCancellationRequested)
+                    return null;
+
+                if (!_records.TryGetValue(descendantId, out var descendant))
+                    break;
+
+                var info = descendant.Info;
+                if (SubAgentStatusPolicy.IsTerminal(info.Status))
+                {
+                    settled.Add(info);
+                    break;
+                }
+
+                try
+                {
+                    await Task.Delay(DescendantPollInterval, _timeProvider, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return null;
+                }
+            }
+        }
+
+        if (settled.Count == 0)
+            return null;
+
+        return settled.FirstOrDefault(info => SubAgentStatusPolicy.IsUnsuccessfulTermination(info.Status))
+            ?? settled[^1];
+    }
+
+    /// <summary>
+    /// Poll cadence while awaiting descendant runs. Short enough that a handoff is not perceptibly
+    /// delayed, long enough not to spin; the wait is always bounded by the parent run's own
+    /// deadline token, so an unsettled descendant can never hang the parent indefinitely.
+    /// </summary>
+    private static readonly TimeSpan DescendantPollInterval = TimeSpan.FromMilliseconds(25);
 
     private Task CompleteBudgetExhaustedAsync(string subAgentId, int maxTurns)
         => CompleteTerminalAsync(
@@ -1077,6 +1204,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         => status switch
         {
             SubAgentStatus.Completed => "completed",
+            SubAgentStatus.HandedOff => "handed off to a sub-agent",
             SubAgentStatus.Failed => "failed",
             SubAgentStatus.TimedOut => "timed out",
             SubAgentStatus.BudgetExhausted => "exhausted its turn budget",

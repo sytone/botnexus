@@ -123,5 +123,28 @@ public enum SubAgentStatus
     /// so the remedy is a larger turn budget or a narrower task rather than a longer deadline
     /// (#2656).
     /// </summary>
-    BudgetExhausted
+    BudgetExhausted,
+
+    /// <summary>
+    /// The run accepted a sub-agent spawn, produced zero delivery payloads, and emitted no
+    /// synthesized text of its own - it delegated and correctly stayed silent (#2725).
+    /// <para>
+    /// <b>Why this is its own state rather than <see cref="Completed"/> or <see cref="Failed"/>.</b>
+    /// Delivery classification used to key solely on the run's own final text, so "the run
+    /// produced nothing" and "the run delegated and correctly stayed silent" collapsed onto the
+    /// same empty-response diagnostic. Under a cron trigger that turned every correctly-delegating
+    /// scheduled job red and dropped the descendant's output on the floor. Reusing
+    /// <see cref="Completed"/> would fix the red run but erase the distinction an operator needs
+    /// ("did this job answer, or did it hand off?"), and it would make suppression of the
+    /// empty-response diagnostic indistinguishable from a genuine empty run.
+    /// </para>
+    /// <para>
+    /// A handoff is a SUCCESS state - <c>SubAgentStatusPolicy.IsUnsuccessfulTermination</c>
+    /// returns <c>false</c> - but a distinguishable one. The summary it carries is the
+    /// DESCENDANT's result, not a diagnostic. A run whose descendant itself failed is recorded as
+    /// <see cref="Failed"/>, never as a handoff: the classification must not launder a failed
+    /// delegation into a success.
+    /// </para>
+    /// </summary>
+    HandedOff
 }
