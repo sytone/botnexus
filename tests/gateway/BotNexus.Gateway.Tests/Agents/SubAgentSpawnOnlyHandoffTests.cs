@@ -216,6 +216,11 @@ public sealed class SubAgentSpawnOnlyHandoffTests
         options.SubAgents.MaxTimeoutSeconds = 30;
         options.SubAgents.DefaultTimeoutSeconds = 30;
         options.SubAgents.MaxConcurrentPerSession = 5;
+        // The fixture models a parent sub-agent that itself delegates, so the descendant sits at
+        // depth 2. SubAgentOptions.MaxDepth defaults to 1, which refuses that spawn with a depth
+        // diagnostic BEFORE the silent-run classification under test is ever reached - the whole
+        // scenario would be exercised vacuously.
+        options.SubAgents.MaxDepth = 2;
 
         return new DefaultSubAgentManager(
             supervisor.Object,
