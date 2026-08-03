@@ -54,7 +54,16 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
     // "assistant" is the default agent seeded by `botnexus init`. The fixture overrides
     // gateway.defaultAgentId to AgentIds[0] ("alpha"), but "assistant" remains in the
     // agent list and is rendered by the portal. Include it here so tests that assert
-    // agent presence or iterate over all agents see the full list.
+    // agent presence or iterate over all agents (e.g.
+    // ProvisioningSmokeTests.ConfigJsonContainsExpectedShape) see the full list.
+    //
+    // Collision note (issue #2491): because `init` already seeds "assistant",
+    // `agent add assistant` fails with "Agent 'assistant' already exists." and exits 1.
+    // RunCliAsync throws on a non-zero exit, which aborted InitializeAsync, left
+    // Succeeded == false, and silently skipped every E2E test class via Skip.IfNot.
+    // The provisioning loop below is therefore add-if-absent: it consults
+    // AgentExistsAsync (backed by `agent show`) and skips the add for agents that
+    // `init` already created.
     public IReadOnlyList<string> AgentIds { get; } = new[] { "alpha", "bravo", "charlie", "assistant" };
     public IReadOnlyList<string> LocationNames { get; } = new[] { "workspace-tmp", "scratch" };
 
@@ -125,6 +134,14 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
 
             foreach (var id in AgentIds)
             {
+                // Add-if-absent: `init` already seeds the default "assistant" agent and
+                // `agent add` on an existing id exits 1 (issue #2491).
+                if (await AgentExistsAsync(id))
+                {
+                    Log.Add($"[cli] agent add {id} skipped - already provisioned by init");
+                    continue;
+                }
+
                 await RunCliAsync("agent",
                     $"add {id} --provider integration-mock --model integration-mock-echo --target \"{Home}\"");
             }
@@ -237,6 +254,20 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
         }
         return result;
     }
+    /// <summary>
+    /// True when <paramref name="id"/> is already present in the sandbox config.
+    /// Uses <c>agent show</c>, which exits 0 when the agent resolves and 1 when it
+    /// does not, so this never throws for the "absent" case (unlike RunCliAsync).
+    /// </summary>
+    private async Task<bool> AgentExistsAsync(string id)
+    {
+        var env = new Dictionary<string, string?> { ["BOTNEXUS_HOME"] = null };
+        var result = await ProcessRunner.RunAsync(
+            CliExecutablePath, $"agent show {id} --json --target \"{Home}\"",
+            environment: env, timeout: CliTimeout);
+        return result.ExitCode == 0;
+    }
+
     private static int PickFreePort()
     {
         // Bind to port 0 to let the OS pick an unused port, then release it.
