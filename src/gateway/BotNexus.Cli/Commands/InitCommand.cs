@@ -12,27 +12,47 @@ internal sealed class InitCommand
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var forceOption = new Option<bool>("--force", "Overwrite existing config.json.");
+
+        // Issue #2798: binding every interface is an operator decision, so it is a stated flag
+        // rather than the generated default. The flag exists precisely so the choice appears in the
+        // command the operator ran, instead of being inherited silently from a generated file.
+        var listenAllOption = new Option<bool>(
+            "--listen-all-interfaces",
+            $"Bind the gateway to every network interface ({GatewayBindAddress.WildcardListenUrl}) for remote or mesh access. "
+            + $"This exposes {GatewayBindAddress.ExposedSurfaceDescription} to every reachable network.");
+
         var command = new Command("init", "Initialize ~/.botnexus with a default config and required directories.")
         {
-            forceOption
+            forceOption,
+            listenAllOption
         };
 
         command.SetHandler(async context =>
         {
             var force = context.ParseResult.GetValueForOption(forceOption);
+            var listenAll = context.ParseResult.GetValueForOption(listenAllOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
-            context.ExitCode = await ExecuteAsync(home, force, verbose, CancellationToken.None);
+            context.ExitCode = await ExecuteAsync(home, force, listenAll, verbose, CancellationToken.None);
         });
 
         return command;
     }
 
     public async Task<int> ExecuteAsync(bool force, bool verbose, CancellationToken cancellationToken)
-        => await ExecuteAsync(PlatformConfigLoader.DefaultHomePath, force, verbose, cancellationToken);
+        => await ExecuteAsync(PlatformConfigLoader.DefaultHomePath, force, listenAllInterfaces: false, verbose, cancellationToken);
 
     public async Task<int> ExecuteAsync(string homePath, bool force, bool verbose, CancellationToken cancellationToken)
+        => await ExecuteAsync(homePath, force, listenAllInterfaces: false, verbose, cancellationToken);
+
+    /// <summary>
+    /// Generates a fresh <c>config.json</c>. Issue #2798: <paramref name="listenAllInterfaces"/>
+    /// defaults to <c>false</c>, so a fresh install binds loopback only and an operator opts into
+    /// the wildcard bind explicitly. This affects the GENERATED default for new installs only - an
+    /// existing config is never rewritten here unless <paramref name="force"/> was passed.
+    /// </summary>
+    public async Task<int> ExecuteAsync(string homePath, bool force, bool listenAllInterfaces, bool verbose, CancellationToken cancellationToken)
     {
         var configPath = Path.Combine(homePath, "config.json");
         PlatformConfigLoader.EnsureConfigDirectory(homePath);
@@ -54,7 +74,12 @@ internal sealed class InitCommand
         {
             Gateway = new GatewaySettingsConfig
             {
-                ListenUrl = "http://0.0.0.0:5005",
+                // #2798: loopback by default; the wildcard is reachable only via --listen-all-interfaces.
+                // Both literals live on GatewayBindAddress so the doctor advisory that reports a
+                // wildcard bind and the value init can emit can never disagree about what a wildcard is.
+                ListenUrl = listenAllInterfaces
+                    ? GatewayBindAddress.WildcardListenUrl
+                    : GatewayBindAddress.LoopbackListenUrl,
                 DefaultAgentId = FreshInstallAgentDefaults.DefaultAgentId,
                 SessionStore = new SessionStoreConfig
                 {

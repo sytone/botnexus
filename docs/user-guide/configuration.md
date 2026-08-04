@@ -85,7 +85,7 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `listenUrl` | string | `http://localhost:5005` | HTTP listen URL for REST API and WebUI |
+| `listenUrl` | string | `http://localhost:5005` | HTTP listen URL for REST API and WebUI. Loopback by default (#2798) — see [Remote and mesh access](#remote-and-mesh-access) before widening it. |
 | `defaultAgentId` | string | `null` | Agent to route to when none specified |
 | `agentsDirectory` | string | `~/.botnexus/agents` | Directory containing agent descriptor JSON files |
 | `sessionStore.type` | string | `Sqlite` | Session store type: `InMemory` or `Sqlite` |
@@ -108,6 +108,32 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `fileAccess.allowedWritePaths` | array | `[]` | Default write paths for all agents (world-level) |
 | `fileAccess.deniedPaths` | array | `[]` | Default denied paths for all agents (world-level) |
 | `rateLimit.enabled` | bool | `false` | Enable per-client rate limiting (opt-in) |
+
+### Remote and mesh access
+
+`botnexus init` writes a **loopback** listen URL (`http://localhost:5005`). A fresh install is therefore
+reachable only from the machine it runs on. This is deliberate (issue #2798): binding every interface is
+an operator decision, not an out-of-box state.
+
+To expose the gateway to a NetBird/Tailscale overlay, a reverse proxy, or a LAN, opt in explicitly:
+
+```bash
+# at install time
+botnexus init --listen-all-interfaces
+
+# or on an existing install
+botnexus config set gateway.listenUrl http://0.0.0.0:5005
+```
+
+**What a wildcard bind exposes.** `listenUrl` serves the portal UI, the SignalR hub, the agent REST API
+**and the gateway admin endpoints** on the same address. Binding `0.0.0.0` (or `*`, `+`, `::`) publishes
+all of them to every network this host can reach. The admin endpoints do not yet enforce an authorization
+scope check (issue #506), so treat a wildcard bind as an administrative exposure and put an authenticated
+reverse proxy or a private overlay network in front of it.
+
+`botnexus doctor config` reports a wildcard bind as an advisory finding, naming the exposed surface. It is
+**never changed automatically** — a wildcard bind can be a deliberate choice, so the tool reports it and
+leaves the decision to you.
 
 ---
 

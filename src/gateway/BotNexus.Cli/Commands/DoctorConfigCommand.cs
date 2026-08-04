@@ -26,6 +26,31 @@ internal sealed class DoctorConfigCommand
         new DevOriginEnforcementCheck(),
     ];
 
+    /// <summary>
+    /// Read-only findings the operator should see but which are NEVER auto-applied (issue #2798).
+    /// Deliberately a separate list from <see cref="Checks"/>: <see cref="IConfigAdvisory"/> has no
+    /// <c>Apply</c>, so nothing here can be wired into the <c>--yes</c> loop even by accident.
+    /// </summary>
+    internal static readonly IReadOnlyList<IConfigAdvisory> Advisories =
+    [
+        new WildcardListenUrlAdvisory(),
+    ];
+
+    /// <summary>
+    /// Renders every applicable advisory. Emits nothing when none apply - an advisory that always
+    /// printed would be boilerplate an operator learns to skip, so its presence alone must mean a
+    /// finding exists (issue #2798 AC4).
+    /// </summary>
+    private static void ReportAdvisories(JsonObject root)
+    {
+        foreach (var advisory in Advisories.Where(a => a.IsApplicable(root)))
+        {
+            AnsiConsole.MarkupLine($"[yellow]![/] [bold]{Markup.Escape(advisory.Id)}[/]");
+            AnsiConsole.MarkupLine($"        {Markup.Escape(advisory.Describe(root))}");
+            AnsiConsole.MarkupLine($"        [dim]Advisory only - not changed automatically:[/] {Markup.Escape(advisory.Remediation)}\n");
+        }
+    }
+
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var yesOption = new Option<bool>("--yes", "Apply all applicable fixes without prompting.");
@@ -82,6 +107,12 @@ internal sealed class DoctorConfigCommand
         var root = JsonNode.Parse(rawJson)?.AsObject() ?? new JsonObject();
 
         var applicable = Checks.Where(c => c.IsApplicable(root)).ToList();
+
+        // Issue #2798 AC4: advisories are REPORTED and never applied, so they are evaluated and
+        // rendered separately from the auto-applied checks above. A wildcard bind may be a
+        // deliberate operator choice, and AC3 requires an existing config to survive untouched -
+        // so the finding must be visible without --yes ever rewriting it.
+        ReportAdvisories(root);
 
         if (applicable.Count == 0)
         {

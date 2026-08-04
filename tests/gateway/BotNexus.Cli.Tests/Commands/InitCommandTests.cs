@@ -9,6 +9,14 @@ namespace BotNexus.Cli.Tests.Commands;
 
 /// <summary>
 /// Tests for InitCommand default configuration values.
+/// <para>
+/// Issue #2798 note for future readers: the listenUrl expectation in this class was INVERTED, not
+/// added. #96 pinned a 0.0.0.0 default here; #2798 established that a wildcard bind is an operator
+/// choice, not an out-of-box state, and moved the wildcard to an explicit opt-in. If you find a
+/// listenUrl assertion here failing, the fix is almost certainly in InitCommand, not in the test -
+/// see the per-test history comment on Init_DefaultConfig_ListenUrl_BindsToLoopbackOnly before
+/// changing anything.
+/// </para>
 /// </summary>
 public sealed class InitCommandTests
 {
@@ -39,8 +47,29 @@ public sealed class InitCommandTests
         }
     }
 
+    /// <summary>
+    /// Issue #2798 AC1: `botnexus init` on a clean home writes a LOOPBACK listenUrl.
+    ///
+    /// HISTORY - DO NOT "RESTORE" THE OLD ASSERTION.
+    /// This test previously asserted the opposite: `json.ShouldContain("0.0.0.0")`, under the name
+    /// Init_DefaultConfig_ListenUrl_BindsToAllInterfaces, with the comment "listenUrl must bind to
+    /// all interfaces so NetBird/remote access works". That expectation was added by #96, which
+    /// widened the generated default to 0.0.0.0 so remote/mesh access worked with no extra
+    /// configuration. #2798 established that this optimised one deployment shape at the cost of
+    /// every local-only install: a fresh install silently published the portal, the SignalR hub, the
+    /// agent REST API and the gateway admin endpoints on every interface, and #506 records that the
+    /// admin endpoints lack an authorization scope check. The operator was neither asked nor told.
+    ///
+    /// The test was therefore INVERTED rather than deleted - its inputs (a clean temp home, a single
+    /// init run, an assertion over the generated config.json text) are the regression corpus and are
+    /// preserved verbatim. Only the expectation moved. The remote case did not disappear; it became
+    /// an explicit opt-in, covered by Init_ListenAllInterfaces_WritesWildcardListenUrl below.
+    ///
+    /// #2798 AC6 non-vacuity: reverting InitCommand's default to "http://0.0.0.0:5005" must redden
+    /// THIS test by name.
+    /// </summary>
     [Fact]
-    public async Task Init_DefaultConfig_ListenUrl_BindsToAllInterfaces()
+    public async Task Init_DefaultConfig_ListenUrl_BindsToLoopbackOnly()
     {
         // Arrange
         var tempHome = Path.Combine(Path.GetTempPath(), $"botnexus-init-test-{Guid.NewGuid():N}");
@@ -52,18 +81,99 @@ public sealed class InitCommandTests
 
             // Act
             var result = await cmd.ExecuteAsync(tempHome, force: false, verbose: false, CancellationToken.None);
+            result.ShouldBe(0);
 
-            // Assert - listenUrl must bind to all interfaces so NetBird/remote access works
+            // Assert - a fresh install must not publish the gateway on every interface (#2798).
             var configPath = Path.Combine(tempHome, "config.json");
             var json = await File.ReadAllTextAsync(configPath);
-            json.ShouldContain("0.0.0.0");
-            json.ShouldNotContain("localhost:5005");
+            json.ShouldNotContain("0.0.0.0");
+
+            var listenUrl = JsonNode.Parse(json)!["gateway"]?["listenUrl"]?.GetValue<string>();
+            listenUrl.ShouldBe(GatewayBindAddress.LoopbackListenUrl);
+            GatewayBindAddress.IsWildcard(listenUrl).ShouldBeFalse();
         }
         finally
         {
             if (Directory.Exists(tempHome))
                 Directory.Delete(tempHome, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// #2798 AC2: the explicit opt-in produces the wildcard listenUrl, byte-identical in that field
+    /// to what init generated before #2798. An operator who wants NetBird/mesh access gets exactly
+    /// the old value - the capability moved from silent default to stated choice, it was not removed.
+    /// </summary>
+    [Fact]
+    public async Task Init_ListenAllInterfaces_WritesWildcardListenUrl()
+    {
+        var tempHome = Path.Combine(Path.GetTempPath(), $"botnexus-init-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempHome);
+
+        try
+        {
+            var result = await new InitCommand().ExecuteAsync(
+                tempHome,
+                force: false,
+                listenAllInterfaces: true,
+                verbose: false,
+                cancellationToken: CancellationToken.None);
+            result.ShouldBe(0);
+
+            var json = await File.ReadAllTextAsync(Path.Combine(tempHome, "config.json"));
+            var listenUrl = JsonNode.Parse(json)!["gateway"]?["listenUrl"]?.GetValue<string>();
+
+            // Byte-identical to the pre-#2798 generated default.
+            listenUrl.ShouldBe("http://0.0.0.0:5005");
+            GatewayBindAddress.IsWildcard(listenUrl).ShouldBeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(tempHome))
+                Directory.Delete(tempHome, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #2798 AC3: an EXISTING config whose listenUrl is a wildcard must be left alone. This is the
+    /// half of the issue that reads as a clean pass if it is merely assumed - the change is to the
+    /// GENERATED DEFAULT for new installs, and an operator who deliberately bound all interfaces
+    /// must not have that silently reverted by an unrelated command.
+    ///
+    /// Two commands that touch config.json without being asked to set listenUrl are exercised:
+    /// `doctor config --yes` (which rewrites the file to apply its migrations) and `init` without
+    /// --force (which must refuse to overwrite at all).
+    /// </summary>
+    [Fact]
+    public async Task ExistingWildcardListenUrl_IsPreserved_ByCommandsNotSettingIt()
+    {
+        using var home = new TempHome();
+
+        // A pre-#2798 install: wildcard bind, plus gaps doctor config genuinely wants to fill so the
+        // command really does write the file rather than short-circuiting on "nothing to do".
+        await File.WriteAllTextAsync(
+            home.ConfigPath,
+            "{\"gateway\":{\"listenUrl\":\"http://0.0.0.0:5005\"},\"agents\":{\"defaults\":{}}}");
+
+        // init without --force must not touch an existing config at all.
+        var initResult = await new InitCommand().ExecuteAsync(
+            home.Path, force: false, verbose: false, CancellationToken.None);
+        initResult.ShouldBe(0);
+        home.ReadConfig()["gateway"]?["listenUrl"]?.GetValue<string>().ShouldBe("http://0.0.0.0:5005");
+
+        // doctor config --yes applies its migrations and rewrites the file; listenUrl is not its
+        // business and must survive untouched.
+        var doctorResult = await new DoctorConfigCommand().ExecuteAsync(
+            home.ConfigPath, autoApply: true, dryRun: false, verbose: false, CancellationToken.None);
+        doctorResult.ShouldBe(0);
+
+        var after = home.ReadConfig();
+        after["gateway"]?["listenUrl"]?.GetValue<string>().ShouldBe(
+            "http://0.0.0.0:5005",
+            "#2798 changes the generated default for NEW installs only - an existing wildcard bind is an operator decision.");
+
+        // Sanity: doctor config really did write, so the preservation above is not vacuous.
+        after["cron"]?["enabled"]?.GetValue<bool>().ShouldBe(true);
     }
 
     // ---------------------------------------------------------------------

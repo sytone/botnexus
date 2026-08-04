@@ -40,6 +40,17 @@ public sealed class InitCommandTests
         config.Gateway?.ListenUrl.ShouldBe("http://localhost:5999");
     }
 
+    /// <summary>
+    /// Asserts that <c>init --force</c> overwrites an existing config with a freshly generated one.
+    ///
+    /// #2798: the listenUrl expectation here was INVERTED, not added. It previously asserted
+    /// <c>"http://0.0.0.0:5005"</c> — a second, independent pin of the #96 wildcard default,
+    /// duplicating the one in <c>BotNexus.Cli.Tests</c>. The inputs are preserved verbatim (an
+    /// existing config on a non-default port, one <c>--force</c> run through the REAL CLI process);
+    /// only the expected generated value moved to loopback. This test is the stronger of the two
+    /// AC1 pins because it exercises the shipped command end-to-end rather than the class directly.
+    /// If it fails, the fix is in InitCommand, not here.
+    /// </summary>
     [Fact]
     public async Task Init_WithForce_OverwritesExistingConfig()
     {
@@ -49,10 +60,28 @@ public sealed class InitCommandTests
         var config = await fixture.LoadConfigAsync();
 
         result.ExitCode.ShouldBe(0);
-        config.Gateway?.ListenUrl.ShouldBe("http://0.0.0.0:5005");
+        config.Gateway?.ListenUrl.ShouldBe("http://localhost:5005");
         config.Agents.ShouldNotBeNull();
         var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
         agents.ShouldContainKey("assistant");
+    }
+
+    /// <summary>
+    /// #2798 AC2, end-to-end: the explicit opt-in flag produces the wildcard listenUrl through the
+    /// real CLI, byte-identical in that field to what init generated before #2798. Pairs with the
+    /// inverted test above — together they pin that the capability moved from silent default to
+    /// stated choice rather than being removed.
+    /// </summary>
+    [Fact]
+    public async Task Init_WithListenAllInterfaces_WritesWildcardListenUrl()
+    {
+        await using var fixture = await CliTestFixture.CreateAsync("""{"gateway":{"listenUrl":"http://localhost:5999"}}""");
+
+        var result = await fixture.RunCliAsync("init", "--force", "--listen-all-interfaces");
+        var config = await fixture.LoadConfigAsync();
+
+        result.ExitCode.ShouldBe(0);
+        config.Gateway?.ListenUrl.ShouldBe("http://0.0.0.0:5005");
     }
 
     // -------------------------------------------------------------------------
