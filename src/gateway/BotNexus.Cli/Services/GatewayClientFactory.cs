@@ -119,6 +119,42 @@ internal static class GatewayClientFactory
     }
 
     /// <summary>
+    /// Applies the same credential policy to an <b>already-constructed</b> client, for the
+    /// command family that receives its <see cref="HttpClient"/> by injection rather than
+    /// building one (<c>cron</c>). Returns <c>null</c> when the client may be used, or the
+    /// operator-facing refusal text when it may not.
+    ///
+    /// <para>This exists so an injected client cannot become a SECOND definition of the
+    /// policy. The classification and the credential decision are made by the same code as
+    /// <see cref="Resolve"/>; only the client's construction differs.</para>
+    /// </summary>
+    public static string? ApplyPolicy(
+        HttpClient client,
+        string baseUrl,
+        string? explicitToken,
+        IGatewayCredentialSource credentialSource)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(credentialSource);
+
+        var resolution = Resolve(baseUrl, client.Timeout, explicitToken, credentialSource);
+        if (resolution.Client is null)
+            return resolution.RefusalMessage;
+
+        using var template = resolution.Client;
+        client.BaseAddress ??= template.BaseAddress;
+
+        // Re-stamp rather than append: a shared injected client is reused across
+        // subcommands, and a stale credential from a previous target must never ride along.
+        client.DefaultRequestHeaders.Remove(CredentialHeaderName);
+        if (template.DefaultRequestHeaders.TryGetValues(CredentialHeaderName, out var values))
+            client.DefaultRequestHeaders.Add(CredentialHeaderName, values);
+
+        return null;
+    }
+
+
+    /// <summary>
     /// True when <paramref name="baseUrl"/> names the loopback gateway this CLI installation
     /// manages, and is therefore the only target the ambient local credential may be sent to.
     /// Anything that cannot be parsed, or is not http/https loopback, is treated as remote:

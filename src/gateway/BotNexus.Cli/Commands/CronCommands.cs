@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Net.Http.Json;
 using System.Text.Json;
 using BotNexus.Cron;
+using BotNexus.Cli.Services;
 using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
@@ -37,70 +38,119 @@ internal sealed class CronCommands
     {
         var command = new Command("cron", "Manage cron jobs on a running BotNexus gateway.");
 
-        var urlOption = new Option<string>("--url", () => "http://localhost:5005", "Gateway base URL.");
+        var urlOption = new Option<string>("--url", () => GatewayClientFactory.DefaultUrl, "Gateway base URL.");
+        var tokenOption = new Option<string?>("--token", "Gateway API credential. Required when --url is not the local gateway.");
 
         // ── list ──────────────────────────────────────────────────────────
-        var listCommand = new Command("list", "List all cron jobs.") { urlOption };
+        var listCommand = new Command("list", "List all cron jobs.") { urlOption, tokenOption };
         listCommand.SetHandler(async context =>
         {
             var url = context.ParseResult.GetValueForOption(urlOption)!;
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            _http.BaseAddress ??= new Uri(url);
+            var refusal = GatewayClientFactory.ApplyPolicy(
+                _http, url, context.ParseResult.GetValueForOption(tokenOption), GatewayClientFactory.DefaultCredentialSource());
+            if (refusal is not null)
+            {
+                AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(refusal));
+                context.ExitCode = 1;
+                return;
+            }
+
             context.ExitCode = await ExecuteListAsync(verbose, context.GetCancellationToken());
         });
 
         // ── get ───────────────────────────────────────────────────────────
         var jobIdArg = new Argument<string>("job-id", "Cron job ID.");
-        var getCommand = new Command("get", "Show details for a single cron job.") { jobIdArg, urlOption };
+        var getCommand = new Command("get", "Show details for a single cron job.") { jobIdArg, urlOption, tokenOption };
         getCommand.SetHandler(async context =>
         {
             var id = context.ParseResult.GetValueForArgument(jobIdArg);
             var url = context.ParseResult.GetValueForOption(urlOption)!;
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            _http.BaseAddress ??= new Uri(url);
+            var refusal = GatewayClientFactory.ApplyPolicy(
+                _http, url, context.ParseResult.GetValueForOption(tokenOption), GatewayClientFactory.DefaultCredentialSource());
+            if (refusal is not null)
+            {
+                AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(refusal));
+                context.ExitCode = 1;
+                return;
+            }
+
             context.ExitCode = await ExecuteGetAsync(id, verbose, context.GetCancellationToken());
         });
 
         // ── delete ────────────────────────────────────────────────────────
-        var deleteCommand = new Command("delete", "Delete a cron job.") { jobIdArg, urlOption };
+        var deleteCommand = new Command("delete", "Delete a cron job.") { jobIdArg, urlOption, tokenOption };
         deleteCommand.SetHandler(async context =>
         {
             var id = context.ParseResult.GetValueForArgument(jobIdArg);
             var url = context.ParseResult.GetValueForOption(urlOption)!;
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            _http.BaseAddress ??= new Uri(url);
+            var refusal = GatewayClientFactory.ApplyPolicy(
+                _http, url, context.ParseResult.GetValueForOption(tokenOption), GatewayClientFactory.DefaultCredentialSource());
+            if (refusal is not null)
+            {
+                AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(refusal));
+                context.ExitCode = 1;
+                return;
+            }
+
             context.ExitCode = await ExecuteDeleteAsync(id, verbose, context.GetCancellationToken());
         });
 
         // ── run ───────────────────────────────────────────────────────────
-        var runCommand = new Command("run", "Trigger a cron job immediately.") { jobIdArg, urlOption };
+        var runCommand = new Command("run", "Trigger a cron job immediately.") { jobIdArg, urlOption, tokenOption };
         runCommand.SetHandler(async context =>
         {
             var id = context.ParseResult.GetValueForArgument(jobIdArg);
             var url = context.ParseResult.GetValueForOption(urlOption)!;
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            _http.BaseAddress ??= new Uri(url);
+            var refusal = GatewayClientFactory.ApplyPolicy(
+                _http, url, context.ParseResult.GetValueForOption(tokenOption), GatewayClientFactory.DefaultCredentialSource());
+            if (refusal is not null)
+            {
+                AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(refusal));
+                context.ExitCode = 1;
+                return;
+            }
+
             context.ExitCode = await ExecuteRunAsync(id, verbose, context.GetCancellationToken());
         });
 
         // ── enable / disable ──────────────────────────────────────────────
-        var enableCommand = new Command("enable", "Enable a cron job.") { jobIdArg, urlOption };
+        var enableCommand = new Command("enable", "Enable a cron job.") { jobIdArg, urlOption, tokenOption };
         enableCommand.SetHandler(async context =>
         {
             var id = context.ParseResult.GetValueForArgument(jobIdArg);
             var url = context.ParseResult.GetValueForOption(urlOption)!;
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            _http.BaseAddress ??= new Uri(url);
+            var refusal = GatewayClientFactory.ApplyPolicy(
+                _http, url, context.ParseResult.GetValueForOption(tokenOption), GatewayClientFactory.DefaultCredentialSource());
+            if (refusal is not null)
+            {
+                AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(refusal));
+                context.ExitCode = 1;
+                return;
+            }
+
             context.ExitCode = await ExecuteEnableAsync(id, enable: true, verbose, context.GetCancellationToken());
         });
 
-        var disableCommand = new Command("disable", "Disable a cron job.") { jobIdArg, urlOption };
+        var disableCommand = new Command("disable", "Disable a cron job.") { jobIdArg, urlOption, tokenOption };
         disableCommand.SetHandler(async context =>
         {
             var id = context.ParseResult.GetValueForArgument(jobIdArg);
             var url = context.ParseResult.GetValueForOption(urlOption)!;
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            _http.BaseAddress ??= new Uri(url);
+            var refusal = GatewayClientFactory.ApplyPolicy(
+                _http, url, context.ParseResult.GetValueForOption(tokenOption), GatewayClientFactory.DefaultCredentialSource());
+            if (refusal is not null)
+            {
+                AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(refusal));
+                context.ExitCode = 1;
+                return;
+            }
+
             context.ExitCode = await ExecuteEnableAsync(id, enable: false, verbose, context.GetCancellationToken());
         });
 

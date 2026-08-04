@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Net.Http.Json;
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Configuration;
+using BotNexus.Cli.Services;
 using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
