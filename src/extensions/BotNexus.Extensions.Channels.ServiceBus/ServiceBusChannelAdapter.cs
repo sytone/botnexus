@@ -92,6 +92,21 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
     private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _pendingQueue =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // #2525 AC5: request keys whose work has already been dispatched successfully. A redelivery
+    // after a lock-lost completion carries the same broker MessageId, and the turn it represents
+    // has already run, so it must not run again. Entries are only added after a successful
+    // dispatch - a handler that threw was abandoned and genuinely does need to be retried.
+    private readonly ConcurrentDictionary<string, byte> _dispatchedMessages =
+        new(StringComparer.Ordinal);
+
+    // FIFO of dispatched keys, used to evict the oldest entries so a long-lived adapter cannot
+    // grow _dispatchedMessages without bound.
+    private readonly ConcurrentQueue<string> _dispatchedOrder = new();
+
+    // Retains roughly an hour of redelivery history at realistic inbound rates, which comfortably
+    // outlives any lock-renewal window, while bounding memory.
+    private const int MaxDispatchedMessages = 10_000;
+
     // Accumulators are keyed by the channel-native request identity, never conversation address,
     // so two concurrent streams in one conversation cannot share text or sequence numbers.
     private readonly ConcurrentDictionary<string, PendingStreamState> _pendingStreams =
@@ -219,6 +234,8 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         _pendingReplies.Clear();
         _pendingQueue.Clear();
         _pendingStreams.Clear();
+        _dispatchedMessages.Clear();
+        _dispatchedOrder.Clear();
 
         if (_activeFactory is IAsyncDisposable disposable)
             await disposable.DisposeAsync();
@@ -544,7 +561,41 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
             ChannelRequestId = requestKey,
         };
 
+        // #2525 AC5: a turn that outlives the message lock still succeeds, but the completion then
+        // fails with a lock-lost error and the broker redelivers the same MessageId. The work has
+        // already been done, so dispatching again would perform it twice. Only a key derived from
+        // the broker's own MessageId is trustworthy - a generated GUID differs on every delivery.
+        var isBrokerKeyed = !string.IsNullOrEmpty(messageId) || !string.IsNullOrEmpty(envelope.MessageId);
+        if (isBrokerKeyed && _dispatchedMessages.ContainsKey(requestKey))
+        {
+            _logger.LogInformation(
+                "{DisplayName} skipping redelivered Service Bus message {MessageId}; it was already processed on an earlier delivery",
+                DisplayName,
+                requestKey);
+            return;
+        }
+
         await DispatchInboundAsync(inbound, cancellationToken);
+
+        // Recorded only after the dispatch returns. A handler that threw propagates out of this
+        // method, is abandoned by the caller, and must still be retried on redelivery.
+        if (isBrokerKeyed)
+            MarkDispatched(requestKey);
+    }
+
+    /// <summary>
+    /// Records a request key as already processed for redelivery suppression (#2525), evicting the
+    /// oldest keys once the retention bound is reached.
+    /// </summary>
+    private void MarkDispatched(string requestKey)
+    {
+        if (!_dispatchedMessages.TryAdd(requestKey, 0))
+            return;
+
+        _dispatchedOrder.Enqueue(requestKey);
+
+        while (_dispatchedOrder.Count > MaxDispatchedMessages && _dispatchedOrder.TryDequeue(out var oldest))
+            _dispatchedMessages.TryRemove(oldest, out _);
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────

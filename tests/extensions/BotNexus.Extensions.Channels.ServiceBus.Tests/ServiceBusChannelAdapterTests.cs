@@ -1068,4 +1068,63 @@ public sealed class ServiceBusChannelAdapterTests
 
         resolved.ShouldBeSameAs(injected);
     }
+
+    // ── Test: AC5 - handler that outlives the lock is not processed twice on redelivery ─
+
+    /// <summary>
+    /// #2525 AC5. The other tests in this area pin the acknowledgement <em>disposition</em> -
+    /// which outcome was reached and whether abandon was called. This one pins the
+    /// <em>outcome</em> the issue exists to guarantee: when a turn outlives the message lock,
+    /// the completion fails and the broker redelivers the same MessageId, the work must not
+    /// run a second time. The assertion is therefore a count of handler executions, not a
+    /// disposition.
+    /// </summary>
+    [Fact]
+    public async Task ProcessMessageCore_HandlerOutlivesLockAndMessageIsRedelivered_HandlerRunsExactlyOnce()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+
+        // Count executions of the handler body itself, through the real dispatch path.
+        var handlerRuns = 0;
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher
+            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                Interlocked.Increment(ref handlerRuns);
+                return Task.CompletedTask;
+            });
+        await adapter.StartAsync(dispatcher.Object);
+
+        const string messageId = "sb-lock-outlived-msg-id";
+        var json = """{ "content": "long running turn", "senderId": "u@x.com", "conversationId": "conv-lock-outlived", "replyTo": "reply-queue-lock", "correlationId": "corr-lock" }""";
+
+        // Delivery 1: the turn succeeds but takes longer than the lock, so the completion
+        // call fails with MessageLockLost and the broker will redeliver.
+        var first = await adapter.ProcessMessageCoreAsync(
+            ct => adapter.HandleMessageBodyAsync(json, null, messageId, ct),
+            _ => throw new ServiceBusException("The lock supplied is invalid.", ServiceBusFailureReason.MessageLockLost),
+            () => Task.CompletedTask,
+            messageId,
+            CancellationToken.None);
+
+        first.ShouldBe(MessageProcessingOutcome.CompleteFailedLockLost);
+        handlerRuns.ShouldBe(1);
+
+        // Delivery 2: the broker redelivers the identical MessageId. The work already
+        // happened, so the handler body must not run again.
+        var second = await adapter.ProcessMessageCoreAsync(
+            ct => adapter.HandleMessageBodyAsync(json, null, messageId, ct),
+            _ => Task.CompletedTask,
+            () => Task.CompletedTask,
+            messageId,
+            CancellationToken.None);
+
+        second.ShouldBe(MessageProcessingOutcome.Completed);
+
+        // The point of the issue: completed work is not performed a second time.
+        handlerRuns.ShouldBe(1);
+    }
+
 }
