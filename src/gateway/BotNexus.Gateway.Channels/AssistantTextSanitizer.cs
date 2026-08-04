@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
+using BotNexus.Domain.Text;
 
 namespace BotNexus.Gateway.Channels;
 
@@ -103,12 +104,14 @@ public static class AssistantTextSanitizer
     {
         if (string.IsNullOrEmpty(text))
             return text;
-        if (text.IndexOf('<') < 0)
+        if (!MightContainMarkup(text))
             return text;
-        var stripped = ThinkingTagPattern.Replace(text, string.Empty);
+        // Escaped spellings are handled by consuming the single EscapedMarkupNormalizer seam
+        // (#2808); this file deliberately owns no escaped-form copy of the patterns above.
+        var stripped = EscapedMarkupNormalizer.ReplaceMatches(text, ThinkingTagPattern);
         stripped = CourtJunkPrefixPattern.Replace(stripped, string.Empty);
-        stripped = ToolCallBlockPattern.Replace(stripped, string.Empty);
-        stripped = ToolCallStrayTagPattern.Replace(stripped, string.Empty);
+        stripped = EscapedMarkupNormalizer.ReplaceMatches(stripped, ToolCallBlockPattern);
+        stripped = EscapedMarkupNormalizer.ReplaceMatches(stripped, ToolCallStrayTagPattern);
         stripped = Regex.Replace(stripped, @"\n{3}", "\n\n");
         return stripped.Trim();
     }
@@ -124,11 +127,16 @@ public static class AssistantTextSanitizer
     {
         if (string.IsNullOrEmpty(text))
             return text;
-        if (text.IndexOf('<') < 0)
+        if (!MightContainMarkup(text))
             return text;
         var stripped = CourtJunkPrefixPattern.Replace(text, string.Empty);
-        stripped = ToolCallBlockPattern.Replace(stripped, string.Empty);
-        stripped = ToolCallStrayTagPattern.Replace(stripped, string.Empty);
+        stripped = EscapedMarkupNormalizer.ReplaceMatches(stripped, ToolCallBlockPattern);
+        stripped = EscapedMarkupNormalizer.ReplaceMatches(stripped, ToolCallStrayTagPattern);
         return stripped.Trim();
     }
+
+    // An escaped marker (\u003cinvoke..., &lt;invoke...) contains no literal '<', so the cheap
+    // pre-check must admit the escape introducers too (#2808).
+    private static bool MightContainMarkup(string text)
+        => text.IndexOf('<') >= 0 || text.IndexOf('\\') >= 0 || text.IndexOf('&') >= 0;
 }

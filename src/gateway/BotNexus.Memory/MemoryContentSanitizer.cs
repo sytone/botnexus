@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
+using BotNexus.Domain.Text;
 
 namespace BotNexus.Memory;
 
@@ -26,6 +27,14 @@ namespace BotNexus.Memory;
 /// <para>
 /// It intentionally removes only injection-class markup — ordinary angle brackets, pipes, and prose
 /// are preserved so legitimate conversational content survives recall.
+/// </para>
+/// <para>
+/// Every pattern below is written in LITERAL form only and is applied through
+/// <see cref="EscapedMarkupNormalizer"/>, which decodes escape spellings into a scan buffer and
+/// deletes the matching span from the original text (issue #2808). Do not add an escaped-form
+/// twin of any pattern here: that would give "what a marker looks like" a second spelling, and a
+/// duplicated definition of what is unsafe is exactly the defect this change removes. The
+/// normalisation therefore lives in exactly one place and is consumed, never restated.
 /// </para>
 /// </remarks>
 public static class MemoryContentSanitizer
@@ -91,13 +100,13 @@ public static class MemoryContentSanitizer
             return content;
 
         var text = content;
-        text = SpecialTokenPattern.Replace(text, string.Empty);
-        text = ToolCallBlockPattern.Replace(text, string.Empty);
-        text = RoleBlockPattern.Replace(text, string.Empty);
-        text = ToolCallStrayTagPattern.Replace(text, string.Empty);
-        text = RoleStrayTagPattern.Replace(text, string.Empty);
-        text = DsmlDirectivePattern.Replace(text, string.Empty);
-        text = MediaPlaceholderPattern.Replace(text, string.Empty);
+        text = EscapedMarkupNormalizer.ReplaceMatches(text, SpecialTokenPattern);
+        text = EscapedMarkupNormalizer.ReplaceMatches(text, ToolCallBlockPattern);
+        text = EscapedMarkupNormalizer.ReplaceMatches(text, RoleBlockPattern);
+        text = EscapedMarkupNormalizer.ReplaceMatches(text, ToolCallStrayTagPattern);
+        text = EscapedMarkupNormalizer.ReplaceMatches(text, RoleStrayTagPattern);
+        text = EscapedMarkupNormalizer.ReplaceMatches(text, DsmlDirectivePattern);
+        text = EscapedMarkupNormalizer.ReplaceMatches(text, MediaPlaceholderPattern);
         text = NoReplyPattern.Replace(text, string.Empty);
 
         return text;
@@ -107,7 +116,11 @@ public static class MemoryContentSanitizer
     {
         // Any of: an angle bracket (tags / placeholders), a pipe or fullwidth pipe (DSML / special
         // tokens), or the literal NO_REPLY marker. Cheap pre-check before compiled regex passes.
+        // '\\' and '&' are included because an escaped marker (\u003c..., &lt;...) carries no
+        // literal '<' at all - omitting them would reinstate the #2808 bypass in the fast path.
         return text.IndexOf('<') >= 0
+            || text.IndexOf('\\') >= 0
+            || text.IndexOf('&') >= 0
             || text.IndexOf('|') >= 0
             || text.IndexOf('\uFF5C') >= 0
             || text.Contains("NO_REPLY", StringComparison.Ordinal);
