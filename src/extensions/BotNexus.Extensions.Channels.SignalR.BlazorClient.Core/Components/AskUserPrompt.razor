@@ -17,7 +17,7 @@
         <div class="ask-user-choices">
             @foreach (var choice in Prompt.Choices ?? [])
             {
-                @if (Prompt.AllowMultiple || IsMultipleChoice)
+                @if (RendersCheckboxes)
                 {
                     <label class="ask-user-choice">
                         <input type="checkbox"
@@ -110,12 +110,42 @@
     private bool IsChoiceMode => IsSingleChoice || IsMultipleChoice || IsChoiceOrFreeForm;
     private bool ShowsFreeForm => IsFreeFormOnly || IsChoiceOrFreeForm || Prompt.AllowFreeForm;
 
-    private bool CanSubmit =>
-        IsFreeFormOnly
-            ? !string.IsNullOrWhiteSpace(_freeFormText)
-            : HasAnyChoiceSelection || (ShowsFreeForm && !string.IsNullOrWhiteSpace(_freeFormText));
+    // #2792: the choice widget is either a checkbox set or a radio group, and THAT decision also
+    // decides which field holds the answer. Naming it once means the markup above and
+    // CurrentSelections below cannot render one control and then read the other.
+    private bool RendersCheckboxes => Prompt.AllowMultiple || IsMultipleChoice;
 
-    private bool HasAnyChoiceSelection => _selectedValues.Count > 0 || !string.IsNullOrWhiteSpace(_singleChoice);
+    // #2792: THE single answer to "what selections does this prompt currently hold".
+    //
+    // Previously CanSubmit and SubmitAsync each derived that independently, and for
+    // ChoiceOrFreeForm they disagreed: the guard consulted _singleChoice (so Submit lit up) while
+    // the payload branched on IsSingleChoice (so the radio value was never read). The gateway
+    // received (null, null, false) and recorded the answer as "(no content provided)".
+    //
+    // Both the guard and the payload now compose from this one expression, so they are
+    // structurally incapable of disagreeing. Do not introduce a second spelling of this question -
+    // removing the second spelling is the entire point of this member.
+    private string[]? CurrentSelections
+    {
+        get
+        {
+            if (!IsChoiceMode)
+                return null;
+
+            return RendersCheckboxes
+                ? (_selectedValues.Count == 0 ? null : _selectedValues.ToArray())
+                : (string.IsNullOrWhiteSpace(_singleChoice) ? null : [_singleChoice]);
+        }
+    }
+
+    // The free-form counterpart, normalised exactly once for the same reason. Gated on
+    // ShowsFreeForm so text that is not offered to the user can never leak into a payload.
+    private string? CurrentFreeFormText =>
+        ShowsFreeForm && !string.IsNullOrWhiteSpace(_freeFormText) ? _freeFormText.Trim() : null;
+
+    // Enabled precisely when the payload would carry something. AC3 (#2792): no enabled Submit
+    // can produce freeFormText=null AND selectedValues=null with wasCancelled=false.
+    private bool CanSubmit => CurrentSelections is not null || CurrentFreeFormText is not null;
 
     protected override void OnParametersSet()
     {
@@ -140,11 +170,16 @@
 
     private async Task SubmitAsync()
     {
-        var selectedValues = IsSingleChoice
-            ? (_singleChoice is null ? null : [_singleChoice])
-            : (_selectedValues.Count == 0 ? null : _selectedValues.ToArray());
+        // Composed from the same expressions CanSubmit gates on - see CurrentSelections (#2792).
+        var selectedValues = CurrentSelections;
+        var freeForm = CurrentFreeFormText;
 
-        var freeForm = string.IsNullOrWhiteSpace(_freeFormText) ? null : _freeFormText.Trim();
+        // Belt to CanSubmit's braces: at the gateway an empty non-cancelled answer is
+        // indistinguishable from "the user said nothing", so never emit one even if the disabled
+        // attribute is bypassed.
+        if (selectedValues is null && freeForm is null)
+            return;
+
         await OnSubmit.InvokeAsync(new AskUserPromptSubmission(freeForm, selectedValues, false));
     }
 
