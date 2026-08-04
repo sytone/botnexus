@@ -83,6 +83,48 @@ public sealed class FeatureManagerConfigShadowGate(
 }
 
 /// <summary>
+/// Evaluates <see cref="ConfigStoreFeatures.Authoritative"/> via <see cref="IFeatureManager"/>.
+///
+/// <para>
+/// <b>Fails closed, and the direction matters more here than anywhere else in the rollout.</b> A failed
+/// flag lookup is read as "not authoritative", which leaves <c>config.json</c> serving configuration -
+/// the behaviour the platform has had for its whole life. The opposite default would let a transient
+/// feature-management fault silently promote an unverified store into the configuration read path,
+/// which is the single outcome the two-flag split exists to prevent.
+/// </para>
+///
+/// <para>
+/// Separate from <see cref="FeatureManagerConfigShadowGate"/> rather than one gate returning both
+/// answers: the flags are independent by design, and a shared evaluation path would let one flag's
+/// failure change the other's answer.
+/// </para>
+/// </summary>
+public sealed class FeatureManagerConfigStoreAuthoritativeGate(
+    IFeatureManager featureManager,
+    ILogger<FeatureManagerConfigStoreAuthoritativeGate> logger) : IConfigStoreAuthoritativeGate
+{
+    /// <inheritdoc />
+    public async Task<bool> IsAuthoritativeAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await featureManager
+                .IsEnabledAsync(ConfigStoreFeatures.Authoritative)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to evaluate feature flag '{Feature}'; treating the configuration store as NOT " +
+                "authoritative so the configuration file continues to serve reads.",
+                ConfigStoreFeatures.Authoritative);
+            return false;
+        }
+    }
+}
+
+/// <summary>
 /// Implements the round-trip seam by writing the document into the store and reading it back
 /// (#2646 PBI 2).
 /// <para>
