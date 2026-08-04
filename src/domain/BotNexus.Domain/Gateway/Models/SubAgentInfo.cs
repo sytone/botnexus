@@ -85,6 +85,43 @@ public sealed record SubAgentInfo
     /// Gets an optional completion summary produced by the sub-agent.
     /// </summary>
     public string? ResultSummary { get; init; }
+
+    /// <summary>
+    /// Gets the budget reduction applied to this spawn, or <c>null</c> when the request fitted
+    /// inside every ceiling (#2789). Deliberately absent rather than always present: an
+    /// unconditional field is boilerplate a calling model learns to skip, so its presence alone
+    /// must mean "your requested budget was reduced and you should re-scope the task".
+    /// </summary>
+    public SubAgentBudgetClamp? BudgetClamp { get; init; }
+}
+
+/// <summary>
+/// Reports that a spawn request's budget was reduced by a configured ceiling (#2789).
+/// <para>
+/// The clamp itself is a deliberate runaway-cost guard and is not negotiable; what this record
+/// fixes is that the reduction used to be visible ONLY in the gateway's own Warning log, so the
+/// agent that asked for the budget went on to brief its worker against a budget it did not have.
+/// The effective values carried here are the same values threaded into the run, not a
+/// recomputation of them.
+/// </para>
+/// </summary>
+/// <param name="PolicyTier">The budget policy tier that applied the ceiling.</param>
+/// <param name="RequestedMaxTurns">The turn budget the caller asked for.</param>
+/// <param name="EffectiveMaxTurns">The turn budget the run actually received.</param>
+/// <param name="RequestedTimeoutSeconds">The timeout the caller asked for, in seconds.</param>
+/// <param name="EffectiveTimeoutSeconds">The timeout the run actually received, in seconds.</param>
+public sealed record SubAgentBudgetClamp(
+    string PolicyTier,
+    int RequestedMaxTurns,
+    int EffectiveMaxTurns,
+    int RequestedTimeoutSeconds,
+    int EffectiveTimeoutSeconds)
+{
+    /// <summary>Gets a value indicating whether the turn budget specifically was reduced.</summary>
+    public bool MaxTurnsClamped => RequestedMaxTurns > EffectiveMaxTurns;
+
+    /// <summary>Gets a value indicating whether the timeout specifically was reduced.</summary>
+    public bool TimeoutSecondsClamped => RequestedTimeoutSeconds > EffectiveTimeoutSeconds;
 }
 
 /// <summary>

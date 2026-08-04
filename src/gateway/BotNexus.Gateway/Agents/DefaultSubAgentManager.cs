@@ -304,6 +304,32 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
+        // Clamp the agent-supplied timeout to the configured ceiling. Depth and concurrency are
+        // already bounded above; without this the timeout (the only budget wired to a real
+        // cancellation token) could be set arbitrarily high, letting a background sub-agent run
+        // effectively forever. Mirrors the runaway-cost guard the agent_converse tool applies.
+        var timeoutSeconds = budgetPolicy.ResolveTimeoutSeconds(request.TimeoutSeconds);
+
+        // Clamp the requested turn budget too, then enforce it: the resolved value is threaded
+        // into the run alongside timeoutSeconds and bounds the live per-turn counter, so a run
+        // that exceeds it terminates as BudgetExhausted (#2656). The ceiling here remains the
+        // request-shape guard it has always been (#1344).
+        var maxTurns = budgetPolicy.ResolveMaxTurns(request.MaxTurns);
+
+        // #2789: when either budget was actually reduced, surface the reduction on the record the
+        // caller reads. Resolved BEFORE the SubAgentInfo is built and reusing the very locals that
+        // are threaded into RunSubAgentAsync below, so the disclosed effective values cannot drift
+        // from the budget the run is given. Null when nothing was clamped - the disclosure has to
+        // be a signal, not a field that is always there and therefore always ignored.
+        var budgetClamp = request.TimeoutSeconds > timeoutSeconds || request.MaxTurns > maxTurns
+            ? new SubAgentBudgetClamp(
+                budgetPolicy.Tier,
+                request.MaxTurns,
+                maxTurns,
+                request.TimeoutSeconds,
+                timeoutSeconds)
+            : null;
+
         var info = new SubAgentInfo
         {
             SubAgentId = subAgentId,
@@ -319,7 +345,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             Archetype = archetype,
             Status = SubAgentStatus.Running,
             StartedAt = DateTimeOffset.UtcNow,
-            TurnsUsed = 0
+            TurnsUsed = 0,
+            // #2789: null unless a ceiling actually reduced the request.
+            BudgetClamp = budgetClamp
         };
 
         var record = new SubAgentRecord(info, request.ParentAgentId, childAgentId);
@@ -346,28 +374,17 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 _policyProvider.SetDynamicDenyList(childAgentId, effectiveDenyList);
         }
 
-        // Clamp the agent-supplied timeout to the configured ceiling. Depth and concurrency are
-        // already bounded above; without this the timeout (the only budget wired to a real
-        // cancellation token) could be set arbitrarily high, letting a background sub-agent run
-        // effectively forever. Mirrors the runaway-cost guard the agent_converse tool applies.
-        var timeoutSeconds = budgetPolicy.ResolveTimeoutSeconds(request.TimeoutSeconds);
-
-        // Clamp the requested turn budget too, then enforce it: the resolved value is threaded
-        // into the run alongside timeoutSeconds and bounds the live per-turn counter, so a run
-        // that exceeds it terminates as BudgetExhausted (#2656). The ceiling here remains the
-        // request-shape guard it has always been (#1344).
-        var maxTurns = budgetPolicy.ResolveMaxTurns(request.MaxTurns);
-        if (request.TimeoutSeconds > timeoutSeconds || request.MaxTurns > maxTurns)
+        if (budgetClamp is not null)
         {
             _logger.LogWarning(
                 "Sub-agent '{SubAgentId}' spawn budget clamped: ParentAgentId={ParentAgentId}, PolicyTier={PolicyTier}, timeoutSeconds {RequestedTimeout}->{ClampedTimeout}, maxTurns {RequestedMaxTurns}->{ClampedMaxTurns}.",
                 subAgentId,
                 request.ParentAgentId.Value,
-                budgetPolicy.Tier,
-                request.TimeoutSeconds,
-                timeoutSeconds,
-                request.MaxTurns,
-                maxTurns);
+                budgetClamp.PolicyTier,
+                budgetClamp.RequestedTimeoutSeconds,
+                budgetClamp.EffectiveTimeoutSeconds,
+                budgetClamp.RequestedMaxTurns,
+                budgetClamp.EffectiveMaxTurns);
         }
 
         var timeoutCts = new CancellationTokenSource();

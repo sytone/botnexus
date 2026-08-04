@@ -147,16 +147,41 @@ public sealed class SubAgentSpawnTool(
                 Status = "failed"
             }, JsonOptions));
         }
-        var result = JsonSerializer.Serialize(new
-        {
-            spawned.SubAgentId,
-            SessionId = spawned.ChildSessionId,
-            // #2338: the run's own conversation id. This is what a channel expands to load the
-            // child's transcript on demand; it is deliberately NOT the caller's conversation id.
-            ConversationId = spawned.ChildConversationId,
-            spawned.Status,
-            spawned.Name
-        }, JsonOptions);
+        // #2789: the clamp field is emitted ONLY when a ceiling actually reduced the request, so
+        // its presence is the signal to re-scope. Serialized through two shapes rather than a
+        // nullable property because a field that is always there (even as null) is boilerplate a
+        // calling model stops reading, which is the failure this issue exists to fix.
+        var result = spawned.BudgetClamp is { } clamp
+            ? JsonSerializer.Serialize(new
+            {
+                spawned.SubAgentId,
+                SessionId = spawned.ChildSessionId,
+                ConversationId = spawned.ChildConversationId,
+                spawned.Status,
+                spawned.Name,
+                BudgetClamp = new
+                {
+                    clamp.PolicyTier,
+                    clamp.MaxTurnsClamped,
+                    clamp.RequestedMaxTurns,
+                    clamp.EffectiveMaxTurns,
+                    clamp.TimeoutSecondsClamped,
+                    clamp.RequestedTimeoutSeconds,
+                    clamp.EffectiveTimeoutSeconds,
+                    Notice = "Your requested budget exceeded a configured ceiling and was reduced. "
+                        + "Scope the delegated task to the effective values above, not the requested ones."
+                }
+            }, JsonOptions)
+            : JsonSerializer.Serialize(new
+            {
+                spawned.SubAgentId,
+                SessionId = spawned.ChildSessionId,
+                // #2338: the run's own conversation id. This is what a channel expands to load the
+                // child's transcript on demand; it is deliberately NOT the caller's conversation id.
+                ConversationId = spawned.ChildConversationId,
+                spawned.Status,
+                spawned.Name
+            }, JsonOptions);
 
         return TextResult(result);
     }

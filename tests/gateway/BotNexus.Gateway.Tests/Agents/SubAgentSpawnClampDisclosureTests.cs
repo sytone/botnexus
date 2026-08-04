@@ -167,7 +167,7 @@ public sealed class SubAgentSpawnClampDisclosureTests
                 ["timeoutSeconds"] = timeoutSeconds
             });
 
-        var text = result.Content[0].Text;
+        var text = result.Content[0].Value;
         text.ShouldNotBeNullOrWhiteSpace();
         return JsonDocument.Parse(text);
     }
