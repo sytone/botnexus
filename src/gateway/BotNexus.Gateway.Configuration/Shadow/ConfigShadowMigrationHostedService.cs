@@ -26,6 +26,31 @@ public interface IConfigStoreRoundTrip
 }
 
 /// <summary>
+/// Entry-shaped round-trip seam, and the one a real store implements (#2646 PBI 2).
+///
+/// <para>
+/// <b>Why this exists alongside <see cref="IConfigStoreRoundTrip"/>.</b> A store's natural read shape
+/// is <see cref="ConfigEntry"/>, and it is the ONLY shape able to report
+/// <see cref="ConfigValueState.Unset"/> - JSON has no way to express "present and unset". Forcing a
+/// store to reconstruct a <see cref="JsonObject"/> before being diffed would push every state through
+/// a format that cannot represent the distinction under test, so a store that had collapsed unset into
+/// explicit-null would diff clean against its own bug.
+/// </para>
+///
+/// <para>
+/// The document-shaped seam is retained for adapters that genuinely round-trip through JSON; the
+/// hosted service prefers this one when both are registered.
+/// </para>
+/// </summary>
+public interface IConfigStoreEntryRoundTrip
+{
+    /// <summary>Migrates <paramref name="source"/> into the store and reads it back as flattened entries.</summary>
+    Task<IReadOnlyDictionary<string, ConfigEntry>> MigrateAndReadBackEntriesAsync(
+        JsonObject source,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Runs the shadow migration on start and reports the diff, without ever affecting behaviour
 /// (#2766 AC3, AC5, AC6).
 ///
@@ -56,7 +81,8 @@ public sealed class ConfigShadowMigrationHostedService(
     IConfigShadowReportSink sink,
     IConfigShadowGate gate,
     ILogger<ConfigShadowMigrationHostedService> logger,
-    TimeProvider? timeProvider = null) : IHostedService
+    TimeProvider? timeProvider = null,
+    IConfigStoreEntryRoundTrip? entryRoundTrip = null) : IHostedService
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
@@ -82,11 +108,28 @@ public sealed class ConfigShadowMigrationHostedService(
                 return;
             }
 
-            var reconstructed = await roundTrip
-                .MigrateAndReadBackAsync(document, cancellationToken)
-                .ConfigureAwait(false);
+            // Prefer the entry-shaped seam when a real store is registered: it is the only path that
+            // can report Unset, so routing a store through the document seam would discard the very
+            // distinction the diff exists to check.
+            ConfigShadowDiffReport report;
+            if (entryRoundTrip is not null)
+            {
+                var storeEntries = await entryRoundTrip
+                    .MigrateAndReadBackEntriesAsync(document, cancellationToken)
+                    .ConfigureAwait(false);
+                report = ConfigShadowDiff.CompareEntries(
+                    ConfigDocumentFlattener.Flatten(document),
+                    storeEntries,
+                    _timeProvider);
+            }
+            else
+            {
+                var reconstructed = await roundTrip
+                    .MigrateAndReadBackAsync(document, cancellationToken)
+                    .ConfigureAwait(false);
+                report = ConfigShadowDiff.Compare(document, reconstructed, _timeProvider);
+            }
 
-            var report = ConfigShadowDiff.Compare(document, reconstructed, _timeProvider);
             sink.Record(report);
 
             if (report.IsClean)

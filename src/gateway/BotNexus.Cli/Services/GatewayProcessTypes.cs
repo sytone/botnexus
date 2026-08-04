@@ -33,13 +33,35 @@ public record GatewayStartResult(
 );
 
 /// <summary>
+/// What a stop attempt actually observed. <see cref="GatewayStopResult.Success"/> alone cannot
+/// express this: "I killed a live gateway" and "I could not find one" were previously both
+/// <c>Success: true</c>, so callers rendered "Gateway stopped" for a no-op (issue #2772).
+/// </summary>
+public enum GatewayStopOutcome
+{
+    /// <summary>A gateway process was observed alive and then observed gone.</summary>
+    Stopped,
+
+    /// <summary>No gateway process could be found. Nothing was signalled.</summary>
+    NotRunning,
+
+    /// <summary>A gateway was found but could not be stopped.</summary>
+    Failed
+}
+
+/// <summary>
 /// Result of a gateway stop operation.
 /// </summary>
-/// <param name="Success">True if the gateway was stopped successfully.</param>
+/// <param name="Success">True when the gateway is not running as a result of this call - i.e.
+/// <see cref="GatewayStopOutcome.Stopped"/> or <see cref="GatewayStopOutcome.NotRunning"/>. It is
+/// deliberately NOT a synonym for "a process was killed"; use <paramref name="Outcome"/> for that.</param>
 /// <param name="Message">Diagnostic message describing the result.</param>
+/// <param name="Outcome">What was actually observed. Defaults to <see cref="GatewayStopOutcome.Stopped"/>
+/// only so existing two-argument construction keeps compiling; every production call site states it.</param>
 public record GatewayStopResult(
     bool Success,
-    string? Message
+    string? Message,
+    GatewayStopOutcome Outcome = GatewayStopOutcome.Stopped
 );
 
 /// <summary>

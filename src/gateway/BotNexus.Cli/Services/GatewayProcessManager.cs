@@ -21,6 +21,9 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     private readonly Func<Process, int, bool>? _waitForExitOverride;
     // Injectable HttpClient for status probe -- allows tests to mock HTTP responses.
     private readonly HttpClient _probeClient;
+    // Injectable process enumeration for PID-file-less discovery (#2772). Tests supply fakes so no
+    // real process is ever inspected or signalled.
+    private readonly Func<IEnumerable<IGatewayProcessHandle>> _processEnumerator;
     // Default health URL used for status probing when no override is provided.
     internal const string DefaultHealthUrl = "http://localhost:5005/health";
 
@@ -29,8 +32,10 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         ILogger<GatewayProcessManager> logger,
         TimeSpan? waitForExitTimeout = null,
         Func<Process, int, bool>? waitForExitOverride = null,
-        HttpClient? probeClient = null)
+        HttpClient? probeClient = null,
+        Func<IEnumerable<IGatewayProcessHandle>>? processEnumerator = null)
     {
+        _processEnumerator = processEnumerator ?? LiveProcessHandle.EnumerateAll;
         _healthChecker = healthChecker;
         _logger = logger;
         _waitForExitTimeout = waitForExitTimeout ?? TimeSpan.FromSeconds(5);
@@ -55,11 +60,17 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// that the recorded process identity still matches the live process (see
     /// <see cref="ResolveVerifiedProcessAsync"/>). An unverifiable or recycled PID counts as NOT running.
     /// </summary>
-    public bool IsRunning(string? homePath = null)
+    public bool IsRunning(string? homePath = null, string? gatewayBinaryPath = null)
     {
         var pidFilePath = ResolvePidFilePath(homePath);
         var (process, _, _) = ResolveVerifiedProcessAsync(pidFilePath).GetAwaiter().GetResult();
-        return process is not null;
+        if (process is not null)
+            return true;
+
+        // #2772: a live gateway with no (or an unverifiable) PID file is exactly the state that
+        // made `update` claim "gateway left running" about nothing. Same path-identity check as
+        // StopAsync; no process is signalled here at all.
+        return FindProcessByBinaryPath(gatewayBinaryPath) is not null;
     }
 
     /// <summary>
@@ -303,33 +314,48 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// not-running — it is NEVER killed.
     /// </para>
     /// </summary>
-    public async Task<GatewayStopResult> StopAsync(string? homePath = null, CancellationToken cancellationToken = default)
+    public async Task<GatewayStopResult> StopAsync(string? homePath = null, string? gatewayBinaryPath = null, CancellationToken cancellationToken = default)
     {
         var pidFilePath = ResolvePidFilePath(homePath);
-        var (process, record, staleReason) = await ResolveVerifiedProcessAsync(pidFilePath);
+        var (verifiedProcess, record, staleReason) = await ResolveVerifiedProcessAsync(pidFilePath);
 
-        if (record is null)
+        IGatewayProcessHandle? handle = verifiedProcess is null
+            ? null
+            : new LiveProcessHandle(verifiedProcess, _waitForExitOverride);
+        var discoveredByPath = false;
+        if (handle is null)
         {
-            _logger.LogInformation("Gateway is not running (no PID file)");
-            return new GatewayStopResult(
-                Success: true,
-                Message: "Gateway is not running");
+            // No usable PID file (absent, stale, or deliberately deleted by
+            // ResolveVerifiedProcessAsync when identity could not be verified) - but the gateway
+            // may still be very much alive and holding file locks (issue #2772). Fall back to
+            // discovery by executable path.
+            //
+            // SECURITY (issue #2369): this does NOT weaken the never-signal-an-unverified-process
+            // guarantee. That guarantee is about a bare PID being no proof of identity. Here we do
+            // not trust any PID at all: we require the live process's own main-module path to equal
+            // the gateway binary this deployment would launch. Path identity is STRICTLY STRONGER
+            // than a recorded PID, so a foreign process can never be selected by this path.
+            handle = FindProcessByBinaryPath(gatewayBinaryPath);
+            discoveredByPath = handle is not null;
         }
 
-        if (process is null)
+        if (handle is null)
         {
-            _logger.LogInformation("Gateway is not running: {Reason}", staleReason);
+            var reason = staleReason ?? "no PID file";
+            _logger.LogInformation("Gateway is not running ({Reason})", reason);
             return new GatewayStopResult(
                 Success: true,
-                Message: $"Gateway was not running ({staleReason})");
+                Message: $"Gateway is not running ({reason})",
+                Outcome: GatewayStopOutcome.NotRunning);
         }
 
-        var pid = record.Pid;
-        _logger.LogInformation("Killing gateway process {Pid}", pid);
+        var pid = discoveredByPath ? handle.Id : record!.Pid;
+        _logger.LogInformation(
+            "Killing gateway process {Pid} ({Source})", pid, discoveredByPath ? "discovered by binary path" : "from PID file");
 
         try
         {
-            process.Kill();
+            handle.Kill();
         }
         catch (InvalidOperationException ex)
         {
@@ -337,21 +363,21 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             await CleanupPidFileAsync(pidFilePath);
             return new GatewayStopResult(
                 Success: true,
-                Message: $"Gateway process {pid} already exited");
+                Message: $"Gateway process {pid} already exited",
+                Outcome: GatewayStopOutcome.Stopped);
         }
         catch (Win32Exception ex)
         {
             _logger.LogError(ex, "Failed to kill gateway process {Pid}", pid);
             return new GatewayStopResult(
                 Success: false,
-                Message: $"Failed to kill gateway process {pid}: {ex.Message}");
+                Message: $"Failed to kill gateway process {pid}: {ex.Message}",
+                Outcome: GatewayStopOutcome.Failed);
         }
 
         // Wait for process to exit after kill
         var timeoutMs = (int)_waitForExitTimeout.TotalMilliseconds;
-        var exited = _waitForExitOverride is not null
-            ? _waitForExitOverride(process, timeoutMs)
-            : await Task.Run(() => process.WaitForExit(timeoutMs), cancellationToken);
+        var exited = await Task.Run(() => handle.WaitForExit(timeoutMs), cancellationToken);
         if (!exited)
         {
             _logger.LogWarning("Gateway process {Pid} did not exit within {Timeout}s", pid, _waitForExitTimeout.TotalSeconds);
@@ -360,7 +386,8 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             // to launch a second gateway that conflicts on the same port.
             return new GatewayStopResult(
                 Success: false,
-                Message: $"Gateway process {pid} did not exit within {_waitForExitTimeout.TotalSeconds}s. It may still be running.");
+                Message: $"Gateway process {pid} did not exit within {_waitForExitTimeout.TotalSeconds}s. It may still be running.",
+                Outcome: GatewayStopOutcome.Failed);
         }
         else
         {
@@ -371,7 +398,89 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
 
         return new GatewayStopResult(
             Success: true,
-            Message: $"Gateway stopped (PID {pid})");
+            Message: $"Gateway stopped (PID {pid})",
+            Outcome: GatewayStopOutcome.Stopped);
+    }
+
+    /// <summary>
+    /// Finds a live process whose main module path equals <paramref name="gatewayBinaryPath"/> or the
+    /// apphost executable sitting beside it. Returns null when no path was supplied or nothing matches.
+    /// <para>
+    /// Only an EXACT (case-insensitive on Windows) full-path match counts. Any process whose module
+    /// path cannot be read - a common outcome for processes owned by another user - is skipped, never
+    /// assumed to be the gateway. That keeps the #2369 guarantee intact: we never signal a process we
+    /// have not positively identified.
+    /// </para>
+    /// </summary>
+    internal IGatewayProcessHandle? FindProcessByBinaryPath(string? gatewayBinaryPath)
+    {
+        if (string.IsNullOrWhiteSpace(gatewayBinaryPath))
+            return null;
+
+        var candidates = BuildGatewayPathCandidates(gatewayBinaryPath);
+
+        foreach (var candidate in _processEnumerator())
+        {
+            string? modulePath;
+            try
+            {
+                modulePath = candidate.ExecutablePath;
+            }
+            catch
+            {
+                // Access denied / exited between enumeration and inspection: unidentifiable,
+                // therefore never a stop target.
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(modulePath))
+                continue;
+
+            string resolved;
+            try
+            {
+                resolved = Path.GetFullPath(modulePath);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var expected in candidates)
+            {
+                if (string.Equals(resolved, expected, PathComparison))
+                {
+                    _logger.LogInformation(
+                        "Discovered live gateway process {Pid} by binary path {Path} (no usable PID file)",
+                        candidate.Id,
+                        modulePath);
+                    return candidate;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    /// <summary>
+    /// The set of executable paths that count as "running the gateway binary": the managed DLL
+    /// itself, and the native apphost emitted next to it (which is what <c>StartAsync</c> prefers).
+    /// </summary>
+    internal static IReadOnlyList<string> BuildGatewayPathCandidates(string gatewayBinaryPath)
+    {
+        var full = Path.GetFullPath(gatewayBinaryPath);
+        var directory = Path.GetDirectoryName(full);
+        var stem = Path.GetFileNameWithoutExtension(full);
+        var list = new List<string> { full };
+        if (directory is not null && !string.IsNullOrEmpty(stem))
+        {
+            list.Add(Path.Combine(directory, stem + ".exe"));
+            list.Add(Path.Combine(directory, stem));
+        }
+        return list;
     }
 
     /// <summary>

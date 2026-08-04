@@ -43,6 +43,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using BotNexus.Gateway.Configuration.Shadow;
+using BotNexus.Gateway.Configuration.Store;
 using Microsoft.FeatureManagement;
 using System.Globalization;
 using System.IO.Abstractions;
@@ -453,6 +455,36 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IConfigSchemaContributor, SessionStoreSchemaContributor>();
         services.AddSingleton<IConfigSchemaContributor, RateLimitSchemaContributor>();
         services.AddHostedService<ConfigHydrationService>();
+
+        // #2646 PBI 2 / #2766: the configuration shadow migration. Placed AFTER
+        // ConfigHydrationService because hydration writes defaults into config.json, and a shadow pass
+        // that ran first would be comparing against a document the platform is about to modify.
+        //
+        // The whole path is inert until ConfigStoreShadowMigration is enabled, and the flag defaults
+        // off: with it off the service returns before it reads anything at all.
+        //
+        // Nothing here can change which configuration the gateway serves. The store is written to and
+        // read back purely to be diffed; ConfigStoreAuthoritative - the flag that would put it in the
+        // read path - is not consumed by any of these registrations.
+        services.TryAddSingleton<IConfigShadowReportSink, ConfigShadowReportSink>();
+        services.TryAddSingleton<IConfigShadowGate, FeatureManagerConfigShadowGate>();
+        services.TryAddSingleton<IConfigShadowSource>(sp =>
+            new FileConfigShadowSource(sp.GetRequiredService<IFileSystem>()));
+        services.TryAddSingleton<IConfigStore>(sp =>
+        {
+            // Sits beside config.json rather than in a separate location, so "delete the store to roll
+            // back" is an obvious operation for whoever needs it at 3am.
+            var fs = sp.GetRequiredService<IFileSystem>();
+            var directory = PlatformConfigLoader.GetDefaultConfigDirectory(fs);
+            return new SqliteConfigStore($"Data Source={Path.Combine(directory, "config.db")}");
+        });
+        services.TryAddSingleton<IConfigStoreEntryRoundTrip>(sp =>
+            new ConfigStoreRoundTrip(sp.GetRequiredService<IConfigStore>()));
+        // The document-shaped seam is unused once the entry-shaped one is registered, but the hosted
+        // service takes it as a required constructor argument, so a no-op keeps the graph resolvable
+        // without inventing a second real implementation.
+        services.TryAddSingleton<IConfigStoreRoundTrip, NoOpConfigStoreRoundTrip>();
+        services.AddHostedService<ConfigShadowMigrationHostedService>();
 
         // #2635: additively reconcile the bundled agent catalog into config.json. Registered
         // HERE, ahead of AgentConfigurationHostedService below, so an entry inserted on this

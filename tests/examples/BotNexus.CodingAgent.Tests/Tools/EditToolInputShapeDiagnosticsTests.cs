@@ -136,36 +136,45 @@ public sealed class EditToolInputShapeDiagnosticsTests
 
     // --- Acceptance criteria 3 and 5: stringified edits stays rejected -----------------------
 
+    // NOTE (issue #2759): the two tests below previously asserted that a WELL-FORMED stringified
+    // 'edits' array was REJECTED. That #2690 decision has been deliberately superseded, not
+    // weakened: forensics measured 37 hard failures/week from exactly this shape (including a cron
+    // that never once wrote its checkpoint), and a string whose content parses cleanly to an array
+    // of {oldText,newText} objects is a lossless unwrap with nothing to guess at - the same
+    // coercion #1562 already performs at the validator seam. The safety property the original
+    // tests existed to protect (never fabricate an edit from a payload we had to guess at) is
+    // preserved and strengthened below: a MALFORMED stringified payload is still rejected and the
+    // file is still byte-identical. The pin has moved from "reject all strings" to "unwrap only
+    // what parses exactly; reject and never mutate otherwise".
+
     [Fact]
-    public async Task ExecuteAsync_WhenEditsIsJsonString_ThrowsNamingStringification()
+    public async Task ExecuteAsync_WhenEditsIsWellFormedJsonString_AppliesTheEdit()
     {
-        await WriteFileAsync("stringified.txt", "alpha\nbeta\n");
+        var filePath = await WriteFileAsync("stringified.txt", "alpha\nbeta\n");
 
         var stringified = JsonDocument
             .Parse("\"[{\\\"oldText\\\":\\\"beta\\\",\\\"newText\\\":\\\"gamma\\\"}]\"")
             .RootElement.Clone();
 
-        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "stringified.txt",
             ["edits"] = stringified
         });
 
-        var ex = await action.ShouldThrowAsync<ArgumentException>();
-        ex.Message.ShouldContain("string", Case.Insensitive);
-        // Must name the stringification as the cause, not merely the type mismatch.
-        ex.Message.ShouldContain("JSON");
-        ex.Message.ShouldContain("edits");
+        var after = await _fileSystem.File.ReadAllTextAsync(filePath);
+        after.ShouldBe("alpha\ngamma\n");
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenEditsIsJsonString_DoesNotApplyTheEdit()
+    public async Task ExecuteAsync_WhenEditsIsMalformedJsonString_ThrowsAndDoesNotApplyTheEdit()
     {
         const string content = "alpha\nbeta\n";
         var filePath = await WriteFileAsync("stringified-negative.txt", content);
 
+        // Truncated mid-object: it cannot be recovered without guessing.
         var stringified = JsonDocument
-            .Parse("\"[{\\\"oldText\\\":\\\"beta\\\",\\\"newText\\\":\\\"gamma\\\"}]\"")
+            .Parse("\"[{\\\"oldText\\\":\\\"beta\\\",\\\"newText\\\"\"")
             .RootElement.Clone();
 
         var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
@@ -174,7 +183,9 @@ public sealed class EditToolInputShapeDiagnosticsTests
             ["edits"] = stringified
         });
 
-        await action.ShouldThrowAsync<ArgumentException>();
+        var ex = await action.ShouldThrowAsync<ArgumentException>();
+        ex.Message.ShouldContain("edits");
+        ex.Message.ShouldContain("JSON");
 
         // #2415 precedent: guessing at a malformed payload risks fabricating an edit against a
         // user's file, so the file must be byte-identical.

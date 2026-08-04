@@ -104,6 +104,12 @@ public sealed class ConfigurationProjectBoundaryArchitectureTests
             // Contracts itself depends only on Agent.Core and Domain, so it sits below the
             // configuration project and does not re-introduce an upward edge.
             "BotNexus.Gateway.Contracts",
+            // #2646: the SQLite-backed config store. Persistence.Sqlite has NO project references of
+            // its own - it is a true leaf wrapping Microsoft.Data.Sqlite - so depending on it cannot
+            // introduce an upward edge. Gateway.Sessions and the conversation store reach it the same
+            // way, which is also why the config store reuses their additive-migration mechanism
+            // rather than inventing a second one.
+            "BotNexus.Persistence.Sqlite",
             "BotNexus.Agent.Providers.Core",
             "BotNexus.Agent.Providers.Copilot",
         };

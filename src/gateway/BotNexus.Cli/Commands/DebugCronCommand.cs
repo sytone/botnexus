@@ -75,7 +75,7 @@ internal sealed class DebugCronCommand
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]cron.sqlite not found at:[/] " + Markup.Escape(dbPath));
+            AnsiConsole.MarkupLine("[red]cron.sqlite not found at:[/] " + CliText.SafeDisplay(dbPath));
             return 1;
         }
 
@@ -136,8 +136,8 @@ internal sealed class DebugCronCommand
         AnsiConsole.MarkupLine($"  Enabled:         [green]{status.EnabledJobs}[/]");
         AnsiConsole.MarkupLine($"  Disabled:        [dim]{status.DisabledJobs}[/]");
         AnsiConsole.MarkupLine($"  Currently running: [bold]{status.RunningNow}[/]");
-        AnsiConsole.MarkupLine($"  Last run at:     {Markup.Escape(FormatDate(status.LastRunAt))}");
-        AnsiConsole.MarkupLine($"  Next scheduled:  {Markup.Escape(FormatDate(status.NextRunAt))}");
+        AnsiConsole.MarkupLine($"  Last run at:     {CliText.SafeDisplay(FormatDate(status.LastRunAt))}");
+        AnsiConsole.MarkupLine($"  Next scheduled:  {CliText.SafeDisplay(FormatDate(status.NextRunAt))}");
         AnsiConsole.MarkupLine($"  DB size:         {Math.Round(status.DbSizeBytes / 1024.0, 1)} KB");
         return 0;
     }
@@ -146,7 +146,7 @@ internal sealed class DebugCronCommand
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]cron.sqlite not found at:[/] " + Markup.Escape(dbPath));
+            AnsiConsole.MarkupLine("[red]cron.sqlite not found at:[/] " + CliText.SafeDisplay(dbPath));
             return 1;
         }
 
@@ -226,12 +226,7 @@ internal sealed class DebugCronCommand
 
         foreach (var r in runs)
         {
-            table.AddRow(
-                Markup.Escape(Truncate(r.JobName ?? r.JobId, 28)),
-                Markup.Escape(FormatDate(r.StartedAt)),
-                r.DurationMs.HasValue ? $"{r.DurationMs}ms" : "[dim]—[/]",
-                FormatRunStatus(r.Status),
-                Markup.Escape(Truncate(r.Error ?? "", 40)));
+            table.AddRow(FormatRunRow(r));
         }
 
         AnsiConsole.Write(table);
@@ -243,7 +238,7 @@ internal sealed class DebugCronCommand
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]cron.sqlite not found at:[/] " + Markup.Escape(dbPath));
+            AnsiConsole.MarkupLine("[red]cron.sqlite not found at:[/] " + CliText.SafeDisplay(dbPath));
             return 1;
         }
 
@@ -310,9 +305,9 @@ internal sealed class DebugCronCommand
         foreach (var m in missed)
         {
             table.AddRow(
-                Markup.Escape(Truncate(m.Name ?? m.JobId, 28)),
-                Markup.Escape(m.Schedule),
-                Markup.Escape(FormatDate(m.NextRunAt)),
+                CliText.SafeDisplay(Truncate(m.Name ?? m.JobId, 28)),
+                CliText.SafeDisplay(m.Schedule),
+                CliText.SafeDisplay(FormatDate(m.NextRunAt)),
                 m.OverdueMinutes.HasValue ? $"[red]{m.OverdueMinutes} min[/]" : "[dim]—[/]");
         }
 
@@ -328,6 +323,20 @@ internal sealed class DebugCronCommand
         connection.Open();
         return connection;
     }
+
+    /// <summary>
+    /// Builds one rendered history row. Job name and error text are written by agents into
+    /// cron.sqlite, so every cell goes through <see cref="CliText.SafeDisplay"/> (issue #2722).
+    /// Extracted so the sanitisation is directly testable without a database.
+    /// </summary>
+    internal static string[] FormatRunRow(CronRunEntry r) =>
+    [
+        CliText.SafeDisplay(Truncate(r.JobName ?? r.JobId, 28)),
+        CliText.SafeDisplay(FormatDate(r.StartedAt)),
+        r.DurationMs.HasValue ? $"{r.DurationMs}ms" : "[dim]—[/]",
+        FormatRunStatus(r.Status),
+        CliText.SafeDisplay(Truncate(r.Error ?? "", 40))
+    ];
 
     private static string Truncate(string value, int maxLength)
         => value.Length <= maxLength ? value : value[..maxLength] + "…";
@@ -346,7 +355,7 @@ internal sealed class DebugCronCommand
         "running" => "[blue]running[/]",
         "failed" => "[red]failed[/]",
         "timeout" => "[yellow]timeout[/]",
-        _ => Markup.Escape(status)
+        _ => CliText.SafeDisplay(status)
     };
 
     // ── DTOs ──

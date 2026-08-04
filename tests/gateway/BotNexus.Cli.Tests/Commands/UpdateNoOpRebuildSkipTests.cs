@@ -62,13 +62,20 @@ public sealed class UpdateNoOpRebuildSkipTests
         }
     }
 
-    private static IGatewayProcessManager NewProcessManager()
+    /// <summary>
+    /// A process manager for the ordinary case: a gateway IS running. Stating liveness explicitly
+    /// matters since #2772 - the skip path now asks whether a gateway is alive instead of asserting
+    /// it from control flow, and an unstubbed <c>IsRunning</c> would silently default to false and
+    /// turn every skip case into a start case.
+    /// </summary>
+    private static IGatewayProcessManager NewProcessManager(bool gatewayRunning = true)
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStopResult(true, null));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(true, 4242, null));
+        pm.IsRunning(Arg.Any<string?>(), Arg.Any<string?>()).Returns(gatewayRunning);
         return pm;
     }
 
@@ -332,7 +339,7 @@ public sealed class UpdateNoOpRebuildSkipTests
             await cmd.ExecuteAsync(root, root, port: FreePort(), verbose: false, CancellationToken.None);
 
             cmd.BuildAndDeployCalls.ShouldBe(1);
-            await pm.Received(1).StopAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            await pm.Received(1).StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
         }
         finally
         {
@@ -395,7 +402,7 @@ public sealed class UpdateNoOpRebuildSkipTests
 
             exitCode.ShouldBe(0);
             cmd.BuildAndDeployCalls.ShouldBe(0);
-            await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
             await pm.DidNotReceive().StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>());
         }
         finally
