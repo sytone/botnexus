@@ -105,6 +105,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     public async Task<string> BuildSystemPromptAsync(
         AgentDescriptor descriptor,
         AgentExecutionContext? executionContext,
+        EffectiveExecutionSettings? effectiveSettings = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
@@ -150,8 +151,14 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
                 AgentId = descriptor.AgentId.Value,
                 Host = Environment.MachineName,
                 Os = Environment.OSVersion.ToString(),
-                Provider = descriptor.ApiProvider,
-                Model = descriptor.ModelId,
+                // #2796: the provider/model reported here are the ALREADY-RESOLVED effective values
+                // threaded in from the isolation strategy, never a second derivation from the
+                // descriptor. Descriptor fields are the fallback only when no run context supplied
+                // settings at all (descriptor-only prompt callers).
+                Provider = effectiveSettings?.Provider ?? descriptor.ApiProvider,
+                Model = effectiveSettings?.Model ?? descriptor.ModelId,
+                DefaultModel = effectiveSettings?.DivergentDescriptorDefaultModel,
+                ContextWindow = effectiveSettings?.ContextWindow,
                 Channel = "signalr",
                 ClientKind = clientKind,
                 SessionId = executionContext?.SessionId.Value
@@ -159,6 +166,9 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             HeartbeatPrompt = descriptor.Heartbeat?.Enabled == true
                 ? descriptor.Heartbeat.Prompt ?? "Read HEARTBEAT.md if it exists and execute any pending tasks. If nothing needs attention, reply HEARTBEAT_OK."
                 : null,
+            // #2796: reasoning observability was never populated, so the runtime block always
+            // claimed "off". It now carries the same effective thinking level applied to AgentOptions.
+            ReasoningLevel = effectiveSettings?.ThinkingWireToken,
             MemoryPromptInjection = memoryPromptInjection,
             ConversationContext = await ResolveConversationContextAsync(descriptor, executionContext, cancellationToken),
             PromptMode = PromptMode.Full
@@ -182,7 +192,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     /// Conversation-scoped prompt context requires the overload that accepts an <see cref="AgentExecutionContext"/>.
     /// </summary>
     public Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
-        => BuildSystemPromptAsync(descriptor, null, cancellationToken);
+        => BuildSystemPromptAsync(descriptor, null, null, cancellationToken);
 
     /// <summary>
     /// Reads the connecting client kind from the execution-context parameter bag, if present.

@@ -162,6 +162,7 @@ public sealed class SystemPromptCaptureTests
         public Task<string> BuildSystemPromptAsync(
             AgentDescriptor descriptor,
             AgentExecutionContext? executionContext,
+            EffectiveExecutionSettings? effectiveSettings = null,
             CancellationToken cancellationToken = default)
             => Task.FromResult(prompt);
     }

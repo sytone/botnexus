@@ -151,7 +151,18 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var model = _llmClient.Models.GetModel(descriptor.ApiProvider, resolvedModelId)
             ?? throw new InvalidOperationException($"Model '{resolvedModelId}' for provider '{descriptor.ApiProvider}' is not registered.");
 
-        var enrichedSystemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, context, cancellationToken);
+        // #2796: hand the prompt builder the SAME resolved settings that configure the model and
+        // AgentOptions below. This is the single value; the context builder must never re-resolve
+        // the override or read descriptor.ModelId for the runtime block, or the block drifts from
+        // what the run actually uses.
+        var effectiveSettings = new EffectiveExecutionSettings(
+            Provider: descriptor.ApiProvider,
+            Model: resolvedModelId,
+            DescriptorDefaultModel: descriptor.ModelId,
+            Thinking: effectiveModel.Thinking,
+            ContextWindow: effectiveModel.ContextWindow);
+
+        var enrichedSystemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, context, effectiveSettings, cancellationToken);
 
         var workspacePath = _workspaceManager.GetWorkspacePath(descriptor.AgentId.Value);
         var pathValidator = new DefaultPathValidator(descriptor.FileAccess, workspacePath);

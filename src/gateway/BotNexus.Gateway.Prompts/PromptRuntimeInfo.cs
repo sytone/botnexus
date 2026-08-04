@@ -34,6 +34,12 @@ public sealed record PromptRuntimeInfo
     /// </summary>
     public string? DefaultModel { get; init; }
     /// <summary>
+    /// Gets the effective context-window size applied to the active run, or null when the provider
+    /// default applies. Emitted so the window reported to the agent is the same value that reached
+    /// AgentOptions rather than an independently-derived one (#2796).
+    /// </summary>
+    public int? ContextWindow { get; init; }
+    /// <summary>
     /// Gets or sets the shell.
     /// </summary>
     public string? Shell { get; init; }

@@ -439,6 +439,7 @@ file sealed class PassthroughContextBuilder : IContextBuilder
     public Task<string> BuildSystemPromptAsync(
         AgentDescriptor descriptor,
         AgentExecutionContext? executionContext,
+        EffectiveExecutionSettings? effectiveSettings = null,
         CancellationToken ct = default)
         => Task.FromResult(descriptor.SystemPrompt ?? string.Empty);
 }

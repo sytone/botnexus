@@ -40,6 +40,7 @@ public static class RuntimeLineFormatter
             !string.IsNullOrWhiteSpace(runtime?.Provider) ? $"provider={runtime!.Provider}" : string.Empty,
             !string.IsNullOrWhiteSpace(runtime?.Model) ? $"model={runtime!.Model}" : string.Empty,
             !string.IsNullOrWhiteSpace(runtime?.DefaultModel) ? $"default_model={runtime!.DefaultModel}" : string.Empty,
+            runtime?.ContextWindow is > 0 ? $"context_window={runtime!.ContextWindow}" : string.Empty,
             !string.IsNullOrWhiteSpace(runtime?.Shell) ? $"shell={runtime!.Shell}" : string.Empty,
             !string.IsNullOrWhiteSpace(runtime?.Channel) ? $"channel={runtime!.Channel.Trim().ToLowerInvariant()}" : string.Empty,
             ShouldEmitClientKind(runtime?.ClientKind) ? $"client={runtime!.ClientKind!.Trim().ToLowerInvariant()}" : string.Empty,

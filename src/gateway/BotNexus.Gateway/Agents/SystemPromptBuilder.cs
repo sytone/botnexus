@@ -20,6 +20,12 @@ public sealed record RuntimeInfo
     public string? Provider { get; init; }
     public string? Model { get; init; }
     public string? DefaultModel { get; init; }
+    /// <summary>
+    /// The effective context-window size applied to this run (#2796), or null for the provider
+    /// default. Emitted on the runtime line so the window the agent reports cannot drift from the
+    /// window AgentOptions actually applied.
+    /// </summary>
+    public int? ContextWindow { get; init; }
     public string? Shell { get; init; }
     public string? Channel { get; init; }
     public string? ClientKind { get; init; }
@@ -372,6 +378,7 @@ public static class SystemPromptBuilder
             Os = runtime.Os,
             Arch = runtime.Arch,
             Provider = runtime.Provider,
+            ContextWindow = runtime.ContextWindow,
             Model = runtime.Model,
             DefaultModel = runtime.DefaultModel,
             Shell = runtime.Shell,
