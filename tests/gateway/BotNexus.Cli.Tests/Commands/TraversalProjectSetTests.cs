@@ -199,6 +199,11 @@ public sealed class TraversalProjectSetTests
     /// The control file must live in the SAME directory as the real one, because the glob is
     /// anchored on <c>$(MSBuildThisFileDirectory)</c>. It is a <c>.proj</c>, not a <c>.csproj</c>,
     /// so it can never enter the set it is measuring.
+    ///
+    /// The control is BY CONSTRUCTION the un-mitigated #2666 shape - a recursive walk over
+    /// thousands of concurrently churning <c>bin/</c> and <c>obj/</c> directories - so it can and
+    /// does lose that race. Callers must treat a degenerate control as "no measurement", never as
+    /// a differential mismatch. See <see cref="ControlDidNotEvaluate"/>.
     /// </summary>
     private static (IReadOnlyList<string> WithExclude, IReadOnlyList<string> WithoutExclude)
         EvaluateWithAndWithoutBinObjExclude(string repoRoot, string dir)
@@ -222,33 +227,81 @@ public sealed class TraversalProjectSetTests
     }
 
     /// <summary>
+    /// True when the no-Exclude control traversal failed to expand its glob at all (#2801).
+    ///
+    /// When MSBuild's recursive walk loses the #2666 race it does not return an empty item list -
+    /// it returns the UNEXPANDED literal pattern as a single item, e.g.
+    /// <c>/…/tests/**/*.csproj</c>. That is non-empty, so <c>ShouldNotBeEmpty</c> never caught it
+    /// and the differential assertion reported a spurious mismatch against a control that had
+    /// simply not evaluated. A wildcard character surviving into a returned path is unambiguous:
+    /// no real project file on disk can contain <c>*</c> or <c>?</c> on either platform.
+    /// </summary>
+    private static bool ControlDidNotEvaluate(IReadOnlyList<string> control) =>
+        control.Count == 0 || control.Any(p => p.Contains('*') || p.Contains('?'));
+
+    /// <summary>
+    /// #2666/#2801. Shared body for the two bin/obj Exclude fences.
+    ///
+    /// Shape chosen (issue #2801 option 1 combined with option 3, deliberately NOT a retry loop):
+    ///
+    /// 1. The DETERMINISTIC pin is unconditional and runs first: the evaluated set of the real
+    ///    traversal must equal the set of .csproj files actually on disk, enumerated independently
+    ///    of MSBuild. That is strictly STRONGER than the differential comparison it backs up - it
+    ///    catches the #2666 empty-set failure mode, any project the Exclude wrongly dropped, and
+    ///    any project it wrongly added, all against ground truth rather than against a second
+    ///    MSBuild evaluation. Note <see cref="ProjectsOnDisk"/> walks bin/ and obj/ too, so it also
+    ///    proves the premise the Exclude rests on: no .csproj is ever emitted under bin/ or obj/.
+    ///    If it were, this equality would fail. Removing the Exclude cannot go unnoticed:
+    ///    <see cref="BothDirectoryTraversals_ExcludeBinAndObjFromTheProjectGlob"/> pins it textually.
+    ///
+    /// 2. The DIFFERENTIAL comparison against a no-Exclude control is kept - it is the only
+    ///    assertion that cannot be satisfied by re-implementing the glob - but it is only
+    ///    MEANINGFUL when the control actually evaluated. The control is the un-mitigated #2666
+    ///    shape by design, so it intermittently degenerates to the unexpanded literal glob under
+    ///    concurrent build churn. Comparing against that measures the race, not the product.
+    ///
+    /// This cannot regress #2666: the empty-set failure mode is pinned by step 1, which never
+    /// skips. A degenerate control skips only step 2, and step 2 is a subset of what step 1
+    /// already proves. This is why a retry loop was rejected: retrying would only re-roll the same
+    /// race for an assertion that adds no coverage over the deterministic pin, while risking
+    /// hiding a genuine regression behind "eventually it agreed".
+    /// </summary>
+    private static void AssertBinObjExcludeIsANoOp(string repoRoot, string dir, string because)
+    {
+        var (withExclude, withoutExclude) = EvaluateWithAndWithoutBinObjExclude(repoRoot, dir);
+
+        // Deterministic ground-truth pin. Never skipped. This is the #2666 fence.
+        var onDisk = ProjectsOnDisk(Path.Combine(repoRoot, dir));
+        onDisk.Count.ShouldBeGreaterThan(20,
+            $"the on-disk enumeration of {dir}/ must itself find projects");
+        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList()
+            .ShouldBe(onDisk.ToList(),
+                $"{dir}/dirs.proj must evaluate to exactly the .csproj files on disk under {dir}/ "
+                + "- an empty or short set is the #2666 failure mode");
+
+        if (ControlDidNotEvaluate(withoutExclude))
+        {
+            // The control lost its own #2666 race (#2801). It measured nothing, so there is
+            // nothing to differentiate against. Coverage is unaffected: the assertion above
+            // already proved the evaluated set against disk.
+            return;
+        }
+
+        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ShouldBe(withoutExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase), because);
+    }
+
+    /// <summary>
     /// #2666. The bin/obj Exclude added to <c>tests/dirs.proj</c> is a pure walk-narrowing: it
     /// removes thousands of concurrently-churning <c>bin/</c> and <c>obj/</c> directories from
     /// MSBuild's recursive directory walk, and it must NOT remove a single project.
-    ///
-    /// Asserted by differential evaluation against a control traversal that has no Exclude, so
-    /// the test cannot pass by re-implementing the glob. Both directions are asserted: an
-    /// Exclude that dropped a real project, or one that somehow ADDED one, fails here.
     /// </summary>
     [Fact]
     public void TestsTraversal_BinObjExclude_DoesNotChangeTheEvaluatedSet()
-    {
-        var repoRoot = FindRepoRoot();
-
-        var (withExclude, withoutExclude) = EvaluateWithAndWithoutBinObjExclude(repoRoot, "tests");
-
-        withoutExclude.ShouldNotBeEmpty("the control traversal must find projects at all");
-        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            .ShouldBe(withoutExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase),
-                "the bin/obj exclude must be a strict no-op on the evaluated set: no .csproj is "
-                + "ever emitted into bin/ or obj/, so excluding those directories may only remove "
-                + "racing directories from the walk, never a project");
-
-        // Anchors the set to what is actually on disk, so the equality above cannot be satisfied
-        // by both sides being empty (the exact #2666 failure mode).
-        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            .ShouldBe(ProjectsOnDisk(Path.Combine(repoRoot, "tests")));
-    }
+        => AssertBinObjExcludeIsANoOp(FindRepoRoot(), "tests",
+            "the bin/obj exclude must be a strict no-op on the evaluated set: no .csproj is "
+            + "ever emitted into bin/ or obj/, so excluding those directories may only remove "
+            + "racing directories from the walk, never a project");
 
     /// <summary>
     /// #2666, the <c>src/</c> half. Same invariant, and additionally proves the Exclude composes
@@ -256,19 +309,8 @@ public sealed class TraversalProjectSetTests
     /// </summary>
     [Fact]
     public void SrcTraversal_BinObjExclude_DoesNotChangeTheEvaluatedSet()
-    {
-        var repoRoot = FindRepoRoot();
-
-        var (withExclude, withoutExclude) = EvaluateWithAndWithoutBinObjExclude(repoRoot, "src");
-
-        withoutExclude.ShouldNotBeEmpty("the control traversal must find projects at all");
-        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            .ShouldBe(withoutExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase),
-                "the bin/obj exclude must be a strict no-op on the deployment closure");
-
-        withExclude.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            .ShouldBe(ProjectsOnDisk(Path.Combine(repoRoot, "src")));
-    }
+        => AssertBinObjExcludeIsANoOp(FindRepoRoot(), "src",
+            "the bin/obj exclude must be a strict no-op on the deployment closure");
 
     /// <summary>
     /// #2666 regression fence on the FILES, not just the evaluated set. <c>ProjectReference</c> is
