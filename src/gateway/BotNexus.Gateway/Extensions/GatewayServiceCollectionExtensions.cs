@@ -486,6 +486,16 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IConfigStoreRoundTrip, NoOpConfigStoreRoundTrip>();
         services.AddHostedService<ConfigShadowMigrationHostedService>();
 
+        // #2646 PBI 3: the store-backed read path. Registered but NOT yet consumed by
+        // PlatformConfigLoader - this PBI builds and proves the seam; replacing the loader's own read
+        // is a separate change with a far larger blast radius, and doing both at once would make a
+        // regression impossible to attribute to either.
+        //
+        // ConfigStoreAuthoritative gates it and defaults off, so with the flag unset this resolves to a
+        // source that reads the file and never opens the store.
+        services.TryAddSingleton<IConfigStoreAuthoritativeGate, FeatureManagerConfigStoreAuthoritativeGate>();
+        services.TryAddSingleton<IConfigDocumentSource, StoreBackedConfigDocumentSource>();
+
         // #2635: additively reconcile the bundled agent catalog into config.json. Registered
         // HERE, ahead of AgentConfigurationHostedService below, so an entry inserted on this
         // startup is visible to the config agent source in the same startup rather than only
