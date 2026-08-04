@@ -3,6 +3,8 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Memory.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Memory;
 
@@ -18,13 +20,15 @@ public sealed class MarkdownAgentMemory : IAgentMemory
     private readonly IMemoryStore _memoryStore;
     private readonly IFileSystem _fileSystem;
     private readonly string? _memoryPathOverride;
+    private readonly ILogger _logger;
 
     public MarkdownAgentMemory(
         string agentId,
         IAgentWorkspaceManager workspaceManager,
         IMemoryStore memoryStore,
         IFileSystem fileSystem,
-        string? memoryPathOverride = null)
+        string? memoryPathOverride = null,
+        ILogger<MarkdownAgentMemory>? logger = null)
     {
         _agentId = string.IsNullOrWhiteSpace(agentId)
             ? throw new ArgumentException("Agent ID is required.", nameof(agentId))
@@ -33,6 +37,7 @@ public sealed class MarkdownAgentMemory : IAgentMemory
         _memoryStore = memoryStore ?? throw new ArgumentNullException(nameof(memoryStore));
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _memoryPathOverride = memoryPathOverride;
+        _logger = logger ?? NullLogger<MarkdownAgentMemory>.Instance;
     }
 
     /// <inheritdoc />
@@ -55,6 +60,8 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             request.Content,
             _memoryPathOverride,
             ct).ConfigureAwait(false);
+
+        await IndexNoteAsync(request.AgentId, filePath: null, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -69,6 +76,37 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             content,
             _memoryPathOverride,
             ct).ConfigureAwait(false);
+
+        await IndexNoteAsync(_agentId, filePath, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Mirrors the markdown note that was just appended into the searchable memory store with
+    /// <c>SourceType = "note"</c> (issue #2780). Strictly additive and fail-safe: the workspace
+    /// file is the source of truth, so any indexing failure is logged and swallowed rather than
+    /// propagated back to the caller that already wrote the note successfully.
+    /// </summary>
+    private async Task IndexNoteAsync(string agentId, string? filePath, CancellationToken ct)
+    {
+        try
+        {
+            var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(agentId));
+            var notePath = MarkdownNoteIndexer.ResolveNotePath(_fileSystem, workspacePath, _memoryPathOverride, filePath);
+            if (string.IsNullOrWhiteSpace(notePath))
+                return;
+
+            await MarkdownNoteIndexer
+                .IndexNoteFileAsync(_memoryStore, _fileSystem, agentId, workspacePath, notePath, ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to index markdown note for agent {AgentId}; the note file was written and remains authoritative.", agentId);
+        }
     }
 
     /// <inheritdoc />
