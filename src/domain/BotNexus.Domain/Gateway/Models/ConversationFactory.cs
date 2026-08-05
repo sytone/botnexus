@@ -211,6 +211,80 @@ public static class ConversationFactory
             timestamp);
 
     /// <summary>
+    /// Mints a self-retriggering ralph loop conversation (issue #2818): the gateway starts a fresh
+    /// session in this conversation each time a turn inside it ends, seeded with the conversation's
+    /// current <see cref="Conversation.Instructions"/>, until a gateway-enforced stop condition fires.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Instructions are required and validated here.</b> A ralph conversation's instructions ARE its
+    /// prompt: with none, iteration 2 has nothing to seed and the loop is dead on arrival, but silently
+    /// so - it would simply never re-trigger and look identical to a loop that had finished its work.
+    /// Refusing at creation with a message naming the missing field turns a silent non-loop into a
+    /// loud construction error (acceptance criterion 1). This is why the check lives in the factory:
+    /// the factory is the single sanctioned construction seam (#2310), so there is no other way to
+    /// bring an instruction-less ralph conversation into existence.
+    /// </para>
+    /// <para>
+    /// The bounds (<paramref name="config"/>) are stamped into conversation metadata by
+    /// <see cref="RalphLoopMetadata"/> together with the loop's initial state, so the single
+    /// stop-decision function (<see cref="RalphLoopPolicy.Evaluate"/>) has everything it needs from the
+    /// conversation row alone.
+    /// </para>
+    /// </remarks>
+    /// <param name="conversationId">Identifier for the new conversation.</param>
+    /// <param name="agentId">Agent that owns and runs the loop.</param>
+    /// <param name="instructions">
+    /// The loop's instructions - the prompt each iteration is seeded with. Required and non-blank.
+    /// </param>
+    /// <param name="config">Gateway-enforced stop bounds; defaults to <see cref="RalphLoopConfig.Default"/>.</param>
+    /// <param name="title">Human-readable title; blank values normalise to <c>"New conversation"</c>.</param>
+    /// <param name="initiator">Citizen that started the loop, when known.</param>
+    /// <param name="purpose">Optional persisted description of the loop's intent.</param>
+    /// <param name="timestamp">Creation clock reading; defaults to <see cref="DateTimeOffset.UtcNow"/>.</param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="instructions"/> is null, empty or whitespace.
+    /// </exception>
+    public static Conversation CreateForRalph(
+        ConversationId conversationId,
+        AgentId agentId,
+        string? instructions,
+        RalphLoopConfig? config = null,
+        string? title = null,
+        CitizenId? initiator = null,
+        string? purpose = null,
+        DateTimeOffset? timestamp = null)
+    {
+        if (string.IsNullOrWhiteSpace(instructions))
+        {
+            throw new ArgumentException(
+                "A ralph conversation requires non-empty 'instructions': they are the prompt each iteration is seeded with.",
+                nameof(instructions));
+        }
+
+        var now = timestamp ?? DateTimeOffset.UtcNow;
+        var conversation = Create(
+            ConversationSource.Agent,
+            ConversationKind.Ralph,
+            ConversationVisibility.UserFacing,
+            conversationId,
+            agentId,
+            title,
+            initiator,
+            purpose,
+            instructions,
+            isDefault: false,
+            now);
+
+        RalphLoopMetadata.Write(
+            conversation,
+            config ?? RalphLoopConfig.Default,
+            RalphLoopState.Initial with { StartedAt = now });
+
+        return conversation;
+    }
+
+    /// <summary>
     /// Mints the conversation for a nested sub-agent run: a supervising agent delegated work to a
     /// child, and that run is a conversation in its own right rather than a stream of foreign events
     /// injected into the supervisor's thread (issue #2338).
