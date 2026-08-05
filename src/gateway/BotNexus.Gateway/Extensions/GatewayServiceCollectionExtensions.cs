@@ -30,6 +30,7 @@ using BotNexus.Gateway.Hooks;
 using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Media;
 using BotNexus.Gateway.Routing;
+using BotNexus.Gateway.Ralph;
 using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
@@ -183,6 +184,11 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<ISessionLifecycleEvents>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionLifecycleEvents>());
         services.TryAddSingleton<SessionWarmupService>();
+        // #2818: the ralph loop is a plain subscriber to the turn-end lifecycle event the gateway
+        // already publishes, registered as a hosted service so it subscribes at startup.
+        services.TryAddSingleton<IRalphIterationRunner, RalphIterationRunner>();
+        services.TryAddSingleton<RalphLoopTrigger>();
+        services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<RalphLoopTrigger>());
         services.TryAddSingleton<ISessionWarmupService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
         services.AddSingleton<IMessageRouter, DefaultMessageRouter>();
