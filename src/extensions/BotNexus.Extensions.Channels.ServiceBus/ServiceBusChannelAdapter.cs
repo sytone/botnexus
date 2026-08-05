@@ -58,6 +58,13 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
     /// </summary>
     internal const string MetaRequestKey = "servicebus.requestKey";
 
+    /// <summary>
+    /// Prefix minted by <see cref="ConversationId.Create"/> for INTERNAL BotNexus conversation ids.
+    /// Such an id identifies a conversation aggregate inside the gateway; it is never an address
+    /// any external transport can deliver to (#2815).
+    /// </summary>
+    internal const string InternalConversationIdPrefix = "c_";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly ILogger<ServiceBusChannelAdapter> _logger;
@@ -106,6 +113,14 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
     // Retains roughly an hour of redelivery history at realistic inbound rates, which comfortably
     // outlives any lock-renewal window, while bounding memory.
     private const int MaxDispatchedMessages = 10_000;
+
+    // #2815: agent ids observed on inbound envelopes. An agent id is a legitimate SESSION-ROUTING
+    // key for internal channels, but it is never an external Service Bus destination - the Teams
+    // relay is fail-closed and dead-letters any envelope whose conversationId is an agent name.
+    // Recording the ids we have actually seen inbound lets the outbound validity clause recognise
+    // one without taking a dependency on the gateway's agent registry.
+    private readonly ConcurrentDictionary<string, byte> _knownAgentIds =
+        new(StringComparer.OrdinalIgnoreCase);
 
     // Accumulators are keyed by the channel-native request identity, never conversation address,
     // so two concurrent streams in one conversation cannot share text or sequence numbers.
@@ -234,6 +249,7 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         _pendingReplies.Clear();
         _pendingQueue.Clear();
         _pendingStreams.Clear();
+        _knownAgentIds.Clear();
         _dispatchedMessages.Clear();
         _dispatchedOrder.Clear();
 
@@ -262,6 +278,9 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         //      unrelated in-flight inbound request. Adopting it would deliver this content into
         //      someone else's conversation, so FAIL LOUDLY instead of guessing.
         //   4. Otherwise the channel address is the unambiguous destination.
+        //   5. #2815 VALIDITY: whatever survived the rules above must actually be an EXTERNAL
+        //      destination. An agent id or an internal 'c_' conversation id is a routing key, not
+        //      a wire address, and an envelope carrying one is guaranteed to dead-letter.
         var conversationId = ResolveOutboundConversationId(
             message,
             inheritedConversationId,
@@ -490,6 +509,12 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
 
         var replyTo = envelope.ReplyTo
             ?? GetApplicationProperty(applicationProperties, "replyTo");
+
+        // #2815: remember the agent id this transport actually talks to, so the outbound validity
+        // clause can recognise it if a gateway producer later hands it back as a channel address.
+        var inboundAgentId = envelope.AgentId ?? GetApplicationProperty(applicationProperties, "agentId");
+        if (!string.IsNullOrWhiteSpace(inboundAgentId))
+            _knownAgentIds.TryAdd(inboundAgentId, 0);
 
         var correlationId = envelope.CorrelationId
             ?? GetApplicationProperty(applicationProperties, "correlationId");
@@ -812,17 +837,83 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
     }
 
     /// <summary>
-    /// Resolves the conversation an outbound envelope is addressed to, fail-closed (#2529).
+    /// Resolves the conversation an outbound envelope is addressed to, fail-closed (#2529, #2815).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The producing session's own <see cref="OutboundMessage.ConversationId"/> always wins.
     /// An inherited conversation is only trusted when it came from an exact
     /// <c>ChannelRequestId</c> match, which is genuine reply correlation. A conversation
     /// borrowed from the FIFO-by-address fallback belongs to an unrelated in-flight request
     /// and must never be adopted; an ambiguous destination throws rather than risking
     /// delivery of content into a third party's conversation.
+    /// </para>
+    /// <para>
+    /// #2815 adds a VALIDITY clause on top of that precedence, and the two must be read together.
+    /// #2529 answers "WHICH conversation?"; #2815 answers "is that value an EXTERNAL destination
+    /// at all?". <c>ChannelAddress</c> is overloaded in this platform: for internal channels it is
+    /// a session-routing key, and gateway producers legitimately build one from an agent id or an
+    /// internal <c>c_</c> conversation id. On an external transport neither can ever be delivered -
+    /// the Teams relay runs with agent-fallback routing disabled (deliberately, because inferring a
+    /// destination from an agent name previously delivered replies into the WRONG chat) and
+    /// dead-letters the envelope. Emitting a message that is certain to dead-letter is not a
+    /// successful send, so this refuses loudly instead. Do not "fix" a dead-letter report by
+    /// deleting this clause or by re-enabling relay-side inference - that reintroduces exactly the
+    /// cross-conversation delivery defect #2529 exists to prevent.
+    /// </para>
     /// </remarks>
-    private static string ResolveOutboundConversationId(
+    private string ResolveOutboundConversationId(
+        OutboundMessage message,
+        string? inheritedConversationId,
+        bool isExactPendingMatch,
+        bool hasBorrowedContext)
+    {
+        var resolved = ResolveOutboundConversationIdCore(
+            message,
+            inheritedConversationId,
+            isExactPendingMatch,
+            hasBorrowedContext);
+
+        // 5. #2815 validity: the resolved value must be an external wire destination.
+        if (TryDescribeNonExternalDestination(resolved) is { } reason)
+        {
+            _logger.LogError(
+                "{DisplayName} refusing to emit an outbound envelope for session '{SessionId}': the only "
+                + "available destination '{ConversationId}' is {Reason}, not an external conversation "
+                + "address. Such an envelope is guaranteed to dead-letter at the relay. Set "
+                + "OutboundMessage.ConversationId to the originating external address, or thread the "
+                + "inbound ChannelRequestId through so the pending reply context supplies it (see #2815).",
+                DisplayName,
+                message.SessionId,
+                resolved,
+                reason);
+
+            throw new InvalidOperationException(
+                $"Refusing to send a Service Bus message addressed to '{resolved}': it is {reason}, "
+                + "not an external conversation address, so the message would certainly dead-letter. "
+                + "Set OutboundMessage.ConversationId or ChannelRequestId to identify the originating "
+                + "external destination (see issue #2815).");
+        }
+
+        return resolved;
+    }
+
+    /// <summary>
+    /// Classifies a candidate destination that is NOT an external address, returning a short
+    /// human-readable reason, or <c>null</c> when the value is an acceptable wire destination.
+    /// </summary>
+    private string? TryDescribeNonExternalDestination(string candidate)
+    {
+        if (candidate.StartsWith(InternalConversationIdPrefix, StringComparison.Ordinal))
+            return "an internal BotNexus conversation id";
+
+        if (_knownAgentIds.ContainsKey(candidate))
+            return "a known agent id";
+
+        return null;
+    }
+
+    private static string ResolveOutboundConversationIdCore(
         OutboundMessage message,
         string? inheritedConversationId,
         bool isExactPendingMatch,

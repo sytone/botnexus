@@ -2,6 +2,7 @@
   <ItemGroup>
     <PackageReference Include="Azure.Messaging.ServiceBus" />
     <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
@@ -13,5 +14,7 @@
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.ServiceBus\BotNexus.Extensions.Channels.ServiceBus.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Conversations\BotNexus.Gateway.Conversations.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
   </ItemGroup>
 </Project>
