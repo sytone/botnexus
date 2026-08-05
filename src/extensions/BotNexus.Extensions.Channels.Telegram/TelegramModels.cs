@@ -80,6 +80,94 @@ public sealed record TelegramUpdate
 
     [JsonPropertyName("channel_post")]
     public TelegramMessage? ChannelPost { get; init; }
+
+    /// <summary>
+    /// Inline-keyboard button press (#2323). Telegram only delivers these when
+    /// <c>callback_query</c> is present in the bot's <c>allowed_updates</c> list.
+    /// </summary>
+    /// <remarks>
+    /// A callback query is <b>inbound user input</b>, not a passive notification: it carries a
+    /// <see cref="TelegramCallbackQuery.From"/> and targets a chat exactly as a text message does.
+    /// It therefore MUST pass the same chat/user allow-list guards as
+    /// <see cref="Message"/> before it is acted on - otherwise a button tapped by an unauthorized
+    /// user in an unauthorized chat would become an unguarded write path into the agent.
+    /// </remarks>
+    [JsonPropertyName("callback_query")]
+    public TelegramCallbackQuery? CallbackQuery { get; init; }
+}
+
+/// <summary>
+/// An incoming callback query produced when a user taps an inline-keyboard button (#2323).
+/// </summary>
+/// <remarks>
+/// Telegram expects every callback query to be acknowledged with <c>answerCallbackQuery</c>;
+/// until that happens the client shows a progress spinner on the button. Handlers therefore
+/// acknowledge on <em>every</em> path, including rejection paths.
+/// </remarks>
+public sealed record TelegramCallbackQuery
+{
+    /// <summary>Unique identifier for this query, required by <c>answerCallbackQuery</c>.</summary>
+    [JsonPropertyName("id")]
+    public required string Id { get; init; }
+
+    /// <summary>The user who pressed the button. Authorization is evaluated against this id.</summary>
+    [JsonPropertyName("from")]
+    public TelegramUser? From { get; init; }
+
+    /// <summary>The message the inline keyboard was attached to; supplies the target chat.</summary>
+    [JsonPropertyName("message")]
+    public TelegramMessage? Message { get; init; }
+
+    /// <summary>
+    /// The opaque <c>callback_data</c> string carried by the pressed button.
+    /// Telegram caps this at 64 <b>bytes</b> - see <see cref="InlineKeyboardButton.CallbackData"/>.
+    /// </summary>
+    [JsonPropertyName("data")]
+    public string? Data { get; init; }
+}
+
+/// <summary>
+/// One button in an inline keyboard (#2323).
+/// </summary>
+public sealed record InlineKeyboardButton
+{
+    /// <summary>
+    /// Label rendered on the button. Telegram does <b>not</b> apply <c>parse_mode</c> to button
+    /// labels, so this is sent as literal text and must NOT be MarkdownV2-escaped - escaping here
+    /// would surface backslashes to the user.
+    /// </summary>
+    [JsonPropertyName("text")]
+    public required string Text { get; init; }
+
+    /// <summary>
+    /// Opaque payload echoed back on <see cref="TelegramCallbackQuery.Data"/> when pressed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The Bot API caps this at 64 BYTES, not 64 characters.</b> The limit is measured after
+    /// UTF-8 encoding, so a label-derived payload containing non-ASCII text can blow the cap at
+    /// well under 64 characters and Telegram rejects the whole <c>sendMessage</c> call - taking
+    /// the prompt with it.
+    /// </para>
+    /// <para>
+    /// BotNexus therefore never puts user-visible choice <em>text</em> in here. Callback data is a
+    /// compact token of <c>request id</c> + choice <c>index</c> only
+    /// (see <c>TelegramAskUserCallbackToken</c>), and the sender verifies the encoded byte length
+    /// before building the keyboard, degrading to a numbered text list if any token would not fit.
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("callback_data")]
+    public required string CallbackData { get; init; }
+}
+
+/// <summary>
+/// An inline keyboard attached to a message via <c>reply_markup</c> (#2323).
+/// </summary>
+public sealed record InlineKeyboardMarkup
+{
+    /// <summary>Rows of buttons, outer array = rows, inner array = buttons within a row.</summary>
+    [JsonPropertyName("inline_keyboard")]
+    public required IReadOnlyList<IReadOnlyList<InlineKeyboardButton>> InlineKeyboard { get; init; }
 }
 
 public sealed record TelegramMessage

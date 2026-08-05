@@ -7,6 +7,7 @@ using BotNexus.Domain.World;
 using BotNexus.Domain.Gateway.Models;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Channels.Startup;
 using Microsoft.Extensions.Configuration;
@@ -24,9 +25,16 @@ public sealed class TelegramChannelAdapter(
     ILogger<TelegramChannelAdapter> logger,
     IOptions<TelegramGatewayOptions> optionsAccessor,
     IHttpClientFactory httpClientFactory,
-    IConfiguration? configuration = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
+    IConfiguration? configuration = null,
+    IAskUserPromptResolver? askUserResolver = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
 {
     private const int StreamingFlushThresholdChars = 100;
+
+    /// <summary>
+    /// Upper bound on remembered ask_user prompt renders. Entries are removed as soon as the prompt
+    /// resolves; this cap only guards the pathological case of prompts that expire unanswered.
+    /// </summary>
+    private const int MaxTrackedAskUserPrompts = 256;
 
     // Fallbacks used when a bot config carries a non-positive bound (misconfiguration must not mean
     // "unbounded"). Rationale for the values lives on TelegramBotConfig.MaxMediaBytes and
@@ -41,7 +49,23 @@ public sealed class TelegramChannelAdapter(
     // Read at point of use so a runtime config.json edit is reflected without a gateway restart (#2010).
     private TelegramGatewayOptions _options => _optionsHolder.Current;
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
+    private readonly IAskUserPromptResolver? _askUserResolver = askUserResolver;
     private readonly ConcurrentDictionary<string, BotRuntime> _bots = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Choice values (in button order) for ask_user prompts this adapter has rendered, keyed by
+    /// request id (#2323).
+    /// </summary>
+    /// <remarks>
+    /// This is a <b>render</b> record, not resolution state. Callback data carries only a choice
+    /// INDEX (the 64-byte cap forbids carrying the text), so the index must be mapped back to the
+    /// machine-stable value the tool expects; that mapping is what lives here. Whether a prompt is
+    /// still pending - and therefore whether a press is honoured at all - is answered exclusively by
+    /// <see cref="IAskUserPromptResolver"/>. Deliberately NOT a second source of pending-state
+    /// truth: a parallel "is it answered" flag here would drift from the resolver and reintroduce
+    /// the double-resolve the seam exists to prevent.
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, PendingAskUserPrompt> _askUserPrompts = new(StringComparer.Ordinal);
 
     // Monotonic source of non-zero Rich Message draft ids. Telegram animates updates that reuse the
     // same draft id, so each stream takes one id and keeps it for the life of that message.
@@ -382,6 +406,17 @@ public sealed class TelegramChannelAdapter(
                     state.PendingCharacterCount += streamEvent.ErrorMessage.Length + 2;
                     break;
 
+                case AgentStreamEventType.UserInputRequired when streamEvent.UserInputRequest is not null:
+                {
+                    // The prompt is a standalone, immediately-visible message, NOT buffered content:
+                    // the buffer is wiped by the next MessageStart and torn down at MessageEnd, so a
+                    // buffered prompt would be destroyed before delivery - the same lifecycle trap
+                    // documented on ToolStart. Any preamble is force-flushed first so ordering reads
+                    // chronologically.
+                    await SendAskUserPromptAsync(runtime, state, streamEvent.UserInputRequest, cancellationToken);
+                    break;
+                }
+
                 case AgentStreamEventType.MessageEnd:
                     await FinalizeStreamAsync(runtime, state, cancellationToken);
                     state.Reset();
@@ -398,6 +433,202 @@ public sealed class TelegramChannelAdapter(
             state.Lock.Release();
         }
     }
+
+    /// <summary>
+    /// Renders a pending <c>ask_user</c> prompt into the chat as its own message, with an inline
+    /// keyboard when the choices fit Telegram's constraints (#2323).
+    /// </summary>
+    /// <remarks>
+    /// Degrades rather than fails: if the keyboard send is rejected the prompt is re-sent as plain
+    /// text with a numbered choice list, because an agent blocked on a prompt the user never saw is
+    /// strictly worse than a prompt without buttons.
+    /// </remarks>
+    private async Task SendAskUserPromptAsync(
+        BotRuntime runtime,
+        StreamingState state,
+        AskUserRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (state.Buffer.Length > 0)
+        {
+            try
+            {
+                await FlushStreamingStateAsync(runtime, state, force: true, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "{DisplayName} bot '{BotName}' failed to flush pending content before ask_user prompt for chat {ChatId}", DisplayName, runtime.BotName, state.ChatId);
+            }
+        }
+
+        var rendered = TelegramAskUserPromptRenderer.Render(request);
+        TrackAskUserPrompt(request, rendered.ChoiceValues, runtime.BotName);
+
+        try
+        {
+            await runtime.ApiClient.SendMessageAsync(
+                state.ChatId,
+                rendered.Text,
+                state.MessageThreadId,
+                cancellationToken,
+                rendered.Keyboard);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} bot '{BotName}' failed to send ask_user prompt {RequestId} for chat {ChatId}",
+                DisplayName,
+                runtime.BotName,
+                request.RequestId,
+                state.ChatId);
+        }
+    }
+
+    private void TrackAskUserPrompt(AskUserRequest request, IReadOnlyList<string> choiceValues, string botName)
+    {
+        if (_askUserPrompts.Count >= MaxTrackedAskUserPrompts)
+        {
+            // Bounded by construction: drop the oldest render record. Losing one only means a stale
+            // button press degrades to "this prompt is no longer available", never a wrong answer.
+            var oldest = _askUserPrompts
+                .OrderBy(kvp => kvp.Value.CreatedUtc)
+                .Select(kvp => kvp.Key)
+                .FirstOrDefault();
+            if (oldest is not null)
+                _askUserPrompts.TryRemove(oldest, out _);
+        }
+
+        _askUserPrompts[request.RequestId] = new PendingAskUserPrompt(
+            request.ConversationId,
+            choiceValues,
+            botName,
+            DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
+    /// Handles an inline-keyboard press answering an <c>ask_user</c> prompt (#2323).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Authorization.</b> A callback query is inbound user input and is subject to exactly the
+    /// same chat and sender allow-lists as a text message. An unauthorized press is explicitly
+    /// rejected (acknowledged with a refusal notification), not silently ignored.
+    /// </para>
+    /// <para>
+    /// <b>Idempotency by construction.</b> This method keeps no "already answered" flag of its own.
+    /// It submits to <see cref="IAskUserPromptResolver"/> and reports whatever the resolver says.
+    /// The resolver owns the pending state and completes a request at most once, so a double-tap -
+    /// or a tap racing a typed answer - produces exactly one resolution and a
+    /// <c>NoPendingPrompt</c> outcome for the loser. Tracking it here as well would be a second
+    /// source of truth that inevitably drifts.
+    /// </para>
+    /// </remarks>
+    private async Task HandleCallbackQueryAsync(BotRuntime runtime, TelegramUpdate update, CancellationToken cancellationToken)
+    {
+        var callback = update.CallbackQuery!;
+        var chatId = callback.Message?.Chat?.Id;
+
+        // Same guards as an ordinary message, in the same order. Reject explicitly: the user gets a
+        // refusal toast rather than a button that spins until it times out.
+        if (chatId is null || !IsChatAllowed(runtime.Config, chatId.Value))
+        {
+            _logger.LogWarning(
+                "{DisplayName} bot '{BotName}' REJECTED callback query from unauthorized chat {ChatId} (updateId={UpdateId})",
+                DisplayName,
+                runtime.BotName,
+                chatId?.ToString(CultureInfo.InvariantCulture) ?? "<none>",
+                update.UpdateId);
+            await AcknowledgeCallbackAsync(runtime, callback.Id, "Not permitted.", cancellationToken);
+            return;
+        }
+
+        if (callback.From is null || !IsUserAllowed(runtime.Config, callback.From.Id))
+        {
+            _logger.LogWarning(
+                "{DisplayName} bot '{BotName}' REJECTED callback query from unauthorized user {UserId} (updateId={UpdateId})",
+                DisplayName,
+                runtime.BotName,
+                callback.From?.Id.ToString(CultureInfo.InvariantCulture) ?? "<none>",
+                update.UpdateId);
+            await AcknowledgeCallbackAsync(runtime, callback.Id, "Not permitted.", cancellationToken);
+            return;
+        }
+
+        if (!TelegramAskUserCallbackToken.TryDecode(callback.Data, out var requestId, out var choiceIndex))
+        {
+            await AcknowledgeCallbackAsync(runtime, callback.Id, null, cancellationToken);
+            return;
+        }
+
+        if (!_askUserPrompts.TryGetValue(requestId, out var prompt)
+            || choiceIndex >= prompt.ChoiceValues.Count)
+        {
+            await AcknowledgeCallbackAsync(runtime, callback.Id, "That prompt is no longer available.", cancellationToken);
+            return;
+        }
+
+        if (_askUserResolver is null)
+        {
+            _logger.LogWarning(
+                "{DisplayName} bot '{BotName}' received an ask_user callback but no IAskUserPromptResolver is registered; the press cannot be honoured.",
+                DisplayName,
+                runtime.BotName);
+            await AcknowledgeCallbackAsync(runtime, callback.Id, "That prompt is no longer available.", cancellationToken);
+            return;
+        }
+
+        var selectedValue = prompt.ChoiceValues[choiceIndex];
+        var result = await _askUserResolver.ResolveAsync(
+            new AskUserSubmission
+            {
+                ConversationId = prompt.ConversationId,
+                RequestId = requestId,
+                SelectedValues = [selectedValue],
+                OriginChannel = ChannelType
+            },
+            cancellationToken);
+
+        if (result.Succeeded)
+        {
+            // The prompt is spent; drop the render record so a later press takes the
+            // "no longer available" path instead of resubmitting.
+            _askUserPrompts.TryRemove(requestId, out _);
+            await AcknowledgeCallbackAsync(runtime, callback.Id, $"Selected: {selectedValue}", cancellationToken);
+            return;
+        }
+
+        _logger.LogDebug(
+            "{DisplayName} bot '{BotName}' ask_user callback for request {RequestId} was not resolved: {Status} ({Reason})",
+            DisplayName,
+            runtime.BotName,
+            requestId,
+            result.Status,
+            result.FailureReason);
+
+        _askUserPrompts.TryRemove(requestId, out _);
+        await AcknowledgeCallbackAsync(runtime, callback.Id, "That prompt is no longer available.", cancellationToken);
+    }
+
+    private async Task AcknowledgeCallbackAsync(BotRuntime runtime, string callbackQueryId, string? text, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await runtime.ApiClient.AnswerCallbackQueryAsync(callbackQueryId, text, showAlert: false, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: a failed acknowledgement leaves a spinner, never a wrong answer.
+            _logger.LogDebug(ex, "{DisplayName} bot '{BotName}' failed to acknowledge callback query {CallbackQueryId}", DisplayName, runtime.BotName, callbackQueryId);
+        }
+    }
+
+    /// <summary>Render record for an ask_user prompt this adapter emitted (#2323).</summary>
+    private sealed record PendingAskUserPrompt(
+        ConversationId ConversationId,
+        IReadOnlyList<string> ChoiceValues,
+        string BotName,
+        DateTimeOffset CreatedUtc);
 
     private async Task RunPollingLoopAsync(BotRuntime runtime, int pollingTimeoutSeconds, CancellationToken cancellationToken)
     {
@@ -469,7 +700,15 @@ public sealed class TelegramChannelAdapter(
 
     private async Task HandleUpdateAsync(BotRuntime runtime, TelegramUpdate update, CancellationToken cancellationToken)
     {
-        // Only process real user messages — not channel posts (no authenticated sender)
+        // An inline-keyboard press is inbound user input on its own update shape; it carries no
+        // message text, so it is routed before the text/photo checks below would discard it (#2323).
+        if (update.CallbackQuery is not null)
+        {
+            await HandleCallbackQueryAsync(runtime, update, cancellationToken);
+            return;
+        }
+
+        // Only process real user messages - not channel posts (no authenticated sender)
         var message = update.Message
             ?? (runtime.Config.ProcessEditedMessages ? update.EditedMessage : null);
 

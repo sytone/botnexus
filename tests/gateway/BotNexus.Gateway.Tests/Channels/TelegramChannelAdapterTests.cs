@@ -554,7 +554,13 @@ public sealed class TelegramChannelAdapterTests
             "edited_message",
             "channel_post",
             "edited_channel_post",
-            "message_reaction"
+            "message_reaction",
+            // #2323: deliberately added. Inline-keyboard presses arrive as callback_query updates and
+            // Telegram delivers NOTHING for an update type absent from allowed_updates, so without
+            // this subscription every ask_user button would spin forever. This list stays an exact
+            // equality on purpose - a silent change to what the bot subscribes to is a live-site
+            // behaviour change and must be an explicit decision, not a drift.
+            "callback_query"
         });
     }
 

@@ -23,7 +23,10 @@ public sealed class TelegramBotApiClient(
         "edited_message",
         "channel_post",
         "edited_channel_post",
-        "message_reaction"
+        "message_reaction",
+        // #2323: without this Telegram silently never delivers inline-keyboard presses, and the
+        // ask_user buttons would spin forever with no inbound update to answer them.
+        "callback_query"
     ];
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -48,9 +51,14 @@ public sealed class TelegramBotApiClient(
     /// <summary>
     /// Sends a text message, optionally into a forum topic thread.
     /// </summary>
-    public async Task<TelegramMessage> SendMessageAsync(long chatId, string text, int? messageThreadId, CancellationToken cancellationToken = default)
+    public async Task<TelegramMessage> SendMessageAsync(
+        long chatId,
+        string text,
+        int? messageThreadId,
+        CancellationToken cancellationToken = default,
+        InlineKeyboardMarkup? replyMarkup = null)
     {
-        // General topic (threadId == 1) must NOT include message_thread_id — Telegram rejects it.
+        // General topic (threadId == 1) must NOT include message_thread_id - Telegram rejects it.
         // For other thread IDs, include message_thread_id as normal.
         var isGeneralTopic = messageThreadId is 1;
         var effectiveThreadId = isGeneralTopic ? null : messageThreadId;
@@ -58,22 +66,75 @@ public sealed class TelegramBotApiClient(
         // Try MarkdownV2 first; fall back to plain text if Telegram rejects it (400).
         try
         {
-            var markdownPayload = effectiveThreadId.HasValue
-                ? (object)new { chat_id = chatId, text, parse_mode = "MarkdownV2", message_thread_id = effectiveThreadId.Value }
-                : new { chat_id = chatId, text, parse_mode = "MarkdownV2" };
-
+            var markdownPayload = BuildSendMessagePayload(chatId, text, effectiveThreadId, "MarkdownV2", replyMarkup);
             return await PostForResultAsync<TelegramMessage>("sendMessage", markdownPayload, cancellationToken, allowMarkdownFallback: true);
         }
         catch (TelegramMarkdownParseException)
         {
-            // MarkdownV2 was rejected — retry as plain text
+            // MarkdownV2 was rejected - retry as plain text. The reply markup is carried through:
+            // dropping it here would leave an ask_user prompt visible but unanswerable (#2323).
             _logger.LogWarning("Telegram rejected MarkdownV2 for sendMessage to chat {ChatId}; retrying as plain text", chatId);
-            var plainPayload = effectiveThreadId.HasValue
-                ? (object)new { chat_id = chatId, text, message_thread_id = effectiveThreadId.Value }
-                : new { chat_id = chatId, text };
-
+            var plainPayload = BuildSendMessagePayload(chatId, text, effectiveThreadId, parseMode: null, replyMarkup);
             return await PostForResultAsync<TelegramMessage>("sendMessage", plainPayload, cancellationToken, allowMarkdownFallback: false);
         }
+    }
+
+    private static Dictionary<string, object?> BuildSendMessagePayload(
+        long chatId,
+        string text,
+        int? effectiveThreadId,
+        string? parseMode,
+        InlineKeyboardMarkup? replyMarkup)
+    {
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["chat_id"] = chatId,
+            ["text"] = text
+        };
+
+        if (parseMode is not null)
+            payload["parse_mode"] = parseMode;
+
+        if (effectiveThreadId.HasValue)
+            payload["message_thread_id"] = effectiveThreadId.Value;
+
+        if (replyMarkup is not null)
+            payload["reply_markup"] = replyMarkup;
+
+        return payload;
+    }
+
+    /// <summary>
+    /// Acknowledges an inline-keyboard callback query (#2323). Telegram shows a progress spinner on
+    /// the pressed button until this is called, so callers MUST acknowledge on every path -
+    /// including rejection paths such as an unauthorized press or an already-resolved prompt.
+    /// </summary>
+    /// <param name="callbackQueryId">The <c>id</c> from the inbound callback query.</param>
+    /// <param name="text">Optional short notification shown to the user (max 200 chars per the API).</param>
+    /// <param name="showAlert">When true, the text is shown as a modal alert rather than a toast.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public Task<bool> AnswerCallbackQueryAsync(
+        string callbackQueryId,
+        string? text = null,
+        bool showAlert = false,
+        CancellationToken cancellationToken = default)
+    {
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["callback_query_id"] = callbackQueryId
+        };
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            // Telegram hard-caps the notification at 200 characters and 400s past it; truncate
+            // rather than let an acknowledgement failure strand the spinner.
+            payload["text"] = text.Length > 200 ? text[..200] : text;
+        }
+
+        if (showAlert)
+            payload["show_alert"] = true;
+
+        return PostForResultAsync<bool>("answerCallbackQuery", payload, cancellationToken, allowMarkdownFallback: false);
     }
 
     /// <summary>
@@ -90,13 +151,27 @@ public sealed class TelegramBotApiClient(
         long chatId,
         int messageId,
         string text,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        InlineKeyboardMarkup? replyMarkup = null)
     {
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["chat_id"] = chatId,
+            ["message_id"] = messageId,
+            ["text"] = text,
+            ["parse_mode"] = "MarkdownV2"
+        };
+
+        // Passing an EMPTY inline keyboard is how a resolved ask_user prompt has its buttons
+        // stripped, so the markup is only omitted when the caller supplies null (#2323).
+        if (replyMarkup is not null)
+            payload["reply_markup"] = replyMarkup;
+
         try
         {
             return await PostForResultAsync<TelegramMessage>(
                 "editMessageText",
-                new { chat_id = chatId, message_id = messageId, text, parse_mode = "MarkdownV2" },
+                payload,
                 cancellationToken,
                 allowMarkdownFallback: false);
         }
