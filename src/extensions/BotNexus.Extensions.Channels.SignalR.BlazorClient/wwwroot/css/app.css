@@ -5736,6 +5736,51 @@ h3.conversation-title.editable:hover {
     box-shadow: inset 3px 0 0 var(--accent-pinned, #8a6b2f);
 }
 
+/* #1888: live marker. The only PRESENT-TENSE signal on the row, so it gets the one
+   animated treatment on the page - motion reads as "happening now" in a way no static
+   colour does, and nothing else here moves, so it cannot be mistaken for decoration. */
+.activity-badge-live {
+    background: var(--accent-live, #1f7a4d);
+    color: #fff;
+}
+
+.activity-badge-live::before {
+    content: "";
+    display: inline-block;
+    width: 0.45em;
+    height: 0.45em;
+    margin-right: 0.35em;
+    border-radius: 50%;
+    background: currentColor;
+    animation: activity-live-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes activity-live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+}
+
+/* Respect reduced-motion: the badge still reads as live via colour and text. */
+@media (prefers-reduced-motion: reduce) {
+    .activity-badge-live::before {
+        animation: none;
+    }
+}
+
+.activity-row-live {
+    box-shadow: inset 3px 0 0 var(--accent-live, #1f7a4d);
+}
+
+/* A pinned row that is ALSO live shows both rails rather than one silently winning. */
+.activity-row-pinned.activity-row-live {
+    box-shadow: inset 3px 0 0 var(--accent-live, #1f7a4d),
+                inset 6px 0 0 var(--accent-pinned, #8a6b2f);
+}
+
+.activity-summary-stat--live .activity-summary-value {
+    color: var(--accent-live, #1f7a4d);
+}
+
 
 /* Cron Jobs single-page selector and editor */
 .cron-selector-section {

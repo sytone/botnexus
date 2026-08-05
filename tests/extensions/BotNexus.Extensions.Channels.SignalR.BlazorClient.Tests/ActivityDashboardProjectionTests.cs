@@ -1011,4 +1011,138 @@ public sealed class ActivityDashboardProjectionTests
         Assert.Equal(1, summary.AgentCount);
         Assert.Equal(0, summary.ScheduledCount);
     }
+    // ---- #1888: live (running-session) facet ------------------------------
+
+    /// <summary>
+    /// The row's liveness comes from the server-stamped ActiveSessionId, never inferred. A present
+    /// id is live; absent is idle.
+    /// </summary>
+    [Fact]
+    public void Project_carries_active_session_id_and_derives_is_live()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            new[] { Conv("c1", activeSessionId: "sess-1"), Conv("c2") },
+            new ActivityDashboardFilter(),
+            Now);
+
+        var live = rows.Single(r => r.ConversationId == "c1");
+        var idle = rows.Single(r => r.ConversationId == "c2");
+
+        Assert.Equal("sess-1", live.ActiveSessionId);
+        Assert.True(live.IsLive);
+        Assert.Null(idle.ActiveSessionId);
+        Assert.False(idle.IsLive);
+    }
+
+    /// <summary>
+    /// A blank id is an ABSENT id. Treating whitespace as live would light the badge for a
+    /// conversation with nothing running, which is the whole point of the signal.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Whitespace_active_session_id_is_not_live(string sessionId)
+    {
+        var row = Assert.Single(ActivityDashboardProjection.Project(
+            new[] { Conv("c1", activeSessionId: sessionId) }, new ActivityDashboardFilter(), Now));
+
+        Assert.False(row.IsLive);
+    }
+
+    /// <summary>The live facet is inert by default: the landing view is unchanged.</summary>
+    [Fact]
+    public void Live_filter_defaults_to_all_and_is_inert()
+    {
+        Assert.Equal(ActivityLiveFilter.All, new ActivityDashboardFilter().Live);
+
+        var rows = ActivityDashboardProjection.Project(
+            new[] { Conv("c1", activeSessionId: "s"), Conv("c2") },
+            new ActivityDashboardFilter(),
+            Now);
+
+        Assert.Equal(2, rows.Count);
+    }
+
+    [Fact]
+    public void Live_filter_selects_only_running_conversations()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            new[] { Conv("c1", activeSessionId: "s"), Conv("c2") },
+            new ActivityDashboardFilter(Live: ActivityLiveFilter.Live),
+            Now);
+
+        Assert.Equal(new[] { "c1" }, rows.Select(r => r.ConversationId));
+    }
+
+    [Fact]
+    public void Idle_filter_selects_only_non_running_conversations()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            new[] { Conv("c1", activeSessionId: "s"), Conv("c2") },
+            new ActivityDashboardFilter(Live: ActivityLiveFilter.Idle),
+            Now);
+
+        Assert.Equal(new[] { "c2" }, rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>
+    /// The live facet COMPOSES and overrides nothing: a live cron run stays hidden until the cron
+    /// toggle reveals it, because running is a state, not a visibility override.
+    /// </summary>
+    [Fact]
+    public void Live_filter_does_not_override_the_cron_default_exclude()
+    {
+        var conversations = new[] { Conv("cron1", activeSessionId: "s", source: "Cron") };
+
+        Assert.Empty(ActivityDashboardProjection.Project(
+            conversations, new ActivityDashboardFilter(Live: ActivityLiveFilter.Live), Now));
+
+        Assert.Single(ActivityDashboardProjection.Project(
+            conversations,
+            new ActivityDashboardFilter(IncludeCron: true, Live: ActivityLiveFilter.Live),
+            Now));
+    }
+
+    /// <summary>
+    /// InternalHidden stays unconditionally excluded (#2692) - the live facet is not an escape hatch.
+    /// </summary>
+    [Fact]
+    public void Live_filter_cannot_reveal_internal_hidden_conversations()
+    {
+        Assert.Empty(ActivityDashboardProjection.Project(
+            new[] { Conv("h1", activeSessionId: "s", visibility: "InternalHidden") },
+            new ActivityDashboardFilter(Live: ActivityLiveFilter.Live),
+            Now));
+    }
+
+    /// <summary>
+    /// The strip's live count mirrors the FILTERED row set, like every other stat - it counts what
+    /// the table shows, not what the server returned.
+    /// </summary>
+    [Fact]
+    public void Summarize_counts_live_rows_from_the_filtered_set()
+    {
+        var conversations = new[]
+        {
+            Conv("c1", activeSessionId: "s1"),
+            Conv("c2", activeSessionId: "s2"),
+            Conv("c3"),
+            Conv("cron1", activeSessionId: "s4", source: "Cron")
+        };
+
+        var visible = ActivityDashboardProjection.Summarize(
+            ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(), Now));
+        Assert.Equal(2, visible.LiveCount);
+
+        var withCron = ActivityDashboardProjection.Summarize(
+            ActivityDashboardProjection.Project(
+                conversations, new ActivityDashboardFilter(IncludeCron: true), Now));
+        Assert.Equal(3, withCron.LiveCount);
+    }
+
+    [Fact]
+    public void Summarize_empty_rows_yields_zero_live_count()
+    {
+        Assert.Equal(0, ActivityDashboardProjection.Summarize(Array.Empty<ActivityRow>()).LiveCount);
+    }
 }

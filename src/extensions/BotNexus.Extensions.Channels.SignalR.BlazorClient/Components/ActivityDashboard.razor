@@ -40,6 +40,15 @@
                 <span class="activity-summary-value">@summary.ScheduledCount</span>
                 <span class="activity-summary-label">scheduled</span>
             </button>
+            <button type="button"
+                    class="activity-summary-stat activity-summary-stat--action activity-summary-stat--live @(_filter.Live == ActivityLiveFilter.Live ? "active" : "")"
+                    data-testid="activity-summary-live"
+                    aria-pressed="@(_filter.Live == ActivityLiveFilter.Live)"
+                    title="@(_filter.Live == ActivityLiveFilter.Live ? "Show conversations in any state" : "Show only conversations running right now")"
+                    @onclick="ToggleLive">
+                <span class="activity-summary-value">@summary.LiveCount</span>
+                <span class="activity-summary-label">live now</span>
+            </button>
             <div class="activity-summary-stat activity-summary-stat--freshness" data-testid="activity-summary-freshness">
                 <span class="activity-summary-value" title="@(summary.LatestActivity?.ToString("o"))">@FreshnessLabel(summary.LatestActivity)</span>
                 <span class="activity-summary-label">latest activity</span>
@@ -105,6 +114,14 @@
             <option value="@ActivityPinFilter.Pinned">Pinned only</option>
             <option value="@ActivityPinFilter.Unpinned">Unpinned only</option>
         </select>
+        <select class="activity-filter-select" data-testid="activity-filter-live"
+                aria-label="Filter by live state"
+                value="@_filter.Live"
+                @onchange="OnLiveFilterChanged">
+            <option value="@ActivityLiveFilter.All">Any live state</option>
+            <option value="@ActivityLiveFilter.Live">Live now</option>
+            <option value="@ActivityLiveFilter.Idle">Idle only</option>
+        </select>
     </div>
 
     @if (_isLoading && _rows is null)
@@ -137,7 +154,7 @@
             <tbody>
                 @foreach (var row in rows)
                 {
-                    <tr class="activity-row @(row.IsCron ? "activity-row-cron" : "") @(row.IsPinned ? "activity-row-pinned" : "")"
+                    <tr class="activity-row @(row.IsCron ? "activity-row-cron" : "") @(row.IsPinned ? "activity-row-pinned" : "") @(row.IsLive ? "activity-row-live" : "")"
                         data-testid="activity-row"
                         data-conversation-id="@row.ConversationId"
                         tabindex="0"
@@ -146,6 +163,15 @@
                         @onkeydown="e => OnRowKeyDown(e, row)">
                         <td class="activity-cell-title">
                             <span class="activity-conversation-title" title="@row.Title">@DisplayTitle(row)</span>
+                            @if (row.IsLive)
+                            {
+                                @* #1888: the row's only present-tense signal. Rendered FIRST so the
+                                   "is anything happening?" answer reads before the historical badges. *@
+                                <span class="activity-badge activity-badge-live"
+                                      data-testid="activity-live-badge"
+                                      title="@LiveTooltip(row)"
+                                      aria-label="Live">Live</span>
+                            }
                             @if (row.IsPinned)
                             {
                                 <span class="activity-badge activity-badge-pinned"
@@ -276,6 +302,18 @@
     private Task ToggleCron() => ApplyFilterAsync(_filter with { IncludeCron = !_filter.IncludeCron });
 
     /// <summary>
+    /// Turns the live stat card into a filter action (#1888), mirroring the scheduled card: clicking
+    /// the number narrows the table to exactly the rows it counted, and clicking again clears the
+    /// facet. Toggles between <see cref="ActivityLiveFilter.Live"/> and
+    /// <see cref="ActivityLiveFilter.All"/> only - the card counts live rows, so it must never land
+    /// the user on <see cref="ActivityLiveFilter.Idle"/>, which is the select's job.
+    /// </summary>
+    private Task ToggleLive() => ApplyFilterAsync(_filter with
+    {
+        Live = _filter.Live == ActivityLiveFilter.Live ? ActivityLiveFilter.All : ActivityLiveFilter.Live
+    });
+
+    /// <summary>
     /// Turns the agents stat card into navigation: focuses the agent-filter dropdown so a click on the
     /// number takes the user straight to picking an agent, mirroring the interactive treatment the
     /// conversations and scheduled cards already have. Keeps the picker as the single source of truth for
@@ -336,6 +374,29 @@
             return ApplyFilterAsync(_filter with { Pinned = pinned });
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Applies the liveness facet (#1888). Mirrors the pin/origin/status/recency handlers exactly -
+    /// it swaps one facet on the existing immutable filter and re-projects, rather than introducing
+    /// a second query path. An unparseable value is ignored so a stale DOM value cannot blank the
+    /// table.
+    /// </summary>
+    private Task OnLiveFilterChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<ActivityLiveFilter>(e.Value?.ToString(), out var live))
+            return ApplyFilterAsync(_filter with { Live = live });
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Hover detail behind the live badge: which session is running, so the badge stays a one-glance
+    /// mark while the underlying server value remains inspectable without lengthening the row.
+    /// Mirrors <see cref="PinTooltip"/>.
+    /// </summary>
+    private static string LiveTooltip(ActivityRow row) =>
+        row.ActiveSessionId is { Length: > 0 } sessionId
+            ? $"Session running: {sessionId}"
+            : "Session running";
 
     /// <summary>
     /// Hover detail behind the pin badge: when the pin was stamped, so the badge stays a one-glance

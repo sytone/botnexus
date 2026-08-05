@@ -88,6 +88,30 @@ public enum ActivityPinFilter
 }
 
 /// <summary>
+/// Liveness facet for the dashboard filter (#1888). Selects rows by whether a session is running
+/// in the conversation <em>right now</em>, keyed off the same server-stamped
+/// <see cref="ConversationSummaryDto.ActiveSessionId"/> the row badge renders, so the filter can
+/// never disagree with what the reader sees on screen.
+/// </summary>
+/// <remarks>
+/// Tri-state rather than a one-way "live only" toggle, matching <see cref="ActivityPinFilter"/>:
+/// the complement ("what is parked?") stays reachable and the facet is inert by default.
+/// Liveness is the only facet whose value can change without any user action, which is exactly why
+/// it belongs on a page that polls - every other facet answers a question about the past.
+/// </remarks>
+public enum ActivityLiveFilter
+{
+    /// <summary>No liveness constraint - every row matches. The default, so the landing view is unchanged.</summary>
+    All,
+
+    /// <summary>Only conversations with a session running right now.</summary>
+    Live,
+
+    /// <summary>Only conversations with no session running.</summary>
+    Idle
+}
+
+/// <summary>
 /// Immutable, composable filter for the Home / Activity dashboard. Each facet is independent so new
 /// facets can be added without changing existing call sites, and the whole record is cheap to copy
 /// with <c>with</c> when a single facet changes from the filter bar.
@@ -116,13 +140,20 @@ public enum ActivityPinFilter
 /// hidden until <paramref name="IncludeCron"/> reveals it, because pinning is a priority signal,
 /// not a visibility override.
 /// </param>
+/// <param name="Live">
+/// Which liveness state to include (#1888). Defaults to <see cref="ActivityLiveFilter.All"/>, so
+/// the facet is inert unless the user selects one. Like the other facets it <em>composes</em> and
+/// overrides none of them - notably a live cron run stays hidden until <paramref name="IncludeCron"/>
+/// reveals it, because running is a state, not a visibility override.
+/// </param>
 public sealed record ActivityDashboardFilter(
     bool IncludeCron = false,
     string? AgentId = null,
     ActivityStatusFilter Status = ActivityStatusFilter.Active,
     ActivityRecencyWindow Recency = ActivityRecencyWindow.Any,
     ActivityOriginFilter Origin = ActivityOriginFilter.All,
-    ActivityPinFilter Pinned = ActivityPinFilter.All);
+    ActivityPinFilter Pinned = ActivityPinFilter.All,
+    ActivityLiveFilter Live = ActivityLiveFilter.All);
 
 /// <summary>
 /// A single projected row on the Home / Activity dashboard: one active conversation plus the derived
@@ -167,6 +198,13 @@ public sealed record ActivityDashboardFilter(
 /// When the pin was stamped, or <see langword="null"/> when the conversation is not pinned. Carried
 /// so a later surface can explain or order pins by age without a second round trip.
 /// </param>
+/// <param name="ActiveSessionId">
+/// The session running in this conversation right now, or <see langword="null"/> when nothing is
+/// running (#1888). Carried straight through from the server-stamped
+/// <see cref="ConversationSummaryDto.ActiveSessionId"/> rather than inferred, so the dashboard and
+/// the chat surface cannot disagree about what is live. This is the row's only <em>present-tense</em>
+/// signal - <c>LastActivity</c>, <c>Status</c>, <c>Source</c> and the pin all describe the past.
+/// </param>
 public sealed record ActivityRow(
     string ConversationId,
     string OwningAgentId,
@@ -179,8 +217,18 @@ public sealed record ActivityRow(
     ConversationKind Kind,
     bool IsPinned = false,
     ConversationVisibility Visibility = ConversationVisibility.UserFacing,
-    DateTimeOffset? PinnedAt = null)
+    DateTimeOffset? PinnedAt = null,
+    string? ActiveSessionId = null)
 {
+    /// <summary>
+    /// Whether a session is running in this conversation right now. Computed from
+    /// <see cref="ActiveSessionId"/> rather than stored, so the flag and the id structurally cannot
+    /// disagree - the same drift class the computed <see cref="IsCron"/> removes. Whitespace-only
+    /// ids count as idle: a blank id is an absent id, and treating it as live would light up the
+    /// badge for a conversation with nothing running.
+    /// </summary>
+    public bool IsLive => !string.IsNullOrWhiteSpace(ActiveSessionId);
+
     /// <summary>
     /// Whether this is a cron/scheduled conversation. Computed from <see cref="Source"/> rather than
     /// stored, so widening the row to the typed origin cannot let the flag and the enum disagree -
@@ -200,6 +248,10 @@ public sealed record ActivityRow(
 /// <param name="ConversationCount">Number of conversations (rows) currently shown.</param>
 /// <param name="AgentCount">Number of distinct agents involved across the shown conversations.</param>
 /// <param name="ScheduledCount">How many of the shown conversations are cron/scheduled.</param>
+/// <param name="LiveCount">
+/// How many of the shown conversations have a session running right now (#1888). The only
+/// present-tense number on the strip: every other stat counts things that have already happened.
+/// </param>
 /// <param name="LatestActivity">
 /// The freshest last-activity timestamp across the shown rows, or <see langword="null"/> when there
 /// are no rows. Lets the UI answer "how recently did anything happen?" without scanning the table.
@@ -208,7 +260,8 @@ public sealed record ActivitySummary(
     int ConversationCount,
     int AgentCount,
     int ScheduledCount,
-    DateTimeOffset? LatestActivity);
+    DateTimeOffset? LatestActivity,
+    int LiveCount = 0);
 
 /// <summary>
 /// Pure projection for the Home / Activity dashboard. Kept as a static, dependency-free helper so it
@@ -302,6 +355,7 @@ public static class ActivityDashboardProjection
             .Where(x => MatchesRecency(x.Dto.UpdatedAt, filter.Recency, now))
             .Where(x => MatchesOrigin(x.Source, x.Kind, filter.Origin))
             .Where(x => MatchesPinned(x.Dto.IsPinned, filter.Pinned))
+            .Where(x => MatchesLive(!string.IsNullOrWhiteSpace(x.Dto.ActiveSessionId), filter.Live))
             // Pinned-first is a GROUPING key applied ahead of the existing ordering keys, mirroring
             // ConversationsController's pinned-first list ordering rather than inventing a second
             // rule. The UpdatedAt-descending / ConversationId-ordinal contract is untouched and
@@ -321,7 +375,8 @@ public static class ActivityDashboardProjection
                 x.Kind,
                 x.Dto.IsPinned,
                 x.Visibility,
-                x.Dto.IsPinned ? x.Dto.PinnedAt : null))
+                x.Dto.IsPinned ? x.Dto.PinnedAt : null,
+                x.Dto.ActiveSessionId))
             .ToList();
     }
 
@@ -337,10 +392,11 @@ public static class ActivityDashboardProjection
         ArgumentNullException.ThrowIfNull(rows);
 
         if (rows.Count == 0)
-            return new ActivitySummary(0, 0, 0, null);
+            return new ActivitySummary(0, 0, 0, null, 0);
 
         var distinctAgents = new HashSet<string>(StringComparer.Ordinal);
         var scheduled = 0;
+        var live = 0;
         DateTimeOffset latest = DateTimeOffset.MinValue;
 
         foreach (var row in rows)
@@ -351,6 +407,9 @@ public static class ActivityDashboardProjection
             if (row.IsCron)
                 scheduled++;
 
+            if (row.IsLive)
+                live++;
+
             if (row.LastActivity > latest)
                 latest = row.LastActivity;
         }
@@ -359,7 +418,8 @@ public static class ActivityDashboardProjection
             rows.Count,
             distinctAgents.Count,
             scheduled,
-            latest == DateTimeOffset.MinValue ? null : latest);
+            latest == DateTimeOffset.MinValue ? null : latest,
+            live);
     }
 
     /// <summary>
@@ -469,6 +529,15 @@ public static class ActivityDashboardProjection
     {
         ActivityPinFilter.Pinned => isPinned,
         ActivityPinFilter.Unpinned => !isPinned,
+        _ => true
+    };
+
+    // All short-circuits rather than comparing, so the default filter costs nothing per row on the
+    // common unfiltered landing view - the same shape as MatchesOrigin/MatchesPinned.
+    private static bool MatchesLive(bool isLive, ActivityLiveFilter filter) => filter switch
+    {
+        ActivityLiveFilter.Live => isLive,
+        ActivityLiveFilter.Idle => !isLive,
         _ => true
     };
 

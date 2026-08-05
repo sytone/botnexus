@@ -729,4 +729,108 @@ public sealed class ActivityDashboardComponentTests : IDisposable
             .Single(r => r.GetAttribute("data-conversation-id") == "c1");
         Assert.Empty(userFacingRow.QuerySelectorAll("[data-testid='activity-readonly-badge']"));
     }
+    // ---- #1888: live (running-session) surface ----------------------------
+
+    /// <summary>
+    /// A conversation with a running session renders the live badge; an idle one does not, so the
+    /// badge carries signal rather than decorating every row.
+    /// </summary>
+    [Fact]
+    public void Running_conversation_renders_a_live_badge_and_idle_one_does_not()
+    {
+        SetupConversations(
+            Conv("c1", title: "Running", activeSessionId: "sess-1"),
+            Conv("c2", title: "Parked"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+
+        var badge = Assert.Single(cut.FindAll("[data-testid='activity-live-badge']"));
+        Assert.Contains("activity-badge", badge.GetAttribute("class"));
+        Assert.Contains("Live", badge.TextContent);
+        Assert.Contains("sess-1", badge.GetAttribute("title"));
+
+        var liveRow = cut.FindAll("[data-testid='activity-row']")
+            .Single(r => r.GetAttribute("data-conversation-id") == "c1");
+        Assert.Contains("activity-row-live", liveRow.GetAttribute("class"));
+
+        var idleRow = cut.FindAll("[data-testid='activity-row']")
+            .Single(r => r.GetAttribute("data-conversation-id") == "c2");
+        Assert.Empty(idleRow.QuerySelectorAll("[data-testid='activity-live-badge']"));
+        Assert.DoesNotContain("activity-row-live", idleRow.GetAttribute("class"));
+    }
+
+    /// <summary>
+    /// The live stat card counts exactly the rows carrying the live badge - the strip and the table
+    /// read the same derivation, so they cannot disagree.
+    /// </summary>
+    [Fact]
+    public void Live_stat_card_counts_the_rows_that_carry_the_live_badge()
+    {
+        SetupConversations(
+            Conv("c1", activeSessionId: "s1"),
+            Conv("c2", activeSessionId: "s2"),
+            Conv("c3"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 3);
+
+        var card = cut.Find("[data-testid='activity-summary-live']");
+        Assert.Equal("2", card.QuerySelector(".activity-summary-value")!.TextContent.Trim());
+        Assert.Equal(2, cut.FindAll("[data-testid='activity-live-badge']").Count);
+    }
+
+    /// <summary>
+    /// Clicking the live stat card narrows the table to exactly the rows it counted, and clicking
+    /// again clears the facet - the same toggle affordance the scheduled card has.
+    /// </summary>
+    [Fact]
+    public void Clicking_live_stat_card_toggles_the_live_filter()
+    {
+        SetupConversations(
+            Conv("c1", activeSessionId: "s1"),
+            Conv("c2"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+
+        // Blazor omits a bool-bound attribute when false, so "not pressed" is the ABSENCE of
+        // aria-pressed - the same rendering the existing scheduled card produces.
+        var card = cut.Find("[data-testid='activity-summary-live']");
+        Assert.Null(card.GetAttribute("aria-pressed"));
+        Assert.DoesNotContain("active", card.GetAttribute("class"));
+
+        card.Click();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+        Assert.Equal(new[] { "c1" }, RowIds(cut));
+        Assert.Contains("active", cut.Find("[data-testid='activity-summary-live']").GetAttribute("class"));
+        // Blazor renders a true bool attribute as valueless, so "pressed" is its PRESENCE.
+        Assert.NotNull(cut.Find("[data-testid='activity-summary-live']").GetAttribute("aria-pressed"));
+
+        cut.Find("[data-testid='activity-summary-live']").Click();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+    }
+
+    /// <summary>
+    /// The live facet is also reachable from the filter bar, including the Idle complement the stat
+    /// card deliberately never lands on.
+    /// </summary>
+    [Fact]
+    public void Live_filter_select_applies_live_and_idle_facets()
+    {
+        SetupConversations(
+            Conv("c1", activeSessionId: "s1"),
+            Conv("c2"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+
+        var select = cut.Find("[data-testid='activity-filter-live']");
+        select.Change(nameof(ActivityLiveFilter.Idle));
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+        Assert.Equal(new[] { "c2" }, RowIds(cut));
+
+        cut.Find("[data-testid='activity-filter-live']").Change(nameof(ActivityLiveFilter.Live));
+        cut.WaitForState(() => RowIds(cut).SequenceEqual(new[] { "c1" }));
+    }
 }
