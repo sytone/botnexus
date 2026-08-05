@@ -7,7 +7,8 @@
 
     * 'strict' is the authoritative pre-push gate: one full solution build, impacted tests
       plus the architecture/scenario safety nets, and Playwright. It is allowed to be slow
-      and it must never be skipped, so it waits for the global lock without a bound.
+      and it must never be skipped, so by default it waits for the global lock effectively
+      without a bound. A caller may still pass -LockWaitSeconds to impose one (#2793).
     * 'hook' is the advisory pre-commit gate: impacted projects only, built and tested
       without a full-solution build and without Playwright. It is bounded per step, and if
       another validation already holds the global lock it SKIPS with a clear message rather
@@ -25,8 +26,8 @@ param(
     [ValidateSet('strict', 'impacted', 'full', 'playwright', 'hook')]
     [string]$Mode = 'strict',
 
-    # Bounded wait for the global validation lock. Hook mode waits briefly then skips;
-    # the authoritative gate waits indefinitely because it must not be bypassed.
+    # Wait for the global validation lock, in seconds. Honoured verbatim in every mode;
+    # the -1 sentinel means "use the documented mode default" resolved below.
     [int]$LockWaitSeconds = -1,
 
     # When set, failing to acquire the lock is a clean skip (exit 0) rather than a failure.
@@ -51,16 +52,23 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
 
 # Documented, mode-specific defaults (#2331 acceptance: "realistic, documented timeout").
 # Hook budgets are sized for an impacted-only build/test on a warm developer machine; the
-# authoritative gate is deliberately unbounded so it can never be silently truncated.
-if ($LockWaitSeconds -lt 0) { $LockWaitSeconds = if ($Mode -eq 'hook') { 120 } else { 0 } }
+# authoritative gate DEFAULTS to an effectively unbounded 24h wait so it can never be
+# silently truncated, but a caller may still bound it explicitly (issue #2793).
+if ($LockWaitSeconds -lt 0) { $LockWaitSeconds = if ($Mode -eq 'hook') { 120 } else { 86400 } }
 if ($BuildTimeoutSeconds -lt 0) { $BuildTimeoutSeconds = if ($Mode -eq 'hook') { 300 } else { 0 } }
 if ($TestTimeoutSeconds -lt 0) { $TestTimeoutSeconds = if ($Mode -eq 'hook') { 600 } else { 0 } }
 
 # Serialize all BotNexus validation host-wide, not merely validation in one worktree.
 # Separate worktrees still compete for the same CPU, Defender, package cache and tool
-# processes. Unlike the pre-#2331 behaviour this WAITS a bounded time instead of throwing.
-$waitSeconds = if ($Mode -eq 'hook') { $LockWaitSeconds } else { [int][Math]::Max($LockWaitSeconds, 86400) }
-$lock = Get-BotNexusValidationLock -TimeoutSeconds $waitSeconds -LockPath $LockPath
+# processes. The effective wait was resolved ONCE above, from the sentinel, and is used
+# verbatim here (issue #2793). Previously the gate recomputed it as
+# [Math]::Max(<caller value>, 86400), which made -LockWaitSeconds inert for the only
+# mode allowed to fail. An unbounded DEFAULT is safe -- a caller who asks for nothing
+# gets a gate that can never be silently truncated, which is the #2331 intent. An
+# unbounded OVERRIDE is not: it removes the caller's ability to bound a wait at all, so
+# a lane blocked on contention can never fall through to the non-acquisition path below
+# and can never tell "lock contention" apart from "validation failed".
+$lock = Get-BotNexusValidationLock -TimeoutSeconds $LockWaitSeconds -LockPath $LockPath
 if (-not $lock.Acquired) {
     if ($SkipOnLockContention) {
         Write-Host "Another BotNexus validation held the global lock for $($lock.WaitedSeconds)s; skipping this advisory run. Full validation still runs at pre-push and in CI." -ForegroundColor Yellow
