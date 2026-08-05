@@ -2923,6 +2923,23 @@ details[open] > .thinking-summary::before {
     cursor: not-allowed;
 }
 
+/* #2795: copy-the-whole-config control in the Agent Configuration dialog. */
+.config-copy-btn {
+    padding: 0.4rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-right: auto;
+}
+
+.config-copy-btn:hover {
+    background: var(--bg-hover, rgba(127, 127, 127, 0.15));
+}
+
 /* ── Copy toast ─────────────────────────────────────────────────────── */
 
 .copy-toast {

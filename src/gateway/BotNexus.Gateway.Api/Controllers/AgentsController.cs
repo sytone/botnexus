@@ -347,8 +347,27 @@ public sealed class AgentsController : ControllerBase
         if (handle is null) return NotFound("No active handle.");
         var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
         if (diag is null) return NotFound("Handle does not support diagnostics.");
+        return Ok(BuildContextResponse(agentId, sessionId, diag));
+    }
+
+    /// <summary>
+    /// Builds the body of <see cref="GetContext"/>. Extracted from the action (#2795) so a test can
+    /// serialize the <b>actual</b> response shape and assert the Blazor portal's
+    /// <c>ContextInfoDto</c> binds to it.
+    /// </summary>
+    /// <remarks>
+    /// The response is an anonymous type, so there is no shared contract type the WASM portal client
+    /// could reference (and it could not reference one in <c>BotNexus.Domain</c> anyway - see
+    /// <c>AgentConfigContracts.cs</c>). The portal therefore mirrors this shape in a private DTO, and
+    /// <c>AgentConfigContractTests</c> pins the two together by calling this method. Note the token
+    /// counts are <b>nested</b> under <c>sections.systemPrompt.tokens</c>: the portal originally
+    /// declared a flat <c>SystemPromptTokens</c>, which silently never bound and rendered an em-dash.
+    /// If you flatten or rename anything here, that test reddens - fix the portal DTO, do not relax it.
+    /// </remarks>
+    internal static object BuildContextResponse(string agentId, string sessionId, ContextDiagnostics diag)
+    {
         const int contextWindowTokens = 128000;
-        return Ok(new
+        return new
         {
             agentId,
             sessionId,
@@ -361,7 +380,7 @@ public sealed class AgentsController : ControllerBase
                 toolDefinitions = new { tokens = diag.ToolDefinitionTokens, toolCount = diag.ToolCount },
                 conversationHistory = new { tokens = diag.HistoryTokens, entryCount = diag.HistoryEntryCount }
             }
-        });
+        };
     }
 
     /// <summary>Full system prompt for a running agent session.</summary>

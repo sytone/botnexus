@@ -5,6 +5,9 @@
 @implements IDisposable
 @using System.Text.Json
 
+@* #2795: every displayed value comes from the ONE AgentConfigSnapshot below, and the Copy button
+   serialises that same snapshot. There is no second field list for the copy path. *@
+
 @if (_showPanel)
 {
     <div class="config-overlay" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
@@ -24,121 +27,33 @@
             else
             {
                 <div class="config-body">
-                    <div class="config-field">
-                        <label>Agent ID</label>
-                        <span class="config-value mono">@AgentId</span>
-                    </div>
-
-                    <div class="config-field">
-                        <label>Display Name</label>
-                        <span class="config-value">@Agent?.DisplayName</span>
-                    </div>
-
-                    <div class="config-field">
-                        <label>Session ID</label>
-                        <span class="config-value mono">@(Agent?.ActiveConversationSessionId ?? "—")</span>
-                    </div>
-
-                    <div class="config-field">
-                        <label>Channel Type</label>
-                        <span class="config-value">@(Agent?.ChannelType ?? "signalr")</span>
-                    </div>
-
-                    @if (_agentConfig is not null)
+                    @if (_snapshot is not null)
                     {
-                        <div class="config-field">
-                            <label>Model</label>
-                            @if (_availableModels.Count > 0)
-                            {
-                                <select class="config-select" @bind="_selectedModel">
-                                    @foreach (var model in _availableModels)
-                                    {
-                                        <option value="@model">@model</option>
-                                    }
-                                </select>
-                            }
-                            else
-                            {
-                                <span class="config-value mono">@(_agentConfig.Model ?? "—")</span>
-                            }
-                        </div>
-
-                        <div class="config-field">
-                            <label>Provider</label>
-                            <span class="config-value">@(_agentConfig.Provider ?? "—")</span>
-                        </div>
-
-                        <div class="config-field">
-                            <label>Tool Count</label>
-                            <div class="config-field-with-badge">
-                                <span class="config-value">@_agentConfig.ToolCount</span>
-                                @if (IsInherited("toolIds"))
+                        @foreach (var field in _snapshot.Fields)
+                        {
+                            <div class="config-field" data-field="@field.Key">
+                                <label>@field.Label</label>
+                                @if (field.Key == AgentConfigSnapshotBuilder.ModelKey && _availableModels.Count > 0)
                                 {
-                                    <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                                    <select class="config-select" @bind="_selectedModel">
+                                        @foreach (var model in _availableModels)
+                                        {
+                                            <option value="@model">@model</option>
+                                        }
+                                    </select>
+                                }
+                                else
+                                {
+                                    <div class="config-field-with-badge">
+                                        <span class="config-value @(IsMono(field.Key) ? "mono" : "")">@field.Display</span>
+                                        @if (field.IsInherited)
+                                        {
+                                            <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                                        }
+                                    </div>
                                 }
                             </div>
-                        </div>
-
-                        @if (_agentConfig.MemoryEnabled.HasValue)
-                        {
-                            <div class="config-field">
-                                <label>Memory</label>
-                                <div class="config-field-with-badge">
-                                    <span class="config-value">@(_agentConfig.MemoryEnabled.Value ? "Enabled" : "Disabled")</span>
-                                    @if (IsInherited("memory.enabled"))
-                                    {
-                                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
-                                    }
-                                </div>
-                            </div>
                         }
-
-                        @if (_agentConfig.HeartbeatEnabled.HasValue)
-                        {
-                            <div class="config-field">
-                                <label>Heartbeat</label>
-                                <div class="config-field-with-badge">
-                                    <span class="config-value">@(_agentConfig.HeartbeatEnabled.Value ? "Enabled" : "Disabled")</span>
-                                    @if (IsInherited("heartbeat.enabled"))
-                                    {
-                                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
-                                    }
-                                </div>
-                            </div>
-                        }
-
-                        @if (_agentConfig.HeartbeatIntervalMinutes.HasValue)
-                        {
-                            <div class="config-field">
-                                <label>Heartbeat Interval</label>
-                                <div class="config-field-with-badge">
-                                    <span class="config-value">@_agentConfig.HeartbeatIntervalMinutes.Value min</span>
-                                    @if (IsInherited("heartbeat.intervalMinutes"))
-                                    {
-                                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
-                                    }
-                                </div>
-                            </div>
-                        }
-
-                        @if (_agentConfig.HasFileAccess)
-                        {
-                            <div class="config-field">
-                                <label>File Access</label>
-                                <div class="config-field-with-badge">
-                                    <span class="config-value">Configured</span>
-                                    @if (IsInherited("fileAccess"))
-                                    {
-                                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
-                                    }
-                                </div>
-                            </div>
-                        }
-
-                        <div class="config-field">
-                            <label>System Prompt Size</label>
-                            <span class="config-value">@(_contextSize ?? "—")</span>
-                        </div>
                     }
 
                     @if (_error is not null)
@@ -148,7 +63,10 @@
                 </div>
 
                 <div class="config-actions">
-                    @if (_availableModels.Count > 0 && _selectedModel != _agentConfig?.Model)
+                    <button class="config-copy-btn" @onclick="CopyConfig" title="Copy the full configuration as JSON">
+                        @(_copied ? "Copied!" : "📋 Copy")
+                    </button>
+                    @if (_availableModels.Count > 0 && _selectedModel != _snapshot?.Field(AgentConfigSnapshotBuilder.ModelKey)?.Value)
                     {
                         <button class="config-save-btn" @onclick="SaveModel" disabled="@_saving">
                             @(_saving ? "Saving…" : "Save Model")
@@ -174,6 +92,7 @@
     {
         Store.OnChanged -= HandleStoreChanged;
     }
+
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
 
@@ -181,21 +100,30 @@
     private bool _showPanel;
     private bool _loading;
     private bool _saving;
+    private bool _copied;
     private string? _error;
-    private AgentConfigDto? _agentConfig;
+
+    /// <summary>
+    /// #2795 AC6: the single source of truth for both the rendered rows and the clipboard payload.
+    /// Do not add a value to the markup that is not a field on this snapshot.
+    /// </summary>
+    private AgentConfigSnapshot? _snapshot;
+
+    private AgentDescriptorDto? _descriptor;
     private List<string> _availableModels = [];
     private string _selectedModel = "";
-    private string? _contextSize;
     private Dictionary<string, bool> _inheritedFields = new(StringComparer.OrdinalIgnoreCase);
 
-    private bool IsInherited(string fieldPath) =>
-        _inheritedFields.TryGetValue(fieldPath, out var inherited) && inherited;
+    /// <summary>Identifier-shaped fields get the monospace treatment (#2795 AC4).</summary>
+    private static bool IsMono(string key) =>
+        key is "agentId" or "conversationId" or "sessionId" or AgentConfigSnapshotBuilder.ModelKey;
 
     public async Task Open()
     {
         _showPanel = true;
         _loading = true;
         _error = null;
+        _copied = false;
         StateHasChanged();
 
         try
@@ -206,12 +134,15 @@
 
             try
             {
-                _agentConfig = await Http.GetFromJsonAsync<AgentConfigDto>($"{apiBase}agents/{AgentId}");
-                _selectedModel = _agentConfig?.Model ?? "";
+                // #2795 defect 1: this endpoint serialises AgentDescriptor (ModelId / ApiProvider /
+                // ToolIds). AgentDescriptorDto mirrors those names; see AgentConfigContracts.cs for
+                // why the shared type itself cannot be referenced from a WASM client.
+                _descriptor = await Http.GetFromJsonAsync<AgentDescriptorDto>($"{apiBase}agents/{AgentId}");
+                _selectedModel = _descriptor?.ModelId ?? "";
             }
             catch
             {
-                _agentConfig = null;
+                _descriptor = null;
             }
 
             try
@@ -226,24 +157,29 @@
 
             await ComputeInheritanceBadgesAsync(apiBase);
 
-            if (Agent.ActiveConversationSessionId is not null)
+            ContextInfoDto? context = null;
+            string? contextUnavailable = null;
+            var sessionId = Agent.ActiveConversationSessionId;
+            if (sessionId is not null)
             {
                 try
                 {
-                    var context = await Http.GetFromJsonAsync<ContextInfoDto>($"{apiBase}agents/{AgentId}/sessions/{Agent.ActiveConversationSessionId}/context");
-                    _contextSize = context?.SystemPromptTokens is not null
-                        ? $"{context.SystemPromptTokens:N0} tokens"
-                        : "—";
+                    // #2795 defect 2: tokens arrive NESTED as sections.systemPrompt.tokens.
+                    context = await Http.GetFromJsonAsync<ContextInfoDto>($"{apiBase}agents/{AgentId}/sessions/{sessionId}/context");
+                    if (context?.Sections?.SystemPrompt?.Tokens is null)
+                        contextUnavailable = AgentConfigField.Unavailable;
                 }
                 catch
                 {
-                    _contextSize = "unavailable";
+                    contextUnavailable = "unavailable";
                 }
             }
             else
             {
-                _contextSize = "no active session";
+                contextUnavailable = AgentConfigSnapshotBuilder.NoActiveSession;
             }
+
+            RebuildSnapshot(context, contextUnavailable);
         }
         catch (Exception ex)
         {
@@ -254,6 +190,25 @@
             _loading = false;
             StateHasChanged();
         }
+    }
+
+    private ContextInfoDto? _context;
+    private string? _contextUnavailable;
+
+    private void RebuildSnapshot(ContextInfoDto? context, string? contextUnavailable)
+    {
+        _context = context;
+        _contextUnavailable = contextUnavailable;
+        _snapshot = AgentConfigSnapshotBuilder.Build(
+            AgentId,
+            Agent?.DisplayName,
+            Agent?.ActiveConversationId,
+            Agent?.ActiveConversationSessionId,
+            Agent?.ChannelType,
+            _descriptor,
+            context,
+            contextUnavailable,
+            _inheritedFields);
     }
 
     private async Task ComputeInheritanceBadgesAsync(string apiBase)
@@ -269,6 +224,28 @@
         catch
         {
             _inheritedFields.Clear();
+        }
+    }
+
+    /// <summary>
+    /// #2795 AC5/AC6: copies the snapshot the panel is rendering. Because the payload is projected
+    /// from <see cref="_snapshot"/>, a field can never be present in one and absent from the other.
+    /// </summary>
+    private async Task CopyConfig()
+    {
+        if (_snapshot is null) return;
+        try
+        {
+            await JS.InvokeAsync<bool>("BotNexus.copyToClipboard", _snapshot.ToClipboardJson());
+            _copied = true;
+            StateHasChanged();
+            await Task.Delay(1500);
+            _copied = false;
+            StateHasChanged();
+        }
+        catch
+        {
+            // Clipboard access may be blocked in some environments.
         }
     }
 
@@ -294,8 +271,11 @@
             var response = await Http.PutAsJsonAsync($"{RestClient.ApiBaseUrl}agents/{AgentId}", payload);
             if (response.IsSuccessStatusCode)
             {
-                if (_agentConfig is not null)
-                    _agentConfig = _agentConfig with { Model = _selectedModel };
+                if (_descriptor is not null)
+                {
+                    _descriptor = _descriptor with { ModelId = _selectedModel };
+                    RebuildSnapshot(_context, _contextUnavailable);
+                }
             }
             else
             {
@@ -317,24 +297,5 @@
         public string? AgentId { get; init; }
         public bool DefaultsApplied { get; init; }
         public Dictionary<string, string>? Sources { get; init; }
-    }
-
-    private sealed record AgentConfigDto
-    {
-        public string? AgentId { get; init; }
-        public string? DisplayName { get; init; }
-        public string? Model { get; init; }
-        public string? Provider { get; init; }
-        public int ToolCount { get; init; }
-        public bool? MemoryEnabled { get; init; }
-        public bool? HeartbeatEnabled { get; init; }
-        public int? HeartbeatIntervalMinutes { get; init; }
-        public bool HasFileAccess { get; init; }
-    }
-
-    private sealed record ContextInfoDto
-    {
-        public int? SystemPromptTokens { get; init; }
-        public int? TotalTokens { get; init; }
     }
 }
