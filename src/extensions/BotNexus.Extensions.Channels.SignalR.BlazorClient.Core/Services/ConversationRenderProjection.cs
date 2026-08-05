@@ -68,6 +68,7 @@ public readonly record struct ConversationRenderProjection(
     /// deliberately excluded so this stays a property of the conversation itself.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <see cref="ConversationSource.Agent"/> is deliberately <em>not</em> a disjunct here (#2526).
     /// That source only records <em>who pulled the trigger</em>, not who participates: the
     /// <c>conversation_new</c> tool mints <c>(HumanAgent, Agent)</c> — a conversation an agent
@@ -75,9 +76,17 @@ public readonly record struct ConversationRenderProjection(
     /// already caught by the <see cref="ConversationKind.AgentAgent"/> /
     /// <see cref="ConversationKind.AgentSubAgent"/> pairings above, which is the axis that actually
     /// encodes participation.
+    /// </para>
+    /// <para>
+    /// <see cref="ConversationKind.Ralph"/> IS a disjunct (#2818): a ralph conversation drives
+    /// itself off the turn-end seam, minting a <em>fresh</em> session for every iteration. Nobody is
+    /// listening for a reply in it, and a message typed into it would be dropped by the very next
+    /// iteration rather than answered — so rendering a composer there would promise an interaction
+    /// the loop cannot honour.
+    /// </para>
     /// </remarks>
     public bool IsUnattended =>
-        Kind is ConversationKind.AgentAgent or ConversationKind.AgentSubAgent
+        Kind is ConversationKind.AgentAgent or ConversationKind.AgentSubAgent or ConversationKind.Ralph
         || Source is ConversationSource.Cron or ConversationSource.Webhook;
 
     /// <summary>
@@ -98,10 +107,11 @@ public readonly record struct ConversationRenderProjection(
     /// <summary>
     /// Which list group/section the conversation belongs to. Agent-initiated pairings win over the
     /// trigger because an agent-supervision thread stays an observer row regardless of what
-    /// originally triggered the parent run.
+    /// originally triggered the parent run. A ralph loop groups here too (#2818): it is an
+    /// agent-driven observer row whose iterations the user watches rather than participates in.
     /// </summary>
     public ConversationListGroup Group =>
-        Kind is ConversationKind.AgentAgent or ConversationKind.AgentSubAgent
+        Kind is ConversationKind.AgentAgent or ConversationKind.AgentSubAgent or ConversationKind.Ralph
             ? ConversationListGroup.AgentInitiated
             : Source switch
             {

@@ -42,6 +42,8 @@ public sealed class ConversationRenderProjectionTests
     [InlineData("HumanAgent", ConversationKind.HumanAgent)]
     [InlineData("AgentAgent", ConversationKind.AgentAgent)]
     [InlineData("agentsubagent", ConversationKind.AgentSubAgent)]
+    [InlineData("Ralph", ConversationKind.Ralph)]
+    [InlineData("ralph", ConversationKind.Ralph)]
     public void ParseKind_ParsesEveryWireValue_CaseInsensitively(string wire, ConversationKind expected) =>
         Assert.Equal(expected, ConversationOrigin.ParseKind(wire));
 
@@ -72,7 +74,14 @@ public sealed class ConversationRenderProjectionTests
             { ConversationKind.AgentSubAgent, ConversationSource.Channel, true,  ConversationListGroup.AgentInitiated, "Read-only" },
             { ConversationKind.AgentSubAgent, ConversationSource.Cron,    true,  ConversationListGroup.AgentInitiated, "Read-only" },
             { ConversationKind.AgentSubAgent, ConversationSource.Webhook, true,  ConversationListGroup.AgentInitiated, "Read-only" },
-            { ConversationKind.AgentSubAgent, ConversationSource.Agent,   true,  ConversationListGroup.AgentInitiated, "Read-only" }
+            { ConversationKind.AgentSubAgent, ConversationSource.Agent,   true,  ConversationListGroup.AgentInitiated, "Read-only" },
+
+            // #2818: a ralph loop is unattended under EVERY trigger. It drives itself off turn end
+            // and mints a fresh session per iteration, so no source makes it writable.
+            { ConversationKind.Ralph,         ConversationSource.Channel, true,  ConversationListGroup.AgentInitiated, "Read-only" },
+            { ConversationKind.Ralph,         ConversationSource.Cron,    true,  ConversationListGroup.AgentInitiated, "Read-only" },
+            { ConversationKind.Ralph,         ConversationSource.Webhook, true,  ConversationListGroup.AgentInitiated, "Read-only" },
+            { ConversationKind.Ralph,         ConversationSource.Agent,   true,  ConversationListGroup.AgentInitiated, "Read-only" }
         };
 
     [Theory]
