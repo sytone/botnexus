@@ -20,6 +20,11 @@ namespace BotNexus.Agent.Providers.Core.Validation;
 public static class ToolCallValidator
 {
     /// <summary>
+    /// Characters of a long string value shown in a diagnostic before eliding. (Issue #2759.)
+    /// </summary>
+    private const int PreviewLength = 40;
+
+    /// <summary>
     /// Validates arguments against the tool's parameter schema.
     /// Returns (isValid, errors) — invalid calls get an error ToolResult
     /// instead of dispatching to the tool.
@@ -512,6 +517,15 @@ public static class ToolCallValidator
     /// Ties are broken by ordinal order of the candidate name so the emitted message is
     /// deterministic regardless of schema property declaration order.
     /// </summary>
+    /// <remarks>
+    /// Issue #2759 AC4 asked for a missing-<c>path</c> error to name candidate files whose content
+    /// matches the supplied <c>oldText</c> values. NOT IMPLEMENTED, deliberately: this validator is
+    /// a pure function of (arguments, schema). It has no reference to the session, the turn's tool
+    /// history, or the filesystem, so it cannot know which files were read this turn. Satisfying
+    /// AC4 would require threading turn state into the validation seam, which is a plumbing change
+    /// well outside a diagnostics fix and would couple a schema validator to conversation state.
+    /// AC4 is reported unmet rather than built.
+    /// </remarks>
     private static string? FindClosestPropertyName(string unknownName, IReadOnlyList<string> declaredNames)
     {
         if (declaredNames.Count == 0 || unknownName.Length == 0)
@@ -644,15 +658,24 @@ public static class ToolCallValidator
     /// kind plus the literal for short scalars (quoted for strings). Long or structured
     /// values are summarised by kind only to keep the error message bounded.
     /// </summary>
+    /// <remarks>
+    /// Issue #2759: the preview is elided at <see cref="PreviewLength"/> characters, and the
+    /// elision used to be indistinguishable from the value itself having been cut short. The
+    /// captured failures read <c>received string "[{"oldText":" \"lastRunUtc\": \"2026-08."</c>
+    /// followed by "reached end of data", which reads as though the ARGUMENT were truncated when
+    /// in fact only the DISPLAY was. The two are diagnosed and retried completely differently, so
+    /// an elided preview now states the full character count of the value it elided.
+    /// </remarks>
     private static string DescribeValue(JsonElement value)
     {
         switch (value.ValueKind)
         {
             case JsonValueKind.String:
                 var text = value.GetString() ?? string.Empty;
-                if (text.Length > 40)
+                if (text.Length > PreviewLength)
                 {
-                    text = text[..40] + "…";
+                    return $"string \"{text[..PreviewLength]}…\" "
+                           + $"(preview only; the full value is {text.Length} characters)";
                 }
 
                 return $"string \"{text}\"";
@@ -694,8 +717,57 @@ public static class ToolCallValidator
         catch (JsonException ex)
         {
             var position = ex.BytePositionInLine ?? 0;
-            return $"{ex.Message} (position {position}).";
+
+            // Issue #2759: report the parse offset AGAINST THE FULL VALUE and state that full
+            // length, so the caller can tell an incomplete payload (offset lands at the end)
+            // from a malformed one (offset lands in the middle). Without the length the offset
+            // is uninterpretable and the model retries blind.
+            var detail = $"{ex.Message} (position {position} of {text.Length} characters).";
+
+            return IsTruncatedJson(ex, text)
+                ? detail + " The value ends mid-structure, so it was cut short in transit rather"
+                         + " than mis-typed: no coercion can recover it. Re-send the WHOLE value,"
+                         + " splitting it across several smaller calls if it is large."
+                : detail;
         }
+    }
+
+    /// <summary>
+    /// True when the parse failed because the input simply STOPPED rather than because it was
+    /// mis-typed — the parser consumed everything it was given and still wanted more.
+    /// </summary>
+    /// <remarks>
+    /// Issue #2759 determination. The premise under investigation was that <c>edit</c> validates
+    /// ahead of the #1562 coercion seam. That is REFUTED: <see cref="Validate"/> calls
+    /// <c>CoerceArguments</c> before <c>ValidateRequired</c>/<c>ValidateTopLevelProperties</c>,
+    /// <c>TryCoerceValue</c> parses a bracket-leading string into an array whenever the schema
+    /// allows one, and <c>edit</c>'s schema declares <c>edits</c> as a plain top-level
+    /// <c>"type": "array"</c>, so the coercion branch IS entered. A well-formed JSON-array string
+    /// for <c>edits</c> is therefore already accepted today.
+    ///
+    /// The residual weekly failures are not a coercion gap. Every captured payload ends
+    /// mid-token ("Expected end of string, but instead reached end of data"), i.e. the provider
+    /// delivered an INCOMPLETE argument value. There is no correct parse of a prefix, so the only
+    /// honest fix is diagnostic: say that the value is incomplete, and never let the elided
+    /// display preview be mistaken for the cause.
+    /// </remarks>
+    private static bool IsTruncatedJson(JsonException exception, string text)
+        => exception.LineNumber is { } line
+           && exception.BytePositionInLine is { } position
+           && line == CountNewlines(text)
+           && position >= LastLineLength(text);
+
+    private static long CountNewlines(string text) => text.Count(c => c == '\n');
+
+    /// <summary>
+    /// UTF-8 byte length of the final line — <see cref="JsonException.BytePositionInLine"/> counts
+    /// BYTES, so a char count would misclassify any non-ASCII payload. (Issue #2759.)
+    /// </summary>
+    private static long LastLineLength(string text)
+    {
+        var lastNewline = text.LastIndexOf('\n');
+        var lastLine = lastNewline < 0 ? text : text[(lastNewline + 1)..];
+        return System.Text.Encoding.UTF8.GetByteCount(lastLine);
     }
 
     private static void ValidateEnum(JsonProperty argumentProperty, JsonElement propertySchema, ICollection<string> errors)
