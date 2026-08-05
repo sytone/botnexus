@@ -37,7 +37,26 @@ public enum ConversationKind
     /// id (see F-6 / PR #547) so sub-agent transcripts are queryable via the parent's
     /// conversation, not a synthetic sub-id.
     /// </summary>
-    AgentSubAgent = 2
+    AgentSubAgent = 2,
+
+    /// <summary>
+    /// A self-retriggering autonomous work loop (issue #2818). The conversation owns a set of
+    /// instructions; when an agent turn inside it ends, the gateway starts a <em>fresh</em> session
+    /// in the same conversation seeded with those instructions, until a gateway-enforced stop
+    /// condition fires (see <c>RalphLoopPolicy</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Topologically this is an agent talking to itself, which is why it is a <c>Kind</c> and not a
+    /// <see cref="ConversationSource"/>: the trigger is still whatever minted the conversation, and
+    /// re-triggering is driven by turn end rather than by a schedule.
+    /// </para>
+    /// <para>
+    /// Added at the END with the next free explicit number. The existing members are persisted
+    /// numerically and must never be renumbered.
+    /// </para>
+    /// </remarks>
+    Ralph = 3
 }
 
 /// <summary>
