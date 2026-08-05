@@ -24,16 +24,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- #2795: the portal's Agent Configuration DTOs are pinned to the ACTUAL serialized shape of
-         AgentsController.BuildContextResponse by AgentConfigContractTests in the Blazor client test
-         project (which already references this project - see its csproj, #1900). The response is an
-         anonymous type with no shareable contract, so the test must call the real builder rather
-         than restate the shape. Granting internals access is the narrowest way to do that without
-         making a controller helper part of the public API surface. -->
-    <InternalsVisibleTo Include="BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="OpenTelemetry.Exporter.Console" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />

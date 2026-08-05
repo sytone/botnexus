@@ -363,8 +363,16 @@ public sealed class AgentsController : ControllerBase
     /// counts are <b>nested</b> under <c>sections.systemPrompt.tokens</c>: the portal originally
     /// declared a flat <c>SystemPromptTokens</c>, which silently never bound and rendered an em-dash.
     /// If you flatten or rename anything here, that test reddens - fix the portal DTO, do not relax it.
+    /// <para>
+    /// This is <c>public</c> rather than <c>internal</c>+<c>InternalsVisibleTo</c> on purpose (#2795):
+    /// naming the SignalR BlazorClient test assembly in this csproj put a
+    /// <c>BotNexus.Extensions.Channels.*</c> string inside generic gateway orchestration, which is
+    /// exactly what the #2086 R1 channel-knowledge fence forbids
+    /// (<c>ChannelKnowledgeFenceArchitectureTests.Rule1_GenericProjects_DoNotReferenceConcreteChannelExtensions</c>).
+    /// The fence is right and must not be widened, so the helper is exposed instead.
+    /// </para>
     /// </remarks>
-    internal static object BuildContextResponse(string agentId, string sessionId, ContextDiagnostics diag)
+    public static object BuildContextResponse(string agentId, string sessionId, ContextDiagnostics diag)
     {
         const int contextWindowTokens = 128000;
         return new
