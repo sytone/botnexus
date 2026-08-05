@@ -169,7 +169,12 @@ internal sealed class InitCommand
             root.Clear();
             foreach (var kvp in replacement)
                 root[kvp.Key] = kvp.Value?.DeepClone();
-        }, "before-init-write", cancellationToken);
+            // #2816: this is the one write in the product whose declared purpose is to discard the
+            // existing document. Reaching here at all required either no config.json or an explicit
+            // --force after the operator was told the file already exists, so the destructive-section
+            // guard is told plainly that a whole-document replace is the intent rather than being
+            // tripped by it. No other caller may use ConfigSectionGuard.EntireDocument.
+        }, "before-init-write", cancellationToken, ConfigSectionGuard.EntireDocument);
     }
 
     /// <summary>

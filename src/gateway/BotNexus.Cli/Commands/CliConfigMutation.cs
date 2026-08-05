@@ -33,20 +33,29 @@ internal static class CliConfigMutation
     /// Edits the raw root in place; returns <see langword="null"/> on success or a
     /// caller-presentable message to abort the write without touching the file.
     /// </param>
+    /// <param name="namedSections">
+    /// The top-level config section this mutation targets, declared to the destructive-section
+    /// guard (#2816). This is not a bypass: naming <c>providers</c> permits a provider command to
+    /// empty <c>providers</c> - which removing the last provider legitimately does - while still
+    /// leaving it unable to flatten <c>channels</c>, which is the actual defect. Every call site
+    /// already knows its section as a <c>const</c>, so passing it costs nothing and omitting it
+    /// fails closed.
+    /// </param>
     /// <returns>Process exit code: 0 when persisted, 1 when rejected.</returns>
     public static async Task<int> ApplyAsync(
         string configPath,
         Func<JsonObject, string?> mutation,
         string reason,
         bool verbose,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<string>? namedSections = null)
     {
         var writer = CreateWriter(configPath);
 
         IReadOnlyList<string> errors;
         try
         {
-            errors = await writer.MutateValidatedAsync(mutation, reason, cancellationToken);
+            errors = await writer.MutateValidatedAsync(mutation, reason, cancellationToken, namedSections);
         }
         catch (PlatformConfigLockTimeoutException ex)
         {
