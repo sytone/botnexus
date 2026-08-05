@@ -50,6 +50,15 @@
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+    <!--
+      #2819: the cron store's home directory is resolved through BotNexusHome BY TYPE. This was
+      previously a Type.GetType("..., BotNexus.Gateway") string, which silently began returning
+      null when #2765/#2777 moved the type into this project - and the resolver then fell back to
+      the shared live ~/.botnexus store, ignoring any isolated home. A real reference makes a
+      future move a BUILD failure rather than a production redirect. Not circular:
+      BotNexus.Gateway.Configuration does not reference BotNexus.Cron.
+    -->
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Configuration\BotNexus.Gateway.Configuration.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Memory\BotNexus.Memory.csproj" />
   </ItemGroup>
