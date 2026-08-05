@@ -13,6 +13,13 @@ using Microsoft.Extensions.Hosting;
 namespace BotNexus.Gateway.Tests.Integration;
 
 [Trait("Category", "Integration")]
+// #2825: this class REASSIGNS the process-global BOTNEXUS_HOME and BotNexus__ConfigPath while it
+// runs. Its own EnvLock only serialises callers inside this class, which is no protection at all
+// against a class in another collection -- and with parallelizeTestCollections: true every class
+// lacking a [Collection] attribute IS another collection. It previously declared
+// Collection("IntegrationTests"), which serialised it against unrelated API tests but NOT against
+// the configuration-reload tests it actually conflicts with. Join the collection that owns global
+// configuration state instead.
 [Collection("IntegrationTests")]
 public sealed class LocationsApiIntegrationTests
 {

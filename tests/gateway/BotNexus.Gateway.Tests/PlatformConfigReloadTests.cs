@@ -10,6 +10,9 @@ namespace BotNexus.Gateway.Tests;
 /// Tests that PlatformConfig hot-reloads via IOptionsMonitor when config.json is updated.
 /// Replaces the deleted PlatformConfigWatcherTests which tested the removed custom watcher.
 /// </summary>
+// #2825: the reload pipeline under test is process-global, so this cannot run concurrently with
+// tests that reassign BOTNEXUS_HOME / BotNexus__ConfigPath.
+[Collection("IntegrationTests")]
 public sealed class PlatformConfigReloadTests : IDisposable
 {
     private readonly string _rootPath;

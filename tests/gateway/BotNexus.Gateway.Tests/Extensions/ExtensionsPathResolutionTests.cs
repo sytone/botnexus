@@ -16,14 +16,28 @@ namespace BotNexus.Gateway.Tests.Extensions;
 /// zero extensions. The <c>BOTNEXUS_EXTENSIONS_PATH</c> override lets the image point the loader at
 /// an unshadowed path without overriding it for local development.
 /// </remarks>
-[Collection(ExtensionsPathResolutionTests.CollectionName)]
+[Collection("IntegrationTests")]
 public sealed class ExtensionsPathResolutionTests : IDisposable
 {
     /// <summary>
     /// These tests mutate process-global environment variables, so they must not run concurrently
-    /// with each other. A dedicated collection serialises them.
+    /// with each other -- OR with anything else that reads them.
     /// </summary>
-    public const string CollectionName = "ExtensionsPathEnvironment";
+    /// <remarks>
+    /// #2825: this class previously declared its own private <c>ExtensionsPathEnvironment</c>
+    /// collection. That serialised its tests against EACH OTHER but against nothing else, which is
+    /// the weaker of the two guarantees it needs: it reassigns <c>BOTNEXUS_HOME</c>, which the
+    /// gateway-host and configuration-reload tests read. With
+    /// <c>parallelizeTestCollections: true</c> a private collection runs CONCURRENTLY with the
+    /// shared one, so the mutation was still visible to classes mid-assertion. Joining the shared
+    /// serialising collection is what actually prevents the interleave.
+    ///
+    /// <para>
+    /// The name is retained only so existing references keep compiling; it no longer designates a
+    /// separate collection.
+    /// </para>
+    /// </remarks>
+    public const string CollectionName = "IntegrationTests";
 
     private readonly string? _originalExtensionsPath =
         Environment.GetEnvironmentVariable(ServiceCollectionExtensions.ExtensionsPathEnvVar);

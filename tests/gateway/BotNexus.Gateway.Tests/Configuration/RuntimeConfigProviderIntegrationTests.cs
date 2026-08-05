@@ -9,6 +9,10 @@ using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tests.Configuration;
 
+// #2825: builds an IConfiguration root over a file it then rewrites, and asserts the reload
+// pipeline observes it. That pipeline is process-global, so this must not run concurrently with
+// any test that swaps BOTNEXUS_HOME / BotNexus__ConfigPath out from under it.
+[Collection("IntegrationTests")]
 public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
 {
     private readonly string _rootPath;
