@@ -192,7 +192,10 @@ internal sealed class ProviderCommand
             root => RawConfigPath.TryPatchEntry(root, ProvidersPath, name, patch, out var error) ? null : error,
             "before-provider-update",
             verbose,
-            cancellationToken);
+            cancellationToken,
+            // #2816: removing the last provider legitimately empties `providers`, so this command
+            // names the one section it owns. It still cannot touch `channels`.
+            namedSections: [ProvidersPath]);
         if (exitCode != 0)
             return exitCode;
 
@@ -234,7 +237,10 @@ internal sealed class ProviderCommand
             candidate => RawConfigPath.TryRemoveEntry(candidate, ProvidersPath, name, out var error) ? null : error,
             "before-provider-update",
             verbose,
-            cancellationToken);
+            cancellationToken,
+            // #2816: removing the last provider legitimately empties `providers`, so this command
+            // names the one section it owns. It still cannot touch `channels`.
+            namedSections: [ProvidersPath]);
         if (exitCode != 0)
             return exitCode;
 
@@ -419,7 +425,8 @@ internal sealed class ProviderCommand
                     root => RawConfigPath.TryPatchEntry(root, ProvidersPath, providerName, wizardPatch, out var error) ? null : error,
                     "before-provider-update",
                     c.Get<bool>("verbose"),
-                    ct);
+                    ct,
+                    namedSections: [ProvidersPath]);
                 if (wizardExit != 0)
                     return;
 

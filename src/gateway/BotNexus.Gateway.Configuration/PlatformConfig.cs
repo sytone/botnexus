@@ -933,6 +933,26 @@ public sealed class ConversationAccessConfig
 }
 
 /// <summary>Channel definition in platform config.</summary>
+/// <remarks>
+/// <para><b>Round-trip safety (#2816).</b> On 2026-07-31 a production write reduced an entire
+/// populated <c>channels</c> section to <c>{"enabled": true}</c>, destroying a Service Bus
+/// connection block and two Telegram bot tokens. The mechanism was this class: it modelled only
+/// <see cref="Type"/>, <see cref="Enabled"/> (which defaults to <see langword="true"/>) and a
+/// flat <c>Dictionary&lt;string,string&gt;</c> of settings, so serialising the typed graph back
+/// over the document emitted exactly the one defaulted property and silently dropped everything
+/// else the operator had written.</para>
+/// <para>Real channel blocks are richer than that by design - <c>telegram.bots.&lt;name&gt;.token</c>,
+/// <c>serviceBus.queues.&lt;name&gt;.maxConcurrent</c> and every other adapter-owned subtree are
+/// nested and non-string, and the platform deliberately does not model adapter options centrally.
+/// So the fix is not to enumerate them here (which would go stale the moment a new adapter ships)
+/// but to <em>carry them through</em>: <see cref="AdditionalSettings"/> is a
+/// <see cref="JsonExtensionDataAttribute"/> overflow member that captures every property this
+/// class does not name and re-emits it verbatim on serialisation.</para>
+/// <para>Consequently this member must not be removed, renamed away from its overflow role, or
+/// "tidied" for being untyped. Removing it re-opens a silent credential-destruction path; see the
+/// destructive-write guard in <see cref="PlatformConfigWriter"/>, which is the second, independent
+/// line of defence for the same defect.</para>
+/// </remarks>
 public sealed class ChannelConfig
 {
     /// <summary>Channel type (e.g. 'signalr', 'slack').</summary>
@@ -947,7 +967,32 @@ public sealed class ChannelConfig
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "channel", Order = 1)]
     public bool Enabled { get; set; } = true;
     /// <summary>Adapter-specific settings.</summary>
-    public Dictionary<string, string>? Settings { get; set; }
+    /// <remarks>
+    /// #2816: typed as <see cref="JsonElement"/> values rather than <see cref="string"/> because a
+    /// real adapter setting is routinely an object, array, number or bool. With the previous
+    /// <c>Dictionary&lt;string,string&gt;</c> such a value could not even be represented, so it was
+    /// lost on the way through the typed graph.
+    /// </remarks>
+    public Dictionary<string, JsonElement>? Settings { get; set; }
+
+    /// <summary>
+    /// Every channel property this class does not model, captured verbatim so a typed round-trip
+    /// through <see cref="PlatformConfig"/> cannot destroy adapter-owned configuration (#2816).
+    /// </summary>
+    /// <remarks>
+    /// This is load-bearing, not incidental: it is what stops <c>channels.telegram.bots</c> and
+    /// <c>channels.serviceBus.queues</c> - live credentials and routing - from being erased by a
+    /// write that was aimed at an entirely different section. Do not remove it. Do not replace it
+    /// with an enumerated set of adapter properties; adapters are extensions and the platform
+    /// cannot know their shapes in advance.
+    /// <para>Deliberately annotated as a <see cref="ConfigFieldWidget.Text"/> passthrough rather
+    /// than left bare: the <c>[ConfigField]</c> coverage fence (#2701) requires every settable
+    /// property reachable from <see cref="PlatformConfig"/> to declare itself, and silencing it via
+    /// the fence baseline was not an option - the baseline may only shrink, and rightly so.</para>
+    /// </remarks>
+    [JsonExtensionData]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "channel", Order = 99)]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
 }
 
 /// <summary>Session store implementation configuration.</summary>

@@ -66,6 +66,10 @@ public sealed class ConfigWriteDurabilityDiskTests
         var originalLength = new FileInfo(home.ConfigPath).Length;
 
         // Shrink the document substantially so a non-atomic in-place rewrite would leave a tail.
+        // #2816: this write's declared purpose is to shrink the document by deleting three
+        // sections, so it names them. The destructive-section guard exists to stop UNDECLARED
+        // section loss; declaring it here is the intended usage, not a bypass, and none of the
+        // assertions below are relaxed by it.
         await home.Writer.MutateAsync(
             root =>
             {
@@ -73,7 +77,9 @@ public sealed class ConfigWriteDurabilityDiskTests
                 root.Remove("channels");
                 root.Remove("agents");
             },
-            "test-shrink");
+            "test-shrink",
+            CancellationToken.None,
+            namedSections: ["customVendorBlock", "channels", "agents"]);
 
         var afterLength = new FileInfo(home.ConfigPath).Length;
         afterLength.ShouldBeLessThan(originalLength);
