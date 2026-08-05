@@ -97,7 +97,7 @@ public sealed class RalphLoopTrigger : IHostedService
         if (conversationId is not { } id || string.IsNullOrWhiteSpace(id.Value))
             return;
 
-        await AdvanceAsync(id, turnSucceeded: true, cancellationToken).ConfigureAwait(false);
+        await AdvanceAsync(id, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -155,12 +155,15 @@ public sealed class RalphLoopTrigger : IHostedService
     /// it halted - is written back to the conversation so the halt is disclosed rather than silent.
     /// </summary>
     /// <param name="conversationId">The conversation to advance.</param>
-    /// <param name="turnSucceeded">Whether the turn that just ended succeeded.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The decision that was acted on.</returns>
+    /// <remarks>
+    /// The <em>iteration outcome</em> is the sole authority on the failure counter, deliberately: a
+    /// turn that fails may never reach the turn-end seam at all, so treating "we got here" as evidence
+    /// of success would silently reset the circuit breaker on exactly the runs it exists to catch.
+    /// </remarks>
     public async Task<RalphLoopDecision> AdvanceAsync(
         ConversationId conversationId,
-        bool turnSucceeded,
         CancellationToken cancellationToken = default)
     {
         var conversation = await _conversations.GetAsync(conversationId, cancellationToken).ConfigureAwait(false);
@@ -173,11 +176,7 @@ public sealed class RalphLoopTrigger : IHostedService
         var (config, state) = RalphLoopMetadata.Read(conversation);
         var now = _timeProvider.GetUtcNow();
 
-        state = state with
-        {
-            StartedAt = state.StartedAt ?? now,
-            ConsecutiveFailures = turnSucceeded ? 0 : state.ConsecutiveFailures + 1
-        };
+        state = state with { StartedAt = state.StartedAt ?? now };
 
         // THE decision. One call, one place, one result carrying outcome and reason.
         var decision = RalphLoopPolicy.Evaluate(
@@ -213,15 +212,16 @@ public sealed class RalphLoopTrigger : IHostedService
                 .RunIterationAsync(conversation, prompt, iteration, cts.Token)
                 .ConfigureAwait(false);
 
-            if (!succeeded)
-            {
-                // Record the failure immediately so the circuit breaker counts it even if this
-                // iteration never reaches the turn-end seam (a failed turn may not publish).
-                await MutateStateAsync(
-                    conversationId,
-                    current => current with { ConsecutiveFailures = current.ConsecutiveFailures + 1 },
-                    CancellationToken.None).ConfigureAwait(false);
-            }
+            // The iteration's own outcome drives the breaker: success clears it, failure increments
+            // it. Recorded here rather than at the next turn end because a failed turn may never
+            // publish one.
+            await MutateStateAsync(
+                conversationId,
+                current => current with
+                {
+                    ConsecutiveFailures = succeeded ? 0 : current.ConsecutiveFailures + 1
+                },
+                CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
