@@ -1,8 +1,10 @@
 using BotNexus.Cron.Actions;
 using BotNexus.Cron.Prompts;
+using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using System.IO.Abstractions;
 
 namespace BotNexus.Cron.Extensions;
@@ -47,21 +49,51 @@ public static class CronServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Resolves the directory that holds <c>cron.sqlite</c>.
+    /// </summary>
+    /// <remarks>
+    /// This binds to <see cref="BotNexusHome"/> DIRECTLY, by type, not through
+    /// <c>Type.GetType("..., BotNexus.Gateway")</c>. The reflection form was a silent
+    /// correctness hazard and it fired in production (#2819): an assembly-qualified name is a
+    /// STRING, so when #2765/#2777 extracted BotNexusHome into BotNexus.Gateway.Configuration the
+    /// lookup began returning null at runtime with nothing failing at compile time. Every caller
+    /// then fell through to the user-profile default below and opened the LIVE
+    /// <c>~/.botnexus/cron.sqlite</c> -- ignoring an explicitly supplied home. Test gateways
+    /// started with an isolated <c>--target</c> home claimed the developer's real scheduled jobs
+    /// and failed them with "Agent 'farnsworth' is not registered".
+    ///
+    /// A direct project reference makes the same mistake impossible: moving the type again breaks
+    /// the BUILD instead of silently redirecting production state. There is no circular
+    /// dependency -- BotNexus.Gateway.Configuration does not reference BotNexus.Cron.
+    /// </remarks>
     private static string ResolveRootPath(IServiceProvider services)
     {
-        var homeType = Type.GetType("BotNexus.Gateway.Configuration.BotNexusHome, BotNexus.Gateway");
-        var home = homeType is null ? null : services.GetService(homeType);
+        var home = services.GetService<BotNexusHome>();
+
         // Prefer the writable data directory (BOTNEXUS_DATA_DIR) so cron.sqlite works even when
         // the config directory (RootPath) is mounted read-only; fall back to RootPath locally.
-        var dataPath = homeType?.GetProperty("DataPath")?.GetValue(home) as string;
-        if (!string.IsNullOrWhiteSpace(dataPath))
-            return dataPath;
-        var rootPath = homeType?.GetProperty("RootPath")?.GetValue(home) as string;
-        if (!string.IsNullOrWhiteSpace(rootPath))
-            return rootPath;
+        if (!string.IsNullOrWhiteSpace(home?.DataPath))
+            return home.DataPath;
 
-        return Path.GetFullPath(Path.Combine(
+        if (!string.IsNullOrWhiteSpace(home?.RootPath))
+            return home.RootPath;
+
+        // No home was registered at all. The user-profile default is a genuine last resort for
+        // hosts that compose cron without the gateway's configuration stack -- but it silently
+        // targets SHARED, LIVE state, so it must never be taken quietly. #2819 went undiagnosed
+        // for days precisely because this branch produced a working-looking store.
+        var fallback = Path.GetFullPath(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".botnexus"));
+
+        services.GetService<ILogger<SqliteCronStore>>()?.LogWarning(
+            "No {HomeType} was registered, so the cron store fell back to the shared user-profile path {FallbackPath}. " +
+            "Any isolated home supplied by the host is being IGNORED and this process will read and claim jobs from the " +
+            "live store (#2819).",
+            nameof(BotNexusHome),
+            fallback);
+
+        return fallback;
     }
 }
