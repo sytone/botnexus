@@ -56,7 +56,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent
-$slnxPath = Join-Path $repoRoot 'BotNexus.slnx'
+$slnxPath = Join-Path $repoRoot 'dirs.proj'
 $firewallHelper = Join-Path $PSScriptRoot 'Ensure-TesthostFirewallRules.ps1'
 
 function Invoke-FirewallAction {
@@ -99,17 +99,14 @@ $alwaysRunPatterns = @(
     '\.Scenarios\.Tests'
 )
 
-# Enumerate every test project in the solution (used for -All and safety-net).
+# Enumerate every test project (used for -All and safety-net).
+# #2842: discovered from disk to match tests/dirs.proj rather than parsing BotNexus.slnx,
+# which was a second hand-maintained spelling of the same set.
 function Get-AllSolutionTestProjects {
-    [xml]$slnxDoc = Get-Content $slnxPath -Raw
-    $projects = @()
-    foreach ($node in $slnxDoc.SelectNodes('//Project[@Path]')) {
-        $path = $node.Path -replace '\\', '/'
-        if ($path -match '\.Tests\.csproj$') {
-            $projects += (Join-Path $repoRoot ($path -replace '/', [IO.Path]::DirectorySeparatorChar))
-        }
-    }
-    return $projects
+    return @(Get-ChildItem -Path (Join-Path $repoRoot 'tests') -Filter '*.Tests.csproj' -Recurse -File |
+        Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } |
+        Select-Object -ExpandProperty FullName |
+        Sort-Object)
 }
 
 if ($All) {
@@ -174,16 +171,9 @@ if ($affectedProjects.Count -eq 0) {
 $affectedTestProjects = @($affectedProjects | Where-Object { $_ -match '\.Tests[/\\]' -or $_ -match '\.Tests\.csproj$' })
 
 # --- Step 4: Always include safety-net projects ---
-# Find all test projects in the solution matching safety-net patterns
-[xml]$slnx = Get-Content $slnxPath -Raw
-$allTestProjects = @()
-$projectNodes = $slnx.SelectNodes('//Project[@Path]')
-foreach ($node in $projectNodes) {
-    $path = $node.Path -replace '\\', '/'
-    if ($path -match '\.Tests\.csproj$') {
-        $allTestProjects += (Join-Path $repoRoot ($path -replace '/', [IO.Path]::DirectorySeparatorChar))
-    }
-}
+# Find all test projects matching safety-net patterns (#2842: reuse the single discovery
+# function rather than re-parsing the graph a second way).
+$allTestProjects = @(Get-AllSolutionTestProjects)
 
 $safetyNetProjects = @()
 foreach ($proj in $allTestProjects) {

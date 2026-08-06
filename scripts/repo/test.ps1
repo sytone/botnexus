@@ -13,14 +13,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repoRoot = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent
-$solutionPath = Join-Path $repoRoot 'BotNexus.slnx'
 $testRunner = Join-Path $PSScriptRoot 'Invoke-TestWithFirewall.ps1'
 
-[xml]$solution = Get-Content $solutionPath -Raw
-$testProjects = @($solution.SelectNodes('//Project[@Path]') |
-    ForEach-Object { $_.Path -replace '\\', '/' } |
-    Where-Object { $_ -match '\.Tests\.csproj$' } |
-    ForEach-Object { Join-Path $repoRoot ($_ -replace '/', [IO.Path]::DirectorySeparatorChar) })
+# #2842: discover test projects from disk, matching how tests/dirs.proj defines the graph.
+# Parsing BotNexus.slnx made this a second, hand-maintained spelling of the same set, so a
+# project added to the traversal but absent from the solution was silently never run here.
+$testProjects = @(Get-ChildItem -Path (Join-Path $repoRoot 'tests') -Filter '*.Tests.csproj' -Recurse -File |
+    Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } |
+    Select-Object -ExpandProperty FullName |
+    Sort-Object)
 
 $runnerParameters = @{
     ProjectPath = $testProjects

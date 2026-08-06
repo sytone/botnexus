@@ -2,8 +2,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-# Copy solution and project files first for better layer caching
-COPY BotNexus.slnx Directory.Build.props Directory.Packages.props ./
+# Copy build graph and props first for better layer caching (#2842). src/dirs.proj is the
+# deployment closure and the only traversal whose references exist in this image - the root
+# dirs.proj also references tests/dirs.proj, which is deliberately never copied here.
+COPY src/dirs.proj src/dirs.proj
+COPY Directory.Build.props Directory.Packages.props ./
 COPY src/ src/
 
 RUN dotnet restore src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj

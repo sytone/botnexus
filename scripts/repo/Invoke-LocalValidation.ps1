@@ -96,7 +96,7 @@ try {
     if ($Mode -ne 'hook') {
         # The authoritative gate keeps its single full-solution build.
         $steps.Add((Invoke-BotNexusValidationStep -Name 'full solution build' -FilePath 'dotnet' `
-                    -Arguments @('build', (Join-Path $repoRoot 'BotNexus.slnx'), '--nologo', '--verbosity', 'minimal', '--tl:off') `
+                    -Arguments @('build', (Join-Path $repoRoot 'dirs.proj'), '--nologo', '--verbosity', 'minimal', '--tl:off') `
                     -WorkingDirectory $repoRoot -TimeoutSeconds $BuildTimeoutSeconds))
         if ($steps[-1].ExitCode -ne 0) { exit $steps[-1].ExitCode }
     }

@@ -83,13 +83,13 @@ sync_instance() {
     git pull "$remote" main >> "$LOG_FILE" 2>&1
 
     log "[$label] Building..."
-    if ! "$DOTNET" build BotNexus.slnx --nologo --tl:off >> "$LOG_FILE" 2>&1; then
+    if ! "$DOTNET" build dirs.proj --nologo --tl:off >> "$LOG_FILE" 2>&1; then
         log "[$label] ERROR: Build failed — aborting."
         return 1
     fi
 
     log "[$label] Running tests..."
-    if ! "$DOTNET" test BotNexus.slnx --nologo --tl:off >> "$LOG_FILE" 2>&1; then
+    if ! "$DOTNET" test tests/dirs.proj --nologo --tl:off >> "$LOG_FILE" 2>&1; then
         log "[$label] ERROR: Tests failed — aborting restart."
         return 1
     fi

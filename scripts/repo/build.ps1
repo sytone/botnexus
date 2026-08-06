@@ -4,4 +4,4 @@
 $repoRoot = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent
 
 
-dotnet build $repoRoot\BotNexus.slnx -c Debug --nologo --tl:off
+dotnet build $repoRoot\dirs.proj -c Debug --nologo --tl:off

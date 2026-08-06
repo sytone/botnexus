@@ -104,19 +104,19 @@ try {
         $line | Add-Content -Path $runnerEnvLog
     }
 
-    & dotnet restore BotNexus.slnx --nologo 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'restore.log')
+    & dotnet restore dirs.proj --nologo 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'restore.log')
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE; throw "Restore failed with exit code $exitCode." }
 
     & dotnet tool restore 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'tool-restore.log')
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE; throw "Tool restore failed with exit code $exitCode." }
 
-    & dotnet build BotNexus.slnx -c Debug --nologo --tl:off --no-restore 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'build.log')
+    & dotnet build dirs.proj -c Debug --nologo --tl:off --no-restore 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'build.log')
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE; throw "Build failed with exit code $exitCode." }
 
     $strictResults = $mode -in @('full', 'core', 'strict', 'playwright')
     switch ($mode) {
         'full' {
-            & dotnet test BotNexus.slnx --nologo --tl:off -c Debug --no-build --logger "trx;LogFilePrefix=runner" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
+            & dotnet test tests/dirs.proj --nologo --tl:off -c Debug --no-build --logger "trx;LogFilePrefix=runner" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
             $exitCode = $LASTEXITCODE
         }
         'core' {
@@ -126,7 +126,7 @@ try {
             # therefore certified a green gate that had silently skipped them. Core must be
             # trustworthy before E2E is folded back in.
             $coreFilter = 'FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E'
-            & dotnet test BotNexus.slnx --nologo --tl:off -c Debug --no-build --filter $coreFilter --logger "trx;LogFilePrefix=runner" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
+            & dotnet test tests/dirs.proj --nologo --tl:off -c Debug --no-build --filter $coreFilter --logger "trx;LogFilePrefix=runner" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
             $exitCode = $LASTEXITCODE
         }
         'strict' {
