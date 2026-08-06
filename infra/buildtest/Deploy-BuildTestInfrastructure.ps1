@@ -3,7 +3,7 @@ param(
     [string]$SubscriptionId = $env:BOTNEXUS_BUILDTEST_SUBSCRIPTION_ID,
     [string]$ResourceGroup = $env:BOTNEXUS_BUILDTEST_RESOURCE_GROUP,
     [string]$Location = $(if ($env:BOTNEXUS_BUILDTEST_LOCATION) { $env:BOTNEXUS_BUILDTEST_LOCATION } else { 'westus2' }),
-    [string]$RunnerImageTag = '0.1.8'
+    [string]$RunnerImageTag = '0.1.10'
 )
 
 Set-StrictMode -Version Latest

@@ -52,6 +52,38 @@ try {
     $env:NUGET_PACKAGES = '/cache/nuget'
     $env:PLAYWRIGHT_BROWSERS_PATH = '/ms-playwright'
 
+    # Raise the inotify INSTANCE ceiling before any test host starts (#2825).
+    #
+    # Sixteen test classes boot a WebApplicationFactory<Program>, and every host registers
+    # AddJsonFile(reloadOnChange: true) -- one inotify instance each. Instances are counted
+    # per-USER, not per-process, so a full-suite run accumulates them across every concurrently
+    # live test host. The container default (128) is exhausted partway through, and the failure is
+    # SILENT: FileSystemWatcher cannot allocate, so the reload token simply never fires and the
+    # test reports "expected the reload pipeline to notify IOptionsMonitor" as though the product
+    # were broken.
+    #
+    # Measured, not assumed: a probe run in this image fired reliably at low watcher counts and
+    # stopped firing once enough reloading configuration roots were held open, while the same
+    # probe passes standalone -- which is exactly why three earlier mechanism hypotheses
+    # (overlayfs, the atomic inode swap, xUnit collection parallelism) each looked plausible and
+    # each tested clean in isolation.
+    #
+    # Best-effort: a runner without CAP_SYS_ADMIN cannot write /proc/sys, and that must not fail
+    # the run -- it simply leaves the previous behaviour in place.
+    foreach ($limit in @(
+        @{ Path = '/proc/sys/fs/inotify/max_user_instances'; Value = '8192' },
+        @{ Path = '/proc/sys/fs/inotify/max_user_watches'; Value = '524288' })) {
+        try {
+            $before = (Get-Content $limit.Path -ErrorAction Stop).Trim()
+            Set-Content -Path $limit.Path -Value $limit.Value -ErrorAction Stop
+            $after = (Get-Content $limit.Path -ErrorAction Stop).Trim()
+            Write-Host "inotify: $($limit.Path) $before -> $after"
+        }
+        catch {
+            Write-Host "inotify: could not raise $($limit.Path) ($($_.Exception.Message.Split([Environment]::NewLine)[0])). Continuing with the default."
+        }
+    }
+
     & dotnet restore BotNexus.slnx --nologo 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'restore.log')
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE; throw "Restore failed with exit code $exitCode." }
 
