@@ -70,6 +70,15 @@ try {
     #
     # Best-effort: a runner without CAP_SYS_ADMIN cannot write /proc/sys, and that must not fail
     # the run -- it simply leaves the previous behaviour in place.
+    #
+    # The outcome is written to an ARTIFACT, not merely Write-Host. Runner stdout is not among the
+    # uploaded artifacts and `az containerapp job logs show` hangs on this environment, so a
+    # diagnostic that only reaches the console is one nobody can read: the first run of this block
+    # produced zero evidence either way and could not be confirmed to have executed at all.
+    $runnerEnvLog = Join-Path $artifactsRoot 'runner-env.log'
+    "runner image env probe $(Get-Date -Format o)" | Set-Content -Path $runnerEnvLog
+    "node: $(try { (& node --version) 2>&1 } catch { '<missing>' })" | Add-Content -Path $runnerEnvLog
+
     foreach ($limit in @(
         @{ Path = '/proc/sys/fs/inotify/max_user_instances'; Value = '8192' },
         @{ Path = '/proc/sys/fs/inotify/max_user_watches'; Value = '524288' })) {
@@ -77,11 +86,13 @@ try {
             $before = (Get-Content $limit.Path -ErrorAction Stop).Trim()
             Set-Content -Path $limit.Path -Value $limit.Value -ErrorAction Stop
             $after = (Get-Content $limit.Path -ErrorAction Stop).Trim()
-            Write-Host "inotify: $($limit.Path) $before -> $after"
+            $line = "inotify: $($limit.Path) $before -> $after"
         }
         catch {
-            Write-Host "inotify: could not raise $($limit.Path) ($($_.Exception.Message.Split([Environment]::NewLine)[0])). Continuing with the default."
+            $line = "inotify: could not raise $($limit.Path) ($($_.Exception.Message.Split([Environment]::NewLine)[0])). Continuing with the default."
         }
+        Write-Host $line
+        $line | Add-Content -Path $runnerEnvLog
     }
 
     & dotnet restore BotNexus.slnx --nologo 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'restore.log')
