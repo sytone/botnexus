@@ -34,6 +34,16 @@ try {
     Assert-Equal $false $result.isComplete 'Unexpected skips must be incomplete.'
     Assert-Equal 'unexpected-skips' $result.failureReason 'Unexpected skip classification.'
 
+    # Regression (2026-08-06): a TRX whose summary UNDER-REPORTS its own skips. The real
+    # E2E run emitted notExecuted="0" while 265 of 280 results carried outcome="NotExecuted",
+    # so the gate reported failed=0/skipped=0 and exited 0 having validated nothing. Only
+    # total vs executed exposes it, so that pair must be authoritative.
+    $lying = Join-Path $temp 'lying-counters.trx'
+    Write-Trx $lying 280 15 15 0 0
+    $result = Get-RunnerTestResult -TrxPaths @($lying) -RequireZeroSkipped
+    Assert-Equal 265 $result.skipped 'Unaccounted tests must be counted as skipped.'
+    Assert-Equal $false $result.isComplete 'A run that executed 15 of 280 must never be complete.'
+
     $failed = Join-Path $temp 'failed.trx'
     Write-Trx $failed 3 3 2 1 0
     $result = Get-RunnerTestResult -TrxPaths @($failed) -RequireZeroSkipped

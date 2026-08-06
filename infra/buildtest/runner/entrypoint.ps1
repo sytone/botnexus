@@ -104,10 +104,20 @@ try {
     & dotnet build BotNexus.slnx -c Debug --nologo --tl:off --no-restore 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'build.log')
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE; throw "Build failed with exit code $exitCode." }
 
-    $strictResults = $mode -in @('full', 'strict', 'playwright')
+    $strictResults = $mode -in @('full', 'core', 'strict', 'playwright')
     switch ($mode) {
         'full' {
             & dotnet test BotNexus.slnx --nologo --tl:off -c Debug --no-build --logger "trx;LogFilePrefix=runner" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
+            $exitCode = $LASTEXITCODE
+        }
+        'core' {
+            # Everything except the browser/E2E projects. Those are quarantined while the
+            # NotExecuted defect is investigated: on 2026-08-06 a 'full' run reported exit 0
+            # with 265 of 280 E2E tests NotExecuted, which is neither passed nor failed and
+            # therefore certified a green gate that had silently skipped them. Core must be
+            # trustworthy before E2E is folded back in.
+            $coreFilter = 'FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E'
+            & dotnet test BotNexus.slnx --nologo --tl:off -c Debug --no-build --filter $coreFilter --logger "trx;LogFilePrefix=runner" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
             $exitCode = $LASTEXITCODE
         }
         'strict' {

@@ -45,11 +45,23 @@ function Get-RunnerTestResult {
         $summary.skipped += [int]$counters.notExecuted + [int]$counters.notRunnable + [int]$counters.inconclusive
     }
 
+    # A TRX summary can under-report its own skips: on 2026-08-06 the E2E project emitted
+    # notExecuted=0 while the file carried 265 results with outcome="NotExecuted", so the
+    # gate reported failed=0/skipped=0 and exited 0 having actually run 15 of 280 tests.
+    # total vs executed is the only counter pair that exposes that, so it is authoritative:
+    # a test that was neither executed nor deliberately skipped has NOT been validated, and
+    # certifying it green is worse than reporting a failure.
+    $unaccounted = $summary.total - $summary.executed - $summary.skipped
+    if ($unaccounted -gt 0) { $summary.skipped += $unaccounted }
+
     if ($summary.total -eq 0 -or $summary.executed -eq 0) {
         $summary.failureReason = 'no-tests-executed'
     }
     elseif ($summary.failed -gt 0) {
         $summary.failureReason = 'test-failures'
+    }
+    elseif ($summary.executed -lt $summary.total -and -not $RequireZeroSkipped) {
+        $summary.failureReason = 'tests-not-executed'
     }
     elseif ($RequireZeroSkipped -and $summary.skipped -gt 0) {
         $summary.failureReason = 'unexpected-skips'
