@@ -155,7 +155,13 @@ public sealed class VirtualChannelAdapterConformance
         var unrelated = NewOutbound("noise");
         await adapter.SendAsync(unrelated);
 
-        var pending = adapter.WaitForOutboundAsync(m => m.Content == "important", TimeSpan.FromSeconds(1));
+        // #2825: the assertion is that the wait resolves as soon as a match ARRIVES, not that
+        // it does so within any particular wall-clock budget. A 1s ceiling made this fail on a
+        // loaded 4-CPU container (1 of 8 identical parallel runs) purely from scheduling delay
+        // on the 20ms poll. A wider ceiling keeps the behaviour under test - the wait still has
+        // to return the matching message and not the unrelated one - while no longer asserting
+        // the throughput of whatever else shares the machine.
+        var pending = adapter.WaitForOutboundAsync(m => m.Content == "important", TimeSpan.FromSeconds(30));
         await adapter.SendAsync(match);
         var resolved = await pending;
 

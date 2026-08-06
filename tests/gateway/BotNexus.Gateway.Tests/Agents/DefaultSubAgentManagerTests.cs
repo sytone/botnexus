@@ -201,11 +201,17 @@ public sealed class DefaultSubAgentManagerTests
         var manager = CreateScaffoldManager(supervisor.Object);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest(timeoutSeconds: 1));
 
+        // #2825: the subject under test is the 1s spawn timeout firing at all, not how quickly
+        // the observer notices. A 3s polling window left barely 2s of slack and failed on a
+        // loaded container (1 of 8 identical parallel runs). Widening only the OBSERVATION
+        // window keeps the assertion exact - the status must still become TimedOut, and a
+        // sub-agent that never times out still fails - without making the test a measurement
+        // of container scheduling latency.
         await WaitUntilAsync(async () =>
         {
             var info = await manager.GetAsync(spawned.SubAgentId);
             return info?.Status == SubAgentStatus.TimedOut;
-        }, TimeSpan.FromSeconds(3));
+        }, TimeSpan.FromSeconds(30));
 
         var updated = await manager.GetAsync(spawned.SubAgentId);
         updated.ShouldNotBeNull();
