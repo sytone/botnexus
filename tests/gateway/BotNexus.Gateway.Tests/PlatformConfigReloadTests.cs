@@ -46,13 +46,28 @@ public sealed class PlatformConfigReloadTests : IDisposable
         var tcs = new TaskCompletionSource<PlatformConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var sub = monitor.OnChange((cfg, _) => tcs.TrySetResult(cfg));
 
-        // Act — write a new config
-        File.WriteAllText(_configPath, """{"gateway":{"defaultAgentId":"agent-b"}}""");
-
-        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        // Act — write a new config.
+        //
+        // #2825: a single write plus one long wait is why this test flaked at ~40% across five
+        // identical parallel container runs. The change notification is a filesystem EVENT, and
+        // an event has two ways to never arrive: it can fire before OnChange finished
+        // registering, or it can be coalesced/dropped while the host is under load. Either way
+        // the single-shot wait then blocks for its whole budget on a notification that no
+        // longer exists, and reports a product defect for a lost event.
+        //
+        // Rewriting periodically makes the test depend on the pipeline eventually delivering A
+        // notification rather than on one specific event surviving. A genuinely broken reload
+        // pipeline still fails - no rewrite can satisfy it - so this removes the flake without
+        // weakening the assertion.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!tcs.Task.IsCompleted && DateTime.UtcNow < deadline)
+        {
+            File.WriteAllText(_configPath, """{"gateway":{"defaultAgentId":"agent-b"}}""");
+            await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+        }
 
         // Assert
-        completed.ShouldBe(tcs.Task, "IOptionsMonitor should have reloaded within 10 seconds");
+        tcs.Task.IsCompleted.ShouldBeTrue("IOptionsMonitor should have reloaded within 30 seconds");
         (await tcs.Task).Gateway?.DefaultAgentId.ShouldBe("agent-b");
     }
 

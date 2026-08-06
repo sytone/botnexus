@@ -57,7 +57,10 @@ internal sealed class MemoryStoreTestContext : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await Store.DisposeAsync();
-        SqliteConnection.ClearAllPools();
+
+        // Deliberately NOT SqliteConnection.ClearAllPools(): see SqlitePoolCleanup for why a
+        // process-global clear makes unrelated parallel tests fail with ObjectDisposedException.
+        SqlitePoolCleanup.ClearPoolFor(DbPath);
         if (Directory.Exists(TempDirectory))
         {
             for (var attempt = 0; attempt < 5; attempt++)
