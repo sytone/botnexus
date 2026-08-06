@@ -45,7 +45,11 @@ param(
     [string]$Configuration = 'Debug',
     [switch]$All,
     [switch]$NoBuild,
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    # #2825: when set, each project emits a TRX here so the remote runner can parse real
+    # counters. Omitted for local runs, which read pass/fail from the exit code alone.
+    [string]$ResultsDirectory
 )
 
 Set-StrictMode -Version Latest
@@ -223,7 +227,15 @@ try {
     foreach ($proj in $projectsToTest) {
         $name = [IO.Path]::GetFileNameWithoutExtension($proj)
         Write-Host "Testing: $name" -ForegroundColor White
-        dotnet test $proj --nologo --tl:off -c $Configuration $buildFlag
+        # #2825: emit a TRX per project when a results directory is supplied. Without a
+        # logger the runner's Get-RunnerTestResult finds no TRX and reports zeroed counters
+        # with failureReason 'missing-test-results' even for a suite that visibly ran and
+        # passed - a gate that cannot report what it executed is not a gate.
+        $loggerArgs = @()
+        if (-not [string]::IsNullOrWhiteSpace($ResultsDirectory)) {
+            $loggerArgs = @('--logger', "trx;LogFilePrefix=$name", '--results-directory', $ResultsDirectory)
+        }
+        dotnet test $proj --nologo --tl:off -c $Configuration $buildFlag @loggerArgs
         if ($LASTEXITCODE -ne 0) { $failed = $true }
     }
 }

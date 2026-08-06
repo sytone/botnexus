@@ -80,7 +80,7 @@ function New-TestRepository {
     return $path
 }
 
-function Write-Receipt([string]$Repository, [string]$Mode = 'strict') {
+function Write-Receipt([string]$Repository, [string]$Mode = 'full') {
     $fingerprint = & $fingerprintScript -WorktreePath $Repository
     $gitDirectory = (Invoke-IsolatedGit -Arguments @('-C', $Repository, 'rev-parse', '--absolute-git-dir')).Trim()
     $receiptDirectory = Join-Path $gitDirectory 'botnexus-validation'
@@ -102,6 +102,7 @@ function New-CommandScript([string]$Directory, [string]$Name, [string]$Marker, [
     @(
         "param([string]`$WorktreePath, [string]`$BaseRef, [string]`$Mode)"
         "Add-Content -Path '$($Marker.Replace("'", "''"))' -Value '$Name'"
+        "Add-Content -Path '$($Marker.Replace("'", "''")).modes' -Value ('$Name -Mode ' + `$Mode)"
         "exit $ExitCode"
     ) | Set-Content $path -Encoding utf8NoBOM
     return $path
@@ -133,7 +134,7 @@ $repositories = [Collections.Generic.List[string]]::new()
 # Scenario counter: proves the block below actually ran. If an early throw skips the
 # scenarios, this stays low and the run is reported RED instead of vacuously green.
 $script:scenariosExercised = 0
-$expectedScenarioCount = 7
+$expectedScenarioCount = 9
 # Clear git's per-invocation environment for the duration of the run. When this test is
 # executed FROM the pre-commit hook, git exports GIT_INDEX_FILE/GIT_DIR/GIT_PREFIX etc.
 # Those leak into the fixture repositories and make Get-WorktreeValidationFingerprint
@@ -158,6 +159,26 @@ try {
     Assert-Equal $false (Test-Path $marker) 'Matching remote receipt should bypass redundant validation.'
     Assert-Match 'Validation mode: remote' $result.Output 'Matching remote receipt should resolve remote mode despite ambient configuration.'
     Assert-Match 'skipping redundant remote validation' $result.Output 'The receipt-bypass branch must be genuinely evaluated, not skipped.'
+
+    # #2825: remote validation must dispatch the FULL solution, not the impacted subset.
+    # Strict was measured to exercise ~4,700 of 13,088 tests, so a silent regression to it
+    # would drop roughly two-thirds of coverage while still reporting a green gate. A
+    # strict receipt must NOT satisfy a full gate either, or the bypass reintroduces it.
+    $repo = New-TestRepository; $repositories.Add($repo)
+    $marker = Join-Path $repo 'commands.log'
+    $remote = New-CommandScript $repo 'remote.ps1' $marker
+    $local = New-CommandScript $repo 'local.ps1' $marker
+    $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; ValidationMode = 'remote' }
+    Assert-Equal 0 $result.ExitCode 'Remote validation should pass.'
+    Assert-Match '-Mode full' (Get-Content "$marker.modes") 'Remote validation must dispatch full-solution mode by default.'
+
+    $repo = New-TestRepository; $repositories.Add($repo)
+    $marker = Join-Path $repo 'commands.log'
+    $remote = New-CommandScript $repo 'remote.ps1' $marker
+    $local = New-CommandScript $repo 'local.ps1' $marker
+    Write-Receipt $repo 'strict'
+    $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; ValidationMode = 'remote' }
+    Assert-Equal $true (Test-Path $marker) 'A strict receipt must not satisfy the full remote gate.'
 
     # Local is the operational default and runs the globally serialized strict gate.
     $repo = New-TestRepository; $repositories.Add($repo)

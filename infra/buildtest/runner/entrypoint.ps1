@@ -111,7 +111,7 @@ try {
             $exitCode = $LASTEXITCODE
         }
         'strict' {
-            & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -From $baseRef -NoBuild 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
+            & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -From $baseRef -NoBuild -ResultsDirectory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
             $exitCode = $LASTEXITCODE
             if ($exitCode -eq 0) {
                 & dotnet test tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj --nologo --tl:off -c Debug --no-build --logger "trx;LogFileName=playwright.trx" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'playwright.log')
@@ -123,7 +123,7 @@ try {
             $exitCode = $LASTEXITCODE
         }
         default {
-            & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -From $baseRef -NoBuild 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
+            & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -From $baseRef -NoBuild -ResultsDirectory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
             $exitCode = $LASTEXITCODE
         }
     }

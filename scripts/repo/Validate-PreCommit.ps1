@@ -5,6 +5,13 @@ param(
     [string]$ValidationMode,
     [switch]$LocalFallback,
 
+    # #2825: remote validation defaults to 'full' - the whole solution, not the impacted
+    # subset. The impacted-test narrowing exists to spare a developer workstation's CPU;
+    # that constraint does not apply to an ephemeral container, and strict was measured to
+    # exercise ~4,700 of 13,088 tests while reporting zeroed counters.
+    [ValidateSet('strict', 'full')]
+    [string]$RemoteMode = 'full',
+
     # Advisory pre-commit scope (#2331): impacted projects only, bounded per step, and a
     # clean skip when another validation holds the global lock. The authoritative gate is
     # unchanged and still runs at pre-push and in CI.
@@ -74,7 +81,7 @@ if (Test-Path $receiptPath) {
             $receipt.baseRef -eq $current.baseRef -and
             $receipt.baseCommit -eq $current.baseCommit -and
             $receipt.tree -eq $current.tree -and
-            $receipt.mode -eq 'strict') {
+            $receipt.mode -eq $RemoteMode) {
             Write-Host "Authoritative Azure validation receipt matches the exact candidate ($($receipt.runId)); skipping redundant remote validation." -ForegroundColor Green
             exit 0
         }
@@ -85,6 +92,6 @@ if (Test-Path $receiptPath) {
     }
 }
 
-Write-Host 'No qualifying exact-content receipt; selected remote Azure Container Apps validation.' -ForegroundColor Cyan
-& $AzureValidationScript -WorktreePath $repoRoot -BaseRef $BaseRef -Mode strict
+Write-Host "No qualifying exact-content receipt; selected remote Azure Container Apps validation ($RemoteMode)." -ForegroundColor Cyan
+& $AzureValidationScript -WorktreePath $repoRoot -BaseRef $BaseRef -Mode $RemoteMode
 exit $LASTEXITCODE
