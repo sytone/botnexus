@@ -109,8 +109,24 @@ public sealed class CliInstallAndInitWorkflowTests : IAsyncLifetime
             .Select(p => Path.GetFileName(p)!)
             .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        // The config home holds the config document plus the `locks` subdirectory that
+        // CrossProcessConfigLock writes its lock file into. That subdirectory is deliberate, not
+        // residue: its own source comment records that the config directory has a pinned contract
+        // of "the config document and nothing else", so the lock was moved into a child directory
+        // precisely to keep a lock file that outlives a write from being indistinguishable from
+        // crash residue. It stays on the same volume rather than in %TEMP% so the exclusive-open
+        // semantics still hold and the lock is scoped to the home that owns the config.
+        //
+        // The directory is created on first write and not removed on release, so a fresh `init`
+        // legitimately leaves it behind. This assertion predates that change (#2765/#2777) and
+        // pinned the older flat layout, which is why it kept passing on a dev box that rarely runs
+        // the full CLI suite while failing consistently in the remote container gate (#2825).
+        //
+        // Assert the EXACT set rather than merely tolerating extras: the point of the original
+        // assertion is that init seeds a MINIMAL home and does not scatter state, and relaxing it
+        // to a subset check would stop detecting exactly that.
         actualEntries.ShouldBe(
-            new[] { "config.json" },
+            new[] { "config.json", "locks" },
             $"Unexpected entries in {configHome}. Got: {string.Join(", ", actualEntries)}");
 
         // ── config.json content ───────────────────────────────────────────
