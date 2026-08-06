@@ -10,8 +10,12 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('strict', 'impacted', 'full', 'playwright')]
+    [ValidateSet('strict', 'impacted', 'full', 'core', 'playwright')]
     [string]$Mode = 'strict',
+
+    # Must track replicaTimeout in infra/buildtest/main.bicep. Kept as a parameter so the
+    # reported budget cannot silently drift from the deployed one when either is retuned.
+    [int]$ReplicaTimeoutMinutes = 20,
     [string]$WorktreePath = (Get-Location).Path,
     [string]$SubscriptionId = $env:BOTNEXUS_BUILDTEST_SUBSCRIPTION_ID,
     [string]$ResourceGroup = $env:BOTNEXUS_BUILDTEST_RESOURCE_GROUP,
@@ -136,11 +140,27 @@ try {
     }
 
     $executionUrl = "${jobUrl}/executions/${executionName}?api-version=2024-03-01"
+    $watchStarted = [DateTime]::UtcNow
     do {
         Start-Sleep -Seconds 15
         $status = Invoke-AzJson @('rest', '--method', 'get', '--url', $executionUrl)
         Write-Host "Execution status: $($status.properties.status)" -ForegroundColor DarkGray
     } while ($status.properties.status -in @('Running', 'Processing', 'Unknown'))
+    $elapsed = ([DateTime]::UtcNow - $watchStarted).TotalMinutes
+
+    # The replica timeout is a deliberately realistic budget, not a safety ceiling, so a run
+    # that approaches it is a signal rather than noise. Report the margin every time and say
+    # so loudly on a breach: a hung lane and a failing test must not read the same, and the
+    # threshold should be raised only when honest run time has genuinely grown.
+    $budgetMinutes = $ReplicaTimeoutMinutes
+    $timedOut = $elapsed -ge ($budgetMinutes - 0.5)
+    $margin = [Math]::Round($budgetMinutes - $elapsed, 1)
+    if ($timedOut) {
+        Write-Warning ("TIMEOUT BUDGET BREACHED: ran {0:N1} min against a {1} min budget. Either the run genuinely hung or the budget is now too small - investigate before raising it." -f $elapsed, $budgetMinutes)
+    }
+    else {
+        Write-Host ("Run took {0:N1} min of a {1} min budget ({2} min margin)." -f $elapsed, $budgetMinutes, $margin) -ForegroundColor DarkGray
+    }
 
     New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
     & az storage blob download-batch --subscription $SubscriptionId --account-name $StorageAccount --source artifacts --destination $OutputPath --pattern "$runId/*" --auth-mode login --overwrite true --only-show-errors
@@ -177,7 +197,8 @@ try {
 
     if ($status.properties.status -ne 'Succeeded' -or $null -eq $result -or $result.exitCode -ne 0 -or -not $requiredArtifactsPresent) {
         $artifactFailure = if ($requiredArtifactsPresent) { '' } else { ' The strict Playwright artifact is missing; the deployed runner does not prove strict mode.' }
-        throw "Azure validation failed. Execution status: $($status.properties.status).$artifactFailure Artifacts: $OutputPath"
+        $timeoutNote = if ($timedOut) { (' The run reached the {0} min replica timeout, so it was killed rather than completing - treat this as a hang, not a test failure.' -f $budgetMinutes) } else { '' }
+        throw "Azure validation failed. Execution status: $($status.properties.status).$artifactFailure$timeoutNote Artifacts: $OutputPath"
     }
 
     Write-Host "Azure validation passed. Artifacts: $OutputPath" -ForegroundColor Green

@@ -130,7 +130,12 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
     workloadProfileName: 'Consumption'
     configuration: {
       triggerType: 'Manual'
-      replicaTimeout: 7200
+      // 20 minutes. A full core run measures ~13-15 min, so this is a realistic budget
+      // rather than an arbitrary ceiling: a lane that breaches it has genuinely hung (the
+      // 2026-08-06 parallel test wedged 3 of 5 lanes past 34 min) instead of quietly
+      // burning two hours before anyone notices. Raise it deliberately if honest run time
+      // grows - Invoke-AzureBuildTest reports the margin so the breach is visible.
+      replicaTimeout: 1200
       replicaRetryLimit: 0
       manualTriggerConfig: {
         parallelism: 1
