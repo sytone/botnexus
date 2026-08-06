@@ -175,7 +175,7 @@ public sealed class SubAgentIntegrationTests
 
         await WaitUntilAsync(
             async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Completed,
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(30));
         var completed = await manager.GetAsync(spawned.SubAgentId);
 
         completed.ShouldNotBeNull();
@@ -204,10 +204,10 @@ public sealed class SubAgentIntegrationTests
 
         await WaitUntilAsync(
             async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Failed,
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(30));
         await WaitUntilAsync(
             () => Task.FromResult(workspaceManager.Invocations.Count > 0),
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(30));
 
         workspaceManager.Verify(w => w.TryCleanupWorkspace(It.IsAny<string>()), Times.Once);
     }
@@ -228,10 +228,10 @@ public sealed class SubAgentIntegrationTests
 
         await WaitUntilAsync(
             async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.TimedOut,
-            TimeSpan.FromSeconds(3));
+            TimeSpan.FromSeconds(30));
         await WaitUntilAsync(
             () => Task.FromResult(workspaceManager.Invocations.Count > 0),
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(30));
 
         workspaceManager.Verify(w => w.TryCleanupWorkspace(It.IsAny<string>()), Times.Once);
     }

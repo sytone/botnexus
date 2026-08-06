@@ -228,7 +228,7 @@ public sealed class ProcessToolTests : IDisposable
     public async Task Kill_TerminatesRunningProcess()
     {
         var managed = SpawnTestProcess("ping -n 60 127.0.0.1 >nul", "sleep 60");
-        await WaitUntilAsync(() => managed.IsRunning, TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => managed.IsRunning, TimeSpan.FromSeconds(30));
 
         managed.IsRunning.ShouldBeTrue();
 
@@ -236,7 +236,7 @@ public sealed class ProcessToolTests : IDisposable
         var text = ResultText(result);
 
         text.ShouldContain("terminated");
-        await WaitUntilAsync(() => !managed.IsRunning, TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => !managed.IsRunning, TimeSpan.FromSeconds(30));
         managed.IsRunning.ShouldBeFalse();
     }
 

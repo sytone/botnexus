@@ -150,7 +150,7 @@ public sealed class DefaultSubAgentManagerRetentionTests
 
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
         await WaitUntilAsync(async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Completed,
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(30));
 
         // Cleanup already disposed the timeout source; a subsequent kill must not throw
         // ObjectDisposedException (the CTS dispose paths are idempotent). Reaching the assertion

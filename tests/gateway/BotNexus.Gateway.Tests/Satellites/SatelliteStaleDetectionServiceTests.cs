@@ -33,9 +33,22 @@ public sealed class SatelliteStaleDetectionServiceTests
             NullLogger<SatelliteStaleDetectionService>.Instance,
             checkInterval: TimeSpan.FromMilliseconds(50));
 
-        // Start service and let it run one cycle
+        // Start service and poll for the outcome.
+        //
+        // #2825: this previously slept 200ms and hoped a 50ms cycle had run, which failed on a
+        // loaded container (Expected Offline, Actual Online) because the background service had
+        // not been scheduled yet. Sleeping a fixed time asserts the host's throughput; polling
+        // for the condition asserts the behaviour. A service that never marks the satellite
+        // stale still fails, so the assertion is unchanged - it just no longer requires the
+        // scheduler to be prompt.
         var task = service.StartAsync(cts.Token);
-        await Task.Delay(200);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (registry.GetById("stale-sat")?.Status != SatelliteStatus.Offline
+            && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
         await cts.CancelAsync();
         await service.StopAsync(CancellationToken.None);
 

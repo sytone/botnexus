@@ -236,7 +236,7 @@ public sealed class MemoryIndexerSweptSessionTests
 
         public async Task<LogRecord> WaitForAsync(LogLevel level)
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             return await Waiter(level).Task.WaitAsync(cts.Token);
         }
 

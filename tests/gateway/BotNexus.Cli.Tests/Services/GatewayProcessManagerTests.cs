@@ -453,6 +453,28 @@ public sealed class GatewayProcessManagerTests : IDisposable
         {
             await WriteIdentityPidFileAsync(process);
 
+            // #2825: wait until the spawned process is genuinely running before stopping it.
+            // StopAsync treats an absent process as "nothing to stop" and returns success, so
+            // on a loaded container - where Process.Start returns before the OS has scheduled
+            // the child - the override path was never reached and the test saw Success=true.
+            // That reported a product defect for a scheduling delay. The assertion below is
+            // unchanged: the override still must force the !exited path and yield a failure.
+            var startDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
+            while (DateTimeOffset.UtcNow < startDeadline)
+            {
+                try
+                {
+                    if (!Process.GetProcessById(process.Id).HasExited)
+                        break;
+                }
+                catch (ArgumentException)
+                {
+                    // Not visible to the OS yet; keep waiting.
+                }
+
+                await Task.Delay(25);
+            }
+
             var result = await neverExitsManager.StopAsync(_testPidDirectory);
 
             // Process reported as still running (override returned false) — MUST return failure.

@@ -20,7 +20,7 @@ public sealed class DefaultSubAgentManagerActivityTests
         var manager = CreateManager(CreateHangingHandle(), out _, out var activity);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
 
-        await WaitUntilAsync(() => activity.Activities.Any(HasLifecycleEvent("subagent_spawned")), TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => activity.Activities.Any(HasLifecycleEvent("subagent_spawned")), TimeSpan.FromSeconds(30));
 
         activity.Activities.ShouldContain(activity =>
             activity.Type == GatewayActivityType.SubAgentSpawned &&
@@ -40,7 +40,7 @@ public sealed class DefaultSubAgentManagerActivityTests
         // window).
         await WaitUntilAsync(
             () => activity.Activities.Any(HasLifecycleEvent("subagent_completed")),
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(30));
 
         activity.Activities.Any(HasLifecycleEvent("subagent_completed")).ShouldBeTrue();
         (await manager.GetAsync(spawned.SubAgentId))!.Status.ShouldBe(SubAgentStatus.Completed);
@@ -59,7 +59,7 @@ public sealed class DefaultSubAgentManagerActivityTests
         // tests do) removes that window.
         await WaitUntilAsync(
             () => activity.Activities.Any(HasLifecycleEvent("subagent_failed")),
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(30));
 
         activity.Activities.Any(HasLifecycleEvent("subagent_failed")).ShouldBeTrue();
         (await manager.GetAsync(spawned.SubAgentId))!.Status.ShouldBe(SubAgentStatus.Failed);
@@ -74,7 +74,7 @@ public sealed class DefaultSubAgentManagerActivityTests
         var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
 
         killed.ShouldBeTrue();
-        await WaitUntilAsync(() => activity.Activities.Any(HasLifecycleEvent("subagent_killed")), TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => activity.Activities.Any(HasLifecycleEvent("subagent_killed")), TimeSpan.FromSeconds(30));
         activity.Activities.Any(HasLifecycleEvent("subagent_killed")).ShouldBeTrue();
     }
 
@@ -95,7 +95,7 @@ public sealed class DefaultSubAgentManagerActivityTests
 
         // Two running sub-agents under two different parent sessions -> the platform-wide count is 2,
         // even though each parent's ListAsync would only see one.
-        await WaitUntilAsync(() => manager.ActiveSubAgentCount == 2, TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => manager.ActiveSubAgentCount == 2, TimeSpan.FromSeconds(30));
         manager.ActiveSubAgentCount.ShouldBe(2);
         (await manager.ListAsync(SessionId.From("parent-session"))).Count.ShouldBe(1);
         (await manager.ListAsync(SessionId.From("parent-session-2"))).Count.ShouldBe(1);
@@ -103,7 +103,7 @@ public sealed class DefaultSubAgentManagerActivityTests
         // Killing one completes that record; the platform-wide active count must exclude it.
         (await manager.KillAsync(first.SubAgentId, SessionId.From("parent-session"))).ShouldBeTrue();
 
-        await WaitUntilAsync(() => manager.ActiveSubAgentCount == 1, TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => manager.ActiveSubAgentCount == 1, TimeSpan.FromSeconds(30));
         manager.ActiveSubAgentCount.ShouldBe(1);
     }
     private static SubAgentSpawnRequest CreateSpawnRequestFor(string parentSessionId)
