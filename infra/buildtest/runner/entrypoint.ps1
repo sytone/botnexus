@@ -52,9 +52,16 @@ try {
     $env:NUGET_PACKAGES = '/cache/nuget'
     $env:PLAYWRIGHT_BROWSERS_PATH = '/ms-playwright'
 
-    # Raise the inotify INSTANCE ceiling before any test host starts (#2825).
+    # Attempt to raise the inotify INSTANCE ceiling before any test host starts (#2825).
     #
-    # Sixteen test classes boot a WebApplicationFactory<Program>, and every host registers
+    # MEASURED OUTCOME: this DOES NOT WORK on Azure Container Apps. /proc/sys is mounted
+    # read-only, the container has no CAP_SYS_ADMIN, and Container Apps jobs expose no sysctl
+    # surface, so both writes fail and the run continues on the default. The block is retained
+    # deliberately: it documents what was tried, it costs nothing, and it will take effect on any
+    # runtime that does permit the write. Do not read a green run as evidence that it applied --
+    # check runner-env.log, which records the failure explicitly.
+    # The exhaustion finding itself is independently confirmed by probe: sixteen test classes boot
+    # a WebApplicationFactory<Program>, and every host registers
     # AddJsonFile(reloadOnChange: true) -- one inotify instance each. Instances are counted
     # per-USER, not per-process, so a full-suite run accumulates them across every concurrently
     # live test host. The container default (128) is exhausted partway through, and the failure is
@@ -68,8 +75,10 @@ try {
     # (overlayfs, the atomic inode swap, xUnit collection parallelism) each looked plausible and
     # each tested clean in isolation.
     #
-    # Best-effort: a runner without CAP_SYS_ADMIN cannot write /proc/sys, and that must not fail
-    # the run -- it simply leaves the previous behaviour in place.
+    # Best-effort: /proc/sys is read-only here, so this always lands in the catch on Container
+    # Apps and must not fail the run -- it simply leaves the previous behaviour in place. The
+    # real remedy is to reduce watcher DEMAND (test hosts mostly do not need reloadOnChange at
+    # all) rather than to raise supply, which is tracked separately.
     #
     # The outcome is written to an ARTIFACT, not merely Write-Host. Runner stdout is not among the
     # uploaded artifacts and `az containerapp job logs show` hangs on this environment, so a
