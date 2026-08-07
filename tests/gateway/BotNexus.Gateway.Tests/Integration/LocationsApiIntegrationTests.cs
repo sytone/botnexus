@@ -20,6 +20,31 @@ public sealed class LocationsApiIntegrationTests
     private static readonly SemaphoreSlim EnvLock = new(1, 1);
 
     /// <summary>
+    /// Builds an absolute filesystem path that is valid on the RUNNING platform.
+    /// </summary>
+    /// <remarks>
+    /// These tests previously embedded Windows literals (<c>Q:\repos\workspace</c>). That is not a
+    /// cosmetic portability wart: since remote containerised validation became the default gate
+    /// (#2158), the suite runs on Linux, where a drive-qualified literal is not an absolute path at
+    /// all - it is a single relative filename whose colon and backslashes are ordinary characters.
+    /// The locations API resolves and stores it, but nothing downstream matches the shape the
+    /// assertions expect, so all four tests failed on every Linux run regardless of the change
+    /// under test (#2830). A gate that is red for reasons unrelated to the diff trains the reader
+    /// to dismiss red, which is how a real regression gets waved through.
+    ///
+    /// Deriving from <see cref="Path.GetTempPath"/> plus <see cref="Path.Combine"/> yields a
+    /// genuinely rooted path with the platform's own separator on both operating systems, so the
+    /// assertions test the API's round-trip behaviour rather than the host's path syntax. The
+    /// directory is deliberately NOT created: these tests exercise configuration persistence, and
+    /// the create/update/delete endpoints do not require the target to exist. Only the health
+    /// projection calls <c>Directory.Exists</c>, and no assertion here depends on it.
+    /// </remarks>
+    /// <param name="segments">Path segments appended beneath the temp root.</param>
+    /// <returns>An absolute, platform-native path.</returns>
+    private static string PlatformPath(params string[] segments)
+        => Path.GetFullPath(Path.Combine([Path.GetTempPath(), "botnexus-locations-values", .. segments]));
+
+    /// <summary>
     /// Polls <paramref name="read"/> until <paramref name="predicate"/> holds or the budget expires.
     /// </summary>
     /// <remarks>
@@ -98,11 +123,14 @@ public sealed class LocationsApiIntegrationTests
             await using var factory = CreateTestFactory();
             using var client = factory.CreateClient();
 
+            var workspacePath = PlatformPath("workspace");
+            var updatedWorkspacePath = PlatformPath("workspace-updated");
+
             var createResponse = await client.PostAsJsonAsync("/api/locations", new
             {
                 name = "workspace",
                 type = "filesystem",
-                value = "Q:\\repos\\workspace",
+                value = workspacePath,
                 description = "Working tree"
             });
 
@@ -120,13 +148,13 @@ public sealed class LocationsApiIntegrationTests
 
             var configAfterCreate = fixture.ReadConfigJson();
             configAfterCreate["gateway"]?["locations"]?["workspace"]?["path"]?.GetValue<string>()
-                .ShouldBe("Q:\\repos\\workspace");
+                .ShouldBe(workspacePath);
 
             var updateResponse = await client.PutAsJsonAsync("/api/locations/workspace", new
             {
                 name = "workspace",
                 type = "filesystem",
-                value = "Q:\\repos\\workspace-updated",
+                value = updatedWorkspacePath,
                 description = "Updated"
             });
 
@@ -134,7 +162,7 @@ public sealed class LocationsApiIntegrationTests
 
             var configAfterUpdate = fixture.ReadConfigJson();
             configAfterUpdate["gateway"]?["locations"]?["workspace"]?["path"]?.GetValue<string>()
-                .ShouldBe("Q:\\repos\\workspace-updated");
+                .ShouldBe(updatedWorkspacePath);
             configAfterUpdate["gateway"]?["locations"]?["workspace"]?["description"]?.GetValue<string>()
                 .ShouldBe("Updated");
 
@@ -166,7 +194,7 @@ public sealed class LocationsApiIntegrationTests
             {
                 name = "hot-reload",
                 type = "filesystem",
-                value = "Q:\\repos\\hot-reload"
+                value = PlatformPath("hot-reload")
             });
             createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
 
@@ -220,7 +248,7 @@ public sealed class LocationsApiIntegrationTests
             {
                 name = "duplicate",
                 type = "filesystem",
-                value = "Q:\\repos\\dupe"
+                value = PlatformPath("dupe")
             });
             firstCreate.StatusCode.ShouldBe(HttpStatusCode.Created);
 
@@ -228,7 +256,7 @@ public sealed class LocationsApiIntegrationTests
             {
                 name = "duplicate",
                 type = "filesystem",
-                value = "Q:\\repos\\dupe2"
+                value = PlatformPath("dupe2")
             });
 
             duplicateCreate.StatusCode.ShouldBe(HttpStatusCode.Conflict);
