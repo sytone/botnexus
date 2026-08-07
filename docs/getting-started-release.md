@@ -293,10 +293,13 @@ The **WebUI** is the easiest way to chat with your agents.
 Open your browser to:
 
 ```text
-http://localhost:18790/
+http://localhost:5005/
 ```
 
 You should see the BotNexus web interface. The UI connects to the Gateway automatically via SignalR.
+
+> If you changed the listen address during setup, ask the Gateway rather than guessing:
+> `botnexus config get gateway.listenUrl` prints the URL it is actually bound to.
 
 ### The Web Interface Layout
 
@@ -483,7 +486,7 @@ botnexus backup restore <backup-name>
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Port already in use | Another process on 18790 | Edit `~/.botnexus/config.json` and change `Gateway.Port` |
+| Port already in use | Another process on 5005 | Edit `~/.botnexus/config.json` and change `Gateway.Port` |
 | OAuth code expired | Took too long to authorize | Send another message to get a fresh code |
 | WebUI shows "Disconnected" | Gateway isn't running | Run `botnexus start` |
 | "No providers found" in health check | Provider DLLs not in extensions directory | Verify `ExtensionsPath` in config.json points to the correct location |

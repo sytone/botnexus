@@ -714,7 +714,7 @@ Gateway HTTP server settings.
 {
   "Gateway": {
     "Host": "0.0.0.0",
-    "Port": 18790,
+    "Port": 5005,
     "ApiKey": "secret-gateway-key",
     "DefaultAgent": "default",
     "BroadcastWhenAgentUnspecified": false,
@@ -729,7 +729,7 @@ Gateway HTTP server settings.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Host` | string | `0.0.0.0` | Bind address (0.0.0.0 = all interfaces, 127.0.0.1 = localhost) |
-| `Port` | int | 18790 | Listen port for gateway server |
+| `Port` | int | 5005 | Listen port for gateway server |
 | `ApiKey` | string | null | Optional API key for authentication (recommended for production) |
 | `DefaultAgent` | string | null | Default agent name if message has no agent metadata |
 | `BroadcastWhenAgentUnspecified` | bool | false | If true, route to all agents when agent not specified |
@@ -1056,7 +1056,7 @@ Gateway-level shell settings control the default shell behavior for all agents. 
 {
   "Gateway": {
     "Host": "0.0.0.0",
-    "Port": 18790,
+    "Port": 5005,
     "ShellPreference": "pwsh",
     "ShellCommand": ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]
   }
@@ -2182,7 +2182,7 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
     },
     "Gateway": {
       "Host": "127.0.0.1",
-      "Port": 18790,
+      "Port": 5005,
   
     }
   }
@@ -2271,7 +2271,7 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
     },
     "Gateway": {
       "Host": "0.0.0.0",
-      "Port": 18790,
+      "Port": 5005,
       "ApiKey": "gateway-secret-key",
       "DefaultAgent": "researcher",
       "Heartbeat": {

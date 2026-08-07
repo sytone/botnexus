@@ -1673,7 +1673,7 @@ dotnet publish src/BotNexus.Gateway -o ./publish
 **Symptom:** `IWebhookHandler` is registered but webhook events aren't arriving.
 
 **Checks:**
-1. Is the Gateway listening on the correct port (default 18790)?
+1. Is the Gateway listening on the correct port (default 5005)?
 2. Is the webhook route registered? Check Gateway logs:
    ```
    Registered webhook handler: /webhooks/slack
