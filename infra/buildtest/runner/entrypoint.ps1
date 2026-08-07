@@ -150,11 +150,20 @@ try {
     if ($strictResults) {
         . $runnerResultScript
         $trxPaths = @(Get-ChildItem -Path $resultsRoot -Filter '*.trx' -Recurse -File | Select-Object -ExpandProperty FullName)
-        $testResult = Get-RunnerTestResult -TrxPaths $trxPaths -RequireZeroSkipped
+
+        # A collapsed run is invisible to a pass/fail check: one passing test satisfies
+        # "zero failed" exactly as well as 12,765 do, so a filter typo or a project that
+        # silently stopped being discovered would certify green. The floors are set well
+        # below the observed counts (core measured 12,802 on 2026-08-06) so ordinary suite
+        # growth and churn never trip them, but a collapse cannot hide.
+        $minimumTotals = @{ full = 12000; core = 12000; strict = 0; playwright = 0 }
+        $minimumTotal = if ($minimumTotals.ContainsKey($mode)) { $minimumTotals[$mode] } else { 0 }
+
+        $testResult = Get-RunnerTestResult -TrxPaths $trxPaths -RequireZeroSkipped -MinimumTotal $minimumTotal
         $testResult | ConvertTo-Json | Set-Content -Path (Join-Path $artifactsRoot 'test-result.json')
         if (-not $testResult.isComplete) {
             $exitCode = 1
-            throw "Strict $mode validation rejected the test result: $($testResult.failureReason) (total=$($testResult.total), passed=$($testResult.passed), failed=$($testResult.failed), skipped=$($testResult.skipped))."
+            throw "Strict $mode validation rejected the test result: $($testResult.failureReason) (total=$($testResult.total), passed=$($testResult.passed), failed=$($testResult.failed), skipped=$($testResult.skipped), fixtureFailures=$($testResult.fixtureFailures), minimumTotal=$minimumTotal)."
         }
     }
 }

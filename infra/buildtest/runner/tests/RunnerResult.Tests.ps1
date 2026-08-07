@@ -8,10 +8,29 @@ function Assert-Equal($Expected, $Actual, [string]$Message) {
 }
 
 function Write-Trx([string]$Path, [int]$Total, [int]$Executed, [int]$Passed, [int]$Failed, [int]$NotExecuted) {
+    # Emits $Passed passing result rows so the fixture matches the shape real `dotnet test`
+    # output actually has. A counter block with no rows behind it is the forged shape #2851
+    # added a guard for, so a synthetic TRX must not use it to mean "an ordinary run".
+    $rows = (1..[Math]::Max($Passed, 0) | Where-Object { $Passed -gt 0 } | ForEach-Object {
+        "    <UnitTestResult testName=`"p$_`" outcome=`"Passed`" />"
+    }) -join "`n"
+    @"
+<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Results>
+$rows
+  </Results>
+  <ResultSummary outcome="Completed">
+    <Counters total="$Total" executed="$Executed" passed="$Passed" failed="$Failed" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="$NotExecuted" disconnected="0" warning="0" completed="$Executed" inProgress="0" pending="0" />
+  </ResultSummary>
+</TestRun>
+"@ | Set-Content -Path $Path
+}
+
+function Write-TrxNoResultsNode([string]$Path, [int]$Total, [int]$Executed, [int]$Passed) {
     @"
 <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
   <ResultSummary outcome="Completed">
-    <Counters total="$Total" executed="$Executed" passed="$Passed" failed="$Failed" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="$NotExecuted" disconnected="0" warning="0" completed="$Executed" inProgress="0" pending="0" />
+    <Counters total="$Total" executed="$Executed" passed="$Passed" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="$Executed" inProgress="0" pending="0" />
   </ResultSummary>
 </TestRun>
 "@ | Set-Content -Path $Path
@@ -96,6 +115,83 @@ try {
     $result = Get-RunnerTestResult -TrxPaths @($empty) -RequireZeroSkipped
     Assert-Equal $false $result.isComplete 'Zero tests must be incomplete.'
     Assert-Equal 'no-tests-executed' $result.failureReason 'Zero test classification.'
+
+    # --- #2851: the blocklist failed open. These are the EXACT messages mined from the 2,214
+    # real TRX files on disk that the merged classifier waved through as deliberate skips.
+
+    # AC1/AC2: bare process-failure messages carry no `Fixture failed:` prefix at all.
+    foreach ($crash in @(
+        'Solution prebuild exit 1.',
+        'dotnet pack exit 1.',
+        'Fixture init failed: Solution prebuild exit 1.',
+        'Fixture init failed: dotnet pack exit 1.',
+        'System.InvalidOperationException: the harness never started'
+    )) {
+        $path = Join-Path $temp ('crash-' + [Guid]::NewGuid().ToString('N') + '.trx')
+        Write-TrxWithResults $path 30 29 29 @($crash)
+        $result = Get-RunnerTestResult -TrxPaths @($path) -RequireZeroSkipped
+        Assert-Equal 1 $result.fixtureFailures "Unrecognised skip reason must be a fixture failure: $crash"
+        Assert-Equal $false $result.isComplete "A build failure must never be complete: $crash"
+        Assert-Equal 'fixture-failures' $result.failureReason "Build-failure classification: $crash"
+    }
+
+    # AC1/AC2 precedence: a crash message that ALSO contains an allow-listed phrase must still
+    # fail. Fixture messages routinely quote the condition they were checking, so
+    # "Dev gateway not running" appears inside real crash text; if the allow-list were consulted
+    # first, quoting a benign phrase would launder a build failure into a deliberate skip.
+    $poisoned = Join-Path $temp 'poisoned-reason.trx'
+    Write-TrxWithResults $poisoned 30 29 29 @('Fixture init failed: Dev gateway not running at localhost:5006. Solution prebuild exit 1.')
+    $result = Get-RunnerTestResult -TrxPaths @($poisoned) -RequireZeroSkipped
+    Assert-Equal 1 $result.fixtureFailures 'A crash quoting an allow-listed phrase must not be laundered.'
+    Assert-Equal $false $result.isComplete 'Process failure must outrank the allow-list.'
+
+    # AC3: counters claiming executed work that no result row corroborates.
+    $ghost = Join-Path $temp 'ghost-rows.trx'
+    Write-TrxNoResultsNode $ghost 100 100 100
+    $result = Get-RunnerTestResult -TrxPaths @($ghost) -RequireZeroSkipped
+    Assert-Equal $false $result.isComplete 'Counters with no result rows must not certify green.'
+    Assert-Equal 'unverifiable-test-results' $result.failureReason 'Uncorroborated counter classification.'
+
+    # AC3 parity: an empty project legitimately emits zero rows AND zero executed. The green
+    # core run of 2026-08-06 contained five such files, so this shape must stay acceptable or
+    # the guard breaks a passing gate.
+    $emptyProject = Join-Path $temp 'empty-project.trx'
+    Write-TrxNoResultsNode $emptyProject 0 0 0
+    $realWork = Join-Path $temp 'real-work.trx'
+    Write-Trx $realWork 10 10 10 0 0
+    $result = Get-RunnerTestResult -TrxPaths @($emptyProject, $realWork) -RequireZeroSkipped
+    Assert-Equal $true $result.isComplete 'An empty project with zero executed must not be unverifiable.'
+
+    # AC4: a run cannot execute more tests than it contains.
+    $impossible = Join-Path $temp 'impossible.trx'
+    Write-Trx $impossible 5 500 500 0 0
+    $result = Get-RunnerTestResult -TrxPaths @($impossible) -RequireZeroSkipped
+    Assert-Equal $false $result.isComplete 'executed > total must never be complete.'
+    Assert-Equal 'impossible-test-counters' $result.failureReason 'Impossible counter classification.'
+
+    # AC5: one passing test satisfies "zero failed" exactly as well as 12,765 do.
+    $collapsed = Join-Path $temp 'collapsed.trx'
+    Write-Trx $collapsed 1 1 1 0 0
+    $result = Get-RunnerTestResult -TrxPaths @($collapsed) -RequireZeroSkipped -MinimumTotal 12000
+    Assert-Equal $false $result.isComplete 'A collapsed run must not pass a mode with a floor.'
+    Assert-Equal 'below-minimum-total' $result.failureReason 'Collapsed run classification.'
+    # And the floor must not fire on a run that meets it.
+    $result = Get-RunnerTestResult -TrxPaths @($collapsed) -RequireZeroSkipped -MinimumTotal 1
+    Assert-Equal $true $result.isComplete 'A run meeting its floor must still pass.'
+
+    # AC6 (parity): every deliberate skip reason observed in the last green core run must still
+    # be recognised. These four messages account for all 38 skips in run 20260806211507-8a39b1d4.
+    $green = Join-Path $temp 'green-parity.trx'
+    $greenSkips = @()
+    $greenSkips += ,'Dev gateway not running at localhost:5006' * 28
+    $greenSkips += ,'GITHUB_TOKEN environment variable not set. Skipping integration test.' * 8
+    $greenSkips += 'Windows-only test.'
+    $greenSkips += 'Blocked by #383: canvas HTML is not persisted across reconnect.'
+    Write-TrxWithResults $green 12802 12764 12764 $greenSkips
+    $result = Get-RunnerTestResult -TrxPaths @($green) -RequireZeroSkipped -MinimumTotal 12000
+    Assert-Equal 38 $result.skipped 'Green-run parity: skipped count.'
+    Assert-Equal 0 $result.fixtureFailures 'Green-run parity: no skip may be reclassified as a crash.'
+    Assert-Equal $true $result.isComplete 'Green-run parity: the last green core run must stay green.'
 
     Write-Host 'RunnerResult.Tests.ps1: PASS'
 }
