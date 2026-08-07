@@ -219,7 +219,7 @@ Files are concatenated in the order specified. Paths are relative to `~/.botnexu
 6. `USER.md` — User preferences
 7. `MEMORY.md` — Long-term distilled memory
 
-Recent daily memory notes (`memory/{today}.md` and `memory/{yesterday}.md`) are auto-loaded regardless of `systemPromptFiles` — that setting only chooses which workspace prompt files to load. To suppress daily notes (and `MEMORY.md`), set `memory.promptInjection` to `"none"`.
+Recent daily memory notes (`memory/{today}.md` and `memory/{yesterday}.md`) are auto-loaded regardless of `systemPromptFiles`, which only chooses which workspace prompt files to load. To suppress daily notes (and `MEMORY.md`), set `memory.promptInjection` to `"none"`.
 
 ### Tool Assignment
 
