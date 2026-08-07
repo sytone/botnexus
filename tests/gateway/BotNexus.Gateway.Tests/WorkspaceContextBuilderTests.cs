@@ -152,6 +152,103 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
+    public async Task BuildSystemPromptAsync_WithExplicitPromptFiles_StillIncludesRecentDailyMemoryFiles()
+    {
+        var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";
+        var yesterdayFileName = $"{DateTime.Now.AddDays(-1):yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            ("SOUL.md", "SOUL"),
+            (Path.Combine("memory", todayFileName), "TODAY MEMORY ENTRY"),
+            (Path.Combine("memory", yesterdayFileName), "YESTERDAY MEMORY ENTRY"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                SystemPromptFiles = ["AGENTS.md", "SOUL.md"]
+            });
+
+            result.ShouldContain("AGENTS");
+            result.ShouldContain("TODAY MEMORY ENTRY");
+            result.ShouldContain("YESTERDAY MEMORY ENTRY");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithSingularPromptFile_StillIncludesRecentDailyMemoryFiles()
+    {
+        var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            (Path.Combine("memory", todayFileName), "TODAY MEMORY ENTRY"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                SystemPromptFile = "AGENTS.md"
+            });
+
+            result.ShouldContain("AGENTS");
+            result.ShouldContain("TODAY MEMORY ENTRY");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithExplicitPromptFilesAndPromptInjectionNone_SkipsRecentDailyMemoryFiles()
+    {
+        var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            (Path.Combine("memory", todayFileName), "TODAY MEMORY ENTRY"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+            var memoryConfig = new MemoryAgentConfig { Enabled = true };
+            SetPromptInjection(memoryConfig, "none");
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                SystemPromptFiles = ["AGENTS.md"],
+                Memory = memoryConfig
+            });
+
+            result.ShouldContain("AGENTS");
+            result.ShouldNotContain("TODAY MEMORY ENTRY");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task BuildSystemPromptAsync_DefaultPrompt_WithMemoryPromptInjectionNone_SkipsMemorySummaryAndRecentDailyFiles()
     {
         var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";

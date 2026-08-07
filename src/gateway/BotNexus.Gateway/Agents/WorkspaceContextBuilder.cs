@@ -126,13 +126,13 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             }
         }
 
-        if (descriptor.SystemPromptFiles.Count == 0 && string.IsNullOrWhiteSpace(descriptor.SystemPromptFile))
+        // Daily memory injection is governed solely by the memory config (`memory.promptInjection`).
+        // It is deliberately NOT gated on `systemPromptFiles` / `systemPromptFile`: those settings
+        // select which workspace prompt files to load, and must not silently disable memory (#2868).
+        if (!IsMemoryPromptInjectionNone(memoryPromptInjection))
         {
-            if (!IsMemoryPromptInjectionNone(memoryPromptInjection))
-            {
-                var recentMemoryFiles = await LoadDailyMemoryAsync(descriptor, workspacePath, cancellationToken);
-                contextFiles.AddRange(recentMemoryFiles);
-            }
+            var recentMemoryFiles = await LoadDailyMemoryAsync(descriptor, workspacePath, cancellationToken);
+            contextFiles.AddRange(recentMemoryFiles);
         }
 
         // Surface the connecting client kind (e.g. SignalR "mobile" vs "desktop") on the runtime
