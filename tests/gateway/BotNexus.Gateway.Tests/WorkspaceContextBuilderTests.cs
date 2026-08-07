@@ -226,10 +226,12 @@ public sealed class WorkspaceContextBuilderTests
     public async Task BuildSystemPromptAsync_WhenDailyNoteAlsoListedInPromptFiles_EmitsItOnce()
     {
         var today = DateTime.Now.Date;
+        var yesterday = today.AddDays(-1);
         var todayRelativePath = $"memory/{today:yyyy-MM-dd}.md";
         var workspacePath = CreateWorkspace(
             ("AGENTS.md", "AGENTS"),
-            (Path.Combine("memory", $"{today:yyyy-MM-dd}.md"), "TODAY MEMORY ENTRY"));
+            (Path.Combine("memory", $"{today:yyyy-MM-dd}.md"), "TODAY MEMORY ENTRY"),
+            (Path.Combine("memory", $"{yesterday:yyyy-MM-dd}.md"), "YESTERDAY MEMORY ENTRY"));
         try
         {
             var manager = new StubWorkspaceManager(workspacePath);
@@ -244,6 +246,11 @@ public sealed class WorkspaceContextBuilderTests
                 SystemPromptFiles = ["AGENTS.md", todayRelativePath]
             });
 
+            // Yesterday's note is not in the prompt-file list, so it can only arrive via the daily
+            // memory pass. Asserting it is present proves that pass actually ran, which makes the
+            // count-of-one below a real dedupe assertion rather than a side-effect of the pass
+            // being skipped (as it was before the systemPromptFiles gate was removed).
+            result.ShouldContain("YESTERDAY MEMORY ENTRY");
             CountOccurrences(result, "TODAY MEMORY ENTRY").ShouldBe(1);
         }
         finally
@@ -313,6 +320,44 @@ public sealed class WorkspaceContextBuilderTests
 
             result.ShouldContain("AGENTS");
             result.ShouldNotContain("TODAY MEMORY ENTRY");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithPromptInjectionNoneAndExplicitlyListedDailyNote_StillLoadsIt()
+    {
+        var today = DateTime.Now.Date;
+        var yesterday = today.AddDays(-1);
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            (Path.Combine("memory", $"{today:yyyy-MM-dd}.md"), "TODAY MEMORY ENTRY"),
+            (Path.Combine("memory", $"{yesterday:yyyy-MM-dd}.md"), "YESTERDAY MEMORY ENTRY"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+            var memoryConfig = new MemoryAgentConfig { Enabled = true };
+            SetPromptInjection(memoryConfig, "none");
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                SystemPromptFiles = ["AGENTS.md", $"memory/{today:yyyy-MM-dd}.md"],
+                Memory = memoryConfig
+            });
+
+            // `none` suppresses the automatic daily-memory pass, not an explicit request: a file the
+            // operator named in systemPromptFiles is still loaded by the prompt-file pass. Yesterday's
+            // note is not listed, so its absence shows the automatic pass really was suppressed.
+            result.ShouldContain("TODAY MEMORY ENTRY");
+            result.ShouldNotContain("YESTERDAY MEMORY ENTRY");
         }
         finally
         {

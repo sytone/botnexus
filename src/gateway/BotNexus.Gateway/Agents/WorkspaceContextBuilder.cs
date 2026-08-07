@@ -127,9 +127,11 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             }
         }
 
-        // Daily memory injection is governed solely by the memory config (`memory.promptInjection`).
-        // It is deliberately NOT gated on `systemPromptFiles` / `systemPromptFile`: those settings
-        // select which workspace prompt files to load, and must not silently disable memory.
+        // Automatic daily memory injection is governed by the memory config (`memory.promptInjection`)
+        // alone. It is deliberately NOT gated on `systemPromptFiles` / `systemPromptFile`: those settings
+        // select which workspace prompt files to load, and must not silently disable memory. Note that
+        // `none` suppresses only this automatic pass; a memory file named explicitly in `systemPromptFiles`
+        // is still loaded by the prompt-file pass above, because an explicit list is an explicit request.
         // NOTE: like MEMORY.md and USER.md, daily notes are owner-private content. Any future
         // conversation-scope filter for shared/multi-participant sessions must cover this path too.
         if (!IsMemoryPromptInjectionNone(memoryPromptInjection))

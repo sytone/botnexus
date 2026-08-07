@@ -336,7 +336,7 @@ When enabled, agents get a `memory_save` tool that writes plain Markdown notes:
 - **Specific files**: Call `memory_save(content, file_path="topic.md")` to append to a named file under the memory root
 - **Durable memory** (`MEMORY.md`): Consolidated long-term facts, loaded into every session
 
-The `path` setting overrides the default memory directory (default: `memory/` under the agent workspace). Today's and yesterday's daily notes are automatically included in the system prompt, independently of `systemPromptFiles`. Set `promptInjection` to `"none"` to keep `MEMORY.md` and the daily notes out of the prompt entirely.
+The `path` setting overrides the default memory directory (default: `memory/` under the agent workspace). Today's and yesterday's daily notes are automatically included in the system prompt, independently of `systemPromptFiles`. Set `promptInjection` to `"none"` to stop `MEMORY.md` and the daily notes being added automatically. A memory file you name explicitly in `systemPromptFiles` is still loaded, since an explicit list is an explicit request.
 
 ### Soul Sessions
 
