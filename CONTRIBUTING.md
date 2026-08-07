@@ -242,6 +242,19 @@ test host - but it is not itself the validation gate. Do not run `dotnet test`
 or `test-impacted.ps1` on a host with a live gateway: the test host leaks
 gateway processes that outlive it (#2158). Test execution is remote.
 
+**Documentation-only changes skip the test gate.** If your change touches nothing
+but `*.md`, `docs/**`, or `mkdocs.yml`, build the docs instead - it takes about
+twenty seconds and catches dead links:
+
+```powershell
+npm ci          # first time only
+npm run docs:build
+```
+
+This is what `deploy-docs.yml` runs. `ci-build-test.yml` already lists `docs/**`
+and `**/*.md` under `paths-ignore`, so a docs-only PR never triggers the test
+workflow. A change touching docs *and* code is a code change - validate it fully.
+
 ---
 
 ## Debugging and Deeper Topics
