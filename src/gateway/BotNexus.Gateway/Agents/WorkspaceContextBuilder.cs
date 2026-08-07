@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Contracts.Memory;
+using BotNexus.Gateway.Prompts;
 using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Agents;
@@ -128,11 +129,13 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         // Daily memory injection is governed solely by the memory config (`memory.promptInjection`).
         // It is deliberately NOT gated on `systemPromptFiles` / `systemPromptFile`: those settings
-        // select which workspace prompt files to load, and must not silently disable memory (#2868).
+        // select which workspace prompt files to load, and must not silently disable memory.
+        // NOTE: like MEMORY.md and USER.md, daily notes are owner-private content. Any future
+        // conversation-scope filter for shared/multi-participant sessions must cover this path too.
         if (!IsMemoryPromptInjectionNone(memoryPromptInjection))
         {
             var recentMemoryFiles = await LoadDailyMemoryAsync(descriptor, workspacePath, cancellationToken);
-            contextFiles.AddRange(recentMemoryFiles);
+            AddContextFilesWithoutDuplicates(contextFiles, recentMemoryFiles);
         }
 
         // Surface the connecting client kind (e.g. SignalR "mobile" vs "desktop") on the runtime
@@ -273,6 +276,27 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         try { fileSystem.File.Delete(filePath); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// Appends <paramref name="additions"/> to <paramref name="contextFiles"/>, skipping any whose
+    /// normalized path is already present. A daily note listed explicitly in <c>systemPromptFiles</c>
+    /// is loaded by the prompt-file pass and would otherwise be emitted twice.
+    /// </summary>
+    private static void AddContextFilesWithoutDuplicates(List<ContextFile> contextFiles, IReadOnlyList<ContextFile> additions)
+    {
+        if (additions.Count == 0)
+            return;
+
+        var seen = contextFiles
+            .Select(file => ContextFileOrdering.NormalizePath(file.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var addition in additions)
+        {
+            if (seen.Add(ContextFileOrdering.NormalizePath(addition.Path)))
+                contextFiles.Add(addition);
+        }
     }
 
     private static IReadOnlyList<string> ResolvePromptFiles(AgentDescriptor descriptor, bool includeMemoryFile)

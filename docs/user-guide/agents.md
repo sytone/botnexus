@@ -219,7 +219,7 @@ Files are concatenated in the order specified. Paths are relative to `~/.botnexu
 6. `USER.md` — User preferences
 7. `MEMORY.md` — Long-term distilled memory
 
-Recent daily memory notes (`memory/{today}.md` and `memory/{yesterday}.md`) are also auto-loaded when using the default prompt file list.
+Recent daily memory notes (`memory/{today}.md` and `memory/{yesterday}.md`) are auto-loaded regardless of `systemPromptFiles` — that setting only chooses which workspace prompt files to load. To suppress daily notes (and `MEMORY.md`), set `memory.promptInjection` to `"none"`.
 
 ### Tool Assignment
 
@@ -336,7 +336,7 @@ When enabled, agents get a `memory_save` tool that writes plain Markdown notes:
 - **Specific files**: Call `memory_save(content, file_path="topic.md")` to append to a named file under the memory root
 - **Durable memory** (`MEMORY.md`): Consolidated long-term facts, loaded into every session
 
-The `path` setting overrides the default memory directory (default: `memory/` under the agent workspace). Today's and yesterday's daily notes are automatically included in the system prompt.
+The `path` setting overrides the default memory directory (default: `memory/` under the agent workspace). Today's and yesterday's daily notes are automatically included in the system prompt, independently of `systemPromptFiles`. Set `promptInjection` to `"none"` to keep `MEMORY.md` and the daily notes out of the prompt entirely.
 
 ### Soul Sessions
 
