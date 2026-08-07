@@ -219,12 +219,13 @@ scripts/repo/Validate-PreCommit.ps1
 ```
 
 Mode is selected via `BOTNEXUS_VALIDATION_MODE` (`local` or `remote`); the
-operational default is `local`, which performs one full solution build, impacted
-tests including the architecture and scenario safety nets, and Playwright under a
-global host lock. Select remote Azure validation explicitly when required:
+operational default is **`remote`** (#2158). Local validation spawns real gateway
+processes that outlive their parent and steal the live gateway's scheduled jobs, so
+it is opt-in and must not be run on a host with a live gateway. Select it explicitly
+only when remote infrastructure is genuinely unavailable:
 
 ```powershell
-$env:BOTNEXUS_VALIDATION_MODE = 'remote'
+$env:BOTNEXUS_VALIDATION_MODE = 'local'
 scripts/repo/Validate-PreCommit.ps1
 ```
 

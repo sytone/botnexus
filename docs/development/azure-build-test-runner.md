@@ -1,6 +1,6 @@
 # Azure build and test runner
 
-BotNexus can validate worktrees remotely on an Azure Container Apps Job. The repository gate currently defaults to globally serialized local validation; this runner remains the supported `remote` mode. The runner captures the worktree as it exists—including staged, unstaged, and untracked files—without requiring a commit or push.
+BotNexus validates worktrees remotely on an Azure Container Apps Job, and **remote is the default gate** (#2158). The runner captures the worktree as it exists-including staged, unstaged, and untracked files-without requiring a commit or push.
 
 ## Security model
 
@@ -50,7 +50,9 @@ Modes:
 
 Results are downloaded to `artifacts/azure-buildtest/<run-id>/`. The script returns a failing exit status when the Azure execution or test process fails.
 
-A successful `strict`, `impacted`, or `full` run writes a receipt under the worktree's Git metadata. The receipt records a SHA-256 fingerprint over the current HEAD, resolved base commit, and exact Git tree containing staged, unstaged, and untracked files. The pre-commit hook recalculates that fingerprint. It skips redundant validation only when the receipt matches exactly; any content or base-ref change invalidates it and starts a new remote run. Only a strict receipt satisfies the authoritative pre-commit gate because it additionally proves the Playwright safety net. The client refuses to issue a strict receipt unless the downloaded artifacts include `playwright.log`; this fails safely when an older deployed runner treats the mode as impacted-only. Impacted, full, and Playwright-only receipts remain useful diagnostic evidence but do not bypass strict validation. Local mode runs the same strict gate under a global host lock and is the operational default. Set `BOTNEXUS_VALIDATION_MODE` at process, user, or machine scope to `local` or `remote`; process scope wins. `-LocalFallback` and `BOTNEXUS_VALIDATION_LOCAL_FALLBACK=1` remain backward-compatible local aliases.
+A successful `strict`, `impacted`, or `full` run writes a receipt under the worktree's Git metadata. The receipt records a SHA-256 fingerprint over the current HEAD, resolved base commit, and exact Git tree containing staged, unstaged, and untracked files. The pre-commit hook recalculates that fingerprint. It skips redundant validation only when the receipt matches exactly; any content or base-ref change invalidates it and starts a new remote run. Only a strict receipt satisfies the authoritative pre-commit gate because it additionally proves the Playwright safety net. The client refuses to issue a strict receipt unless the downloaded artifacts include `playwright.log`; this fails safely when an older deployed runner treats the mode as impacted-only. Impacted, full, and Playwright-only receipts remain useful diagnostic evidence but do not bypass strict validation.
+
+**Remote is the default and local is opt-in (#2158).** With nothing configured, `Resolve-BotNexusValidationMode` returns `remote`. Local validation spawns real gateway processes on the development host; when their parent dies the children survive, and because every gateway opens the shared cron store they claim scheduled jobs belonging to the live gateway and fail them. On 2026-08-06 three such orphans - two of them 30+ hours old - starved the live gateway until the portal would not load. To choose local deliberately, set `BOTNEXUS_VALIDATION_MODE=local` at process, user, or machine scope (process scope wins), pass `-ValidationMode local`, or use the `-LocalFallback` / `BOTNEXUS_VALIDATION_LOCAL_FALLBACK=1` aliases.
 
 Deployment-specific settings come from the environment:
 
@@ -88,4 +90,4 @@ The runner clones the bundle, applies the overlay, commits a temporary snapshot,
 
 ## Maintenance and PR automation
 
-All agents, maintenance jobs, PR workflows, and human development flows call `scripts/repo/Validate-PreCommit.ps1` once for the final candidate. Record the selected mode and gate evidence in Merge Notes. Do not hand-run `dotnet build`, `dotnet test`, or `test-impacted.ps1` as an extra pre-push gate. Local mode is globally serialized across BotNexus worktrees; remote mode retains exact-content receipt reuse.
+All agents, maintenance jobs, PR workflows, and human development flows call `scripts/repo/Validate-PreCommit.ps1` once for the final candidate. Record the selected mode and gate evidence in Merge Notes. Do not hand-run `dotnet build`, `dotnet test`, or `test-impacted.ps1` as an extra pre-push gate, and do not run them on the development host at all - that is the leak path #2158 exists to close. Remote mode retains exact-content receipt reuse; local mode, when explicitly requested, is globally serialized across BotNexus worktrees.

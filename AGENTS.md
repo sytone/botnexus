@@ -6,16 +6,25 @@ BotNexus runs on **Windows and Linux**. All code, tests, scripts, and documentat
 
 ## Validation
 
-The authoritative repository gate is selectable and defaults to strict local validation:
+The authoritative repository gate is remote by default (#2158):
 
 ```powershell
 scripts/repo/Validate-PreCommit.ps1
 ```
 
-Set `BOTNEXUS_VALIDATION_MODE` to `local` or `remote`. Resolution checks process, user, then machine environment so user/machine settings work in spawned processes. The operational default is `local`; it performs one full solution build, impacted tests including architecture and scenario safety nets, and Playwright under a global host lock. Remote Azure validation and exact-content receipts remain available when explicitly selected:
+With nothing configured this runs **remote** Azure Container Apps validation. Set
+`BOTNEXUS_VALIDATION_MODE` to `local` or `remote` to override; resolution checks process, user,
+then machine environment so user/machine settings work in spawned processes.
+
+**Local validation is opt-in and must not be run on a host with a live gateway.** It spawns real
+gateway processes; when their parent dies the children survive, and because every gateway opens
+the shared cron store they claim scheduled jobs belonging to the live gateway and fail them. On
+2026-08-06 three such orphans - two of them 30+ hours old - starved the live gateway until the
+portal would not load. Choose it deliberately when remote infrastructure is genuinely unavailable,
+and say so:
 
 ```powershell
-$env:BOTNEXUS_VALIDATION_MODE = 'remote'
+$env:BOTNEXUS_VALIDATION_MODE = 'local'
 scripts/repo/Validate-PreCommit.ps1
 ```
 
@@ -76,7 +85,7 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
    scripts/repo/Validate-PreCommit.ps1
    ```
 
-   By default this invokes globally serialized local strict validation. Set `BOTNEXUS_VALIDATION_MODE=remote` to select Azure Container Apps; a qualifying exact-content receipt then bypasses redundant remote validation. Both modes build the full solution and run impacted tests plus mandatory architecture/scenario and Playwright safety nets.
+   By default this invokes remote Azure Container Apps validation; a qualifying exact-content receipt then bypasses redundant remote validation. Set `BOTNEXUS_VALIDATION_MODE=local` to explicitly select globally serialized local strict validation instead. Both modes build the full solution and run impacted tests plus mandatory architecture/scenario and Playwright safety nets.
 
    The lower-level `test-impacted.ps1 -DryRun` remains useful to preview impacted projects during diagnosis, but it is not an additional pre-push requirement after a qualifying remote receipt.
 
@@ -86,7 +95,7 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
 
 5. **Do not use `--no-verify`** for code changes. The pre-commit hook verifies an exact-content strict Azure receipt or starts strict Azure validation itself. Strict mode includes the full build, impacted tests, mandatory architecture/scenario safety nets, and strict Playwright coverage; do not run `test-impacted.ps1` again after it passes.
 
-6. **Do not run local `dotnet build` or `dotnet test` as the normal validation gate.** Use Azure validation to avoid worktree output collisions and development-host saturation. For focused diagnosis only, local commands may be used deliberately. If Azure is unavailable, `Validate-PreCommit.ps1 -LocalFallback` is the sole supported local gate; it serializes validation for the worktree and may use `--no-build` internally after its single build.
+6. **Do not run local `dotnet build` or `dotnet test` as the normal validation gate**, and do not run them at all on a host with a live gateway - that is the orphan-process leak #2158 exists to close. Remote validation avoids worktree output collisions and development-host saturation. For focused diagnosis only, local commands may be used deliberately. If remote infrastructure is genuinely unavailable, `Validate-PreCommit.ps1 -ValidationMode local` (or the `-LocalFallback` alias) is the sole supported local gate; it serializes validation for the worktree and may use `--no-build` internally after its single build. State the fallback explicitly whenever you use it.
 
 7. **If you introduce new behaviour**, add corresponding tests first (see rule 1).
 

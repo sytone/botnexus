@@ -198,15 +198,19 @@ try {
     $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; ValidationMode = 'remote' }
     Assert-Equal $true (Test-Path $marker) 'A strict receipt must not satisfy the full remote gate.'
 
-    # Local is the operational default and runs the globally serialized strict gate.
+    # #2158: REMOTE is the operational default. An unconfigured caller must reach the Azure
+    # runner and must NOT touch the local script, because local validation spawns gateway
+    # processes that outlive their parent and steal the live gateway's cron jobs. The marker
+    # assertion is the load-bearing half: it proves local was never invoked, not merely that
+    # the run happened to succeed.
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
-    $remote = New-CommandScript $repo 'remote.ps1' $marker 9
-    $local = New-CommandScript $repo 'local.ps1' $marker
+    $remote = New-CommandScript $repo 'remote.ps1' $marker
+    $local = New-CommandScript $repo 'local.ps1' $marker 9
     $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local }
-    Assert-Equal 0 $result.ExitCode 'Default local validation should pass.'
-    Assert-Equal 'local.ps1' ((Get-Content $marker) -join ',') 'Default validation should select local only.'
-    Assert-Match 'Validation mode: local' $result.Output 'Default validation should resolve local mode.'
+    Assert-Equal 0 $result.ExitCode 'Default remote validation should pass.'
+    Assert-Equal 'remote.ps1' ((Get-Content $marker) -join ',') 'Default validation should select remote only.'
+    Assert-Match 'Validation mode: remote' $result.Output 'Default validation should resolve remote mode.'
 
     # Exact-content receipts are authoritative and bypass remote work.
     $repo = New-TestRepository; $repositories.Add($repo)

@@ -63,7 +63,7 @@ $plan = scripts/maintenance/Get-MaintenanceDispatchPlan.ps1 -StatePath maintenan
 
 Candidate order is priority order. The runtime owns issue/PR discovery and must populate `trusted`, `decisionFree`, and the complete intended file set from authoritative evidence. Put every path changed by an open PR in `reservedFiles`; active workers contribute their file sets automatically. Missing evidence fails closed, and an issue already assigned to an active worker is rejected as `already-active`.
 
-Set `validationMode` to `local` or `remote`; omitted values default to `local`, matching the repository gate. Workers still run `scripts/repo/Validate-PreCommit.ps1`; the planner records the selected plane but does not replace strict validation. In local mode no remote capacity is reserved, eliminating the unhealthy remote runner from the current critical path while `Invoke-LocalValidation.ps1` globally serializes host work. In remote mode, `validationRequired` reserves capacity and `remoteValidation.maxConcurrent`/`maxCost` remain hard ceilings.
+Set `validationMode` to `local` or `remote`; omitted values default to `remote`, matching the repository gate (#2158). Workers still run `scripts/repo/Validate-PreCommit.ps1`; the planner records the selected plane but does not replace strict validation. In remote mode, `validationRequired` reserves capacity and `remoteValidation.maxConcurrent`/`maxCost` remain hard ceilings. Local mode is an explicit opt-in that reserves no remote capacity and lets `Invoke-LocalValidation.ps1` globally serialize host work; it must not be selected on a host running a live gateway, because local test hosts outlive their parent and claim the live gateway's scheduled jobs.
 
 ## Preserved gates
 

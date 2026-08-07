@@ -239,8 +239,11 @@ scripts/repo/Validate-PreCommit.ps1
 ```
 
 Mode is selected by `BOTNEXUS_VALIDATION_MODE` (`local` or `remote`); the
-operational default is `local`, and `-LocalFallback` is a backward-compatible
-alias for local mode. Stage the exact snapshot you intend to commit, then
+operational default is **`remote`** (#2158), and `-LocalFallback` is a
+backward-compatible alias for opting in to local mode. Local validation spawns real
+gateway processes that outlive their parent and steal the live gateway's scheduled
+jobs, so do not run it on a host with a live gateway. Stage the exact snapshot you
+intend to commit, then
 validate, then commit — a passing run emits a content-addressed receipt keyed to
 the staged tree, and any mismatch fails closed and revalidates. See
 [validation-receipts.md](validation-receipts.md).

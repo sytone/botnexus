@@ -66,7 +66,21 @@ function Resolve-BotNexusValidationMode {
         }
     }
 
-    if ([string]::IsNullOrWhiteSpace($candidate)) { return 'local' }
+    # No explicit selection anywhere: default to REMOTE.
+    #
+    # This used to return 'local', which made the banned path the path you got by doing
+    # nothing. On 2026-08-06 local gates leaked three orphan gateway processes - parent dies,
+    # child survives - two of which ran for 30+ hours. They starved the live gateway until the
+    # portal would not load, and because every gateway opens the shared cron store they claimed
+    # scheduled jobs belonging to the real one and failed them. Jon banned local validation on
+    # the development host that day (#2158).
+    #
+    # A default is an instruction. Defaulting to the mode that damages the host and then
+    # documenting "do not use local" puts the code and the rule in direct contradiction, and the
+    # code wins every time nobody is reading. Local remains fully available, but it must now be
+    # ASKED FOR - via -ValidationMode local, -LocalFallback, or BOTNEXUS_VALIDATION_MODE - so
+    # that using it is a deliberate, attributable choice rather than an accident.
+    if ([string]::IsNullOrWhiteSpace($candidate)) { return 'remote' }
     $normalized = $candidate.Trim().ToLowerInvariant()
     if ($normalized -notin @('local', 'remote')) {
         # Do not include the supplied value: environment content can be sensitive.
