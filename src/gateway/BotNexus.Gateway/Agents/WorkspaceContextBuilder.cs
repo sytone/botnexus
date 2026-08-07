@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Contracts.Memory;
+using BotNexus.Gateway.Prompts;
 using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Agents;
@@ -127,13 +128,17 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             }
         }
 
-        if (descriptor.SystemPromptFiles.Count == 0 && string.IsNullOrWhiteSpace(descriptor.SystemPromptFile))
+        // Automatic daily memory injection is governed by the memory config (`memory.promptInjection`)
+        // alone. It is deliberately NOT gated on `systemPromptFiles` / `systemPromptFile`: those settings
+        // select which workspace prompt files to load, and must not silently disable memory. Note that
+        // `none` suppresses only this automatic pass; a memory file named explicitly in `systemPromptFiles`
+        // is still loaded by the prompt-file pass above, because an explicit list is an explicit request.
+        // NOTE: like MEMORY.md and USER.md, daily notes are owner-private content. Any future
+        // conversation-scope filter for shared/multi-participant sessions must cover this path too.
+        if (!IsMemoryPromptInjectionNone(memoryPromptInjection))
         {
-            if (!IsMemoryPromptInjectionNone(memoryPromptInjection))
-            {
-                var recentMemoryFiles = await LoadDailyMemoryAsync(descriptor, workspacePath, cancellationToken);
-                contextFiles.AddRange(recentMemoryFiles);
-            }
+            var recentMemoryFiles = await LoadDailyMemoryAsync(descriptor, workspacePath, cancellationToken);
+            AddContextFilesWithoutDuplicates(contextFiles, recentMemoryFiles);
         }
 
         // Surface the connecting client kind (e.g. SignalR "mobile" vs "desktop") on the runtime
@@ -283,6 +288,27 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         try { fileSystem.File.Delete(filePath); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// Appends <paramref name="additions"/> to <paramref name="contextFiles"/>, skipping any whose
+    /// normalized path is already present. A daily note listed explicitly in <c>systemPromptFiles</c>
+    /// is loaded by the prompt-file pass and would otherwise be emitted twice.
+    /// </summary>
+    private static void AddContextFilesWithoutDuplicates(List<ContextFile> contextFiles, IReadOnlyList<ContextFile> additions)
+    {
+        if (additions.Count == 0)
+            return;
+
+        var seen = contextFiles
+            .Select(file => ContextFileOrdering.NormalizePath(file.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var addition in additions)
+        {
+            if (seen.Add(ContextFileOrdering.NormalizePath(addition.Path)))
+                contextFiles.Add(addition);
+        }
     }
 
     private static IReadOnlyList<string> ResolvePromptFiles(AgentDescriptor descriptor, bool includeMemoryFile)
