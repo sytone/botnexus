@@ -48,7 +48,7 @@ $statusIcon = @{
 
 # Known checks in display order; any extras from CheckRows appended at end
 $knownOrder = @(
-    'impacted-tests',
+    'core-tests',
     'CodeQL',
     'Analyze (csharp)',
     'Code Pattern Checks',

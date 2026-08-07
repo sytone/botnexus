@@ -47,11 +47,22 @@ permissions:
   contents: read
 
 jobs:
-  # PRs: run only tests affected by the change (fast feedback)
-  impacted-tests:
+  # PRs: run the CORE suite -- everything except the browser/E2E projects.
+  #
+  # This deliberately replaced an impacted-only job. Impacted selection decides what to run from
+  # a diff, so a change that breaks a project it does not textually touch passes CI and fails
+  # later. It also produced no TRX, so its result counters read total=0 even on a green run --
+  # the gate could not prove what it had executed.
+  #
+  # E2E is excluded on purpose and temporarily: on 2026-08-06 a full run reported exit 0 with
+  # 265 of 280 E2E tests NotExecuted, which is neither passed nor failed, so a fixture crash
+  # certified a green gate that had silently skipped them. Core must be trustworthy before E2E
+  # is folded back in. The filter matches infra/buildtest/runner/entrypoint.ps1 'core' mode so
+  # CI and the remote container gate agree on what core means.
+  core-tests:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,9 +81,16 @@ jobs:
       - name: Build
         run: dotnet build dirs.proj --no-restore
 
-      - name: Test (impacted only)
-        shell: pwsh
-        run: ./scripts/repo/test-impacted.ps1 -From origin/${{ github.base_ref }} -NoBuild
+      - name: Test (core)
+        run: dotnet test tests/dirs.proj --no-build --filter "FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E" --logger "trx;LogFilePrefix=ci" --results-directory ${{ github.workspace }}/artifacts/test-results
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-test-results
+          path: artifacts/test-results/*.trx
+          if-no-files-found: error
 
   # Push to main: full test suite with coverage (safety net)
   full-tests:
@@ -94,11 +112,15 @@ jobs:
         run: dotnet build dirs.proj --no-restore
 
       - name: Test
-        # Excludes tests that require external infrastructure not present in CI:
-        # - BotNexus.Integration.*  : CLI pack/install integration tests (not unit tests)
-        # - BotNexus.Conversation.* : live-gateway SignalR tests (all SkippableFact; gateway not running)
-        # - BotNexus.E2E.*          : Playwright end-to-end tests (browsers not installed)
-        run: dotnet test tests/dirs.proj --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration.&FullyQualifiedName!~BotNexus.Conversation.Tests.&FullyQualifiedName!~BotNexus.E2E.Tests."
+        # Core scope: everything except the browser/E2E projects. The filter is kept identical to
+        # the core-tests job above and to infra/buildtest/runner/entrypoint.ps1 'core' mode --
+        # three spellings of the same scope is how they drift apart.
+        #
+        # This previously also excluded BotNexus.Integration.* and BotNexus.Conversation.*, which
+        # was over-broad: those projects declare their own environmental skips with stated reasons
+        # ("Dev gateway not running at localhost:5006", "GITHUB_TOKEN not set"), so the runner can
+        # execute them and report honest skips rather than never running them at all.
+        run: dotnet test tests/dirs.proj --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E"
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
