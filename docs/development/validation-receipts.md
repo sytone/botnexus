@@ -1,6 +1,11 @@
 # Content-Addressed Validation Receipts
 
-**Purpose:** Explain how BotNexus lets the pre-commit hook safely skip redundant
+> **Note:** receipts are still live, but no git hook consumes them. #2841 removed the
+> pre-commit hook; `scripts/repo/Validate-PreCommit.ps1` is now the only reader, and it
+> is invoked explicitly rather than on commit. References to "the pre-commit hook" below
+> mean that explicit invocation.
+
+**Purpose:** Explain how BotNexus lets repeat validation safely skip redundant
 build/test work when the *exact content being committed* has already passed the current
 required validation policy (issue #2143).
 
@@ -8,7 +13,7 @@ required validation policy (issue #2143).
 
 ## The stage → validate → commit workflow
 
-The pre-commit hook is a safety catch, not a mandatory duplicate test runner. To benefit
+Explicit validation is a safety catch, not a mandatory duplicate test runner. To benefit
 from receipt reuse, follow this order:
 
 1. **Stage the intended snapshot.** `git add` exactly what you plan to commit.
@@ -19,8 +24,8 @@ from receipt reuse, follow this order:
    ```
 
    On success this emits a *validation receipt* describing the exact staged content.
-3. **Commit.** The pre-commit hook recomputes the staged identity and, if it matches a
-   valid receipt, prints a cache-hit message and allows the commit without rerunning
+3. **Commit.** A later `Validate-PreCommit.ps1` run recomputes the staged identity and,
+   if it matches a valid receipt, prints a cache-hit message and returns without rerunning
    build/tests.
 
 If you change any staged file, the validation policy, or the toolchain between steps 2

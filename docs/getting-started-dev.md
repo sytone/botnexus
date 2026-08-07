@@ -29,10 +29,12 @@ The Gateway starts at `http://localhost:5005` with the WebUI at the root URL.
 
 > **First run?** BotNexus auto-creates `~/.botnexus/` with a default `config.json`. No manual setup needed.
 
-Install the pre-commit hook (once, after cloning):
+Install the versioned git hooks (once, after cloning). This activates the
+`pre-push` `core.bare` guard (#1602); there is deliberately no pre-commit hook,
+because commit-time local validation is banned:
 
 ```powershell
-.\scripts\install-pre-commit-hook.ps1
+.\scripts\repo\install-hooks.ps1
 ```
 
 ### Verify it's running
@@ -132,7 +134,8 @@ dotnet test tests\gateway\BotNexus.Gateway.Tests
 dotnet test BotNexus.slnx --filter "FullyQualifiedName~MyTestName"
 ```
 
-All tests must pass before committing. The pre-commit hook enforces this.
+All tests must pass before pushing. Test execution runs remotely - see
+[Validation](development/azure-build-test-runner.md). No git hook runs tests.
 
 ---
 
@@ -345,7 +348,7 @@ All scripts live in `scripts/`.
 | `dev-loop.ps1` | Build + test + run cycle | `-Watch`, `-Port`, `-SkipBuild`, `-SkipTests` |
 | `start-gateway.ps1` | Build and start the Gateway | `-Port`, `-SkipBuild` |
 | `export-openapi.ps1` | Export OpenAPI spec to `docs/api/openapi.json` | `-Port`, `-OutputPath`, `-SkipBuild` |
-| `install-pre-commit-hook.ps1` | Install Git pre-commit hook (run once) | — |
+| `repo/install-hooks.ps1` | Install versioned git hooks (run once) | - |
 
 ---
 

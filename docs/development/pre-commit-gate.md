@@ -1,7 +1,14 @@
 # Pre-Commit Gate Scope, Timeouts and Lock Behaviour
 
-**Purpose:** What the pre-commit hook actually runs, how long it is allowed to take, and
-what it does when another validation is already running.
+> **HISTORICAL - the pre-commit hook described here no longer exists.** #2841 removed it,
+> and `scripts/repo/install-hooks.ps1` now activates only the `pre-push` `core.bare` guard
+> (#1602). Commit-time local validation is banned because a local test host boots gateway
+> processes that outlive their parent (#2158). Test execution is remote; see
+> [Azure build/test runner](azure-build-test-runner.md). This page is retained to explain
+> the timeout and lock reasoning that shaped the current design.
+
+**Purpose:** What the pre-commit hook ran, how long it was allowed to take, and
+what it did when another validation was already running.
 
 Related issue: [#2331](https://github.com/Sytone/botnexus/issues/2331).
 

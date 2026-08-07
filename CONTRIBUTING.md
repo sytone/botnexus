@@ -62,11 +62,11 @@ dotnet run --project src/gateway/BotNexus.Cli -- serve
 The WebUI and REST API serve at `http://localhost:5005`. For a fuller walkthrough
 see the [Developer Setup guide](docs/getting-started-dev.md).
 
-Optional: install the local pre-commit validation hook (see
-[Validation](#validation)):
+Install the versioned git hooks (the #1602 `core.bare` guard runs on push; there
+is deliberately no pre-commit hook - see [Validation](#validation)):
 
 ```powershell
-pwsh scripts/install-pre-commit-hook.ps1
+pwsh scripts/repo/install-hooks.ps1
 ```
 
 ---
@@ -229,15 +229,18 @@ $env:BOTNEXUS_VALIDATION_MODE = 'local'
 scripts/repo/Validate-PreCommit.ps1
 ```
 
-Install the git pre-commit hook so validation runs automatically:
+Install the versioned git hooks (the #1602 `core.bare` guard on push). There is
+deliberately no pre-commit hook - commit-time local validation is banned:
 
 ```powershell
-pwsh scripts/install-pre-commit-hook.ps1
+pwsh scripts/repo/install-hooks.ps1
 ```
 
-Do not use `--no-verify` on commits containing code changes, and do not treat a
-hand-run `dotnet build`/`dotnet test` as the validation gate — it is
-diagnostic-only.
+Do not use `--no-verify` on commits containing code changes. A hand-run
+`dotnet build` is encouraged before validating - it costs seconds and starts no
+test host - but it is not itself the validation gate. Do not run `dotnet test`
+or `test-impacted.ps1` on a host with a live gateway: the test host leaks
+gateway processes that outlive it (#2158). Test execution is remote.
 
 ---
 

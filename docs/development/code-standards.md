@@ -223,16 +223,24 @@ warnings and can deadlock.
 
 ### Running tests
 
-Preview or run the impacted set, which always includes the architecture and
-scenario safety nets:
+Compile what you changed before spending a remote gate. A build starts no test
+host and no gateway process, so it cannot leak, and it catches in about a second
+the compile errors that would otherwise cost a full remote run:
+
+```powershell
+dotnet build path/to/Changed.Project.csproj
+```
+
+To preview which projects the impacted set would cover (a dry run performs no
+test execution and is safe locally):
 
 ```powershell
 scripts/repo/test-impacted.ps1 -DryRun   # show which projects would run
-scripts/repo/test-impacted.ps1           # run them
 ```
 
-The authoritative pre-push gate is the strict validation script, not a hand-run
-`dotnet test`:
+Do not run `test-impacted.ps1` without `-DryRun`, and do not run `dotnet test`,
+on a host with a live gateway. The authoritative gate is the validation script,
+which executes tests remotely:
 
 ```powershell
 scripts/repo/Validate-PreCommit.ps1
