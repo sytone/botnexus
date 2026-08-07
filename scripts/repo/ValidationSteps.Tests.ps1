@@ -99,8 +99,15 @@ try {
         'The local runner must no longer throw on lock contention.'
     Assert-True ($localRunner -match "'hook'") 'The local runner must support an impacted-only hook mode.'
 
-    $hook = Get-Content (Join-Path $repoRoot 'scripts/repo/githooks/pre-commit') -Raw
-    Assert-True ($hook -match '-Hook') 'The pre-commit hook must invoke the bounded hook-scoped gate.'
+    # The pre-commit hook was REMOVED deliberately: it ran local validation on the developer
+    # workstation, which is banned. Local gates spawn real gateway processes that outlive their
+    # parent, starve the live gateway, and claim its scheduled jobs out of the shared cron store.
+    # Remote container validation is authoritative. Assert absence so it cannot be reinstated
+    # silently -- a reintroduced hook would quietly restore the failure mode.
+    Assert-True (-not (Test-Path (Join-Path $repoRoot 'scripts/repo/githooks/pre-commit'))) `
+        'The pre-commit hook must not exist: local validation is banned, remote is authoritative.'
+    Assert-True (-not (Test-Path (Join-Path $repoRoot 'scripts/install-pre-commit-hook.ps1'))) `
+        'The pre-commit hook installer must not exist: local validation is banned.'
 
     $validate = Get-Content (Join-Path $repoRoot 'scripts/repo/Validate-PreCommit.ps1') -Raw
     Assert-True ($validate -match '\[switch\]\$Hook') 'Validate-PreCommit must expose a -Hook switch.'

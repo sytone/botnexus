@@ -5,9 +5,13 @@
 
 .DESCRIPTION
     The default .git/hooks pre-commit only built + tested. The versioned hooks add the
-    #1602 core.bare guard at commit AND push time, and live in-tree so they're reviewed,
+    #1602 core.bare guard at push time, and live in-tree so they're reviewed,
     versioned, and shared across every worktree. Setting core.hooksPath also covers all
     existing worktrees (they share .git/config).
+
+    There is deliberately NO pre-commit hook: commit-time local validation is banned
+    because it spawns gateway processes that outlive their parent and claim the live
+    cron store. Remote container validation is authoritative.
 
 .EXAMPLE
     pwsh -NoProfile -File scripts/repo/install-hooks.ps1
@@ -19,5 +23,5 @@ $ErrorActionPreference = 'Stop'
 if (-not $RepoPath) { $RepoPath = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent }
 $hooks = Join-Path $RepoPath 'scripts/repo/githooks'
 & git -C $RepoPath config core.hooksPath 'scripts/repo/githooks'
-if ($IsLinux -or $IsMacOS) { foreach ($h in 'pre-commit', 'pre-push') { chmod +x (Join-Path $hooks $h) } }
-Write-Host "[install-hooks] core.hooksPath -> scripts/repo/githooks (pre-commit + pre-push #1602 guard active)" -ForegroundColor Green
+if ($IsLinux -or $IsMacOS) { chmod +x (Join-Path $hooks 'pre-push') }
+Write-Host "[install-hooks] core.hooksPath -> scripts/repo/githooks (pre-push #1602 guard active; no pre-commit gate by design)" -ForegroundColor Green
