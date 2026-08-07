@@ -104,10 +104,116 @@ public sealed class SubAgentToolInheritanceTests
         result.ShouldNotBeNull();
     }
 
+    /// <summary>
+    /// #2847 clause 3: the inherited deny-list must already be installed when the child's runtime
+    /// handle is created. The supervisor double interrogates the policy provider from INSIDE
+    /// GetOrCreateAsync, which is the only vantage point that can tell "set before" from "set
+    /// eventually" - the pre-existing RegistersChildDenyListInPolicyProvider test asserts the
+    /// latter and passes either way, which is precisely why it did not catch this.
+    /// </summary>
+    [Fact]
+    public async Task SpawnAsync_InstallsInheritedDenyList_BeforeChildHandleIsCreated()
+    {
+        IReadOnlyList<string>? denyListVisibleAtHandleCreation = null;
+        AgentId? childIdAtHandleCreation = null;
+
+        var childHandle = CreateHandle();
+        DefaultToolPolicyProvider? policyProvider = null;
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .Returns((AgentId agentId, SessionId _, CancellationToken _) =>
+            {
+                // Sampled at the exact moment the child becomes able to reach the model.
+                childIdAtHandleCreation = agentId;
+                denyListVisibleAtHandleCreation = policyProvider!.GetEffectiveDenyList(agentId.Value);
+                return Task.FromResult(childHandle.Object);
+            });
+
+        policyProvider = CreatePolicyWithDenied("parent-agent", ["exec", "bash"]);
+        var manager = CreateManager(supervisor.Object, policyProvider);
+
+        await manager.SpawnAsync(CreateSpawnRequest());
+
+        childIdAtHandleCreation.ShouldNotBeNull();
+        denyListVisibleAtHandleCreation.ShouldNotBeNull();
+        denyListVisibleAtHandleCreation.ShouldContain(
+            "exec",
+            "the child handle can reach the model immediately, so a parent-denied tool must already be denied for it");
+        denyListVisibleAtHandleCreation.ShouldContain("bash");
+    }
+
+    /// <summary>
+    /// #2847 clause 2: an empty parent deny-list must still install an EXPLICIT empty policy for
+    /// the child. The previous `if (count > 0)` guard left the slot absent, which reads identically
+    /// to "never configured" and was asymmetric with RemoveDynamicDenyList, which always removes.
+    /// </summary>
+    [Fact]
+    public async Task SpawnAsync_EmptyParentDenyList_StillRegistersAnExplicitChildPolicy()
+    {
+        var registrations = new List<(AgentId AgentId, IReadOnlyList<string> DenyList)>();
+
+        var childHandle = CreateHandle();
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(childHandle.Object);
+
+        var policyProvider = CreatePolicyWithDenied(
+            "parent-agent",
+            [],
+            onSetDynamic: (agentId, denyList) => registrations.Add((agentId, denyList)));
+
+        var manager = CreateManager(supervisor.Object, policyProvider);
+
+        await manager.SpawnAsync(CreateSpawnRequest());
+
+        registrations.ShouldHaveSingleItem();
+        registrations[0].DenyList.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// #2847 clause 5: the child's policy slot must not outlive the spawn. The ephemeral child agent
+    /// id is unique per spawn, so a leaked entry is unreachable rather than dangerous - but an
+    /// unbounded map of dead ids is still a leak, and "unreachable" is an argument that stops being
+    /// true the moment id minting changes. Now that registration is unconditional, removal is the
+    /// only thing keeping the two symmetric, so it gets a test rather than an assumption.
+    /// </summary>
+    [Fact]
+    public async Task CompletedSpawn_RemovesTheChildDenyListEntry()
+    {
+        var set = new List<AgentId>();
+        var removed = new List<AgentId>();
+
+        var childHandle = CreateHandle();
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(childHandle.Object);
+
+        var policyProvider = CreatePolicyWithDenied(
+            "parent-agent",
+            ["exec"],
+            onSetDynamic: (agentId, _) => set.Add(agentId),
+            onRemoveDynamic: removed.Add);
+
+        var manager = CreateManager(supervisor.Object, policyProvider);
+
+        var result = await manager.SpawnAsync(CreateSpawnRequest());
+        await manager.KillAsync(result.SubAgentId, SessionId.From("root-session"));
+
+        set.ShouldHaveSingleItem();
+        removed.ShouldContain(
+            set[0],
+            "the deny-list entry installed for the ephemeral child id must not survive its spawn");
+    }
+
     private static DefaultToolPolicyProvider CreatePolicyWithDenied(
         string agentId,
         IReadOnlyList<string> denied,
-        Action<AgentId, IReadOnlyList<string>>? onSetDynamic = null)
+        Action<AgentId, IReadOnlyList<string>>? onSetDynamic = null,
+        Action<AgentId>? onRemoveDynamic = null)
     {
         var policyConfig = new BotNexus.Gateway.Configuration.PlatformConfig
         {
@@ -121,6 +227,9 @@ public sealed class SubAgentToolInheritanceTests
 
         if (onSetDynamic is not null)
             provider.OnDynamicDenyListSet = onSetDynamic;
+
+        if (onRemoveDynamic is not null)
+            provider.OnDynamicDenyListRemoved = onRemoveDynamic;
 
         return provider;
     }

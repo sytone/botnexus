@@ -120,6 +120,12 @@ public sealed class DefaultToolPolicyProvider : IToolPolicyProvider
     {
         if (_dynamicDenyLists.TryRemove(agentId.Value, out _))
             _logger.LogDebug("Removed dynamic deny-list for sub-agent '{AgentId}'", agentId);
+
+        // Fired unconditionally, unlike the log line: the caller's question is "is this id gone",
+        // and an id that was never present is equally gone. Gating the notification on TryRemove
+        // would make an observer unable to distinguish "removed" from "never registered", which is
+        // the same conflation #2847 removed from the set path.
+        OnDynamicDenyListRemoved?.Invoke(agentId);
     }
 
     /// <summary>
@@ -127,6 +133,13 @@ public sealed class DefaultToolPolicyProvider : IToolPolicyProvider
     /// Allows tests to verify the child deny-list without requiring a full DI setup.
     /// </summary>
     internal Action<AgentId, IReadOnlyList<string>>? OnDynamicDenyListSet { get; set; }
+
+    /// <summary>
+    /// Test hook: invoked on each <see cref="RemoveDynamicDenyList"/> call. Mirrors
+    /// <see cref="OnDynamicDenyListSet"/> so a test can assert the set/remove pair is symmetric
+    /// (#2847 clause 5).
+    /// </summary>
+    internal Action<AgentId>? OnDynamicDenyListRemoved { get; set; }
 
     /// <summary>
     /// Returns the union of the static config deny-list and any dynamic deny-list for the given agent.

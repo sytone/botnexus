@@ -1,4 +1,4 @@
-﻿using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Sessions;
 using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -302,6 +302,31 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // its own conversation rather than inheriting the parent's.
         var childConversationId = await MintChildConversationAsync(request, childSessionId, childAgentId, name, ct).ConfigureAwait(false);
 
+        // #2847: install the inherited deny-list BEFORE the handle exists. This used to sit 67
+        // lines lower, after record construction and an awaited SaveSubAgentSessionAsync - so the
+        // child agent had a live runtime handle, and the comment directly above says handle
+        // creation "can reach the model immediately", while carrying no inherited restrictions at
+        // all. The gap was bounded by disk I/O rather than instruction count, making it schedulable
+        // rather than theoretical, and a sub-agent spawned by a restricted parent could invoke a
+        // parent-denied tool inside it. Tool restriction is the control that stops a restricted
+        // agent escalating by spawning an unrestricted child, so it must be bound to the execution
+        // identity at creation, not applied afterwards.
+        //
+        // Registration is UNCONDITIONAL, including for an empty list. The previous
+        // `if (count > 0)` guard left the child's policy slot absent rather than explicitly empty,
+        // which is a different state from "deliberately unrestricted" and was asymmetric with
+        // RemoveDynamicDenyList, which always removes. Always writing the slot means the child's
+        // authority is a decision that was recorded, not an absence that happens to read the same.
+        // ParentAgentId is a required non-nullable AgentId on the request, so it needs no guard;
+        // only the optional policy provider does. (.Value here is AgentId's underlying string, not
+        // a Nullable unwrap - the same accessor the original registration used.)
+        if (_policyProvider is not null)
+        {
+            _policyProvider.SetDynamicDenyList(
+                childAgentId,
+                _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value));
+        }
+
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
         // Clamp the agent-supplied timeout to the configured ceiling. Depth and concurrency are
@@ -365,14 +390,6 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         _parentChildren.GetOrAdd(request.ParentSessionId, _ => []).Add(subAgentId);
-
-        // Register inherited deny-list so the child agent can't invoke parent-denied tools
-        if (_policyProvider is not null)
-        {
-            var effectiveDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
-            if (effectiveDenyList.Count > 0)
-                _policyProvider.SetDynamicDenyList(childAgentId, effectiveDenyList);
-        }
 
         if (budgetClamp is not null)
         {
