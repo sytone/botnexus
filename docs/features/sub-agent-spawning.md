@@ -327,7 +327,37 @@ Sub-agent behavior is configured via `SubAgentOptions`, nested under the `gatewa
 
 The `maxTurns` and `timeoutSeconds` parameters on `spawn_subagent` override `defaultMaxTurns` and `defaultTimeoutSeconds` respectively. If not specified at spawn time, the configured defaults apply.
 
-Both are bounded by hard ceilings: a spawn-supplied `maxTurns` is clamped to at most `maxTurnsCeiling` (default `30`) and `timeoutSeconds` to at most `maxTimeoutSeconds` (default `1800`). This prevents a single `spawn_subagent` call from requesting a runaway turn budget or an effectively unbounded wall-clock timeout. Set a ceiling to `0` to disable it. When a request is clamped, the manager logs a warning recording the requested and effective values.
+Both are bounded by hard ceilings: a spawn-supplied `maxTurns` is clamped to at most `maxTurnsCeiling` (default `30`) and `timeoutSeconds` to at most `maxTimeoutSeconds` (default `1800`). This prevents a single `spawn_subagent` call from requesting a runaway turn budget or an effectively unbounded wall-clock timeout. Set a ceiling to `0` to disable it.
+
+#### Clamp disclosure on the tool result
+
+When a ceiling actually reduces the request, the `spawn_subagent` result carries a `budgetClamp` object so the
+calling agent can re-scope the delegated task against the budget it really has (issue #2789). The field is
+emitted **only** when something was clamped - its presence is the signal, so a result without it needs no
+interpretation.
+
+```json
+{
+  "subAgentId": "sub_abc123",
+  "sessionId": "...",
+  "conversationId": "...",
+  "status": "Running",
+  "name": "researcher",
+  "budgetClamp": {
+    "policyTier": "...",
+    "maxTurnsClamped": true,
+    "requestedMaxTurns": 100,
+    "effectiveMaxTurns": 30,
+    "timeoutSecondsClamped": false,
+    "requestedTimeoutSeconds": 600,
+    "effectiveTimeoutSeconds": 600,
+    "notice": "Your requested budget exceeded a configured ceiling and was reduced. Scope the delegated task to the effective values above, not the requested ones."
+  }
+}
+```
+
+The clamp itself is unchanged by this disclosure - only its visibility. The reduction is still recorded in the
+gateway log as well.
 
 The `model` parameter at spawn time overrides `defaultModel`. If neither is set, the sub-agent inherits the parent agent's model.
 

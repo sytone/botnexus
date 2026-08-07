@@ -59,6 +59,8 @@ DM your bot and it will respond via the configured agent.
       "showToolActivity": true,
       "maxRichMessageLength": 32000,
       "processEditedMessages": false,
+      "maxMediaBytes": 20971520,
+      "mediaDownloadTimeoutSeconds": 30,
       "webhookUrl": "string (optional)",
       "webhookSecretToken": "string (optional)"
     }
@@ -79,6 +81,8 @@ DM your bot and it will respond via the configured agent.
 | `showToolActivity` | bool | `true` | Surface tool executions to the chat as compact standalone status messages (e.g. `📄 read done`) as the agent runs, so you can see which tools are being called. Each tool is delivered as its own message using a shared cross-channel icon. Set `false` to show only the agent's replies. |
 | `maxRichMessageLength` | int | `32000` | Characters before splitting a Rich Message (the rich limit is 32768). Only used when `richMessages` is enabled. |
 | `processEditedMessages` | bool | `false` | When `true`, edited messages are processed as new messages. |
+| `maxMediaBytes` | long | `20971520` (20 MB) | Hard ceiling, in bytes, on any single inbound media attachment. The default matches the Telegram Bot API download limit. Oversize media is skipped and the message is still dispatched with its caption text. |
+| `mediaDownloadTimeoutSeconds` | int | `30` | Wall-clock budget, in seconds, for downloading a single inbound media attachment. A timeout skips the media only; the caption is still delivered. |
 | `webhookUrl` | string | `null` | Set to enable webhook mode instead of polling (requires a public HTTPS URL). |
 | `webhookSecretToken` | string | `null` | Secret used to authenticate inbound webhook requests. When omitted in webhook mode, a strong token is generated automatically. Only used when `webhookUrl` is set. |
 

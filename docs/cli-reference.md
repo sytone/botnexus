@@ -363,7 +363,14 @@ botnexus init [OPTIONS]
 | Option | Description |
 |---|---|
 | `--force` | Overwrite existing `config.json`. Use with caution. |
+| `--listen-all-interfaces` | Bind the gateway to every network interface (`http://0.0.0.0:5005`) instead of loopback. |
 | `--verbose` | Show the full default configuration in JSON format. |
+
+> **Loopback by default (issue #2798).** A fresh `init` writes `gateway.listenUrl` as `http://localhost:5005`,
+> so the portal UI, the SignalR hub, the agent REST API and the gateway admin endpoints are reachable only
+> from the machine the gateway runs on. Binding every interface is an explicit operator decision: pass
+> `--listen-all-interfaces` to have `init` emit `http://0.0.0.0:5005` instead. An existing wildcard bind is
+> never rewritten - [`doctor config`](#doctor-config) reports it as a read-only advisory.
 
 ### Examples
 
@@ -748,7 +755,12 @@ These options apply to every `conversation` subcommand:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--url <URL>` | `http://localhost:5005` | Gateway base URL. |
+| `--token <CREDENTIAL>` | (ambient) | Gateway API credential. Required when `--url` is not the local gateway. |
 | `--format <FORMAT>` | `table` | Output format: `table` or `json`. |
+
+> **Credentials are never sent to a remote host implicitly (issue #2747).** The CLI's ambient credential is
+> attached only when the target is loopback. Point `--url` at any non-loopback host and the command is refused
+> unless you supply `--token` explicitly, so a local gateway secret cannot leak to an overridden URL.
 
 ### Subcommands
 
@@ -1781,7 +1793,16 @@ Checks include: config validity, provider reachability, directory/location acces
 
 Guided config migration. Compares your existing `config.json` against a set of built-in checks, reports any missing or outdated settings, and optionally applies the fixes in place. Operates offline — no running gateway required.
 
-Current checks include: the `extensions` block, the Skills world default, cron configuration, the memory agent default, and the compaction model settings.
+Current checks include: the `extensions` block, the Skills world default, the dev-mode origin enforcement flag, cron configuration, the memory agent default, and the compaction model settings.
+
+### Advisories
+
+Separately from the checks above, `doctor config` reports **advisories**: findings an operator should see but
+which the tool must never rewrite. Advisories have no fix to apply and are unaffected by `--yes`.
+
+| Advisory | Reports |
+|---|---|
+| `gateway-wildcard-bind` | `gateway.listenUrl` binds a wildcard address (`0.0.0.0`, `*`, `+`, `::`), publishing the portal UI, the SignalR hub, the agent REST API and the gateway admin endpoints to every reachable network. A wildcard bind can be a deliberate choice for remote or mesh access, so it is reported and left unchanged. |
 
 ### Usage
 
@@ -2045,7 +2066,9 @@ botnexus cron <COMMAND> [OPTIONS]
 | `disable` | Disable a job. |
 | `delete` | Delete a cron job. |
 
-Each subcommand takes a `--url <URL>` option pointing at the running gateway (defaults to `http://localhost:5005`); `get`, `run`, `enable`, `disable`, and `delete` take the job id as an argument.
+Each subcommand takes a `--url <URL>` option pointing at the running gateway (defaults to `http://localhost:5005`) and a `--token <CREDENTIAL>` option; `get`, `run`, `enable`, `disable`, and `delete` take the job id as an argument.
+
+As with every gateway-facing command, the ambient credential is attached only for a loopback `--url`. An overridden, non-loopback `--url` requires an explicit `--token` (issue #2747).
 
 ### Examples
 
@@ -2314,6 +2337,7 @@ These options apply to every `debug gateway` subcommand:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--url <URL>` | `http://localhost:5005` | Gateway base URL |
+| `--token <CREDENTIAL>` | (ambient) | Gateway API credential. Required when `--url` is not the local gateway (issue #2747). |
 | `--format` | `table` | Output format: `table` or `json` |
 
 **Per-subcommand options:**
