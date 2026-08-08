@@ -177,13 +177,7 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             //     would otherwise try to overwrite those locked dlls. /nodeReuse:false
             //     + UseSharedCompilation=false force MSBuild and the Roslyn server
             //     to exit cleanly so this subprocess returns.
-            Log.Add("[build] dotnet build BotNexus.slnx -c Release (prebuild)");
-            var build = await ProcessRunner.RunAsync(
-                "dotnet",
-                "build BotNexus.slnx --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
-                workingDirectory: repoRoot,
-                environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
-                timeout: SolutionBuildTimeout);
+            var build = await EnsureSolutionBuiltAsync(repoRoot);
             if (build.ExitCode != 0)
             {
                 Error = $"Solution prebuild exit {build.ExitCode}.\n{build.Combined}";
@@ -239,6 +233,70 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             // Windows are not worth failing the suite for.
         }
     }
+
+    /// <summary>
+    /// Serialise the solution prebuild across every process on the machine (issue #2739).
+    ///
+    /// The prebuild writes the shared <c>bin/Release</c> and <c>obj</c> trees. When two
+    /// xUnit test hosts for this project run concurrently, both fixtures entered this
+    /// build at the same time and raced those outputs, producing CS2012 / MSB3883
+    /// file-lock failures, <c>Solution prebuild exit 1</c>, and - because every test
+    /// class guards on <c>Skip.IfNot(_fx.Succeeded, ...)</c> - a suite that degraded
+    /// into ~265 silent skips while still exiting 0. A vacuously green gate is worse
+    /// than a red one.
+    ///
+    /// A machine-wide named <see cref="Mutex"/> is used rather than an in-process lock
+    /// because the contending builds live in DIFFERENT PROCESSES; an in-process lock
+    /// cannot see them. The second holder finds the outputs already current and its
+    /// build is a cheap no-op, so serialising costs one build, not two.
+    ///
+    /// The entire acquire/build/release cycle runs on ONE dedicated thread via
+    /// <see cref="Task.Run(Action)"/> because a Win32 mutex has THREAD AFFINITY: only
+    /// the thread that acquired it may release it. Awaiting the build inline resumed
+    /// the continuation on a different thread-pool thread, and ReleaseMutex then threw
+    /// "Object synchronization method was called from an unsynchronized block of code",
+    /// failing initialization outright. Do not re-inline this await.
+    /// </summary>
+    private Task<ProcessRunner.ProcessResult> EnsureSolutionBuiltAsync(string repoRoot) => Task.Run(() =>
+    {
+        // "Global\" so the mutex is visible across sessions, not just the current one.
+        using var mutex = new Mutex(initiallyOwned: false, name: @"Global\botnexus-e2e-prebuild");
+        var held = false;
+        try
+        {
+            try
+            {
+                held = mutex.WaitOne(SolutionBuildTimeout);
+            }
+            catch (AbandonedMutexException)
+            {
+                // A previous holder died mid-build. We now own the mutex; the build
+                // below re-derives whatever that process left half-written.
+                held = true;
+            }
+
+            if (!held)
+            {
+                Log.Add($"[build] timed out after {SolutionBuildTimeout} waiting for the prebuild mutex");
+                return new ProcessRunner.ProcessResult(
+                    ExitCode: 1,
+                    StdOut: string.Empty,
+                    StdErr: $"Solution prebuild mutex not acquired within {SolutionBuildTimeout}.");
+            }
+
+            Log.Add("[build] dotnet build BotNexus.slnx -c Release (prebuild, mutex held)");
+            return ProcessRunner.RunAsync(
+                "dotnet",
+                "build BotNexus.slnx --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
+                workingDirectory: repoRoot,
+                environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
+                timeout: SolutionBuildTimeout).GetAwaiter().GetResult();
+        }
+        finally
+        {
+            if (held) mutex.ReleaseMutex();
+        }
+    });
 
     /// <summary>
     /// Invoke the installed CLI with a sandboxed environment so it cannot leak into
