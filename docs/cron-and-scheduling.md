@@ -290,16 +290,28 @@ BotNexus uses the **Cronos** library, which supports:
 
 ### Timezone Support
 
-When `Timezone` is specified in the job config, the cron expression is evaluated in that timezone. For example:
+When `timeZone` is set on a job, the cron expression is evaluated in that timezone. For example:
 
 ```json
 {
-  "Schedule": "0 9 * * *",
-  "Timezone": "America/New_York"
+  "schedule": "0 9 * * *",
+  "timeZone": "America/New_York"
 }
 ```
 
-This job runs at 9:00 AM **Eastern Time**, not UTC.
+This job runs at 9:00 AM **Eastern Time**, not UTC. Omitting `timeZone` (or setting it to `UTC`) evaluates
+the expression in UTC.
+
+**Id resolution accepts either family.** A timezone id is resolved through a single canonical resolver
+(`CronTimeZoneResolver`, issue #2748), which tries the id as given and then converts between the Windows
+and IANA spellings and retries. `America/New_York` and `Eastern Standard Time` therefore both resolve on
+either a Linux or a Windows host, and the scheduler's next-run computation, the `cron` tool's validation
+and the missed-run detector all agree on the result - before #2748 three independent implementations
+disagreed, so a job could fire at the wrong hour while the action that ran it reported the right one.
+
+**An unresolvable id degrades to UTC rather than throwing**, because resolution runs inside the scheduler
+loop and a throw would stop all scheduling. This is fail-safe, not silent-correct: check the job's reported
+next-run time after setting an unusual id, since a typo lands you in UTC instead of erroring.
 
 ---
 

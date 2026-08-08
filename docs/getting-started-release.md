@@ -208,31 +208,32 @@ Edit `~/.botnexus/config.json`:
 
 ```json
 {
-  "BotNexus": {
-    "ExtensionsPath": "~/.botnexus/extensions",
-    "Providers": {
-      "copilot": {
-        "Auth": "oauth",
-        "DefaultModel": "gpt-4o",
-        "ApiBase": "https://api.githubcopilot.com"
-      }
+  "extensionsPath": "~/.botnexus/extensions",
+  "providers": {
+    "copilot": {
+      "auth": "oauth",
+      "defaultModel": "gpt-4o",
+      "apiBase": "https://api.githubcopilot.com"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "toolTimeoutSeconds": 300
     },
-    "Agents": {
-      "Model": "gpt-4o",
-      "MaxTokens": 8192,
-      "Temperature": 0.1,
-      "Named": {
-        "assistant": {
-          "Name": "assistant",
-          "Provider": "copilot",
-          "Model": "gpt-4o",
-          "EnableMemory": true
-        }
-      }
+    "assistant": {
+      "displayName": "Assistant",
+      "provider": "copilot",
+      "model": "gpt-4o",
+      "memory": { "enabled": true }
     }
   }
 }
 ```
+
+> Agents are keyed **directly** under `agents` by agent id - there is no `named` sub-dictionary. The one
+> reserved key is `defaults`, which holds the world-level defaults merged into every agent. See the
+> [configuration reference](configuration.md#agents-agent-definitions-and-agents-defaults) for the full
+> per-agent key list.
 
 The configuration is loaded automatically. BotNexus creates a workspace directory for your agent:
 
@@ -366,28 +367,24 @@ Add more agents with different personalities or specialized roles:
 Edit `~/.botnexus/config.json`:
 
 ```json
-"Agents": {
-  "Model": "gpt-4o",
-  "Named": {
-    "assistant": {
-      "Name": "assistant",
-      "Provider": "copilot",
-      "Model": "gpt-4o",
-      "EnableMemory": true
-    },
-    "researcher": {
-      "Name": "researcher",
-      "Provider": "copilot",
-      "Model": "gpt-4o",
-      "Temperature": 0.3,
-      "MaxTokens": 16384
-    },
-    "note-taker": {
-      "Name": "note-taker",
-      "Provider": "copilot",
-      "Model": "gpt-4o",
-      "Temperature": 0.0
-    }
+"agents": {
+  "assistant": {
+    "displayName": "Assistant",
+    "provider": "copilot",
+    "model": "gpt-4o",
+    "memory": { "enabled": true }
+  },
+  "researcher": {
+    "displayName": "Researcher",
+    "provider": "copilot",
+    "model": "gpt-4o",
+    "toolIds": ["read", "web_search", "web_fetch"]
+  },
+  "note-taker": {
+    "displayName": "Note Taker",
+    "provider": "copilot",
+    "model": "gpt-4o",
+    "systemPromptFiles": ["SOUL.md", "IDENTITY.md"]
   }
 }
 ```

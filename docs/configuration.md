@@ -208,143 +208,147 @@ concurrently.
 
 ---
 
-### Agents: AgentDefaults
+### Configuration store (shadow migration)
 
-Default settings for all agents. Individual agents can override any property.
+A SQLite-backed configuration store is being introduced alongside `config.json` (issues #2646, #2766).
+It is **off by default and inert**: with both flags below unset, no new code path runs, nothing is
+written, and the gateway serves configuration exactly as it does today.
 
-```json
+The rollout is deliberately split across **two independent flags** so that verifying the migration and
+depending on it are separate decisions. A single flag would mean the first evidence the migration is
+faithful arrives only once the platform already depends on it.
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `ConfigStoreShadowMigration` | off | On start, migrate `config.json` into the store and diff the round-trip against the source. **Report only** - this flag can never change which configuration the gateway serves. |
+| `ConfigStoreAuthoritative` | off | Read configuration from the store instead of JSON. The shadow diff continues to run as a regression guard. |
+
+There are three valid states, in order:
+
+1. **Both off** - today's behaviour, zero new code paths active. This is the default.
+2. **Shadow on, authoritative off** - the migration runs and is verified on every start; JSON remains authoritative.
+3. **Both on** - the store is authoritative.
+
+The flags bind through `Microsoft.FeatureManagement` on the same `IConfiguration` that loads
+`config.json`, so they are set in the `FeatureManagement` section - the same mechanism as the
+[Dev-Mode Origin Guard](./features/dev-origin-guard.md):
+
+```jsonc
 {
-  "Agents": {
-    "Workspace": "~/.botnexus/workspace",
-    "Model": "gpt-4o",
-    "ContextWindowTokens": 65536,
-    "MaxToolIterations": 40,
-    "Timezone": "UTC",
-    "Named": {
-      "planner": { ... },
-      "writer": { ... }
-    }
+  "FeatureManagement": {
+    // Verify the migration first. Leave authoritative off until diffs are clean
+    // across restarts, config edits, agent additions and extension installs.
+    "ConfigStoreShadowMigration": true,
+    "ConfigStoreAuthoritative": false
   }
 }
 ```
 
-#### AgentDefaults Properties
+**Authoritative-without-shadow is refused at startup**, loudly, rather than being silently upgraded:
+enabling the store as the read path without the verification path having run would put a migration
+nothing has ever checked in front of every configuration read. Note this is deliberately stricter than
+the shadow path's own failure policy - a shadow migration that throws must *never* fail startup,
+because it is diagnostic; an operator asking for an unverified authoritative store is a configuration
+error, which is exactly what startup validation exists to catch.
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Workspace` | string | `~/.botnexus/workspace` | Directory for agent session data, memory, and local files |
-| `Model` | string | `gpt-4o` | Default LLM model name (e.g., gpt-4o, gpt-4-turbo, claude-3-5-sonnet) |
-| `MaxTokens` | int? | null | Max tokens per response (if unset, provider decides) |
-| `ContextWindowTokens` | int? | 65536 | Total context window size used for planning and session limits |
-| `Temperature` | double? | null | Randomness (0.0=deterministic, 1.0=creative). If unset, provider decides |
-| `MaxToolIterations` | int | 40 | Max tool call loops in a single agent cycle |
-| `MaxRepeatedToolCalls` | int | 2 | Max times the same tool can be called with identical arguments (loop detection) |
-| `ToolTimeoutSeconds` | int? | 300 | Global per-tool execution timeout in seconds. Inherited by all agents that do not set their own override; five minutes accommodates long-running cross-agent calls while still bounding stuck tools |
-| `Timezone` | string | `UTC` | Default timezone for agent operations (IANA format) |
-| `Named` | dict | `{}` | Per-agent customizations (see AgentConfig below) |
-
-#### AgentConfig: Per-Agent Customization
-
-Override any default for a specific agent:
-
-```json
-{
-  "Agents": {
-    "Named": {
-      "planner": {
-        "Model": "gpt-4-turbo",
-        "SystemPrompt": "You are an expert strategic planner...",
-        "Temperature": 0.5,
-        "MaxTokens": 12000,
-        "EnableMemory": true,
-        "Skills": ["research", "analysis"],
-        "McpServers": [
-          { "Name": "filesystem", "Command": "npx", ... }
-        ],
-        "CronJobs": [                                              // ⚠️ Deprecated — use Cron.Jobs
-          { "Name": "daily-briefing", "Schedule": "0 9 * * *", ... }
-        ]
-      }
-    }
-  }
-}
-```
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `Name` | string | Agent identifier (matches key in Named dict) |
-| `SystemPrompt` | string | Custom system message (overrides default) |
-| `SystemPromptFile` | string | Path to .txt file with system prompt (if SystemPrompt not set) |
-| `Workspace` | string | Custom workspace directory for this agent |
-| `Model` | string | Override default model for this agent |
-| `Thinking` | string? | Agent-level default reasoning level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Agent layer of the 3-layer model/thinking/context override stack (model default -> agent -> conversation); `null` falls through to the model default. Rejected at registration if the model does not support it |
-| `ContextWindow` | int? | Agent-level default context-window size in tokens. Agent layer of the override stack; `null` falls through to the model default. Only sizes the model advertises as supported are accepted |
-| `Provider` | string | Override default provider (copilot, openai, anthropic, etc.) |
-| `MaxTokens` | int? | Override default max tokens. When `null`, provider uses its own default |
-| `Temperature` | double? | Override default temperature (0.0-2.0). When `null`, provider uses its own default |
-| `MaxToolIterations` | int | Override default max tool calls |
-| `MaxRepeatedToolCalls` | int | Override default repeated tool call limit (loop detection) |
-| `Timezone` | string | Override default timezone |
-| `EnableMemory` | bool | Enable persistent memory for this agent |
-| `ToolTimeoutSeconds` | int? | Per-tool execution timeout in seconds. Overrides the global `agents.defaults.toolTimeoutSeconds` value for this agent. When null or omitted, inherits the global default (300 seconds unless configured otherwise) |
-| `DisallowedTools` | list | Tool names to exclude for this agent (e.g., `["shell", "filesystem"]`) — see [Internal Tools](#internal-tools) |
-| `McpServers` | list | MCP servers enabled for this agent (see [MCP Servers](#mcp-servers)) |
-| `Skills` | list | Named skill references (plugin extension names) |
-| `DisabledSkills` | list | Skill names or patterns to exclude for this agent (e.g., `["debug-*", "experimental-*", "test-skill"]`) — supports wildcards (`*`, `?`). See [Skills Guide](./skills.md#disabling-skills) |
-| `CronJobs` | list | **Deprecated.** Use centralized `Cron.Jobs` instead (see [Cron and Scheduling Guide](./cron-and-scheduling.md)). Legacy entries are auto-migrated at startup. |
+The store lives at `config.db` in the same directory as `config.json`.
 
 ---
 
-#### Agent Iteration & Loop Detection
+### Agents: agent definitions and `agents.defaults`
 
-Each agent's tool calling loop is bounded by two configurable limits to prevent infinite loops and excessive token usage:
-
-**MaxToolIterations** — Total number of LLM calls in a single agent cycle
-- **Default:** 40
-- **Purpose:** Limits total loop iterations; prevents runaway multi-turn conversations
-- **Typical usage:** File operations (5-10), analysis chains (10-20), complex planning (30-40)
-
-**MaxRepeatedToolCalls** — Max times the same tool can be called with identical arguments
-- **Default:** 2
-- **Purpose:** Detects when agents get stuck repeatedly calling the same tool without variation
-- **How it works:** Tracks tool signatures (`tool_name + arguments`); blocks execution when threshold is reached; returns error to LLM
-
-**Example Configuration:**
+The `agents` section is a dictionary keyed by **agent id**. One reserved key, `defaults`, holds the
+world-level defaults that are field-merged into every agent; every other key defines a named agent.
 
 ```json
 {
-  "Agents": {
-    "MaxToolIterations": 40,
-    "MaxRepeatedToolCalls": 2,
-    "Named": {
-      "careful-agent": {
-        "MaxToolIterations": 10,        // Strict: max 10 LLM calls
-        "MaxRepeatedToolCalls": 1       // No retries allowed
-      },
-      "researcher": {
-        "MaxToolIterations": 100,       // Permissive: max 100 LLM calls
-        "MaxRepeatedToolCalls": 5       // Allow up to 5 retries per tool
-      }
+  "agents": {
+    "defaults": {
+      "toolIds": ["read", "write", "shell"],
+      "toolTimeoutSeconds": 300
+    },
+    "assistant": {
+      "displayName": "Assistant",
+      "provider": "copilot",
+      "model": "gpt-4.1",
+      "systemPromptFiles": ["SOUL.md", "IDENTITY.md"],
+      "toolIds": ["read", "write", "web_search"],
+      "enabled": true
     }
   }
 }
 ```
 
-**Loop Detection Example:**
+#### `agents.defaults` properties
 
-When an agent calls `search_files("")` three times without changing arguments:
+Backed by `AgentDefaultsConfig`. Only these four keys exist - a default that is not listed here is not
+merged, because there is no property to merge it into.
 
-```text
-Iteration 0: search_files("") → executes (count: 1)
-Iteration 1: search_files("") → executes (count: 2)
-Iteration 2: search_files("") → blocked! count: 2 >= MaxRepeatedToolCalls: 2
-  └─ Agent receives error: "Tool 'search_files' called 3 times with identical arguments"
-```
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `toolIds` | array | `null` | Default tool ids inherited by agents that do not set their own `toolIds` |
+| `toolTimeoutSeconds` | int? | `300` | Default per-tool timeout in seconds. Five minutes accommodates tools that wait on another agent while still bounding genuinely stuck calls |
+| `memory` | object | `null` | Default memory configuration inherited by agents |
+| `heartbeat` | object | `null` | Default heartbeat configuration inherited by agents |
+| `fileAccess` | object | `null` | Default file access policy inherited by agents |
 
-The agent then receives this error as a tool result and can decide to:
-1. Try a different search query
-2. Use a different tool
-3. Proceed with current context
+#### Per-agent properties
+
+Backed by `AgentDefinitionConfig`. Every key below is a real, bound property; a per-agent value
+overrides the corresponding `agents.defaults` value.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `provider` | string | `null` | Provider name (for example `copilot`) |
+| `displayName` | string | `null` | Human-readable display name shown for this agent in clients |
+| `emoji` | string | `null` | Optional emoji shown alongside the agent name |
+| `description` | string | `null` | Description of the agent's purpose |
+| `model` | string | `null` | Model identifier (for example `gpt-4.1`) |
+| `allowedModels` | array | `null` | Model ids this agent may use. Null means unrestricted within the provider allowlist |
+| `systemPromptFiles` | array | `null` | Ordered list of files to load as the system prompt. Empty means the default order |
+| `systemPromptFile` | string | `null` | Single system prompt file path (legacy - prefer `systemPromptFiles`) |
+| `toolIds` | array | `null` | Tool identifiers this agent has access to |
+| `toolTimeoutSeconds` | int? | inherits | Per-tool timeout in seconds for this agent |
+| `subAgents` | array | `null` | Agent ids this agent can call as sub-agents |
+| `subAgentRoles` | array | `null` | Role names this agent can converse with (role-based grants for `agent_converse`) |
+| `isolationStrategy` | string | `null` | Isolation strategy name (for example `in-process`) |
+| `isolationOptions` | object | `null` | Strategy-specific isolation options |
+| `cacheRetention` | string | `null` | Prompt-caching retention policy. Null means the provider default (short) |
+| `thinking` | string? | `null` | Agent-level default reasoning level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Agent layer of the three-layer model/thinking/context override stack; `null` inherits the model default. An unsupported value causes the agent to be skipped at config load with a warning |
+| `contextWindow` | int? | `null` | Agent-level default context-window size in tokens. Same override stack; validated against the model's advertised sizes |
+| `maxConcurrentSessions` | int? | `null` | Maximum concurrent sessions for this agent |
+| `metadata` | object | `null` | Agent-level metadata |
+| `enabled` | bool | `true` | Whether this agent is enabled and available for routing |
+| `kind` | string | `Named` | Only `Named` is accepted from config. `SubAgent` is rejected - sub-agents are runtime-only |
+| `memory` | object | `null` | Memory system configuration for this agent |
+| `soul` | object | `null` | Soul session lifecycle configuration |
+| `heartbeat` | object | `null` | Heartbeat polling configuration |
+| `dateTimeInjection` | object | `null` | Datetime injection override for this agent |
+| `sessionAccess` | object | `null` | Session access configuration for this agent's session tool |
+| `conversationAccess` | object | `null` | Conversation access configuration for this agent's conversation tool |
+| `fileAccess` | object | `null` | File access policy for this agent's file tools |
+| `shellCommand` | array | `null` | Custom shell command array overriding the gateway-level shell. Element `[0]` is the executable; the agent's command string is appended last |
+| `extensions` | object | `null` | Extension-specific configuration keyed by extension id (for example `botnexus-skills`) |
+| `toolPolicy` | object | `null` | Tool policy overrides for this agent |
+
+See [Agent Settings Reference](./user-guide/configuration.md#agent-settings-reference) in the user guide
+for the nested `memory.*`, `soul.*`, `sessionAccess.*`, `toolPolicy.*` and `fileAccess.*` keys.
+
+> **No `named` sub-dictionary, and no iteration limits.** Agents are keyed directly under `agents`;
+> there is no `agents.named` wrapper. There is likewise no `maxToolIterations`, `maxRepeatedToolCalls`,
+> `contextWindowTokens`, `enableMemory`, `disallowedTools`, `skills`, `disabledSkills`, `systemPrompt`,
+> `workspace`, `timezone` or `cronJobs` key on an agent - none of those bind to anything. Use
+> `toolIds` to grant tools (an omitted tool is simply not granted), `toolPolicy.denied` to block one
+> outright, `agents.<id>.extensions.botnexus-skills` for skills, `soul.timezone` for the agent's
+> timezone, `memory.enabled` for memory, `contextWindow` for the window size, and the top-level `cron`
+> section for scheduled jobs.
+
+#### Agent loop safety limits
+
+Per-turn tool execution is bounded by the per-tool timeout above (`toolTimeoutSeconds`, default 300 s),
+which is the only agent-loop limit exposed through `config.json`. Cross-agent runaway protection is
+separate and lives under the agent-exchange budget (turn budgets, daily caps and a loop-detection
+cooldown), not under `agents`.
 
 ---
 
@@ -440,7 +444,6 @@ The Copilot provider exposes **26 registered models** organized by API format:
       }
     },
     "Agents": {
-      "Named": {
         "analyst": {
           "Model": "gpt-4o",
           "Provider": "copilot"
@@ -1128,14 +1131,17 @@ Every agent automatically gets access to these internal tools:
 
 **Disabling Tools per Agent:**
 
-Use the `DisallowedTools` array in agent configuration to disable specific tools:
+There is no `disallowedTools` key. A tool is withheld either by omitting it from the agent's
+`toolIds` grant, or - when it must be blocked outright regardless of what grants it - by listing it in
+`toolPolicy.denied`:
 
 ```json
 {
-  "Agents": {
-    "Named": {
-      "secure-agent": {
-        "DisallowedTools": ["shell", "filesystem"]
+  "agents": {
+    "secure-agent": {
+      "toolIds": ["read", "web_search"],
+      "toolPolicy": {
+        "denied": ["shell", "exec"]
       }
     }
   }
@@ -1529,7 +1535,6 @@ When `MaxTokens` or `Temperature` are not specified (null), providers use their 
 ```json
 {
   "Agents": {
-    "Named": {
       "fast-agent": {
         "Model": "gpt-4o",
         "Temperature": 0.5     // Set explicitly
@@ -2195,21 +2200,14 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
 {
   "BotNexus": {
     "Agents": {
-      "Model": "gpt-4o",
-      "Named": {
         "planner": {
           "Model": "gpt-4-turbo",
-          "Temperature": 0.5,
-          "MaxTokens": 12000,
-          "SystemPrompt": "You are a strategic planning expert. Break down complex goals into actionable steps."
+          "SystemPromptFiles": ["planner-soul.md"]
         },
         "writer": {
           "Model": "gpt-4o",
-          "Temperature": 0.7,
-          "MaxTokens": 16000,
-          "SystemPrompt": "You are a technical writer. Write clear, concise documentation."
+          "SystemPromptFiles": ["writer-soul.md"]
         }
-      }
     },
     "Providers": {
       "openai": {
@@ -2232,15 +2230,14 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
 {
   "BotNexus": {
     "Agents": {
-      "Workspace": "~/.botnexus/workspace",
-      "Model": "gpt-4o",
-      "Named": {
         "researcher": {
           "Model": "gpt-4o",
-          "Temperature": 0.3,
-          "McpServers": ["filesystem", "github-mcp"]
+          "Extensions": {
+            "botnexus-mcp": {
+              "Servers": { "filesystem": { "Command": "npx" } }
+            }
+          }
         }
-      }
     },
     "Providers": {
       "copilot": {
