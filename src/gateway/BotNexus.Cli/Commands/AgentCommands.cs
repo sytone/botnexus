@@ -372,7 +372,10 @@ internal sealed class AgentCommands
             root => RawConfigPath.TryRemoveEntry(root, AgentsPath, matchedId, out var error) ? null : error,
             "before-agent-remove",
             verbose,
-            cancellationToken);
+            cancellationToken,
+            // #2816: removing the last agent legitimately empties `agents`; naming it here keeps
+            // that working without granting this command any reach into other sections.
+            namedSections: [AgentsPath]);
         if (saveCode != 0)
             return saveCode;
 
@@ -701,7 +704,8 @@ internal sealed class AgentCommands
             },
             "before-agent-import",
             verbose,
-            cancellationToken);
+            cancellationToken,
+            namedSections: [AgentsPath]);
         if (saveCode != 0)
             return saveCode;
 
@@ -868,7 +872,8 @@ internal sealed class AgentCommands
             root => RawConfigPath.TrySetEntry(root, AgentsPath, agentId, ToNode(agent), out var error) ? null : error,
             "before-agent-update",
             verbose,
-            cancellationToken);
+            cancellationToken,
+            namedSections: [AgentsPath]);
 
     private static bool ContainsDictionaryKey<TKey, TValue>(Dictionary<TKey, TValue> dictionary, TKey key)
         where TKey : notnull

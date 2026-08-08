@@ -29,6 +29,16 @@ namespace BotNexus.Gateway.Configuration;
 /// raw-document edit (<see cref="MutateAsync(Action{JsonObject}, string, CancellationToken)" /> or
 /// <see cref="MutateValidatedAsync" />), never as a side effect of a typed whole-document replace.
 /// Any future configuration store (#2646) must reproduce this behaviour deliberately.</para>
+/// <para><b>Destructive-section guard (#2816).</b> Every write - without exception - passes through
+/// the single private pipeline <see cref="MutateCoreAsync" />, which applies
+/// <see cref="ConfigSectionGuard" /> to the candidate document before the file is touched. A
+/// candidate that would drop or empty a populated top-level section the caller did not
+/// <em>name</em> is refused, and the bytes on disk are left exactly as they were. This exists
+/// because a 2026-07-31 production write flattened the whole <c>channels</c> section to a single
+/// defaulted property and destroyed live credentials while reporting success; see
+/// <see cref="ConfigSectionGuard" /> for the full rationale and for why the guard deliberately has
+/// no bypass flag. New write methods must route through <see cref="MutateCoreAsync" /> rather than
+/// re-implementing the read/mutate/validate/write sequence, or they will silently opt out of it.</para>
 /// </remarks>
 public sealed class PlatformConfigWriter
 {
@@ -97,6 +107,8 @@ public sealed class PlatformConfigWriter
         => await MutateAsync(
             root =>
             {
+                // #2816: sectionName is declared to the guard below, so this path may legitimately
+                // clear the section it was asked to replace - and only that section.
                 if (!merge || value is not JsonObject incoming || root[sectionName] is not JsonObject existing)
                 {
                     // No existing object section (or non-object payload): nothing to
@@ -121,7 +133,8 @@ public sealed class PlatformConfigWriter
                 root[sectionName] = merged;
             },
             $"before-{sectionName}-update",
-            ct);
+            ct,
+            namedSections: [sectionName]);
 
     /// <summary>
     /// Reads the current platform configuration together with the revision token it was read at.
@@ -155,11 +168,19 @@ public sealed class PlatformConfigWriter
     /// <see langword="null"/> the historical last-writer-wins behaviour is preserved, so existing
     /// callers are unaffected.
     /// </param>
+    /// <param name="namedSections">
+    /// Top-level sections this replacement is explicitly entitled to empty or remove (#2816).
+    /// Defaults to none: a whole-document replace is exactly the shape of write that destroyed a
+    /// production <c>channels</c> section, so by default it is held to the same guard as every
+    /// other path and is refused if it silently flattens something. Pass the section names only
+    /// from a caller whose declared job is to regenerate those sections wholesale.
+    /// </param>
     public async Task UpdatePlatformConfigAsync(
         PlatformConfig config,
         string reason,
         CancellationToken ct = default,
-        string? expectedRevision = null)
+        string? expectedRevision = null,
+        IReadOnlyCollection<string>? namedSections = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         await MutateAsync(root =>
@@ -204,7 +225,7 @@ public sealed class PlatformConfigWriter
             root.Clear();
             foreach (var kvp in next)
                 root[kvp.Key] = kvp.Value?.DeepClone();
-        }, reason, ct);
+        }, reason, ct, namedSections);
     }
 
     /// <summary>
@@ -244,6 +265,8 @@ public sealed class PlatformConfigWriter
         ArgumentException.ThrowIfNullOrWhiteSpace(sectionName);
         ArgumentNullException.ThrowIfNull(mutation);
 
+        // #2816: this call names exactly one section, so the guard permits it to empty that one
+        // and nothing else - a mutation aimed at gateway still cannot flatten channels.
         return await MutateValidatedAsync(
             root =>
             {
@@ -256,7 +279,8 @@ public sealed class PlatformConfigWriter
                 return mutation(section);
             },
             reason,
-            ct);
+            ct,
+            namedSections: [sectionName]);
     }
 
     /// <summary>
@@ -333,44 +357,65 @@ public sealed class PlatformConfigWriter
             {
                 section[key] = value;
             }
-        }, $"before-{sectionName}-update", ct);
+        }, $"before-{sectionName}-update", ct, namedSections: [sectionName]);
 
     /// <summary>
     /// Atomically mutates the config document and persists the result.
     /// </summary>
-    public async Task MutateAsync(Action<JsonObject> mutation, string reason, CancellationToken ct = default)
+    /// <param name="namedSections">
+    /// Top-level sections the caller explicitly declares it is operating on, so the
+    /// destructive-section guard (#2816) permits this write to empty or remove them. Leave
+    /// <see langword="null" /> for a targeted edit that is not supposed to destroy anything.
+    /// </param>
+    public async Task MutateAsync(
+        Action<JsonObject> mutation,
+        string reason,
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
         await MutateAsync(root =>
         {
             mutation(root);
             return Task.CompletedTask;
-        }, reason, ct);
+        }, reason, ct, namedSections);
     }
 
     /// <summary>
     /// Atomically mutates the config document and persists the result.
     /// </summary>
-    public async Task MutateAsync(Func<JsonObject, Task> mutation, string reason, CancellationToken ct = default)
+    /// <param name="namedSections">
+    /// Top-level sections the caller explicitly declares it is operating on (#2816). See the
+    /// overload above.
+    /// </param>
+    /// <exception cref="PlatformConfigSectionGuardException">
+    /// The candidate document would have destroyed a populated top-level section that
+    /// <paramref name="namedSections" /> does not name. Nothing was written.
+    /// </exception>
+    public async Task MutateAsync(
+        Func<JsonObject, Task> mutation,
+        string reason,
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
 
-        // Lock order is always semaphore -> cross-process file lock (#2134). See
-        // CrossProcessConfigLock for the ordering/deadlock argument: the semaphore keeps this
-        // process's own threads from queueing on the OS lock, and the file lock extends the same
-        // critical section across the CLI/gateway process boundary.
-        await WriteLock.WaitAsync(ct);
-        try
-        {
-            using var crossProcess = await CrossProcessConfigLock.AcquireAsync(_configPath, _fileSystem, ct);
-            var root = await ReadRootAsync(ct);
-            await mutation(root);
-            await WriteRootAsync(root, reason, ct);
-        }
-        finally
-        {
-            WriteLock.Release();
-        }
+        var errors = await MutateCoreAsync(
+            async root =>
+            {
+                await mutation(root);
+                return null;
+            },
+            reason,
+            validateCandidate: false,
+            namedSections,
+            ct);
+
+        // This overload has no error channel in its signature, so a guard rejection must throw or
+        // it would be indistinguishable from a successful write - which is precisely the silent
+        // failure mode #2816 is about.
+        if (errors.Count > 0)
+            throw new PlatformConfigSectionGuardException(errors[0]);
     }
 
     /// <summary>
@@ -401,30 +446,92 @@ public sealed class PlatformConfigWriter
     /// </param>
     /// <param name="reason">Backup reason label recorded when the write proceeds.</param>
     /// <returns>The rejection messages; empty when the mutation was validated and persisted.</returns>
+    /// <param name="namedSections">
+    /// Top-level sections the caller explicitly declares it is operating on, so the
+    /// destructive-section guard (#2816) permits this write to empty or remove them. A guard
+    /// rejection is returned through the same error list as a validation failure, so existing
+    /// callers report it and exit non-zero without any change.
+    /// </param>
     public async Task<IReadOnlyList<string>> MutateValidatedAsync(
         Func<JsonObject, string?> mutation,
         string reason,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
 
-        // Same lock order as MutateAsync: semaphore first, then the cross-process file lock (#2134).
+        return await MutateCoreAsync(
+            root => Task.FromResult(mutation(root)),
+            reason,
+            validateCandidate: true,
+            namedSections,
+            ct);
+    }
+
+    /// <summary>
+    /// The single read-modify-guard-validate-write pipeline every public write method funnels
+    /// through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Issue #2816. The destructive-section guard is applied here, once, rather than in each public
+    /// method. That is the whole design decision: the incident it prevents was never attributed to
+    /// a specific command, so a per-command check would have been re-derived four ways, forgotten
+    /// by the fifth command, and possibly absent from the path that actually caused the damage. A
+    /// method that bypasses this pipeline bypasses the guard, so do not add one.
+    /// </para>
+    /// <para>
+    /// Ordering inside the lock is deliberate: the pristine document is captured BEFORE the
+    /// mutation runs (the mutation edits the live root in place), the guard then compares pristine
+    /// against candidate, and only a candidate that passes both the guard and validation reaches
+    /// <see cref="WriteRootAsync" />. A rejected write therefore leaves the file byte-for-byte
+    /// unchanged and takes no backup.
+    /// </para>
+    /// </remarks>
+    /// <param name="validateCandidate">
+    /// Whether to run full <c>PlatformConfigLoader.ValidateRawJson</c> validation on the candidate.
+    /// Only the validated write paths do; the raw <c>MutateAsync</c> paths historically do not, and
+    /// turning that on here would change behaviour well beyond #2816.
+    /// </param>
+    private async Task<IReadOnlyList<string>> MutateCoreAsync(
+        Func<JsonObject, Task<string?>> mutation,
+        string reason,
+        bool validateCandidate,
+        IReadOnlyCollection<string>? namedSections,
+        CancellationToken ct)
+    {
+        // Lock order is always semaphore -> cross-process file lock (#2134). See
+        // CrossProcessConfigLock for the ordering/deadlock argument: the semaphore keeps this
+        // process's own threads from queueing on the OS lock, and the file lock extends the same
+        // critical section across the CLI/gateway process boundary.
         await WriteLock.WaitAsync(ct);
         try
         {
             using var crossProcess = await CrossProcessConfigLock.AcquireAsync(_configPath, _fileSystem, ct);
             var root = await ReadRootAsync(ct);
 
-            var mutationError = mutation(root);
+            // Snapshot the pristine document: mutations edit root in place, so this is the only
+            // moment the pre-mutation state still exists to compare against.
+            var pristine = root.DeepClone().AsObject();
+
+            var mutationError = await mutation(root);
             if (!string.IsNullOrWhiteSpace(mutationError))
                 return [mutationError];
 
-            // Validate the complete candidate document, not just the mutated fragment: a locally
-            // plausible edit can still violate a cross-field rule elsewhere in the graph.
-            var candidateJson = root.ToJsonString(PlatformPersistOptions);
-            var errors = PlatformConfigLoader.ValidateRawJson(candidateJson);
-            if (errors.Count > 0)
-                return errors;
+            var destroyed = ConfigSectionGuard.FindDestroyedSections(pristine, root, namedSections);
+            if (destroyed.Count > 0)
+                return [ConfigSectionGuard.FormatRejection(_configPath, destroyed)];
+
+            if (validateCandidate)
+            {
+                // Validate the complete candidate document, not just the mutated fragment: a
+                // locally plausible edit can still violate a cross-field rule elsewhere in the
+                // graph.
+                var candidateJson = root.ToJsonString(PlatformPersistOptions);
+                var errors = PlatformConfigLoader.ValidateRawJson(candidateJson);
+                if (errors.Count > 0)
+                    return errors;
+            }
 
             await WriteRootAsync(root, reason, ct);
             return [];
@@ -443,7 +550,7 @@ public sealed class PlatformConfigWriter
         {
             if (root[sectionName] is JsonObject section)
                 section.Remove(key);
-        }, $"before-{sectionName}-remove", ct);
+        }, $"before-{sectionName}-remove", ct, namedSections: [sectionName]);
 
     private async Task<JsonObject> ReadRootAsync(CancellationToken ct)
     {

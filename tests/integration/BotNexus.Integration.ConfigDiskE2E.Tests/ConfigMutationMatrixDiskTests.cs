@@ -213,11 +213,19 @@ public sealed class ConfigMutationMatrixDiskTests
     }
 
     /// <summary>
-    /// Replacing the whole document through the typed model is the one path that is <em>allowed</em>
-    /// to lose unmodelled JSON, because it serialises <see cref="PlatformConfig"/> wholesale.
+    /// Replacing the whole document through the typed model still loses JSON the typed
+    /// <see cref="PlatformConfig"/> graph does not model, because it serialises the graph wholesale.
     /// Pinning that behaviour on a physical file documents the real blast radius of the typed
     /// replace path instead of leaving callers to discover it in production.
     /// </summary>
+    /// <remarks>
+    /// #2816 narrowed this considerably. The loss is no longer <em>silent</em>: the
+    /// destructive-section guard now refuses any typed replace that would drop a populated
+    /// top-level section the caller did not name, so this test has to declare
+    /// <c>customVendorBlock</c> to reach the behaviour it pins at all. Previously it did not, and
+    /// the same unguarded write shape destroyed a production <c>channels</c> section. The
+    /// assertions below are unchanged; only the caller's declaration of intent is new.
+    /// </remarks>
     [Fact]
     public async Task UpdatePlatformConfig_TypedReplace_PersistsModelledStateToDisk()
     {
@@ -227,7 +235,12 @@ public sealed class ConfigMutationMatrixDiskTests
         config.Gateway.ShouldNotBeNull();
         config.Gateway!.LogLevel = "Warning";
 
-        await home.Writer.UpdatePlatformConfigAsync(config, "test-typed-replace");
+        await home.Writer.UpdatePlatformConfigAsync(
+            config,
+            "test-typed-replace",
+            CancellationToken.None,
+            expectedRevision: null,
+            namedSections: ["customVendorBlock"]);
 
         var after = home.ReadFromDisk();
         after["gateway"]!["logLevel"]!.GetValue<string>().ShouldBe("Warning");
