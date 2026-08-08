@@ -614,22 +614,17 @@ Agent workspaces are configured via `AgentConfig` in the BotNexus configuration:
 
 ```json
 {
-  "BotNexus": {
-    "Agents": {
-      "Model": "gpt-4-turbo",               // Default LLM model
-      "ContextWindowTokens": 8000,          // Total context window (tokens)
-      "Named": {
-        "leela": {
-          "Model": "gpt-4-turbo",           // Agent-specific model (overrides default)
-          "Workspace": "~/.botnexus/agents/leela/",  // Agent workspace path
-          "EnableMemory": true,             // Enable memory for this agent
-          "MaxContextFileChars": 8000,      // Max chars per workspace file in system prompt
-          "MaxTokens": 2000,                // Max tokens per response
-          "Temperature": 0.7,               // LLM temperature
-          "MaxToolIterations": 40,          // Max tool calls per execution
-          "ConsolidationModel": "gpt-3.5-turbo", // Model for memory consolidation
-          "MemoryConsolidationIntervalHours": 24,  // Consolidation interval
-          "AutoLoadMemory": true            // Auto-load today+yesterday in system prompt
+  "agents": {
+    "leela": {
+      "model": "gpt-4-turbo",
+      "memory": {
+        "enabled": true,
+        "path": "memory",
+        "indexing": "auto",
+        "promptInjection": "full",
+        "search": {
+          "defaultTopK": 10,
+          "maxTopK": 100
         }
       }
     }
@@ -641,12 +636,18 @@ Agent workspaces are configured via `AgentConfig` in the BotNexus configuration:
 
 | Property | Type | Default | Purpose |
 |----------|------|---------|---------|
-| `Workspace` | string | `~/.botnexus/agents/{name}/` | Override default workspace path |
-| `EnableMemory` | bool | `true` | Enable memory system for this agent |
-| `MaxContextFileChars` | int | 8000 | Max characters per workspace file included in system prompt |
-| `AutoLoadMemory` | bool | `true` | Auto-load today's and yesterday's daily notes into system prompt |
-| `ConsolidationModel` | string | (none) | LLM model for memory consolidation (can differ from primary model) |
-| `MemoryConsolidationIntervalHours` | int | 24 | Hours between consolidation runs |
+| `memory.enabled` | bool | `false` | Enable the memory system for this agent |
+| `memory.path` | string | `memory` | Memory root directory, relative to the agent workspace. Daily notes (`YYYY-MM-DD.md`) are written here |
+| `memory.indexing` | string | `auto` | Memory indexing mode |
+| `memory.promptInjection` | string | `full` | How memory is injected into the system prompt: `full`, `summary`, or `none` |
+| `memory.search.defaultTopK` | int | `10` | Default number of `memory_search` results |
+| `memory.search.maxTopK` | int | `100` | Upper bound for the `memory_search` `topK` argument; larger caller values are clamped |
+| `memory.search.maxLimit` | int | `100` | Upper bound for the `memory_get` session-listing `limit` argument |
+
+> The agent workspace path is not a per-agent config key - it is derived as
+> `~/.botnexus/agents/{id}/workspace/`. There is likewise no `maxContextFileChars`,
+> `autoLoadMemory`, `consolidationModel` or `memoryConsolidationIntervalHours` key; none of these bind
+> to anything.
 
 ### Environment Variables
 

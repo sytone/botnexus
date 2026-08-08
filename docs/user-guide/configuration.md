@@ -578,6 +578,21 @@ See also: [Agent Configuration](#agent-configuration) for the agent layer, and t
 [Conversations guide](conversations.md#per-conversation-model-reasoning-and-context-override) for
 the conversation layer.
 
+### Confirming which window actually applied
+
+The agent's hidden runtime-context block reports the effective settings that reached the run, so the
+value the agent is told is the same one the resolver produced rather than an independently-derived
+guess (issue #2796). When a context-window size is in force, the runtime line carries a
+`context_window=<tokens>` field:
+
+```text
+Runtime: agent=researcher | session=... | provider=copilot | model=my-custom-reasoner | context_window=131072
+```
+
+The field is **omitted entirely** when the provider default applies - its absence means "no explicit
+window was resolved", not "zero". This is the fastest way to confirm an agent-level or
+conversation-level override actually took effect, rather than being silently rejected and fallen back.
+
 ---
 
 ## Channel Configuration
