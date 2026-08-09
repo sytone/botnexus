@@ -103,6 +103,22 @@ $env:BOTNEXUS_BUILDTEST_LOCATION = '<azure-region>'
 
 The script uses the current Azure CLI user as the operator identity and builds the runner image through ACR Tasks. The subscription used for the shared deployment does not permit Basic or Standard ACR, so the template uses Premium. Container Apps compute scales to zero, but the registry has a standing charge.
 
+### Runner image tags are content-addressed
+
+Do not pick a version number for the runner image. The tag is **derived from a SHA-256 over the contents of `infra/buildtest/runner/`** and looks like `src-1bc35f62d232` (#2900).
+
+This is a correctness guard, not a convenience. **ACR tags are mutable**: `az acr build` against an existing tag republishes over it with exit 0 and no warning. On 2026-08-09 a hand-picked "next" version destroyed the existing `0.1.12` image, because the default in the deploy script read `0.1.11` while the deployed job was actually running `0.1.15` and `main.bicep` claimed `0.1.4` — three sources of truth, all disagreeing.
+
+Content addressing removes the failure mode rather than documenting it:
+
+- Identical content always yields the same tag, so a redundant deploy is a **skipped no-op** instead of an overwrite.
+- Different content always yields a different tag, so a change can never land on an existing one.
+- There is no number left to drift, and `main.bicep` now requires the parameter instead of defaulting.
+
+Passing `-RunnerImageTag` explicitly is still allowed for pinning a historical image during a rollback, but the script **refuses to publish over a tag that already exists**. Deleting a tag has to be a deliberate, separate act.
+
+Files under `infra/buildtest/runner/tests/` are excluded from the hash — they never enter the image, so editing them must not force a rebuild. `infra/buildtest/tests/DeployTagGuard.Tests.ps1` pins all of these properties and is mutation-verified.
+
 ## Snapshot format
 
 The local script uploads a small payload containing:

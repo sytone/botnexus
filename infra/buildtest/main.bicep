@@ -3,7 +3,11 @@ targetScope = 'resourceGroup'
 param location string = resourceGroup().location
 param operatorObjectId string
 param suffix string
-param runnerImageTag string = '0.1.4'
+// No default: the tag is content-derived by Deploy-BuildTestInfrastructure.ps1 and always passed
+// explicitly (#2900). A default here was a THIRD source of truth for the runner version -- it
+// still read '0.1.4' while the script said '0.1.11' and the deployed job ran '0.1.15'. A required
+// parameter cannot silently deploy a stale image.
+param runnerImageTag string
 
 var tags = {
   workload: 'botnexus-buildtest'
