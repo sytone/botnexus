@@ -50,6 +50,30 @@ Modes:
 
 Results are downloaded to `artifacts/azure-buildtest/<run-id>/`. The script returns a failing exit status when the Azure execution or test process fails.
 
+### Phase timings
+
+Each run records how long every phase took, in `runner-timing.log` and in the `timings` object inside `result.json` (#2889):
+
+```
+source-download        12.40s  ok
+payload-extract         8.10s  ok
+restore                63.20s  ok
+tool-restore            4.80s  ok
+build                 141.60s  ok
+test                  502.30s  ok
+artifact-upload         6.90s  ok
+```
+
+Without this the only derivable number was total wall clock, so a twelve-minute run might have been three minutes of restore plus nine of test, or seven plus five - and those call for entirely different fixes. Any proposed change to gate performance should quote a measured before and after from this artifact rather than argue from structure.
+
+Three properties are deliberate:
+
+- **It is an artifact, not console output.** Runner stdout is not uploaded and `az containerapp job logs show` hangs against this environment, so a diagnostic that only reaches the console cannot be read afterwards.
+- **It cannot fail a run.** Every timing write is best-effort and swallows its own errors. A measurement bug turning a green suite red would be worse than having no measurement.
+- **A phase that did not run is marked `skipped`, never `0.00s`.** A phase that was absent and a phase that was genuinely instant are different findings.
+
+Because artifacts are deleted after each run, pass `-KeepRemoteArtifacts` when the timings are the point of the run.
+
 A successful `strict`, `impacted`, or `full` run writes a receipt under the worktree's Git metadata. The receipt records a SHA-256 fingerprint over the current HEAD, resolved base commit, and exact Git tree containing staged, unstaged, and untracked files. `Validate-PreCommit.ps1` recalculates that fingerprint when it is invoked. It skips redundant validation only when the receipt matches exactly; any content or base-ref change invalidates it and starts a new remote run. Note that no git hook consumes this receipt: #2841 removed the pre-commit hook, and `scripts/repo/install-hooks.ps1` activates only the `pre-push` `core.bare` guard (#1602). The client refuses to issue a strict receipt unless the downloaded artifacts include `playwright.log`; this fails safely when an older deployed runner treats the mode as impacted-only. Impacted, full, and Playwright-only receipts remain useful diagnostic evidence but do not bypass strict validation.
 
 **Remote is the default and local is opt-in (#2158).** With nothing configured, `Resolve-BotNexusValidationMode` returns `remote`. Local validation spawns real gateway processes on the development host; when their parent dies the children survive, and because every gateway opens the shared cron store they claim scheduled jobs belonging to the live gateway and fail them. On 2026-08-06 three such orphans - two of them 30+ hours old - starved the live gateway until the portal would not load. To choose local deliberately, set `BOTNEXUS_VALIDATION_MODE=local` at process, user, or machine scope (process scope wins), pass `-ValidationMode local`, or use the `-LocalFallback` / `BOTNEXUS_VALIDATION_LOCAL_FALLBACK=1` aliases.

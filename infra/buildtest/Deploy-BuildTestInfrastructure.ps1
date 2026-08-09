@@ -3,7 +3,13 @@ param(
     [string]$SubscriptionId = $env:BOTNEXUS_BUILDTEST_SUBSCRIPTION_ID,
     [string]$ResourceGroup = $env:BOTNEXUS_BUILDTEST_RESOURCE_GROUP,
     [string]$Location = $(if ($env:BOTNEXUS_BUILDTEST_LOCATION) { $env:BOTNEXUS_BUILDTEST_LOCATION } else { 'westus2' }),
-    [string]$RunnerImageTag = '0.1.11'
+    # 0.1.16 adds the phase-timing artifact (#2889). Tag history: 0.1.8 node; 0.1.9 ABANDONED
+    # polling-watcher experiment that REGRESSED results, do not use; 0.1.10 node+inotify;
+    # 0.1.11 +runner-env artifact; 0.1.12-0.1.15 incremental runner fixes; 0.1.16 +runner-timing.
+    # Always check `az acr repository show-tags` before choosing a tag: tags here are MUTABLE and
+    # this default drifted behind the deployed image, so picking the "next" number by reading only
+    # this line silently overwrites an existing historical image.
+    [string]$RunnerImageTag = '0.1.16'
 )
 
 Set-StrictMode -Version Latest
