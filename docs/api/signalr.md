@@ -132,8 +132,15 @@ entering the normal dispatch queue, and throws `HubException` when:
 | `conversationId` blank | `Conversation ID is required.` |
 | `requestId` blank | `Request ID is required.` |
 | Conversation not found | `Conversation '<id>' not found.` |
-| Conversation has no `signalr` channel binding | `Caller does not have access to this conversation.` |
 | No matching pending request | `No matching ask_user request is pending for this conversation.` |
+
+> **Authorisation is the `gateway:control` scope, not a channel binding (#2744).** An earlier
+> revision also rejected the call when the conversation carried no `signalr` channel binding.
+> That check was removed: whether a conversation has a `signalr` binding is a *routing* property
+> owned by fan-out, not a statement about who is calling, so gating on it made an `ask_user`
+> prompt raised on a non-SignalR conversation (a Telegram or cron turn, say) permanently
+> unanswerable from the portal - which is a channel-agnostic observer of every turn. A read-only
+> scoped connection is still rejected by the `gateway:control` scope check.
 
 `selectedValues` entries are trimmed and blank entries dropped; an empty result becomes `null`.
 

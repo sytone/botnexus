@@ -140,6 +140,8 @@ Spawns a new background sub-agent session.
 | `apiProvider` | string | No | parent's provider | API provider override for the sub-agent run |
 | `tools` | string[] | No | parent's tools minus `spawn_subagent` | Explicit tool allowlist |
 | `systemPrompt` | string | No | parent's system prompt | Override system prompt instructions |
+| `archetype` | string | No | `general` | Behavioural role profile. One of `researcher`, `coder`, `planner`, `reviewer`, `writer`, `general`. Narrows the sub-agent's tool set to the role unless `tools` is supplied. See [Built-in Agent Archetypes](/features/built-in-agents) |
+| `targetAgentId` | string | No | - | Run the sub-agent as an already-registered named agent, using that agent's descriptor verbatim ("mirror" mode) instead of cloning the parent |
 | `maxTurns` | integer | No | `30` | Maximum conversation turns before auto-stop |
 | `timeoutSeconds` | integer | No | `600` | Timeout in seconds |
 | `shareWorkspace` | boolean | No | `false` | Grants the sub-agent **read and write** access to the parent agent's whole workspace |
@@ -161,6 +163,15 @@ example a git worktree) — it is narrower than `shareWorkspace`, which hands ov
 parent workspace. Handing a write-capable sub-agent only `grantedPaths` logs a warning at
 spawn time, because every `write`/`edit` outside its own workspace would otherwise be
 refused mid-run (#2650).
+
+#### Embody vs mirror: `targetAgentId` is exclusive
+
+A spawn is either **embody** (a role, optionally customised) or **mirror** (an existing named
+agent, verbatim) - never both. Supplying `targetAgentId` together with any embody-only field
+(`name`, `model`, `apiProvider`, `tools`, `systemPrompt`, `archetype`) is rejected with an error
+naming the conflicting fields. Mirror mode is strict pass-through of the target's descriptor;
+only `task` differs from that agent's normal operation. Reserved archetype ids are never valid
+`targetAgentId` values.
 
 #### Archetypes and shell access
 
