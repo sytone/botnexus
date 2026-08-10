@@ -50,11 +50,13 @@ dotnet tool install -g BotNexus.Cli --add-source ./artifacts
 botnexus --version
 ```
 
-!!! note "`--add-source` still consults your configured feeds"
-    `--add-source` *adds* a source rather than replacing your configured ones, so NuGet may still try nuget.org and log a warning. If a blocked feed causes a hard failure rather than a warning, add `--ignore-failed-sources`, or use the `nuget.config` in [Platform restore behind a blocked feed](#platform-restore-behind-a-blocked-feed) below, which clears inherited sources entirely.
+::: info `--add-source` still consults your configured feeds
+`--add-source` *adds* a source rather than replacing your configured ones, so NuGet may still try nuget.org and log a warning. If a blocked feed causes a hard failure rather than a warning, add `--ignore-failed-sources`, or use the `nuget.config` in [Platform restore behind a blocked feed](#platform-restore-behind-a-blocked-feed) below, which clears inherited sources entirely.
+:::
 
-!!! warning "`dotnet pack` itself needs to restore"
-    Building the package restores BotNexus's own dependencies. On a machine that has never restored this repository and cannot reach any feed, complete [Platform restore behind a blocked feed](#platform-restore-behind-a-blocked-feed) first, or run `dotnet pack` once on a connected machine and copy the resulting `.nupkg` across.
+::: warning `dotnet pack` itself needs to restore
+Building the package restores BotNexus's own dependencies. On a machine that has never restored this repository and cannot reach any feed, complete [Platform restore behind a blocked feed](#platform-restore-behind-a-blocked-feed) first, or run `dotnet pack` once on a connected machine and copy the resulting `.nupkg` across.
+:::
 
 ---
 

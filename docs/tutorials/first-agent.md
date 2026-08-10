@@ -10,8 +10,9 @@ By the end of this tutorial, you will:
 - chat with it in the Web UI
 - customize its behavior with a system prompt
 
-!!! tip
-    This is a **hands-on tutorial**. Copy and run each step in order.
+::: tip
+This is a **hands-on tutorial**. Copy and run each step in order.
+:::
 
 ## What you'll build
 
@@ -40,8 +41,9 @@ git --version
 
 You should see version output for both commands.
 
-!!! warning
-    Keep API keys private. Never commit them to source control.
+::: warning
+Keep API keys private. Never commit them to source control.
+:::
 
 ---
 
@@ -91,8 +93,9 @@ Create or edit that file and add this minimal OpenAI provider config:
 }
 ```
 
-!!! tip
-    Replace `"your-api-key-here"` with your real OpenAI API key.
+::: tip
+Replace `"your-api-key-here"` with your real OpenAI API key.
+:::
 
 ---
 
@@ -122,8 +125,9 @@ In the **same** `~/.botnexus/config.json`, add an `agents` section alongside the
 
 That's a complete minimal configuration. BotNexus will load the agent on startup.
 
-!!! tip
-    See the [Configuration Reference](../configuration.md) for all available agent options including tools, sub-agents, and isolation strategies.
+::: tip
+See the [Configuration Reference](../configuration.md) for all available agent options including tools, sub-agents, and isolation strategies.
+:::
 
 ---
 
@@ -221,8 +225,9 @@ Send the same chat message again.
 
 You should notice a different response style that matches your new prompt.
 
-!!! tip
-    System prompts are the fastest way to shape agent behavior without writing code.
+::: tip
+System prompts are the fastest way to shape agent behavior without writing code.
+:::
 
 As a next step, you can add tools to your agent so it can do more than just chat.
 

@@ -13,8 +13,9 @@ BotNexus supports voice messages through browser-based audio recording. Record a
 5. Optionally type additional text alongside the audio
 6. Press **Send** — your audio is transcribed and sent to the agent
 
-!!! tip "First time?"
-    Your browser will ask for microphone permission on the first recording. Grant it once, and you're set for all future sessions.
+::: tip First time?
+Your browser will ask for microphone permission on the first recording. Grant it once, and you're set for all future sessions.
+:::
 
 ---
 
@@ -55,8 +56,9 @@ The Whisper extension supports the following configuration options:
 
 **Default supported formats:** `audio/wav`, `audio/mpeg`, `audio/mp3`, `audio/ogg`, `audio/webm`, `audio/flac`
 
-!!! note
-    The WebUI records audio as **WebM/Opus** (`audio/webm`), which is included in the defaults. No format configuration is needed for standard browser recording.
+::: info
+The WebUI records audio as **WebM/Opus** (`audio/webm`), which is included in the defaults. No format configuration is needed for standard browser recording.
+:::
 
 ### Browser Requirements
 
@@ -64,8 +66,9 @@ The Whisper extension supports the following configuration options:
 - **Microphone permission** must be granted when prompted
 - **HTTPS** is required (or `localhost` for local development)
 
-!!! warning "Safari support"
-    Safari has limited MediaRecorder support. For the best experience, use Chrome, Firefox, or Edge.
+::: warning Safari support
+Safari has limited MediaRecorder support. For the best experience, use Chrome, Firefox, or Edge.
+:::
 
 ---
 
