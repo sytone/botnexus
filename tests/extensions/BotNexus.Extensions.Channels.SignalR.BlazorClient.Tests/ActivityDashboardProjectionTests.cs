@@ -130,8 +130,75 @@ public sealed class ActivityDashboardProjectionTests
 
         var agents = ActivityDashboardProjection.InvolvedAgents(conv);
 
-        Assert.Equal(new[] { "alpha", "beta", "gamma" }, agents);
-        Assert.DoesNotContain("jon", agents);
+        Assert.Equal(new[] { "alpha", "beta", "gamma" }, agents.Select(a => a.AgentId));
+        Assert.DoesNotContain(agents, a => a.AgentId == "jon");
+    }
+
+    [Fact]
+    public void InvolvedAgents_carries_initiator_and_target_roles_onto_the_right_agents()
+    {
+        // #2857: the exact shape AgentExchangeService/CrossWorldExchangeRouter stamp.
+        var conv = Conv("c1", agentId: "alpha", participants: new[]
+        {
+            new ParticipantDto("Agent", "alpha", "initiator"),
+            new ParticipantDto("Agent", "beta", "target")
+        });
+
+        var agents = ActivityDashboardProjection.InvolvedAgents(conv);
+
+        Assert.Equal(new[] { "alpha", "beta" }, agents.Select(a => a.AgentId));
+        Assert.Equal("initiator", agents[0].Role);
+        Assert.Equal("target", agents[1].Role);
+        Assert.Equal("initiator", ActivityDashboardProjection.RoleModifier(agents[0]));
+        Assert.Equal("target", ActivityDashboardProjection.RoleModifier(agents[1]));
+    }
+
+    [Fact]
+    public void InvolvedAgents_fails_open_on_unrecognised_null_and_blank_roles()
+    {
+        // An unknown role must still be RETURNED and DISPLAYED - only the colour modifier declines.
+        var conv = Conv("c1", agentId: "alpha", participants: new[]
+        {
+            new ParticipantDto("Agent", "alpha", "quartermaster"),
+            new ParticipantDto("Agent", "beta", null),
+            new ParticipantDto("Agent", "gamma", "   ")
+        });
+
+        var agents = ActivityDashboardProjection.InvolvedAgents(conv);
+
+        Assert.Equal(new[] { "alpha", "beta", "gamma" }, agents.Select(a => a.AgentId));
+        Assert.Equal("quartermaster", agents[0].Role);
+        Assert.Equal("quartermaster", ActivityDashboardProjection.RoleLabel(agents[0]));
+        Assert.Null(ActivityDashboardProjection.RoleModifier(agents[0]));
+        // Blank and absent both collapse to null so they render identically.
+        Assert.Null(agents[1].Role);
+        Assert.Null(agents[2].Role);
+        Assert.Null(ActivityDashboardProjection.RoleLabel(agents[2]));
+    }
+
+    [Fact]
+    public void Summarize_agent_count_ignores_roles()
+    {
+        // One agent playing two roles across two rows is still ONE agent on the stat strip.
+        var conversations = new[]
+        {
+            Conv("c1", agentId: "alpha", participants: new[]
+            {
+                new ParticipantDto("Agent", "alpha", "initiator"),
+                new ParticipantDto("Agent", "beta", "target")
+            }),
+            Conv("c2", agentId: "beta", participants: new[]
+            {
+                new ParticipantDto("Agent", "beta", "initiator"),
+                new ParticipantDto("Agent", "alpha", "target")
+            })
+        };
+
+        var rows = ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(), Now);
+        var summary = ActivityDashboardProjection.Summarize(rows);
+
+        Assert.Equal(2, summary.ConversationCount);
+        Assert.Equal(2, summary.AgentCount);
     }
 
     [Fact]
@@ -145,7 +212,7 @@ public sealed class ActivityDashboardProjectionTests
 
         var agents = ActivityDashboardProjection.InvolvedAgents(conv);
 
-        Assert.Equal(new[] { "alpha", "beta" }, agents);
+        Assert.Equal(new[] { "alpha", "beta" }, agents.Select(a => a.AgentId));
     }
 
     [Fact]
@@ -155,7 +222,8 @@ public sealed class ActivityDashboardProjectionTests
 
         var agents = ActivityDashboardProjection.InvolvedAgents(conv);
 
-        Assert.Equal(new[] { "alpha" }, agents);
+        Assert.Equal(new[] { "alpha" }, agents.Select(a => a.AgentId));
+        Assert.Null(agents[0].Role);
     }
 
     [Fact]
@@ -168,7 +236,7 @@ public sealed class ActivityDashboardProjectionTests
 
         var rows = ActivityDashboardProjection.Project(new[] { conv }, new ActivityDashboardFilter(), Now);
 
-        Assert.Equal(new[] { "alpha", "beta" }, rows[0].InvolvedAgents);
+        Assert.Equal(new[] { "alpha", "beta" }, rows[0].InvolvedAgents.Select(a => a.AgentId));
     }
 
     // ── Status filter ──────────────────────────────────────────────────────

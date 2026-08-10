@@ -197,9 +197,18 @@
                             }
                         </td>
                         <td class="activity-cell-agents">
-                            @foreach (var agentId in row.InvolvedAgents)
+                            @foreach (var agent in row.InvolvedAgents)
                             {
-                                <span class="activity-agent-chip">@AgentLabel(agentId)</span>
+                                var roleLabel = ActivityDashboardProjection.RoleLabel(agent);
+                                var roleModifier = ActivityDashboardProjection.RoleModifier(agent);
+                                <span class="activity-agent-chip @(roleModifier is null ? null : $"activity-agent-chip--{roleModifier}")"
+                                      data-testid="activity-agent-chip"
+                                      data-role="@roleLabel"
+                                      title="@AgentChipTooltip(agent)"
+                                      aria-label="@AgentChipTooltip(agent)">@AgentLabel(agent.AgentId)@if (roleLabel is not null)
+                                    {
+                                        <span class="activity-agent-role">@roleLabel</span>
+                                    }</span>
                             }
                         </td>
                         <td class="activity-cell-status">
@@ -434,6 +443,18 @@
         if (agent is { DisplayName.Length: > 0 })
             return agent.DisplayName;
         return agentId;
+    }
+
+    /// <summary>
+    /// Hover/screen-reader detail for an agent chip (#2857). Names the agent and, when the gateway
+    /// stamped one, the role it played - so the direction of an agent-to-agent or sub-agent exchange
+    /// is available to assistive tech, not only to sighted readers of the small role suffix.
+    /// </summary>
+    private string AgentChipTooltip(ActivityAgentRef agent)
+    {
+        var label = AgentLabel(agent.AgentId);
+        var role = ActivityDashboardProjection.RoleLabel(agent);
+        return role is null ? label : $"{label} - {role}";
     }
 
     /// <summary>

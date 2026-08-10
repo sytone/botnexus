@@ -156,6 +156,27 @@ public sealed record ActivityDashboardFilter(
     ActivityLiveFilter Live = ActivityLiveFilter.All);
 
 /// <summary>
+/// One agent involved in a conversation, together with the role the gateway stamped for it (#2857).
+/// Replaces the bare agent-id string the dashboard used to carry so the agents column can answer
+/// <em>direction</em> ("who called whom") and not merely membership.
+/// </summary>
+/// <remarks>
+/// The role is carried through verbatim from <see cref="ParticipantDto.Role"/> rather than parsed
+/// into an enum: the gateway stamps free-form strings (<c>initiator</c> / <c>target</c> today) from
+/// several call sites, and an unrecognised value must still render. Recognition happens only in
+/// <see cref="ActivityDashboardProjection.RoleModifier"/>, which fails open to <see langword="null"/>
+/// (no colour treatment) while <see cref="ActivityDashboardProjection.RoleLabel"/> still shows the
+/// server's word - the same fail-open posture <c>ParseVisibility</c> takes on display.
+/// </remarks>
+/// <param name="AgentId">The involved agent's identifier.</param>
+/// <param name="Role">
+/// The participant role as stamped by the gateway, or <see langword="null"/> when the roster names
+/// no role for this agent (the ordinary human/channel case). A blank server value normalises to
+/// <see langword="null"/> so "present but empty" and "absent" cannot render differently.
+/// </param>
+public sealed record ActivityAgentRef(string AgentId, string? Role = null);
+
+/// <summary>
 /// A single projected row on the Home / Activity dashboard: one active conversation plus the derived
 /// signals the row renders (involved agents, last-activity, status, cron flag).
 /// </summary>
@@ -211,7 +232,7 @@ public sealed record ActivityRow(
     string Title,
     string Status,
     DateTimeOffset LastActivity,
-    IReadOnlyList<string> InvolvedAgents,
+    IReadOnlyList<ActivityAgentRef> InvolvedAgents,
     int ChannelCount,
     ConversationSource Source,
     ConversationKind Kind,
@@ -291,28 +312,91 @@ public static class ActivityDashboardProjection
     /// conversations surface all involved agents rather than just the owner. Ordered deterministically
     /// with the owner first, then the remaining agents alphabetically, and de-duplicated.
     /// </summary>
-    public static IReadOnlyList<string> InvolvedAgents(ConversationSummaryDto conversation)
+    public static IReadOnlyList<ActivityAgentRef> InvolvedAgents(ConversationSummaryDto conversation)
     {
-        var ordered = new List<string>();
+        ArgumentNullException.ThrowIfNull(conversation);
+
+        var agentParticipants = (conversation.Participants ?? [])
+            .Where(p => string.Equals(p.Kind, "Agent", StringComparison.OrdinalIgnoreCase))
+            .Where(p => !string.IsNullOrWhiteSpace(p.Id))
+            .ToList();
+
+        // First stamped role wins, matching the de-duplication rule for ids: a roster that names the
+        // same agent twice yields one chip, so it must also yield one role rather than the last-seen.
+        var roles = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var participant in agentParticipants)
+        {
+            if (!roles.ContainsKey(participant.Id))
+                roles[participant.Id] = NormalizeRole(participant.Role);
+        }
+
+        string? RoleFor(string agentId) => roles.TryGetValue(agentId, out var role) ? role : null;
+
+        var ordered = new List<ActivityAgentRef>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
+        // The owner leads, as before - but it now contributes its OWN roster role when the roster
+        // names it, so owner-first ordering stops masquerading as a direction cue.
         if (!string.IsNullOrWhiteSpace(conversation.AgentId) && seen.Add(conversation.AgentId))
-            ordered.Add(conversation.AgentId);
+            ordered.Add(new ActivityAgentRef(conversation.AgentId, RoleFor(conversation.AgentId)));
 
-        var participantAgents = (conversation.Participants ?? [])
-            .Where(p => string.Equals(p.Kind, "Agent", StringComparison.OrdinalIgnoreCase))
+        var participantAgents = agentParticipants
             .Select(p => p.Id)
-            .Where(id => !string.IsNullOrWhiteSpace(id))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(id => id, StringComparer.OrdinalIgnoreCase);
 
         foreach (var agentId in participantAgents)
         {
             if (seen.Add(agentId))
-                ordered.Add(agentId);
+                ordered.Add(new ActivityAgentRef(agentId, RoleFor(agentId)));
         }
 
         return ordered;
+    }
+
+    // Blank is indistinguishable from absent for display purposes, so both collapse to null and the
+    // chip renders exactly as an unroled one rather than growing an empty parenthetical.
+    private static string? NormalizeRole(string? role) =>
+        string.IsNullOrWhiteSpace(role) ? null : role.Trim();
+
+    /// <summary>
+    /// The role text to show on an agent chip, or <see langword="null"/> when the agent has no
+    /// stamped role and the chip should render exactly as it did before #2857.
+    /// </summary>
+    /// <remarks>
+    /// Fails OPEN: an unrecognised role from a newer gateway is displayed verbatim rather than
+    /// dropped, because losing a stamped distinction is worse than showing an unfamiliar word.
+    /// </remarks>
+    /// <param name="agent">An involved-agent reference from a projected row.</param>
+    public static string? RoleLabel(ActivityAgentRef agent)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+
+        return agent.Role;
+    }
+
+    /// <summary>
+    /// CSS modifier suffix for the agent chip's role treatment, so the component gets colour without
+    /// string-matching on display copy - the same split <see cref="OriginModifier"/> uses.
+    /// </summary>
+    /// <remarks>
+    /// Only the two roles the gateway actually stamps (<c>initiator</c> / <c>target</c>, from
+    /// <c>AgentExchangeService</c>, <c>CrossWorldExchangeRouter</c> and
+    /// <c>CrossWorldFederationController</c>) get a modifier. Anything else returns
+    /// <see langword="null"/>: the role still renders via <see cref="RoleLabel"/>, it simply gets no
+    /// colour, so an unknown role degrades to plain text instead of an unstyled class name.
+    /// </remarks>
+    /// <param name="agent">An involved-agent reference from a projected row.</param>
+    public static string? RoleModifier(ActivityAgentRef agent)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+
+        return agent.Role?.ToLowerInvariant() switch
+        {
+            "initiator" => "initiator",
+            "target" => "target",
+            _ => null
+        };
     }
 
     /// <summary>
@@ -351,7 +435,7 @@ public static class ActivityDashboardProjection
             .Where(x => filter.IncludeCron || !x.IsCron)
             .Where(x => MatchesStatus(x.Dto.Status, filter.Status))
             .Where(x => filter.AgentId is null ||
-                        x.Agents.Contains(filter.AgentId, StringComparer.Ordinal))
+                        x.Agents.Any(a => string.Equals(a.AgentId, filter.AgentId, StringComparison.Ordinal)))
             .Where(x => MatchesRecency(x.Dto.UpdatedAt, filter.Recency, now))
             .Where(x => MatchesOrigin(x.Source, x.Kind, filter.Origin))
             .Where(x => MatchesPinned(x.Dto.IsPinned, filter.Pinned))
@@ -401,8 +485,10 @@ public static class ActivityDashboardProjection
 
         foreach (var row in rows)
         {
-            foreach (var agentId in row.InvolvedAgents)
-                distinctAgents.Add(agentId);
+            // Counts distinct agent IDS, deliberately ignoring role: one agent that is the initiator
+            // in one row and the target in another is still one agent on the strip.
+            foreach (var agent in row.InvolvedAgents)
+                distinctAgents.Add(agent.AgentId);
 
             if (row.IsCron)
                 scheduled++;

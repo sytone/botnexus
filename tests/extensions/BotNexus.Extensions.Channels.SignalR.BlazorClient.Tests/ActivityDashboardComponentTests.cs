@@ -334,6 +334,49 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         cut.Find("[data-testid='activity-summary-agents']").Click();
         Assert.Equal("beta", cut.Find("[data-testid='activity-filter-agent']").GetAttribute("value"));
     }
+
+    // ── Participant roles on agent chips (#2857) ───────────────────────────
+
+    [Fact]
+    public void Agent_chips_carry_the_participant_role_and_unroled_chips_render_unchanged()
+    {
+        SetupConversations(
+            // An agent-to-agent exchange with the roles the gateway actually stamps.
+            Conv("c1", title: "Peer", agentId: "alpha", source: "Agent", kind: "AgentAgent",
+                participants: new[]
+                {
+                    new ParticipantDto("Agent", "alpha", "initiator"),
+                    new ParticipantDto("Agent", "beta", "target")
+                }),
+            // An ordinary human/channel row: no roster, so no role, so no change from before #2857.
+            Conv("c2", title: "Jon DM", agentId: "gamma"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
+
+        var chipsByRow = cut.FindAll("[data-testid='activity-row']")
+            .ToDictionary(
+                r => r.GetAttribute("data-conversation-id")!,
+                r => r.QuerySelectorAll("[data-testid='activity-agent-chip']").ToList());
+
+        // Roled row: both chips render, each carrying its own role and colour modifier.
+        var roled = chipsByRow["c1"];
+        Assert.Equal(2, roled.Count);
+        Assert.Equal("initiator", roled[0].GetAttribute("data-role"));
+        Assert.Contains("activity-agent-chip--initiator", roled[0].GetAttribute("class"));
+        Assert.Contains("initiator", roled[0].TextContent);
+        Assert.Equal("target", roled[1].GetAttribute("data-role"));
+        Assert.Contains("activity-agent-chip--target", roled[1].GetAttribute("class"));
+        // The role reaches assistive tech, not only the small visual suffix.
+        Assert.Contains("target", roled[1].GetAttribute("aria-label"));
+
+        // Unroled row: no role element, no modifier class - visually identical to pre-#2857.
+        var unroled = Assert.Single(chipsByRow["c2"]);
+        Assert.True(string.IsNullOrEmpty(unroled.GetAttribute("data-role")));
+        Assert.DoesNotContain("activity-agent-chip--", unroled.GetAttribute("class"));
+        Assert.Null(unroled.QuerySelector(".activity-agent-role"));
+    }
+
     // ── Origin badges (#2385, epic #2300) ──────────────────────────────────
 
     [Fact]

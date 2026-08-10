@@ -5674,6 +5674,25 @@ h3.conversation-title.editable:hover {
     font-size: 0.75rem;
 }
 
+/* #2857: role treatment on the agent chip. A left border rather than a background swap, so a
+   roled chip stays visually a chip and unroled chips are pixel-identical to before. */
+.activity-agent-chip--initiator {
+    border-left: 3px solid var(--accent, #6ea8fe);
+}
+
+.activity-agent-chip--target {
+    border-left: 3px solid var(--accent-muted, #4a5a70);
+}
+
+/* The role word rides inside the chip at reduced emphasis: present for scanning, never competing
+   with the agent name it qualifies. */
+.activity-agent-role {
+    margin-left: 0.3rem;
+    opacity: 0.7;
+    font-size: 0.68rem;
+    text-transform: lowercase;
+}
+
 .activity-badge {
     display: inline-block;
     /* #2528: badge is fixed-width signal - it must not shrink or be pushed out by a long title. */
