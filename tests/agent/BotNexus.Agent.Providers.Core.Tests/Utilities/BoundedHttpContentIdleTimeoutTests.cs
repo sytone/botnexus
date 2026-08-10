@@ -88,14 +88,29 @@ public class BoundedHttpContentIdleTimeoutTests
     [Fact]
     public async Task ReadStringWithLimitAsync_SlowButProgressingStream_Completes()
     {
-        // Six 50ms gaps = 300ms total, each comfortably inside the 250ms idle window.
+        // Six 50ms gaps, so 300ms of total transfer time - and that TOTAL is deliberately larger
+        // than any single idle gap, because the property under test is that total duration does
+        // not matter, only the interval BETWEEN reads.
+        //
+        // The idle window is an INPUT to this test, not the subject of its assertion (#2869). It
+        // was 250ms against a 50ms trickle: a 5x margin that a loaded CI runner does not reliably
+        // honour, and it failed in CI at 838ms on a branch touching none of this code.
+        //
+        // Widening the window cannot make a broken implementation pass. An implementation that
+        // (incorrectly) applied the deadline to TOTAL elapsed time rather than resetting it on
+        // progress would still be caught by
+        // ReadStringWithLimitAsync_StreamStallsAfterFirstChunk_ThrowsStalledWithinWindow, which
+        // delivers one chunk, stalls permanently, and asserts ResponseBodyStalledException within
+        // the window. That test owns the FAILING direction; this one asserts only that PROGRESS
+        // keeps the read alive. Widening an observation window is safe precisely because a sibling
+        // test pins the direction that must still fail.
         using var stream = new TrickleStream("abcdef", TimeSpan.FromMilliseconds(50));
         var content = new StreamContent(stream);
 
         var body = await BoundedHttpContent.ReadStringWithLimitAsync(
             content,
             maxBytes: 1024,
-            idleTimeout: TimeSpan.FromMilliseconds(250));
+            idleTimeout: TimeSpan.FromSeconds(5));
 
         body.ShouldBe("abcdef");
     }
