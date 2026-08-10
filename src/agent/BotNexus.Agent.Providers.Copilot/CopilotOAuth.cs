@@ -65,9 +65,13 @@ public static class CopilotOAuth
         }, ct);
 
         var codeJson = await ReadJsonAsync(codeResponse, ct);
-        var deviceCode = codeJson.GetProperty("device_code").GetString()!;
-        var userCode = codeJson.GetProperty("user_code").GetString()!;
-        var verificationUri = codeJson.GetProperty("verification_uri").GetString()!;
+        // The envelope is already known to be a JSON object (ReadBoundedJsonAsync enforces that),
+        // but the individual fields are still peer-controlled: a well-formed object missing
+        // device_code used to slip a null past ! and surface as a NullReferenceException far
+        // downstream. Fail here, by field name, with no body text. (#2894)
+        var deviceCode = RequireStringProperty(codeJson, "device_code", DeviceCodeUrl);
+        var userCode = RequireStringProperty(codeJson, "user_code", DeviceCodeUrl);
+        var verificationUri = RequireStringProperty(codeJson, "verification_uri", DeviceCodeUrl);
         var interval = codeJson.TryGetProperty("interval", out var intervalEl) ? intervalEl.GetInt32() : 5;
         var expiresIn = codeJson.TryGetProperty("expires_in", out var expiresEl) ? expiresEl.GetInt32() : 900;
 
@@ -256,7 +260,49 @@ public static class CopilotOAuth
     {
         var json = await BoundedHttpContent.ReadStringWithLimitAsync(response.Content, maxBytes, ct);
         using var doc = JsonDocument.Parse(json);
+
+        // Every OAuth caller indexes the result with GetProperty / TryGetProperty, which requires a
+        // JSON object. A hostile or rewriting endpoint returning a JSON null, an array or a scalar
+        // otherwise produced a raw System.Text.Json InvalidOperationException instead of a
+        // controlled authentication failure. Validate once here so all three call sites are covered.
+        // The diagnostic names the endpoint and the observed kind only - never any body text, which
+        // can reflect the just-submitted credential back at us (see #1884). (#2894)
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            var endpoint = response.RequestMessage?.RequestUri?.ToString() ?? "the GitHub OAuth endpoint";
+            throw new InvalidOperationException(
+                $"GitHub returned an unexpected response from {endpoint}: expected a JSON object " +
+                $"but the response root was {doc.RootElement.ValueKind}.");
+        }
+
         return doc.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// Reads a required string field out of a validated OAuth response object, failing by field
+    /// name when it is absent or not a JSON string. Replaces the null-forgiving
+    /// <c>GetProperty(...).GetString()!</c> reads so a well-formed but incomplete envelope produces
+    /// an actionable authentication error rather than a NullReferenceException later in the flow.
+    /// The message carries the field name and the endpoint only - never the value of any field,
+    /// because siblings in the envelope can be credentials. (#2894)
+    /// </summary>
+    /// <param name="root">A JSON object element previously validated by <see cref="ReadBoundedJsonAsync"/>.</param>
+    /// <param name="propertyName">The required property name.</param>
+    /// <param name="endpoint">The endpoint URL to name in the failure diagnostic.</param>
+    /// <returns>The property's string value.</returns>
+    internal static string RequireStringProperty(JsonElement root, string propertyName, string endpoint)
+    {
+        if (!root.TryGetProperty(propertyName, out var element) || element.ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidOperationException(
+                $"GitHub returned an unexpected response from {endpoint}: " +
+                $"required field '{propertyName}' was missing or was not a JSON string.");
+        }
+
+        return element.GetString()
+            ?? throw new InvalidOperationException(
+                $"GitHub returned an unexpected response from {endpoint}: " +
+                $"required field '{propertyName}' was missing or was not a JSON string.");
     }
 
     /// <summary>

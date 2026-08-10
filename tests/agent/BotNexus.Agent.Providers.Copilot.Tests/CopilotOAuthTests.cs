@@ -321,6 +321,171 @@ public class CopilotOAuthTests
         stream.BytesRead.ShouldBeGreaterThan(0);
     }
 
+    // --- OAuth envelope-shape validation (#2894) ---
+    //
+    // ReadBoundedJsonAsync is the single choke-point for all three peer-controlled OAuth reads
+    // (device-code :67, access-token :94, copilot-token :187). Before this fix it returned the
+    // parsed root element without checking its kind, so a `null`, array or scalar body reached
+    // GetProperty and produced a raw System.Text.Json InvalidOperationException instead of a
+    // controlled authentication failure. The message must name the endpoint and the observed
+    // JsonValueKind and must never carry any response-body text.
+
+    [Theory]
+    [InlineData("null", JsonValueKind.Null)]
+    [InlineData("[]", JsonValueKind.Array)]
+    [InlineData("""["device_code","leaked_secret_value"]""", JsonValueKind.Array)]
+    [InlineData("\"leaked_secret_value\"", JsonValueKind.String)]
+    [InlineData("42", JsonValueKind.Number)]
+    [InlineData("true", JsonValueKind.True)]
+    [InlineData("false", JsonValueKind.False)]
+    public async Task ReadBoundedJsonAsync_NonObjectRoot_ThrowsControlledEnvelopeFailure(
+        string body, JsonValueKind expectedKind)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://github.com/login/device/code");
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            RequestMessage = request
+        };
+
+        var act = async () => await CopilotOAuth.ReadBoundedJsonAsync(response, maxBytes: 1024, CancellationToken.None);
+
+        var ex = await act.ShouldThrowAsync<InvalidOperationException>();
+        ex.Message.ShouldContain("https://github.com/login/device/code");
+        ex.Message.ShouldContain(expectedKind.ToString());
+        // The body must never be echoed - it can carry a reflected credential.
+        ex.Message.ShouldNotContain("leaked_secret_value");
+        // Bodies that are bare JSON keywords (null/true/false) share their spelling with the
+        // JsonValueKind name the diagnostic is required to report, so a literal substring check
+        // would collide with the very kind token asserted above. Only assert non-echo for bodies
+        // whose text is distinguishable from the kind name.
+        if (!string.Equals(body, expectedKind.ToString(), StringComparison.OrdinalIgnoreCase))
+        {
+            ex.Message.ShouldNotContain(body);
+        }
+    }
+
+    // All three production call sites funnel through the same seam, so each endpoint URL must
+    // surface in its own controlled failure rather than a System.Text.Json type exception.
+    [Theory]
+    [InlineData("https://github.com/login/device/code")]
+    [InlineData("https://github.com/login/oauth/access_token")]
+    [InlineData("https://api.github.com/copilot_internal/v2/token")]
+    public async Task ReadBoundedJsonAsync_NonObjectRoot_NamesTheCallingEndpoint(string url)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[]", Encoding.UTF8, "application/json"),
+            RequestMessage = request
+        };
+
+        var act = async () => await CopilotOAuth.ReadBoundedJsonAsync(response, maxBytes: 1024, CancellationToken.None);
+
+        var ex = await act.ShouldThrowAsync<InvalidOperationException>();
+        ex.Message.ShouldContain(url);
+        ex.Message.ShouldContain("Array");
+    }
+
+    [Fact]
+    public async Task ReadBoundedJsonAsync_NonObjectRootWithNoRequestMessage_StillThrowsWithoutBody()
+    {
+        // A response constructed without a RequestMessage must still fail controlled rather than
+        // NullReferenceException while building the diagnostic.
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""["leaked_secret_value"]""", Encoding.UTF8, "application/json")
+        };
+
+        var act = async () => await CopilotOAuth.ReadBoundedJsonAsync(response, maxBytes: 1024, CancellationToken.None);
+
+        var ex = await act.ShouldThrowAsync<InvalidOperationException>();
+        ex.Message.ShouldContain("Array");
+        ex.Message.ShouldNotContain("leaked_secret_value");
+    }
+
+    [Fact]
+    public async Task ReadBoundedJsonAsync_ObjectRoot_StillReturnsTheElement()
+    {
+        // The shape check must not disturb the happy path for any of the three call sites.
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """{"device_code":"dc","user_code":"UC-1","verification_uri":"https://github.com/login/device"}""",
+                Encoding.UTF8,
+                "application/json")
+        };
+
+        var element = await CopilotOAuth.ReadBoundedJsonAsync(response, maxBytes: 1024, CancellationToken.None);
+
+        element.ValueKind.ShouldBe(JsonValueKind.Object);
+        element.GetProperty("device_code").GetString().ShouldBe("dc");
+    }
+
+    // The device-code envelope reads three required string fields. A well-formed object that is
+    // missing one - or carries a non-string value - must fail by name, not via the null-forgiving
+    // `!` operator downstream.
+    [Theory]
+    [InlineData("device_code")]
+    [InlineData("user_code")]
+    [InlineData("verification_uri")]
+    public void RequireStringProperty_MissingProperty_ThrowsNamedFailure(string missing)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["device_code"] = "dc",
+            ["user_code"] = "UC-1",
+            ["verification_uri"] = "https://github.com/login/device"
+        };
+        fields.Remove(missing);
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(fields));
+        var root = doc.RootElement;
+
+        var ex = Should.Throw<InvalidOperationException>(
+            () => CopilotOAuth.RequireStringProperty(root, missing, "https://github.com/login/device/code"));
+
+        ex.Message.ShouldContain(missing);
+        ex.Message.ShouldContain("https://github.com/login/device/code");
+    }
+
+    [Theory]
+    [InlineData("""{"device_code":null}""")]
+    [InlineData("""{"device_code":123}""")]
+    [InlineData("""{"device_code":[]}""")]
+    [InlineData("""{"device_code":{}}""")]
+    public void RequireStringProperty_NonStringProperty_ThrowsNamedFailure(string body)
+    {
+        using var doc = JsonDocument.Parse(body);
+
+        var ex = Should.Throw<InvalidOperationException>(
+            () => CopilotOAuth.RequireStringProperty(doc.RootElement, "device_code", "https://github.com/login/device/code"));
+
+        ex.Message.ShouldContain("device_code");
+        ex.Message.ShouldNotContain("123");
+    }
+
+    [Fact]
+    public void RequireStringProperty_PresentStringProperty_ReturnsValue()
+    {
+        using var doc = JsonDocument.Parse("""{"device_code":"dc-1234"}""");
+
+        CopilotOAuth.RequireStringProperty(doc.RootElement, "device_code", "https://github.com/login/device/code")
+            .ShouldBe("dc-1234");
+    }
+
+    [Fact]
+    public void RequireStringProperty_NeverEchoesTheValueOfOtherFields()
+    {
+        // The failure diagnostic names the missing field only; sibling values may be credentials.
+        using var doc = JsonDocument.Parse("""{"access_token":"gho_supersecrettoken1234567890"}""");
+
+        var ex = Should.Throw<InvalidOperationException>(
+            () => CopilotOAuth.RequireStringProperty(doc.RootElement, "device_code", "https://github.com/login/device/code"));
+
+        ex.Message.ShouldNotContain("gho_supersecrettoken1234567890");
+    }
+
+
     // BuildOAuthErrorMessage must never echo the peer-supplied error_description (#1884): GitHub
     // OAuth error bodies can reflect the just-submitted refresh_token / device_code back inside
     // error_description, so only the machine-readable error code may appear in the exception text.
