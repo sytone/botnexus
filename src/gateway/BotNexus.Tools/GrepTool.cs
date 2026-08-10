@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -565,6 +566,6 @@ public sealed class GrepTool : IAgentTool
             return line;
         }
 
-        return $"{line[..MaxLineLength]}... [truncated]";
+        return $"{TextTruncation.SafeTruncate(line, MaxLineLength)}... [truncated]";
     }
 }

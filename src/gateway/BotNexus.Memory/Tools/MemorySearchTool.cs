@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -250,9 +251,7 @@ public sealed class MemorySearchTool : IAgentTool
             // Defence-in-depth: neutralize any control / role-injection markup in historical rows
             // (written before sanitization existed) on the recall path too (#1560).
             var sanitized = MemoryContentSanitizer.Sanitize(entry.Content);
-            var preview = sanitized.Length > 240
-                ? $"{sanitized[..240]}..."
-                : sanitized;
+            var preview = TextTruncation.SafeTruncate(sanitized, 240, "...")!;
             preview = preview.Replace("\r\n", " ", StringComparison.Ordinal).Replace('\n', ' ');
 
             lines.Add($"[{i + 1}] ID: {entry.Id}");

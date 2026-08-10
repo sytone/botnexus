@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Text;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
@@ -89,7 +90,7 @@ public sealed class MemoryController(
                 CreatedAt: e.CreatedAt,
                 SourceType: e.SourceType,
                 SessionId: e.SessionId,
-                ContentPreview: e.Content.Length > 200 ? e.Content[..200] + "..." : e.Content
+                ContentPreview: TextTruncation.SafeTruncate(e.Content, 200, "...")!
             )).ToList();
 
             return Ok(new { agentId, query, entries = dtos, count = dtos.Count });

@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.CommandLine;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -259,9 +260,14 @@ internal sealed class ConversationCommands
             token,
             GatewayClientFactory.DefaultCredentialSource());
 
+    /// <summary>
+    /// Shortens an identifier for display. Deliberately keeps raw slicing: ids are generated
+    /// ASCII (a <c>c_</c>/<c>s_</c> prefix plus hex), never user text, so no surrogate can occur
+    /// here and the #2883 helper would only add indirection.
+    /// </summary>
     private static string TruncateId(string id)
         => id.Length > 12 ? id[..12] + "..." : id;
 
     private static string Truncate(string value, int maxLength)
-        => value.Length > maxLength ? value[..maxLength] + "..." : value;
+        => TextTruncation.SafeTruncate(value, maxLength, "...")!;
 }

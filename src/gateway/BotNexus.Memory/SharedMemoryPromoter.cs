@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using BotNexus.Memory.Learning;
 using BotNexus.Memory.Models;
 using Microsoft.Extensions.Logging;
@@ -156,7 +157,7 @@ public sealed class SharedMemoryPromoter
             .ToHashSet();
 
     private static string Truncate(string text, int maxLength)
-        => text.Length <= maxLength ? text : text[..maxLength];
+        => TextTruncation.SafeTruncate(text, maxLength)!;
 
     private static string BuildMetadataJson(ExtractedKnowledge item)
         => $"{{\"category\":\"{item.Category}\",\"confidence\":{item.Confidence:F2},\"sourceSession\":\"{item.SourceSessionId}\",\"sourceTurn\":{item.SourceTurnIndex}}}";

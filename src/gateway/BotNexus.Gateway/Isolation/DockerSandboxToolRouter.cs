@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Isolation;
@@ -63,7 +64,7 @@ public sealed class DockerSandboxToolRouter
         {
             _logger.LogWarning(
                 "Sandbox exec in '{SandboxName}' exited with code {ExitCode}: {Stderr}",
-                sandboxName, result.ExitCode, result.Stderr.Length > 200 ? result.Stderr[..200] + "..." : result.Stderr);
+                sandboxName, result.ExitCode, TextTruncation.SafeTruncate(result.Stderr, 200, "..."));
         }
         else
         {

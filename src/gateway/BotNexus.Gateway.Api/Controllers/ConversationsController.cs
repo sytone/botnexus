@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Text;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Conversations;
 using Microsoft.Extensions.Logging;
@@ -842,7 +843,14 @@ public sealed class ConversationsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Truncates persisted conversation metadata without splitting surrogate pairs (#2883).
+    /// </summary>
+    /// <remarks>
+    /// This path <em>stores</em> its result, so a lone surrogate here is unrecoverable: the other
+    /// half of the pair is gone by the time anyone notices the replacement glyph.
+    /// </remarks>
     private static string? Truncate(string? value, int maxLength)
-        => value is null ? null : value.Length <= maxLength ? value : value[..maxLength];
+        => TextTruncation.SafeTruncate(value, maxLength);
 
 }

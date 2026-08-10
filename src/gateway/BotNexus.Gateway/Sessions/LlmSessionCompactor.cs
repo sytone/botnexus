@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.Collections.Concurrent;
 using System.Text;
 using BotNexus.Gateway.Abstractions.Models;
@@ -744,7 +745,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             ? Math.Min(200, MaxEntryContentCharsInPrompt)
             : MaxEntryContentCharsInPrompt;
 
-        return content[..limit] + $"... [truncated, {content.Length} chars total]";
+        return TextTruncation.SafeTruncate(content, limit, $"... [truncated, {content.Length} chars total]")!;
     }
 
     private async Task<string> CallLlmForSummaryAsync(

@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.CommandLine;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -339,7 +340,7 @@ internal sealed class DebugCronCommand
     ];
 
     private static string Truncate(string value, int maxLength)
-        => value.Length <= maxLength ? value : value[..maxLength] + "…";
+        => TextTruncation.SafeTruncate(value, maxLength, "…")!;
 
     private static string FormatDate(string? isoDate)
     {

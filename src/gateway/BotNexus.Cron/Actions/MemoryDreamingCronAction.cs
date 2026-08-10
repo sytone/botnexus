@@ -267,7 +267,7 @@ public sealed class MemoryDreamingCronAction : ICronAction
             // Truncate individual file if it would exceed the cap
             var remaining = maxContentChars - totalChars;
             if (content.Length > remaining)
-                content = content[..remaining] + "\n[...truncated]";
+                content = TextTruncation.SafeTruncate(content, remaining, "\n[...truncated]")!;
 
             results.Add((date!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), content));
             totalChars += content.Length;
@@ -311,9 +311,7 @@ public sealed class MemoryDreamingCronAction : ICronAction
             sb.AppendLine();
             sb.AppendLine("```markdown");
             // Truncate if very long — the agent only needs context, not the full file
-            var truncatedMemory = existingMemory.Length > 10_000
-                ? existingMemory[..10_000] + "\n[...truncated]"
-                : existingMemory;
+            var truncatedMemory = TextTruncation.SafeTruncate(existingMemory, 10_000, "\n[...truncated]")!;
             sb.AppendLine(truncatedMemory);
             sb.AppendLine("```");
             sb.AppendLine();

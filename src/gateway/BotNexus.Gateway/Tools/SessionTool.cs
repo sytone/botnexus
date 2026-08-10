@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -292,7 +293,7 @@ public sealed class SessionTool(
     }
 
     private static string Truncate(string text, int maxLength)
-        => text.Length <= maxLength ? text : text[..maxLength] + "...";
+        => TextTruncation.SafeTruncate(text, maxLength, "...")!;
 
     private static AgentToolResult TextResult(string text)
         => new([new AgentToolContent(AgentToolContentType.Text, text)]);

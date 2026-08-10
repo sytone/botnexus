@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
@@ -95,9 +96,5 @@ public sealed class LogDiagnosticsRingBuffer
     }
 
     private static string Truncate(string value, int maxLength)
-    {
-        if (value.Length <= maxLength)
-            return value;
-        return value[..maxLength] + "...";
-    }
+        => TextTruncation.SafeTruncate(value, maxLength, "...")!;
 }

@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Text;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -42,6 +43,37 @@ public abstract class ConversationStoreContractTests
         };
 
     // ── GetAsync ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// #2883 (acceptance criterion 3): a title truncated on a grapheme boundary must survive the
+    /// full persistence round-trip with no replacement characters. This runs against every store
+    /// implementation because the corruption is unrepairable once written - the other half of the
+    /// surrogate pair no longer exists to reconstruct from.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_PersistsTruncatedEmojiTitle_WithoutReplacementCharacters()
+    {
+        const string Grinning = "\U0001F600";
+        var sixtyEmoji = string.Concat(Enumerable.Repeat(Grinning, 60));
+
+        // 40 code units lands on a pair boundary here, but the helper is what guarantees that;
+        // the point of the test is that whatever it produces survives storage intact.
+        var truncated = TextTruncation.SafeTruncate(sixtyEmoji, 40)!;
+        truncated.ShouldNotContain('\uFFFD');
+
+        var store = CreateStore();
+        var conv = MakeConversation(title: truncated);
+
+        await store.CreateAsync(conv);
+        var loaded = await store.GetAsync(conv.ConversationId);
+
+        loaded.ShouldNotBeNull();
+        loaded!.Title.ShouldBe(truncated);
+        loaded.Title.ShouldNotContain('\uFFFD');
+        loaded.Title!.Any(char.IsSurrogate).ShouldBeTrue(
+            "non-vacuity: the round-tripped title must still contain astral characters, " +
+            "otherwise the store silently stripped them and the assertion proves nothing");
+    }
 
     [Fact]
     public async Task GetAsync_ReturnsNull_WhenNotFound()

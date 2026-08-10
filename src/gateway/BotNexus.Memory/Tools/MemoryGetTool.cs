@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -120,9 +121,7 @@ public sealed class MemoryGetTool : IAgentTool
 
     private static string FormatMemory(MemoryEntry entry)
     {
-        var preview = entry.Content.Length > 400
-            ? $"{entry.Content[..400]}..."
-            : entry.Content;
+        var preview = TextTruncation.SafeTruncate(entry.Content, 400, "...")!;
 
         return string.Join(Environment.NewLine,
             $"ID: {entry.Id}",

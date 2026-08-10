@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -218,9 +219,9 @@ public sealed class CommandCronAction : ICronAction
     private static string TruncateForError(string output)
     {
         const int maxErrorChars = 2000;
-        return output.Length <= maxErrorChars
-            ? output
-            : output[..maxErrorChars] + "... (truncated)";
+
+        // Cron error text routinely carries model output, which is emoji-dense (#2883).
+        return TextTruncation.SafeTruncate(output, maxErrorChars, "... (truncated)")!;
     }
 
     /// <summary>

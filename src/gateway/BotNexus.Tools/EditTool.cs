@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
@@ -891,7 +892,7 @@ public sealed class EditTool : IAgentTool
 
     private static string Truncate(string value, int maxLength)
     {
-        return value.Length <= maxLength ? value : value[..maxLength] + "\u2026";
+        return TextTruncation.SafeTruncate(value, maxLength, "\u2026")!;
     }
 
     private static string NormalizeForFuzzyMatch(string text)

@@ -1,3 +1,4 @@
+using BotNexus.Domain.Text;
 using System.Text.Json;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -574,8 +575,9 @@ public sealed class ConversationAutoTitleService
         var sanitised = string.Join(
             " ",
             withoutQuotes.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        // Limit to 80 chars defensively.
-        return sanitised.Length > 80 ? sanitised[..80].TrimEnd() : sanitised;
+        // Limit to 80 chars defensively, on a grapheme boundary so an emoji title is not cut in
+        // half before being persisted (#2883).
+        return TextTruncation.SafeTruncate(sanitised, 80)!.TrimEnd();
     }
 
     private LlmModel ResolveModel(string? preferredModelId)
