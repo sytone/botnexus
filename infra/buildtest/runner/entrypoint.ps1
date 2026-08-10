@@ -189,6 +189,44 @@ try {
         if ($LASTEXITCODE -ne 0) { $script:exitCode = $LASTEXITCODE; throw "Build failed with exit code $LASTEXITCODE." }
     }
 
+    # Release build of the deployment closure (#2914).
+    #
+    # WHY THIS EXISTS. The gateway boot fixtures - ExtensionBootFixture and
+    # NewUserExperienceFixture - must exercise the PRODUCTION boot path, and that path resolves
+    # the host from a hardcoded bin/Release location (GatewayCommand.StartAttachedAsync exits 1
+    # with "Release build not found" otherwise) while ServeCommand.ResolveExtensionOutputDirectory
+    # prefers Release over Debug. The runner above builds Debug, so those fixtures used to compile
+    # all 48 src/ projects in Release themselves, from inside a testhost, during the test phase.
+    # Measured on run 20260810170439-279d1484: the ExtensionBoot assembly took 228.2s of a 333.6s
+    # test phase (68%) for three tests that execute in 89ms.
+    #
+    # Building Release here does not remove that work, it RELOCATES it to where it is cheaper:
+    #   * node reuse and shared compilation are available, whereas a build launched from inside a
+    #     testhost must pass /nodeReuse:false /p:UseSharedCompilation=false to avoid leaving build
+    #     nodes attached and fighting the testhost for locked, already-loaded dlls;
+    #   * it is not competing with 50+ concurrently draining test assemblies for 4 CPUs.
+    # The fixtures KEEP their own prebuild call - it becomes an MSBuild up-to-date check over 48
+    # projects instead of a compile, and it must still work for anyone running those tests outside
+    # this runner where no Release output exists.
+    #
+    # SkipCli is deliberately NOT passed. Production BuildCommand.BuildSolutionAsync uses
+    # /p:SkipTests=true /p:SkipCli=true, but ExtensionBootFixture LAUNCHES BotNexus.Cli.dll, so
+    # excluding it here would break the gate. SkipTests is a no-op against src/dirs.proj, which
+    # holds no test projects. Do not copy the production argument string wholesale.
+    #
+    # Skipped for modes that run neither fixture, so a playwright-only or impacted-only run does
+    # not pay for a Release compile it will never load.
+    $needsReleaseBuild = $mode -in @('full', 'core', 'playwright')
+    if ($needsReleaseBuild) {
+        Invoke-TimedPhase -Phase 'build-release' -Body {
+            & dotnet build src/dirs.proj -c Release --nologo --tl:off --no-restore 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'build-release.log')
+            if ($LASTEXITCODE -ne 0) { $script:exitCode = $LASTEXITCODE; throw "Release build failed with exit code $LASTEXITCODE." }
+        }
+    }
+    else {
+        Write-PhaseTiming -Phase 'build-release' -Status 'skipped'
+    }
+
     $strictResults = $mode -in @('full', 'core', 'strict', 'playwright')
 
     # Timed inline rather than through Invoke-TimedPhase: every branch below assigns $exitCode,

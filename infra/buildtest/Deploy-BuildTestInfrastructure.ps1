@@ -21,7 +21,8 @@ param(
     # Historical tag record, kept for rollback reference now that the sequence has ended:
     #   0.1.8 node; 0.1.9 ABANDONED polling-watcher experiment that REGRESSED results, do not use;
     #   0.1.10 node+inotify; 0.1.11 +runner-env artifact; 0.1.12-0.1.15 incremental runner fixes;
-    #   0.1.16 +runner-timing (#2889); 0.1.17 +build-release phase (#2914).
+    #   0.1.16 +runner-timing (#2889); 0.1.17 +build-release phase (#2914). 0.1.17 was the LAST
+    #   hand-picked tag; everything after it is content-addressed as src-<sha256[0:12]>.
     [string]$RunnerImageTag
 )
 
