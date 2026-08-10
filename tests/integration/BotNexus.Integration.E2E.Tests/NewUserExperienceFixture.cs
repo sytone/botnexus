@@ -169,18 +169,24 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             // Default agent → first provisioned agent.
             await RunCliAsync("config", $"set gateway.defaultAgentId {AgentIds[0]} --target \"{Home}\"");
 
-            // 5 ─ pre-build the solution then start the gateway via the CLI with
-            //     --skip-build. We must pre-build (a) so the gateway dll exists and
+            // 5 ─ pre-build the deployment closure then start the gateway via the CLI
+            //     with --skip-build. We must pre-build (a) so the gateway dll exists and
             //     (b) so the in-test build can't collide with the running testhost
             //     that has many of the same dlls loaded for the test process itself
-            //     (BotNexus.Domain, BotNexus.Gateway.Contracts, etc.) — MSBuild
+            //     (BotNexus.Domain, BotNexus.Gateway.Contracts, etc.) - MSBuild
             //     would otherwise try to overwrite those locked dlls. /nodeReuse:false
             //     + UseSharedCompilation=false force MSBuild and the Roslyn server
             //     to exit cleanly so this subprocess returns.
-            Log.Add("[build] dotnet build BotNexus.slnx -c Release (prebuild)");
+            //
+            //     SCOPE (#2910): src/dirs.proj, NOT BotNexus.slnx. The solution carries 112
+            //     projects, 57 of them test projects that this fixture never deploys or loads;
+            //     building them in Release from inside the test phase is pure waste. Release
+            //     itself is load-bearing and must stay - GatewayCommand resolves the host from
+            //     a hardcoded bin/Release path - so narrow the SET, never the CONFIGURATION.
+            Log.Add("[build] dotnet build src/dirs.proj -c Release (prebuild, deployment closure)");
             var build = await ProcessRunner.RunAsync(
                 "dotnet",
-                "build BotNexus.slnx --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
+                "build src/dirs.proj --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
                 workingDirectory: repoRoot,
                 environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
                 timeout: SolutionBuildTimeout);

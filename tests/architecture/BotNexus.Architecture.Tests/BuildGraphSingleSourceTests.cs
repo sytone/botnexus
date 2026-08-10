@@ -29,11 +29,34 @@ public class BuildGraphSingleSourceTests
     public void BuildAndTestInvocations_DoNotNameTheSolutionFile()
     {
         var repoRoot = FindRepoRoot();
-        var extensions = new[] { ".ps1", ".sh", ".yml", ".yaml", ".proj", ".props" };
+        // .cs is included because the ONE call site this fence originally missed was a C# test
+        // fixture, not a script: ExtensionBootFixture shelled out to `dotnet build BotNexus.slnx
+        // -c Release` from inside the test phase (#2910). It cost 319.3s of a 443s test phase -
+        // 72% - rebuilding 57 test projects in Release that nothing deploys or loads. A fence
+        // that scans only scripts cannot see a build invoked from compiled code, and this is
+        // exactly where the expensive drift hid.
+        var extensions = new[] { ".ps1", ".sh", ".yml", ".yaml", ".proj", ".props", ".cs" };
 
-        // 'dotnet build|test|restore|list <something> BotNexus.slnx' in any order on one line.
+        // Pattern 1: 'dotnet build|test|... <something> BotNexus.slnx' on ONE line. Covers every
+        // script, workflow and Dockerfile call site.
         var invocation = new Regex(
             @"dotnet\s+(build|test|restore|list|publish|pack)\b[^\r\n]*BotNexus\.slnx",
+            RegexOptions.IgnoreCase);
+
+        // Pattern 2: the SPLIT-ARGUMENT form, which pattern 1 structurally cannot see and which is
+        // how the #2910 defect hid for so long. A C# process launch passes the executable and its
+        // arguments as separate string literals on separate lines:
+        //
+        //     await ProcessRunner.RunAsync(
+        //         "dotnet",
+        //         "build BotNexus.slnx --configuration Release ...",
+        //
+        // The verb and the solution name share a line, but the word 'dotnet' does not, so a regex
+        // anchored on 'dotnet' matches nothing. This was mutation-proven: reverting the fixture to
+        // the solution build left pattern 1 GREEN. A fence that cannot fail on the very defect it
+        // was written for is decoration, so match the verb+solution pair without requiring 'dotnet'.
+        var splitArgInvocation = new Regex(
+            @"^\s*""(build|test|restore|list|publish|pack)\s[^\r\n]*BotNexus\.slnx",
             RegexOptions.IgnoreCase);
 
         var violations = new List<string>();
@@ -51,7 +74,7 @@ public class BuildGraphSingleSourceTests
                 if (trimmed.StartsWith('#') || trimmed.StartsWith("//"))
                     continue;
 
-                if (invocation.IsMatch(line))
+                if (invocation.IsMatch(line) || splitArgInvocation.IsMatch(line))
                     violations.Add($"{Path.GetRelativePath(repoRoot, file)}:{i + 1}");
             }
         }

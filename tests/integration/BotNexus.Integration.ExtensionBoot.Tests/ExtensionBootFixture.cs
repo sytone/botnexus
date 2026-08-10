@@ -9,8 +9,10 @@ namespace BotNexus.Integration.ExtensionBoot.Tests;
 /// xUnit collection fixture for the extension-boot smoke gate (issue #2220).
 ///
 /// Lifecycle:
-///   1. Locate the repo and build the solution in Release (this also builds the
-///      full extension set under src/extensions/*/bin/Release).
+///   1. Locate the repo and build the deployment closure (src/dirs.proj) in Release.
+///      This also builds the full extension set under src/extensions/*/bin/Release.
+///      Scoped to src/ rather than the whole solution by #2910 - see the comment on
+///      step 1 for why the SET is narrowed but the Release CONFIGURATION is not.
 ///   2. Provision a clean temp BOTNEXUS_HOME with a config that enables extension
 ///      loading and pins a free listen port.
 ///   3. Boot the gateway through the real CLI `gateway start --attached --skip-build`,
@@ -52,16 +54,33 @@ public sealed class ExtensionBootFixture : IAsyncLifetime
             Home = Path.Combine(SandboxRoot, "home");
             Directory.CreateDirectory(Home);
 
-            // 1 - build the solution in Release. This produces both the gateway dll
+            // 1 - build the DEPLOYMENT CLOSURE in Release. This produces both the gateway dll
             //     and the extension bin outputs that DeployExtensions copies. We pre-build
             //     (with --skip-build passed to the gateway) so MSBuild never fights the
             //     running testhost for locked, already-loaded dlls. /nodeReuse:false and
             //     UseSharedCompilation=false force MSBuild + Roslyn to exit cleanly so this
             //     subprocess returns control instead of leaving build nodes attached.
-            Log.Add("[build] dotnet build BotNexus.slnx -c Release (prebuild)");
+            //
+            //     SCOPE (#2910): src/dirs.proj, NOT BotNexus.slnx. The solution carries 112
+            //     projects, 57 of them under tests/, and this fixture used to build every one
+            //     of them in Release *after* the remote runner had already built the tree in
+            //     Debug - 319.3s of a 443s test phase (72%) for three tests that execute in
+            //     81ms. src/dirs.proj is the deployment closure and provably emits everything
+            //     this gate loads: the Gateway.Api dll, the Cli dll, and all 19 extension
+            //     bin/Release outputs. No test assembly is deployed or loaded by the gateway,
+            //     so building them here bought nothing.
+            //
+            //     CONFIGURATION IS LOAD-BEARING - do not "optimise" this to Debug to reuse the
+            //     runner's output. GatewayCommand.StartAttachedAsync resolves the host from a
+            //     hardcoded bin/Release path and exits 1 with "Release build not found"
+            //     otherwise, and ServeCommand.ResolveExtensionOutputDirectory prefers Release
+            //     over Debug. A Debug prebuild would either fail outright or deploy through a
+            //     different resolution path than production takes, which is precisely the path
+            //     this gate exists to exercise (#2220). Narrow the SET, never the CONFIGURATION.
+            Log.Add("[build] dotnet build src/dirs.proj -c Release (prebuild, deployment closure)");
             var build = await ProcessRunner.RunAsync(
                 "dotnet",
-                "build BotNexus.slnx --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
+                "build src/dirs.proj --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
                 workingDirectory: RepoRoot,
                 environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
                 timeout: SolutionBuildTimeout);

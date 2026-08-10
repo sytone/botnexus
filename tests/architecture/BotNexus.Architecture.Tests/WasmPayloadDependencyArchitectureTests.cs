@@ -264,7 +264,7 @@ public sealed class WasmPayloadDependencyArchitectureTests
             scan.State == WasmBuildOutputScanState.NoBuildOutput,
             "SKIPPED (#2707): no Blazor WebAssembly build output exists in this checkout, so there " +
             "is nothing to scan. This is not a payload violation - it means the WASM projects have " +
-            "not been built here. Run 'dotnet build BotNexus.slnx' and re-run to exercise this " +
+            "not been built here. Run 'dotnet build dirs.proj' and re-run to exercise this " +
             "fence. Missing output directories: " + string.Join("; ", scan.MissingBinRoots));
 
         // Anti-vacuity guard, PRESERVED (#2707 criterion 5) and now aimed at the case it was
