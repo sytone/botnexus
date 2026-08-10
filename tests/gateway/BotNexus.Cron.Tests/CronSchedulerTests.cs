@@ -11,6 +11,18 @@ namespace BotNexus.Cron.Tests;
 
 public sealed class CronSchedulerTests
 {
+    /// <summary>
+    /// How long a job waits at the concurrency rendezvous before giving up (#2911).
+    ///
+    /// This is an OBSERVATION WINDOW, not a performance budget. It is deliberately generous:
+    /// enlarging it cannot make a serially-executing scheduler pass, because the first job would
+    /// still be waiting for a second job that has not been started. Contrast the assertion it
+    /// replaced, where the timeout WAS the assertion and every widening eroded the test's ability
+    /// to detect the defect. Do not shrink this to "tighten" the test - it would only make the
+    /// test flaky again without testing anything more.
+    /// </summary>
+    private static readonly TimeSpan RendezvousWindow = TimeSpan.FromSeconds(30);
+
     [Fact]
     public async Task Scheduler_ExecutesDueJobs()
     {
@@ -572,10 +584,31 @@ public sealed class CronSchedulerTests
     [Fact]
     public async Task Scheduler_MultipleDueJobs_RunConcurrently_NotSerially()
     {
-        // Two jobs each take ~150ms. Serial execution would take >=300ms.
-        // Concurrent execution should finish in <250ms.
+        // Asserts CONCURRENCY DIRECTLY via a rendezvous barrier, not by timing the tick (#2911).
+        //
+        // This test used to assert `sw.ElapsedMilliseconds < 800` around two 150ms jobs. That
+        // measures machine load as much as scheduling: the bound was widened 400 -> 800 in an
+        // unrelated PR and still failed on the remote gate at 1703ms and at 929ms, on branches
+        // touching no cron code. Widening it again would eventually exceed 2 x 150ms, at which
+        // point a fully SERIAL scheduler would also pass and the test would assert nothing.
+        //
+        // The barrier below cannot pass under serial execution at any speed. Each job announces
+        // its arrival and then waits for the other; the second arrival releases both. Run
+        // serially, the first job waits for a second job that has not been started yet and times
+        // out. Run concurrently, both arrive and both complete. The timeout is a generous
+        // OBSERVATION WINDOW rather than the subject of the assertion - enlarging it cannot turn a
+        // serial scheduler green, which is precisely the property the old assertion lacked.
         await using var context = await CronStoreTestContext.CreateAsync();
-        var action = new DelayedAction("slow-action", TimeSpan.FromMilliseconds(150));
+
+        var arrivals = 0;
+        var rendezvous = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var action = new RendezvousAction("slow-action", async ct =>
+        {
+            if (Interlocked.Increment(ref arrivals) == 2)
+                rendezvous.TrySetResult();
+
+            await rendezvous.Task.WaitAsync(RendezvousWindow, ct);
+        });
 
         for (var i = 1; i <= 2; i++)
         {
@@ -587,13 +620,15 @@ public sealed class CronSchedulerTests
         }
 
         var scheduler = CreateScheduler(context.Store, [action]);
-        var sw = System.Diagnostics.Stopwatch.StartNew();
         await InvokeProcessTickAsync(scheduler);
-        sw.Stop();
 
         action.ExecutionCount.ShouldBe(2, "both jobs must run");
-        sw.ElapsedMilliseconds.ShouldBeLessThan(800,
-            "concurrent execution of two 150ms jobs should complete well under 300ms");
+        action.Faulted.ShouldBeNull(
+            "a job timed out waiting at the rendezvous, which means the scheduler ran the two jobs " +
+            "one after another instead of concurrently");
+        rendezvous.Task.IsCompletedSuccessfully.ShouldBeTrue(
+            "both jobs must be in flight simultaneously for the rendezvous to complete - serial " +
+            "execution can never satisfy this, at any machine speed");
     }
 
     [Fact]
@@ -707,6 +742,36 @@ public sealed class CronSchedulerTests
         {
             await Task.Delay(delay, cancellationToken);
             Interlocked.Increment(ref _executionCount);
+        }
+    }
+
+    /// <summary>
+    /// Runs an arbitrary body per execution and captures any fault, so a test can assert on WHAT
+    /// went wrong rather than only that a count was short. Used by the concurrency test, where a
+    /// serial scheduler manifests as a rendezvous timeout inside the body (#2911).
+    /// </summary>
+    private sealed class RendezvousAction(string actionType, Func<CancellationToken, Task> body) : ICronAction
+    {
+        private int _executionCount;
+        public int ExecutionCount => _executionCount;
+        public string ActionType => actionType;
+
+        /// <summary>First fault thrown by any execution, or null if all completed cleanly.</summary>
+        public Exception? Faulted { get; private set; }
+
+        public async Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _executionCount);
+            try
+            {
+                await body(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                // Recorded rather than rethrown: the scheduler records a thrown action as a failed
+                // run, which would mask the distinction between "ran serially" and "threw".
+                Faulted ??= ex;
+            }
         }
     }
 
