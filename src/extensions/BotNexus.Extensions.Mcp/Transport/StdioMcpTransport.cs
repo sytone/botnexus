@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.Extensions.Mcp.Protocol;
 
 namespace BotNexus.Extensions.Mcp.Transport;
@@ -46,12 +47,17 @@ public sealed class StdioMcpTransport : IMcpTransport
         _inheritEnv = inheritEnv;
     }
 
-    /// <inheritdoc />
-    public Task ConnectAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Builds the <see cref="ProcessStartInfo"/> the MCP server subprocess is started with.
+    /// <para>
+    /// Extracted from <see cref="ConnectAsync"/> so the environment block the child actually receives
+    /// can be asserted on without spawning a process (#2892). Environment overrides are applied through
+    /// the shared <see cref="ProcessEnvironment.Merge"/> seam rather than an ad-hoc loop, so the
+    /// platform casing rule is owned in one place instead of re-derived per spawn site.
+    /// </para>
+    /// </summary>
+    internal ProcessStartInfo BuildStartInfo()
     {
-        ct.ThrowIfCancellationRequested();
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
         var (fileName, processArgs) = ResolveCommand(_command, _args);
 
         var startInfo = new ProcessStartInfo
@@ -83,11 +89,22 @@ public sealed class StdioMcpTransport : IMcpTransport
 
         if (_env is not null)
         {
-            foreach (var (key, value) in _env)
-            {
-                startInfo.Environment[key] = ResolveEnvValue(value);
-            }
+            // Shared merge seam: an override must replace the inherited variable of the same
+            // name under the platform casing rule, not sit alongside it (#2892). Placeholder
+            // resolution rides along as the merge's value projection, not a second loop.
+            ProcessEnvironment.Merge(startInfo.Environment, _env, valueTransform: ResolveEnvValue);
         }
+
+        return startInfo;
+    }
+
+    /// <inheritdoc />
+    public Task ConnectAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var startInfo = BuildStartInfo();
 
         _process = new Process { StartInfo = startInfo };
         if (!_process.Start())

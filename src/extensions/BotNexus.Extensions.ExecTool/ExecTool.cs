@@ -236,10 +236,9 @@ public sealed class ExecTool : IAgentTool
 
         if (env is not null)
         {
-            foreach (var (key, value) in env)
-            {
-                startInfo.Environment[key] = value;
-            }
+            // Route through the shared merge seam so an override replaces - rather than
+            // duplicates - an inherited variable whose key differs only by case on Windows (#2892).
+            ProcessEnvironment.Merge(startInfo.Environment, env);
         }
 
         // Re-check cancellation immediately before Start(). Everything above - command resolution,
