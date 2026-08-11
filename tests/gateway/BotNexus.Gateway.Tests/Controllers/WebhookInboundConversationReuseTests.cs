@@ -27,6 +27,7 @@ public sealed class WebhookInboundConversationReuseTests : IAsyncLifetime
     private SqliteWebhookRunStore _runs = null!;
     private InMemoryConversationStore _conversations = null!;
     private IInboundMessageOrchestrator _orchestrator = null!;
+    private IConversationDispatcher _dispatcher = null!;
     private ISessionStore _sessions = null!;
     private IHttpClientFactory _httpClientFactory = null!;
 
@@ -42,6 +43,7 @@ public sealed class WebhookInboundConversationReuseTests : IAsyncLifetime
         _orchestrator.AcceptAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
             .Returns(InboundDispatchResult.NoRoute());
         _sessions = Substitute.For<ISessionStore>();
+        _dispatcher = Substitute.For<IConversationDispatcher>();
         _httpClientFactory = Substitute.For<IHttpClientFactory>();
     }
 
@@ -111,6 +113,7 @@ public sealed class WebhookInboundConversationReuseTests : IAsyncLifetime
             _registrations,
             _runs,
             _orchestrator,
+            _dispatcher,
             conversations,
             _sessions,
             _httpClientFactory,

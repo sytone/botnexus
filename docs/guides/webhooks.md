@@ -354,6 +354,16 @@ The response is `202 Accepted` and the run is immediately marked `Completed` wit
 a `null` `agentResponse` — there is nothing for the agent to say because it never
 ran. `agentAction` defaults to `true`.
 
+The message lands in the **same** session an `agentAction: true` delivery would
+resolve, so successive store-only posts accumulate in one conversation transcript
+and are readable from that conversation's history. The only difference between the
+two modes is whether an agent turn runs, not where the message is stored.
+
+If no session can be resolved for the target conversation the endpoint returns
+`503 Service Unavailable` and the run is marked `Failed` — a store-only delivery
+never reports `202` for a write that did not land, so a caller always has a signal
+to retry.
+
 Use this for high-volume signal capture (heartbeats, telemetry, log lines) that you
 want on the record but do not want to spend an LLM run on. A later message with
 `agentAction: true` (the default) can then ask the agent to summarise everything

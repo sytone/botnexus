@@ -201,7 +201,9 @@ public sealed class WebhookConcurrencyPolicyTests : IAsyncLifetime
     {
         var rawBody = Encoding.UTF8.GetBytes("{\"message\":\"payload\",\"agentAction\":true}");
         var controller = new WebhookInboundController(
-            _registrations, _runs, orchestrator, _conversations, _sessions,
+            _registrations, _runs, orchestrator,
+            NSubstitute.Substitute.For<BotNexus.Gateway.Dispatching.IConversationDispatcher>(),
+            _conversations, _sessions,
             _httpClientFactory, NullLogger<WebhookInboundController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }

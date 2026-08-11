@@ -22,6 +22,7 @@ public sealed class WebhookInboundController(
     IWebhookRegistrationStore registrationStore,
     IWebhookRunStore runStore,
     IInboundMessageOrchestrator orchestrator,
+    IConversationDispatcher conversationDispatcher,
     IConversationStore conversationStore,
     ISessionStore sessionStore,
     IHttpClientFactory httpClientFactory,
@@ -169,11 +170,36 @@ public sealed class WebhookInboundController(
 
         if (!run.AgentAction)
         {
-            // Store-only mode — record a session entry but don't run the agent.
-            await StoreMessageOnlyAsync(typedAgentId, resolvedConversationId, body.Message, cancellationToken);
-            run.Status = WebhookRunStatus.Completed;
-            run.CompletedAt = DateTimeOffset.UtcNow;
-            run.AgentResponse = null;
+            // Store-only mode — append to the conversation's own session, but don't run the agent.
+            var storedSessionId = await StoreMessageOnlyAsync(
+                run, typedAgentId, resolvedConversationId, body.Message, cancellationToken);
+
+            if (storedSessionId is null)
+            {
+                // The write did not land. Returning 202 here (issue #2839) handed the caller a
+                // success receipt plus a valid-looking conversation id for a message that could
+                // never be read back, so nothing signalled a retry. Fail loudly instead.
+                run.Status = WebhookRunStatus.Failed;
+                run.CompletedAt = DateTimeOffset.UtcNow;
+                run.Error = $"Store-only delivery could not resolve a session for conversation '{resolvedConversationId.Value}'.";
+                await runStore.UpdateAsync(run, cancellationToken);
+
+                logger.LogError(
+                    "Webhook '{WebhookId}' store-only run '{RunId}' could not resolve a session for conversation '{ConversationId}'.",
+                    webhookId, run.Id, resolvedConversationId);
+
+                return StatusCode(
+                    StatusCodes.Status503ServiceUnavailable,
+                    new { error = "Could not resolve a session for the target conversation; message was not stored." });
+            }
+
+            run = run with
+            {
+                Status = WebhookRunStatus.Completed,
+                CompletedAt = DateTimeOffset.UtcNow,
+                AgentResponse = null,
+                SessionId = storedSessionId
+            };
             await runStore.UpdateAsync(run, cancellationToken);
             return Accepted(new WebhookAcceptedResponse(run.Id.Value, pollUrl, resolvedConversationId.Value));
         }
@@ -323,19 +349,54 @@ public sealed class WebhookInboundController(
         }
     }
 
-    private async Task StoreMessageOnlyAsync(
-        AgentId agentId, ConversationId conversationId, string message, CancellationToken ct)
+    /// <summary>
+    /// Store-only path: append the user message to the session bound to the requested conversation
+    /// without executing an agent turn. Useful for audit trails and async aggregation.
+    /// </summary>
+    /// <remarks>
+    /// Session resolution is delegated to <see cref="IConversationDispatcher"/> — the same seam
+    /// <see cref="ExecuteAgentAsync"/> reaches through <see cref="IInboundMessageOrchestrator"/> —
+    /// so the two modes cannot drift on <em>where</em> a message is stored. Before #2839 this method
+    /// minted <c>SessionId.From(Guid.NewGuid())</c> and ignored <paramref name="conversationId"/>
+    /// entirely, writing every delivery into a fresh session bound to no conversation.
+    /// </remarks>
+    /// <returns>
+    /// The session the message was appended to, or <see langword="null"/> when no session could be
+    /// resolved or the append was refused — the caller must then not report success.
+    /// </returns>
+    private async Task<SessionId?> StoreMessageOnlyAsync(
+        WebhookRun run, AgentId agentId, ConversationId conversationId, string message, CancellationToken ct)
     {
-        // Minimal store-only path: create/get a session and append the user message.
-        // Agent does not run — useful for audit trails, async aggregation, etc.
-        var sessionId = SessionId.From(Guid.NewGuid().ToString("N"));
-        var session = await sessionStore.GetOrCreateAsync(sessionId, agentId, ct);
-        session.AddEntry(new SessionEntry
+        var inbound = new InboundMessage
         {
-            Role = MessageRole.User,
-            Content = message
-        });
-        await sessionStore.SaveAsync(session, ct);
+            ChannelType = ChannelKey.From("webhook"),
+            SenderId = $"webhook:{run.WebhookId.Value}",
+            Sender = CitizenId.Of(agentId),
+            ChannelAddress = ChannelAddress.From(run.WebhookId.Value),
+            Content = message.Trim(),
+            RoutingHints = new InboundMessageRoutingHints(
+                RequestedAgentId: agentId,
+                RequestedSessionId: null,
+                RequestedConversationId: conversationId),
+            Metadata = new Dictionary<string, object?>
+            {
+                ["webhookRunId"] = run.Id.Value,
+                ["webhookId"] = run.WebhookId.Value
+            }
+        };
+
+        var context = InboundMessageContext.FromInboundMessage(agentId, inbound);
+        var dispatch = await conversationDispatcher.DispatchAsync(context, ct);
+        var sessionId = dispatch.Resolution.SessionId;
+
+        // Narrow append rather than a read-mutate-save of the whole aggregate (#2132): a store-only
+        // write must not roll back a metadata patch or lifecycle transition that landed concurrently.
+        var appended = await sessionStore.AppendEntriesAsync(
+            sessionId,
+            [new SessionEntry { Role = MessageRole.User, Content = message }],
+            ct);
+
+        return appended.Outcome == SessionMutationOutcome.Applied ? sessionId : null;
     }
 
     private async Task DeliverCallbackAsync(WebhookRunId runId, string callbackUrl, CancellationToken ct)
