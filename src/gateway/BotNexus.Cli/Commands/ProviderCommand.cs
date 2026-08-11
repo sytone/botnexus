@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Cli.Commands.Provider;
+using BotNexus.Cli.Diagnostics;
 using BotNexus.Cli.Wizard;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
@@ -384,7 +385,7 @@ internal sealed class ProviderCommand
                 c.Set("apiKey", "ollama");
                 c.Set("baseUrl", baseUrl.TrimEnd('/') + "/v1");
                 c.Set("api", "openai-completions");
-                AnsiConsole.MarkupLine($"[dim]Base URL: {Markup.Escape(baseUrl)}, API: openai-completions[/]\n");
+                AnsiConsole.MarkupLine($"[dim]Base URL: {Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl))}, API: openai-completions[/]\n");
                 return Task.CompletedTask;
             })
             .Step(new OllamaProviderSubcommand.OllamaPickModelStep())

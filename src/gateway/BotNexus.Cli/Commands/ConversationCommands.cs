@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.Net.Http.Json;
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Configuration;
+using BotNexus.Cli.Diagnostics;
 using BotNexus.Cli.Services;
 using Spectre.Console;
 
@@ -130,7 +131,7 @@ internal sealed class ConversationCommands
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(baseUrl), Markup.Escape(ex.Message));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -203,7 +204,7 @@ internal sealed class ConversationCommands
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(baseUrl), Markup.Escape(ex.Message));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -241,7 +242,7 @@ internal sealed class ConversationCommands
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(baseUrl), Markup.Escape(ex.Message));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)

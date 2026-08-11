@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BotNexus.Cli.Diagnostics;
 using BotNexus.Cli.Wizard;
 using Spectre.Console;
 
@@ -85,18 +86,18 @@ internal static class OllamaProviderSubcommand
             if (response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync(ct);
-                AnsiConsole.MarkupLine($"[green]✓[/] Ollama is running at [green]{Markup.Escape(baseUrl)}[/]");
+                AnsiConsole.MarkupLine($"[green]✓[/] Ollama is running at [green]{Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl))}[/]");
                 if (!string.IsNullOrWhiteSpace(body))
                     AnsiConsole.MarkupLine($"[dim]{Markup.Escape(body.Trim())}[/]");
                 return 0;
             }
 
-            AnsiConsole.MarkupLine($"[red]✗[/] Ollama returned HTTP {(int)response.StatusCode} at {Markup.Escape(baseUrl)}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Ollama returned HTTP {(int)response.StatusCode} at {Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl))}");
             return 2;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Cannot reach Ollama at {Markup.Escape(baseUrl)}: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Cannot reach Ollama at {Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl))}: {Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message))}");
             AnsiConsole.MarkupLine("[dim]Is Ollama running? Start with: ollama serve[/]");
             return 1;
         }
@@ -113,7 +114,7 @@ internal static class OllamaProviderSubcommand
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Cannot reach Ollama at {Markup.Escape(baseUrl)}:[/] {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Cannot reach Ollama at {Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl))}:[/] {Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message))}");
             return 1;
         }
 
@@ -142,7 +143,7 @@ internal static class OllamaProviderSubcommand
         }
 
         AnsiConsole.Write(table);
-        AnsiConsole.MarkupLine($"[dim]{models.Count} model(s) at {Markup.Escape(baseUrl)}[/]");
+        AnsiConsole.MarkupLine($"[dim]{models.Count} model(s) at {Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl))}[/]");
         return 0;
     }
 
@@ -161,7 +162,7 @@ internal static class OllamaProviderSubcommand
             }
             catch (HttpRequestException ex)
             {
-                AnsiConsole.MarkupLine($"[red]Cannot reach Ollama:[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLine($"[red]Cannot reach Ollama:[/] {Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message))}");
                 return 1;
             }
 
@@ -173,7 +174,7 @@ internal static class OllamaProviderSubcommand
             }
         }
 
-        AnsiConsole.MarkupLine($"[dim]→ {Markup.Escape(baseUrl)} | model: {Markup.Escape(modelId)}[/]");
+        AnsiConsole.MarkupLine($"[dim]→ {Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl))} | model: {Markup.Escape(modelId)}[/]");
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
@@ -207,7 +208,7 @@ internal static class OllamaProviderSubcommand
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Request failed:[/] {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Request failed:[/] {Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message))}");
             return 1;
         }
     }
