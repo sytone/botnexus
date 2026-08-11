@@ -18,6 +18,17 @@ namespace BotNexus.Memory.Embeddings;
 public sealed record MemoryRankingCandidate(MemoryEntry Entry, double LexicalScore, double? Similarity, double AgeDays);
 
 /// <summary>
+/// A ranked memory row paired with the fused relevance magnitude that placed it there.
+/// </summary>
+/// <param name="Entry">The memory row.</param>
+/// <param name="Score">
+/// The fused relevance score produced by <see cref="HybridMemoryRanker"/>. Higher is more relevant.
+/// This is the single definition of relevance: callers render and threshold this value rather than
+/// deriving a second notion of relevance downstream (#2781).
+/// </param>
+public sealed record ScoredMemoryEntry(MemoryEntry Entry, double Score);
+
+/// <summary>
 /// Fuses lexical relevance and vector similarity into one ordering while preserving the
 /// existing temporal-decay behaviour.
 /// </summary>
@@ -64,6 +75,22 @@ public static class HybridMemoryRanker
         IReadOnlyCollection<MemoryRankingCandidate> candidates,
         int limit,
         double lambda)
+        => RankWithScores(candidates, limit, lambda).Select(scored => scored.Entry).ToList();
+
+    /// <summary>
+    /// Ranks candidates exactly as <see cref="Rank"/> does, but also returns the fused relevance
+    /// magnitude that produced each position.
+    /// </summary>
+    /// <remarks>
+    /// This is the ordering function itself, not a parallel scoring pass: <see cref="Rank"/> is
+    /// implemented on top of it, so the score a caller renders or thresholds is by construction the
+    /// score that decided the order. Recomputing relevance anywhere downstream would let the two
+    /// definitions drift (#2781).
+    /// </remarks>
+    public static IReadOnlyList<ScoredMemoryEntry> RankWithScores(
+        IReadOnlyCollection<MemoryRankingCandidate> candidates,
+        int limit,
+        double lambda)
     {
         ArgumentNullException.ThrowIfNull(candidates);
 
@@ -76,9 +103,11 @@ public static class HybridMemoryRanker
         if (!anySimilarity)
         {
             return candidates
-                .OrderByDescending(candidate => candidate.LexicalScore * Decay(candidate.AgeDays, lambda))
+                .Select(candidate => new ScoredMemoryEntry(
+                    candidate.Entry,
+                    candidate.LexicalScore * Decay(candidate.AgeDays, lambda)))
+                .OrderByDescending(scored => scored.Score)
                 .Take(limit)
-                .Select(candidate => candidate.Entry)
                 .ToList();
         }
 
@@ -93,11 +122,10 @@ public static class HybridMemoryRanker
                     : NeutralSimilarityPrior;
 
                 var fused = (LexicalWeight * lexicalNormalised) + (SimilarityWeight * similarityNormalised);
-                return (candidate.Entry, Score: fused * Decay(candidate.AgeDays, lambda));
+                return new ScoredMemoryEntry(candidate.Entry, fused * Decay(candidate.AgeDays, lambda));
             })
-            .OrderByDescending(item => item.Score)
+            .OrderByDescending(scored => scored.Score)
             .Take(limit)
-            .Select(item => item.Entry)
             .ToList();
     }
 

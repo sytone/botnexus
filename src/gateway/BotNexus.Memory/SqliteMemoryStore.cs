@@ -212,6 +212,18 @@ public sealed class SqliteMemoryStore(
 
     public async Task<IReadOnlyList<MemoryEntry>> SearchAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
     {
+        var scored = await SearchScoredAsync(query, topK, filter, ct).ConfigureAwait(false);
+        return scored.Select(item => item.Entry).ToList();
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// This is the real search implementation; <see cref="SearchAsync"/> is the projection that drops
+    /// the score. Keeping it that way round means the rendered/thresholded score is by construction
+    /// the one that produced the ordering, with no second relevance definition to drift (#2781).
+    /// </remarks>
+    public async Task<IReadOnlyList<ScoredMemoryEntry>> SearchScoredAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
+    {
         await InitializeAsync(ct).ConfigureAwait(false);
         var sanitized = SanitizeFtsQuery(query);
         if (string.IsNullOrWhiteSpace(sanitized))
@@ -245,7 +257,7 @@ public sealed class SqliteMemoryStore(
 
             await AugmentWithVectorCandidatesAsync(connection, query, candidates, filter, ct).ConfigureAwait(false);
 
-            return HybridMemoryRanker.Rank(candidates.Values, limit, lambda);
+            return HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda);
         }
         catch (SqliteException ex) when (SqliteRetryHelper.IsTransient(ex))
         {
@@ -522,13 +534,30 @@ public sealed class SqliteMemoryStore(
         return string.Join(" ", sanitized.Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
-    private Task<IReadOnlyList<MemoryEntry>> SearchWithLikeFallbackAsync(
+    private Task<IReadOnlyList<ScoredMemoryEntry>> SearchWithLikeFallbackAsync(
         string sanitizedQuery,
         int limit,
         MemorySearchFilter? filter,
         double lambda,
         CancellationToken ct)
-        => SearchWithLikeFallbackAsync(sanitizedQuery, limit, filter, lambda, _likeFallbackOptions, ct);
+        => SearchWithLikeFallbackScoredAsync(sanitizedQuery, limit, filter, lambda, _likeFallbackOptions, ct);
+
+    /// <summary>
+    /// Score-dropping projection of <see cref="SearchWithLikeFallbackScoredAsync"/>, kept so existing
+    /// callers and tests that only assert ordering are unaffected by the score plumbing (#2781).
+    /// </summary>
+    internal async Task<IReadOnlyList<MemoryEntry>> SearchWithLikeFallbackAsync(
+        string sanitizedQuery,
+        int limit,
+        MemorySearchFilter? filter,
+        double lambda,
+        MemoryLikeFallbackOptions fallbackOptions,
+        CancellationToken ct)
+    {
+        var scored = await SearchWithLikeFallbackScoredAsync(sanitizedQuery, limit, filter, lambda, fallbackOptions, ct)
+            .ConfigureAwait(false);
+        return scored.Select(item => item.Entry).ToList();
+    }
 
     /// <summary>
     /// Best-effort LIKE-based search used only when the FTS primary path errors out
@@ -542,7 +571,7 @@ public sealed class SqliteMemoryStore(
     /// path is unaffected. The internal overload exists so tests can drive the fallback
     /// directly with a tight window/ceiling.
     /// </summary>
-    internal async Task<IReadOnlyList<MemoryEntry>> SearchWithLikeFallbackAsync(
+    internal async Task<IReadOnlyList<ScoredMemoryEntry>> SearchWithLikeFallbackScoredAsync(
         string sanitizedQuery,
         int limit,
         MemorySearchFilter? filter,
@@ -620,7 +649,7 @@ public sealed class SqliteMemoryStore(
         // model this collapses to exactly the previous lexical ordering.
         await AugmentWithVectorCandidatesAsync(connection, sanitizedQuery, candidates, filter, ct).ConfigureAwait(false);
 
-        return HybridMemoryRanker.Rank(candidates.Values, limit, lambda);
+        return HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda);
     }
 
     /// <summary>

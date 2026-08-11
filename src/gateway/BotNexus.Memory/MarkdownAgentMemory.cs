@@ -2,6 +2,7 @@ using System.IO.Abstractions;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Contracts.Memory;
+using BotNexus.Memory.Embeddings;
 using BotNexus.Memory.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -124,7 +125,7 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             }
             : null;
 
-        var entries = await _memoryStore.SearchAsync(request.Query, request.TopK, filter, ct).ConfigureAwait(false);
+        var entries = await _memoryStore.SearchScoredAsync(request.Query, request.TopK, filter, ct).ConfigureAwait(false);
         return entries.Select(MapToSearchResult).ToList();
     }
 
@@ -307,4 +308,11 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             SourceType: entry.SourceType,
             SessionId: entry.SessionId,
             CreatedAt: entry.CreatedAt);
+
+    /// <summary>
+    /// Maps a ranked row, preserving the fused relevance score so the caller can render a magnitude
+    /// and apply a floor instead of inferring relevance from position (#2781).
+    /// </summary>
+    private static AgentMemorySearchResult MapToSearchResult(ScoredMemoryEntry scored)
+        => MapToSearchResult(scored.Entry) with { RelevanceScore = scored.Score };
 }

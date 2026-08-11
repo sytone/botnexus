@@ -430,9 +430,17 @@ Searches across long-term memory and daily notes for relevant information.
 ```text
 memory_search(
   query: string,                    # Search query string (required)
-  max_results: integer = 10         # Maximum number of results (optional)
+  topK: integer = 10,               # Maximum number of results (optional)
+  minScore: number                  # Optional relevance floor; see below
 )
 ```
+
+**Result format**: each result renders its rank *and* the numeric fused relevance score that
+produced that rank, e.g. `Score: 0.7412 (rank #1)`. Passing `minScore` excludes results below the
+floor, returning an empty set rather than a ranked page of near-misses when nothing qualifies. The
+score is a provider-specific magnitude, not a 0-1 probability — see
+[Hybrid memory retrieval](../features/hybrid-memory-retrieval.md) for how it is computed and how to
+calibrate a floor.
 
 **Search Strategy**:
 - Keyword-based search (grep-style, case-insensitive)

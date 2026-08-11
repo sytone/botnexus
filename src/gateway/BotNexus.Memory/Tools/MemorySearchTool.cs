@@ -1,4 +1,5 @@
 using BotNexus.Domain.Text;
+using System.Globalization;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -60,6 +61,10 @@ public sealed class MemorySearchTool : IAgentTool
                   "type": "string",
                   "description": "Specific shared store name to search. When set, only that store is searched regardless of scope."
                 },
+                "minScore": {
+                  "type": "number",
+                  "description": "Optional relevance floor. Results whose fused relevance score is below this value are excluded, so a query with no genuinely relevant match returns an empty set instead of a ranked list of near-misses. Scores are provider-specific magnitudes, not a fixed 0-1 scale: calibrate against observed values rather than assuming a threshold."
+                },
                 "filter": {
                   "type": "object",
                   "description": "Optional filters: { sourceType, sessionId, afterDate, beforeDate, tags }",
@@ -99,6 +104,9 @@ public sealed class MemorySearchTool : IAgentTool
         if (arguments.TryGetValue("store", out var store) && store is not null)
             prepared["store"] = ToStringValue(store);
 
+        if (arguments.TryGetValue("minScore", out var minScore) && minScore is not null)
+            prepared["minScore"] = ToDoubleValue(minScore, "minScore");
+
         if (arguments.TryGetValue("filter", out var filter) && filter is not null)
             prepared["filter"] = filter;
 
@@ -130,12 +138,15 @@ public sealed class MemorySearchTool : IAgentTool
         var storeName = arguments.TryGetValue("store", out var storeValue) && storeValue is not null
             ? ToStringValue(storeValue)
             : null;
+        var minScore = arguments.TryGetValue("minScore", out var minScoreValue) && minScoreValue is not null
+            ? ToDoubleValue(minScoreValue, "minScore")
+            : (double?)null;
         var filter = ParseFilter(arguments.TryGetValue("filter", out var filterValue) ? filterValue : null);
 
         // If a specific store is requested, validate access and search only that store
         if (!string.IsNullOrWhiteSpace(storeName))
         {
-            return await SearchSpecificStoreAsync(query, topK, storeName!, filter, cancellationToken).ConfigureAwait(false);
+            return await SearchSpecificStoreAsync(query, topK, storeName!, filter, minScore, cancellationToken).ConfigureAwait(false);
         }
 
         var allResults = new List<AgentMemorySearchResult>();
@@ -173,24 +184,24 @@ public sealed class MemorySearchTool : IAgentTool
                 var store = _sharedRegistry.GetStore(name);
                 if (store is null) continue;
 
-                var sharedResults = await store.SearchAsync(query, topK, memoryFilter, cancellationToken).ConfigureAwait(false);
-                foreach (var entry in sharedResults)
+                var sharedResults = await store.SearchScoredAsync(query, topK, memoryFilter, cancellationToken).ConfigureAwait(false);
+                foreach (var scored in sharedResults)
                 {
                     allResults.Add(new AgentMemorySearchResult(
-                        Id: entry.Id,
-                        Content: entry.Content,
+                        Id: scored.Entry.Id,
+                        Content: scored.Entry.Content,
                         SourceType: $"shared:{name}",
-                        SessionId: entry.SessionId,
-                        CreatedAt: entry.CreatedAt));
+                        SessionId: scored.Entry.SessionId,
+                        CreatedAt: scored.Entry.CreatedAt,
+                        RelevanceScore: scored.Score));
                 }
             }
         }
 
-        // Sort by relevance (CreatedAt as proxy for temporal decay), take topK
-        var finalResults = allResults
-            .OrderByDescending(r => r.CreatedAt)
-            .Take(topK)
-            .ToList();
+        // Order by the ranker's fused relevance score, then apply the caller's floor. The floor is
+        // applied AFTER ranking so it filters the same magnitude that is rendered - a pre-ranking
+        // filter would threshold un-normalised per-store signals and mean something different again.
+        var finalResults = ApplyFloorAndRank(allResults, minScore, topK);
 
         if (finalResults.Count == 0)
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "No matching memories found.")]);
@@ -200,7 +211,7 @@ public sealed class MemorySearchTool : IAgentTool
 
     private async Task<AgentToolResult> SearchSpecificStoreAsync(
         string query, int topK, string storeName,
-        AgentMemorySearchFilter? filter, CancellationToken cancellationToken)
+        AgentMemorySearchFilter? filter, double? minScore, CancellationToken cancellationToken)
     {
         if (_sharedRegistry is null)
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, $"Shared memory stores are not configured.")]);
@@ -223,19 +234,43 @@ public sealed class MemorySearchTool : IAgentTool
             }
             : null;
 
-        var entries = await store.SearchAsync(query, topK, memoryFilter, cancellationToken).ConfigureAwait(false);
-        var results = entries.Select(e => new AgentMemorySearchResult(
-            Id: e.Id,
-            Content: e.Content,
-            SourceType: $"shared:{storeName}",
-            SessionId: e.SessionId,
-            CreatedAt: e.CreatedAt)).ToList();
+        var entries = await store.SearchScoredAsync(query, topK, memoryFilter, cancellationToken).ConfigureAwait(false);
+        var results = ApplyFloorAndRank(
+            entries.Select(scored => new AgentMemorySearchResult(
+                Id: scored.Entry.Id,
+                Content: scored.Entry.Content,
+                SourceType: $"shared:{storeName}",
+                SessionId: scored.Entry.SessionId,
+                CreatedAt: scored.Entry.CreatedAt,
+                RelevanceScore: scored.Score)),
+            minScore,
+            topK);
 
         if (results.Count == 0)
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "No matching memories found.")]);
 
         return FormatResults(results);
     }
+
+    /// <summary>
+    /// Applies the optional relevance floor to already-ranked results and takes the caller's slice.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does not recompute relevance: it orders and thresholds the score the ranker
+    /// already produced. A second relevance definition in the display path is exactly the drift
+    /// #2781 exists to remove. Filtering precedes <c>Take</c> so a floor cannot yield a short page
+    /// padded out of a larger candidate set - when nothing clears the floor the set is empty.
+    /// </remarks>
+    private static List<AgentMemorySearchResult> ApplyFloorAndRank(
+        IEnumerable<AgentMemorySearchResult> results,
+        double? minScore,
+        int topK)
+        => results
+            .Where(result => minScore is not { } floor || result.RelevanceScore >= floor)
+            .OrderByDescending(result => result.RelevanceScore)
+            .ThenByDescending(result => result.CreatedAt)
+            .Take(topK)
+            .ToList();
 
     private static AgentToolResult FormatResults(IReadOnlyList<AgentMemorySearchResult> entries)
     {
@@ -255,7 +290,9 @@ public sealed class MemorySearchTool : IAgentTool
             preview = preview.Replace("\r\n", " ", StringComparison.Ordinal).Replace('\n', ' ');
 
             lines.Add($"[{i + 1}] ID: {entry.Id}");
-            lines.Add($"Score: #{i + 1} (ranked)");
+            // Rank AND magnitude: the ordinal alone told a caller nothing about whether the top hit
+            // was any good, which is the whole of #2781.
+            lines.Add($"Score: {entry.RelevanceScore.ToString("0.####", CultureInfo.InvariantCulture)} (rank #{i + 1})");
             lines.Add($"Timestamp: {entry.CreatedAt:O}");
             if (!string.IsNullOrWhiteSpace(entry.SessionId))
                 lines.Add($"Session: {entry.SessionId}");
@@ -344,5 +381,24 @@ public sealed class MemorySearchTool : IAgentTool
             string text when int.TryParse(text, out var parsed) => parsed,
             string text when double.TryParse(text, out var d) => (int)d,
             _ => throw new ArgumentException($"Argument '{argumentName}' must be an integer.")
+        };
+
+    /// <summary>
+    /// Coerces a relevance-floor argument to a double across the shapes a provider may send it in
+    /// (native number, JSON number, or a numeric string).
+    /// </summary>
+    private static double ToDoubleValue(object value, string argumentName)
+        => value switch
+        {
+            double d => d,
+            float f => f,
+            int i => i,
+            long l => l,
+            decimal m => (double)m,
+            JsonElement { ValueKind: JsonValueKind.Number } element => element.GetDouble(),
+            JsonElement { ValueKind: JsonValueKind.String } element
+                when double.TryParse(element.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            string text when double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => throw new ArgumentException($"Argument '{argumentName}' must be a number.")
         };
 }

@@ -41,6 +41,42 @@ score `0`), not by outranking strong lexical hits. A dominant exact-term match i
 deliberately not displaced by similarity alone. This is what keeps exact lexical matches
 competitive.
 
+## Reading the score
+
+Each `memory_search` result renders both its position and the fused magnitude that earned it:
+
+```text
+[1] ID: 3f2a...
+Score: 0.7412 (rank #1)
+```
+
+The number is the ranker's fused `(0.6 x lexical + 0.4 x similarity) x decay` output - the *same*
+value that produced the ordering, not a second relevance measure computed for display. Before #2781
+the line read `Score: #1 (ranked)`, which was the loop ordinal under a `Score:` label: every result
+set ran `#1 ... #N` regardless of match quality, so the strongest and weakest possible matches
+rendered identically and a caller had no way to tell a good hit from the best row of a bad set.
+
+The magnitude is **provider-specific and not a fixed 0-1 scale**. It is comparable *within* a result
+set, and roughly comparable across queries against the same store, but it is not a probability and
+not portable across stores. Calibrate against observed values rather than assuming a threshold.
+
+### `minScore` - applying a relevance floor
+
+`memory_search` accepts an optional `minScore` (number). Results whose fused score falls below it are
+excluded, and if nothing clears the floor the tool returns no matches rather than a truncated ranked
+list of near-misses:
+
+```text
+memory_search(query: "deployment rollback policy", minScore: 0.35)
+```
+
+The floor is applied **after** ranking, so it filters exactly the magnitude that is rendered.
+Filtering also precedes the `topK` slice, so a floor can never produce a short page padded out of a
+larger candidate set.
+
+Because the scale is corpus-dependent, the practical way to pick a floor is to run the query without
+one, look at the emitted scores, and set the threshold beneath the last result still worth citing.
+
 ## Vector identity
 
 Vectors from different models — or different builds of the same model — occupy unrelated
