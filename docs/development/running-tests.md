@@ -20,6 +20,52 @@ for parameters (`-From`, `-Configuration`, `-All`, `-NoBuild`, `-DryRun`).
 
 ---
 
+## Freshness guards (#2785)
+
+The gate consumes two **cached** inputs. Both used to be trusted without ever being
+checked, so the gate could report a confident verdict about work it had not done.
+
+### Stale test assemblies
+
+`dotnet test --no-build` does **not** fail when the assembly on disk predates the source.
+It silently runs whatever `.dll` is already there. Observed on 2026-08-03: a gate run
+reported 564 tests / 3 failed from an assembly compiled 15 minutes before the commit under
+validation, while a forced-clean run of the same commit reported 591 / 0 - 27 tests did not
+exist in the executed assembly. The false-red cost two hours of triage; the same mechanism
+produces a **false green** just as easily, which is the severe direction for a pre-push gate.
+
+When `-NoBuild` is passed, `test-impacted.ps1` now compares every selected project's
+compiled assembly against the HEAD commit timestamp and **refuses to run** if any is older,
+naming the offending project and its timestamp. A project with no assembly at all is
+`missing`, never `fresh` - absence fails closed.
+
+### Stale base ref
+
+`-From` defaulted to `origin/main` and nothing fetched it, so the impacted set was derived
+from whatever that remote-tracking ref last pointed at in that checkout (observed: 7 commits
+stale). `--from <tip>` is also a **two-dot** diff, so every commit that landed on the base
+after the branch forked entered the change set - a true 10-file diff was reported as 26
+files across projects the branch never touched. The dangerous direction is the opposite one:
+a stale base can **omit** projects a change genuinely impacts, and those tests never run.
+
+The base ref is now fetched before use and the impacted set is computed from
+`git merge-base <base> HEAD`, which is by construction unaffected by later base commits. A
+fetch failure (offline, no auth) is **not** fatal - the gate still runs - but it is reported
+rather than silent.
+
+### Configuration unification
+
+`Invoke-LocalValidation.ps1` takes a single `-Configuration` (default `Debug`) and passes it
+to the build step *and* every test step. Previously the build passed no `-c` while
+`test-impacted.ps1` defaulted independently, so `Debug` and `Release` artifact sets could
+diverge with only one of them refreshed.
+
+The guards live in [`ValidationFreshness.psm1`](../../scripts/repo/ValidationFreshness.psm1),
+covered by `ValidationFreshness.Tests.ps1` and mutation-checked by
+`ValidationFreshness.Mutation.ps1` (each guard must redden its test **by name** when reverted).
+
+---
+
 ## Windows testhost firewall pre-authorization
 
 ### The problem

@@ -40,6 +40,14 @@ param(
     [int]$BuildTimeoutSeconds = -1,
     [int]$TestTimeoutSeconds = -1,
 
+    # #2785 AC3: ONE source for the configuration used by the build step and by every test
+    # step. Previously the build passed no `-c` (so Debug) while test-impacted.ps1 defaulted
+    # to Debug independently and Release artifacts also existed in the tree - two artifact
+    # sets, only one of them ever refreshed. Deriving both from this parameter makes that
+    # divergence unrepresentable.
+    [ValidateSet('Debug', 'Release')]
+    [string]$Configuration = 'Debug',
+
     [string]$LockPath = (Join-Path ([IO.Path]::GetTempPath()) 'botnexus-local-validation-global.lock')
 )
 
@@ -106,7 +114,7 @@ try {
     if ($Mode -ne 'hook') {
         # The authoritative gate keeps its single full-solution build.
         $steps.Add((Invoke-BotNexusValidationStep -Name 'full solution build' -FilePath 'dotnet' `
-                    -Arguments @('build', (Join-Path $repoRoot 'dirs.proj'), '--nologo', '--verbosity', 'minimal', '--tl:off') `
+                    -Arguments @('build', (Join-Path $repoRoot 'dirs.proj'), '--nologo', '--verbosity', 'minimal', '--tl:off', '-c', $Configuration) `
                     -WorkingDirectory $repoRoot -TimeoutSeconds $BuildTimeoutSeconds))
         if ($steps[-1].ExitCode -ne 0) { exit $steps[-1].ExitCode }
     }
@@ -116,26 +124,26 @@ try {
             # Impacted projects only, and test-impacted builds them itself. No full-solution
             # build and no Playwright: that is the pre-push gate's job, not every commit's.
             $steps.Add((Invoke-BotNexusValidationStep -Name 'impacted tests (hook scope)' -FilePath $pwshPath `
-                        -Arguments @('-NoProfile', '-File', $testImpacted, '-From', $BaseRef) `
+                        -Arguments @('-NoProfile', '-File', $testImpacted, '-From', $BaseRef, '-Configuration', $Configuration) `
                         -WorkingDirectory $repoRoot -TimeoutSeconds $TestTimeoutSeconds))
         }
         'full' {
             $steps.Add((Invoke-BotNexusValidationStep -Name 'full test suite' -FilePath $pwshPath `
-                        -Arguments @('-NoProfile', '-File', $testImpacted, '-All', '-NoBuild') `
+                        -Arguments @('-NoProfile', '-File', $testImpacted, '-All', '-NoBuild', '-Configuration', $Configuration) `
                         -WorkingDirectory $repoRoot -TimeoutSeconds $TestTimeoutSeconds))
         }
         'playwright' {
             $steps.Add((Invoke-BotNexusValidationStep -Name 'playwright end-to-end tests' -FilePath $pwshPath `
-                        -Arguments @('-NoProfile', '-File', $e2eRunner, '-Project', $playwrightProject, '-Configuration', 'Debug', '-NoBuild') `
+                        -Arguments @('-NoProfile', '-File', $e2eRunner, '-Project', $playwrightProject, '-Configuration', $Configuration, '-NoBuild') `
                         -WorkingDirectory $repoRoot -TimeoutSeconds $TestTimeoutSeconds))
         }
         default {
             $steps.Add((Invoke-BotNexusValidationStep -Name 'impacted tests and safety nets' -FilePath $pwshPath `
-                        -Arguments @('-NoProfile', '-File', $testImpacted, '-From', $BaseRef, '-NoBuild') `
+                        -Arguments @('-NoProfile', '-File', $testImpacted, '-From', $BaseRef, '-NoBuild', '-Configuration', $Configuration) `
                         -WorkingDirectory $repoRoot -TimeoutSeconds $TestTimeoutSeconds))
             if ($steps[-1].ExitCode -eq 0 -and $Mode -eq 'strict') {
                 $steps.Add((Invoke-BotNexusValidationStep -Name 'playwright end-to-end tests' -FilePath $pwshPath `
-                            -Arguments @('-NoProfile', '-File', $e2eRunner, '-Project', $playwrightProject, '-Configuration', 'Debug', '-NoBuild') `
+                            -Arguments @('-NoProfile', '-File', $e2eRunner, '-Project', $playwrightProject, '-Configuration', $Configuration, '-NoBuild') `
                             -WorkingDirectory $repoRoot -TimeoutSeconds $TestTimeoutSeconds))
             }
         }

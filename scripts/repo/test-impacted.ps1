@@ -59,6 +59,11 @@ $repoRoot = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent
 $slnxPath = Join-Path $repoRoot 'dirs.proj'
 $firewallHelper = Join-Path $PSScriptRoot 'Ensure-TesthostFirewallRules.ps1'
 
+# #2785: freshness guards for the two cached inputs this script consumes without ever
+# having checked them - the compiled test assemblies (run with --no-build) and the base
+# ref (used to compute the impacted set).
+Import-Module (Join-Path $PSScriptRoot 'ValidationFreshness.psm1') -Force
+
 function Invoke-FirewallAction {
     param(
         [string[]]$Projects,
@@ -122,7 +127,28 @@ dotnet tool restore --nologo 2>&1 | Out-Null
 
 # --- Step 2: Run dotnet-affected to get affected project list ---
 # Run for committed changes (branch diff) AND uncommitted changes (working dir)
-Write-Host "Analyzing affected projects (comparing against: $From)..." -ForegroundColor Cyan
+#
+# #2785 AC4/AC5: `$From` is a CACHE. It defaulted to 'origin/main' and nothing ever fetched
+# it, so the impacted set was derived from whatever that ref last pointed at in this
+# checkout - observed 7 commits stale. Worse, `--from <tip>` is a two-dot diff, so every
+# commit that landed on the base after the branch forked enters the change set: a true
+# 10-file diff was reported as 26 files across projects the branch never touched. The
+# opposite direction is the dangerous one - a stale base can OMIT projects a change
+# genuinely impacts, and those tests then never run.
+#
+# Resolving to the merge-base makes the change set independent of later base commits by
+# construction, and the fetch means it is not computed from a cache. A fetch failure is not
+# fatal (offline / no auth is a legitimate state) but it is reported, never silent.
+$baseResolution = Resolve-BotNexusValidationBaseRef -RepoRoot $repoRoot -BaseRef $From
+if (-not $baseResolution.Fetched -and $null -ne $baseResolution.FetchError) {
+    Write-Warning "Could not refresh '$From' before computing the impacted set; using the cached ref. $($baseResolution.FetchError)"
+}
+if ($baseResolution.IsStale) {
+    Write-Host "Base ref '$From' is $($baseResolution.BehindCount) commit(s) ahead of HEAD's fork point; diffing from the merge-base $($baseResolution.MergeBase.Substring(0, 8)) so unrelated base commits cannot enter the impacted set." -ForegroundColor Yellow
+}
+$diffFrom = $baseResolution.MergeBase
+
+Write-Host "Analyzing affected projects (comparing against: $From @ merge-base $($diffFrom.Substring(0, 8)))..." -ForegroundColor Cyan
 
 $outputDir = Join-Path $repoRoot '.affected'
 if (Test-Path $outputDir) { Remove-Item $outputDir -Recurse -Force }
@@ -131,7 +157,7 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 $affectedProjects = @()
 
 # Check committed changes against base ref
-$affectedOutput = dotnet affected --from $From -f text --output-dir $outputDir --output-name affected-branch 2>&1
+$affectedOutput = dotnet affected --from $diffFrom -f text --output-dir $outputDir --output-name affected-branch 2>&1
 $branchExitCode = $LASTEXITCODE
 
 if ($branchExitCode -eq 0) {
@@ -212,6 +238,31 @@ Write-Host ""
 $buildFlag = if ($NoBuild) { '--no-build' } else { '--no-restore' }
 $leasePath = Join-Path ([IO.Path]::GetTempPath()) ("botnexus-fw-lease-{0}" -f [guid]::NewGuid().ToString('N'))
 $failed = $false
+
+# #2785 AC1/AC2/AC6: refuse to run an assembly older than the commit under validation.
+# `dotnet test --no-build` does NOT fail when the assembly on disk predates the source;
+# it silently runs the stale .dll and reports a verdict about code it never compiled.
+# Observed live: 564 tests / 3 failed from a 15-minute-old assembly where a forced-clean
+# run of the same commit gave 591 / 0. The false-green direction is the severe one.
+# Deliberately OUTSIDE the try below: bailing here must not trigger firewall cleanup for a
+# lease that was never acquired.
+if ($NoBuild) {
+    $commitTimeRaw = & git -C $repoRoot show -s --format=%cI HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($commitTimeRaw)) {
+        $commitTimeUtc = [DateTimeOffset]::Parse("$commitTimeRaw".Trim()).UtcDateTime
+        $freshness = Assert-BotNexusTestAssemblyFreshness -ProjectPath $projectsToTest -Configuration $Configuration -ReferenceTimeUtc $commitTimeUtc
+        if (-not $freshness.IsFresh) {
+            Write-Host ""
+            Write-Host $freshness.Message -ForegroundColor Red
+            exit 1
+        }
+        Write-Host $freshness.Message -ForegroundColor DarkGray
+    }
+    else {
+        Write-Warning 'Could not read the HEAD commit timestamp; skipping the #2785 stale-assembly guard.'
+    }
+}
+
 try {
     Invoke-FirewallAction -Projects $projectsToTest -Action Ensure -LeasePath $leasePath
     foreach ($proj in $projectsToTest) {
