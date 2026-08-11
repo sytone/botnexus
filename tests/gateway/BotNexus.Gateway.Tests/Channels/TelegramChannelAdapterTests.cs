@@ -554,7 +554,12 @@ public sealed class TelegramChannelAdapterTests
             "edited_message",
             "channel_post",
             "edited_channel_post",
-            "message_reaction"
+            "message_reaction",
+            // Required for ask_user inline keyboards (#2323). Telegram filters updates server-side,
+            // so omitting this would make every button tap undeliverable - buttons would render and
+            // silently do nothing. Still asserted as an EXACT set so an accidental subscription to an
+            // unrelated update type is still caught.
+            "callback_query"
         });
     }
 
