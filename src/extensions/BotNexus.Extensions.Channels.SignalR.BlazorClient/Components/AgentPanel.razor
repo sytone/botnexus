@@ -53,7 +53,7 @@
                  data-testid="agent-panel-canvas"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Canvas) ? "active" : "")"
                  role="tabpanel">
-            <CanvasPanel AgentId="@AgentId" ConversationId="@Agent?.ActiveConversationId" />
+            <CanvasPanel AgentId="@AgentId" ConversationId="@EffectiveConversationId" />
         </section>
 
         <section id="@GetPanelId(AgentPanelTab.Todo)"
@@ -68,6 +68,43 @@
 @code {
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
+
+    /// <summary>
+    /// #2976: the conversation named by the ROUTE, when the URL carries a conversation segment.
+    /// The canvas pane must show the routed conversation's canvas, because a deep link is exactly
+    /// the case where the agent's active conversation has since moved on and a silent wrong-canvas
+    /// render is worse than no canvas. Null when the route is agent-only
+    /// (<c>/agent/{AgentId}</c>), in which case the pre-#2976 active-conversation behaviour and the
+    /// agent-level legacy fallback below it are preserved unchanged.
+    /// </summary>
+    [Parameter]
+    public string? RoutedConversationId { get; set; }
+
+    /// <summary>
+    /// Resolves which conversation the per-conversation panes bind to.
+    ///
+    /// The routed id is honoured ONLY when it belongs to THIS agent. That guard is load-bearing, not
+    /// defensive padding: Home.razor renders one AgentPanel per agent in Store.Agents, while the route
+    /// names a single agent, and CanvasPanel resolves HTML via IClientStateStore.GetConversation which
+    /// searches EVERY agent's conversation map. Passing the routed id down unconditionally would make
+    /// every other agent's panel resolve and render the routed agent's canvas. Ownership is checked
+    /// against this agent's own Conversations map, so a stale or hand-edited URL naming a foreign
+    /// conversation falls back rather than leaking another agent's canvas.
+    /// </summary>
+    private string? EffectiveConversationId
+    {
+        get
+        {
+            var agent = Agent;
+            if (RoutedConversationId is { Length: > 0 } routed &&
+                agent?.Conversations.ContainsKey(routed) == true)
+            {
+                return routed;
+            }
+
+            return agent?.ActiveConversationId;
+        }
+    }
 
     private AgentPanelTab _activeTab = AgentPanelTab.Conversation;
     // Track whether the agent was a sub-agent last time we checked, so we can

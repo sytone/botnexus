@@ -40,7 +40,7 @@ else
     @foreach (var (agentId, _) in Store.Agents)
     {
         <div class="chat-panel-wrapper @(agentId == Store.ActiveAgentId ? "active" : "hidden")">
-            <AgentPanel AgentId="@agentId" />
+            <AgentPanel AgentId="@agentId" RoutedConversationId="@RoutedConversationIdFor(agentId)" />
         </div>
     }
 }
@@ -49,6 +49,23 @@ else
     [Parameter] public string? AgentId { get; set; }
     [Parameter] public string? ConversationId { get; set; }
     private string? _appliedRouteKey;
+
+    /// <summary>
+    /// #2976: hands the route's conversation segment down to the panel for the agent the route
+    /// actually names, and to no other. This page renders one AgentPanel per agent in Store.Agents,
+    /// so an unconditional pass-through would give every agent's panel a conversation id that
+    /// belongs to a different agent. Escaping is undone the same way ApplyRouteSelectionAsync does
+    /// it, so both paths agree on the identity of the routed conversation.
+    /// </summary>
+    private string? RoutedConversationIdFor(string agentId)
+    {
+        if (string.IsNullOrWhiteSpace(AgentId) || string.IsNullOrWhiteSpace(ConversationId))
+            return null;
+
+        return string.Equals(Uri.UnescapeDataString(AgentId), agentId, StringComparison.Ordinal)
+            ? Uri.UnescapeDataString(ConversationId)
+            : null;
+    }
 
     // #2293: re-entrancy guard. ApplyRouteSelectionAsync calls Store.NotifyChanged(), which raises
     // Store.OnChanged, which is wired to HandleStateChanged -> ApplyRouteSelectionAsync again. Without
