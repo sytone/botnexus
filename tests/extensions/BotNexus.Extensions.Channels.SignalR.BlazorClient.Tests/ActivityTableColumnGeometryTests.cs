@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -39,6 +40,39 @@ public sealed class ActivityTableColumnGeometryTests
     /// <summary>The width the table is resolved against. Any positive value works; the
     /// assertions are all relative, so the constant only makes the numbers readable.</summary>
     private const double TableWidthPx = 1200d;
+
+    /// <summary>
+    /// Read the stylesheet with <c>/* ... */</c> comments removed.
+    /// </summary>
+    /// <remarks>
+    /// The rule comments in this area of app.css deliberately quote the selectors and
+    /// declarations they are explaining ("do not reintroduce <c>max-width</c> here"), so a
+    /// naive selector regex matches the prose before it reaches the rule. Parsing the
+    /// comment-stripped text is the only way this guard reads the CSS the browser sees.
+    /// </remarks>
+    private static string ReadCssWithoutComments()
+    {
+        var css = File.ReadAllText(s_cssPath);
+        var sb = new StringBuilder(css.Length);
+        for (var i = 0; i < css.Length; i++)
+        {
+            if (i + 1 < css.Length && css[i] == '/' && css[i + 1] == '*')
+            {
+                var end = css.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                if (end < 0)
+                {
+                    break;
+                }
+
+                i = end + 1;
+                continue;
+            }
+
+            sb.Append(css[i]);
+        }
+
+        return sb.ToString();
+    }
 
     /// <summary>
     /// Resolve the rendered width of an <c>.activity-table</c> column under
@@ -155,7 +189,7 @@ public sealed class ActivityTableColumnGeometryTests
     [Fact]
     public void ConversationColumn_ResolvesWiderThanStatusColumn()
     {
-        var css = File.ReadAllText(s_cssPath);
+        var css = ReadCssWithoutComments();
 
         var conversation = ResolveColumnWidthPx(css, 1);
         var status = ResolveColumnWidthPx(css, 3);
@@ -176,7 +210,7 @@ public sealed class ActivityTableColumnGeometryTests
     [Fact]
     public void DeclaredColumns_DoNotExceedTableWidth()
     {
-        var css = File.ReadAllText(s_cssPath);
+        var css = ReadCssWithoutComments();
 
         var total = 0d;
         for (var i = 1; i <= 5; i++)
@@ -198,7 +232,7 @@ public sealed class ActivityTableColumnGeometryTests
     [Fact]
     public void TitleCell_DeclaresNoMaxWidth_SoTheColumnIsNotClamped()
     {
-        var css = File.ReadAllText(s_cssPath);
+        var css = ReadCssWithoutComments();
 
         Assert.Null(ReadCellMaxWidthPx(css, ".activity-cell-title"));
     }
@@ -211,7 +245,7 @@ public sealed class ActivityTableColumnGeometryTests
     [Fact]
     public void TitleShrinksViaChildMinWidth_AndStillEllipsisesOnOneLine()
     {
-        var css = File.ReadAllText(s_cssPath);
+        var css = ReadCssWithoutComments();
 
         var rule = Regex.Match(
             css,
