@@ -169,14 +169,27 @@ public sealed class MemorySearchToolScoreTests
     {
         await using var context = await MemoryStoreTestContext.CreateAsync();
 
-        // A MULTI-ROW corpus is required, and the reason is worth stating: BM25's IDF term is
-        // log(N / n_t). With a single indexed document every term appears in every document, IDF
-        // collapses to zero, and `-bm25()` is legitimately 0.0 for even a perfect match. That is a
-        // property of BM25 on a degenerate corpus, not of the score plumbing - so a single-row
-        // fixture cannot distinguish "score wired up" from "score always zero".
-        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-1", AgentId, "searchablememorytext searchablememorytext deployment rollback"));
-        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-2", AgentId, "searchablememorytext unrelated filler prose"));
-        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-3", AgentId, "wholly unrelated content about gardening"));
+        // The corpus shape here is load-bearing, and the arithmetic is worth writing down because a
+        // naive fixture silently yields a zero score for a genuine match:
+        //
+        //   SQLite's bm25() weights each term by IDF = log((N - n + 0.5) / (n + 0.5)), where N is the
+        //   number of indexed rows and n the number containing the term. When a term is COMMON the
+        //   ratio drops below 1, IDF goes negative, bm25() flips sign, and the store's
+        //   `Math.Max(0d, -bm25(...))` clamp - which is correct, a negative lexical magnitude is
+        //   meaningless - floors the candidate at 0.
+        //
+        // So the query term must be RARE: here it appears in 2 of 12 rows, giving
+        // log(10.5 / 2.5) > 0 and a genuinely positive lexical signal. The two matching rows carry
+        // different term frequencies so the ranker must also separate them.
+        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry(
+            "entry-1", AgentId, "searchablememorytext searchablememorytext searchablememorytext deployment rollback"));
+        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry(
+            "entry-2", AgentId, "searchablememorytext buried among a great deal of unrelated filler prose"));
+        for (var i = 0; i < 10; i++)
+        {
+            await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry(
+                $"filler-{i}", AgentId, $"wholly unrelated content about gardening and weather number {i}"));
+        }
 
         var agentMemory = new MarkdownAgentMemory(AgentId, new StubWorkspaceManager(), context.Store, new FileSystem());
         var tool = new MemorySearchTool(agentMemory, AgentId);
@@ -188,9 +201,8 @@ public sealed class MemorySearchToolScoreTests
         text.ShouldContain("ID: entry-1");
         var scores = ParsedScores(text);
 
-        // Two rows match the term with different term frequencies, so the real ranker must separate
-        // them. Under the defect these rendered as the constant ordinals 1 and 2.
-        scores.Count.ShouldBeGreaterThanOrEqualTo(2);
+        // A real fused magnitude from the ranker, not the ordinal the defect emitted.
+        scores.Count.ShouldBe(2);
         scores[0].ShouldBeGreaterThan(0d);
         scores.ShouldNotBe([1d, 2d]);
         scores[0].ShouldBeGreaterThan(scores[1]);
