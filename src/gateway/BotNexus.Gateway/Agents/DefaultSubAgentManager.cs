@@ -404,8 +404,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 budgetClamp.EffectiveMaxTurns);
         }
 
-        var timeoutCts = new CancellationTokenSource();
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        // The deadline is scheduled through the injected TimeProvider rather than the ambient
+        // CancelAfter timer so the run's clock is the SAME clock the rest of this class already
+        // uses (retention stamps, descendant polling). Under TimeProvider.System this is
+        // byte-for-byte the previous behaviour; under a test provider the deadline becomes
+        // virtual, which is what removes the wall-clock race that made the non-timeout
+        // classification tests flaky on a loaded CI runner (#2979). A test asserting "empty
+        // response before the deadline" must not have to WIN A RACE against a real 1s timer.
+        var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds), _timeProvider);
         record.TimeoutCts = timeoutCts;
 
         _ = Task.Run(() => RunSubAgentAsync(subAgentId, handle, request.Task, timeoutSeconds, maxTurns), CancellationToken.None);

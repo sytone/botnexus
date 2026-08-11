@@ -48,15 +48,13 @@ public sealed class DefaultSubAgentManagerTimeoutTests
     [Fact]
     public async Task RunSubAgentAsync_EmptyResponseBeforeTimeout_ReportsFailed()
     {
+        // The deadline is scheduled on a virtual clock that is never advanced, so it CANNOT fire.
+        // The classification under test is therefore decided by the response content alone and no
+        // longer by whether a synchronous delegate beats a real 1s timer on a loaded runner (#2979).
         var handle = CreateHandle(_ => Task.FromResult(new AgentResponse { Content = "  " }));
-        // #2979: this is the only test in the file that needs the delegate to BEAT the deadline, so a
-        // 1-second budget made correctness depend on winning a wall-clock race against a loaded CI
-        // runner (observed: a synchronous delegate took 3s to be scheduled, and the run classified
-        // TimedOut instead of Failed). The timeout is never intended to fire here, so a large budget
-        // costs nothing and removes the race. The timeout-seeking tests keep the 1-second default.
-        var (manager, dispatcher) = CreateManager(handle, timeoutSeconds: NonExpiringTimeoutSeconds);
+        var (manager, dispatcher) = CreateManager(handle, new ControllableTimeProvider());
 
-        var result = await SpawnAndAwaitTerminalAsync(manager, timeoutSeconds: NonExpiringTimeoutSeconds);
+        var result = await SpawnAndAwaitTerminalAsync(manager);
         await WaitForDiagnosticAsync(dispatcher);
 
         result.Status.ShouldBe(SubAgentStatus.Failed);
@@ -68,8 +66,9 @@ public sealed class DefaultSubAgentManagerTimeoutTests
     [Fact]
     public async Task RunSubAgentAsync_NonEmptyResponseBeforeTimeout_ReportsCompleted()
     {
+        // Same deterministic construction as the Failed case: an unadvanced virtual deadline.
         var handle = CreateHandle(_ => Task.FromResult(new AgentResponse { Content = "Implemented the fix." }));
-        var (manager, dispatcher) = CreateManager(handle);
+        var (manager, dispatcher) = CreateManager(handle, new ControllableTimeProvider());
 
         var result = await SpawnAndAwaitTerminalAsync(manager);
         await WaitForDiagnosticAsync(dispatcher);
@@ -98,8 +97,45 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         result.Status.ShouldNotBe(SubAgentStatus.Completed);
     }
 
+    /// <summary>
+    /// Pins the seam the fix depends on: the run's deadline must be scheduled on the INJECTED
+    /// <see cref="TimeProvider"/>, not on the ambient <c>CancelAfter</c> timer.
+    /// <para>
+    /// The budget is <b>300 seconds</b> deliberately. A real timer with that budget cannot fire
+    /// inside the harness's 5-second poll window, so the ONLY way this run can reach a terminal
+    /// state is a virtual advance firing a timer the provider itself owns. Reverting the production
+    /// code to <c>new CancellationTokenSource()</c> + <c>CancelAfter</c> makes this test fail with
+    /// "Sub-agent did not reach a terminal state" - mutation-verified. An earlier version of this
+    /// test used a 1-second budget and SURVIVED that mutation, because a real 1s timer fires inside
+    /// the poll window regardless of which clock scheduled it: it proved nothing.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task RunSubAgentAsync_TimeoutIsScheduledOnInjectedTimeProvider_VirtualAdvanceTimesOut()
+    {
+        var handle = CreateHandle(async token =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new AgentResponse { Content = "unreachable" };
+        });
+        var time = new ControllableTimeProvider();
+        var (manager, dispatcher) = CreateManager(handle, time, timeoutSecondsBudget: 300);
+
+        var result = await SpawnAndAwaitTerminalAsync(
+            manager,
+            onPoll: () => time.Advance(TimeSpan.FromSeconds(60)),
+            timeoutSeconds: 300);
+
+        await WaitForDiagnosticAsync(dispatcher);
+        result.Status.ShouldBe(SubAgentStatus.TimedOut);
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain("timed out after 300 seconds");
+        VerifyDiagnostic(dispatcher, "timed out", "timed out after 300 seconds");
+    }
+
     private static async Task<SubAgentInfo> SpawnAndAwaitTerminalAsync(
         DefaultSubAgentManager manager,
+        Action? onPoll = null,
         int timeoutSeconds = 1)
     {
         var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
@@ -112,14 +148,13 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             InheritedConversationId = ConversationId.From("inherited-conversation")
         });
 
-        // Allow for the sub-agent's own budget plus scheduling slack, so a deliberately long budget
-        // is not cut short by the harness's own polling deadline.
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds + 5);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
         while (DateTimeOffset.UtcNow < deadline)
         {
             var current = await manager.GetAsync(spawned.SubAgentId);
             if (current is { Status: not SubAgentStatus.Running })
                 return current;
+            onPoll?.Invoke();
             await Task.Delay(20);
         }
 
@@ -171,16 +206,91 @@ public sealed class DefaultSubAgentManagerTimeoutTests
     }
 
     /// <summary>
-    /// A sub-agent budget large enough that it can never plausibly expire during a test, used by the
-    /// cases that assert a classification the delegate must reach BEFORE the deadline (#2979). Any
-    /// value well above worst-case CI scheduling latency works; the point is that the timer is not
-    /// part of what the test is measuring.
+    /// A <see cref="TimeProvider"/> whose clock only moves when a test moves it. Timers created
+    /// through it fire solely from <see cref="Advance"/>, so a deadline scheduled on this provider
+    /// is unreachable until the test chooses to reach it. That is what makes the non-timeout
+    /// classification tests independent of runner load (#2979).
     /// </summary>
-    private const int NonExpiringTimeoutSeconds = 30;
+    private sealed class ControllableTimeProvider : TimeProvider
+    {
+        private readonly List<VirtualTimer> _timers = [];
+        private readonly Lock _gate = new();
+        private DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            lock (_gate)
+                return _now;
+        }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new VirtualTimer(this, callback, state, dueTime);
+            lock (_gate)
+                _timers.Add(timer);
+            return timer;
+        }
+
+        /// <summary>Moves the virtual clock forward and fires every timer now due.</summary>
+        public void Advance(TimeSpan delta)
+        {
+            VirtualTimer[] due;
+            lock (_gate)
+            {
+                _now = _now.Add(delta);
+                due = [.. _timers.Where(t => t.IsDueAt(_now))];
+            }
+
+            foreach (var timer in due)
+                timer.Fire();
+        }
+
+        internal void Remove(VirtualTimer timer)
+        {
+            lock (_gate)
+                _timers.Remove(timer);
+        }
+
+        internal sealed class VirtualTimer(
+            ControllableTimeProvider owner,
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime) : ITimer
+        {
+            private DateTimeOffset? _dueAt = dueTime == Timeout.InfiniteTimeSpan
+                ? null
+                : owner.GetUtcNow().Add(dueTime);
+            private int _fired;
+
+            public bool IsDueAt(DateTimeOffset now) => _dueAt is { } due && now >= due;
+
+            public void Fire()
+            {
+                if (Interlocked.CompareExchange(ref _fired, 1, 0) != 0)
+                    return;
+                callback(state);
+            }
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                _dueAt = dueTime == Timeout.InfiniteTimeSpan ? null : owner.GetUtcNow().Add(dueTime);
+                return true;
+            }
+
+            public void Dispose() => owner.Remove(this);
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+        }
+    }
 
     private static (DefaultSubAgentManager Manager, Mock<IChannelDispatcher> Dispatcher) CreateManager(
         Mock<IAgentHandle> handle,
-        int timeoutSeconds = 1)
+        TimeProvider? timeProvider = null,
+        int timeoutSecondsBudget = 1)
     {
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(
@@ -205,10 +315,8 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             .Returns(Task.CompletedTask);
 
         var options = new GatewayOptions();
-        // MaxTimeoutSeconds clamps the request, so it must move with the requested budget -- otherwise a
-        // deliberately long, non-expiring budget is silently clamped straight back down to the racy 1s.
-        options.SubAgents.MaxTimeoutSeconds = timeoutSeconds;
-        options.SubAgents.DefaultTimeoutSeconds = timeoutSeconds;
+        options.SubAgents.MaxTimeoutSeconds = timeoutSecondsBudget;
+        options.SubAgents.DefaultTimeoutSeconds = timeoutSecondsBudget;
 
         return (new DefaultSubAgentManager(
             supervisor.Object,
@@ -216,6 +324,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             Mock.Of<IActivityBroadcaster>(),
             dispatcher.Object,
             new TestOptionsMonitor<GatewayOptions>(options),
-            NullLogger<DefaultSubAgentManager>.Instance), dispatcher);
+            NullLogger<DefaultSubAgentManager>.Instance,
+            timeProvider: timeProvider), dispatcher);
     }
 }
