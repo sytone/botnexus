@@ -388,8 +388,8 @@ botnexus init
 Expected output:
 
 ```text
-Initialized BotNexus home at: C:\Users\<YourName>\AppData\Local\BotNexus
-Created config: C:\Users\<YourName>\AppData\Local\BotNexus\config.json
+Initialized BotNexus home at: C:\Users\<YourName>\.botnexus
+Created config: C:\Users\<YourName>\.botnexus\config.json
 Next steps:
   - botnexus validate
   - botnexus agent list
@@ -453,7 +453,7 @@ botnexus agent list --verbose
 ```text
 Agents:
   assistant  provider=copilot  model=gpt-4.1  enabled=true
-Loaded from: C:\Users\<YourName>\AppData\Local\BotNexus\config.json
+Loaded from: C:\Users\<YourName>\.botnexus\config.json
 ```
 
 ---
@@ -2546,11 +2546,20 @@ Most config changes are applied immediately when the Gateway is running:
 
 ### Config File Location
 
-| OS | Default Path |
+`config.json` lives in the BotNexus home directory, and the path is the **same on every platform**:
+
+| Resolution step | Path |
 |---|---|
-| Windows | `%LOCALAPPDATA%\BotNexus\config.json` |
-| macOS/Linux | `~/.botnexus/config.json` |
-| Custom | `$env:BOTNEXUS_HOME/config.json` |
+| 1. Explicit `--target <PATH>` | `<PATH>/config.json` |
+| 2. `BOTNEXUS_HOME` environment variable | `$env:BOTNEXUS_HOME/config.json` |
+| 3. Default | `~/.botnexus/config.json` (`%USERPROFILE%\.botnexus\config.json` on Windows) |
+
+The first match wins. There is no Windows-specific `%LOCALAPPDATA%` config location —
+`%LOCALAPPDATA%\BotNexus` is where the release installer puts **binaries**, not configuration.
+
+`config.json` is a **flat top-level document with `camelCase` keys and no `BotNexus` wrapper** — the
+same shape the dotted keys above address (`gateway.listenUrl` → `{"gateway": {"listenUrl": ...}}`).
+See [Canonical document shape and location](configuration.md#canonical-shape) for the binding rules.
 
 Override with environment variable:
 

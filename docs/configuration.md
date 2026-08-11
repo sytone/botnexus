@@ -69,7 +69,50 @@ To add your first provider, run the interactive setup wizard:
 botnexus provider setup
 ```
 
-Or add it manually to the `providers` section. `config.json` is a flat top-level document — there is **no** `BotNexus` wrapper. All keys use `camelCase`:
+Or add it manually to the `providers` section.
+
+### Canonical document shape and location {#canonical-shape}
+
+These two facts govern **every** JSON sample on this page, and are verified against the
+configuration-binding source rather than against another doc page:
+
+| | Canonical form | Verified against |
+|---|---|---|
+| **Shape** | Flat top-level document, `camelCase` keys, **no** `BotNexus` wrapper | `AddPlatformConfiguration` binds `PlatformConfig` at the configuration **root** (`services.AddOptions<PlatformConfig>().Bind(configuration)`), and `PlatformConfigLoader.Load` deserializes the file straight into `PlatformConfig`. |
+| **Location** | `~/.botnexus/config.json` | `BotNexusHome.ResolveHomePath` / `CliPaths.ResolveTarget` |
+
+**A `BotNexus` wrapper is not an accepted alternative — it binds nothing.** `PlatformConfig` has no
+`BotNexus` property, and the binder is rooted at the document top level, so keys nested under a
+`"BotNexus": { ... }` object are silently ignored and every setting falls back to its default. This is
+the silent-failure mode the shape rule exists to prevent: the file parses, the gateway starts, and
+nothing you wrote takes effect.
+
+Key **casing** is a different matter and is forgiving: binding is case-insensitive
+(`PropertyNameCaseInsensitive = true`, plus `IConfiguration`'s own case-insensitive lookup), so
+`"gateway"` and `"Gateway"` both bind. **`camelCase` is nonetheless the canonical and recommended
+form** — it matches the CLI's dotted-key contract (`botnexus config get gateway.listenUrl`), the
+generated JSON schema, and the document `botnexus init` writes. Use it.
+
+> The one place the token `BotNexus` legitimately appears as a config key is `appsettings.json`'s
+> `BotNexus:ConfigPath`, which is a host bootstrap **pointer to** `config.json`. It is not part of the
+> `config.json` document, and it takes no other keys beneath it.
+
+### Config path resolution order
+
+The first match wins:
+
+1. `--target <PATH>` (CLI commands) or `BotNexus:ConfigPath` in `appsettings.json` (gateway host)
+2. `BOTNEXUS_HOME` environment variable → `$BOTNEXUS_HOME/config.json`
+3. Default: `~/.botnexus/config.json` — i.e. `%USERPROFILE%\.botnexus\config.json` on Windows,
+   `$HOME/.botnexus/config.json` on macOS/Linux
+
+The path is the **same on every platform**; there is no Windows-specific `%LOCALAPPDATA%` config
+location. (`%LOCALAPPDATA%\BotNexus` is where the release installer puts **binaries** — see
+[Getting Started](getting-started.md) — not configuration.) `BOTNEXUS_DATA_DIR` separately relocates
+writable runtime state (`sessions/`, `logs/`, `tokens/`, `agents/`, `extensions/`, `backups/`) away
+from the config root, which is what makes a read-only config mount workable in containers.
+
+An example of the canonical shape:
 
 ```json
 {
@@ -358,7 +401,7 @@ Dictionary mapping provider names to provider configurations. Keys are case-inse
 
 ```json
 {
-  "Providers": {
+  "providers": {
     "copilot": { ... },
     "openai": { ... },
     "anthropic": { ... },
@@ -434,29 +477,26 @@ The Copilot provider exposes **26 registered models** organized by API format:
 
 ```json
 {
-  "BotNexus": {
-    "Providers": {
-      "copilot": {
-        "Auth": "oauth",
-        "DefaultModel": "claude-opus-4.6",
-        "TimeoutSeconds": 120,
-        "MaxRetries": 3
-      }
+  "providers": {
+    "copilot": {
+      "auth": "oauth",
+      "defaultModel": "claude-opus-4.6",
+      "timeoutSeconds": 120,
+      "maxRetries": 3
+    }
+  },
+  "agents": {
+    "analyst": {
+      "model": "gpt-4o",
+      "provider": "copilot"
     },
-    "Agents": {
-        "analyst": {
-          "Model": "gpt-4o",
-          "Provider": "copilot"
-        },
-        "researcher": {
-          "Model": "gpt-5.4",
-          "Provider": "copilot"
-        },
-        "coder": {
-          "Model": "claude-opus-4.6",
-          "Provider": "copilot"
-        }
-      }
+    "researcher": {
+      "model": "gpt-5.4",
+      "provider": "copilot"
+    },
+    "coder": {
+      "model": "claude-opus-4.6",
+      "provider": "copilot"
     }
   }
 }
@@ -478,14 +518,14 @@ The Copilot provider exposes **26 registered models** organized by API format:
 
 ```json
 {
-  "Providers": {
+  "providers": {
     "copilot": {
-      "Auth": "oauth",
-      "DefaultModel": "gpt-4o",
-      "ApiBase": "https://api.individual.githubcopilot.com",
-      "OAuthClientId": "Iv1.b507a08c87ecfe98",
-      "TimeoutSeconds": 120,
-      "MaxRetries": 3
+      "auth": "oauth",
+      "defaultModel": "gpt-4o",
+      "apiBase": "https://api.individual.githubcopilot.com",
+      "oAuthClientId": "Iv1.b507a08c87ecfe98",
+      "timeoutSeconds": 120,
+      "maxRetries": 3
     }
   }
 }
@@ -525,14 +565,14 @@ These headers identify the client to the Copilot API and enable proper rate limi
 
 ```json
 {
-  "Providers": {
+  "providers": {
     "openai": {
-      "Auth": "apikey",
-      "ApiKey": "sk-...",
-      "DefaultModel": "gpt-4-turbo",
-      "ApiBase": "https://api.openai.com/v1",
-      "TimeoutSeconds": 120,
-      "MaxRetries": 3
+      "auth": "apikey",
+      "apiKey": "sk-...",
+      "defaultModel": "gpt-4-turbo",
+      "apiBase": "https://api.openai.com/v1",
+      "timeoutSeconds": 120,
+      "maxRetries": 3
     }
   }
 }
@@ -545,14 +585,14 @@ These headers identify the client to the Copilot API and enable proper rate limi
 
 ```json
 {
-  "Providers": {
+  "providers": {
     "anthropic": {
-      "Auth": "apikey",
-      "ApiKey": "sk-ant-...",
-      "DefaultModel": "claude-3-5-sonnet-20241022",
-      "ApiBase": "https://api.anthropic.com",
-      "TimeoutSeconds": 120,
-      "MaxRetries": 3
+      "auth": "apikey",
+      "apiKey": "sk-ant-...",
+      "defaultModel": "claude-3-5-sonnet-20241022",
+      "apiBase": "https://api.anthropic.com",
+      "timeoutSeconds": 120,
+      "maxRetries": 3
     }
   }
 }
@@ -565,14 +605,14 @@ These headers identify the client to the Copilot API and enable proper rate limi
 
 ```json
 {
-  "Providers": {
+  "providers": {
     "azure-openai": {
-      "Auth": "apikey",
-      "ApiKey": "your-azure-key",
-      "DefaultModel": "deployment-name",
-      "ApiBase": "https://your-resource.openai.azure.com/openai/deployments/deployment-name",
-      "TimeoutSeconds": 120,
-      "MaxRetries": 3
+      "auth": "apikey",
+      "apiKey": "your-azure-key",
+      "defaultModel": "deployment-name",
+      "apiBase": "https://your-resource.openai.azure.com/openai/deployments/deployment-name",
+      "timeoutSeconds": 120,
+      "maxRetries": 3
     }
   }
 }
@@ -586,11 +626,11 @@ Social channel integrations. Keys in `Instances` dict are case-insensitive and m
 
 ```json
 {
-  "Channels": {
-    "SendProgress": true,
-    "SendToolHints": false,
-    "SendMaxRetries": 3,
-    "Instances": {
+  "channels": {
+    "sendProgress": true,
+    "sendToolHints": false,
+    "sendMaxRetries": 3,
+    "instances": {
       "telegram": { ... },
       "discord": { ... },
       "slack": { ... }
@@ -676,12 +716,12 @@ package / Microsoft.Extensions.* pin design note.
 
 ```json
 {
-  "Channels": {
-    "Instances": {
+  "channels": {
+    "instances": {
       "discord": {
-        "Enabled": true,
-        "BotToken": "MzA5NTkyMzAzMTgyNzIzODQw.C_DUbA.Tz3u1NBoI7K-xypwWD",
-        "AllowFrom": []
+        "enabled": true,
+        "botToken": "MzA5NTkyMzAzMTgyNzIzODQw.C_DUbA.Tz3u1NBoI7K-xypwWD",
+        "allowFrom": []
       }
     }
   }
@@ -694,13 +734,13 @@ package / Microsoft.Extensions.* pin design note.
 
 ```json
 {
-  "Channels": {
-    "Instances": {
+  "channels": {
+    "instances": {
       "slack": {
-        "Enabled": true,
-        "BotToken": "xoxb-1234567890-1234567890-xxxxxxxxxxxxx",
-        "SigningSecret": "8f742231b91ee1522d552420d224e9aa",
-        "AllowFrom": []
+        "enabled": true,
+        "botToken": "xoxb-1234567890-1234567890-xxxxxxxxxxxxx",
+        "signingSecret": "8f742231b91ee1522d552420d224e9aa",
+        "allowFrom": []
       }
     }
   }
@@ -715,15 +755,15 @@ Gateway HTTP server settings.
 
 ```json
 {
-  "Gateway": {
-    "Host": "0.0.0.0",
-    "Port": 5005,
-    "ApiKey": "secret-gateway-key",
-    "DefaultAgent": "default",
-    "BroadcastWhenAgentUnspecified": false,
-    "Heartbeat": {
-      "Enabled": true,
-      "IntervalSeconds": 1800
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 5005,
+    "apiKey": "secret-gateway-key",
+    "defaultAgent": "default",
+    "broadcastWhenAgentUnspecified": false,
+    "heartbeat": {
+      "enabled": true,
+      "intervalSeconds": 1800
     }
   }
 }
@@ -1057,11 +1097,11 @@ Gateway-level shell settings control the default shell behavior for all agents. 
 
 ```json
 {
-  "Gateway": {
-    "Host": "0.0.0.0",
-    "Port": 5005,
-    "ShellPreference": "pwsh",
-    "ShellCommand": ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 5005,
+    "shellPreference": "pwsh",
+    "shellCommand": ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]
   }
 }
 ```
@@ -1084,21 +1124,21 @@ Tool and extension tool settings.
 
 ```json
 {
-  "Tools": {
-    "RestrictToWorkspace": false,
-    "Exec": {
-      "Enable": true,
-      "Timeout": 60
+  "tools": {
+    "restrictToWorkspace": false,
+    "exec": {
+      "enable": true,
+      "timeout": 60
     },
-    "Web": {
-      "Search": {
-        "Provider": "brave",
-        "ApiKey": "...",
-        "MaxResults": 5
+    "web": {
+      "search": {
+        "provider": "brave",
+        "apiKey": "...",
+        "maxResults": 5
       }
     },
-    "Extensions": {},
-    "McpServers": {
+    "extensions": {},
+    "mcpServers": {
       "filesystem": { ... },
       "github-mcp": { ... }
     }
@@ -1175,34 +1215,34 @@ MCP (Model Context Protocol) servers provide tools to agents. Supports local pro
 
 ```json
 {
-  "Tools": {
-    "McpServers": {
+  "tools": {
+    "mcpServers": {
       "filesystem": {
-        "Type": "Stdio",
-        "Command": "npx",
-        "Args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-        "ToolTimeout": 30,
-        "EnabledTools": ["*"]
+        "type": "Stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+        "toolTimeout": 30,
+        "enabledTools": ["*"]
       },
       "github-mcp": {
-        "Type": "Sse",
-        "Url": "http://localhost:3001/sse",
-        "Headers": {
+        "type": "Sse",
+        "url": "http://localhost:3001/sse",
+        "headers": {
           "Authorization": "Bearer YOUR_TOKEN"
         },
-        "ToolTimeout": 30,
-        "EnabledTools": ["*"]
+        "toolTimeout": 30,
+        "enabledTools": ["*"]
       },
       "trello": {
-        "Type": "Stdio",
-        "Command": "node",
-        "Args": ["./mcp-servers/trello-server.js"],
-        "Env": {
+        "type": "Stdio",
+        "command": "node",
+        "args": ["./mcp-servers/trello-server.js"],
+        "env": {
           "TRELLO_API_KEY": "xxx",
           "TRELLO_API_TOKEN": "yyy"
         },
-        "ToolTimeout": 30,
-        "EnabledTools": ["*"]
+        "toolTimeout": 30,
+        "enabledTools": ["*"]
       }
     }
   }
@@ -1234,11 +1274,11 @@ Optional OpenAI-compatible REST API (for external clients).
 
 ```json
 {
-  "Api": {
-    "Host": "127.0.0.1",
-    "Port": 8900,
-    "Timeout": 120.0,
-    "Enabled": false
+  "api": {
+    "host": "127.0.0.1",
+    "port": 8900,
+    "timeout": 120.0,
+    "enabled": false
   }
 }
 ```
@@ -1513,10 +1553,10 @@ When `MaxTokens` or `Temperature` are not specified (null), providers use their 
 
 ```json
 {
-  "Agents": {
-    "Model": "gpt-4o",
-    "MaxTokens": null,      // Provider uses OpenAI default (e.g., 4096)
-    "Temperature": null     // Provider uses OpenAI default (e.g., 0.7)
+  "agents": {
+    "model": "gpt-4o",
+    "maxTokens": null,      // Provider uses OpenAI default (e.g., 4096)
+    "temperature": null     // Provider uses OpenAI default (e.g., 0.7)
   }
 }
 ```
@@ -1534,14 +1574,14 @@ When `MaxTokens` or `Temperature` are not specified (null), providers use their 
 **Example:**
 ```json
 {
-  "Agents": {
+  "agents": {
       "fast-agent": {
-        "Model": "gpt-4o",
-        "Temperature": 0.5     // Set explicitly
+        "model": "gpt-4o",
+        "temperature": 0.5     // Set explicitly
         // MaxTokens not set → use OpenAI default
       },
       "creative-agent": {
-        "Model": "claude-3-5-sonnet",
+        "model": "claude-3-5-sonnet",
         // Both MaxTokens and Temperature use Anthropic defaults
       }
     }
@@ -1631,12 +1671,12 @@ Extension-specific config is placed in `Tools.Extensions`:
 
 ```json
 {
-  "Tools": {
-    "Extensions": {
+  "tools": {
+    "extensions": {
       "github": {
-        "Token": "ghp_...",
-        "DefaultOwner": "microsoft",
-        "ApiBase": "https://api.github.com"
+        "token": "ghp_...",
+        "defaultOwner": "microsoft",
+        "apiBase": "https://api.github.com"
       }
     }
   }
@@ -1649,45 +1689,50 @@ Extensions access their config from the DI container or from the main `BotNexusC
 
 ## Environment Variable Overrides
 
-Any configuration value can be overridden via environment variables using the standard .NET Configuration pattern:
+Configuration values can be supplied via environment variables using the standard .NET Configuration
+pattern, with double underscores (`__`) separating nested levels:
 
 ```text
-BotNexus__<Path>__<To>__<Property>=value
+<top-level-key>__<nested>__<property>=value
 ```
 
-Double underscores (`__`) separate nested levels. The prefix `BotNexus__` is required.
+**There is no `BotNexus__` prefix.** This follows directly from the
+[canonical shape](#canonical-shape): `PlatformConfig` binds at the configuration root, so the
+environment path starts at a top-level `config.json` key (`providers`, `agents`, `channels`,
+`gateway`, ...). Names are case-insensitive, matching the rest of the binder.
 
 ### Examples
 
 ```bash
-# Override default agent model
-export BotNexus__Agents__Model=claude-3-5-sonnet
-
 # Override Copilot API base
-export BotNexus__Providers__copilot__ApiBase=https://api.githubcopilot.com
+export providers__copilot__apiBase=https://api.githubcopilot.com
 
-# Override gateway port
-export BotNexus__Gateway__Port=9000
+# Override the gateway listen URL
+export gateway__listenUrl=http://0.0.0.0:9000
 
 # Override Telegram bot token
-export BotNexus__channels__telegram__botToken=123456789:ABCdef...
+export channels__telegram__botToken=123456789:ABCdef...
 
-# Override planner agent model
-export BotNexus__Agents__Named__planner__Model=gpt-4-turbo
-
-# Override MCP server command
-export BotNexus__Tools__McpServers__filesystem__Command=/usr/local/bin/mcp-filesystem
+# Override the planner agent's model
+export agents__planner__model=gpt-4-turbo
 ```
 
 ### Precedence
 
-Configuration sources are loaded in order — later sources override earlier ones:
+Configuration sources are loaded in order - later sources override earlier ones:
 
 1. **Code defaults** (built-in fallbacks, lowest priority)
-2. **appsettings.json** (project defaults in `src/BotNexus.Gateway/`)
+2. **appsettings.json** (host defaults, including the `BotNexus:ConfigPath` pointer)
 3. **appsettings.{Environment}.json** (environment-specific overrides)
-4. **~/.botnexus/config.json** (user configuration)
-5. **Environment variables** (highest priority)
+4. **Environment variables**
+5. **`~/.botnexus/config.json`** (user configuration, highest priority)
+
+> Note the ordering: `config.json` is added to the pipeline **after** the host's default sources, so
+> where a key is present in **both**, `config.json` wins over the environment variable. To let an
+> environment variable take effect, leave the corresponding key out of `config.json` (or set it to
+> empty), as in [Example 4](#example-4-using-environment-variables-for-secrets). The dedicated
+> `BOTNEXUS_HOME` / `BOTNEXUS_DATA_DIR` / `BOTNEXUS_API_KEY` variables are read directly from the
+> environment and are not subject to this ordering.
 
 ---
 
@@ -1714,8 +1759,8 @@ For production Gateway deployments, always set `Gateway.ApiKey`:
 
 ```json
 {
-  "Gateway": {
-    "ApiKey": "random-secret-key"
+  "gateway": {
+    "apiKey": "random-secret-key"
   }
 }
 ```
@@ -1743,8 +1788,8 @@ Enable workspace restriction to limit file access:
 
 ```json
 {
-  "Tools": {
-    "RestrictToWorkspace": true
+  "tools": {
+    "restrictToWorkspace": true
   }
 }
 ```
@@ -1755,12 +1800,12 @@ Use `AllowFrom` to whitelist specific users/chats:
 
 ```json
 {
-  "Channels": {
-    "Instances": {
+  "channels": {
+    "instances": {
       "telegram": {
-        "Enabled": true,
-        "BotToken": "...",
-        "AllowFrom": ["12345", "67890"]
+        "enabled": true,
+        "botToken": "...",
+        "allowFrom": ["12345", "67890"]
       }
     }
   }
@@ -1769,15 +1814,15 @@ Use `AllowFrom` to whitelist specific users/chats:
 
 ### 6. Sensitive Config in Development
 
-Use `appsettings.Development.json` for local dev secrets (add to .gitignore):
+Keep local dev secrets out of source control. Prefer the default `~/.botnexus/config.json` (which is
+never committed), or supply them via environment variables — see
+[Environment Variable Overrides](#environment-variable-overrides):
 
 ```json
 {
-  "BotNexus": {
-    "Providers": {
-      "openai": {
-        "ApiKey": "sk-local-dev-key-here"
-      }
+  "providers": {
+    "openai": {
+      "apiKey": "sk-local-dev-key-here"
     }
   }
 }
@@ -2190,30 +2235,28 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
 
 ```json
 {
-  "BotNexus": {
-    "Agents": {
-      "Model": "gpt-4o"
-    },
-    "Providers": {
-      "copilot": {
-        "Auth": "oauth",
-        "DefaultModel": "gpt-4o",
-        "ApiBase": "https://api.githubcopilot.com"
-      }
-    },
-    "Channels": {
-      "SendProgress": true,
-      "Instances": {
-        "telegram": {
-          "Enabled": false
-        }
-      }
-    },
-    "Gateway": {
-      "Host": "127.0.0.1",
-      "Port": 5005,
-  
+  "version": 1,
+  "agents": {
+    "assistant": {
+      "provider": "copilot",
+      "model": "gpt-4o"
     }
+  },
+  "providers": {
+    "copilot": {
+      "auth": "oauth",
+      "defaultModel": "gpt-4o",
+      "apiBase": "https://api.githubcopilot.com"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false
+    }
+  },
+  "gateway": {
+    "listenUrl": "http://127.0.0.1:5005",
+    "defaultAgentId": "assistant"
   }
 }
 ```
@@ -2222,28 +2265,28 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
 
 ```json
 {
-  "BotNexus": {
-    "Agents": {
-        "planner": {
-          "Model": "gpt-4-turbo",
-          "SystemPromptFiles": ["planner-soul.md"]
-        },
-        "writer": {
-          "Model": "gpt-4o",
-          "SystemPromptFiles": ["writer-soul.md"]
-        }
+  "version": 1,
+  "agents": {
+    "planner": {
+      "provider": "openai",
+      "model": "gpt-4-turbo",
+      "systemPromptFiles": ["planner-soul.md"]
     },
-    "Providers": {
-      "openai": {
-        "Auth": "apikey",
-        "ApiKey": "sk-...",
-        "DefaultModel": "gpt-4-turbo"
-      }
-    },
-    "Gateway": {
-      "DefaultAgent": "planner",
-      "BroadcastWhenAgentUnspecified": false
+    "writer": {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "systemPromptFiles": ["writer-soul.md"]
     }
+  },
+  "providers": {
+    "openai": {
+      "auth": "apikey",
+      "apiKey": "sk-...",
+      "defaultModel": "gpt-4-turbo"
+    }
+  },
+  "gateway": {
+    "defaultAgentId": "planner"
   }
 }
 ```
@@ -2252,107 +2295,65 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
 
 ```json
 {
-  "BotNexus": {
-    "Agents": {
-        "researcher": {
-          "Model": "gpt-4o",
-          "Extensions": {
-            "botnexus-mcp": {
-              "Servers": { "filesystem": { "Command": "npx" } }
-            }
-          }
-        }
-    },
-    "Providers": {
-      "copilot": {
-        "Auth": "oauth",
-        "DefaultModel": "gpt-4o",
-        "ApiBase": "https://api.githubcopilot.com"
-      }
-    },
-    "Channels": {
-      "SendProgress": true,
-      "SendToolHints": true,
-      "Instances": {
-        "telegram": {
-          "Enabled": true,
-          "BotToken": "123456789:ABCdef...",
-          "AllowFrom": ["12345"]
-        },
-        "discord": {
-          "Enabled": true,
-          "BotToken": "xoxp-..."
-        },
-        "slack": {
-          "Enabled": true,
-          "BotToken": "xoxb-...",
-          "SigningSecret": "8f742231b91ee1522d..."
+  "version": 1,
+  "agents": {
+    "researcher": {
+      "provider": "copilot",
+      "model": "gpt-4o",
+      "extensions": {
+        "botnexus-mcp": {
+          "servers": { "filesystem": { "command": "npx" } }
         }
       }
-    },
-    "Gateway": {
-      "Host": "0.0.0.0",
-      "Port": 5005,
-      "ApiKey": "gateway-secret-key",
-      "DefaultAgent": "researcher",
-      "Heartbeat": {
-        "Enabled": true,
-        "IntervalSeconds": 1800
-      }
-    },
-    "Tools": {
-      "RestrictToWorkspace": false,
-      "Exec": {
-        "Enable": true,
-        "Timeout": 60
-      },
-      "Web": {
-        "Search": {
-          "Provider": "brave",
-          "ApiKey": "...",
-          "MaxResults": 10
-        }
-      },
-      "McpServers": {
-        "filesystem": {
-          "Type": "Stdio",
-          "Command": "npx",
-          "Args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-          "ToolTimeout": 30,
-          "EnabledTools": ["*"]
-        },
-        "github-mcp": {
-          "Type": "Sse",
-          "Url": "http://localhost:3001/sse",
-          "Headers": {
-            "Authorization": "Bearer github-token"
-          },
-          "ToolTimeout": 30,
-          "EnabledTools": ["*"]
-        }
-      }
-    },
-    "Api": {
-      "Host": "127.0.0.1",
-      "Port": 8900,
-      "Timeout": 120.0,
-      "Enabled": false
     }
-  }
+  },
+  "providers": {
+    "copilot": {
+      "auth": "oauth",
+      "defaultModel": "gpt-4o",
+      "apiBase": "https://api.githubcopilot.com"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "botToken": "123456789:ABCdef...",
+      "agentId": "researcher",
+      "allowedUserIds": [12345]
+    },
+    "discord": {
+      "enabled": true,
+      "settings": {
+        "botToken": "xoxp-..."
+      }
+    },
+    "slack": {
+      "enabled": true,
+      "settings": {
+        "botToken": "xoxb-...",
+        "signingSecret": "8f742231b91ee1522d..."
+      }
+    }
+  },
+  "gateway": {
+    "listenUrl": "http://0.0.0.0:5005",
+    "defaultAgentId": "researcher"
+  },
+  "apiKey": "gateway-secret-key"
 }
 ```
 
 ### Example 4: Using Environment Variables for Secrets
 
-appsettings.json:
+Leave the secret empty in `config.json` and supply it from the environment. The gateway binds
+`config.json` at the configuration root, so the `__` (double-underscore) environment path starts at
+the **top-level key** — there is no `BotNexus__` prefix:
+
 ```json
 {
-  "BotNexus": {
-    "Providers": {
-      "openai": {
-        "Auth": "apikey",
-        "ApiKey": ""
-      }
+  "providers": {
+    "openai": {
+      "auth": "apikey",
+      "apiKey": ""
     }
   }
 }
@@ -2361,8 +2362,8 @@ appsettings.json:
 Environment setup:
 ```bash
 #!/bin/bash
-export BotNexus__Providers__openai__ApiKey="sk-$(openssl rand -hex 32)"
-export BotNexus__Gateway__ApiKey="$(openssl rand -hex 32)"
+export providers__openai__apiKey="sk-$(openssl rand -hex 32)"
+export BOTNEXUS_API_KEY="$(openssl rand -hex 32)"
 ./BotNexus.Gateway
 ```
 

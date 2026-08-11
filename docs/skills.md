@@ -201,7 +201,10 @@ For example, if both `~/.botnexus/skills/security/SKILL.md` and `my-project/skil
 
 ## Agent configuration
 
-Configure skills per-agent in `~/.botnexus/config.json` under `agents.{agent-id}.skills`:
+Configure skills per-agent in `~/.botnexus/config.json` under `agents.{agent-id}.skills`. As
+everywhere else, `config.json` is a flat top-level document with `camelCase` keys and **no**
+`BotNexus` wrapper — see
+[Canonical document shape and location](configuration.md#canonical-shape):
 
 ```json
 {
