@@ -336,7 +336,13 @@ public sealed record SessionEntry
     /// <summary>Tool call ID for correlating requests and results.</summary>
     public string? ToolCallId { get; init; }
 
-    /// <summary>Serialized JSON args for tool call (when Role is <see cref="MessageRole.Tool"/> and this is a ToolStart entry).</summary>
+    /// <summary>Serialized JSON args for tool call (when Role is <see cref="MessageRole.Tool"/>).</summary>
+    /// <remarks>
+    /// #2906: this is populated on BOTH rows of a tool-call pair - the start row and the result row -
+    /// so a result row is self-describing. A tool invoked with no arguments records an empty JSON
+    /// object (<c>{}</c>) rather than <c>null</c>, so "no args" stays distinguishable from
+    /// "args lost". <c>null</c> now means only "legacy row, or not a tool row".
+    /// </remarks>
     public string? ToolArgs { get; init; }
 
     /// <summary>True if the tool call resulted in an error.</summary>
@@ -395,6 +401,39 @@ public sealed record SessionEntry
     /// </summary>
     /// <returns>The stamped kind, or <see cref="MessageKind.Message"/> when none was supplied.</returns>
     public MessageKind ResolveKind() => Kind ?? MessageKind.Message;
+
+    /// <summary>
+    /// True when this entry is the audit row recorded at the START of a tool call (#2906).
+    /// </summary>
+    /// <remarks>
+    /// Prefers the explicit <see cref="MessageKind.ToolStart"/> stamp. Rows persisted before #2906
+    /// carry no kind, so they fall back to the historical heuristic - a start row was the only tool
+    /// row that had <see cref="ToolArgs"/>. That fallback must stay for replay of existing
+    /// transcripts; it is exactly the ambiguity the typed kind removes going forward.
+    /// </remarks>
+    /// <returns><see langword="true"/> when this is a tool-start row.</returns>
+    public bool IsToolStartRow()
+    {
+        if (!Role.Equals(MessageRole.Tool))
+            return false;
+
+        if (Kind is { } kind)
+        {
+            if (kind.Equals(MessageKind.ToolStart))
+                return true;
+            if (kind.Equals(MessageKind.ToolResult))
+                return false;
+        }
+
+        return ToolArgs is not null;
+    }
+
+    /// <summary>
+    /// True when this entry is the audit row recorded for a tool call's RESULT (#2906), including
+    /// the synthesized row for a call that never completed.
+    /// </summary>
+    /// <returns><see langword="true"/> when this is a tool-result row.</returns>
+    public bool IsToolResultRow() => Role.Equals(MessageRole.Tool) && !IsToolStartRow();
 }
 
 /// <summary>

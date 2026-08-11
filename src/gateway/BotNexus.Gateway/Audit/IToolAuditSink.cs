@@ -43,8 +43,19 @@ public interface IToolAuditSink
     /// <param name="resultContent">The raw result content, or null when the tool returned none.</param>
     /// <param name="isError">Whether the tool execution failed.</param>
     /// <param name="maxPersistedBytes">Write-time UTF-8 byte cap; non-positive disables it (#1598).</param>
+    /// <param name="serializedArguments">
+    /// The already-serialized JSON arguments that produced this result (#2906). Pass <c>null</c>
+    /// only when the arguments are genuinely unknown at this boundary; a call observed with no
+    /// arguments must pass an empty JSON object so "no args" stays distinguishable from "args lost".
+    /// </param>
     /// <returns>The tool-result history row.</returns>
-    SessionEntry ProjectResult(string? toolCallId, string? toolName, string? resultContent, bool isError, int maxPersistedBytes);
+    SessionEntry ProjectResult(
+        string? toolCallId,
+        string? toolName,
+        string? resultContent,
+        bool isError,
+        int maxPersistedBytes,
+        string? serializedArguments = null);
 
     /// <summary>
     /// Renders the synthesized audit row for a call that started but never produced a result
@@ -53,8 +64,12 @@ public interface IToolAuditSink
     /// </summary>
     /// <param name="toolCallId">Provider tool-call correlation id.</param>
     /// <param name="toolName">The invoked tool name.</param>
+    /// <param name="serializedArguments">
+    /// The already-serialized JSON arguments the call was issued with (#2906), so an interrupted
+    /// call is still forensically readable.
+    /// </param>
     /// <returns>The synthesized incomplete-call history row, flagged as an error.</returns>
-    SessionEntry ProjectIncomplete(string? toolCallId, string toolName);
+    SessionEntry ProjectIncomplete(string? toolCallId, string toolName, string? serializedArguments = null);
 
     /// <summary>
     /// Projects a settled blocking-run tool timeline into ordered audit rows, one per call.
@@ -85,6 +100,13 @@ public interface IToolAuditSink
 /// </remarks>
 public sealed class DefaultToolAuditSink : IToolAuditSink
 {
+    /// <summary>
+    /// The canonical serialization of "this tool was invoked with no arguments" (#2906). Persisting
+    /// this instead of <c>null</c> is what makes "no args" distinguishable from "args lost" in the
+    /// session store, which is the whole point of the issue.
+    /// </summary>
+    public const string NoArguments = "{}";
+
     private readonly ToolInvocationRecordPolicy _policy;
 
     /// <summary>
@@ -109,11 +131,20 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
             Content = $"Tool '{toolName ?? "unknown"}' started.",
             ToolName = toolName,
             ToolCallId = toolCallId,
-            ToolArgs = serializedArguments
+            // #2906: never persist NULL on a row this sink renders. An observed call with no
+            // arguments records the empty object so a consumer can tell it apart from data loss.
+            ToolArgs = NormalizeArguments(serializedArguments),
+            Kind = MessageKind.ToolStart
         };
 
     /// <inheritdoc/>
-    public SessionEntry ProjectResult(string? toolCallId, string? toolName, string? resultContent, bool isError, int maxPersistedBytes)
+    public SessionEntry ProjectResult(
+        string? toolCallId,
+        string? toolName,
+        string? resultContent,
+        bool isError,
+        int maxPersistedBytes,
+        string? serializedArguments = null)
     {
         var content = resultContent ?? (isError ? "Tool execution failed." : "Tool execution completed.");
         return new SessionEntry
@@ -122,20 +153,34 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
             Content = StreamingSessionHelper.TruncateToolResult(content, maxPersistedBytes),
             ToolName = toolName,
             ToolCallId = toolCallId,
-            ToolIsError = isError
+            ToolIsError = isError,
+            // #2906 AC1/AC2: the result row is self-describing. The caller re-supplies the same
+            // arguments the start row carried, so no consumer needs a self-join on tool_call_id.
+            ToolArgs = NormalizeArguments(serializedArguments),
+            Kind = MessageKind.ToolResult
         };
     }
 
     /// <inheritdoc/>
-    public SessionEntry ProjectIncomplete(string? toolCallId, string toolName)
+    public SessionEntry ProjectIncomplete(string? toolCallId, string toolName, string? serializedArguments = null)
         => new()
         {
             Role = MessageRole.Tool,
-            Content = $"Tool '{toolName}' did not complete — result synthesized for transcript consistency.",
+            Content = $"Tool '{toolName}' did not complete \u2014 result synthesized for transcript consistency.",
             ToolName = toolName,
             ToolCallId = toolCallId,
-            ToolIsError = true
+            ToolIsError = true,
+            ToolArgs = NormalizeArguments(serializedArguments),
+            Kind = MessageKind.ToolResult
         };
+
+    /// <summary>
+    /// Maps a missing/blank serialized-argument string onto <see cref="NoArguments"/> (#2906).
+    /// </summary>
+    /// <param name="serializedArguments">The raw serialized arguments, possibly null or blank.</param>
+    /// <returns>The arguments to persist; never <see langword="null"/>.</returns>
+    private static string NormalizeArguments(string? serializedArguments)
+        => string.IsNullOrWhiteSpace(serializedArguments) ? NoArguments : serializedArguments;
 
     /// <inheritdoc/>
     public IReadOnlyList<SessionEntry> ProjectBlockingRun(IReadOnlyList<ToolInvocationRecord> invocations)
@@ -143,15 +188,15 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
         var rows = new List<SessionEntry>(invocations.Count);
         foreach (var record in invocations)
         {
-            if (record.IsIncomplete)
-            {
-                var incomplete = ProjectIncomplete(record.ToolCallId, record.ToolName);
-                rows.Add(incomplete with { ToolArgs = record.Arguments });
-                continue;
-            }
-
-            var row = ProjectResult(record.ToolCallId, record.ToolName, record.ResultContent, record.IsError, maxPersistedBytes: 0);
-            rows.Add(row with { ToolArgs = record.Arguments });
+            rows.Add(record.IsIncomplete
+                ? ProjectIncomplete(record.ToolCallId, record.ToolName, record.Arguments)
+                : ProjectResult(
+                    record.ToolCallId,
+                    record.ToolName,
+                    record.ResultContent,
+                    record.IsError,
+                    maxPersistedBytes: 0,
+                    record.Arguments));
         }
 
         return rows;

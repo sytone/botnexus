@@ -93,12 +93,13 @@ public sealed class ToolResultTrimmer
 
     private bool ShouldTrim(SessionEntry entry, int turnAge)
     {
-        // Only trim tool result entries (not tool-start entries which have ToolArgs).
+        // Only trim tool result entries (not tool-start entries).
         if (!entry.Role.Equals(MessageRole.Tool))
             return false;
 
-        // Don't trim tool-start entries (they have ToolArgs set).
-        if (entry.ToolArgs is not null)
+        // Don't trim tool-start entries. #2906: both rows carry ToolArgs now, so the
+        // discriminator is the typed row kind (with a legacy ToolArgs fallback).
+        if (entry.IsToolStartRow())
             return false;
 
         // Already a tombstone — skip.

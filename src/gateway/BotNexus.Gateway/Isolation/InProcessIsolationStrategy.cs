@@ -344,7 +344,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
             afterToolCall = hookDispatcher is null ? null : async (ctx, ct) =>
             {
-                var resultText = ctx.Result.Content.FirstOrDefault()?.ToString();
+                var resultText = AgentToolResultText.Extract(ctx.Result);
                 var hookEvent = new AfterToolCallEvent(
                     agentId,
                     ctx.ToolCallRequest.Name,
@@ -1031,7 +1031,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                         call.Name,
                         result.IsError,
                         arguments,
-                        result.Result.Content.FirstOrDefault()?.Value,
+                        AgentToolResultText.Extract(result.Result),
                         IsIncomplete: false));
                 }
                 else
@@ -1061,7 +1061,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                     result.ToolName,
                     result.IsError,
                     Arguments: null,
-                    result.Result.Content.FirstOrDefault()?.Value,
+                    AgentToolResultText.Extract(result.Result),
                     IsIncomplete: false));
             }
         }
@@ -1126,7 +1126,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                         toolCallId: call.Id,
                         toolName: call.Name,
                         rawArguments: arguments,
-                        rawResultContent: result.Result.Content.FirstOrDefault()?.Value,
+                        rawResultContent: AgentToolResultText.Extract(result.Result),
                         isError: result.IsError,
                         isIncomplete: false,
                         startedAt: assistant.Timestamp,
@@ -1162,7 +1162,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                     toolCallId: result.ToolCallId,
                     toolName: result.ToolName,
                     rawArguments: null,
-                    rawResultContent: result.Result.Content.FirstOrDefault()?.Value,
+                    rawResultContent: AgentToolResultText.Extract(result.Result),
                     isError: result.IsError,
                     isIncomplete: false,
                     startedAt: result.Timestamp,
@@ -1230,7 +1230,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 Type = AgentStreamEventType.ToolEnd,
                 ToolCallId = toolEnd.ToolCallId,
                 ToolName = toolEnd.ToolName,
-                ToolResult = toolEnd.Result.Content.FirstOrDefault()?.Value,
+                ToolResult = AgentToolResultText.Extract(toolEnd.Result),
                 ToolIsError = toolEnd.IsError,
                 MessageId = messageId
             },

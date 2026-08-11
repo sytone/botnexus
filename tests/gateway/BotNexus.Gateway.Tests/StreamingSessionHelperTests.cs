@@ -148,7 +148,7 @@ public sealed class StreamingSessionHelperTests
     }
 
     [Fact]
-    public async Task ProcessAndSaveAsync_ToolStart_WithNoArgs_ToolArgsIsNull()
+    public async Task ProcessAndSaveAsync_ToolStart_WithNoArgs_ToolArgsIsEmptyObject()
     {
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-noargs"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
         var store = new Mock<ISessionStore>();
@@ -169,11 +169,13 @@ public sealed class StreamingSessionHelperTests
 
         result.HistoryEntries.Count.ShouldBe(2); // start + synthesized orphan result
         var entry = result.HistoryEntries[0];
-        entry.ToolArgs.ShouldBeNull();
+        // #2906 AC2: "no args" is recorded as an empty JSON object, never NULL, so it stays
+        // distinguishable from "args lost".
+        entry.ToolArgs.ShouldBe("{}");
     }
 
     [Fact]
-    public async Task ProcessAndSaveAsync_ToolStart_WithEmptyArgs_ToolArgsIsNull()
+    public async Task ProcessAndSaveAsync_ToolStart_WithEmptyArgs_ToolArgsIsEmptyObject()
     {
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-emptyargs"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
         var store = new Mock<ISessionStore>();
@@ -194,7 +196,8 @@ public sealed class StreamingSessionHelperTests
 
         result.HistoryEntries.Count.ShouldBe(2); // start + synthesized orphan result
         var entry = result.HistoryEntries[0];
-        entry.ToolArgs.ShouldBeNull();
+        // #2906 AC2: an empty argument dictionary serializes to the empty object, not NULL.
+        entry.ToolArgs.ShouldBe("{}");
     }
 
     // ── ToolIsError tests ─────────────────────────────────────────────────
@@ -382,8 +385,10 @@ public sealed class StreamingSessionHelperTests
             session,
             store.Object);
 
+        // #2906: both rows of the pair carry ToolArgs now, so the de-duplication invariant is
+        // "exactly one START row", expressed via the typed row kind rather than args presence.
         session.GetHistorySnapshot().Count(entry =>
-            entry.ToolCallId == "tc-prepersisted" && entry.ToolArgs is not null).ShouldBe(1);
+            entry.ToolCallId == "tc-prepersisted" && entry.IsToolStartRow()).ShouldBe(1);
     }
 
     // ── Write-ahead persistence tests (#1052) ───────────────────────────────

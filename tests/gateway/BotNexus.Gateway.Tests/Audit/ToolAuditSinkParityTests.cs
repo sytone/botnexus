@@ -43,6 +43,76 @@ public sealed class ToolAuditSinkParityTests
         blocking.ToolName.ShouldBe(streamed.ToolName);
         blocking.ToolCallId.ShouldBe(streamed.ToolCallId);
         blocking.ToolIsError.ShouldBe(streamed.ToolIsError);
+        // #2906: neither transport may emit a NULL-argument audit row.
+        streamed.ToolArgs.ShouldBe(DefaultToolAuditSink.NoArguments);
+        blocking.ToolArgs.ShouldBe(DefaultToolAuditSink.NoArguments);
+    }
+
+    [Fact]
+    public void ResultRow_CarriesTheArgumentsThatProducedIt()
+    {
+        // #2906 AC1: the row that records a tool RESULT carries the tool_args that produced it, so
+        // a query over result rows never needs a self-join on tool_call_id to see the inputs.
+        const string args = """{"command":"git status"}""";
+
+        var streamed = Sink.ProjectResult("call-1", "shell", "ok", isError: false, maxPersistedBytes: 0, args);
+        streamed.ToolArgs.ShouldBe(args);
+
+        var response = new AgentResponse
+        {
+            Content = "done",
+            ToolCalls = [new AgentToolCallInfo("call-1", "shell", IsError: false, Arguments: args, ResultContent: "ok")]
+        };
+        Sink.ProjectBlockingRun(Sink.CaptureBlockingRun(response))
+            .ShouldHaveSingleItem()
+            .ToolArgs.ShouldBe(args);
+    }
+
+    [Fact]
+    public void NoArgumentTool_RecordsAnEmptyObject_NotNull()
+    {
+        // #2906 AC2: "invoked with no arguments" and "arguments were lost" must not look the same
+        // in the store. The former is the empty object; the latter no longer occurs.
+        Sink.ProjectStart("call-1", "datetime_helper", null).ToolArgs.ShouldBe("{}");
+        Sink.ProjectResult("call-1", "datetime_helper", "now", isError: false, maxPersistedBytes: 0)
+            .ToolArgs.ShouldBe("{}");
+        Sink.ProjectIncomplete("call-1", "datetime_helper").ToolArgs.ShouldBe("{}");
+    }
+
+    [Fact]
+    public void EveryRenderedRow_IsTypedAsStartOrResult()
+    {
+        // With both rows carrying arguments, the typed MessageKind is the ONLY sound way to tell a
+        // start row from a result row. Pin that every renderer stamps it, so no consumer regresses
+        // to the old "has args therefore it is a start" heuristic on new rows.
+        Sink.ProjectStart("c", "shell", "{}").Kind.ShouldBe(MessageKind.ToolStart);
+        Sink.ProjectStart("c", "shell", "{}").IsToolStartRow().ShouldBeTrue();
+
+        var result = Sink.ProjectResult("c", "shell", "ok", isError: false, maxPersistedBytes: 0, "{}");
+        result.Kind.ShouldBe(MessageKind.ToolResult);
+        result.IsToolResultRow().ShouldBeTrue();
+        result.IsToolStartRow().ShouldBeFalse();
+
+        Sink.ProjectIncomplete("c", "shell").Kind.ShouldBe(MessageKind.ToolResult);
+    }
+
+    [Fact]
+    public void LegacyRowsWithNoKind_StillClassifyByTheOldArgumentsHeuristic()
+    {
+        // Transcripts recorded before #2906 carry no kind. Replay of those rows must keep working,
+        // which is why IsToolStartRow falls back rather than assuming "no kind means result".
+        var legacyStart = new SessionEntry
+        {
+            Role = MessageRole.Tool,
+            Content = "Tool 'shell' started.",
+            ToolCallId = "c",
+            ToolArgs = "{}"
+        };
+        var legacyResult = new SessionEntry { Role = MessageRole.Tool, Content = "ok", ToolCallId = "c" };
+
+        legacyStart.IsToolStartRow().ShouldBeTrue();
+        legacyResult.IsToolStartRow().ShouldBeFalse();
+        legacyResult.IsToolResultRow().ShouldBeTrue();
     }
 
     [Fact]

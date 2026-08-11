@@ -157,9 +157,10 @@ public sealed class OrphanToolCallTests
         errorEntries.Count.ShouldBe(1);
         errorEntries[0].ToolCallId.ShouldBe("tc2");
 
-        // tc1 should have completed normally
+        // tc1 should have completed normally. #2906: a result row is now identified by its typed
+        // kind, not by the accident of having no ToolArgs - result rows carry their arguments too.
         var tc1End = session.History.FirstOrDefault(e =>
-            e.Role.Equals(MessageRole.Tool) && e.ToolCallId == "tc1" && !e.ToolIsError && e.ToolArgs is null);
+            e.Role.Equals(MessageRole.Tool) && e.ToolCallId == "tc1" && !e.ToolIsError && e.IsToolResultRow());
         tc1End.ShouldNotBeNull();
     }
 

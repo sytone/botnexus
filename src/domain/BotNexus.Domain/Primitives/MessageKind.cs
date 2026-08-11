@@ -38,6 +38,23 @@ public sealed class MessageKind : IEquatable<MessageKind>
     /// </summary>
     public static readonly MessageKind CanvasSubmission = Register("canvas-submission");
 
+    /// <summary>
+    /// The audit row written when a tool call is observed to START (#2906). Before this kind
+    /// existed the only way to tell a start row from a result row was the accident that the result
+    /// row had no <c>ToolArgs</c> - which is precisely the data loss #2906 fixes. Making the
+    /// distinction explicit and typed lets BOTH rows carry their arguments without any consumer
+    /// having to infer the row's meaning from a missing field.
+    /// </summary>
+    public static readonly MessageKind ToolStart = Register("tool-start");
+
+    /// <summary>
+    /// The audit row written when a tool call produces a RESULT (#2906), including the synthesized
+    /// row for a call that never completed. This row is self-describing: it carries the arguments
+    /// that produced the result, so a query over result rows never needs a self-join on
+    /// <c>tool_call_id</c> to see the inputs.
+    /// </summary>
+    public static readonly MessageKind ToolResult = Register("tool-result");
+
     /// <summary>Gets the stable wire value of this kind.</summary>
     public string Value { get; }
 

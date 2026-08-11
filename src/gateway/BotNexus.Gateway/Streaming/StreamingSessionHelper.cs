@@ -102,7 +102,7 @@ public static class StreamingSessionHelper
                             : null);
                     var alreadyPersisted = evt.ToolCallId is not null
                         && session.GetHistorySnapshot().Any(entry =>
-                            entry.ToolCallId == evt.ToolCallId && entry.ToolArgs is not null);
+                            entry.ToolCallId == evt.ToolCallId && entry.IsToolStartRow());
                     if (!alreadyPersisted)
                     {
                         streamedHistory.Add(startEntry);
@@ -152,12 +152,21 @@ public static class StreamingSessionHelper
                 case AgentStreamEventType.ToolEnd when evt.ToolCallId is not null || evt.ToolName is not null:
                     // #2614: the sink renders the result row and applies the write-time #1598 cap,
                     // so the streamed and blocking boundaries cannot drift in format.
+                    // #2906: re-supply the arguments the paired ToolStart carried so the RESULT row
+                    // is self-describing. They are already in hand here - the start entry for this
+                    // tool_call_id is held in toolStartEntries - so the value never has to be
+                    // recovered later by a self-join over the transcript.
+                    var resultArgs = evt.ToolCallId is not null
+                        && toolStartEntries.TryGetValue(evt.ToolCallId, out var pairedStart)
+                        ? pairedStart.ToolArgs
+                        : null;
                     streamedHistory.Add(auditSink.ProjectResult(
                         evt.ToolCallId,
                         evt.ToolName,
                         evt.ToolResult,
                         evt.ToolIsError == true,
-                        options.MaxPersistedToolResultBytes));
+                        options.MaxPersistedToolResultBytes,
+                        resultArgs));
                     allHistoryEntries.Add(streamedHistory[^1]);
                     if (evt.ToolCallId is not null)
                         toolEndIds.Add(evt.ToolCallId);
@@ -247,10 +256,11 @@ public static class StreamingSessionHelper
         // consumers (e.g. provider message builders) do not encounter an orphan call.
         foreach (var orphanId in toolStartIds.Except(toolEndIds))
         {
-            var toolName = toolStartEntries.TryGetValue(orphanId, out var entry)
-                ? entry.ToolName ?? "unknown"
-                : "unknown";
-            var orphanEntry = auditSink.ProjectIncomplete(orphanId, toolName);
+            var hasStart = toolStartEntries.TryGetValue(orphanId, out var entry);
+            var toolName = hasStart ? entry!.ToolName ?? "unknown" : "unknown";
+            // #2906: an interrupted call is exactly the case forensics needs the arguments for, so
+            // the synthesized row carries them too.
+            var orphanEntry = auditSink.ProjectIncomplete(orphanId, toolName, hasStart ? entry!.ToolArgs : null);
             streamedHistory.Add(orphanEntry);
             allHistoryEntries.Add(orphanEntry);
         }

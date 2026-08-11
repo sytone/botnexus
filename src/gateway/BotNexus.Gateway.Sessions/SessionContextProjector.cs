@@ -87,9 +87,11 @@ public static class SessionContextProjector
     /// context should not be replayed to the agent.
     /// </summary>
     /// <remarks>
-    /// A ToolStart entry is identified by having <see cref="SessionEntry.ToolArgs"/> set
+    /// A ToolStart entry is identified by <see cref="SessionEntry.IsToolStartRow"/> - the typed
+    /// <c>MessageKind.ToolStart</c> stamp added in #2906, falling back for legacy rows to the old
+    /// heuristic of having <see cref="SessionEntry.ToolArgs"/> set
     /// (populated from the <c>AgentStreamEventType.ToolStart</c> event). A matching ToolEnd
-    /// shares the same <see cref="SessionEntry.ToolCallId"/> but has no <c>ToolArgs</c>.
+    /// shares the same <see cref="SessionEntry.ToolCallId"/>.
     /// The detection scans backward from the most recent user message and checks all tool
     /// entries in the preceding turn for unmatched starts.
     /// </remarks>
@@ -131,6 +133,9 @@ public static class SessionContextProjector
         // Scan the entries between prevUserIndex and lastUserIndex for dangling tool starts.
         // A ToolStart has ToolArgs set; a ToolEnd for the same call has the same ToolCallId
         // but no ToolArgs.
+        // #2906: BOTH rows now carry ToolArgs, so the discriminator is the typed row kind
+        // (SessionEntry.IsToolStartRow), which falls back to the old ToolArgs heuristic for rows
+        // persisted before #2906.
         var toolStarts = new HashSet<string>(StringComparer.Ordinal);
         var toolEnds = new HashSet<string>(StringComparer.Ordinal);
         int abandonedCount = 0;
@@ -147,7 +152,7 @@ public static class SessionContextProjector
             if (entry.ToolCallId is null)
                 continue;
 
-            if (entry.ToolArgs is not null)
+            if (entry.IsToolStartRow())
             {
                 // This is a ToolStart entry
                 toolStarts.Add(entry.ToolCallId);

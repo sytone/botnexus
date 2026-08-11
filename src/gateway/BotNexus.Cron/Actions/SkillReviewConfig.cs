@@ -144,8 +144,10 @@ public sealed record SkillReviewSignals
                 if (!Equals(entry.Role, MessageRole.Tool) || string.IsNullOrWhiteSpace(entry.ToolName))
                     continue;
 
-                // Only count ToolStart records (which carry args) so a request/result pair
-                // is not double-counted.
+                // Count a row once per call: a start/result pair shares a tool_call_id, and rows
+                // with neither args nor a call id are not tool invocations at all. Unchanged by
+                // #2906 (which makes result rows carry args too) - the predicate is still true for
+                // exactly the same rows it was before.
                 if (entry.ToolArgs is null && entry.ToolCallId is null)
                     continue;
 

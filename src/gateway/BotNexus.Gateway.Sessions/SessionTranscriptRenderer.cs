@@ -75,7 +75,7 @@ public static class SessionTranscriptRenderer
             }
             else if (entry.Role == MessageRole.Tool)
             {
-                if (!string.IsNullOrEmpty(entry.ToolName) && !string.IsNullOrEmpty(entry.ToolArgs))
+                if (entry.IsToolStartRow() && !string.IsNullOrEmpty(entry.ToolName) && !string.IsNullOrEmpty(entry.ToolArgs))
                 {
                     sb.AppendLine($"### 🔧 Tool Call: `{entry.ToolName}` [{timestamp}]");
                     sb.AppendLine();
