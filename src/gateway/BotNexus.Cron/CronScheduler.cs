@@ -195,7 +195,7 @@ public sealed class CronScheduler(
             if (!TryGetSchedule(job, out var expression))
                 continue;
 
-            var tz = ResolveTimeZone(job);
+            var tz = CronTimeZoneResolver.Resolve(job.TimeZone, _logger);
             var computedNext = expression.GetNextOccurrence(now, tz);
 
             if (job.NextRunAt is null)
@@ -248,7 +248,7 @@ public sealed class CronScheduler(
             async (entry, _) =>
             {
                 var (job, expression) = entry;
-                var tz = ResolveTimeZone(job);
+                var tz = CronTimeZoneResolver.Resolve(job.TimeZone, _logger);
                 await RunActionAsync(job, CronTriggerType.Scheduled, now, ct).ConfigureAwait(false);
 
                 // #2133: reschedule via the narrow next_run_at write. RunActionAsync already
@@ -1117,11 +1117,12 @@ public sealed class CronScheduler(
         }
     }
 
-    // Delegates to CronTimeZoneResolver - see #2748. This used to be a second, weaker
-    // definition of resolution (no Windows/IANA translation), which made the next-run
-    // computation disagree with the actions that ran the job.
-    private static TimeZoneInfo ResolveTimeZone(CronJob job)
-        => CronTimeZoneResolver.Resolve(job.TimeZone);
+    // #2748: resolution has exactly ONE definition (CronTimeZoneResolver). The scheduler used to
+    // carry its own weaker copy - a single FindSystemTimeZoneById with no Windows/IANA translation
+    // and no InvalidTimeZoneException handling - which made the next-run computation disagree with
+    // the actions that ran the job. Do NOT reintroduce a local wrapper here: call the resolver
+    // directly and pass _logger so a degradation to UTC is reported rather than swallowed.
+    // Guarded by CronSchedulerTimeZoneResolutionTests.
 
     private int ResolveJobTimeout(CronJob job)
     {

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace BotNexus.Cron;
 
 /// <summary>
@@ -27,9 +29,15 @@ internal static class CronTimeZoneResolver
     /// Resolves a cron timezone id against the host timezone database, accepting either
     /// Windows or IANA spelling regardless of which family the host natively stores.
     /// Returns <see cref="TimeZoneInfo.Utc"/> for null/blank/"UTC" or an unresolvable id.
+    /// <para>
+    /// Pass <paramref name="logger"/> wherever one is available: degrading to UTC changes the hour
+    /// a job fires, and issue #2748 was hard to diagnose precisely because that degradation was
+    /// silent. The parameter is optional only so pure-domain call sites without a logger still
+    /// share this one definition rather than growing a second one.
+    /// </para>
     /// </summary>
-    internal static TimeZoneInfo Resolve(string? timezoneId)
-        => Resolve(timezoneId, TimeZoneInfo.FindSystemTimeZoneById);
+    internal static TimeZoneInfo Resolve(string? timezoneId, ILogger? logger = null)
+        => Resolve(timezoneId, TimeZoneInfo.FindSystemTimeZoneById, logger);
 
     /// <summary>
     /// Resolution against an explicit host-database lookup. The seam exists so tests can
@@ -37,7 +45,10 @@ internal static class CronTimeZoneResolver
     /// ICU) - the two failure modes behind #2748 - which cannot both be reproduced on a
     /// single real machine.
     /// </summary>
-    internal static TimeZoneInfo Resolve(string? timezoneId, Func<string, TimeZoneInfo> hostLookup)
+    internal static TimeZoneInfo Resolve(
+        string? timezoneId,
+        Func<string, TimeZoneInfo> hostLookup,
+        ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(hostLookup);
 
@@ -56,6 +67,14 @@ internal static class CronTimeZoneResolver
         if (TimeZoneInfo.TryConvertIanaIdToWindowsId(timezoneId, out var windowsId) &&
             TryLookup(hostLookup, windowsId, out var viaWindows))
             return viaWindows;
+
+        // Warning-grade, not debug: the job will now fire at a different hour than its author
+        // intended. Silence here is what made #2748 undiagnosable in production logs.
+        logger?.LogWarning(
+            "Cron timezone '{TimeZoneId}' could not be resolved as either a Windows or IANA id on " +
+            "this host; falling back to UTC. Scheduling for this job will use UTC, which may differ " +
+            "from the intended local time.",
+            timezoneId);
 
         return TimeZoneInfo.Utc;
     }
