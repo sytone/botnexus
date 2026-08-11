@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Streaming;
 using Microsoft.Extensions.Logging;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
@@ -177,6 +178,11 @@ public sealed class HeartbeatTrigger(
 
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
         var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+
+        // #2522 residual: stamp the provider's reported prompt-token count on the blocking path so
+        // the compactor's unit normalisation has a real ratio to work with (parity with the
+        // streaming path's MessageEnd recording).
+        ProviderTokenUsageRecorder.Record(session, response.Usage);
 
         var ackMaxChars = descriptor?.Heartbeat?.AckMaxChars ?? AckMaxCharsDefault;
 

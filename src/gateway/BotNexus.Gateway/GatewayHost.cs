@@ -742,6 +742,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     try
                     {
                         response = await handle.PromptAsync(userMessage, cancellationToken);
+
+                        // #2522 residual: the blocking branch must stamp the provider's reported
+                        // prompt-token count just as the streaming branch does at MessageEnd,
+                        // otherwise a non-streamed turn leaves the compactor with no provider
+                        // measurement and the unit normalisation degrades to a no-op.
+                        ProviderTokenUsageRecorder.Record(session, response.Usage);
                     }
                     finally
                     {

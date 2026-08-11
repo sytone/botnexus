@@ -78,12 +78,17 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// <summary>
     /// #2522: session metadata key carrying the provider's LAST REPORTED prompt-token count for the
     /// session, i.e. the real input cost of the previous turn including system prompt, tool schemas
-    /// and workspace-injected files. The compactor reads this OPPORTUNISTICALLY: as of this change no
-    /// producer writes it (a repo-wide search for <c>PromptTokens</c>/<c>usageTokens</c>/<c>LastUsage</c>
-    /// under <c>Sessions</c> returns zero hits; provider usage currently stops at the agent-loop /
-    /// message-converter layer and is never persisted onto the session). The read is therefore a
-    /// no-op in production today and exists so the measurement below light up the moment the
-    /// producer seam lands. Do NOT gate behaviour on it until then.
+    /// and workspace-injected files.
+    ///
+    /// The producer seam is live: <c>ProviderTokenUsageRecorder.Record</c> writes this key from the
+    /// streaming path (<c>StreamingSessionHelper</c>'s <c>MessageEnd</c>) and from every blocking
+    /// <c>PromptAsync</c> path (<c>GatewayHost</c>, <c>CronTrigger</c>, <c>SoulTrigger</c>,
+    /// <c>HeartbeatTrigger</c>).
+    ///
+    /// The read remains OPPORTUNISTIC: the key is legitimately absent for a provider that reports no
+    /// usage, and for any session whose first turn has not completed yet. Absence must therefore be
+    /// treated as "unavailable" and never as zero - a fabricated zero would make the ratio
+    /// computable and wrong.
     /// </summary>
     internal const string ProviderPromptTokensMetadataKey = "lastProviderPromptTokens";
 

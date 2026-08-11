@@ -27,11 +27,11 @@ namespace BotNexus.Gateway.Streaming;
 /// <para>
 /// The write is last-writer-wins and is a plain metadata assignment, so it rides the session's
 /// normal persistence path - no schema column, no separate store call, nothing that can be
-/// forgotten by a store implementation. It can still legitimately be absent in two cases, both
-/// benign because the read side treats absence as <c>unavailable</c> rather than as zero:
-/// (1) a provider that reports no usage at all, and (2) the blocking <c>PromptAsync</c> path
-/// (cron / soul / heartbeat), which does not flow through the streaming helper. Extending the
-/// blocking path is a separate, larger change and is intentionally not made here.
+/// forgotten by a store implementation. It can still legitimately be absent in one case, which is
+/// benign because the read side treats absence as <c>unavailable</c> rather than as zero: a provider
+/// that reports no usage at all. The blocking <c>PromptAsync</c> paths (gateway host, cron, soul,
+/// heartbeat) call <see cref="Record"/> directly at their own post-prompt choke points, so they are
+/// covered too.
 /// </para>
 /// </remarks>
 public static class ProviderTokenUsageRecorder

@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.Text;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Streaming;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Api.Triggers;
@@ -115,6 +116,13 @@ public sealed class CronTrigger(
             try
             {
                 response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+
+                // #2522 residual: the blocking path must stamp the provider's reported prompt-token
+                // count exactly as the streaming path does at MessageEnd. Without it, long-lived
+                // cron sessions - the ones that compact most often - present a null provider count
+                // to LlmSessionCompactor, so the unit normalisation shipped by #2717 silently falls
+                // back to the unscaled keep-recent budget and the fix is inert where it matters most.
+                ProviderTokenUsageRecorder.Record(session, response.Usage);
             }
             catch (AgentPromptInterruptedException interrupted)
             {
