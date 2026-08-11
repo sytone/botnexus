@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BotNexus.Gateway.Contracts.Memory;
+using BotNexus.Memory.Embeddings;
 using BotNexus.Memory.Models;
 using BotNexus.Memory.Tools;
 using Moq;
@@ -39,10 +40,10 @@ public sealed class MemorySearchToolSharedScopeTests
     {
         var agentMemory = new Mock<IAgentMemory>();
         var sharedStore = new Mock<IMemoryStore>();
-        sharedStore.Setup(s => s.SearchAsync("test", 10, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<MemoryEntry>
+        sharedStore.Setup(s => s.SearchScoredAsync("test", 10, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredMemoryEntry>
             {
-                new() { Id = "s1", AgentId = "other", Content = "shared result", SourceType = "tool", CreatedAt = DateTimeOffset.UtcNow }
+                new(new MemoryEntry { Id = "s1", AgentId = "other", Content = "shared result", SourceType = "tool", CreatedAt = DateTimeOffset.UtcNow }, 0.5d)
             });
 
         var sharedRegistry = new Mock<ISharedMemoryStoreRegistry>();
@@ -72,10 +73,10 @@ public sealed class MemorySearchToolSharedScopeTests
             });
 
         var sharedStore = new Mock<IMemoryStore>();
-        sharedStore.Setup(s => s.SearchAsync("test", 10, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<MemoryEntry>
+        sharedStore.Setup(s => s.SearchScoredAsync("test", 10, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredMemoryEntry>
             {
-                new() { Id = "s1", AgentId = "other", Content = "shared data", SourceType = "tool", CreatedAt = DateTimeOffset.UtcNow }
+                new(new MemoryEntry { Id = "s1", AgentId = "other", Content = "shared data", SourceType = "tool", CreatedAt = DateTimeOffset.UtcNow }, 0.5d)
             });
 
         var sharedRegistry = new Mock<ISharedMemoryStoreRegistry>();
@@ -115,10 +116,10 @@ public sealed class MemorySearchToolSharedScopeTests
     {
         var agentMemory = new Mock<IAgentMemory>();
         var sharedStore = new Mock<IMemoryStore>();
-        sharedStore.Setup(s => s.SearchAsync("patterns", 10, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<MemoryEntry>
+        sharedStore.Setup(s => s.SearchScoredAsync("patterns", 10, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredMemoryEntry>
             {
-                new() { Id = "p1", AgentId = "other", Content = "a pattern", SourceType = "decision", CreatedAt = DateTimeOffset.UtcNow }
+                new(new MemoryEntry { Id = "p1", AgentId = "other", Content = "a pattern", SourceType = "decision", CreatedAt = DateTimeOffset.UtcNow }, 0.5d)
             });
 
         var sharedRegistry = new Mock<ISharedMemoryStoreRegistry>();
@@ -163,8 +164,8 @@ public sealed class MemorySearchToolSharedScopeTests
             });
 
         var sharedStore = new Mock<IMemoryStore>();
-        sharedStore.Setup(s => s.SearchAsync("test", 10, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<MemoryEntry>());
+        sharedStore.Setup(s => s.SearchScoredAsync("test", 10, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredMemoryEntry>());
 
         var sharedRegistry = new Mock<ISharedMemoryStoreRegistry>();
         sharedRegistry.Setup(r => r.GetReadableStores(AgentId)).Returns(["store1"]);
@@ -179,6 +180,6 @@ public sealed class MemorySearchToolSharedScopeTests
 
         // Should have searched both own and shared
         agentMemory.Verify(m => m.SearchAsync(It.IsAny<AgentMemorySearchRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        sharedStore.Verify(s => s.SearchAsync("test", 10, null, It.IsAny<CancellationToken>()), Times.Once);
+        sharedStore.Verify(s => s.SearchScoredAsync("test", 10, null, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

@@ -168,7 +168,16 @@ public sealed class MemorySearchToolScoreTests
     public async Task ExecuteAsync_OverRealStore_EmitsNonOrdinalScoreFromTheRanker()
     {
         await using var context = await MemoryStoreTestContext.CreateAsync();
-        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-1", AgentId, "searchablememorytext"));
+
+        // A MULTI-ROW corpus is required, and the reason is worth stating: BM25's IDF term is
+        // log(N / n_t). With a single indexed document every term appears in every document, IDF
+        // collapses to zero, and `-bm25()` is legitimately 0.0 for even a perfect match. That is a
+        // property of BM25 on a degenerate corpus, not of the score plumbing - so a single-row
+        // fixture cannot distinguish "score wired up" from "score always zero".
+        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-1", AgentId, "searchablememorytext searchablememorytext deployment rollback"));
+        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-2", AgentId, "searchablememorytext unrelated filler prose"));
+        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-3", AgentId, "wholly unrelated content about gardening"));
+
         var agentMemory = new MarkdownAgentMemory(AgentId, new StubWorkspaceManager(), context.Store, new FileSystem());
         var tool = new MemorySearchTool(agentMemory, AgentId);
 
@@ -177,12 +186,14 @@ public sealed class MemorySearchToolScoreTests
             new Dictionary<string, object?> { ["query"] = "searchablememorytext" }));
 
         text.ShouldContain("ID: entry-1");
-        var score = ParsedScores(text).Single();
+        var scores = ParsedScores(text);
 
-        // A real fused lexical*decay magnitude for a fresh single-candidate row: strictly positive
-        // and not the ordinal 1 that the defect emitted.
-        score.ShouldBeGreaterThan(0d);
-        score.ShouldNotBe(1d);
+        // Two rows match the term with different term frequencies, so the real ranker must separate
+        // them. Under the defect these rendered as the constant ordinals 1 and 2.
+        scores.Count.ShouldBeGreaterThanOrEqualTo(2);
+        scores[0].ShouldBeGreaterThan(0d);
+        scores.ShouldNotBe([1d, 2d]);
+        scores[0].ShouldBeGreaterThan(scores[1]);
     }
 
     private sealed class StubWorkspaceManager : IAgentWorkspaceManager

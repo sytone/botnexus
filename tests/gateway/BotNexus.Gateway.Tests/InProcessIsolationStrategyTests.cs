@@ -1,3 +1,4 @@
+using BotNexus.Memory.Embeddings;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Core;
@@ -566,6 +567,14 @@ public sealed class InProcessIsolationStrategyTests
             => Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
         public Task<IReadOnlyList<MemoryEntry>> SearchAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
+
+        // #2781: explicit pass-through. Required (not default-implemented) on IMemoryStore because
+        // Moq returns null for default interface methods rather than running the default body.
+        public async Task<IReadOnlyList<ScoredMemoryEntry>> SearchScoredAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
+        {
+            var entries = await SearchAsync(query, topK, filter, ct);
+            return entries.Select(entry => new ScoredMemoryEntry(entry, 0d)).ToList();
+        }
         public Task DeleteAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
         public Task ClearAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task<MemoryStoreStats> GetStatsAsync(CancellationToken ct = default) => Task.FromResult(new MemoryStoreStats(0, 0, null));

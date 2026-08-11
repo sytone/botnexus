@@ -16,16 +16,14 @@ public interface IMemoryStore : IAsyncDisposable
     /// decided each row's position, so callers can render a magnitude and apply a relevance floor.
     /// </summary>
     /// <remarks>
-    /// Default-implemented rather than required so the many lightweight stores and test doubles that
-    /// only ever needed ordering keep compiling. The default reports <c>0</c> for every row: an
-    /// honest "this store publishes no score", never a fabricated one. Stores backed by
-    /// <see cref="HybridMemoryRanker"/> override it with the real fused magnitude (#2781).
+    /// Deliberately a REQUIRED member rather than a default-implemented one. A default implementation
+    /// compiles more stubs unchanged, but Moq intercepts default interface methods and returns
+    /// <see langword="null"/> instead of running the default body - so every mocked store would have
+    /// silently produced a null task at runtime rather than a degraded-but-correct result. Requiring
+    /// the member makes each implementer state its scoring behaviour explicitly, and the compiler
+    /// enforces it (#2781).
     /// </remarks>
-    async Task<IReadOnlyList<ScoredMemoryEntry>> SearchScoredAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
-    {
-        var entries = await SearchAsync(query, topK, filter, ct).ConfigureAwait(false);
-        return entries.Select(entry => new ScoredMemoryEntry(entry, 0d)).ToList();
-    }
+    Task<IReadOnlyList<ScoredMemoryEntry>> SearchScoredAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default);
 
     Task DeleteAsync(string id, CancellationToken ct = default);
     Task ClearAsync(CancellationToken ct = default);

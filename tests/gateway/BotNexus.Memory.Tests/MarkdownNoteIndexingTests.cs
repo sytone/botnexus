@@ -277,6 +277,11 @@ public sealed class MarkdownNoteIndexingTests
             => Task.FromResult<IReadOnlyList<Models.MemoryEntry>>([]);
         public Task<IReadOnlyList<Models.MemoryEntry>> SearchAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<Models.MemoryEntry>>([]);
+
+        // #2781: explicit pass-through. Required (not default-implemented) on IMemoryStore because
+        // Moq returns null for default interface methods rather than running the default body.
+        public Task<IReadOnlyList<BotNexus.Memory.Embeddings.ScoredMemoryEntry>> SearchScoredAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<BotNexus.Memory.Embeddings.ScoredMemoryEntry>>([]);
         public Task DeleteAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
         public Task ClearAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task<MemoryStoreStats> GetStatsAsync(CancellationToken ct = default)

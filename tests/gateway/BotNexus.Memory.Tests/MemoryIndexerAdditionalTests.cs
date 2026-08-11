@@ -1,3 +1,4 @@
+using BotNexus.Memory.Embeddings;
 using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
@@ -260,6 +261,14 @@ public sealed class MemoryIndexerAdditionalTests
         public Task<IReadOnlyList<MemoryEntry>> SearchAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
 
+        // #2781: explicit pass-through. Required (not default-implemented) on IMemoryStore because
+        // Moq returns null for default interface methods rather than running the default body.
+        public async Task<IReadOnlyList<ScoredMemoryEntry>> SearchScoredAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
+        {
+            var entries = await SearchAsync(query, topK, filter, ct);
+            return entries.Select(entry => new ScoredMemoryEntry(entry, 0d)).ToList();
+        }
+
         public Task DeleteAsync(string id, CancellationToken ct = default)
         {
             _entries.TryRemove(id, out _);
@@ -284,4 +293,3 @@ public sealed class MemoryIndexerAdditionalTests
         }
     }
 }
-
