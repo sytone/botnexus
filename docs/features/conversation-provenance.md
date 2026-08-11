@@ -33,6 +33,72 @@ information, because the axes genuinely vary independently:
 `ConversationSource` is deliberately **coarse** — a fifth value such as "SubAgent" would
 re-introduce overlap between the trigger axis and the topology axis.
 
+## `ConversationKind`
+
+```csharp
+public enum ConversationKind
+{
+    HumanAgent    = 0,   // a human talking to one or more named agents - back-compat default
+    AgentAgent    = 1,   // two named agents in a peer exchange (IAgentExchangeService.ConverseAsync)
+    AgentSubAgent = 2,   // a named agent supervising a spawned sub-agent
+    Ralph         = 3,   // a self-retriggering autonomous work loop (issue #2818)
+}
+```
+
+`HumanAgent = 0` is first so the enum's default-value contract makes it the back-compat
+value. Members are persisted numerically and are **never renumbered**; a new kind is added
+at the end with the next free explicit number.
+
+### `Ralph`
+
+A ralph conversation owns a set of instructions and re-triggers itself: when an agent turn
+inside it ends, the gateway starts a **fresh session** in the same conversation, seeded with
+those instructions, until a gateway-enforced stop condition fires.
+
+- **Fresh session per iteration, not a growing one.** Each iteration mints a new session id
+  (prefix `ralph`) and starts with empty history, so a fact stated only in iteration N's
+  transcript cannot reach iteration N+1. This is structural, not a convention: it stops the
+  loop's behaviour becoming a function of accumulated context, and stops it compacting.
+- **Instructions are re-read every iteration.** Editing a ralph conversation's instructions
+  changes the next iteration's prompt without recreating the conversation.
+- **Turn-end driven, not timer driven.** The loop subscribes to the existing turn-end
+  lifecycle event, so a turn still running (for example one waiting on a sub-agent) simply
+  has not published yet and the loop does not re-trigger. There is no missed-wake class.
+- **Topologically an agent talking to itself**, which is why it is a `Kind` and not a
+  `Source`: the trigger is still whatever minted the conversation.
+- **Unattended by construction.** `ConversationRenderProjection` treats `Ralph` alongside
+  `AgentAgent`/`AgentSubAgent` as unattended and read-only - each iteration is a new session,
+  so anything typed would be discarded rather than answered.
+
+#### Stop conditions
+
+Enforcement is the gateway's job, never the prompt's: an instruction asking the agent to stop
+has no enforcement and no retry if a turn ends early. Bounds live in `RalphLoopConfig`, stored
+in the conversation's metadata under the `ralph` key, and every stop is attributable to one
+named `RalphStopReason` recorded with human-readable disclosure text.
+
+| Bound | Default | Stop reason |
+|---|---|---|
+| `MaxIterations` | `null` (unbounded by count) | `MaxIterations` |
+| `MaxDurationMinutes` | `null` (unbounded by time) | `MaxDuration` |
+| `MaxConsecutiveFailures` | `3` | `Failed` |
+
+`MaxIterations` and `MaxDurationMinutes` are enforced **independently**; whichever binds
+first stops the loop and is named in the recorded reason. The other reasons are `Paused` (the
+agent signalled "nothing to do" from within a turn; resumable), `Killed` (an external kill
+switch - explicit stop, disable or archive - which cancels the in-flight iteration rather
+than awaiting it), `NotActive` (the conversation is archived), `NoInstructions` (nothing to
+seed the next iteration with), and `NotRalph`. `None` is the continue decision and never
+appears on a decision that halts.
+
+The decision is made in exactly one place, `RalphLoopPolicy.Evaluate`, called once per turn
+end. Loop state (`Iterations`, `StartedAt`, `ConsecutiveFailures`, `IsPaused`, `IsKilled`,
+`StopReason`, `StopDetail`) is durable rather than in-context, so continuity survives a
+gateway restart - each iteration inherits no transcript.
+
+Unreadable or absent ralph metadata degrades to `RalphLoopConfig.Default` plus the initial
+state rather than throwing: an unparseable blob must not make a conversation unloadable.
+
 ## `ConversationSource`
 
 ```csharp

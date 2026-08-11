@@ -53,7 +53,7 @@ convention already used for `status`):
 
 | Field | Values | Meaning |
 |-------|--------|---------|
-| `kind` | `HumanAgent`, `AgentAgent`, `AgentSubAgent` | pairing topology - who is talking to whom |
+| `kind` | `HumanAgent`, `AgentAgent`, `AgentSubAgent`, `Ralph` | pairing topology - who is talking to whom |
 | `source` | `Channel`, `Cron`, `Webhook`, `Agent` | origination trigger - why the conversation exists |
 | `visibility` | `UserFacing`, `InspectableReadOnly`, `InternalHidden` | who may see the row |
 
