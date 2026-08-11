@@ -8,7 +8,7 @@ public class ContextOverflowDetectorTests
     [InlineData("prompt is too long: 213462 tokens > 200000 maximum")]
     [InlineData("Your input exceeds the context window of this model")]
     [InlineData("This model's maximum prompt length is 131072 but the request contains 537812 tokens")]
-    [InlineData("400 status code (no body)")]
+    [InlineData("413 status code (no body)")]
     [InlineData("Requested token count exceeds the model's maximum context length of 131072 tokens.")]
     [InlineData("Input length (265330) exceeds model's maximum context length (262144).")]
     [InlineData("Input length 131393 exceeds the maximum allowed input length of 131040 tokens.")]
@@ -27,6 +27,9 @@ public class ContextOverflowDetectorTests
     [InlineData("rate limit reached")]
     [InlineData("too many requests from this client")]
     [InlineData("internal server error")]
+    // Inverted from a positive case: a bodyless 400 is a transient/malformed-request
+    // error, not a context overflow. See issue #2844.
+    [InlineData("400 status code (no body)")]
     public void IsContextOverflow_NonOverflowMessage_ReturnsFalse(string message)
     {
         ContextOverflowDetector.IsContextOverflow(message).ShouldBeFalse();

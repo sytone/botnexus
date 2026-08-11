@@ -35,7 +35,10 @@ public static class ContextOverflowDetector
         new("context[_ ]length[_ ]exceeded", RegexOptions.IgnoreCase | RegexOptions.Compiled),
         new("too many tokens", RegexOptions.IgnoreCase | RegexOptions.Compiled),
         new("token limit exceeded", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        new("^4(?:00|13)\\s*(?:status code)?\\s*\\(no body\\)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        // A bodyless 413 (payload too large) is a genuine overflow signal (e.g. Cerebras).
+        // A bodyless 400 is NOT: it is a transient/malformed-request error and must surface
+        // to the caller rather than trigger lossy compaction. See issue #2844.
+        new("^413\\s*(?:status code)?\\s*\\(no body\\)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
     ];
 
     private static readonly Regex[] NonOverflowPatterns =
