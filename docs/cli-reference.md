@@ -311,6 +311,7 @@ botnexus validate [OPTIONS]
 |---|---|
 | `--remote` | Validate using the running gateway `/api/config/validate` endpoint instead of local files. |
 | `--gateway-url <URL>` | Override the gateway base URL for remote validation (default: `http://localhost:5005`). |
+| `--token <CREDENTIAL>` | Gateway API credential. Required when `--gateway-url` is not the local gateway (issue #2747). |
 | `--verbose` | Show detailed validation output. |
 
 ### Examples
@@ -336,8 +337,12 @@ botnexus validate --remote
 **Custom gateway URL:**
 
 ```powershell
-botnexus validate --remote --gateway-url http://api.example.com:8080
+botnexus validate --remote --gateway-url http://api.example.com:8080 --token $env:REMOTE_GATEWAY_KEY
 ```
+
+> The credential configured for the local gateway is never sent to a URL supplied on the command
+> line. A non-loopback `--gateway-url` without `--token` is refused rather than contacted
+> unauthenticated (issue #2747).
 
 ---
 
@@ -1629,6 +1634,7 @@ botnexus prompt run <TEMPLATE> [OPTIONS]
 | `--config <PATH>` | Explicit path to `config.json`. Defaults to `~/.botnexus/config.json`. |
 | `--target <DIR>` | BotNexus home directory (config, workspace, extensions). Defaults to `~/.botnexus/`. |
 | `--gateway-url <URL>` | Override gateway URL. Defaults to `gateway.listenUrl` from config (or `http://localhost:5005`). |
+| `--token <CREDENTIAL>` | Gateway API credential. Required when `--gateway-url` is not the local gateway (issue #2747). |
 | `--verbose` | Show rendering and execution details. |
 
 ### Examples
@@ -1662,8 +1668,12 @@ botnexus prompt run daily-standup --session my-session-123
 **Execute against a non-default gateway:**
 
 ```powershell
-botnexus prompt run daily-standup --gateway-url http://production.example.com:5005
+botnexus prompt run daily-standup --gateway-url http://production.example.com:5005 --token $env:REMOTE_GATEWAY_KEY
 ```
+
+> As with every gateway-facing command, the ambient local credential is attached only for a
+> loopback target. An overridden, non-loopback `--gateway-url` requires an explicit `--token`
+> (issue #2747).
 
 **Verbose execution:**
 

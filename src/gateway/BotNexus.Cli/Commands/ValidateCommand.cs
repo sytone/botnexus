@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Text.Json;
+using BotNexus.Cli.Services;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
 
@@ -11,10 +12,15 @@ internal sealed class ValidateCommand
     {
         var remoteOption = new Option<bool>("--remote", "Validate using the running gateway /api/config/validate endpoint.");
         var gatewayUrlOption = new Option<string?>("--gateway-url", "Gateway base URL override for remote validation.");
+        // #2747 clause 1: --gateway-url names an operator-supplied host. The local gateway's
+        // credential is never sent there, so a non-loopback target must carry its own token or
+        // the command refuses rather than probing it unauthenticated.
+        var tokenOption = new Option<string?>("--token", "API key for the target gateway. Required when --gateway-url is not loopback.");
         var command = new Command("validate", "Validate BotNexus platform configuration.")
         {
             remoteOption,
-            gatewayUrlOption
+            gatewayUrlOption,
+            tokenOption
         };
 
         command.SetHandler(async context =>
@@ -22,11 +28,12 @@ internal sealed class ValidateCommand
             var remote = context.ParseResult.GetValueForOption(remoteOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var gatewayUrlOverride = context.ParseResult.GetValueForOption(gatewayUrlOption);
+            var token = context.ParseResult.GetValueForOption(tokenOption);
             var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = remote
-                ? await ExecuteRemoteAsync(gatewayUrlOverride, verbose, CancellationToken.None)
+                ? await ExecuteRemoteAsync(gatewayUrlOverride, verbose, CancellationToken.None, token)
                 : await ExecuteAsync(configPath, verbose, CancellationToken.None);
         });
 
@@ -82,7 +89,7 @@ internal sealed class ValidateCommand
         return errors.Count == 0 ? 0 : 1;
     }
 
-    public async Task<int> ExecuteRemoteAsync(string? gatewayUrlOverride, bool verbose, CancellationToken cancellationToken)
+    public async Task<int> ExecuteRemoteAsync(string? gatewayUrlOverride, bool verbose, CancellationToken cancellationToken, string? token = null)
     {
         var gatewayUrl = ResolveGatewayUrl(gatewayUrlOverride);
         if (!Uri.TryCreate(gatewayUrl, UriKind.Absolute, out var gatewayBaseUri))
@@ -96,7 +103,21 @@ internal sealed class ValidateCommand
         AnsiConsole.MarkupLine($"Gateway URL: [dim]{Markup.Escape(gatewayBaseUri.ToString())}[/]");
         AnsiConsole.MarkupLine($"Endpoint: [dim]{Markup.Escape(endpoint.ToString())}[/]");
 
-        using var httpClient = new HttpClient();
+        // #2747 clause 1: routed through the one factory so the credential policy is applied
+        // here too - previously this was a bare client that contacted any --gateway-url host
+        // unauthenticated, and never presented a credential to a gateway that required one.
+        var resolution = GatewayClientFactory.Resolve(
+            gatewayBaseUri.ToString(),
+            TimeSpan.FromSeconds(30),
+            token,
+            GatewayClientFactory.DefaultCredentialSource());
+        if (resolution.IsRefused)
+        {
+            PrintResult(valid: false, warnings: [], errors: [resolution.RefusalMessage!]);
+            return 1;
+        }
+
+        using var httpClient = resolution.Client!;
         HttpResponseMessage response;
         try
         {
@@ -156,11 +177,11 @@ internal sealed class ValidateCommand
         try
         {
             var config = PlatformConfigLoader.Load(validateOnLoad: false);
-            return config.Gateway?.ListenUrl ?? "http://localhost:5005";
+            return config.Gateway?.ListenUrl ?? GatewayClientFactory.DefaultUrl;
         }
         catch
         {
-            return "http://localhost:5005";
+            return GatewayClientFactory.DefaultUrl;
         }
     }
 

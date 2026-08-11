@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.Text.Json;
+using BotNexus.Cli.Services;
 using BotNexus.Cron;
 using BotNexus.Cron.Prompts;
 using BotNexus.Domain.Primitives;
@@ -70,6 +71,10 @@ internal sealed class PromptCommands
 
         var sessionOption = new Option<string?>("--session", () => null, "Optional session ID when invoking the gateway.");
         var gatewayUrlOption = new Option<string?>("--gateway-url", () => null, "Override gateway URL (defaults to gateway.listenUrl).");
+        // #2747 clause 1: an overridden --gateway-url is an operator-supplied host, so it needs a
+        // credential named for THAT host. Without this option the only honest outcome for a remote
+        // target is a refusal, because the local gateway's credential must never follow the URL.
+        var tokenOption = new Option<string?>("--token", () => null, "API key for the target gateway. Required when --gateway-url is not loopback.");
         var runCommand = new Command("run", "Render and run a prompt template.")
         {
             templateArgument,
@@ -77,7 +82,8 @@ internal sealed class PromptCommands
             agentOption,
             parameterOption,
             sessionOption,
-            gatewayUrlOption
+            gatewayUrlOption,
+            tokenOption
         };
         runCommand.SetHandler(async context =>
         {
@@ -89,6 +95,7 @@ internal sealed class PromptCommands
             var agentId = context.ParseResult.GetValueForOption(agentOption);
             var sessionId = context.ParseResult.GetValueForOption(sessionOption);
             var gatewayUrl = context.ParseResult.GetValueForOption(gatewayUrlOption);
+            var token = context.ParseResult.GetValueForOption(tokenOption);
             context.ExitCode = await ExecuteRunAsync(
                 configPath,
                 agentId,
@@ -97,7 +104,8 @@ internal sealed class PromptCommands
                 sessionId,
                 gatewayUrl,
                 verbose,
-                CancellationToken.None);
+                CancellationToken.None,
+                token);
         });
 
         var createCommand = new Command("create", "Create prompt templates.");
@@ -265,7 +273,8 @@ internal sealed class PromptCommands
         string? sessionId,
         string? gatewayUrlOverride,
         bool verbose,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? token = null)
     {
         var config = await LoadConfigAsync(configPath, cancellationToken);
         if (config is null)
@@ -306,11 +315,29 @@ internal sealed class PromptCommands
         var gatewayUrl = string.IsNullOrWhiteSpace(gatewayUrlOverride)
             ? config.Gateway?.ListenUrl
             : gatewayUrlOverride;
+        // #2858-family drift fix: this used to fall back to localhost:5000 while the gateway binds
+        // 5005, so an operator with no gateway.listenUrl got a connection-refused that looked like a
+        // dead gateway. The default gateway target has exactly one spelling.
         if (string.IsNullOrWhiteSpace(gatewayUrl))
-            gatewayUrl = "http://localhost:5000";
+            gatewayUrl = GatewayClientFactory.DefaultUrl;
 
         var endpoint = $"{gatewayUrl.TrimEnd('/')}/api/chat";
-        using var httpClient = new HttpClient();
+
+        // #2747 clause 1: the credential policy is defined once, in GatewayClientFactory. This
+        // call site previously built a bare HttpClient, which sent an unauthenticated POST to
+        // whatever host --gateway-url named.
+        var resolution = GatewayClientFactory.Resolve(
+            gatewayUrl,
+            TimeSpan.FromMinutes(5),
+            token,
+            GatewayClientFactory.DefaultCredentialSource());
+        if (resolution.IsRefused)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(resolution.RefusalMessage!)}");
+            return 1;
+        }
+
+        using var httpClient = resolution.Client!;
         var response = await httpClient.PostAsJsonAsync(
             endpoint,
             new ChatRequestPayload(resolvedAgentId, renderedPrompt, sessionId),

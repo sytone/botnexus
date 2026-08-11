@@ -343,6 +343,58 @@ public sealed class PromptCommandsTests
         }
     }
 
+    /// <summary>
+    /// Clause 1 of #2747: <c>prompt run</c> used to POST <c>/api/chat</c> from a bare HttpClient, so
+    /// an operator-supplied <c>--gateway-url</c> was contacted with no credential and no refusal. The
+    /// prompt still renders; the request is what must not leave.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteRunAsync_RefusesNonLoopbackGatewayUrl_WithoutExplicitToken()
+    {
+        var tempHome = Path.Combine(Path.GetTempPath(), $"botnexus-prompt-refuse-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(tempHome, "prompts"));
+        var configPath = Path.Combine(tempHome, "config.json");
+        await File.WriteAllTextAsync(
+            Path.Combine(tempHome, "prompts", "status-report.prompt.md"),
+            """
+            ---
+            name: status-report
+            ---
+            Status for {{project}}
+            """);
+        await File.WriteAllTextAsync(
+            configPath,
+            JsonSerializer.Serialize(
+                new PlatformConfig { Gateway = new GatewaySettingsConfig { DefaultAgentId = "agent-a" } },
+                new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+
+        try
+        {
+            // TEST-NET-3 (RFC 5737): reserved, non-routable. A regression that actually sends the
+            // request fails on connect instead of reaching a real host - the refusal must come first.
+            var result = await new PromptCommands().ExecuteRunAsync(
+                configPath,
+                "agent-a",
+                "status-report",
+                ["project=BotNexus"],
+                sessionId: null,
+                gatewayUrlOverride: "http://203.0.113.10:5005",
+                verbose: false,
+                CancellationToken.None,
+                token: null);
+
+            result.ShouldBe(1,
+                "A non-loopback --gateway-url with no --token must be refused before the POST is sent. " +
+                "Any other outcome means the rendered prompt was shipped unauthenticated to a host " +
+                "named on the command line. See #2747 clause 1.");
+        }
+        finally
+        {
+            if (Directory.Exists(tempHome))
+                Directory.Delete(tempHome, recursive: true);
+        }
+    }
+
     [Fact]
     public void GetEmbeddedSampleTemplateNames_ReturnsBundledTemplates()
     {
