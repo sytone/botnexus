@@ -5639,8 +5639,13 @@ h3.conversation-title.editable:hover {
     font-size: 0.9rem;
 }
 
-/* #2528: explicit column allocation - the title column gives way, the signal columns do not. */
-.activity-table th:nth-child(1), .activity-table td:nth-child(1) { width: auto; }
+/* #2528: explicit column allocation - the title column gives way, the signal columns do not.
+   #2788: column 1 declares its width explicitly rather than `auto`. Under `table-layout: fixed`
+   the first row's declared widths determine the columns outright, so an `auto` column is only as
+   wide as whatever else lets it be - and the `max-width: 0` that used to sit on
+   `.activity-cell-title` resolved it to approximately zero, clipping every title to one character.
+   50% is the complement of the 20+9+9+12 the signal columns declare. */
+.activity-table th:nth-child(1), .activity-table td:nth-child(1) { width: 50%; }
 .activity-table th:nth-child(2), .activity-table td:nth-child(2) { width: 20%; }
 .activity-table th:nth-child(3), .activity-table td:nth-child(3) { width: 9%; }
 .activity-table th:nth-child(4), .activity-table td:nth-child(4) { width: 9%; }
@@ -5676,12 +5681,15 @@ h3.conversation-title.editable:hover {
 }
 
 /* #2528: the title cell is a flex line so the fixed-width origin badge (#2496) survives while the
-   title itself is what gives way to the ellipsis. */
+   title itself is what gives way to the ellipsis.
+   #2788: deliberately declares NO `max-width`. The shrink constraint belongs on the flex CHILD -
+   `.activity-conversation-title { min-width: 0 }` below is sufficient and is what actually lets the
+   title ellipsise. A `max-width` here constrains the COLUMN under `table-layout: fixed`, not just
+   the flex line, which is what collapsed the Conversation column. Do not reintroduce it. */
 .activity-cell-title {
     display: flex;
     align-items: center;
     gap: 0.25rem;
-    max-width: 0;
 }
 
 .activity-conversation-title {
