@@ -1,3 +1,4 @@
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Abstractions.Conversations;
@@ -17,10 +18,21 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 {
     private const string BootstrapFileName = "BOOTSTRAP.md";
     private const string MemoryFileName = "MEMORY.md";
+    private const string UserFileName = "USER.md";
     private const string MemoryPromptInjectionNone = "none";
     private const string MemoryPromptInjectionFull = "full";
     private static readonly string[] DefaultPromptFiles =
-        ["AGENTS.md", "SOUL.md", "TOOLS.md", "BOOTSTRAP.md", "IDENTITY.md", "USER.md", MemoryFileName];
+        ["AGENTS.md", "SOUL.md", "TOOLS.md", "BOOTSTRAP.md", "IDENTITY.md", UserFileName, MemoryFileName];
+
+    /// <summary>
+    /// The workspace files that belong to the agent's owner alone and must never reach a
+    /// conversation with non-owner participants (issue #2846). <c>MEMORY.md</c> is the agent's
+    /// consolidated long-term memory; <c>USER.md</c> is the owner's personal profile (name,
+    /// timezone, working preferences). Daily memory notes are equally private but are identified
+    /// by their location under the memory root rather than by name — see
+    /// <see cref="IsOwnerPrivateContextFile"/>.
+    /// </summary>
+    private static readonly string[] OwnerPrivateFileNames = [MemoryFileName, UserFileName];
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IFileSystem _fileSystem;
     private readonly IHookDispatcher? _hookDispatcher;
@@ -108,10 +120,27 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         AgentExecutionContext? executionContext,
         EffectiveExecutionSettings? effectiveSettings = null,
         CancellationToken cancellationToken = default)
+        => await BuildSystemPromptAsync(descriptor, executionContext, effectiveSettings, ConversationScope.Private, cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<string> BuildSystemPromptAsync(
+        AgentDescriptor descriptor,
+        AgentExecutionContext? executionContext,
+        EffectiveExecutionSettings? effectiveSettings,
+        ConversationScope scope,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
         var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(descriptor.AgentId.Value));
+        var conversation = await ResolveConversationAsync(descriptor, executionContext, cancellationToken).ConfigureAwait(false);
+
+        // #2846: the caller's scope is a floor, not the last word. A conversation whose persisted
+        // participant set already contains non-owner citizens is shared even if the caller did not
+        // know it, so the exclusion protects call sites that have not been threaded yet.
+        scope = ResolveEffectiveScope(scope, conversation);
+
         var memoryPromptInjection = ResolveMemoryPromptInjection(descriptor.Memory?.PromptInjection);
         var promptFiles = ResolvePromptFiles(descriptor, includeMemoryFile: !IsMemoryPromptInjectionNone(memoryPromptInjection));
         var contextFiles = (await LoadContextFilesAsync(_fileSystem, workspacePath, promptFiles, cancellationToken)).ToList();
@@ -133,13 +162,22 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         // select which workspace prompt files to load, and must not silently disable memory. Note that
         // `none` suppresses only this automatic pass; a memory file named explicitly in `systemPromptFiles`
         // is still loaded by the prompt-file pass above, because an explicit list is an explicit request.
-        // NOTE: like MEMORY.md and USER.md, daily notes are owner-private content. Any future
-        // conversation-scope filter for shared/multi-participant sessions must cover this path too.
+        // NOTE: like MEMORY.md and USER.md, daily notes are owner-private content. They are loaded
+        // unconditionally here and withheld later by FilterOwnerPrivateContextFiles when the
+        // conversation is shared (#2846), so this pass stays concerned only with memory config.
         if (!IsMemoryPromptInjectionNone(memoryPromptInjection))
         {
             var recentMemoryFiles = await LoadDailyMemoryAsync(descriptor, workspacePath, cancellationToken);
             AddContextFilesWithoutDuplicates(contextFiles, recentMemoryFiles);
         }
+
+        // #2846: hooks contribute context files here, BEFORE the owner-private exclusion and
+        // BEFORE assembly. Ordering is the whole point: a hook that tries to reintroduce MEMORY.md
+        // into a shared conversation has its addition dropped by the filter below, and no private
+        // content is ever materialised into prompt text.
+        contextFiles = await ApplyContextFileHooksAsync(descriptor, scope, contextFiles, cancellationToken)
+            .ConfigureAwait(false);
+        contextFiles = FilterOwnerPrivateContextFiles(contextFiles, scope, descriptor.Memory?.Path);
 
         // Surface the connecting client kind (e.g. SignalR "mobile" vs "desktop") on the runtime
         // line when the execution context carries it. Absent -> null, which the runtime-line
@@ -175,7 +213,8 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             // claimed "off". It now carries the same effective thinking level applied to AgentOptions.
             ReasoningLevel = effectiveSettings?.ThinkingWireToken,
             MemoryPromptInjection = memoryPromptInjection,
-            ConversationContext = await ResolveConversationContextAsync(descriptor, executionContext, cancellationToken),
+            Scope = scope,
+            ConversationContext = ToConversationContext(conversation),
             PromptMode = PromptMode.Full
         });
 
@@ -219,7 +258,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         return null;
     }
 
-    private async Task<ConversationContext?> ResolveConversationContextAsync(
+    private async Task<Conversation?> ResolveConversationAsync(
         AgentDescriptor descriptor,
         AgentExecutionContext? executionContext,
         CancellationToken cancellationToken)
@@ -241,9 +280,64 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             conversation = conversations.FirstOrDefault(candidate => candidate.ActiveSessionId == executionContext.SessionId);
         }
 
-        return conversation is null
+        return conversation;
+    }
+
+    private static ConversationContext? ToConversationContext(Conversation? conversation)
+        => conversation is null
             ? null
             : new ConversationContext(conversation.ConversationId.Value, conversation.Title, conversation.Purpose, conversation.Instructions, conversation.TodoJson);
+
+    /// <summary>
+    /// Escalates the caller-supplied scope to <see cref="ConversationScope.Shared"/> when the
+    /// resolved conversation carries a participant that is neither the owning agent nor a single
+    /// human counterpart (issue #2846).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Escalation only. A caller that already knows the conversation is shared (a federation entry
+    /// point, say) is never downgraded to private by a participant list that has not been
+    /// backfilled yet, so this cannot reopen the disclosure it exists to close.
+    /// </para>
+    /// <para>
+    /// "Non-owner" means: any agent participant other than the conversation's owning agent, or more
+    /// than one distinct human participant. A single human plus the owning agent is the classic
+    /// one-to-one channel the private file set was designed for. An empty participant list — the
+    /// shape of every legacy row written before participants were tracked — stays private, which
+    /// is what keeps the default path byte-identical.
+    /// </para>
+    /// </remarks>
+    private static ConversationScope ResolveEffectiveScope(ConversationScope requestedScope, Conversation? conversation)
+    {
+        if (requestedScope == ConversationScope.Shared || conversation is null)
+            return requestedScope;
+
+        return HasNonOwnerParticipants(conversation) ? ConversationScope.Shared : requestedScope;
+    }
+
+    /// <summary>
+    /// True when the conversation's participant set extends past the owning agent and one human.
+    /// </summary>
+    internal static bool HasNonOwnerParticipants(Conversation conversation)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+
+        var participants = conversation.Participants;
+        if (participants.Count == 0)
+            return false;
+
+        var distinctHumans = participants
+            .Where(static participant => participant.CitizenId.Kind == CitizenKind.User)
+            .Select(static participant => participant.CitizenId.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        if (distinctHumans > 1)
+            return true;
+
+        return participants.Any(participant =>
+            participant.CitizenId.Kind == CitizenKind.Agent
+            && !string.Equals(participant.CitizenId.Value, conversation.AgentId.Value, StringComparison.OrdinalIgnoreCase));
     }
 
     private static async Task<ContextFile[]> LoadContextFilesAsync(
@@ -309,6 +403,88 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             if (seen.Add(ContextFileOrdering.NormalizePath(addition.Path)))
                 contextFiles.Add(addition);
         }
+    }
+
+    /// <summary>
+    /// Dispatches <see cref="BeforeContextFilesBuildEvent"/> and appends whatever handlers
+    /// contribute. Runs BEFORE <see cref="FilterOwnerPrivateContextFiles"/> so hook additions are
+    /// subject to the same owner-private exclusion as the loaded set (#2846 AC#4).
+    /// </summary>
+    private async Task<List<ContextFile>> ApplyContextFileHooksAsync(
+        AgentDescriptor descriptor,
+        ConversationScope scope,
+        List<ContextFile> contextFiles,
+        CancellationToken cancellationToken)
+    {
+        if (_hookDispatcher is null)
+            return contextFiles;
+
+        var hookEvent = new BeforeContextFilesBuildEvent(
+            descriptor.AgentId,
+            descriptor,
+            scope,
+            [.. contextFiles.Select(static file => new PromptContextFile(file.Path, file.Content))]);
+
+        var results = await _hookDispatcher
+            .DispatchAsync<BeforeContextFilesBuildEvent, BeforeContextFilesBuildResult>(hookEvent, cancellationToken)
+            .ConfigureAwait(false);
+
+        var additions = results
+            .SelectMany(static result => result.AdditionalContextFiles)
+            .Where(static file => !string.IsNullOrWhiteSpace(file.Path) && !string.IsNullOrWhiteSpace(file.Content))
+            .Select(static file => new ContextFile(file.Path, file.Content))
+            .ToList();
+
+        AddContextFilesWithoutDuplicates(contextFiles, additions);
+        return contextFiles;
+    }
+
+    /// <summary>
+    /// Removes owner-private context files when the conversation is shared (#2846).
+    /// </summary>
+    /// <remarks>
+    /// Applied to the FILE SET, never to assembled prompt text: a post-hoc string filter would
+    /// have to have materialised the private content first, and could not tell a memory heading
+    /// apart from an agent legitimately quoting one.
+    /// </remarks>
+    /// <param name="contextFiles">The candidate context files, hook additions included.</param>
+    /// <param name="scope">The conversation scope; <see cref="ConversationScope.Private"/> is a no-op.</param>
+    /// <param name="memoryPathOverride">The agent's configured memory root, when overridden.</param>
+    private static List<ContextFile> FilterOwnerPrivateContextFiles(
+        List<ContextFile> contextFiles,
+        ConversationScope scope,
+        string? memoryPathOverride)
+    {
+        if (scope != ConversationScope.Shared)
+            return contextFiles;
+
+        return [.. contextFiles.Where(file => !IsOwnerPrivateContextFile(file.Path, memoryPathOverride))];
+    }
+
+    /// <summary>
+    /// True when a context-file path denotes owner-private content: the named private files
+    /// (<c>MEMORY.md</c>, <c>USER.md</c>) anywhere in the workspace, or any note under the agent's
+    /// memory root (daily notes are as private as the consolidated file they feed).
+    /// </summary>
+    private static bool IsOwnerPrivateContextFile(string? path, string? memoryPathOverride)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        var normalized = ContextFileOrdering.NormalizePath(path);
+        var fileName = Path.GetFileName(normalized);
+
+        if (OwnerPrivateFileNames.Contains(fileName, StringComparer.OrdinalIgnoreCase))
+            return true;
+
+        var memoryRoot = string.IsNullOrWhiteSpace(memoryPathOverride)
+            ? "memory"
+            : memoryPathOverride.Trim().Replace('\\', '/').TrimEnd('/');
+        if (memoryRoot.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            memoryRoot = Path.GetDirectoryName(memoryRoot)?.Replace('\\', '/') ?? "memory";
+
+        return !string.IsNullOrWhiteSpace(memoryRoot)
+            && normalized.StartsWith(memoryRoot + "/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<string> ResolvePromptFiles(AgentDescriptor descriptor, bool includeMemoryFile)

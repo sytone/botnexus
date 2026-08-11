@@ -32,6 +32,53 @@ public sealed record BeforePromptBuildResult
     public string? AppendSystemContext { get; init; }
 }
 
+// ── Before context files are assembled ──────────────────────────────
+
+/// <summary>
+/// A workspace context file destined for the system prompt, in the shape hook handlers exchange
+/// it. Deliberately a Contracts-level primitive (path + content) rather than the gateway's own
+/// <c>ContextFile</c> so extension assemblies can contribute context without referencing the
+/// prompt-assembly internals.
+/// </summary>
+/// <param name="Path">Workspace-relative path, used as the prompt heading and the identity key.</param>
+/// <param name="Content">The file body to inject.</param>
+public sealed record PromptContextFile(string Path, string Content);
+
+/// <summary>
+/// Event raised after workspace context files have been loaded but <em>before</em> the system
+/// prompt is assembled from them (issue #2846). Handlers may contribute additional context files.
+/// </summary>
+/// <remarks>
+/// This is the seam that makes the owner-private exclusion enforceable. The exclusion is applied
+/// to the file set <em>after</em> this event is dispatched and <em>before</em> assembly, so a hook
+/// cannot reintroduce <c>MEMORY.md</c> or <c>USER.md</c> into a shared conversation, and the
+/// private content is never materialised into prompt text in the first place. Contrast
+/// <see cref="BeforePromptBuildEvent"/>, which operates on the already-assembled string and is
+/// therefore the wrong place to enforce a content boundary.
+/// </remarks>
+/// <param name="AgentId">The agent being invoked.</param>
+/// <param name="Descriptor">The agent descriptor for the invoked agent.</param>
+/// <param name="Scope">Whether the conversation is owner-private or shared.</param>
+/// <param name="ContextFiles">The context files loaded so far, in prompt order.</param>
+public sealed record BeforeContextFilesBuildEvent(
+    AgentId AgentId,
+    AgentDescriptor Descriptor,
+    BotNexus.Gateway.Abstractions.Agents.ConversationScope Scope,
+    IReadOnlyList<PromptContextFile> ContextFiles);
+
+/// <summary>
+/// Result returned by a handler of <see cref="BeforeContextFilesBuildEvent"/>.
+/// </summary>
+public sealed record BeforeContextFilesBuildResult
+{
+    /// <summary>
+    /// Context files to append to the set. Additions are subject to the same owner-private
+    /// exclusion as the loaded set — a handler cannot use this to smuggle private content into a
+    /// shared conversation.
+    /// </summary>
+    public IReadOnlyList<PromptContextFile> AdditionalContextFiles { get; init; } = [];
+}
+
 // ── Before tool call ─────────────────────────────────────────────────
 
 /// <summary>

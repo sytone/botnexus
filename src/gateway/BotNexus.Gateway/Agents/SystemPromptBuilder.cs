@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Prompts;
 
 namespace BotNexus.Gateway.Agents;
@@ -54,6 +55,15 @@ public sealed record SystemPromptParams
     public bool ReasoningTagHint { get; init; }
     public string? ReasoningLevel { get; init; }
     public string? MemoryPromptInjection { get; init; }
+
+    /// <summary>
+    /// Whether the conversation this prompt serves is owner-private or shared with non-owner
+    /// participants (issue #2846). Defaults to <see cref="ConversationScope.Private"/> so every
+    /// existing caller renders an unchanged prompt. <see cref="ConversationScope.Shared"/>
+    /// suppresses the memory-write guidance block, which would otherwise instruct the agent to
+    /// consult and write owner-private memory that is not in its context.
+    /// </summary>
+    public ConversationScope Scope { get; init; } = ConversationScope.Private;
     public ConversationContext? ConversationContext { get; init; }
 }
 
@@ -236,7 +246,27 @@ public static class SystemPromptBuilder
 
     public static IReadOnlyList<string> BuildMemorySection(bool isMinimal, string? promptInjectionMode, IReadOnlySet<string> availableTools)
     {
+        return BuildMemorySection(isMinimal, promptInjectionMode, availableTools, ConversationScope.Private);
+    }
+
+    /// <summary>
+    /// Builds the memory-guidance block, or nothing at all in a shared conversation (issue #2846).
+    /// </summary>
+    /// <remarks>
+    /// In a shared conversation the owner-private files this guidance describes are withheld from
+    /// the prompt, so emitting the guidance would both describe absent context and instruct the
+    /// agent to write durable owner memory from a conversation it does not privately own.
+    /// </remarks>
+    public static IReadOnlyList<string> BuildMemorySection(
+        bool isMinimal,
+        string? promptInjectionMode,
+        IReadOnlySet<string> availableTools,
+        ConversationScope scope)
+    {
         if (isMinimal)
+            return [];
+
+        if (scope == ConversationScope.Shared)
             return [];
 
         var mode = NormalizeMemoryPromptInjection(promptInjectionMode);
@@ -412,7 +442,7 @@ public static class SystemPromptBuilder
     private static IReadOnlyList<string> BuildMemoryGuidanceSection(PromptContext context)
     {
         var data = GetGatewayData(context);
-        return BuildMemorySection(data.IsMinimal, data.Parameters.MemoryPromptInjection, data.NormalizedTools);
+        return BuildMemorySection(data.IsMinimal, data.Parameters.MemoryPromptInjection, data.NormalizedTools, data.Parameters.Scope);
     }
 
     private static IReadOnlyList<string> BuildDocsGuidanceSection(PromptContext context)
