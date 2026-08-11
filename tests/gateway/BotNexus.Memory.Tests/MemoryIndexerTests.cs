@@ -32,10 +32,14 @@ public sealed class MemoryIndexerTests
 
             var entries = store.GetAll().OrderBy(entry => entry.TurnIndex).ToList();
             entries.Count().ShouldBe(2);
-            entries[0].Content.ShouldContain("User: Hello");
-            entries[0].Content.ShouldContain("Assistant: Hi there");
-            entries[1].Content.ShouldContain("User: How are you?");
-            entries[1].Content.ShouldContain("Assistant: Doing great");
+            // Assert through the decoder rather than the wire shape: payloads are now quoted (#2954).
+            // Exact equality is stricter than the substring check this replaces.
+            TranscriptTurnFormat.TryDecode(entries[0].Content, out var user0, out var assistant0).ShouldBeTrue();
+            user0.ShouldBe("Hello");
+            assistant0.ShouldBe("Hi there");
+            TranscriptTurnFormat.TryDecode(entries[1].Content, out var user1, out var assistant1).ShouldBeTrue();
+            user1.ShouldBe("How are you?");
+            assistant1.ShouldBe("Doing great");
         }
         finally
         {
@@ -64,8 +68,9 @@ public sealed class MemoryIndexerTests
             await WaitForAsync(() => store.GetAll().Count == 1);
 
             var indexed = store.GetAll().Single();
-            indexed.Content.ShouldContain("User: Run search");
-            indexed.Content.ShouldContain("Assistant: Here is what I found");
+            TranscriptTurnFormat.TryDecode(indexed.Content, out var user, out var assistant).ShouldBeTrue();
+            user.ShouldBe("Run search");
+            assistant.ShouldBe("Here is what I found");
             indexed.Content.ShouldNotContain("tool output");
         }
         finally

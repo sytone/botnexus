@@ -178,9 +178,13 @@ public sealed class MarkdownAgentMemory : IAgentMemory
                     SessionId = sessionEvent.SessionId,
                     TurnIndex = pendingUser.Index,
                     SourceType = "conversation",
-                    // Strip LLM control / role-injection markup before persisting raw transcript
-                    // text to the searchable store — defends against memory-poisoning (#1560).
-                    Content = $"User: {MemoryContentSanitizer.Sanitize(pendingUser.Content)}\nAssistant: {MemoryContentSanitizer.Sanitize(turn.Content)}",
+                                        // Strip LLM control / role-injection markup before persisting raw transcript
+                    // text to the searchable store - defends against memory-poisoning (#1560).
+                    // Then delimit through the single shared encoder so no user text can forge an
+                    // extra role record in the stored row (#2954).
+                    Content = TranscriptTurnFormat.Encode(
+                        MemoryContentSanitizer.Sanitize(pendingUser.Content),
+                        MemoryContentSanitizer.Sanitize(turn.Content)),
                     MetadataJson = null,
                     Embedding = null,
                     CreatedAt = turn.Timestamp,

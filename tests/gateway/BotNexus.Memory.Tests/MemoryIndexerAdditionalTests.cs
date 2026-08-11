@@ -85,8 +85,12 @@ public sealed class MemoryIndexerAdditionalTests
             await WaitForAsync(() => store.All.Count == 2);
 
             store.All.ShouldAllBe(entry => entry.SourceType == "conversation");
-            store.All.Select(entry => entry.Content).ShouldContain(content => content.Contains("User: one", StringComparison.Ordinal));
-            store.All.Select(entry => entry.Content).ShouldContain(content => content.Contains("User: two", StringComparison.Ordinal));
+            // Decode rather than match the wire shape: payloads are quoted since #2954.
+            var decoded = store.All
+                .Select(entry => TranscriptTurnFormat.TryDecode(entry.Content, out var u, out _) ? u : null)
+                .ToList();
+            decoded.ShouldContain("one");
+            decoded.ShouldContain("two");
         }
         finally
         {

@@ -77,25 +77,13 @@ public sealed class LearningExtractionPipeline
     }
 
     /// <summary>
-    /// Parses the "User: ...\nAssistant: ..." format stored by MemoryIndexer.
+    /// Parses a stored turn-pair row back into its two role records.
     /// </summary>
+    /// <remarks>
+    /// Decoding goes through <see cref="TranscriptTurnFormat"/>, the same seam the writers encode with, so
+    /// the reader can never disagree with the writer about where a role record ends (#2954). The helper
+    /// also handles legacy undelimited rows written before that change.
+    /// </remarks>
     internal static bool TryParseConversationEntry(string content, out string userContent, out string assistantContent)
-    {
-        userContent = string.Empty;
-        assistantContent = string.Empty;
-
-        const string userPrefix = "User: ";
-        const string assistantPrefix = "\nAssistant: ";
-
-        if (!content.StartsWith(userPrefix, StringComparison.Ordinal))
-            return false;
-
-        var assistantIndex = content.IndexOf(assistantPrefix, StringComparison.Ordinal);
-        if (assistantIndex < 0)
-            return false;
-
-        userContent = content[userPrefix.Length..assistantIndex];
-        assistantContent = content[(assistantIndex + assistantPrefix.Length)..];
-        return true;
-    }
+        => TranscriptTurnFormat.TryDecode(content, out userContent, out assistantContent);
 }
