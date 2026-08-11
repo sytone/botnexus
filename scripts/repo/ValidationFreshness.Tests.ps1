@@ -206,8 +206,11 @@ Describe 'Resolve-BotNexusValidationBaseRef (#2785 stale base ref / two-dot diff
         $pair = New-ForkedRepoPair
         $resolved = Resolve-BotNexusValidationBaseRef -RepoRoot $pair.Clone -BaseRef 'origin/main'
 
-        $fromMergeBase = @(& git -C $pair.Clone diff --name-only $resolved.MergeBase HEAD) | Where-Object { $_ }
-        $fromTip = @(& git -C $pair.Clone diff --name-only $resolved.BaseCommit HEAD) | Where-Object { $_ }
+        # The @() must wrap the WHOLE pipeline: `@(git ...) | Where-Object` unwraps back to a
+        # scalar when exactly one path survives the filter, and reading .Count off a scalar
+        # string is a terminating error under Set-StrictMode.
+        $fromMergeBase = @(@(& git -C $pair.Clone diff --name-only $resolved.MergeBase HEAD) | Where-Object { $_ })
+        $fromTip = @(@(& git -C $pair.Clone diff --name-only $resolved.BaseCommit HEAD) | Where-Object { $_ })
 
         $fromMergeBase | Should -Be @('branch-only.txt')
         # The two-dot diff against the tip drags in the unrelated base commits - the defect.

@@ -98,6 +98,40 @@ function Invoke-FullTestSuite {
     return $exitCode
 }
 
+function Assert-FreshOrExit {
+    <#
+        #2785 AC1/AC2/AC6: refuse to run an assembly older than the commit under validation.
+        `dotnet test --no-build` does NOT fail when the assembly on disk predates the source;
+        it silently runs the stale .dll and reports a verdict about code it never compiled.
+        Observed live: 564 tests / 3 failed from a 15-minute-old assembly where a forced-clean
+        run of the same commit gave 591 / 0. The false-green direction is the severe one.
+
+        Called from BOTH the -All path and the impacted path, because AC2 requires the guard
+        to cover EVERY project subsequently run with --no-build - and `-Mode full` reaches
+        `dotnet test` through the -All branch, which would otherwise skip the check entirely.
+
+        Exits rather than throwing so the caller bails before any firewall lease is acquired.
+    #>
+    param([string[]]$Projects)
+
+    if (-not $NoBuild) { return }
+
+    $commitTimeRaw = & git -C $repoRoot show -s --format=%cI HEAD 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commitTimeRaw)) {
+        Write-Warning 'Could not read the HEAD commit timestamp; skipping the #2785 stale-assembly guard.'
+        return
+    }
+
+    $commitTimeUtc = [DateTimeOffset]::Parse("$commitTimeRaw".Trim()).UtcDateTime
+    $freshness = Assert-BotNexusTestAssemblyFreshness -ProjectPath $Projects -Configuration $Configuration -ReferenceTimeUtc $commitTimeUtc
+    if (-not $freshness.IsFresh) {
+        Write-Host ""
+        Write-Host $freshness.Message -ForegroundColor Red
+        exit 1
+    }
+    Write-Host $freshness.Message -ForegroundColor DarkGray
+}
+
 # Projects that always run regardless of what changed (cross-cutting safety net)
 $alwaysRunPatterns = @(
     '\.Architecture\.Tests'
@@ -117,6 +151,7 @@ function Get-AllSolutionTestProjects {
 if ($All) {
     Write-Host "Running full test suite (--All specified)" -ForegroundColor Cyan
     $allProjects = Get-AllSolutionTestProjects
+    Assert-FreshOrExit -Projects $allProjects
     $exitCode = Invoke-FullTestSuite -Projects $allProjects
     exit $exitCode
 }
@@ -239,29 +274,9 @@ $buildFlag = if ($NoBuild) { '--no-build' } else { '--no-restore' }
 $leasePath = Join-Path ([IO.Path]::GetTempPath()) ("botnexus-fw-lease-{0}" -f [guid]::NewGuid().ToString('N'))
 $failed = $false
 
-# #2785 AC1/AC2/AC6: refuse to run an assembly older than the commit under validation.
-# `dotnet test --no-build` does NOT fail when the assembly on disk predates the source;
-# it silently runs the stale .dll and reports a verdict about code it never compiled.
-# Observed live: 564 tests / 3 failed from a 15-minute-old assembly where a forced-clean
-# run of the same commit gave 591 / 0. The false-green direction is the severe one.
-# Deliberately OUTSIDE the try below: bailing here must not trigger firewall cleanup for a
-# lease that was never acquired.
-if ($NoBuild) {
-    $commitTimeRaw = & git -C $repoRoot show -s --format=%cI HEAD 2>$null
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($commitTimeRaw)) {
-        $commitTimeUtc = [DateTimeOffset]::Parse("$commitTimeRaw".Trim()).UtcDateTime
-        $freshness = Assert-BotNexusTestAssemblyFreshness -ProjectPath $projectsToTest -Configuration $Configuration -ReferenceTimeUtc $commitTimeUtc
-        if (-not $freshness.IsFresh) {
-            Write-Host ""
-            Write-Host $freshness.Message -ForegroundColor Red
-            exit 1
-        }
-        Write-Host $freshness.Message -ForegroundColor DarkGray
-    }
-    else {
-        Write-Warning 'Could not read the HEAD commit timestamp; skipping the #2785 stale-assembly guard.'
-    }
-}
+# #2785 AC1/AC2/AC6 - see Assert-FreshOrExit. Deliberately BEFORE the try below: bailing
+# here must not trigger firewall cleanup for a lease that was never acquired.
+Assert-FreshOrExit -Projects $projectsToTest
 
 try {
     Invoke-FirewallAction -Projects $projectsToTest -Action Ensure -LeasePath $leasePath
