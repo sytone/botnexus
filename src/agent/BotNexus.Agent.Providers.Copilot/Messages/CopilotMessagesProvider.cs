@@ -84,7 +84,8 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
 
     public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
     {
-        var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
+        var credential = ProviderCredentialResolver.Resolve(model.Provider, options?.ApiKey, null);
+        var apiKey = credential.Value;
         var baseOptions = SimpleOptionsHelper.BuildBaseOptions(model, options, apiKey);
 
         var copilotOpts = new CopilotMessagesOptions
@@ -157,7 +158,8 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
         CancellationToken ct)
     {
         var copilotOpts = options as CopilotMessagesOptions;
-        var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
+        var credential = ProviderCredentialResolver.Resolve(model.Provider, options?.ApiKey, null);
+        var apiKey = credential.Value;
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException(

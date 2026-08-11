@@ -112,13 +112,18 @@ public sealed class GatewayAuthManager
             return authKey;
         }
 
-        var envKey = EnvironmentApiKeys.GetApiKey(provider);
-        if (!string.IsNullOrWhiteSpace(envKey))
+        // #2807: declared provider configuration must be consulted BEFORE the process environment.
+        // The previous order let an ambient variable win over an explicitly declared credential, and
+        // let a declared-but-blank credential fall through to whatever the environment happened to
+        // hold. Ambient admission is now gated on nothing having been declared at all.
+        var declaredKey = await ResolveProviderConfigApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        if (declaredKey is not null)
         {
-            return envKey;
+            return declaredKey;
         }
 
-        return await ResolveProviderConfigApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        var credential = ProviderCredentialResolver.Resolve(provider, declaredApiKey: null, _logger);
+        return credential.HasValue ? credential.Value : null;
     }
 
     /// <summary>
@@ -157,9 +162,17 @@ public sealed class GatewayAuthManager
         }
 
         if (!TryGetProviderConfig(_platformConfig.CurrentValue.Providers, provider, out var providerConfig) ||
-            string.IsNullOrWhiteSpace(providerConfig?.ApiKey))
+            providerConfig?.ApiKey is null)
         {
             return null;
+        }
+
+        // #2807: a declared-but-blank apiKey is still a declaration. Returning null here would let the
+        // caller widen into the ambient environment, which is exactly the substitution being prevented,
+        // so the blank value is returned as-is and fails the caller's own emptiness guard instead.
+        if (string.IsNullOrWhiteSpace(providerConfig.ApiKey))
+        {
+            return providerConfig.ApiKey;
         }
 
         const string AuthPrefix = "auth:";

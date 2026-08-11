@@ -64,6 +64,39 @@ public static class EnvironmentApiKeys
         return null;
     }
 
+    /// <summary>
+    /// Names the environment variable that currently supplies this provider's ambient credential.
+    /// </summary>
+    /// <param name="provider">The provider identifier.</param>
+    /// <returns>
+    /// The variable name that actually resolved, so an ambient-admission warning can name the specific
+    /// source rather than the whole priority chain. Falls back to the chain description when nothing is
+    /// set, and to <c>&lt;none&gt;</c> for providers with no known mapping.
+    /// </returns>
+    public static string DescribeSourceVariable(string provider)
+    {
+        if (string.Equals(provider, "github-copilot", StringComparison.OrdinalIgnoreCase))
+            return FirstSetName("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN");
+
+        if (string.Equals(provider, "anthropic", StringComparison.OrdinalIgnoreCase))
+            return FirstSetName("ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY");
+
+        return EnvMap.TryGetValue(provider, out var envVar) ? envVar : "<none>";
+    }
+
+    // Returns the first variable in the chain that holds a non-blank value, else the chain itself
+    // rendered as "A/B/C" so a diagnostic is still actionable when nothing is set.
+    private static string FirstSetName(params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name)))
+                return name;
+        }
+
+        return string.Join("/", names);
+    }
+
     // Returns the first value that is not null/whitespace, else null. Used to coalesce
     // provider env-var priority chains over genuinely-configured (non-blank) values so a
     // set-but-empty leading variable falls through to the next candidate.

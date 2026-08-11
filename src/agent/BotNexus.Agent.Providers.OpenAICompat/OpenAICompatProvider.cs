@@ -62,7 +62,8 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
 
     public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
     {
-        var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
+        var credential = ProviderCredentialResolver.Resolve(model.Provider, options?.ApiKey, null);
+        var apiKey = credential.Value;
         var baseOptions = SimpleOptionsHelper.BuildBaseOptions(model, options, apiKey);
 
         // Apply reasoning effort if supported
@@ -99,7 +100,8 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         LlmModel model, Context context, StreamOptions? options, LlmStream stream)
     {
         var compat = CompatDetector.Detect(model);
-        var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
+        var credential = ProviderCredentialResolver.Resolve(model.Provider, options?.ApiKey, null);
+        var apiKey = credential.Value;
         var ct = options?.CancellationToken ?? CancellationToken.None;
 
         var requestBody = BuildRequestBody(model, context, options, compat);

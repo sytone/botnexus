@@ -97,7 +97,8 @@ public static class CompletionsStreamEngine
         CancellationToken ct)
     {
         var compat = CompatResolver.Resolve(model);
-        var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
+        var credential = ProviderCredentialResolver.Resolve(model.Provider, options?.ApiKey, logger);
+        var apiKey = credential.Value;
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException(

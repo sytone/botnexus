@@ -62,7 +62,7 @@ public static class ResponsesStreamEngine
 
             try
             {
-                await StreamCoreAsync(profile, httpClient, stream, model, context, options, ct);
+                await StreamCoreAsync(profile, httpClient, logger, stream, model, context, options, ct);
                 activity?.SetStatus(ActivityStatusCode.Ok);
             }
             catch (OperationCanceledException)
@@ -84,13 +84,15 @@ public static class ResponsesStreamEngine
     private static async Task StreamCoreAsync(
         ResponsesTransportProfile profile,
         HttpClient httpClient,
+        ILogger logger,
         LlmStream stream,
         LlmModel model,
         Context context,
         StreamOptions? options,
         CancellationToken ct)
     {
-        var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
+        var credential = ProviderCredentialResolver.Resolve(model.Provider, options?.ApiKey, logger);
+        var apiKey = credential.Value;
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException(
