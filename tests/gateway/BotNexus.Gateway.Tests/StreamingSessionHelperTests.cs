@@ -7,6 +7,110 @@ namespace BotNexus.Gateway.Tests;
 
 public sealed class StreamingSessionHelperTests
 {
+    /// <summary>
+    /// Minimal capturing logger so the #2921 silent-stop warning can be asserted on directly
+    /// rather than inferred. Records level plus the formatted message.
+    /// </summary>
+    private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger
+    {
+        public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Entries.Add((logLevel, formatter(state, exception)));
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_ThinkingThenTextThenEmptyFinalCompletion_DoesNotPersistGhostRow()
+    {
+        // #2921 regression: hadThinkingContent is a run-wide sticky latch while thinkingBuffer is
+        // cleared at every TurnEnd. A normal thinking+text turn therefore used to fall into the
+        // #1198 thinking-only branch at the final write and append a SECOND, contentless assistant
+        // row carrying no ThinkingContent - the exact shape of the 412 observed ghost rows.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-2921-ghost"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ThinkingDelta, ThinkingContent = "Reasoning..." },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Here is the answer." },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd },
+                new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd },
+                // The provider then emits a contentless final completion.
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }
+            ]),
+            session,
+            store.Object);
+
+        // Exactly one assistant row - the real answer. No trailing ghost.
+        session.History.ShouldHaveSingleItem();
+        session.History[0].Content.ShouldBe("Here is the answer.");
+        session.History[0].ThinkingContent.ShouldBe("Reasoning...");
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_MessageStartEndWithNoDeltas_PersistsNothingAndWarns()
+    {
+        // #2921 AC3 + AC4: a stream with MessageStart/MessageEnd and no ContentDelta/ThinkingDelta
+        // persists zero assistant entries, and the silent stop is surfaced as a warning naming the
+        // session id.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-2921-empty"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var logger = new CapturingLogger();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(Logger: logger));
+
+        session.History.ShouldBeEmpty();
+
+        var warning = logger.Entries.ShouldHaveSingleItem();
+        warning.Level.ShouldBe(Microsoft.Extensions.Logging.LogLevel.Warning);
+        warning.Message.ShouldContain("session-2921-empty");
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_ThinkingOnly_StillPersistsEntry_AndDoesNotWarn()
+    {
+        // #2921 AC2 anti-regression pin for the #1198/#656 branch. This fails if that branch is
+        // removed or if the new emptiness guard swallows the legitimate thinking-only case.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-2921-think"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var logger = new CapturingLogger();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ThinkingDelta, ThinkingContent = "Only reasoning." },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(Logger: logger));
+
+        session.History.ShouldHaveSingleItem();
+        session.History[0].Role.ShouldBe(MessageRole.Assistant);
+        session.History[0].Content.ShouldBe(string.Empty);
+        // A thinking-only turn is normal model behaviour, not a silent stop.
+        logger.Entries.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task ProcessAndSaveAsync_AccumulatesAssistantContentAndToolHistory()
     {

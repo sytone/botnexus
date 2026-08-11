@@ -663,6 +663,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         new StreamingSessionOptions(
                             IncludeErrorsInHistory: true,
                             AssistantMessageKind: responseKind,
+                            // #2921: surface a run that terminates on an empty assistant completion.
+                            Logger: _logger,
                             OnEventAsync: async (AgentStreamEvent evt, CancellationToken ct) =>
                             {
                                 // Enrich with agentId so the client can route events

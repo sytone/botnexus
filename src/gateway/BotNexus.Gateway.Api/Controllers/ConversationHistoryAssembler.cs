@@ -133,6 +133,19 @@ public sealed class ConversationHistoryAssembler : IConversationHistoryAssembler
                     string.Equals(entry.Content?.Trim(), "NO_REPLY", StringComparison.Ordinal))
                     continue;
 
+                // #2921: never replay a contentless assistant row as a chat bubble. The fix in
+                // StreamingSessionHelper stops NEW ghost rows being written, but the rows already
+                // in session_history would keep rendering as empty timestamped bubbles forever.
+                // A thinking-only entry (#1198/#656) is deliberately NOT skipped - it has thinking
+                // content to show and is a legitimate transcript entry.
+                if (entry.Role == MessageRole.Assistant
+                    && !entry.IsCompactionSummary
+                    && string.IsNullOrWhiteSpace(entry.Content)
+                    && string.IsNullOrWhiteSpace(entry.ThinkingContent)
+                    && entry.ToolCallId is null
+                    && entry.ToolName is null)
+                    continue;
+
                 // Emit compaction summaries as distinct boundary markers so the portal
                 // can render them as separators rather than normal system messages.
                 if (entry.IsCompactionSummary)

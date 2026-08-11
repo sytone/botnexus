@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.Logging;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -57,6 +58,14 @@ public static class StreamingSessionHelper
         var hadThinkingContent = false;
         var thinkingBuffer = new StringBuilder();
         var hadMessageEnd = false;
+        // #2921: latch whether this run has ALREADY persisted a non-empty assistant entry.
+        // hadThinkingContent is sticky for the whole run while thinkingBuffer is cleared at every
+        // TurnEnd, so a normal thinking+text turn used to satisfy the #1198 thinking-only branch
+        // below at the final write and append a second, contentless assistant row. That ghost row
+        // carried no ThinkingContent - which is exactly why all observed rows have thinking_content
+        // NULL. The #1198 branch itself is unchanged; it is simply no longer reachable once real
+        // assistant content has been emitted.
+        var emittedAssistantContent = false;
         var toolStartIds = new HashSet<string>(StringComparer.Ordinal);
         var toolEndIds = new HashSet<string>(StringComparer.Ordinal);
         var toolStartEntries = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
@@ -220,6 +229,7 @@ public static class StreamingSessionHelper
                     if (streamedContent.Length > 0)
                     {
                         turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString(), ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null, Kind = assistantKind });
+                        emittedAssistantContent = true;
                         thinkingBuffer.Clear();
                         streamedContent.Clear();
                     }
@@ -272,8 +282,9 @@ public static class StreamingSessionHelper
         if (!string.IsNullOrWhiteSpace(finalContent))
         {
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = finalContent, ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null, Kind = assistantKind });
+            emittedAssistantContent = true;
         }
-        else if (streamedHistory.Count == 0 && hadThinkingContent && hadMessageEnd)
+        else if (streamedHistory.Count == 0 && hadThinkingContent && hadMessageEnd && !emittedAssistantContent)
         {
             // The model produced only reasoning/thinking blocks and no visible text or tool calls.
             // Add an empty assistant entry so the transcript is in a valid state (prevents the
@@ -285,6 +296,17 @@ public static class StreamingSessionHelper
                 Content = string.Empty,
                 Kind = assistantKind
             });
+        }
+        else if (hadMessageEnd && streamedHistory.Count == 0)
+        {
+            // #2921: the run reached a clean MessageEnd but produced no visible text, no tool calls
+            // and no thinking for this final completion. Nothing is persisted (a contentless row is
+            // not a valid transcript entry), but the run has ended without answering - make that
+            // observable instead of failing silently.
+            options.Logger?.LogWarning(
+                "Run for session '{SessionId}' terminated on an empty assistant completion " +
+                "(no content, no tool calls, no thinking). No transcript row was written.",
+                session.SessionId.Value);
         }
 
         // Remove crash sentinel on clean completion (#363).
@@ -407,7 +429,8 @@ public sealed record StreamingSessionOptions(
     ProviderStallWatchdog? StallWatchdog = null,
     int MaxPersistedToolResultBytes = 0,
     MessageKind? AssistantMessageKind = null,
-    IToolAuditSink? ToolAuditSink = null);
+    IToolAuditSink? ToolAuditSink = null,
+    ILogger? Logger = null);
 
 /// <summary>
 /// Represents the accumulated results of stream processing.

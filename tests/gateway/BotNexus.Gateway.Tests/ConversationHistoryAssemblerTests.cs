@@ -119,6 +119,35 @@ public sealed class ConversationHistoryAssemblerTests
     }
 
     [Fact]
+    public async Task AssembleAsync_SkipsGhostEmptyAssistantEntries_ButKeepsThinkingOnly()
+    {
+        // #2921 AC5: a contentless assistant row (no content, no thinking, no tool linkage) is a
+        // ghost bubble and must not be replayed. A thinking-only row (#1198/#656) has something to
+        // render and must survive - this test fails if the guard over-reaches and drops it.
+        var conversationId = ConversationId.From("c_ghost");
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-1"), AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "ping", Timestamp = Ts(0) });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "real reply", Timestamp = Ts(1) });
+        // The ghost: empty content, empty thinking, no tool linkage.
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = string.Empty, Timestamp = Ts(2) });
+        // Legitimate thinking-only entry - must be preserved.
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = string.Empty, ThinkingContent = "reasoning", Timestamp = Ts(3) });
+        await sessions.SaveAsync(session);
+
+        var assembler = await NewAssemblerAsync(conversationId, "quill", sessions);
+
+        var result = await assembler.AssembleAsync(conversationId, limit: 50, offset: 0);
+
+        result.ShouldNotBeNull();
+        result!.TotalCount.ShouldBe(3);
+        result.Entries[0].Content.ShouldBe("ping");
+        result.Entries[1].Content.ShouldBe("real reply");
+        result.Entries[2].ThinkingContent.ShouldBe("reasoning");
+    }
+
+    [Fact]
     public async Task AssembleAsync_DoesNotSkipUserContentThatHappensToSayNoReply()
     {
         // The NO_REPLY drop only applies to ASSISTANT entries. A user literally typing "NO_REPLY"
