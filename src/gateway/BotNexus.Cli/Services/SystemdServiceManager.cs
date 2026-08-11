@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace BotNexus.Cli.Services;
@@ -10,15 +9,35 @@ internal sealed class SystemdServiceManager : IOsServiceManager
 {
     private const string ServiceName = "botnexus";
     private const string UnitFileName = "botnexus.service";
-    private static readonly string UnitFilePath = $"/etc/systemd/system/{UnitFileName}";
+    private const string DefaultUnitFilePath = $"/etc/systemd/system/{UnitFileName}";
+
+    /// <summary>
+    /// Environment keys BotNexus owns in the unit file. Any other <c>Environment=</c> line found in
+    /// an existing unit is carried over verbatim.
+    /// </summary>
+    internal static readonly string[] OwnedEnvironmentKeys = ["ASPNETCORE_URLS", "BOTNEXUS_HOME", "DOTNET_ENVIRONMENT"];
+
+    private readonly IServiceProcessRunner _runner;
+    private readonly string _unitFilePath;
+
+    public SystemdServiceManager()
+        : this(SystemServiceProcessRunner.Instance, DefaultUnitFilePath)
+    {
+    }
+
+    internal SystemdServiceManager(IServiceProcessRunner runner, string unitFilePath)
+    {
+        _runner = runner;
+        _unitFilePath = unitFilePath;
+    }
 
     public bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
     public string ServiceManagerName => "systemd";
 
     public async Task<bool> IsInstalledAsync(CancellationToken cancellationToken = default)
     {
-        var (exitCode, _) = await RunAsync("systemctl", $"is-enabled {ServiceName}", cancellationToken);
-        return exitCode == 0;
+        var result = await RunAsync("systemctl", $"is-enabled {ServiceName}", cancellationToken);
+        return result.ExitCode == 0;
     }
 
     public async Task<ServiceOperationResult> InstallAsync(string executablePath, string homePath, int port, CancellationToken cancellationToken = default)
@@ -29,6 +48,21 @@ internal sealed class SystemdServiceManager : IOsServiceManager
         var execLine = executablePath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
             ? $"dotnet \"{executablePath}\""
             : $"\"{executablePath}\"";
+
+        // A unit may already exist (repair/reinstall over a disabled unit). Anything an operator
+        // added there -- typically a credential-bearing Environment= line -- must survive.
+        var preserved = File.Exists(_unitFilePath)
+            ? ExtractForeignEnvironmentLines(await File.ReadAllTextAsync(_unitFilePath, cancellationToken))
+            : [];
+
+        var environmentBlock = string.Join(
+            Environment.NewLine,
+            new[]
+            {
+                $"Environment=ASPNETCORE_URLS=http://localhost:{port}",
+                $"Environment=BOTNEXUS_HOME={homePath}",
+                "Environment=DOTNET_ENVIRONMENT=Production"
+            }.Concat(preserved));
 
         var unitContent = $"""
             [Unit]
@@ -41,9 +75,7 @@ internal sealed class SystemdServiceManager : IOsServiceManager
             WorkingDirectory={Path.GetDirectoryName(executablePath)}
             Restart=on-failure
             RestartSec=5
-            Environment=ASPNETCORE_URLS=http://localhost:{port}
-            Environment=BOTNEXUS_HOME={homePath}
-            Environment=DOTNET_ENVIRONMENT=Production
+            {environmentBlock}
             KillSignal=SIGINT
             SyslogIdentifier=botnexus
             TimeoutStopSec=30
@@ -54,19 +86,19 @@ internal sealed class SystemdServiceManager : IOsServiceManager
 
         try
         {
-            await File.WriteAllTextAsync(UnitFilePath, unitContent, cancellationToken);
+            await File.WriteAllTextAsync(_unitFilePath, unitContent, cancellationToken);
         }
         catch (UnauthorizedAccessException)
         {
-            return new ServiceOperationResult(false, $"Permission denied writing {UnitFilePath}. Run with sudo.");
+            return new ServiceOperationResult(false, $"Permission denied writing {_unitFilePath}. Run with sudo.");
         }
 
         // Reload systemd, enable and start
         await RunAsync("systemctl", "daemon-reload", cancellationToken);
-        var (enableExit, enableOutput) = await RunAsync("systemctl", $"enable --now {ServiceName}", cancellationToken);
+        var enable = await RunAsync("systemctl", $"enable --now {ServiceName}", cancellationToken);
 
-        if (enableExit != 0)
-            return new ServiceOperationResult(false, $"Failed to enable/start service: {enableOutput}");
+        if (enable.ExitCode != 0)
+            return new ServiceOperationResult(false, $"Failed to enable/start service: {enable.Output}");
 
         return new ServiceOperationResult(true, $"Service '{ServiceName}' installed and started (port {port}).");
     }
@@ -81,15 +113,15 @@ internal sealed class SystemdServiceManager : IOsServiceManager
         await RunAsync("systemctl", $"disable {ServiceName}", cancellationToken);
 
         // Remove unit file
-        if (File.Exists(UnitFilePath))
+        if (File.Exists(_unitFilePath))
         {
             try
             {
-                File.Delete(UnitFilePath);
+                File.Delete(_unitFilePath);
             }
             catch (UnauthorizedAccessException)
             {
-                return new ServiceOperationResult(false, $"Permission denied removing {UnitFilePath}. Run with sudo.");
+                return new ServiceOperationResult(false, $"Permission denied removing {_unitFilePath}. Run with sudo.");
             }
         }
 
@@ -98,25 +130,36 @@ internal sealed class SystemdServiceManager : IOsServiceManager
         return new ServiceOperationResult(true, $"Service '{ServiceName}' stopped and removed.");
     }
 
-    private static async Task<(int ExitCode, string Output)> RunAsync(string command, string arguments, CancellationToken cancellationToken)
+    /// <summary>
+    /// Returns the <c>Environment=</c> lines of an existing unit whose key BotNexus does not own,
+    /// in file order and verbatim, so they can be reproduced in the regenerated unit.
+    /// </summary>
+    internal static IReadOnlyList<string> ExtractForeignEnvironmentLines(string unitContent)
     {
-        var psi = new ProcessStartInfo
+        if (string.IsNullOrWhiteSpace(unitContent))
+            return [];
+
+        var preserved = new List<string>();
+
+        foreach (var rawLine in unitContent.Split('\n'))
         {
-            FileName = command,
-            Arguments = arguments,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
+            var line = rawLine.Trim('\r', ' ', '\t');
+            if (!line.StartsWith("Environment=", StringComparison.Ordinal))
+                continue;
 
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Failed to start {command}");
+            var assignment = line["Environment=".Length..];
+            var separator = assignment.IndexOf('=');
+            var key = separator < 0 ? assignment : assignment[..separator];
 
-        var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
+            if (OwnedEnvironmentKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
+                continue;
 
-        return (process.ExitCode, string.IsNullOrWhiteSpace(output) ? error : output);
+            preserved.Add(line);
+        }
+
+        return preserved;
     }
+
+    private Task<ProcessRunResult> RunAsync(string command, string arguments, CancellationToken cancellationToken)
+        => _runner.RunRawAsync(command, arguments, cancellationToken);
 }

@@ -1091,6 +1091,28 @@ botnexus gateway install --port 8080
 
 After installation, manage the service with standard OS tools (`sc`, `systemctl`, `launchctl`).
 
+#### Service environment variables — what BotNexus owns
+
+The service environment is a **shared surface**. Operators legitimately add entries to it (on
+Windows, the `Environment` `REG_MULTI_SZ` value under
+`HKLM\SYSTEM\CurrentControlSet\Services\BotNexus`; on Linux, `Environment=` lines in
+`/etc/systemd/system/botnexus.service`) — typically to supply a secret without putting it in
+`config.json`.
+
+BotNexus **owns** only these keys, and rewrites them on every install or repair:
+
+| Key | Platform | Value written |
+|-----|----------|---------------|
+| `BOTNEXUS_HOME` | Windows, Linux, macOS | The resolved BotNexus home directory |
+| `ASPNETCORE_URLS` | Windows, Linux, macOS | `http://localhost:<port>` |
+| `DOTNET_ENVIRONMENT` | Linux (systemd unit) | `Production` |
+
+**Every other environment entry is preserved.** Installation reads the existing value first,
+replaces only the owned keys in place (never duplicating them), and writes back the union — so an
+operator-set entry such as a provider API key survives reinstallation. If the environment write
+fails (for example, `reg.exe` returns non-zero because the command was not run elevated), the
+install reports failure rather than silently continuing with a partially configured service.
+
 ### gateway uninstall
 
 Remove the OS service registration.
