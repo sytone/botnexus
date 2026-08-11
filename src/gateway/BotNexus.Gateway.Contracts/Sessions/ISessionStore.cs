@@ -236,6 +236,31 @@ public interface ISessionStore
     /// <summary>
     /// Archives the session, preserving its data but removing it from active use.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Drain guarantee (issue #2903).</b> Implementations MUST stop and drain any agent run
+    /// bound to <paramref name="sessionId"/> <em>before</em> they commit the archive, and MUST
+    /// scope that fence to the exact session - archiving session A must never disturb a run on an
+    /// unrelated session, even one owned by the same agent.
+    /// </para>
+    /// <para>
+    /// If the run cannot be drained within the implementation's bounded timeout, the archive MUST
+    /// fail with <see cref="SessionArchiveDrainTimeoutException"/> and leave the session untouched
+    /// rather than seal over live work. Callers can therefore rely on exactly two outcomes: the
+    /// in-flight turn completed and was persisted before the seal, or nothing was archived at all.
+    /// A sealed session never subsequently gains turns, and no turn is silently lost.
+    /// </para>
+    /// <para>
+    /// This guarantee is about run lifecycle only. It does not change what "archived" means for a
+    /// given store - the SQLite store seals the row in place, the file store moves the files
+    /// aside, the in-memory store drops the row.
+    /// </para>
+    /// </remarks>
+    /// <param name="sessionId">The session to archive.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="SessionArchiveDrainTimeoutException">
+    /// A run bound to the session did not drain inside the timeout; nothing was archived.
+    /// </exception>
     Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>

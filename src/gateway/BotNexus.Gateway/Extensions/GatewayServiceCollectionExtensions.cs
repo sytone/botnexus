@@ -196,7 +196,12 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<ConversationEventPublisher>();
         services.TryAddSingleton<IConversationEventPublisher>(serviceProvider =>
             serviceProvider.GetRequiredService<ConversationEventPublisher>());
-        services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
+        services.TryAddSingleton<ISessionRunDrain>(serviceProvider =>
+            new SupervisorSessionRunDrain(
+                serviceProvider,
+                serviceProvider.GetService<ILogger<SupervisorSessionRunDrain>>()));
+        services.TryAddSingleton<ISessionStore>(serviceProvider =>
+            AttachArchiveDrain(new InMemorySessionStore(), serviceProvider));
         services.TryAddSingleton<ISessionWriteLock, SessionWriteLock>();
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
         services.TryAddSingleton<IConversationSectionStore, InMemoryConversationSectionStore>();
@@ -641,10 +646,12 @@ public static class GatewayServiceCollectionExtensions
             // Phase 9 / P9-B (#615): thread the conversation store so save-time legacy
             // backfill applies in InMemory test/dev deployments too.
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
-                new InMemorySessionStore(
-                    redactor: serviceProvider.GetService<ISecretRedactor>(),
-                    conversationStore: serviceProvider.GetService<IConversationStore>(),
-                    logger: serviceProvider.GetService<ILogger<InMemorySessionStore>>())));
+                AttachArchiveDrain(
+                    new InMemorySessionStore(
+                        redactor: serviceProvider.GetService<ISecretRedactor>(),
+                        conversationStore: serviceProvider.GetService<IConversationStore>(),
+                        logger: serviceProvider.GetService<ILogger<InMemorySessionStore>>()),
+                    serviceProvider)));
             return;
         }
 
@@ -661,12 +668,14 @@ public static class GatewayServiceCollectionExtensions
             {
                 var fs = serviceProvider.GetRequiredService<IFileSystem>();
                 fs.Directory.CreateDirectory(sessionsPath);
-                return new FileSessionStore(
-                    sessionsPath,
-                    serviceProvider.GetRequiredService<ILogger<FileSessionStore>>(),
-                    fs,
-                    conversationStore: serviceProvider.GetRequiredService<IConversationStore>(),
-                    redactor: serviceProvider.GetService<ISecretRedactor>());
+                return AttachArchiveDrain(
+                    new FileSessionStore(
+                        sessionsPath,
+                        serviceProvider.GetRequiredService<ILogger<FileSessionStore>>(),
+                        fs,
+                        conversationStore: serviceProvider.GetRequiredService<IConversationStore>(),
+                        redactor: serviceProvider.GetService<ISecretRedactor>()),
+                    serviceProvider);
             }));
             return;
         }
@@ -682,15 +691,31 @@ public static class GatewayServiceCollectionExtensions
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
             {
                 RegisterSqliteDatabasePath(serviceProvider, connectionString);
-                return new SqliteSessionStore(
-                    connectionString,
-                    serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
-                    serviceProvider.GetRequiredService<IConversationStore>());
+                return AttachArchiveDrain(
+                    new SqliteSessionStore(
+                        connectionString,
+                        serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
+                        serviceProvider.GetRequiredService<IConversationStore>()),
+                    serviceProvider);
             }));
             return;
         }
 
         throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), ["gateway.sessionStore.type must be either 'InMemory', 'File', or 'Sqlite'."]);
+    }
+
+    /// <summary>
+    /// Wires the archive run-fence (#2903) onto a freshly constructed store. Done here, at the
+    /// composition root, rather than through the store constructors: the fence needs
+    /// <c>IAgentSupervisor</c>, which needs <c>ISessionStore</c>, so a constructor parameter would
+    /// be an unresolvable cycle. <see cref="SupervisorSessionRunDrain"/> resolves the supervisor
+    /// lazily at drain time, so attaching it here costs nothing until an archive actually runs.
+    /// </summary>
+    private static TStore AttachArchiveDrain<TStore>(TStore store, IServiceProvider serviceProvider)
+        where TStore : SessionStoreBase
+    {
+        store.ConfigureArchiveDrain(serviceProvider.GetService<ISessionRunDrain>());
+        return store;
     }
 
     private static void ConfigureConversationStore(IServiceCollection services, PlatformConfig config, string configDirectory)

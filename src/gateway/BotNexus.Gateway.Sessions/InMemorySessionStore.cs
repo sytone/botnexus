@@ -118,13 +118,17 @@ public sealed class InMemorySessionStore : SessionStoreBase
     }
 
     /// <inheritdoc />
-    public override Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default)
+    public override async Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
+        // #2903: this implementation drops the row outright, so archiving under a live run is the
+        // most destructive variant of the race. Fence the exact session first; a drain that times
+        // out throws and the row is left in place.
+        await DrainActiveRunForArchiveAsync(sessionId, cancellationToken).ConfigureAwait(false);
+
         lock (_sync)
         {
             _sessions.Remove(sessionId);
         }
-        return Task.CompletedTask;
     }
 
     protected override Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken)

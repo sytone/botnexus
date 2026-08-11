@@ -198,6 +198,11 @@ public sealed class FileSessionStore : SessionStoreBase
     /// <inheritdoc />
     public override async Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
+        // #2903: stop and drain the run bound to this exact session before the files are moved out
+        // of normal lookup. Archiving under an in-flight turn otherwise leaves the run writing to a
+        // path the store no longer reads. Drained outside the store lock so the run can persist.
+        await DrainActiveRunForArchiveAsync(sessionId, cancellationToken).ConfigureAwait(false);
+
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {

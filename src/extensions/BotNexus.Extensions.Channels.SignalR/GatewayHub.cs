@@ -765,7 +765,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// Delegates to the conversation-reset operation on <see cref="IGatewayHubApplicationService"/>
     /// when a conversation is bound, guarding against stale <paramref name="sessionId"/> values by
     /// passing it as the expected active session. Sessions without a conversation (legacy/orphans)
-    /// are sealed in place -- no transcript-destroying <see cref="ISessionStore.ArchiveAsync"/>.
+    /// are sealed in place rather than archived: as of #2903 <see cref="ISessionStore.ArchiveAsync"/>
+    /// is no longer the run-racing hazard it was -- it now stops and drains the run bound to the
+    /// exact session before committing, and refuses rather than sealing over live work -- but its
+    /// per-store disposal semantics still differ from an in-place seal, which is what this path
+    /// wants.
     /// </remarks>
     /// <param name="agentId">The agent id.</param>
     /// <param name="sessionId">The session id known to the caller.</param>
@@ -788,9 +792,14 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         {
             // Orphan/legacy session with no conversation link (or no reset service configured):
             // stop the agent and seal the session in place (Status=Sealed + SaveAsync).
-            // Deliberately avoids ArchiveAsync because the InMemory implementation deletes the
-            // row and the file store renames files out of normal lookup -- both destroy transcript
-            // readability for any UI that lists historical sessions.
+            //
+            // #2903 re-evaluation: ArchiveAsync is no longer avoided because it races the run --
+            // it now fences the exact session, draining any active run before it commits and
+            // failing with SessionArchiveDrainTimeoutException rather than sealing over live work.
+            // The remaining reason to seal in place is unchanged and is about storage semantics,
+            // not concurrency: the InMemory implementation deletes the row and the file store
+            // renames files out of normal lookup, both of which destroy transcript readability for
+            // any UI that lists historical sessions. Sealing keeps the transcript addressable.
             try
             {
                 await _supervisor.StopAsync(ctx.AgentId, ctx.SessionId, CancellationToken.None);

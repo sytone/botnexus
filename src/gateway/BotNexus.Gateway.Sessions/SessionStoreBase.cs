@@ -10,6 +10,15 @@ namespace BotNexus.Gateway.Sessions;
 public abstract class SessionStoreBase : ISessionStore
 {
     private readonly IConversationStore? _conversationStoreForExistence;
+    private ISessionRunDrain? _runDrain;
+    private TimeSpan _archiveDrainTimeout = DefaultArchiveDrainTimeout;
+
+    /// <summary>
+    /// Default bound on how long <c>ArchiveAsync</c> waits for an active run to stop before it
+    /// refuses to seal (issue #2903). Long enough for a turn that is mid tool-call to unwind after
+    /// an abort, short enough that an archive request does not appear to hang.
+    /// </summary>
+    public static readonly TimeSpan DefaultArchiveDrainTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Initialises the base. Concrete subclasses pass through the optional
@@ -138,6 +147,54 @@ public abstract class SessionStoreBase : ISessionStore
         return new SessionStatusMutationResult(SessionMutationOutcome.Applied, newStatus, session.UpdatedAt);
     }
 
+    /// <summary>
+    /// Wires the run fence used by <see cref="ArchiveAsync"/> (issue #2903). Called after
+    /// construction rather than through the constructor because the drain needs the agent
+    /// supervisor, which in turn needs the session store - a cycle the DI container cannot resolve
+    /// in one pass. A store with no drain configured keeps the pre-#2903 behaviour, which is what
+    /// test fixtures and minimal hosts with no agent runtime want.
+    /// </summary>
+    /// <param name="runDrain">The fence, or <c>null</c> to disable it.</param>
+    /// <param name="drainTimeout">
+    /// Bound on the drain wait. Defaults to <see cref="DefaultArchiveDrainTimeout"/> when null.
+    /// </param>
+    public void ConfigureArchiveDrain(ISessionRunDrain? runDrain, TimeSpan? drainTimeout = null)
+    {
+        _runDrain = runDrain;
+        _archiveDrainTimeout = drainTimeout ?? DefaultArchiveDrainTimeout;
+    }
+
+    /// <summary>
+    /// Stops and drains any run bound to <paramref name="sessionId"/> before an archive commits
+    /// (issue #2903). Derived stores MUST call this as the first statement of their
+    /// <see cref="ArchiveAsync"/> override - before taking any store lock, so a drain that waits
+    /// cannot block the very run it is waiting for from persisting its final turn.
+    /// </summary>
+    /// <param name="sessionId">The exact session being archived.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="SessionArchiveDrainTimeoutException">
+    /// The run was still live at the deadline. The caller must not proceed with the seal.
+    /// </exception>
+    protected async Task DrainActiveRunForArchiveAsync(SessionId sessionId, CancellationToken cancellationToken)
+    {
+        var drain = _runDrain;
+        if (drain is null)
+            return;
+
+        var outcome = await drain.DrainAsync(sessionId, _archiveDrainTimeout, cancellationToken).ConfigureAwait(false);
+        if (outcome == SessionDrainOutcome.TimedOut)
+            throw new SessionArchiveDrainTimeoutException(sessionId, _archiveDrainTimeout);
+    }
+
+    /// <summary>
+    /// Seals the session so it is no longer in active use.
+    /// </summary>
+    /// <remarks>
+    /// Issue #2903: implementations first stop and drain any run bound to <b>this exact</b>
+    /// session, then commit. If the run cannot be drained within the configured timeout the
+    /// archive is abandoned with <see cref="SessionArchiveDrainTimeoutException"/> and the session
+    /// is left exactly as it was - never sealed over live work.
+    /// </remarks>
     public abstract Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
     public async Task<IReadOnlyList<GatewaySession>> ListAsync(AgentId? agentId = null, CancellationToken cancellationToken = default)

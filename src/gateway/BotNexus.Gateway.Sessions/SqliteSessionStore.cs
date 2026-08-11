@@ -522,6 +522,16 @@ public sealed class SqliteSessionStore : SessionStoreBase
     public override async Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+
+        // #2903: fence the run BEFORE the per-session lock. The lock only serialises store writes;
+        // it does nothing to stop an agent turn that is still appending to this session, and the
+        // ReplaceHistoryAsync below is a destructive full-history rewrite from the snapshot loaded
+        // here - so a turn that lands after the load is silently erased. Draining outside the lock
+        // is deliberate: the run being drained needs the lock to persist its final turn, so
+        // waiting while holding it would deadlock the drain against its own subject.
+        // A drain that times out throws and nothing is written at all.
+        await DrainActiveRunForArchiveAsync(sessionId, cancellationToken).ConfigureAwait(false);
+
         using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
         _cache.Remove(sessionId);
 
