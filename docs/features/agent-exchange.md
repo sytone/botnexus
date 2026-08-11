@@ -65,23 +65,21 @@ The budget system prevents runaway agent loops and excessive resource consumptio
 
 ## Scheduled Agent Conversations
 
-Agents can be configured to converse on a cron schedule using the `agent-converse` action:
+Agents can be configured to converse on a cron schedule using the `agent-converse` action. Cron jobs
+are not a configuration-file section - they live in `cron.sqlite` and are created through the `cron`
+tool or `botnexus debug cron`. A single job's stored shape is:
 
 ```json
 {
-  "BotNexus.Cron.Jobs": [
-    {
-      "id": "morning-sync",
-      "schedule": "0 9 * * 1-5",
-      "action": "agent-converse",
-      "metadata": {
-        "targetAgentId": "reporter",
-        "message": "Generate the morning status report.",
-        "objective": "Get daily status",
-        "maxTurns": 5
-      }
-    }
-  ]
+  "id": "morning-sync",
+  "schedule": "0 9 * * 1-5",
+  "action": "agent-converse",
+  "metadata": {
+    "targetAgentId": "reporter",
+    "message": "Generate the morning status report.",
+    "objective": "Get daily status",
+    "maxTurns": 5
+  }
 }
 ```
 

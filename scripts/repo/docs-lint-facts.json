@@ -1,0 +1,44 @@
+{
+  "$comment": [
+    "Fact registry for docs-lint Rule 2 (intra-page contradiction), issue #2865.",
+    "Each entry names a single high-value fact. Rule 2 asserts that any one documentation",
+    "page states AT MOST ONE distinct value for it. A page that disagrees with itself is a",
+    "hard failure: a reader has no way to tell which half is true, so the whole page - and by",
+    "extension the docset - stops being trustworthy.",
+    "",
+    "Fields:",
+    "  id       - stable identifier, reported on failure.",
+    "  defect   - the specific defect from the 2026-08-07 DOC-FINDINGS.md batch this entry",
+    "             exists to prevent. Required by AC7: every rule cites its motivating defect.",
+    "  pattern  - .NET/PowerShell regex with a named capture group 'value'. Every match on a",
+    "             page contributes one observed value.",
+    "  ignoreCase - optional, defaults true.",
+    "  normalize  - optional: 'lower' | 'none'. Defaults 'lower' so 'True' and 'true' are one",
+    "               value; set 'none' when the fact IS the casing (see configKeyCasing)."
+  ],
+  "facts": [
+    {
+      "id": "cronTickIntervalSeconds",
+      "defect": "cron-and-scheduling.md gave tickIntervalSeconds as 60 in a table and 10 in a diagram.",
+      "pattern": "tickIntervalSeconds\\s*(?:[:=]|\\||is|defaults?\\s+to)\\s*[`\"'*]*\\s*(?<value>\\d+)"
+    },
+    {
+      "id": "gatewayLoopbackPort",
+      "defect": "getting-started-release.md sent every new user to port 18790 while the gateway binds 5005.",
+      "$scoping": [
+        "Deliberately NOT a bare localhost:<port> match. A docs page legitimately quotes many",
+        "loopback ports belonging to OTHER processes - Ollama 11434, Jaeger 16686, an OTLP",
+        "collector 4317, a sample reverse proxy on 8080. Flagging those as a self-contradiction",
+        "would be false and would train readers to ignore the gate. The fact is specifically",
+        "'which port does the BotNexus gateway/portal listen on', so the match requires gateway,",
+        "portal or botnexus wording on the same line as the URL."
+      ],
+      "pattern": "(?:gateway|portal|botnexus)[^\\n]{0,80}?(?:localhost|127\\.0\\.0\\.1)\\s*:\\s*(?<value>\\d{2,5})\\b|(?:localhost|127\\.0\\.0\\.1)\\s*:\\s*(?<value>\\d{2,5})\\b[^\\n]{0,60}?(?:gateway|portal|botnexus)"
+    },
+    {
+      "id": "heartbeatIntervalMinutes",
+      "defect": "heartbeat ownership/cadence was stated twice with different numbers.",
+      "pattern": "heartbeat\\s+(?:interval|cadence)[^0-9\\n]{0,24}(?<value>\\d+)\\s*(?:minutes?|min\\b)"
+    }
+  ]
+}

@@ -58,6 +58,19 @@ Closes #
      populated, and error. If the change genuinely has no visible delta (pure refactor),
      write "No visible UI change — pure refactor" instead of attaching media. -->
 
+## Documentation impact
+
+<!-- Issue #2865, rule 4. Documentation drifts because nobody is asked at the time the code
+     changes. This is that question. Tick exactly one.
+
+     The docs-lint workflow enforces the same rule mechanically for changes to an extension
+     manifest, a provider interface, or a controller route: with no `docs/` change in the PR
+     it fails unless the body contains `no-docs-impact`. -->
+
+- [ ] Documentation updated in this PR (list the pages under **Changes**)
+- [ ] Follow-up docs issue opened: #
+- [ ] `no-docs-impact` — reason:
+
 ## Risk & rollback
 
 <!-- Blast radius and how to undo. Call out anything a reviewer would regret discovering post-merge. -->

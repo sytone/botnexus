@@ -1700,11 +1700,11 @@ Configuration sources are loaded in order — later sources override earlier one
 Options:
 - **User secrets** (.NET Core dev only):
   ```bash
-  dotnet user-secrets set "BotNexus:Providers:openai:ApiKey" "sk-..."
+  dotnet user-secrets set "providers:openai:apiKey" "sk-..."
   ```
 - **Environment variables** (production):
   ```bash
-  export BotNexus__Providers__openai__ApiKey=sk-...
+  export BotNexus__providers__openai__apiKey=sk-...
   ```
 - **Secret management** (Azure Key Vault, HashiCorp Vault, etc.)
 

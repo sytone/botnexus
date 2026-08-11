@@ -1,0 +1,107 @@
+name: "CI: Docs lint"
+
+# Mechanical grooming for docs/** (issue #2865).
+#
+# Grooming was 100% human, and a human read reliably catches tone and structure and reliably
+# glides past a wrong port number. On 2026-08-07 one writer reading the docset cold found
+# twelve defects; the worst sent every new user to http://localhost:18790 on the highest-
+# traffic page in the docset while the gateway binds 5005. This workflow runs the checks that
+# would have caught them for free.
+#
+# NOTE ON TRIGGER SCOPE: this deliberately runs on the docs/** paths that ci-build-test.yml
+# lists under paths-ignore, so a docs-only PR - which triggers no test workflow at all - is
+# still gated. It also runs on the lint's own inputs, because a change to the fact registry
+# or the allow-list can silently disarm the gate.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'scripts/repo/docs-lint.ps1'
+      - 'scripts/repo/docs-lint-facts.json'
+      - 'scripts/repo/docs-lint-allow.json'
+      - '.github/workflows/docs-lint.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'scripts/repo/docs-lint.ps1'
+      - 'scripts/repo/docs-lint-facts.json'
+      - 'scripts/repo/docs-lint-allow.json'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  docs-lint:
+    name: docs-lint (literal drift, contradiction, legacy markers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run docs-lint
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/repo/docs-lint.ps1
+
+  # Rule 4 of issue #2865: the docs-vs-source trigger.
+  #
+  # A PR that changes an extension manifest, a provider interface or a controller route has
+  # almost certainly invalidated a documentation page, and the docs drift precisely because
+  # nobody is asked at the time. This job asks. It is advisory by design - a genuine no-docs-
+  # impact change is real, so `no-docs-impact` in the PR body satisfies it - but the
+  # justification has to be written down rather than assumed.
+  docs-impact:
+    name: docs-vs-source trigger
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for a docs change or an explicit justification
+        shell: pwsh
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $changed = @(git diff --name-only "$env:BASE_SHA" "$env:HEAD_SHA")
+          Write-Host "Changed files: $($changed.Count)"
+
+          # Surfaces whose shape a docs page describes verbatim.
+          $sensitive = @($changed | Where-Object {
+              $_ -like '*botnexus-extension.json' -or
+              $_ -like '*IApiProvider*' -or
+              $_ -match 'Controller\.cs$'
+          })
+
+          if ($sensitive.Count -eq 0) {
+            Write-Host 'No documentation-sensitive surface touched; nothing to justify.'
+            exit 0
+          }
+
+          Write-Host "Documentation-sensitive files touched:`n  $($sensitive -join "`n  ")"
+
+          $touchedDocs = @($changed | Where-Object { $_ -like 'docs/*' })
+          if ($touchedDocs.Count -gt 0) {
+            Write-Host "PR also changes documentation ($($touchedDocs.Count) file(s)); satisfied."
+            exit 0
+          }
+
+          if ("$env:PR_BODY" -match 'no-docs-impact') {
+            Write-Host 'PR body carries an explicit no-docs-impact justification; satisfied.'
+            exit 0
+          }
+
+          Write-Host '::error::This PR changes an extension manifest, a provider interface or a controller route but changes no docs/ page and gives no justification. Update the affected documentation, or state `no-docs-impact` in the PR body with a reason (issue #2865, rule 4).'
+          exit 1

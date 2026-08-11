@@ -997,7 +997,7 @@ Extensions receive configuration scoped to their own section (from `~/.botnexus/
 public void Register(IServiceCollection services, IConfiguration configuration)
 {
     // configuration is already scoped to this extension's section
-    // (e.g., "BotNexus:Providers:openai" for the OpenAI provider)
+    // (e.g., "providers:openai" for the OpenAI provider)
     
     var config = configuration.Get<MyExtensionConfig>() ?? new MyExtensionConfig();
     

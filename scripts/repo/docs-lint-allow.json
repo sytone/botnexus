@@ -1,0 +1,30 @@
+{
+  "$comment": [
+    "Rule 1 (literal drift) allow-list, issue #2865.",
+    "A literal listed here is legitimately absent from src/: an external service, a",
+    "third-party default, or a deliberately illustrative example. Every entry must carry a",
+    "justification in $portNotes / $keyNotes - an unexplained addition here is how the gate",
+    "gets hollowed out one silent suppression at a time.",
+    "",
+    "ports: bare port numbers appearing as localhost:<port> / 127.0.0.1:<port> in a fence.",
+    "keys:  dotted or colon-delimited BotNexus.* configuration keys."
+  ],
+  "ports": [
+    "3001",
+    "4317",
+    "4318",
+    "16686",
+    "11434",
+    "5006"
+  ],
+  "$portNotes": {
+    "3001": "A reader's own MCP SSE server in docs/configuration.md. Not a BotNexus port.",
+    "4317": "OpenTelemetry OTLP gRPC, the collector's well-known port (docs/observability.md).",
+    "4318": "OpenTelemetry OTLP HTTP, the collector's well-known port (docs/observability.md).",
+    "16686": "Jaeger UI, Jaeger's own default (docs/observability.md).",
+    "11434": "Ollama's default port, quoted in the OpenAI-compatible provider docs.",
+    "5006": "Deliberately illustrative: troubleshooting.md tells a reader whose 5005 is taken to pick a DIFFERENT port. The value is an example, not a claim about the default."
+  },
+  "keys": [],
+  "$keyNotes": {}
+}
