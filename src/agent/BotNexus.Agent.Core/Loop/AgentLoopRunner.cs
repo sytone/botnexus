@@ -550,25 +550,10 @@ public static class AgentLoopRunner
         return messages.Skip(messages.Count - keep).ToList();
     }
 
+    /// <summary>
+    /// Delegates to <see cref="TransientErrorClassifier"/> so the loop's retry decision and the
+    /// classifier's tested pattern table can never drift apart (issue #2856).
+    /// </summary>
     private static bool IsTransientError(Exception exception)
-    {
-        if (exception is ProviderRateLimitException)
-            return true;
-
-        var message = exception.Message;
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return false;
-        }
-
-        return message.Contains("rate limit", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("too many requests", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("temporarily unavailable", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("service unavailable", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("429", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("502", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("503", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("504", StringComparison.OrdinalIgnoreCase);
-    }
+        => TransientErrorClassifier.IsTransient(exception);
 }
