@@ -496,6 +496,11 @@ The following section IDs cannot be overridden (safety-critical or runtime data)
 | `skills-guidance` | 55 | Skills loading and creation guidance (conditional: only when skills tools available) |
 | `model-guidance` | 135 | Per-model-family behavioral defaults (conditional: only for recognized families) |
 
+The gateway's `SystemPromptBuilder` registers further sections by `PromptOrder` key rather than by
+section ID, including the `<canvas>` guidance at order 155 (conditional: only when the agent's tool
+list contains `canvas`). That section states when the canvas is the right output surface and when a
+file is — it does not restate the canvas tool's mechanics, which the tool description already carries.
+
 ### LambdaPromptSection
 
 A convenience class for creating sections with a delegate, optional `SectionId`, and optional inclusion predicate:

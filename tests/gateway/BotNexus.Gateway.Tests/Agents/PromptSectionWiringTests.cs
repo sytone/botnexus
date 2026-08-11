@@ -129,6 +129,63 @@ public sealed class PromptSectionWiringTests
     }
 
     [Fact]
+    public void CanvasGuidanceSection_AppearsWhenCanvasToolAvailable()
+    {
+        var prompt = BuildFullPrompt(tools: ["read", "write", "canvas"]);
+
+        prompt.ShouldContain("<canvas>");
+        prompt.ShouldContain("</canvas>");
+        prompt.ShouldContain("sortable");
+    }
+
+    [Fact]
+    public void CanvasGuidanceSection_OmittedWhenCanvasToolAbsent()
+    {
+        // AC#2: an agent without the canvas tool pays no tokens for guidance it cannot act on.
+        var prompt = BuildFullPrompt(tools: ["read", "write", "shell"]);
+
+        prompt.ShouldNotContain("<canvas>");
+    }
+
+    [Fact]
+    public void CanvasGuidanceSection_NamesNonTriggersNotJustTriggers()
+    {
+        // AC#3: the section must stay a two-sided trigger list. A future edit that reduces it to
+        // blanket "prefer the canvas" encouragement produces canvas renders for two-line answers,
+        // which is worse than having no guidance at all -- so pin the non-trigger clauses by name.
+        var prompt = BuildFullPrompt(tools: ["read", "canvas"]);
+
+        prompt.ShouldContain("Do NOT use the canvas for");
+        prompt.ShouldContain("a file is the right surface");
+        prompt.ShouldContain("outlive the conversation");
+    }
+
+    [Fact]
+    public void CanvasGuidanceSection_WarnsThatNonPortalChannelsCannotSeeIt()
+    {
+        // The canvas renders only in the portal; on Signal/Telegram the reply itself must still
+        // carry the substance or the user receives nothing.
+        var prompt = BuildFullPrompt(tools: ["read", "canvas"]);
+
+        prompt.ShouldContain("reply must still carry the answer");
+    }
+
+    [Fact]
+    public void SectionOrder_CanvasGuidance_AfterMessaging()
+    {
+        // AC#4: the canvas section has a defined PromptOrder slot next to the other
+        // output-surface guidance (messaging/voice), not an arbitrary append.
+        var prompt = BuildFullPrompt(tools: ["read", "canvas"]);
+
+        var messagingIdx = prompt.IndexOf("<messaging>", StringComparison.Ordinal);
+        var canvasIdx = prompt.IndexOf("<canvas>", StringComparison.Ordinal);
+
+        messagingIdx.ShouldBeGreaterThan(-1);
+        canvasIdx.ShouldBeGreaterThan(-1);
+        messagingIdx.ShouldBeLessThan(canvasIdx);
+    }
+
+    [Fact]
     public void SectionOrder_ToolEnforcement_BeforeSafety()
     {
         var prompt = BuildFullPrompt();

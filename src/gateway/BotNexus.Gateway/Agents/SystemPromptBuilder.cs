@@ -100,6 +100,7 @@ public static class SystemPromptBuilder
         public const int WorkspaceFilesHeader = 130;
         public const int ReplyTags = 140;
         public const int Messaging = 150;
+        public const int Canvas = 155;
         public const int Voice = 160;
         public const int Reasoning = 170;
         public const int StableProjectContext = 180;
@@ -186,6 +187,7 @@ public static class SystemPromptBuilder
             .Add(ModelGuidanceSection.Create())
             .Add(new LambdaPromptSection(PromptOrder.ReplyTags, BuildReplyTagsGuidanceSection, static _ => IncludeReplyTagsSectionByDefault))
             .Add(new LambdaPromptSection(PromptOrder.Messaging, BuildMessagingGuidanceSection, xmlTag: "messaging"))
+            .Add(new LambdaPromptSection(PromptOrder.Canvas, BuildCanvasGuidanceSection, HasCanvasTool, xmlTag: "canvas"))
             .Add(new LambdaPromptSection(PromptOrder.Voice, BuildVoiceGuidanceSection))
             .Add(new LambdaPromptSection(PromptOrder.Reasoning, BuildReasoningSection, static context => GetGatewayData(context).Parameters.ReasoningTagHint))
             .Add(new LambdaPromptSection(PromptOrder.StableProjectContext, BuildStableProjectContextSection))
@@ -378,6 +380,30 @@ public static class SystemPromptBuilder
         return ["## Voice (TTS)", hint, ""];
     }
 
+    /// <summary>
+    /// Canvas guidance (#2974). This deliberately says what the canvas is FOR and when a file beats
+    /// it; the mechanics (render/clear/state/submitToAgent) already live in the tool description and
+    /// restating them here would be paid for on every single turn. It is written as a two-sided
+    /// trigger list on purpose: unconditional "prefer the canvas" encouragement produces canvas
+    /// renders for two-line answers, which is a worse outcome than the canvas going unused.
+    /// </summary>
+    public static IReadOnlyList<string> BuildCanvasSection(bool isMinimal, IReadOnlySet<string> availableTools)
+    {
+        ArgumentNullException.ThrowIfNull(availableTools);
+
+        if (isMinimal || !availableTools.Contains("canvas"))
+            return [];
+
+        return
+        [
+            "The canvas is a rendered HTML panel in the portal, alongside the conversation. It is for output the user LOOKS AT rather than processes.",
+            "Use it for: tabular or comparative data (especially sortable/filterable), anything graphable (trends, distributions, dependency or flow diagrams), and forms or choices the user hands back to you.",
+            "Do NOT use the canvas for: short prose answers; content the user will grep, diff, or feed to another tool -- a file is the right surface for that; or anything that must outlive the conversation, because canvas state is per-conversation.",
+            "The canvas is only visible in the portal. On other channels the reply must still carry the answer -- never respond with only a pointer to a render.",
+            ""
+        ];
+    }
+
     public static IReadOnlyList<string> BuildDocsSection(string? docsPath, bool isMinimal, string readToolName)
     {
         _ = readToolName;
@@ -479,6 +505,23 @@ public static class SystemPromptBuilder
     {
         var data = GetGatewayData(context);
         return BuildVoiceSection(data.IsMinimal, data.Parameters.TtsHint);
+    }
+
+    /// <summary>
+    /// Gate for the canvas guidance section. The canvas is a real output surface that agents were
+    /// simply never told about (#2974), but guidance an agent cannot act on is pure token cost, so
+    /// the section is emitted only when the agent actually holds the <c>canvas</c> tool.
+    /// </summary>
+    private static bool HasCanvasTool(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return !data.IsMinimal && data.NormalizedTools.Contains("canvas");
+    }
+
+    private static IReadOnlyList<string> BuildCanvasGuidanceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildCanvasSection(data.IsMinimal, data.NormalizedTools);
     }
 
     private static IReadOnlyList<string> BuildStableProjectContextSection(PromptContext context)
