@@ -339,7 +339,12 @@ public sealed class DocsLintScriptTests : IDisposable
         var args = new StringBuilder();
         args.Append("-NoProfile -NonInteractive -File \"").Append(scriptPath).Append('"');
         args.Append(" -RepoRoot \"").Append(repoRoot).Append('"');
-        args.Append(" -Rule ").Append(rules.Replace(",", " "));
+        // Pass the rule list as an UNQUOTED comma-separated token. pwsh parses that as an
+        // array, which is what -Rule expects. The two obvious alternatives both fail:
+        // a quoted "a,b,c" binds as ONE string and trips the ValidateSet, and a
+        // space-separated list lets the trailing values bind positionally to -DocsPath and
+        // -SourcePath instead. Both cost a remote gate to discover.
+        args.Append(" -Rule ").Append(rules);
         if (asJson)
         {
             args.Append(" -AsJson");

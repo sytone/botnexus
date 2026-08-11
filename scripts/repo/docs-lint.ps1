@@ -73,7 +73,7 @@ param(
     [string]$SourcePath = 'src',
     [string]$FactsPath,
     [string]$AllowListPath,
-    [ValidateSet('literal-drift', 'intra-page-contradiction', 'legacy-marker')]
+    [ValidateNotNullOrEmpty()]
     [string[]]$Rule = @('literal-drift', 'intra-page-contradiction', 'legacy-marker'),
     [switch]$AsJson
 )
@@ -85,6 +85,19 @@ if (-not $RepoRoot) {
     $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+
+# `pwsh -File script.ps1 -Rule a,b,c` hands the parameter ONE literal string - the -File host
+# does no PowerShell parsing of arguments, so an array is never constructed and a ValidateSet
+# on the raw value rejects the very list it permits. Split here instead, then validate
+# ourselves. Discovered by a remote gate failure; do not "simplify" this back to ValidateSet.
+$Rule = @($Rule | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$knownRules = @('literal-drift', 'intra-page-contradiction', 'legacy-marker')
+$unknownRules = @($Rule | Where-Object { $knownRules -notcontains $_ })
+if ($unknownRules.Count -gt 0) {
+    [Console]::Error.WriteLine(
+        "Unknown rule(s): $($unknownRules -join ', '). Known rules: $($knownRules -join ', ').")
+    exit 2
+}
 if (-not $FactsPath) { $FactsPath = Join-Path $PSScriptRoot 'docs-lint-facts.json' }
 if (-not $AllowListPath) { $AllowListPath = Join-Path $PSScriptRoot 'docs-lint-allow.json' }
 
