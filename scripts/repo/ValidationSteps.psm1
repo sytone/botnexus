@@ -492,4 +492,42 @@ function Get-BotNexusValidationLock {
     }
 }
 
-Export-ModuleMember -Function Invoke-BotNexusValidationStep, Get-BotNexusValidationLock, Remove-BotNexusValidationLock, Register-BotNexusValidationLockRelease, Test-BotNexusLockOwnerAlive, Read-BotNexusLockOwner, ConvertTo-BotNexusLockOwnerRecord
+function Get-BotNexusLockWaitSeconds {
+    <#
+    .SYNOPSIS
+        Resolves the global-lock wait budget for a validation mode.
+    .DESCRIPTION
+        Issue #2331 wanted the authoritative gate to be effectively unbounded so it could
+        never be silently truncated, and that intent is sound. It was implemented as
+        `[Math]::Max($LockWaitSeconds, 86400)`, which uses the caller's value only as a LOWER
+        bound -- so `-LockWaitSeconds 300` became 86400 and the parameter was inert for the
+        one mode allowed to fail (issue #2793).
+
+        An unbounded DEFAULT is safe; an unbounded OVERRIDE removes the caller's ability to
+        bound a wait at all. This function keeps the former and drops the latter: a caller
+        that supplies nothing (RequestedSeconds -lt 0) gets the documented mode default, and
+        a caller that supplies a value gets exactly that value, so an automated caller can
+        bound contention and retry instead of hanging.
+    .PARAMETER Mode
+        The Invoke-LocalValidation mode. 'hook' is the advisory pre-commit gate; every other
+        mode is the authoritative gate.
+    .PARAMETER RequestedSeconds
+        The caller-supplied bound. Negative means 'not supplied' -- use the mode default.
+        Zero is an explicit request for a single acquisition attempt, not 'unset'.
+    .OUTPUTS
+        [int] seconds to wait for the global validation lock.
+    #>
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory)][string]$Mode,
+        [Parameter(Mandatory)][int]$RequestedSeconds
+    )
+
+    if ($RequestedSeconds -ge 0) { return $RequestedSeconds }
+    if ($Mode -eq 'hook') { return 120 }
+    # Effectively unbounded, but a real number so the non-acquisition path stays reachable.
+    return 86400
+}
+
+Export-ModuleMember -Function Invoke-BotNexusValidationStep, Get-BotNexusValidationLock, Get-BotNexusLockWaitSeconds, Remove-BotNexusValidationLock, Register-BotNexusValidationLockRelease, Test-BotNexusLockOwnerAlive, Read-BotNexusLockOwner, ConvertTo-BotNexusLockOwnerRecord
