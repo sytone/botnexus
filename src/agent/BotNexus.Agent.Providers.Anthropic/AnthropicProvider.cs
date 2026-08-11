@@ -8,6 +8,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Agent.Providers.Anthropic;
 
@@ -18,7 +19,13 @@ namespace BotNexus.Agent.Providers.Anthropic;
 /// message conversion to <see cref="AnthropicMessageConverter"/>,
 /// and stream parsing to <see cref="AnthropicStreamParser"/>.
 /// </summary>
-public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvider
+/// <param name="httpClient">The shared provider HTTP client.</param>
+/// <param name="secretRedactor">
+/// Optional secret redactor applied to a non-2xx error body before it is interpolated into an
+/// exception message that the agent loop persists as the session-visible <c>ErrorMessage</c> (#2881).
+/// Optional so no existing construction site breaks; the gateway wires the shared redactor.
+/// </param>
+public sealed partial class AnthropicProvider(HttpClient httpClient, ISecretRedactor? secretRedactor = null) : IApiProvider
 {
     private const string ApiVersion = "2023-06-01";
     private const string ClaudeCodeVersion = "2.1.75";
@@ -225,7 +232,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
             {
                 errorBody = $"<error body exceeded {ErrorBodyLimitBytes} bytes and was discarded>";
             }
-            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Anthropic");
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Anthropic", secretRedactor);
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(effectiveCt);

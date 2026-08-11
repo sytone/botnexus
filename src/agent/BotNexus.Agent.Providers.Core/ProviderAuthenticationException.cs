@@ -43,9 +43,24 @@ public sealed class ProviderAuthenticationException : HttpRequestException
     /// <param name="providerName">The provider that rejected the request.</param>
     /// <param name="statusCode">The HTTP status code (typically 401 or 403).</param>
     /// <param name="errorBody">The raw error body from the provider, appended for diagnosis.</param>
-    public static string BuildMessage(string providerName, int statusCode, string errorBody)
+    /// <param name="secretRedactor">
+    /// Optional secret redactor applied to <paramref name="errorBody"/> before it is appended to the
+    /// <c>Provider response:</c> suffix. A 401/403 body is the <b>most</b> likely place for a provider
+    /// to echo the credential it just rejected, and this message is persisted as the session-visible
+    /// <c>ErrorMessage</c>, so redaction is applied here as well as in
+    /// <see cref="ProviderHttpErrorHelper.ThrowForFailedResponse"/>: the redactor is idempotent, and
+    /// pinning it on both surfaces means a direct caller of this builder cannot bypass it (#2881).
+    /// When <see langword="null"/> the body is appended unchanged, so no existing caller breaks and
+    /// diagnostics are never silently dropped.
+    /// </param>
+    public static string BuildMessage(
+        string providerName,
+        int statusCode,
+        string errorBody,
+        BotNexus.Gateway.Abstractions.Security.ISecretRedactor? secretRedactor = null)
     {
-        var detail = string.IsNullOrWhiteSpace(errorBody) ? string.Empty : $" Provider response: {errorBody}";
+        var redactedBody = ProviderHttpErrorHelper.Redact(errorBody, secretRedactor);
+        var detail = string.IsNullOrWhiteSpace(redactedBody) ? string.Empty : $" Provider response: {redactedBody}";
         return
             $"Authentication failed for provider '{providerName}' (HTTP {statusCode}): the provider rejected your " +
             $"credentials. Check or rotate the API key for '{providerName}', or switch to a model whose provider is " +

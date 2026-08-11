@@ -7,6 +7,7 @@ using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Compatibility;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Providers.Copilot.Completions;
@@ -23,16 +24,23 @@ namespace BotNexus.Agent.Providers.Copilot.Completions;
 /// Completions provider.
 /// </para>
 /// </summary>
+/// <param name="httpClient">The shared provider HTTP client.</param>
+/// <param name="logger">Stream diagnostics logger.</param>
+/// <param name="secretRedactor">
+/// Optional secret redactor applied to a non-2xx error body before it is interpolated into an
+/// exception message that the agent loop persists as the session-visible <c>ErrorMessage</c> (#2881).
+/// </param>
 public sealed class CopilotCompletionsProvider(
     HttpClient httpClient,
-    ILogger<CopilotCompletionsProvider> logger) : IApiProvider
+    ILogger<CopilotCompletionsProvider> logger,
+    ISecretRedactor? secretRedactor = null) : IApiProvider
 {
     private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
 
     public string Api => "github-copilot-completions";
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
-        => CompletionsStreamEngine.StreamAsync(BuildProfile(), _httpClient, logger, model, context, options);
+        => CompletionsStreamEngine.StreamAsync(BuildProfile(secretRedactor), _httpClient, logger, model, context, options);
 
     public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
     {
@@ -59,7 +67,7 @@ public sealed class CopilotCompletionsProvider(
         return Stream(model, context, completionsOptions);
     }
 
-    private static CompletionsTransportProfile BuildProfile() => new(
+    private static CompletionsTransportProfile BuildProfile(ISecretRedactor? secretRedactor) => new(
         Api: "github-copilot-completions",
         ActivityName: "provider.copilot-completions.stream",
         BuildPayload: static (model, systemPrompt, messages, tools, opts, compat) =>
@@ -77,8 +85,9 @@ public sealed class CopilotCompletionsProvider(
             foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(messages, hasImages, headerOptions))
                 request.Headers.TryAddWithoutValidation(key, value);
         },
-        ThrowForError: static (response, providerError) =>
-            ProviderHttpErrorHelper.ThrowForFailedResponse(response, providerError, "Copilot Completions"),
+        ThrowForError: static (response, providerError, redactor) =>
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, providerError, "Copilot Completions", redactor),
         OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current),
-        InspectChunk: static root => CopilotUsageActivity.TryParseAndEmit(root, Activity.Current));
+        InspectChunk: static root => CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
+        SecretRedactor: secretRedactor);
 }

@@ -143,7 +143,10 @@ public static class ResponsesStreamEngine
             {
                 errorBody = $"<error body exceeded {ErrorBodyLimitBytes} bytes and was discarded>";
             }
-            profile.ThrowForError(response, errorBody);
+            // #2881: the untrusted provider error body is about to become a persisted, user-visible
+            // exception message. Hand the profile's redactor down so ProviderHttpErrorHelper can
+            // scrub it at the single choke point.
+            profile.ThrowForError(response, errorBody, profile.SecretRedactor);
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(ct);

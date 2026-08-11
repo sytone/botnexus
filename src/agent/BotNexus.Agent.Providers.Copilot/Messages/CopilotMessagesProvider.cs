@@ -8,6 +8,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Agent.Providers.Copilot.Messages;
 
@@ -18,7 +19,12 @@ namespace BotNexus.Agent.Providers.Copilot.Messages;
 /// Always uses Bearer auth with the Copilot OAuth access token and applies
 /// Copilot dynamic headers on every request.
 /// </summary>
-public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IApiProvider
+/// <param name="httpClient">The shared provider HTTP client.</param>
+/// <param name="secretRedactor">
+/// Optional secret redactor applied to a non-2xx error body before it is interpolated into an
+/// exception message that the agent loop persists as the session-visible <c>ErrorMessage</c> (#2881).
+/// </param>
+public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecretRedactor? secretRedactor = null) : IApiProvider
 {
     private const string ApiVersion = "2023-06-01";
     public const string ApiId = "github-copilot-messages";
@@ -225,7 +231,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient) : IAp
                 errorBody = $"<error body exceeded {ErrorBodyLimitBytes} bytes and was discarded>";
             }
 
-            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Messages");
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Messages", secretRedactor);
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(effectiveCt);

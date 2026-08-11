@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Core.Compatibility;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Agent.Providers.Core.Streaming;
 
@@ -25,9 +26,12 @@ namespace BotNexus.Agent.Providers.Core.Streaming;
 /// interaction id).
 /// </param>
 /// <param name="ThrowForError">
-/// Projects a non-success HTTP response into the provider's exception shape — a plain
+/// Projects a non-success HTTP response into the provider's exception shape - a plain
 /// <see cref="System.Net.Http.HttpRequestException"/> for OpenAI, or the richer
-/// <c>ProviderHttpErrorHelper</c> projection for Copilot.
+/// <c>ProviderHttpErrorHelper</c> projection for Copilot. The third argument is the optional secret
+/// redactor the engine hands down from <see cref="SecretRedactor"/>; the delegate must forward it to
+/// <c>ProviderHttpErrorHelper.ThrowForFailedResponse</c> so the untrusted error body is scrubbed at
+/// the single choke point before it is interpolated into a persisted, user-visible message (#2881).
 /// </param>
 /// <param name="OnResponseHeaders">
 /// Optional hook invoked with the raw response immediately after send. Copilot uses it to emit
@@ -37,11 +41,17 @@ namespace BotNexus.Agent.Providers.Core.Streaming;
 /// Optional per-SSE-chunk inspection hook. Copilot uses it to emit usage telemetry; OpenAI leaves it
 /// null.
 /// </param>
+/// <param name="SecretRedactor">
+/// Optional secret redactor for the untrusted non-2xx error body (#2881). Supplied by the provider
+/// shell from its own injected redactor and handed to <paramref name="ThrowForError"/> by the engine.
+/// Null is a deliberate no-op so an unwired provider keeps its diagnostics rather than losing them.
+/// </param>
 public sealed record CompletionsTransportProfile(
     string Api,
     string ActivityName,
     Func<LlmModel, string?, IReadOnlyList<Message>, IReadOnlyList<Tool>?, StreamOptions?, OpenAICompletionsCompat, JsonObject> BuildPayload,
     Action<HttpRequestMessage, LlmModel, IReadOnlyList<Message>, StreamOptions?> DecorateHeaders,
-    Action<HttpResponseMessage, string> ThrowForError,
+    Action<HttpResponseMessage, string, ISecretRedactor?> ThrowForError,
     Action<HttpResponseMessage>? OnResponseHeaders = null,
-    Action<JsonElement>? InspectChunk = null);
+    Action<JsonElement>? InspectChunk = null,
+    ISecretRedactor? SecretRedactor = null);

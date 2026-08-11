@@ -10,6 +10,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Providers.Copilot.Responses;
@@ -24,9 +25,19 @@ public sealed class CopilotResponsesProvider : IApiProvider
     private readonly ILogger<CopilotResponsesProvider> _logger;
     private readonly Func<ICopilotResponsesWebSocketTransport> _webSocketFactory;
 
+    /// <summary>
+    /// Optional secret redactor applied to a non-2xx error body before it is interpolated into an
+    /// exception message that the agent loop persists as the session-visible <c>ErrorMessage</c>
+    /// (#2881). Null is a deliberate no-op so no existing construction site breaks.
+    /// </summary>
+    private readonly ISecretRedactor? _secretRedactor;
+
     /// <summary>Creates the Copilot Responses provider with the production WebSocket adapter.</summary>
-    public CopilotResponsesProvider(HttpClient httpClient, ILogger<CopilotResponsesProvider> logger)
-        : this(httpClient, logger, static () => new CopilotResponsesWebSocketTransport())
+    public CopilotResponsesProvider(
+        HttpClient httpClient,
+        ILogger<CopilotResponsesProvider> logger,
+        ISecretRedactor? secretRedactor = null)
+        : this(httpClient, logger, static () => new CopilotResponsesWebSocketTransport(), secretRedactor)
     {
     }
 
@@ -34,18 +45,20 @@ public sealed class CopilotResponsesProvider : IApiProvider
         HttpClient httpClient,
         ILogger<CopilotResponsesProvider> logger,
         ICopilotResponsesWebSocketTransport webSocket)
-        : this(httpClient, logger, () => webSocket)
+        : this(httpClient, logger, () => webSocket, null)
     {
     }
 
     private CopilotResponsesProvider(
         HttpClient httpClient,
         ILogger<CopilotResponsesProvider> logger,
-        Func<ICopilotResponsesWebSocketTransport> webSocketFactory)
+        Func<ICopilotResponsesWebSocketTransport> webSocketFactory,
+        ISecretRedactor? secretRedactor)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _webSocketFactory = webSocketFactory;
+        _secretRedactor = secretRedactor;
     }
 
     /// <inheritdoc />
@@ -252,9 +265,9 @@ public sealed class CopilotResponsesProvider : IApiProvider
     }
 
     private LlmStream StreamSse(LlmModel model, Context context, StreamOptions? options)
-        => ResponsesStreamEngine.StreamAsync(BuildProfile(_logger), _httpClient, _logger, model, context, options);
+        => ResponsesStreamEngine.StreamAsync(BuildProfile(_logger, _secretRedactor), _httpClient, _logger, model, context, options);
 
-    private static ResponsesTransportProfile BuildProfile(ILogger logger) => new(
+    private static ResponsesTransportProfile BuildProfile(ILogger logger, ISecretRedactor? secretRedactor) => new(
         Api: "github-copilot-responses",
         ActivityName: "provider.copilot-responses.stream",
         BuildPayload: static (model, systemPrompt, messages, tools, options) =>
@@ -272,9 +285,10 @@ public sealed class CopilotResponsesProvider : IApiProvider
             foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(messages, hasImages, headerOptions))
                 request.Headers.TryAddWithoutValidation(key, value);
         },
-        ThrowForError: static (response, errorBody) =>
-            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Responses"),
-        OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current));
+        ThrowForError: static (response, errorBody, redactor) =>
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Responses", redactor),
+        OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current),
+        SecretRedactor: secretRedactor);
 
     private static string NormalizeTextDelta(LlmModel model, string delta)
         => CopilotTextDeltaNormalizer.Normalize(model.Id, delta);

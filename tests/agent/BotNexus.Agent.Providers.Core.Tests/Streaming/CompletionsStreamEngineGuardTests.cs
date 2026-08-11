@@ -100,7 +100,9 @@ public class CompletionsStreamEngineGuardTests
             ActivityName: "test.completions.stream",
             BuildPayload: (_, _, _, _, _, _) => new JsonObject { ["model"] = "gpt-guard", ["stream"] = true },
             DecorateHeaders: (_, _, _, _) => { },
-            ThrowForError: (resp, providerError) =>
+            // #2881: ThrowForError now receives the transport profile's optional secret redactor.
+            // This guard test asserts byte-cap behaviour, not redaction, so it ignores the redactor.
+            ThrowForError: (resp, providerError, _) =>
                 throw new HttpRequestException($"HTTP {(int)resp.StatusCode}: {providerError}"));
 
         var stream = CompletionsStreamEngine.StreamAsync(

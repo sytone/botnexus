@@ -154,7 +154,10 @@ public static class CompletionsStreamEngine
                 errorBody = $"<error body exceeded {ErrorBodyLimitBytes} bytes and was discarded>";
             }
             var providerError = ExtractProviderErrorMessage(errorBody, model);
-            profile.ThrowForError(response, providerError);
+            // #2881: the untrusted provider error body is about to become a persisted, user-visible
+            // exception message. Hand the profile's redactor down so ProviderHttpErrorHelper can
+            // scrub it at the single choke point.
+            profile.ThrowForError(response, providerError, profile.SecretRedactor);
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(ct);

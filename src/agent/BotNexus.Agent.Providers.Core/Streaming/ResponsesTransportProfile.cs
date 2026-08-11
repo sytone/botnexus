@@ -1,5 +1,6 @@
 using System.Net.Http;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Agent.Providers.Core.Streaming;
 
@@ -55,11 +56,18 @@ public delegate Task ResponsesStreamParse(
 /// Optional hook invoked with the raw response immediately after send. Copilot uses it to emit
 /// response-header telemetry to the current activity; OpenAI leaves it null.
 /// </param>
+/// <param name="SecretRedactor">
+/// Optional secret redactor for the untrusted non-2xx error body (#2881). Supplied by the provider
+/// shell and handed to <paramref name="ThrowForError"/> by the engine so the body is scrubbed at the
+/// single choke point before it lands in a persisted, user-visible exception message. Null is a
+/// deliberate no-op so an unwired provider keeps its diagnostics rather than losing them.
+/// </param>
 public sealed record ResponsesTransportProfile(
     string Api,
     string ActivityName,
     ResponsesPayloadBuilder BuildPayload,
     ResponsesStreamParse Parse,
     Action<HttpRequestMessage, LlmModel, IReadOnlyList<Message>, StreamOptions?> DecorateHeaders,
-    Action<HttpResponseMessage, string> ThrowForError,
-    Action<HttpResponseMessage>? OnResponseHeaders = null);
+    Action<HttpResponseMessage, string, ISecretRedactor?> ThrowForError,
+    Action<HttpResponseMessage>? OnResponseHeaders = null,
+    ISecretRedactor? SecretRedactor = null);

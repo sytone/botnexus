@@ -8,5 +8,15 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="OpenTelemetry.Api" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- #2881: ProviderHttpErrorHelper must redact secret-shaped values out of provider error
+         bodies BEFORE they are interpolated into an exception message, because that message is
+         persisted as the session-visible ErrorMessage. The redaction seam is ISecretRedactor,
+         which lives in the zero-dependency BotNexus.Domain.Wire assembly precisely so a
+         low-level, widely-referenced project like this one (and the extension ALCs that load it)
+         can consume the interface without taking a dependency on BotNexus.Domain and its Vogen
+         runtime closure. Wire has no references of its own, so this edge is a pure leaf edge. -->
+    <ProjectReference Include="..\..\domain\BotNexus.Domain.Wire\BotNexus.Domain.Wire.csproj" />
+  </ItemGroup>
 
 </Project>

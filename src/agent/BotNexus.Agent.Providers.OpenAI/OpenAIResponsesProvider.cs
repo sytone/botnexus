@@ -4,6 +4,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Providers.OpenAI;
@@ -21,14 +22,21 @@ namespace BotNexus.Agent.Providers.OpenAI;
 /// emit shapes are shared with the Copilot Responses provider.
 /// </para>
 /// </summary>
+/// <param name="httpClient">The shared provider HTTP client.</param>
+/// <param name="logger">Stream diagnostics logger.</param>
+/// <param name="secretRedactor">
+/// Optional secret redactor applied to a non-2xx error body before it is interpolated into an
+/// exception message that the agent loop persists as the session-visible <c>ErrorMessage</c> (#2881).
+/// </param>
 public sealed class OpenAIResponsesProvider(
     HttpClient httpClient,
-    ILogger<OpenAIResponsesProvider> logger) : IApiProvider
+    ILogger<OpenAIResponsesProvider> logger,
+    ISecretRedactor? secretRedactor = null) : IApiProvider
 {
     public string Api => "openai-responses";
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
-        => ResponsesStreamEngine.StreamAsync(BuildProfile(logger), httpClient, logger, model, context, options);
+        => ResponsesStreamEngine.StreamAsync(BuildProfile(logger, secretRedactor), httpClient, logger, model, context, options);
 
     public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
     {
@@ -55,7 +63,7 @@ public sealed class OpenAIResponsesProvider(
         return Stream(model, context, responsesOptions);
     }
 
-    private static ResponsesTransportProfile BuildProfile(ILogger logger) => new(
+    private static ResponsesTransportProfile BuildProfile(ILogger logger, ISecretRedactor? secretRedactor) => new(
         Api: "openai-responses",
         ActivityName: "provider.openai-responses.stream",
         BuildPayload: static (model, systemPrompt, messages, tools, options) =>
@@ -78,8 +86,9 @@ public sealed class OpenAIResponsesProvider(
                     request.Headers.TryAddWithoutValidation(key, value);
             }
         },
-        ThrowForError: static (response, errorBody) =>
-            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "OpenAI"));
+        ThrowForError: static (response, errorBody, redactor) =>
+            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "OpenAI", redactor),
+        SecretRedactor: secretRedactor);
 
     private static string MapThinkingLevel(ThinkingLevel level) => level switch
     {

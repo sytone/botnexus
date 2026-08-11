@@ -109,7 +109,9 @@ public class ResponsesStreamEngineGuardTests
                 stream.End(msg);
             },
             DecorateHeaders: (_, _, _, _) => { },
-            ThrowForError: (resp, body) => throw new HttpRequestException($"HTTP {(int)resp.StatusCode}: {body}"));
+            // #2881: ThrowForError now receives the transport profile's optional secret redactor.
+            // This guard test asserts byte-cap behaviour, not redaction, so it ignores the redactor.
+            ThrowForError: (resp, body, _) => throw new HttpRequestException($"HTTP {(int)resp.StatusCode}: {body}"));
 
         var stream = ResponsesStreamEngine.StreamAsync(
             profile, new HttpClient(handler), NullLogger.Instance, Model(),

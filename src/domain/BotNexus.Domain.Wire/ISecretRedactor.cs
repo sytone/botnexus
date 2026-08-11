@@ -5,6 +5,17 @@ namespace BotNexus.Gateway.Abstractions.Security;
 /// Applied inline at every transcript append and compaction summary write to prevent
 /// credentials, API keys, and tokens from being persisted unredacted.
 /// </summary>
+/// <remarks>
+/// <b>Why this interface lives in the dependency-free <c>BotNexus.Domain.Wire</c> assembly (#2881).</b>
+/// It used to sit in <c>BotNexus.Domain</c>, which is unreachable from the provider layer: the
+/// <c>BotNexus.Agent.Providers.*</c> projects sit below Domain in the graph and are loaded into
+/// isolated extension <c>AssemblyLoadContext</c>s, so referencing Domain from there would drag
+/// Vogen's runtime closure into places it has no business being. That structural gap is why
+/// provider error bodies were interpolated into exception messages unredacted: there was nowhere
+/// for a redactor to be threaded in. Wire has zero references of its own and this is a pure
+/// interface, so declaring it here makes the redaction seam reachable from every layer without
+/// widening anyone's dependency surface.
+/// </remarks>
 public interface ISecretRedactor
 {
     /// <summary>

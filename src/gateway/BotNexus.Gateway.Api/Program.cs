@@ -353,13 +353,21 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     // factory so dropped image content parts are warned about instead of vanishing silently.
     ProviderDiagnostics.LoggerFactory = loggerFactory;
 
-    apiProviders.Register(new AnthropicProvider(httpClient));
-    apiProviders.Register(new CopilotMessagesProvider(httpClient));
-    apiProviders.Register(new OpenAICompletionsProvider(httpClient, loggerFactory.CreateLogger<OpenAICompletionsProvider>()));
-    apiProviders.Register(new OpenAIResponsesProvider(httpClient, loggerFactory.CreateLogger<OpenAIResponsesProvider>()));
+    // #2881: the SAME shared SecretRedactor already wired into ProviderLoggingHandler above is
+    // handed to every provider, so a credential a provider echoes back in a 401/403 body is
+    // scrubbed on the EXCEPTION path too, not just the logging path. Without this, the raw body is
+    // interpolated into an exception message that Agent.cs persists as the session-visible
+    // ErrorMessage and renders to the user. Resolved with GetService: the redactor is optional at
+    // this seam and a null one degrades to a no-op rather than dropping diagnostics.
+    var providerSecretRedactor = serviceProvider.GetService<ISecretRedactor>();
 
-    apiProviders.Register(new CopilotCompletionsProvider(httpClient, loggerFactory.CreateLogger<CopilotCompletionsProvider>()));
-    apiProviders.Register(new CopilotResponsesProvider(httpClient, loggerFactory.CreateLogger<CopilotResponsesProvider>()));
+    apiProviders.Register(new AnthropicProvider(httpClient, providerSecretRedactor));
+    apiProviders.Register(new CopilotMessagesProvider(httpClient, providerSecretRedactor));
+    apiProviders.Register(new OpenAICompletionsProvider(httpClient, loggerFactory.CreateLogger<OpenAICompletionsProvider>(), providerSecretRedactor));
+    apiProviders.Register(new OpenAIResponsesProvider(httpClient, loggerFactory.CreateLogger<OpenAIResponsesProvider>(), providerSecretRedactor));
+
+    apiProviders.Register(new CopilotCompletionsProvider(httpClient, loggerFactory.CreateLogger<CopilotCompletionsProvider>(), providerSecretRedactor));
+    apiProviders.Register(new CopilotResponsesProvider(httpClient, loggerFactory.CreateLogger<CopilotResponsesProvider>(), providerSecretRedactor));
     apiProviders.Register(new OpenAICompatProvider(httpClient));
     apiProviders.Register(new IntegrationMockProvider());
 
