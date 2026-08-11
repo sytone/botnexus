@@ -441,8 +441,13 @@ public sealed class ConversationsControllerHistoryTests
     }
 
     [Fact]
-    public async Task GetHistory_HistoricalEntries_AreExcluded()
+    public async Task GetHistory_HistoricalEntries_AreReturned_FlaggedAsFolded()
     {
+        // #2936: this test previously asserted the DEFECT -- that folded (IsHistory) rows are
+        // excluded from the history response. Compaction evicts an entry from the LLM context
+        // window; it does not delete the transcript, and the flag's own contract says historical
+        // entries survive "for transcript fidelity, replay, audit, and UI fold/collapse". The
+        // endpoint now returns them, flagged IsFolded so the portal renders them collapsed.
         var conversationId = ConversationId.From("c_history_excluded");
         var sessions = new InMemorySessionStore();
         var conversationStore = new StubConversationStore(CreateConversation(conversationId, "quill"));
@@ -460,9 +465,11 @@ public sealed class ConversationsControllerHistoryTests
 
         var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
         response.ShouldNotBeNull();
-        response!.TotalCount.ShouldBe(2); // historical entry excluded
-        response.Entries.ShouldNotContain(e => e.Content == "Old message");
+        response!.TotalCount.ShouldBe(3); // folded entry now participates in paging
+        var old = response.Entries.Single(e => e.Content == "Old message");
+        old.IsFolded.ShouldBeTrue();
         response.Entries.ShouldContain(e => e.Kind == "compaction" && e.Content == "Compaction summary");
-        response.Entries.ShouldContain(e => e.Content == "New message");
+        var latest = response.Entries.Single(e => e.Content == "New message");
+        latest.IsFolded.ShouldBeFalse();
     }
 }

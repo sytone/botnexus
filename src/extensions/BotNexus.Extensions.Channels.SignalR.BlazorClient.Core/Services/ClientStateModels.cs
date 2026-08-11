@@ -119,6 +119,13 @@ public sealed record ChatMessage(string Role, string Content, DateTimeOffset Tim
     /// <summary>Whether this entry is a compaction boundary (context was summarised).</summary>
     public bool IsCompaction => Kind == "compaction";
 
+    /// <summary>
+    /// True when this row was folded into a later compaction summary server-side (#2936). It is
+    /// still part of the transcript and still reachable by scrolling up; the chat panel renders it
+    /// inside a collapsed group so pre-compaction history does not read as ordinary live turns.
+    /// </summary>
+    public bool IsFolded { get; init; }
+
     /// <summary>CSS class derived from the message role.</summary>
     public string CssClass => Role.ToLowerInvariant();
 }

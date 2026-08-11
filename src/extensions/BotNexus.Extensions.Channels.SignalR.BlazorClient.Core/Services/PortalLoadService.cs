@@ -242,14 +242,19 @@ public sealed class PortalLoadService : IPortalLoadService
                             ToolArgs = entry.ToolArgs,
                             ToolIsError = entry.ToolIsError,
                             ToolResult = isTool ? AnsiStripper.Strip(entry.Content) : null,
-                            IsToolCall = isTool
+                            IsToolCall = isTool,
+                            IsFolded = entry.IsFolded
                         });
                     }
                 }
 
-                // Open on the most-recent 20 and allow scroll-up paging when a full page came back (#1691).
+                // Open on the most-recent page and allow scroll-up paging while the server total
+                // says older rows remain. A short-page test alone is unsound since #2936 lets the
+                // server return a whole expanded folded run in one response.
                 conversation.LoadedHistoryRows = historyEntries.Count;
-                conversation.HasMoreHistory = historyEntries.Count >= historyLimit;
+                conversation.HasMoreHistory = history.TotalCount > 0
+                    ? historyEntries.Count < history.TotalCount
+                    : historyEntries.Count >= historyLimit;
                 conversation.HistoryLoaded = true;
             }
             else

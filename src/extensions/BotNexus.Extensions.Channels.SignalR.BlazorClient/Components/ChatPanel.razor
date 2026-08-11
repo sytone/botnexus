@@ -239,6 +239,23 @@
             </div>
         }
 
+        @if (HasFoldedHistory)
+        {
+            @* #2936: pre-compaction rows are part of the transcript and are now returned by the
+               history endpoint, but they are not live context. They render collapsed behind this
+               toggle so scrolling up reaches them without them reading as ordinary recent turns. *@
+            <div class="folded-history-toggle" data-testid="folded-history-toggle">
+                <button class="load-more-btn"
+                        type="button"
+                        data-testid="folded-history-toggle-btn"
+                        aria-expanded="@(_showFoldedHistory ? "true" : "false")"
+                        @onclick="ToggleFoldedHistory">
+                    @(_showFoldedHistory
+                        ? $"Hide {FoldedHistoryCount} pre-compaction messages"
+                        : $"Show {FoldedHistoryCount} pre-compaction messages")
+                </button>
+            </div>
+        }
         @foreach (var msg in Messages)
         {
             @* Keyed wrapper: forces Blazor to diff message subtrees by identity, not list
@@ -247,7 +264,10 @@
                causes positional diffing to retarget retained text nodes onto the wrong logical
                message, duplicating streamed fragments in the DOM (garbled live messages that
                render fine on reload-from-store). display:contents keeps layout unchanged. *@
-            <div @key="msg.Id" style="display:contents">
+            <div @key="msg.Id"
+                 style="@(msg.IsFolded && !_showFoldedHistory ? "display:none" : "display:contents")"
+                 class="@(msg.IsFolded ? "folded-history-entry" : null)"
+                 data-folded="@(msg.IsFolded ? "true" : null)">
             @if (msg.IsBoundary)
             {
                 <div class="session-boundary" role="separator" aria-label="Session boundary">
@@ -602,6 +622,14 @@ private bool IsStreaming =>
     private bool HasMessages => Messages.Count > 0;
     private bool HistoryLoadFailed => ActiveConversation?.HistoryLoadFailed ?? false;
     private bool HasMoreHistory => ActiveConversation?.HasMoreHistory ?? false;
+
+    // #2936: pre-compaction (folded) rows are returned by the history endpoint so the transcript is
+    // reachable, but they are hidden by default and revealed by an explicit toggle.
+    private bool _showFoldedHistory;
+    private int FoldedHistoryCount => Messages.Count(m => m.IsFolded);
+    private bool HasFoldedHistory => FoldedHistoryCount > 0;
+
+    private void ToggleFoldedHistory() => _showFoldedHistory = !_showFoldedHistory;
     private bool IsLoadingMore => _isLoadingMore;
     private AskUserPromptState? PendingAskUserPrompt =>
         ActiveConversationId is not null ? Store.GetPendingAskUser(ActiveConversationId) : null;

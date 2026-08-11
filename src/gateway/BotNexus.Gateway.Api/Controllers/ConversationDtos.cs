@@ -126,6 +126,15 @@ public sealed class ConversationHistoryEntry
     /// <summary>Reason for the boundary (for kind = "boundary").</summary>
     public string? Reason { get; init; }
 
+    /// <summary>
+    /// True when the underlying transcript entry has been folded into a later compaction summary
+    /// (<c>SessionEntry.IsHistory</c>). Folded entries are still returned so the transcript remains
+    /// reachable from the portal (#2936) - compaction removes an entry from the LLM context window,
+    /// it does not delete it - but the client renders them collapsed beneath the compaction boundary
+    /// rather than as ordinary turns.
+    /// </summary>
+    public bool IsFolded { get; init; }
+
     /// <summary>Thinking/reasoning content from the model (for assistant messages).</summary>
     public string? ThinkingContent { get; init; }
 

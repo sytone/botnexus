@@ -2228,6 +2228,35 @@ html, body, #app {
     border-color: var(--text-muted);
 }
 
+/* #2936: pre-compaction (folded) transcript rows. They are real history and are now returned by
+   the history endpoint, but they are not live LLM context, so they are collapsed behind a toggle
+   and de-emphasised when expanded. */
+.folded-history-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1rem;
+}
+
+.folded-history-toggle .load-more-btn {
+    background: transparent;
+    border: 1px dashed var(--border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.75rem;
+}
+
+.folded-history-toggle .load-more-btn:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+}
+
+.folded-history-entry {
+    opacity: 0.72;
+}
+
 .loading-spinner.small {
     width: 20px;
     height: 20px;

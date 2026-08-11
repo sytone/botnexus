@@ -139,6 +139,29 @@ public sealed class SessionContextProjectorTests
     }
 
     [Fact]
+    public void ProjectForResume_ExcludesFoldedEntries_EvenThoughTheUiNowShowsThem()
+    {
+        // #2936 AC5: the portal history endpoint stopped filtering IsHistory so pre-compaction
+        // transcript stays reachable in the UI. That is a READ-PATH change only -- LLM context
+        // projection must be untouched. A folded turn beside a live one is still evicted here.
+        var history = new[]
+        {
+            User("folded-user") with { IsHistory = true },
+            Assistant("folded-assistant") with { IsHistory = true },
+            Summary("active summary"),
+            User("live-user"),
+            Assistant("live-assistant"),
+        };
+
+        var projected = SessionContextProjector.ProjectForResume(history);
+
+        projected.ShouldNotContain(e => e.Content == "folded-user");
+        projected.ShouldNotContain(e => e.Content == "folded-assistant");
+        projected.Select(e => e.Content).ShouldContain("live-user");
+        projected.Select(e => e.Content).ShouldContain("live-assistant");
+    }
+
+    [Fact]
     public void IsVisibleInLiveContext_ExcludesIsHistory()
     {
         var entry = Assistant() with { IsHistory = true };

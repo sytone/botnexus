@@ -1294,6 +1294,59 @@ public sealed class ChatPanelTests : IDisposable
     // wraps each loop item in a @key="msg.Id" element and gives the streaming bubble
     // a stable sentinel key so it is never diff-matched against a committed message.
 
+    // ── #2936: pre-compaction (folded) history rendering ──────────────────────
+
+    [Fact]
+    public void Folded_history_rows_are_hidden_until_the_toggle_is_used()
+    {
+        // #2936 AC3: folded rows are now delivered to the client (they are transcript, not context)
+        // but must render collapsed rather than as ordinary turns.
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "pre-compaction", DateTimeOffset.UtcNow) { IsFolded = true });
+        _store.AppendMessage("conv-1", new ChatMessage("User", "live turn", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var folded = cut.Find("div[data-folded='true']");
+        Assert.Contains("display:none", folded.GetAttribute("style"));
+        // The live row is unaffected and still uses the keyed display:contents wrapper.
+        Assert.Single(cut.FindAll("div[data-folded='true']"));
+        Assert.NotNull(cut.Find("[data-testid='folded-history-toggle-btn']"));
+    }
+
+    [Fact]
+    public void Folded_history_toggle_reveals_pre_compaction_rows()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "pre-compaction", DateTimeOffset.UtcNow) { IsFolded = true });
+        _store.AppendMessage("conv-1", new ChatMessage("User", "live turn", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find("[data-testid='folded-history-toggle-btn']").Click();
+
+        var folded = cut.Find("div[data-folded='true']");
+        Assert.DoesNotContain("display:none", folded.GetAttribute("style"));
+        Assert.Contains("pre-compaction", cut.Markup);
+    }
+
+    [Fact]
+    public void Folded_history_toggle_is_absent_when_no_folded_rows_exist()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "live turn", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Empty(cut.FindAll("[data-testid='folded-history-toggle']"));
+        Assert.Empty(cut.FindAll("div[data-folded='true']"));
+    }
+
     [Fact]
     public void Each_message_row_is_keyed_by_message_id()
     {

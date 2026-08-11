@@ -17,6 +17,15 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// </remarks>
 public sealed class ConversationHistoryAssembler : IConversationHistoryAssembler
 {
+    /// <summary>
+    /// Hard ceiling on the number of entries a single page may return once a folded run has been
+    /// expanded (#2936). Folded rows render collapsed, so returning a whole run at once is cheap for
+    /// the client and removes the ~137-round-trip walk a 20-row page implies over a 2,700-row
+    /// compacted transcript - but an unbounded expansion would let one request materialise an
+    /// arbitrarily large transcript, so the run is chunked at this size instead.
+    /// </summary>
+    public const int MaxFoldedPageEntries = 500;
+
     private readonly IConversationStore _conversations;
     private readonly ISessionStore _sessions;
 
@@ -76,7 +85,9 @@ public sealed class ConversationHistoryAssembler : IConversationHistoryAssembler
     /// <summary>
     /// Flattens the ordered session list into a single chronological entry list, inserting a
     /// <c>boundary</c> marker between sessions, dropping <c>NO_REPLY</c> assistant turns (#773) and
-    /// folded entries, and projecting compaction summaries as distinct <c>compaction</c> markers.
+    /// crash sentinels, and projecting compaction summaries as distinct <c>compaction</c> markers.
+    /// Folded (<c>IsHistory</c>) entries are retained and flagged <c>IsFolded</c> (#2936) so the
+    /// pre-compaction transcript stays reachable and can be rendered collapsed.
     /// </summary>
     private static List<ConversationHistoryEntry> AssembleEntries(IReadOnlyList<GatewaySession> linkedSessions)
     {
@@ -107,8 +118,15 @@ public sealed class ConversationHistoryAssembler : IConversationHistoryAssembler
             var snapshot = session.GetHistorySnapshot();
             foreach (var entry in snapshot)
             {
-                // Skip folded entries that have been superseded by compaction summaries.
-                if (entry.IsHistory)
+                // #2936: folded entries (IsHistory) are NOT skipped. IsHistory answers "should this
+                // go to the LLM?", not "should this go to the UI?" - the flag's own contract says
+                // historical entries stay in the store for transcript fidelity and UI fold/collapse.
+                // Filtering them here removed them from the candidate set entirely, making up to 96%
+                // of a compacted transcript unreachable from every client. They are now emitted with
+                // IsFolded = true so the portal can render them collapsed under the boundary marker.
+                //
+                // Crash sentinels are genuinely non-content recovery placeholders and stay skipped.
+                if (entry.IsCrashSentinel)
                     continue;
 
                 if (entry.Role == MessageRole.Assistant &&
@@ -126,7 +144,8 @@ public sealed class ConversationHistoryAssembler : IConversationHistoryAssembler
                         AgentId = session.AgentId.Value,
                         Timestamp = entry.Timestamp,
                         Reason = "compaction",
-                        Content = entry.Content
+                        Content = entry.Content,
+                        IsFolded = entry.IsHistory
                     });
                     continue;
                 }
@@ -144,6 +163,7 @@ public sealed class ConversationHistoryAssembler : IConversationHistoryAssembler
                     ToolArgs = entry.ToolArgs,
                     ToolIsError = entry.ToolIsError,
                     ThinkingContent = entry.ThinkingContent,
+                    IsFolded = entry.IsHistory,
                     // #2149: project the orthogonal typed kind so live delivery and history replay
                     // agree; ResolveKind maps legacy/unstamped entries to "message".
                     MessageKind = entry.ResolveKind().Value
@@ -168,10 +188,27 @@ public sealed class ConversationHistoryAssembler : IConversationHistoryAssembler
             return [];
 
         var take = Math.Min(limit, totalCount - offset);
-        var startIndex = Math.Max(0, totalCount - offset - take);
+        var endExclusive = totalCount - offset;
+        var startIndex = Math.Max(0, endExclusive - take);
+
+        // #2936 paging-cost mitigation. Unfolding pre-compaction history without this turns a
+        // "cannot reach history" bug into a "reachable but unusable" one: at a 20-row page a 2,736-row
+        // transcript is ~137 sequential round trips. Folded rows render collapsed, so when a page
+        // lands inside a contiguous folded run we extend it backwards over the rest of that run (up
+        // to MaxFoldedPageEntries) and hand the client the whole collapsed block in one response.
+        // The extension only ever grows the page BACKWARDS from startIndex, so the newest-first
+        // window the client already anchored on is unchanged and offset arithmetic stays monotonic:
+        // the client advances its offset by the actual returned count.
+        if (startIndex > 0 && allEntries[startIndex].IsFolded)
+        {
+            var maxStart = Math.Max(0, endExclusive - MaxFoldedPageEntries);
+            while (startIndex > maxStart && allEntries[startIndex - 1].IsFolded)
+                startIndex--;
+        }
+
         return allEntries
             .Skip(startIndex)
-            .Take(take)
+            .Take(endExclusive - startIndex)
             .ToList();
     }
 }

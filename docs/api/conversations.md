@@ -108,6 +108,19 @@ conversation or binding does not exist.
 Returns `200 OK` with a paginated history response, `400 Bad Request` when
 `offset < 0` or `limit <= 0`, or `404 Not Found`.
 
+Each entry carries `kind` (`message`, `boundary`, or `compaction`) and, since
+#2936, an `isFolded` boolean. `isFolded` is true when the underlying transcript
+entry was folded into a later compaction summary. **Folded entries are returned.**
+Compaction evicts an entry from the LLM context window; it does not delete the
+transcript, so pre-compaction history stays reachable by paging and clients are
+expected to render folded entries collapsed rather than as ordinary turns.
+
+> **A page may exceed `limit`.** When a page boundary lands inside a contiguous run
+> of folded entries, the server extends the page backwards over the rest of that run
+> (bounded at 500 entries) so a multi-thousand-row compacted transcript does not
+> require ~137 sequential requests. Page backwards with `offset += entries.length`
+> and use `totalCount` - not a short page - to decide when history is exhausted.
+
 ### `GET /api/conversations/{conversationId}/audit`
 
 | Parameter | In | Type | Notes |

@@ -603,6 +603,21 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    /// <summary>
+    /// Decides whether older history remains unfetched (#1691, #2936).
+    /// </summary>
+    /// <remarks>
+    /// The original rule was purely "the last page was full", which assumed every page is exactly
+    /// <see cref="DefaultHistoryPageSize"/> rows. Since #2936 the server may return a larger page
+    /// when it expands a contiguous folded (pre-compaction) run, so the server-reported total is the
+    /// authority whenever it is present. The page-size heuristic is kept as the fallback for a
+    /// server that reports no usable total, preserving the pre-#2936 behaviour there.
+    /// </remarks>
+    internal static bool HasMoreHistory(int loadedRows, int? totalCount, int lastPageCount)
+        => totalCount is > 0
+            ? loadedRows < totalCount.Value
+            : lastPageCount >= DefaultHistoryPageSize;
+
     /// <inheritdoc />
     public async Task<int> LoadMoreHistoryAsync(string agentId, string conversationId)
     {
@@ -641,8 +656,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
             _store.PrependMessages(conversationId, older);
 
             conv.LoadedHistoryRows += entries.Count;
-            // Stop once a page returns fewer rows than the page size.
-            conv.HasMoreHistory = entries.Count >= DefaultHistoryPageSize;
+            // #2936: a page is no longer a fixed 20 rows -- the server may return a whole collapsed
+            // folded run in one response to avoid the ~137-round-trip walk back through a compacted
+            // transcript. "Was the page short?" is therefore no longer a sound exhaustion test, so
+            // the authoritative server total decides while it is available.
+            conv.HasMoreHistory = HasMoreHistory(conv.LoadedHistoryRows, response?.TotalCount, entries.Count);
             return entries.Count;
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
@@ -971,10 +989,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
             foreach (var entry in entries)
                 conv.AppendMessage(ProjectConversationEntry(entry));
 
-            // The endpoint pages backwards into older history; a full page means there is more to
-            // fetch on scroll-up, while a short page means we have reached the start (#1691).
+            // The endpoint pages backwards into older history. The server-reported total decides
+            // whether older rows remain; the short-page heuristic survives only as the fallback for
+            // a server that reports no usable total (#1691, #2936).
             conv.LoadedHistoryRows = entries.Count;
-            conv.HasMoreHistory = entries.Count >= DefaultHistoryPageSize;
+            conv.HasMoreHistory = HasMoreHistory(conv.LoadedHistoryRows, response.TotalCount, entries.Count);
         }
 
         conv.HistoryLoaded = true;
@@ -1010,11 +1029,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
             {
                 Kind = "compaction",
                 BoundaryLabel = label,
-                BoundarySessionId = entry.SessionId
+                BoundarySessionId = entry.SessionId,
+                IsFolded = entry.IsFolded
             };
         }
 
-        return ToChatMessage(entry);
+        // #2936: carry the server's folded flag onto the displayable row so the panel can render
+        // pre-compaction history collapsed instead of as ordinary live turns.
+        return ToChatMessage(entry) with { IsFolded = entry.IsFolded };
     }
 
     /// <summary>

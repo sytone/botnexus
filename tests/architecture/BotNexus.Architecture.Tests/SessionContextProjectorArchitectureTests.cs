@@ -65,6 +65,15 @@ public sealed class SessionContextProjectorArchitectureTests
             // Documentation comment only; the actual projection is delegated to the
             // projector via SessionCompaction.ApplyLegacyHistoryProjection.
             "FileSessionStore.cs",
+            // #2936: the portal history read path. It references IsCrashSentinel (skipped -- a
+            // recovery placeholder is not transcript) and IsHistory (NOT skipped -- projected onto
+            // the wire as IsFolded so pre-compaction history stays reachable and renders collapsed).
+            // That is deliberately the OPPOSITE of the LLM-context predicate, not a copy of it: this
+            // file answers "should this go to the UI?", SessionContextProjector answers "should this
+            // go to the model?". Routing it through the projector would reintroduce the defect --
+            // it would drop every folded row again. The two flags never form a combined predicate
+            // here, so the fitness function's grep signal is a false positive on this file.
+            "ConversationHistoryAssembler.cs",
         };
 
         var offenders = Directory

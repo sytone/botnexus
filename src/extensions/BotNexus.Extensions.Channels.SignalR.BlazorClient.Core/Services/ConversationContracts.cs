@@ -106,6 +106,15 @@ public sealed class ConversationHistoryEntryDto
     [JsonPropertyName("reason")]
     public string? Reason { get; init; }
 
+    /// <summary>
+    /// True when the entry was folded into a later compaction summary server-side (#2936). Such
+    /// entries are still returned so pre-compaction history is reachable, but the portal renders
+    /// them collapsed beneath the compaction boundary rather than as ordinary turns. Absent from a
+    /// legacy server, which deserialises to <c>false</c> - i.e. the pre-#2936 rendering.
+    /// </summary>
+    [JsonPropertyName("isFolded")]
+    public bool IsFolded { get; init; }
+
     [JsonPropertyName("thinkingContent")]
     public string? ThinkingContent { get; init; }
 
