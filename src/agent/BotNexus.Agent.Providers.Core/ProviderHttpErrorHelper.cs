@@ -58,8 +58,11 @@ public static class ProviderHttpErrorHelper
 
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
+            // errorBody is ALREADY redacted above, so pass no redactor: BuildMessage keeps its own
+            // redaction for callers that reach it directly, but redacting twice here would make the
+            // cost scale with the number of branches for no additional protection.
             throw new ProviderAuthenticationException(
-                ProviderAuthenticationException.BuildMessage(providerName, statusCode, errorBody, secretRedactor),
+                ProviderAuthenticationException.BuildMessage(providerName, statusCode, errorBody),
                 statusCode,
                 providerName);
         }

@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Providers.Core.Streaming;
@@ -145,8 +146,10 @@ public static class ResponsesStreamEngine
             }
             // #2881: the untrusted provider error body is about to become a persisted, user-visible
             // exception message. Hand the profile's redactor down so ProviderHttpErrorHelper can
-            // scrub it at the single choke point.
-            profile.ThrowForError(response, errorBody, profile.SecretRedactor);
+            // scrub it at the single choke point. Typed local rather than an inline member access so
+            // the redaction seam is visible in this file to reader and fence alike.
+            ISecretRedactor? secretRedactor = profile.SecretRedactor;
+            profile.ThrowForError(response, errorBody, secretRedactor);
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(ct);
