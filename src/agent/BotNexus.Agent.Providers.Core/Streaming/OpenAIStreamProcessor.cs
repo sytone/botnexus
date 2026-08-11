@@ -54,6 +54,10 @@ public sealed class OpenAIStreamProcessor
 
         var toolCallState = new Dictionary<int, (string Id, string Name, StringBuilder Args, int ContentIndex, string? ThoughtSignature, Dictionary<string, object?>? LastParsedArgs, int LastParsedLength)>();
 
+        // One budget per streamed tool call, bounding the cumulative UTF-8 byte cost of its
+        // arguments fragments (#2902). Keyed by the same tool-call index as toolCallState.
+        var argumentBudgets = new Dictionary<int, StreamToolArgumentBudget>();
+
         var startEmitted = false;
         StopReason? stopReason = null;
         string? errorMessage = null;
@@ -286,6 +290,8 @@ public sealed class OpenAIStreamProcessor
                                 var contentIndex = contentBlocks.Count;
                                 contentBlocks.Add(new ToolCallContent(tcId, fnName, []));
                                 toolCallState[tcIndex] = (tcId, fnName, new StringBuilder(), contentIndex, thoughtSignature, null, -1);
+                                argumentBudgets[tcIndex] = StreamToolArgumentBudget.ForToolCall(
+                                    model.Provider, model.Id, $"tool '{fnName}' (index {tcIndex})");
 
                                 stream.Push(new ToolCallStartEvent(contentIndex, BuildPartial()));
                             }
@@ -298,7 +304,14 @@ public sealed class OpenAIStreamProcessor
                                 if (argsChunk.Length > 0)
                                 {
                                     var state = toolCallState[tcIndex];
-                                    state.Args.Append(argsChunk);
+                                    // Budgeted append: throws StreamToolArgumentsTooLargeException on
+                                    // overflow, which the stream engine turns into a terminal error
+                                    // event rather than emitting a truncated-and-therefore-invalid
+                                    // argument blob (#2902).
+                                    if (argumentBudgets.TryGetValue(tcIndex, out var budget))
+                                        budget.Append(state.Args, argsChunk);
+                                    else
+                                        state.Args.Append(argsChunk);
                                     if (thoughtSignature is not null)
                                         state.ThoughtSignature = thoughtSignature;
 
@@ -386,6 +399,9 @@ public sealed class OpenAIStreamProcessor
         var output = CreatePartialMessage(model, api);
         var contentBuilder = new StringBuilder();
         var toolCallBuilders = new Dictionary<int, ToolCallBuilder>();
+        // One budget per streamed tool call, bounding the cumulative UTF-8 byte cost of its
+        // arguments fragments (#2902).
+        var argumentBudgets = new Dictionary<int, StreamToolArgumentBudget>();
         var contentIndex = 0;
         var started = false;
         string? responseId = null;
@@ -477,6 +493,9 @@ public sealed class OpenAIStreamProcessor
                                 builder.Name = nameProp.GetString() ?? "";
                         }
 
+                        argumentBudgets[tcIndex] = StreamToolArgumentBudget.ForToolCall(
+                            model.Provider, model.Id, $"tool '{builder.Name ?? ""}' (index {tcIndex})");
+
                         stream.Push(new ToolCallStartEvent(contentIndex + tcIndex, output));
                     }
 
@@ -488,7 +507,13 @@ public sealed class OpenAIStreamProcessor
                         if (fnDelta.TryGetProperty("arguments", out var argsDelta))
                         {
                             var argChunk = argsDelta.GetString() ?? "";
-                            builder.ArgumentsJson.Append(argChunk);
+                            // Budgeted append: throws StreamToolArgumentsTooLargeException on
+                            // overflow rather than emitting a truncated-and-therefore-invalid
+                            // argument blob as if it were complete (#2902).
+                            if (argumentBudgets.TryGetValue(tcIndex, out var budget))
+                                budget.Append(builder.ArgumentsJson, argChunk);
+                            else
+                                builder.ArgumentsJson.Append(argChunk);
                             stream.Push(new ToolCallDeltaEvent(contentIndex + tcIndex, argChunk, output));
                         }
                     }

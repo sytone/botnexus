@@ -1783,6 +1783,30 @@ Use `appsettings.Development.json` for local dev secrets (add to .gitignore):
 }
 ```
 
+### 7. Streaming Tool-Argument Byte Budget
+
+The provider stream layer is the trust boundary against the model/proxy. Streamed tool-call
+argument fragments (`arguments` on OpenAI-compatible APIs, `partial_json` on Anthropic and Copilot
+Messages) are accumulated per tool call under a **cumulative UTF-8 byte budget**, so a malicious or
+malfunctioning stream cannot grow the process heap without limit (issue #2902).
+
+- Default budget: **1 MiB per tool call**.
+- Measured in UTF-8 bytes appended, not UTF-16 characters, so multi-byte payloads cannot exceed the
+  intended memory ceiling.
+- On overflow, accumulation for that tool call is terminated, a single warning is logged (with
+  provider, model, and observed size), and the turn fails with a distinguishable error. A truncated
+  argument blob is never emitted as if it were complete.
+
+Override the budget with an environment variable (an absent, unparseable, or non-positive value
+falls back to the default - the guard cannot be switched off):
+
+```bash
+export BOTNEXUS_STREAM_TOOL_ARGUMENT_MAX_BYTES=2097152   # 2 MiB per tool call
+```
+
+This is distinct from `ToolInvocationRecord.MaxArgumentBytes` (16 KiB), which is a display/record
+time sanitiser applied after the fact; both use UTF-8 bytes as their unit.
+
 ---
 
 ## Prompt Templates

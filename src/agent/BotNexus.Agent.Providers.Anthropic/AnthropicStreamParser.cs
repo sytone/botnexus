@@ -30,6 +30,9 @@ internal static class AnthropicStreamParser
         var signatureAccumulators = new Dictionary<int, StringBuilder>();
         var toolCallIds = new Dictionary<int, string>();
         var toolCallNames = new Dictionary<int, string>();
+        // One budget per streamed tool call, bounding the cumulative UTF-8 byte cost of its
+        // input_json_delta fragments (#2902). Created on content_block_start for tool_use blocks.
+        var argumentBudgets = new Dictionary<int, StreamToolArgumentBudget>();
         string? responseId = null;
         var stopReason = StopReason.Stop;
         string? currentEvent = null;
@@ -77,6 +80,7 @@ internal static class AnthropicStreamParser
                     signatureAccumulators,
                     toolCallIds,
                     toolCallNames,
+                    argumentBudgets,
                     usage,
                     tools,
                     isOAuthToken,
@@ -104,6 +108,7 @@ internal static class AnthropicStreamParser
         Dictionary<int, StringBuilder> signatureAccumulators,
         Dictionary<int, string> toolCallIds,
         Dictionary<int, string> toolCallNames,
+        Dictionary<int, StreamToolArgumentBudget> argumentBudgets,
         Usage usage,
         IReadOnlyList<Tool>? tools,
         bool isOAuthToken,
@@ -134,13 +139,13 @@ internal static class AnthropicStreamParser
 
             case "content_block_start":
                 HandleContentBlockStart(data, model, stream, contentBlocks, blockTypes,
-                    textAccumulators, signatureAccumulators, toolCallIds, toolCallNames, usage, responseId,
+                    textAccumulators, signatureAccumulators, toolCallIds, toolCallNames, argumentBudgets, usage, responseId,
                     tools, isOAuthToken, buildMessage);
                 break;
 
             case "content_block_delta":
                 HandleContentBlockDelta(data, model, stream, contentBlocks, blockTypes,
-                    textAccumulators, signatureAccumulators, usage, responseId, buildMessage);
+                    textAccumulators, signatureAccumulators, argumentBudgets, usage, responseId, buildMessage);
                 break;
 
             case "content_block_stop":
@@ -179,6 +184,7 @@ internal static class AnthropicStreamParser
         Dictionary<int, StringBuilder> signatureAccumulators,
         Dictionary<int, string> toolCallIds,
         Dictionary<int, string> toolCallNames,
+        Dictionary<int, StreamToolArgumentBudget> argumentBudgets,
         Usage usage,
         string? responseId,
         IReadOnlyList<Tool>? tools,
@@ -216,6 +222,11 @@ internal static class AnthropicStreamParser
                     toolCallNames[index] = isOAuthToken
                         ? AnthropicMessageConverter.FromClaudeCodeName(tcName.GetString() ?? "", tools)
                         : tcName.GetString() ?? "";
+                // Bound this tool call's argument accumulation before the first fragment arrives
+                // (#2902): a hostile stream must not be able to grow the buffer without limit.
+                argumentBudgets[index] = StreamToolArgumentBudget.ForToolCall(
+                    model.Provider, model.Id,
+                    $"tool '{toolCallNames.GetValueOrDefault(index, "")}' (block {index})");
                 stream.Push(new ToolCallStartEvent(index, partial));
                 break;
         }
@@ -229,6 +240,7 @@ internal static class AnthropicStreamParser
         Dictionary<int, string> blockTypes,
         Dictionary<int, StringBuilder> textAccumulators,
         Dictionary<int, StringBuilder> signatureAccumulators,
+        Dictionary<int, StreamToolArgumentBudget> argumentBudgets,
         Usage usage,
         string? responseId,
         Func<LlmModel, List<ContentBlock>, Usage, StopReason, string?, string?, AssistantMessage> buildMessage)
@@ -253,7 +265,13 @@ internal static class AnthropicStreamParser
                 break;
             case "input_json_delta":
                 var jsonFrag = delta.GetProperty("partial_json").GetString() ?? "";
-                textAccumulators[index].Append(jsonFrag);
+                // Budgeted append: throws StreamToolArgumentsTooLargeException on overflow, which the
+                // provider's stream task turns into a terminal error event rather than emitting a
+                // truncated-and-therefore-invalid argument blob (#2902).
+                if (argumentBudgets.TryGetValue(index, out var budget))
+                    budget.Append(textAccumulators[index], jsonFrag);
+                else
+                    textAccumulators[index].Append(jsonFrag);
                 stream.Push(new ToolCallDeltaEvent(index, jsonFrag, partial));
                 break;
             case "signature_delta":
