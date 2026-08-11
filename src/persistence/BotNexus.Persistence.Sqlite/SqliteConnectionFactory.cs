@@ -74,14 +74,49 @@ public static class SqliteConnectionFactory
                 nameof(busyTimeoutMs), busyTimeoutMs, "busy_timeout must be non-negative.");
         }
 
-        connection.StateChange += (_, e) =>
+        connection.StateChange += BusyTimeoutOnOpen;
+
+        void BusyTimeoutOnOpen(object? sender, System.Data.StateChangeEventArgs e)
         {
-            if (e.CurrentState == System.Data.ConnectionState.Open)
+            // NB: deliberately NOT unsubscribed on close. busy_timeout is per-connection and
+            // resets to 0 on every open, so the subscription must survive a close/reopen cycle
+            // (pinned by Create_reapplies_busy_timeout_after_reopen). Lifetime safety comes from
+            // not capturing the connection plus the handle guard below, not from detaching.
+            if (e.CurrentState != System.Data.ConnectionState.Open)
             {
-                using var pragma = connection.CreateCommand();
+                return;
+            }
+
+            // Use the event's sender rather than a captured local: the delegate must not hold the
+            // connection it is attached to, or a stale subscription can drive a command against a
+            // connection whose native handle is already gone (#2977).
+            if (sender is not SqliteConnection opened)
+            {
+                return;
+            }
+
+            // The managed connection can report Open while the underlying SQLitePCL.sqlite3 handle
+            // has already been released underneath it (observed under parallel load in the core
+            // gate). Preparing a statement against that handle throws ObjectDisposedException from
+            // inside the callback and onto the caller's Open stack, so skip rather than attempt.
+            if (opened.Handle is null || opened.Handle.IsInvalid || opened.Handle.IsClosed)
+            {
+                return;
+            }
+
+            try
+            {
+                using var pragma = opened.CreateCommand();
                 pragma.CommandText = $"PRAGMA busy_timeout={busyTimeoutMs};";
                 pragma.ExecuteNonQuery();
             }
-        };
+            catch (ObjectDisposedException)
+            {
+                // Lost a race with disposal between the handle check and the prepare. busy_timeout
+                // is a best-effort per-connection tuning pragma on a connection that is going away
+                // regardless; it must never throw out of a StateChange callback (#2977). Any other
+                // exception is a genuine fault and is deliberately left to propagate.
+            }
+        }
     }
 }
