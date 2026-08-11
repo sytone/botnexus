@@ -206,6 +206,33 @@ Rich Messages are enabled by default (`richMessages: true`). If Telegram ever re
 
 ---
 
+## Interactive prompts (`ask_user`)
+
+When an agent calls the `ask_user` tool, the question is delivered to Telegram as a real message with **tappable inline-keyboard buttons**. The agent is genuinely blocked until you answer, so the prompt is always sent immediately as its own message rather than being folded into the streaming reply.
+
+| Prompt kind | What you see |
+|---|---|
+| `free_form` | The question as plain text. Reply by typing. |
+| `single_choice` | One button per choice, plus **Cancel**. |
+| `choice_or_free_form` | Buttons **and** a typed reply are both accepted. |
+| `multiple_choice` / `allow_multiple` | Buttons toggle a check mark; tap **Submit** when done. |
+
+Every prompt carries a **Cancel** button, matching the portal - you are never forced to wait for a timeout.
+
+Once a prompt is answered the message is **edited in place** to show the chosen answer and the keyboard is removed, so a stale prompt cannot be tapped twice. Answering is idempotent: a double-tap, or a tap that races a typed reply or another client (such as the portal), resolves the prompt exactly once.
+
+### Long choice lists
+
+Telegram inline keyboards become unusable beyond roughly 30 buttons, so a prompt with more choices than that degrades to a **numbered text list** instead of failing to send. Reply with the number of your choice (or the choice text) and it resolves the same way.
+
+### Authorization
+
+A button is visible to everyone in a group chat, so button taps are authorized **identically to text messages** - both `allowedChatIds` and `allowedUserIds` are enforced on the callback. A tap from an unauthorized chat or user is rejected and leaves the prompt pending.
+
+> **Webhook users:** Telegram filters updates server-side. The adapter requests the `callback_query` update type automatically, but if you registered a webhook with an older BotNexus build, restart the gateway so the allow-list is re-registered - otherwise buttons render but taps never arrive.
+
+---
+
 ## Polling vs webhook
 
 | | Long polling (default) | Webhook |

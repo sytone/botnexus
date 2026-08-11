@@ -23,7 +23,11 @@ public sealed class TelegramBotApiClient(
         "edited_message",
         "channel_post",
         "edited_channel_post",
-        "message_reaction"
+        "message_reaction",
+        // Required for ask_user inline keyboards (#2323). Telegram filters updates server-side
+        // against allowed_updates, so omitting this makes every button tap undeliverable - the
+        // buttons would render and simply do nothing.
+        "callback_query"
     ];
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -44,6 +48,91 @@ public sealed class TelegramBotApiClient(
     /// </remarks>
     public Task<TelegramMessage> SendMessageAsync(long chatId, string text, CancellationToken cancellationToken = default)
         => SendMessageAsync(chatId, text, messageThreadId: null, cancellationToken);
+
+    /// <summary>
+    /// Sends a text message carrying an inline keyboard (#2323), used to render an <c>ask_user</c>
+    /// prompt as tappable choices.
+    /// </summary>
+    /// <remarks>
+    /// Sent as PLAIN TEXT with no <c>parse_mode</c>, deliberately. A prompt is agent-authored text
+    /// that routinely contains characters MarkdownV2 treats as syntax; a parse failure here would
+    /// cost the user the entire prompt, and the MarkdownV2-then-plain retry used elsewhere would
+    /// silently drop the keyboard on the retry leg. An unformatted prompt that is answerable beats a
+    /// formatted one that is not.
+    /// </remarks>
+    public Task<TelegramMessage> SendMessageWithKeyboardAsync(
+        long chatId,
+        string text,
+        InlineKeyboardMarkup? replyMarkup,
+        int? messageThreadId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveThreadId = messageThreadId is 1 ? null : messageThreadId;
+
+        object payload = (effectiveThreadId, replyMarkup) switch
+        {
+            (null, null) => new { chat_id = chatId, text },
+            (null, not null) => new { chat_id = chatId, text, reply_markup = replyMarkup },
+            (not null, null) => new { chat_id = chatId, text, message_thread_id = effectiveThreadId.Value },
+            (not null, not null) => new { chat_id = chatId, text, message_thread_id = effectiveThreadId.Value, reply_markup = replyMarkup }
+        };
+
+        return PostForResultAsync<TelegramMessage>("sendMessage", payload, cancellationToken, allowMarkdownFallback: false);
+    }
+
+    /// <summary>
+    /// Edits a message's text and replaces (or removes) its inline keyboard (#2323).
+    /// </summary>
+    /// <remarks>
+    /// Passing a null <paramref name="replyMarkup"/> omits <c>reply_markup</c> entirely, which is how
+    /// Telegram is told to strip the keyboard. That is what makes a resolved prompt un-tappable in the
+    /// UI rather than merely idempotent on the server - defence in depth alongside the adapter's own
+    /// duplicate-tap guard. A "message is not modified" 400 is benign and treated as success, matching
+    /// <see cref="EditMessageTextAsync"/>.
+    /// </remarks>
+    public async Task<TelegramMessage> EditMessageTextWithKeyboardAsync(
+        long chatId,
+        int messageId,
+        string text,
+        InlineKeyboardMarkup? replyMarkup,
+        CancellationToken cancellationToken = default)
+    {
+        object payload = replyMarkup is null
+            ? new { chat_id = chatId, message_id = messageId, text }
+            : new { chat_id = chatId, message_id = messageId, text, reply_markup = replyMarkup };
+
+        try
+        {
+            return await PostForResultAsync<TelegramMessage>("editMessageText", payload, cancellationToken, allowMarkdownFallback: false);
+        }
+        catch (TelegramMessageNotModifiedException)
+        {
+            return new TelegramMessage { MessageId = messageId };
+        }
+    }
+
+    /// <summary>
+    /// Acknowledges a callback query so the Telegram client stops showing its loading spinner (#2323).
+    /// </summary>
+    /// <remarks>
+    /// Telegram requires this within a few seconds of the tap, and it is purely cosmetic, so failures
+    /// are swallowed by the caller: a missing acknowledgement must never fail an otherwise successful
+    /// prompt resolution.
+    /// </remarks>
+    /// <param name="callbackQueryId">Id of the callback query being answered.</param>
+    /// <param name="text">Optional short toast shown to the user.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public Task<bool> AnswerCallbackQueryAsync(
+        string callbackQueryId,
+        string? text = null,
+        CancellationToken cancellationToken = default)
+        => PostForResultAsync<bool>(
+            "answerCallbackQuery",
+            string.IsNullOrWhiteSpace(text)
+                ? new { callback_query_id = callbackQueryId }
+                : (object)new { callback_query_id = callbackQueryId, text },
+            cancellationToken,
+            allowMarkdownFallback: false);
 
     /// <summary>
     /// Sends a text message, optionally into a forum topic thread.

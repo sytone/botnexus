@@ -80,6 +80,75 @@ public sealed record TelegramUpdate
 
     [JsonPropertyName("channel_post")]
     public TelegramMessage? ChannelPost { get; init; }
+
+    /// <summary>
+    /// Inline-keyboard button tap (#2323). Null for every other update kind. Without this member the
+    /// adapter could send buttons that were physically untappable: the tap arrives as its own update
+    /// type, not as a message, so a keyboard rendered against an update model that cannot express a
+    /// callback query is write-only.
+    /// </summary>
+    [JsonPropertyName("callback_query")]
+    public TelegramCallbackQuery? CallbackQuery { get; init; }
+}
+
+/// <summary>
+/// An incoming callback query from an inline-keyboard button tap.
+/// Reference: https://core.telegram.org/bots/api#callbackquery
+/// </summary>
+/// <remarks>
+/// A callback query is an inbound event attributable to a specific user, so it carries the same
+/// authorization weight as a text message and is run through the identical chat/user allow-list
+/// checks. The message member is the message the keyboard was attached to, which is what lets the
+/// adapter edit the prompt in place once it resolves.
+/// </remarks>
+public sealed record TelegramCallbackQuery
+{
+    [JsonPropertyName("id")]
+    public required string Id { get; init; }
+
+    [JsonPropertyName("from")]
+    public TelegramUser? From { get; init; }
+
+    /// <summary>Message carrying the inline keyboard that was tapped. Null for inline-mode messages.</summary>
+    [JsonPropertyName("message")]
+    public TelegramMessage? Message { get; init; }
+
+    /// <summary>
+    /// Opaque data attached to the tapped button, capped by Telegram at 64 bytes.
+    /// See TelegramPromptKeyboard for the compact token format used to stay inside that.
+    /// </summary>
+    [JsonPropertyName("data")]
+    public string? Data { get; init; }
+}
+
+/// <summary>
+/// An inline keyboard attached to a message via <c>reply_markup</c>.
+/// Reference: https://core.telegram.org/bots/api#inlinekeyboardmarkup
+/// </summary>
+public sealed record InlineKeyboardMarkup
+{
+    /// <summary>Rows of buttons; each inner list is one displayed row.</summary>
+    [JsonPropertyName("inline_keyboard")]
+    public required IReadOnlyList<IReadOnlyList<InlineKeyboardButton>> InlineKeyboard { get; init; }
+}
+
+/// <summary>
+/// One button on an <see cref="InlineKeyboardMarkup"/>.
+/// Reference: https://core.telegram.org/bots/api#inlinekeyboardbutton
+/// </summary>
+public sealed record InlineKeyboardButton
+{
+    /// <summary>Label shown on the button. Rendered literally; no parse_mode applies to markup.</summary>
+    [JsonPropertyName("text")]
+    public required string Text { get; init; }
+
+    /// <summary>
+    /// Data delivered back in the callback query when tapped.
+    /// Telegram rejects the whole send if this exceeds 64 bytes.
+    /// </summary>
+    [JsonPropertyName("callback_data")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CallbackData { get; init; }
 }
 
 public sealed record TelegramMessage

@@ -7,6 +7,7 @@ using BotNexus.Domain.World;
 using BotNexus.Domain.Gateway.Models;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Channels.Startup;
 using Microsoft.Extensions.Configuration;
@@ -24,7 +25,8 @@ public sealed class TelegramChannelAdapter(
     ILogger<TelegramChannelAdapter> logger,
     IOptions<TelegramGatewayOptions> optionsAccessor,
     IHttpClientFactory httpClientFactory,
-    IConfiguration? configuration = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
+    IConfiguration? configuration = null,
+    IAskUserPromptResolver? promptResolver = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
 {
     private const int StreamingFlushThresholdChars = 100;
 
@@ -41,7 +43,12 @@ public sealed class TelegramChannelAdapter(
     // Read at point of use so a runtime config.json edit is reflected without a gateway restart (#2010).
     private TelegramGatewayOptions _options => _optionsHolder.Current;
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
+    private readonly IAskUserPromptResolver? _promptResolver = promptResolver;
     private readonly ConcurrentDictionary<string, BotRuntime> _bots = new(StringComparer.OrdinalIgnoreCase);
+
+    // Monotonic source of short callback tokens. The Bot API caps callback_data at 64 bytes, so the
+    // button carries a token + ordinal rather than the choice value itself (see TelegramPromptKeyboard).
+    private long _promptTokenCounter;
 
     // Monotonic source of non-zero Rich Message draft ids. Telegram animates updates that reuse the
     // same draft id, so each stream takes one id and keeps it for the life of that message.
@@ -96,6 +103,17 @@ public sealed class TelegramChannelAdapter(
 
     /// <inheritdoc />
     public override bool SupportsInboundImages => true;
+
+    /// <summary>
+    /// Telegram renders <c>ask_user</c> prompts as inline keyboards and receives taps as callback
+    /// queries (#2323), so it is a fully interactive prompt surface rather than a text-degraded one.
+    /// </summary>
+    /// <remarks>
+    /// Reported unconditionally: the capability describes the transport, not a per-prompt decision.
+    /// A prompt with too many choices to draw still degrades to the shared numbered-text rendering,
+    /// which is a rendering fallback inside an interactive channel, not a loss of the capability.
+    /// </remarks>
+    public override bool SupportsInteractivePrompts => true;
 
     /// <summary>
     /// Telegram chats are a user-visible surface, so the delimited internal runtime-context
@@ -202,6 +220,9 @@ public sealed class TelegramChannelAdapter(
             runtime.PollingCancellation?.Dispose();
             runtime.StreamingStates.Clear();
             runtime.LastErrorReplyUtcByChat.Clear();
+            // Pending prompts are adapter-local render state only; the durable checkpoint survives
+            // restart independently, so dropping them here cannot lose an answerable prompt.
+            runtime.PendingPrompts.Clear();
 
             // Release the start latch so a legitimate restart is not silently a no-op.
             runtime.AbandonStart();
@@ -388,6 +409,15 @@ public sealed class TelegramChannelAdapter(
                     // Remove the entry to prevent unbounded dictionary growth over time.
                     runtime.StreamingStates.TryRemove(stateKey, out _);
                     return;
+
+                case AgentStreamEventType.UserInputRequired:
+                    // The agent is BLOCKED until this resolves, so the prompt must be delivered as its
+                    // own message immediately rather than buffered: the streaming buffer is reset at
+                    // MessageStart and torn down at MessageEnd, and a prompt that never renders leaves
+                    // the user staring at a turn that appears to hang (#2323). Any pending content is
+                    // force-flushed first so the question appears after the text that led up to it.
+                    await SendUserInputPromptAsync(runtime, state, streamEvent, cancellationToken);
+                    return;
             }
 
             if (ShouldFlush(state, runtime.Config))
@@ -469,6 +499,14 @@ public sealed class TelegramChannelAdapter(
 
     private async Task HandleUpdateAsync(BotRuntime runtime, TelegramUpdate update, CancellationToken cancellationToken)
     {
+        // Inline-keyboard taps arrive as their own update kind, not as a message, and are handled on
+        // a dedicated path that applies the identical chat/user authorization checks (#2323).
+        if (update.CallbackQuery is { } callbackQuery)
+        {
+            await HandleCallbackQueryAsync(runtime, callbackQuery, cancellationToken);
+            return;
+        }
+
         // Only process real user messages — not channel posts (no authenticated sender)
         var message = update.Message
             ?? (runtime.Config.ProcessEditedMessages ? update.EditedMessage : null);
@@ -1082,6 +1120,406 @@ public sealed class TelegramChannelAdapter(
             builder.AppendLine();
     }
 
+    // ── ask_user interactive prompts (#2323) ─────────────────────────────────
+
+    /// <summary>
+    /// Renders a <c>UserInputRequired</c> event as a visible Telegram message: an inline keyboard
+    /// when the prompt carries a workable number of choices, otherwise the shared numbered-text
+    /// rendering that a user can answer by typing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pending prompt is recorded against the bot runtime before the send, keyed by a short token
+    /// carried in each button's <c>callback_data</c>. That indirection exists because the Bot API caps
+    /// <c>callback_data</c> at 64 bytes: packing the request id and choice value into the button would
+    /// make delivery depend on how verbose the agent's labels are.
+    /// </para>
+    /// <para>
+    /// Failures are logged and swallowed rather than propagated. The prompt is already blocked on a
+    /// human; throwing here would additionally fault the stream and lose the surrounding turn.
+    /// </para>
+    /// </remarks>
+    private async Task SendUserInputPromptAsync(
+        BotRuntime runtime,
+        StreamingState state,
+        AgentStreamEvent streamEvent,
+        CancellationToken cancellationToken)
+    {
+        if (streamEvent.UserInputRequest is not { } request)
+        {
+            _logger.LogWarning(
+                "{DisplayName} bot '{BotName}' received a UserInputRequired event with no request payload; nothing to render",
+                DisplayName,
+                runtime.BotName);
+            return;
+        }
+
+        var prompt = request.ToPrompt();
+
+        // Preserve chronological order: whatever the agent said before asking goes out first.
+        if (state.Buffer.Length > 0)
+        {
+            try
+            {
+                await FlushStreamingStateAsync(runtime, state, force: true, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(
+                    ex,
+                    "{DisplayName} bot '{BotName}' failed to flush pending content before the ask_user prompt for chat {ChatId}",
+                    DisplayName,
+                    runtime.BotName,
+                    state.ChatId);
+            }
+        }
+
+        var token = NextPromptToken();
+        var renderKeyboard = TelegramPromptKeyboard.ShouldRenderKeyboard(prompt);
+
+        // Too many choices to draw as buttons: fall back to the numbered text list every channel
+        // shares, which the free-text interception path can still resolve. Degrading beats failing
+        // the send and leaving the user with no prompt at all.
+        var text = renderKeyboard ? prompt.Prompt : AskUserPromptTextRenderer.Render(prompt);
+        var keyboard = renderKeyboard ? TelegramPromptKeyboard.BuildKeyboard(prompt, token) : null;
+
+        try
+        {
+            var sent = await runtime.ApiClient.SendMessageWithKeyboardAsync(
+                state.ChatId,
+                text,
+                keyboard,
+                state.MessageThreadId,
+                cancellationToken);
+
+            if (renderKeyboard)
+            {
+                runtime.PendingPrompts[token] = new PendingPrompt(
+                    prompt,
+                    state.ChatId,
+                    sent.MessageId,
+                    state.MessageThreadId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} bot '{BotName}' failed to deliver the ask_user prompt for chat {ChatId}; the prompt will resolve only by timeout or a typed reply",
+                DisplayName,
+                runtime.BotName,
+                state.ChatId);
+        }
+    }
+
+    /// <summary>
+    /// Handles an inline-keyboard tap: authorizes it, resolves the prompt through the shared gateway
+    /// seam, and rewrites the prompt message so it cannot be answered twice (#2323).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Authorization is not optional here.</b> A callback query is an inbound event from a user and
+    /// is run through the same <c>AllowedChatIds</c>/<c>AllowedUserIds</c> checks as a text message.
+    /// A button is visible to everyone in a group, so without this an unauthorized member of an
+    /// allowed chat could answer on the operator's behalf.
+    /// </para>
+    /// <para>
+    /// <b>Idempotency has two layers.</b> The token is removed from the pending map with an atomic
+    /// <c>TryRemove</c>, so only one of two racing taps proceeds; and resolution itself goes through
+    /// <see cref="IAskUserPromptResolver"/>, which returns <c>NoPendingPrompt</c> for an already
+    /// answered prompt. The adapter never touches the response registry directly.
+    /// </para>
+    /// </remarks>
+    private async Task HandleCallbackQueryAsync(
+        BotRuntime runtime,
+        TelegramCallbackQuery callback,
+        CancellationToken cancellationToken)
+    {
+        // Not one of ours (or malformed): acknowledge so the client stops spinning, then ignore.
+        if (!TelegramPromptKeyboard.TryParseCallbackData(callback.Data, out var token, out var kind, out var choiceIndex))
+        {
+            await AcknowledgeCallbackAsync(runtime, callback.Id, text: null, cancellationToken);
+            return;
+        }
+
+        var chatId = callback.Message?.Chat?.Id;
+        if (chatId is null || !IsChatAllowed(runtime.Config, chatId.Value))
+        {
+            _logger.LogDebug(
+                "{DisplayName} bot '{BotName}' ignored callback query from unauthorized chat {ChatId}",
+                DisplayName,
+                runtime.BotName,
+                chatId);
+            await AcknowledgeCallbackAsync(runtime, callback.Id, "Not authorized.", cancellationToken);
+            return;
+        }
+
+        if (callback.From is null || !IsUserAllowed(runtime.Config, callback.From.Id))
+        {
+            _logger.LogDebug(
+                "{DisplayName} bot '{BotName}' ignored callback query from unauthorized user {UserId}",
+                DisplayName,
+                runtime.BotName,
+                callback.From?.Id);
+            await AcknowledgeCallbackAsync(runtime, callback.Id, "Not authorized.", cancellationToken);
+            return;
+        }
+
+        if (!runtime.PendingPrompts.TryGetValue(token, out var pending))
+        {
+            // Already answered, or from a prompt this process never issued (e.g. after a restart).
+            // Acknowledging is the whole response: a stale tap must never resolve anything.
+            await AcknowledgeCallbackAsync(runtime, callback.Id, "This prompt has already been answered.", cancellationToken);
+            return;
+        }
+
+        // Multi-select accumulates until the user explicitly submits, so a choice tap only updates the
+        // keyboard - the prompt stays pending and tappable by design.
+        if (kind == TelegramPromptCallbackKind.Choice && pending.Prompt.AllowMultiple)
+        {
+            await ToggleMultiSelectAsync(runtime, callback, token, pending, choiceIndex, cancellationToken);
+            return;
+        }
+
+        // Terminal from here: claim the token atomically so a double-tap (or a tap racing a typed
+        // answer) can only be claimed once.
+        if (!runtime.PendingPrompts.TryRemove(token, out pending))
+        {
+            await AcknowledgeCallbackAsync(runtime, callback.Id, "This prompt has already been answered.", cancellationToken);
+            return;
+        }
+
+        var cancelled = kind == TelegramPromptCallbackKind.Cancel;
+        IReadOnlyList<string>? selectedValues = null;
+
+        if (!cancelled)
+        {
+            selectedValues = kind switch
+            {
+                TelegramPromptCallbackKind.Submit => pending.Selected.ToArray(),
+                TelegramPromptCallbackKind.Choice when TryGetChoiceValue(pending.Prompt, choiceIndex, out var value) => [value],
+                _ => null
+            };
+
+            if (selectedValues is null)
+            {
+                // A choice ordinal that does not exist on the prompt - a stale keyboard from a prompt
+                // that has since changed. Put the prompt back so a valid tap can still answer it.
+                runtime.PendingPrompts.TryAdd(token, pending);
+                await AcknowledgeCallbackAsync(runtime, callback.Id, "That option is no longer available.", cancellationToken);
+                return;
+            }
+        }
+
+        await AcknowledgeCallbackAsync(runtime, callback.Id, cancelled ? "Cancelled." : "Answer recorded.", cancellationToken);
+
+        var resolved = await ResolvePromptAsync(runtime, pending.Prompt, selectedValues, cancelled, cancellationToken);
+
+        // Rewrite the message and drop the keyboard whether or not the gateway still had a waiter:
+        // a prompt that was resolved elsewhere is equally stale on this surface and must stop
+        // presenting tappable buttons.
+        await FinalizePromptMessageAsync(runtime, pending, selectedValues, cancelled, cancellationToken);
+
+        if (!resolved)
+        {
+            _logger.LogDebug(
+                "{DisplayName} bot '{BotName}' callback for request {RequestId} found no pending prompt to resolve (already answered or expired)",
+                DisplayName,
+                runtime.BotName,
+                pending.Prompt.RequestId);
+        }
+    }
+
+    /// <summary>
+    /// Toggles one value in a multi-select prompt and redraws the keyboard with check marks, leaving
+    /// the prompt pending until the user taps Submit.
+    /// </summary>
+    private async Task ToggleMultiSelectAsync(
+        BotRuntime runtime,
+        TelegramCallbackQuery callback,
+        string token,
+        PendingPrompt pending,
+        int choiceIndex,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetChoiceValue(pending.Prompt, choiceIndex, out var value))
+        {
+            await AcknowledgeCallbackAsync(runtime, callback.Id, "That option is no longer available.", cancellationToken);
+            return;
+        }
+
+        lock (pending.SelectionLock)
+        {
+            if (!pending.Selected.Remove(value))
+                pending.Selected.Add(value);
+        }
+
+        await AcknowledgeCallbackAsync(runtime, callback.Id, null, cancellationToken);
+
+        string[] snapshot;
+        lock (pending.SelectionLock)
+            snapshot = [.. pending.Selected];
+
+        try
+        {
+            await runtime.ApiClient.EditMessageTextWithKeyboardAsync(
+                pending.ChatId,
+                pending.MessageId,
+                pending.Prompt.Prompt,
+                TelegramPromptKeyboard.BuildKeyboard(pending.Prompt, token, snapshot),
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // A failed redraw only costs the check marks; the accumulated selection is authoritative
+            // in memory and Submit still resolves with it.
+            _logger.LogDebug(
+                ex,
+                "{DisplayName} bot '{BotName}' failed to redraw the multi-select keyboard for chat {ChatId}",
+                DisplayName,
+                runtime.BotName,
+                pending.ChatId);
+        }
+    }
+
+    /// <summary>
+    /// Resolves the prompt through the shared channel-agnostic gateway seam (#2322). The adapter
+    /// deliberately owns no registry access of its own - that duplication is the exact thing the seam
+    /// was introduced to remove.
+    /// </summary>
+    private async Task<bool> ResolvePromptAsync(
+        BotRuntime runtime,
+        AskUserPrompt prompt,
+        IReadOnlyList<string>? selectedValues,
+        bool cancelled,
+        CancellationToken cancellationToken)
+    {
+        if (_promptResolver is null)
+        {
+            _logger.LogWarning(
+                "{DisplayName} bot '{BotName}' cannot resolve ask_user prompt {RequestId}: no IAskUserPromptResolver is registered",
+                DisplayName,
+                runtime.BotName,
+                prompt.RequestId);
+            return false;
+        }
+
+        if (prompt.ToConversationId() is not { } conversationId)
+        {
+            _logger.LogWarning(
+                "{DisplayName} bot '{BotName}' cannot resolve ask_user prompt {RequestId}: the prompt carries no conversation id",
+                DisplayName,
+                runtime.BotName,
+                prompt.RequestId);
+            return false;
+        }
+
+        try
+        {
+            var result = await _promptResolver.ResolveAsync(
+                new AskUserSubmission
+                {
+                    ConversationId = conversationId,
+                    RequestId = prompt.RequestId,
+                    SelectedValues = cancelled ? null : selectedValues,
+                    Cancelled = cancelled,
+                    OriginChannel = ChannelType
+                },
+                cancellationToken);
+
+            return result.Succeeded;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} bot '{BotName}' failed to resolve ask_user prompt {RequestId}",
+                DisplayName,
+                runtime.BotName,
+                prompt.RequestId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Edits the prompt message to show the answer and removes its keyboard, so chat history records
+    /// what was chosen and the buttons cannot be tapped again.
+    /// </summary>
+    private async Task FinalizePromptMessageAsync(
+        BotRuntime runtime,
+        PendingPrompt pending,
+        IReadOnlyList<string>? selectedValues,
+        bool cancelled,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await runtime.ApiClient.EditMessageTextWithKeyboardAsync(
+                pending.ChatId,
+                pending.MessageId,
+                TelegramPromptKeyboard.RenderResolvedText(pending.Prompt, selectedValues, cancelled),
+                // Null reply_markup strips the keyboard.
+                replyMarkup: null,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Cosmetic only - the prompt is already resolved and the token already claimed, so a
+            // failed edit cannot produce a second resolution.
+            _logger.LogDebug(
+                ex,
+                "{DisplayName} bot '{BotName}' failed to finalize the resolved prompt message in chat {ChatId}",
+                DisplayName,
+                runtime.BotName,
+                pending.ChatId);
+        }
+    }
+
+    /// <summary>
+    /// Answers a callback query so Telegram stops showing the client-side spinner. Best-effort: this
+    /// is cosmetic and must never fail a resolution that already succeeded.
+    /// </summary>
+    private async Task AcknowledgeCallbackAsync(
+        BotRuntime runtime,
+        string callbackQueryId,
+        string? text,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await runtime.ApiClient.AnswerCallbackQueryAsync(callbackQueryId, text, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(
+                ex,
+                "{DisplayName} bot '{BotName}' failed to answer callback query {CallbackQueryId}",
+                DisplayName,
+                runtime.BotName,
+                callbackQueryId);
+        }
+    }
+
+    private static bool TryGetChoiceValue(AskUserPrompt prompt, int index, out string value)
+    {
+        value = string.Empty;
+        if (prompt.Choices is not { } choices || index < 0 || index >= choices.Count)
+            return false;
+
+        value = choices[index].Value;
+        return true;
+    }
+
+    private string NextPromptToken()
+        => Interlocked.Increment(ref _promptTokenCounter).ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Returns the number of prompts currently awaiting a button tap, across all bot runtimes.
+    /// Used by tests to assert a resolved prompt is actually forgotten.
+    /// </summary>
+    internal int GetPendingPromptCount()
+        => _bots.Values.Sum(r => r.PendingPrompts.Count);
+
     /// <summary>
     /// Returns the total number of streaming state entries across all bot runtimes.
     /// Used for diagnostics and testing to verify state is properly evicted.
@@ -1131,6 +1569,20 @@ public sealed class TelegramChannelAdapter(
 
         public ConcurrentDictionary<string, StreamingState> StreamingStates { get; } = new(StringComparer.Ordinal);
         public ConcurrentDictionary<long, DateTimeOffset> LastErrorReplyUtcByChat { get; } = new();
+
+        /// <summary>
+        /// Prompts awaiting an inline-keyboard tap, keyed by the short token embedded in each
+        /// button's <c>callback_data</c> (#2323).
+        /// </summary>
+        /// <remarks>
+        /// This map holds only what is needed to render and finalize the Telegram message; it is NOT
+        /// a second source of truth for whether a prompt is answerable. The durable checkpoint
+        /// (#2047) owns that, and every resolution goes through <c>IAskUserPromptResolver</c>. The
+        /// atomic <c>TryRemove</c> on this map is a local double-tap guard layered on top of the
+        /// gateway's own idempotency, not a replacement for it - which is also why a tap arriving
+        /// after a restart is simply acknowledged as stale rather than resolved from adapter memory.
+        /// </remarks>
+        public ConcurrentDictionary<string, PendingPrompt> PendingPrompts { get; } = new(StringComparer.Ordinal);
         public CancellationTokenSource? PollingCancellation { get; set; }
         public Task? PollingTask { get; set; }
 
@@ -1150,6 +1602,29 @@ public sealed class TelegramChannelAdapter(
         /// live state, so a later retry may attempt this bot again.
         /// </summary>
         public void AbandonStart() => Interlocked.Exchange(ref _startClaimed, 0);
+    }
+
+    /// <summary>
+    /// A prompt rendered as an inline keyboard and awaiting a tap (#2323).
+    /// </summary>
+    /// <param name="Prompt">The normalized prompt, used to map a tapped ordinal back to a choice value.</param>
+    /// <param name="ChatId">Chat the prompt message was sent to.</param>
+    /// <param name="MessageId">Message id of the prompt, so it can be edited on resolution.</param>
+    /// <param name="MessageThreadId">Forum topic thread, when the prompt was sent into one.</param>
+    private sealed record PendingPrompt(
+        AskUserPrompt Prompt,
+        long ChatId,
+        int MessageId,
+        int? MessageThreadId)
+    {
+        /// <summary>
+        /// Values accumulated so far on a multi-select prompt. Guarded by <see cref="SelectionLock"/>
+        /// because two taps on the same keyboard can be processed concurrently by the polling loop.
+        /// </summary>
+        public List<string> Selected { get; } = [];
+
+        /// <summary>Guards <see cref="Selected"/>.</summary>
+        public object SelectionLock { get; } = new();
     }
 
     private sealed class StreamingState(long chatId, int? messageThreadId)
