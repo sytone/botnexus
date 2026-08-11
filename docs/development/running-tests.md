@@ -35,7 +35,9 @@ Q:\repos\botnexus-wt\<branch>\tests\gateway\BotNexus.Cli.Tests\bin\Debug\net10.0
 ```
 
 a **new popup appears for every worktree**. During unattended or agent-driven runs
-this blocks the test run entirely.
+this blocks the test run entirely. Worse, the popup is not self-limiting: answering it
+creates a permanent ungrouped rule, so the rule set grows monotonically with every
+worktree ever created. See [Reclaiming orphaned rules](#reclaiming-orphaned-rules-issue-2774).
 
 ### The fix
 
@@ -43,12 +45,23 @@ this blocks the test run entirely.
 [`Ensure-TesthostFirewallRules.ps1`](../../scripts/repo/Ensure-TesthostFirewallRules.ps1)
 just before running tests. That helper:
 
-1. Derives the deterministic `testhost.exe` path for each selected test project
-   (`<projectDir>/bin/<Configuration>/net10.0/testhost.exe`). The firewall rule does
-   not require the binary to exist yet, so this works even on a fresh worktree.
+1. Derives the leased program set from each project's **build output** — every
+   executable actually present in `<projectDir>/bin/<Configuration>/<tfw>/`, not just
+   `testhost.exe`. This matters because fixtures such as `CliTestFixture` and
+   `CrossProcessConfigWriteTests` spawn a child process, and the binary they launch
+   (`BotNexus.Cli.exe`) sits in that same directory. Leasing only `testhost.exe` left
+   the CLI unleased, so it prompted anyway (issue #2774). If the output directory does
+   not exist yet — a fresh worktree before any build — the composed `testhost.exe` path
+   is used as a floor so a lease still happens.
 2. Checks which of those paths do **not** already have a firewall rule.
 3. If any are missing, batches them into a **single self-elevated child process** and
    creates inbound + outbound allow-rules (grouped under `BotNexus-Testhost`).
+
+The derivation lives in
+[`FirewallLeaseProgram.ps1`](../../scripts/repo/FirewallLeaseProgram.ps1) and is
+narrow by construction: only binaries directly inside the project's *own* output
+directory are ever leased. Nested `runtimes/` probes, sibling projects, and anything
+outside the repository are discarded.
 
 ### Behavior notes
 
@@ -60,6 +73,33 @@ just before running tests. That helper:
   fails the test run — at worst the original testhost popup reappears once.
 - **Idempotent.** Re-running is a clean no-op once rules are present.
 
+### Reclaiming orphaned rules (issue #2774)
+
+When someone answers an interactive firewall prompt, Windows creates rules named
+`TCP Query User{<GUID>}<program path>` with **no group at all**. A prune that iterates
+`Get-NetFirewallRule -Group 'BotNexus-Testhost'` is therefore a structural no-op against
+exactly the rule class the prompts generate — which is why 68 such rules accumulated on
+one machine, most pointing at long-deleted worktrees, four of them `Block`.
+
+[`Invoke-FirewallRuleReclaim.ps1`](../../scripts/repo/Invoke-FirewallRuleReclaim.ps1)
+is the one-shot reclaim. It reports by default and changes nothing without `-Apply`:
+
+```powershell
+# Report only — safe to run anywhere, changes nothing.
+pwsh -NoProfile -File scripts/repo/Invoke-FirewallRuleReclaim.ps1
+
+# Remove the orphans. Run from an ELEVATED shell.
+pwsh -NoProfile -File scripts/repo/Invoke-FirewallRuleReclaim.ps1 -Apply
+```
+
+**Narrowness contract.** A rule is removed only when *both* hold: its program path is
+under this repository or its worktree container, **and** that program no longer exists
+on disk. A `BotNexus-Testhost` lease rule is additionally spared while its owning
+process is still alive. Nothing outside those roots is ever touched — an over-broad
+firewall prune on a developer machine is worse than the bug it fixes. The guarantee is
+pinned by [`FirewallRulePrune.Tests.ps1`](../../scripts/repo/FirewallRulePrune.Tests.ps1),
+whose negative assertions fail if the selection ever widens.
+
 ### Managing the rules manually
 
 List the rules created by the helper:
@@ -68,11 +108,21 @@ List the rules created by the helper:
 Get-NetFirewallRule -Group 'BotNexus-Testhost'
 ```
 
-Remove them all (e.g. after deleting old worktrees):
+List the ungrouped rules that interactive prompts created:
+
+```powershell
+Get-NetFirewallRule -DisplayName 'testhost' | Where-Object { -not $_.Group }
+```
+
+Remove the grouped lease rules (e.g. after deleting old worktrees):
 
 ```powershell
 Get-NetFirewallRule -Group 'BotNexus-Testhost' | Remove-NetFirewallRule
 ```
+
+> Prefer `Invoke-FirewallRuleReclaim.ps1` over a hand-rolled `Remove-NetFirewallRule`
+> pipeline: it will not remove a rule whose binary still exists or whose lease is held
+> by a running test process.
 
 You can also pre-create rules for a specific set of projects without running tests:
 

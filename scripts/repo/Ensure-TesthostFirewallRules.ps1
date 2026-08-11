@@ -14,7 +14,12 @@
     Windows; firewall policy never changes the test command's result.
 
 .PARAMETER ProjectPath
-    Test project paths used to derive testhost.exe locations.
+    Test project paths. The leased program set is derived from each project's
+    BUILD OUTPUT (see FirewallLeaseProgram.ps1), not from a hard-coded
+    testhost.exe literal - issue #2774 Gap 2. Fixtures that spawn a child
+    process (CliTestFixture, CrossProcessConfigWriteTests) launch
+    BotNexus.Cli.exe, which the old literal never leased, so it prompted and
+    the prompt created an ungrouped rule the prune could not reclaim.
 
 .PARAMETER Configuration
     Build configuration segment in the output path. Defaults to Debug.
@@ -50,6 +55,7 @@ param(
 )
 
 begin {
+    . (Join-Path $PSScriptRoot 'FirewallLeaseProgram.ps1')
     $ruleGroup = 'BotNexus-Testhost'
     $collected = [System.Collections.Generic.List[string]]::new()
 
@@ -108,13 +114,16 @@ end {
     $candidatePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($project in $collected) {
         try {
-            $projectDirectory = Split-Path -Parent $project
-            if (-not $projectDirectory) { continue }
-            $testhostPath = Join-Path $projectDirectory (Join-Path 'bin' (Join-Path $Configuration (Join-Path $TargetFramework 'testhost.exe')))
-            [void]$candidatePaths.Add([System.IO.Path]::GetFullPath($testhostPath))
+            # Derived from build output: every executable actually present in the
+            # project's own output directory, so a new child-process fixture needs
+            # no change here. Falls back to the composed testhost.exe path when
+            # nothing is built yet.
+            foreach ($program in @(Get-LeasedProgramPath -ProjectPath $project -Configuration $Configuration -TargetFramework $TargetFramework)) {
+                [void]$candidatePaths.Add($program)
+            }
         }
         catch {
-            Write-Warning "Could not derive testhost path for '$project': $($_.Exception.Message)"
+            Write-Warning "Could not derive leased program paths for '$project': $($_.Exception.Message)"
         }
     }
 
@@ -160,7 +169,8 @@ try {
     `$index = 0
     foreach (`$program in `$targetPaths) {
         `$projectName = Split-Path (Split-Path (Split-Path (Split-Path `$program -Parent) -Parent) -Parent) -Leaf
-        `$displayName = "BotNexus testhost lease - `$projectName"
+        `$binaryName = Split-Path `$program -Leaf
+        `$displayName = "BotNexus testhost lease - `$projectName (`$binaryName)"
         foreach (`$direction in @('Inbound', 'Outbound')) {
             `$ruleName = 'BotNexus-Testhost-$callerProcessId-$callerStartTicks-$leaseId-' + `$index
             New-NetFirewallRule -Name `$ruleName -DisplayName `$displayName -Group `$ruleGroup -Direction `$direction -Action Allow -Program `$program -Profile Any | Out-Null
