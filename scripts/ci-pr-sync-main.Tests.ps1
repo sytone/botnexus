@@ -38,6 +38,7 @@ BeforeAll {
         Copy-Item $script:SourceScript (Join-Path $scriptsDir 'ci-pr-sync-main.ps1') -Force
         Copy-Item (Join-Path $PSScriptRoot 'repo/Remove-Worktree.ps1') $repoDir -Force
         Copy-Item (Join-Path $PSScriptRoot 'repo/WorktreeSyncGuard.ps1') $repoDir -Force
+        Copy-Item (Join-Path $PSScriptRoot 'repo/GitRemoteAuth.ps1') $repoDir -Force
 
         Set-Content -Path (Join-Path $work 'readme.txt') -Value 'fixture' -Encoding utf8
         Invoke-FixtureGit $work @('add', '-A') | Out-Null
@@ -114,5 +115,64 @@ Describe 'ci-pr-sync-main.ps1 repository resolution (#2405)' {
         $unqualified = [regex]::Matches($body, '(?<![\w.-])git\s+(?!-C\b)[a-z]')
         $names = ($unqualified | ForEach-Object { $_.Value }) -join '; '
         $unqualified.Count | Should -Be 0 -Because "issue #2405: all git calls must pass -C <repoRoot>. Found: $names"
+    }
+
+    # Issue #2961 gotcha 1: pushing to an explicit URL argument makes
+    # --force-with-lease fail with `(stale info)`, because the lease has no
+    # remote-tracking ref to compare against for an anonymous destination.
+    # Authentication must therefore be applied to the remote, and every push
+    # must target the remote NAME.
+    It 'never pushes to an explicit url' {
+        $content = Get-Content $script:SourceScript -Raw
+        $body = [regex]::Replace($content, '(?s)<#.*?#>', '')
+        $body = ($body -split "`n" | ForEach-Object { ($_ -replace '#.*$', '') }) -join "`n"
+        $urlPushes = [regex]::Matches($body, 'push[^\r\n]*https?://')
+        $urlPushes.Count | Should -Be 0 -Because 'issue #2961: push must target the remote name so --force-with-lease has a tracking ref'
+    }
+
+    It 'routes every push through the authenticated-remote helper' {
+        $content = Get-Content $script:SourceScript -Raw
+        $content | Should -Match 'Remove-SecretFromText' -Because 'issue #2961: git output may echo the authenticated url; it must be redacted before output'
+        $content | Should -Match 'Test-RemoteBranchExists' -Because 'issue #2961 gotcha 2: a deleted remote branch also reports "(stale info)" and must be reported distinctly'
+
+        # AST check, not a substring check. A substring assertion passes as soon
+        # as ONE call site is wrapped, which leaves the other push unauthenticated
+        # -- exactly the defect #2961 reports. Walk every invocation of a
+        # push-performing function and require it to be lexically enclosed by an
+        # Invoke-WithAuthenticatedRemote -Body block.
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:SourceScript, [ref]$tokens, [ref]$errors)
+        $errors.Count | Should -Be 0 -Because 'the script must parse'
+
+        $pushers = @('Invoke-RebaseAndPush', 'Invoke-LeasedPush')
+        $calls = $ast.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -and $pushers -contains $n.GetCommandName()
+            }, $true)
+
+        # Non-vacuity: the candidate set must not be empty, or this test proves nothing.
+        $calls.Count | Should -BeGreaterThan 0 -Because 'there must be at least one push call site to check'
+
+        foreach ($call in $calls) {
+            $wrapped = $false
+            $node = $call.Parent
+            while ($node) {
+                if ($node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Invoke-WithAuthenticatedRemote') {
+                    $wrapped = $true
+                    break
+                }
+                # A push helper invoked from inside another push helper inherits
+                # that helper's wrapping; only the outermost call site needs one.
+                if ($node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $pushers -contains $node.Name) {
+                    $wrapped = $true
+                    break
+                }
+                $node = $node.Parent
+            }
+            $wrapped | Should -BeTrue -Because "issue #2961: '$($call.GetCommandName())' at line $($call.Extent.StartLineNumber) pushes without an authenticated remote, so it fails with 'could not read Username'"
+        }
     }
 }

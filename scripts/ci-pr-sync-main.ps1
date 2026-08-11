@@ -18,6 +18,13 @@
 .PARAMETER Branch
     The head branch name to sync with main.
 
+.PARAMETER Token
+    GitHub token used to authenticate the force-push. Defaults to $env:GH_TOKEN.
+    Issue #2961: without this the rebase succeeded locally and the push then
+    died on an interactive credential prompt ('could not read Username').
+    The token is embedded in the origin remote URL for the duration of the
+    push only, and scrubbed in a finally; it is redacted from all output.
+
 .OUTPUTS
     JSON object: { success: bool, message: string }
 
@@ -27,7 +34,12 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [string]$Branch
+    [string]$Branch,
+
+    [Parameter()]
+    [AllowNull()]
+    [AllowEmptyString()]
+    [string]$Token = $env:GH_TOKEN
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,10 +53,52 @@ $repo = 'Sytone/botnexus'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'repo/Remove-Worktree.ps1')
 . (Join-Path $PSScriptRoot 'repo/WorktreeSyncGuard.ps1')
+. (Join-Path $PSScriptRoot 'repo/GitRemoteAuth.ps1')
 
 function Output-Result {
     param([bool]$Success, [string]$Message)
-    [pscustomobject]@{ success = $Success; message = $Message } | ConvertTo-Json -Compress
+    # Issue #2961: every message here can carry raw git output, which may echo
+    # the authenticated remote URL. Redact before it reaches stdout or a log.
+    $safe = Remove-SecretFromText -Text $Message -Secret @($Token)
+    [pscustomobject]@{ success = $Success; message = $safe } | ConvertTo-Json -Compress
+}
+
+<#
+.SYNOPSIS
+    Force-pushes with lease, distinguishing a deleted remote branch from a
+    genuine lease violation.
+.DESCRIPTION
+    Issue #2961 gotcha 2: `--force-with-lease` reports `(stale info)` both when
+    someone else moved the branch AND when the remote branch does not exist at
+    all (its PR merged and the branch was deleted). Those need different
+    operator responses, so probe the remote before reporting.
+
+    Gotcha 1: the push target is the remote NAME, never an explicit URL. A
+    lease has no remote-tracking ref to compare against for an anonymous URL,
+    so pushing to a URL makes --force-with-lease fail with `(stale info)`
+    unconditionally. Authentication therefore lives on the remote URL itself.
+#>
+function Invoke-LeasedPush {
+    param(
+        [Parameter(Mandatory)][string]$Dir,
+        [Parameter(Mandatory)][string]$Refspec,
+        [Parameter(Mandatory)][string]$RemoteBranch
+    )
+
+    $pushResult = git -C $Dir push --force-with-lease origin $Refspec 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        return [pscustomobject]@{ Ok = $true; Message = '' }
+    }
+
+    $text = Remove-SecretFromText -Text $pushResult -Secret @($Token)
+    if ($text -match 'stale info' -and -not (Test-RemoteBranchExists -RepoRoot $repoRoot -Branch $RemoteBranch)) {
+        return [pscustomobject]@{
+            Ok      = $false
+            Message = "Remote branch '$RemoteBranch' no longer exists on origin (its PR was likely merged and the branch deleted); nothing to sync. Push output: $text"
+        }
+    }
+
+    return [pscustomobject]@{ Ok = $false; Message = "Push failed: $text" }
 }
 
 # Fetch latest from remote
@@ -96,9 +150,9 @@ function Invoke-RebaseAndPush {
 
     # Rebase rewrites history, so a plain push is rejected; use lease so we
     # never clobber commits pushed to the branch since we fetched.
-    $pushResult = git -C $Dir push --force-with-lease origin $Branch 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        return [pscustomobject]@{ Ok = $false; Message = "Push failed: $pushResult" }
+    $push = Invoke-LeasedPush -Dir $Dir -Refspec $Branch -RemoteBranch $Branch
+    if (-not $push.Ok) {
+        return [pscustomobject]@{ Ok = $false; Message = $push.Message }
     }
 
     return [pscustomobject]@{ Ok = $true; Message = "Rebased $Branch onto main ($behind commit(s)) and force-pushed successfully." }
@@ -118,7 +172,9 @@ if ($worktreePath) {
 
     # Ensure the worktree branch matches the remote tip before rebasing so a
     # locally-stale worktree does not resurrect old commits.
-    $result = Invoke-RebaseAndPush -Dir $worktreePath
+    $result = Invoke-WithAuthenticatedRemote -RepoRoot $repoRoot -Token $Token -Body {
+        Invoke-RebaseAndPush -Dir $worktreePath
+    }
     Output-Result -Success $result.Ok -Message $result.Message
 } else {
     # No worktree — rebase in a temporary worktree tracking the remote branch.
@@ -140,9 +196,11 @@ if ($worktreePath) {
             return
         }
 
-        $pushResult = git -C $tempDir push --force-with-lease origin "${tempBranch}:${Branch}" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Output-Result -Success $false -Message "Push failed: $pushResult"
+        $push = Invoke-WithAuthenticatedRemote -RepoRoot $repoRoot -Token $Token -Body {
+            Invoke-LeasedPush -Dir $tempDir -Refspec "${tempBranch}:${Branch}" -RemoteBranch $Branch
+        }
+        if (-not $push.Ok) {
+            Output-Result -Success $false -Message $push.Message
             return
         }
 

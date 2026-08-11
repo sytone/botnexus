@@ -55,3 +55,34 @@ Automation calls `guard-bare.ps1` as a first-class step before git work, so a fl
 pwsh -NoProfile -File scripts/repo/install-hooks.ps1   # once per clone
 pwsh -NoProfile -File scripts/repo/guard-bare.ps1 -Prune  # guard + shrink rewrite surface
 ```
+
+## Unattended push authentication (issue #2961)
+
+`ci-pr-sync-main.ps1` rebased correctly but had **no credential path**: `origin` is
+`https://github.com/Sytone/botnexus.git`, so every force-push fell through to an
+interactive credential prompt and died with
+`fatal: could not read Username for 'https://github.com/Sytone/botnexus.git'`
+(preceded by `/dev/tty: No such device or address` under a non-tty runner).
+
+`scripts/repo/GitRemoteAuth.ps1` supplies the pattern:
+
+| Helper | Role |
+|--------|------|
+| `Invoke-WithAuthenticatedRemote` | Sets `origin` to `https://x-access-token:$GH_TOKEN@…` on the **main repo** (worktrees inherit remotes), runs the body, and restores a credential-free URL in a `finally` — including on throw. It also scrubs a credential left behind by a previously-interrupted run. |
+| `ConvertTo-SanitizedRemoteUrl` / `ConvertTo-AuthenticatedRemoteUrl` | Strip/embed the userinfo component. Embedding is idempotent: it replaces, never doubles. |
+| `Remove-SecretFromText` | Redacts the token and any surviving URL userinfo from anything bound for stdout, a log, or a result payload. |
+| `Test-RemoteBranchExists` | Distinguishes the two causes of `(stale info)`. |
+
+Two measured constraints the design encodes:
+
+1. **Authenticate the remote, not the push command.** Pushing to an explicit URL argument
+   makes `--force-with-lease` fail with `(stale info)` unconditionally, because a lease has
+   no remote-tracking ref to compare against for an anonymous destination. Push to the
+   remote *name*; `ci-pr-sync-main.Tests.ps1` pins this with an AST walk over every push
+   call site, so wrapping only one of them still fails.
+2. **A deleted remote branch also reports `(stale info)`.** When a PR merges and its branch
+   is deleted, the lease has nothing to compare against. That is not a lease violation and
+   is reported distinctly rather than as an opaque push failure.
+
+The token is never written to a persisted remote URL, never logged, and never appears in
+the script's JSON result.
