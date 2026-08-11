@@ -92,7 +92,7 @@ $docsRoot = Join-Path $RepoRoot $DocsPath
 $sourceRoot = Join-Path $RepoRoot $SourcePath
 
 if (-not (Test-Path -LiteralPath $docsRoot)) {
-    Write-Error "docs root not found: $docsRoot"
+    [Console]::Error.WriteLine("docs root not found: $docsRoot")
     exit 2
 }
 
@@ -183,8 +183,12 @@ function Test-DemonstrationLine {
 # breaks, fail loudly rather than certifying a docset nobody read.
 $minimumDocFiles = 20
 if ($docFiles.Count -lt $minimumDocFiles) {
-    Write-Error ("docs-lint scanned only {0} markdown files under '{1}' (minimum {2}). " -f
-        $docFiles.Count, $docsRoot, $minimumDocFiles +
+    # Deliberately NOT Write-Error: $ErrorActionPreference is 'Stop', which makes Write-Error
+    # terminating, so the script would die with exit 1 - indistinguishable from an ordinary
+    # findings result - and the caller could never tell a broken sweep from a dirty docset.
+    [Console]::Error.WriteLine(
+        ("docs-lint scanned only {0} markdown files under '{1}' (minimum {2}). " -f
+            $docFiles.Count, $docsRoot, $minimumDocFiles) +
         'The enumeration is broken; a green result here would be vacuous.')
     exit 2
 }
@@ -272,14 +276,14 @@ function Invoke-LiteralDriftRule {
 # ---------------------------------------------------------------------------
 function Invoke-ContradictionRule {
     if (-not (Test-Path -LiteralPath $FactsPath)) {
-        Write-Error "fact registry not found: $FactsPath"
+        [Console]::Error.WriteLine("fact registry not found: $FactsPath")
         exit 2
     }
     $registry = Get-Content -LiteralPath $FactsPath -Raw | ConvertFrom-Json
     $facts = @($registry.facts)
     if ($facts.Count -eq 0) {
         # An empty registry makes the rule silently pass on every page.
-        Write-Error 'fact registry contains no facts; rule 2 would be vacuous.'
+        [Console]::Error.WriteLine('fact registry contains no facts; rule 2 would be vacuous.')
         exit 2
     }
 

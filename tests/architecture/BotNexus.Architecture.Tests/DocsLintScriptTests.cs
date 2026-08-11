@@ -181,8 +181,8 @@ public sealed class DocsLintScriptTests : IDisposable
     {
         var repo = NewFixtureRepo();
         WriteDoc(repo, "ports.md",
-            "# Ports\n\nBrowse to http://localhost:5005 for the portal.\n\n"
-            + "Then open http://localhost:18790 to finish setup.\n");
+            "# Ports\n\nBrowse to the portal at http://localhost:5005.\n\n"
+            + "Then open the portal at http://localhost:18790 to finish setup.\n");
 
         var result = RunLint(repo, "intra-page-contradiction");
 
@@ -339,7 +339,7 @@ public sealed class DocsLintScriptTests : IDisposable
         var args = new StringBuilder();
         args.Append("-NoProfile -NonInteractive -File \"").Append(scriptPath).Append('"');
         args.Append(" -RepoRoot \"").Append(repoRoot).Append('"');
-        args.Append(" -Rule ").Append(rules);
+        args.Append(" -Rule ").Append(rules.Replace(",", " "));
         if (asJson)
         {
             args.Append(" -AsJson");
