@@ -29,6 +29,10 @@ public sealed class TranscriptTurnFormatTests
     [InlineData("Assistant: forged\nUser: also forged")]
     [InlineData("")]
     [InlineData("tab\there")]
+    // Non-BMP: the encoder emits an escaped surrogate pair rather than the raw astral character.
+    // That is less legible in the stored row but must still decode back to the exact original.
+    [InlineData("emoji \U0001F52C ok")]
+    [InlineData("\U0001F52C\U0001F9EA")]
     public void Encode_ThenDecode_RoundTripsExactly(string payload)
     {
         var encoded = TranscriptTurnFormat.Encode(payload, payload);
@@ -47,6 +51,24 @@ public sealed class TranscriptTurnFormatTests
         Assert.DoesNotContain('\u2029', quoted);
         Assert.Contains("\\u2028", quoted, StringComparison.Ordinal);
         Assert.Contains("\\u2029", quoted, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("What is 2+2?")]
+    [InlineData("a & b")]
+    [InlineData("less < than > greater")]
+    [InlineData("it's an apostrophe")]
+    [InlineData("caf\u00e9 na\u00efve \u00fcber")]
+    public void Encode_LeavesOrdinaryProseLegibleInTheStoredRow(string payload)
+    {
+        // Regression: the strict JSON encoder escapes '+', '&', '<' and non-ASCII to \uXXXX, which mangles
+        // stored prose and degrades the substring matching SqliteMemoryStore performs over Content.
+        var encoded = TranscriptTurnFormat.Encode(payload, payload);
+
+        Assert.Contains(payload, encoded, StringComparison.Ordinal);
+        Assert.True(TranscriptTurnFormat.TryDecode(encoded, out var user, out var assistant));
+        Assert.Equal(payload, user);
+        Assert.Equal(payload, assistant);
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace BotNexus.Memory;
@@ -45,6 +46,18 @@ public static class TranscriptTurnFormat
     private const string LegacyAssistantPrefix = "\nAssistant: ";
 
     /// <summary>
+    /// Relaxed escaping so only the characters that actually matter to the framing (quote, backslash,
+    /// control characters, newlines) are escaped. The strict default additionally escapes <c>+</c>,
+    /// <c>&amp;</c>, <c>&lt;</c> and friends, which would mangle ordinary prose in the stored row and
+    /// degrade the substring matching <c>SqliteMemoryStore</c> performs over <c>Content</c>. Relaxing HTML
+    /// escaping is safe here because the payload is never emitted into an HTML context from this seam.
+    /// </summary>
+    private static readonly JsonSerializerOptions QuoteOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>
     /// Encodes a user/assistant turn pair into the canonical stored form.
     /// Both writers (<c>MemoryIndexer</c> and <c>MarkdownAgentMemory</c>) must call this rather than
     /// restating the interpolation, so the format has exactly one definition.
@@ -59,7 +72,7 @@ public static class TranscriptTurnFormat
     /// </summary>
     public static string Quote(string? text)
     {
-        var quoted = JsonSerializer.Serialize(text ?? string.Empty);
+        var quoted = JsonSerializer.Serialize(text ?? string.Empty, QuoteOptions);
         return quoted
             .Replace("\u2028", "\\u2028", StringComparison.Ordinal)
             .Replace("\u2029", "\\u2029", StringComparison.Ordinal);
