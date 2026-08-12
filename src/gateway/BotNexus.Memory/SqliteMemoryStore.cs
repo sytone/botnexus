@@ -280,6 +280,59 @@ public sealed class SqliteMemoryStore(
         }
     }
 
+    /// <inheritdoc />
+    public async Task<int> DeleteBySessionAsync(string sessionId, CancellationToken ct = default)
+    {
+        // A blank id is treated as "nothing to do" rather than an argument fault: session delete
+        // is an idempotent, best-effort cleanup path and must never widen into a broad delete.
+        // `WHERE session_id = ''` would also not match NULL rows in SQLite, but short-circuiting
+        // makes that guarantee independent of SQL comparison semantics.
+        if (string.IsNullOrWhiteSpace(sessionId))
+            return 0;
+
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            // Uses idx_memories_session_id. The memories_ad trigger mirrors each deletion into
+            // the FTS index, so the rows stop being searchable and not merely stop being listed.
+            command.CommandText = "DELETE FROM memories WHERE session_id = $sessionId";
+            command.Parameters.AddWithValue("$sessionId", sessionId);
+            return await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ListSessionIdsAsync(CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+        return await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(token).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            // IS NOT NULL is load-bearing: a NULL session_id marks a non-session memory, and
+            // surfacing it here would make the reconciler treat it as an unresolvable orphan.
+            command.CommandText = """
+                SELECT DISTINCT session_id
+                FROM memories
+                WHERE session_id IS NOT NULL
+                """;
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            List<string> ids = [];
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+                ids.Add(reader.GetString(0));
+            return ids as IReadOnlyList<string>;
+        }, ct).ConfigureAwait(false);
+    }
+
     public async Task ClearAsync(CancellationToken ct = default)
     {
         await InitializeAsync(ct).ConfigureAwait(false);

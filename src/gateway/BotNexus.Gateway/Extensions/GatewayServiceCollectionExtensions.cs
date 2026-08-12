@@ -354,6 +354,11 @@ public static class GatewayServiceCollectionExtensions
         services.AddHostedService<SubAgentWorkspaceSweepHostedService>();
         services.AddHostedService<MemoryIndexer>();
 
+        // #2956: converge memory rows left behind by sessions deleted while the gateway was down
+        // (or before the delete path existed). Fails closed on a session-corpus scan error.
+        services.TryAddSingleton<MemorySessionReconciler>();
+        services.AddHostedService<MemorySessionReconciliationService>();
+
         // Liveness watchdog: monitors gateway activity and logs warnings on stalls
         services.AddSingleton<IActivityTracker, ActivityTracker>();
         services.AddSingleton<IThreadPoolProbe, ThreadPoolProbe>();

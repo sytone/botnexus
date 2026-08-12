@@ -7,6 +7,7 @@ using AgentId = BotNexus.Domain.Primitives.AgentId;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using BotNexus.Gateway.Api;
+using BotNexus.Memory;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -32,6 +33,7 @@ public sealed class SessionsController : ControllerBase
     private readonly ILogger<SessionsController>? _logger;
     private readonly TranscriptExportOptions _transcriptExport;
     private readonly IAgentSupervisor? _supervisor;
+    private readonly IMemoryStoreFactory? _memoryStoreFactory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SessionsController"/> class.
@@ -42,13 +44,19 @@ public sealed class SessionsController : ControllerBase
     /// <param name="logger">Optional logger for swallowed sink faults.</param>
     /// <param name="transcriptExport">Transcript export options controlling render-time secret redaction; when null, redaction defaults off.</param>
     /// <param name="supervisor">Agent supervisor used to read the live rendered system prompt off an active handle for the debug inspector; optional so tests without a running gateway still resolve the controller.</param>
+    /// <param name="memoryStoreFactory">
+    /// Resolves the per-agent memory store so a session delete also removes that session's indexed
+    /// memory rows (#2956). Optional: memory is a configurable subsystem and the controller must
+    /// resolve without it.
+    /// </param>
     public SessionsController(
         ISessionStore sessions,
         ISubAgentManager? subAgentManager = null,
         ISecurityEventSink? securityEvents = null,
         ILogger<SessionsController>? logger = null,
         IOptions<TranscriptExportOptions>? transcriptExport = null,
-        IAgentSupervisor? supervisor = null)
+        IAgentSupervisor? supervisor = null,
+        IMemoryStoreFactory? memoryStoreFactory = null)
     {
         _transcriptExport = transcriptExport?.Value ?? new TranscriptExportOptions();
         _sessions = sessions;
@@ -56,6 +64,7 @@ public sealed class SessionsController : ControllerBase
         _securityEvents = securityEvents;
         _logger = logger;
         _supervisor = supervisor;
+        _memoryStoreFactory = memoryStoreFactory;
     }
 
     /// <summary>Lists sessions, optionally filtered by agent ID.</summary>
@@ -556,7 +565,53 @@ public sealed class SessionsController : ControllerBase
             return authorizationFailure;
 
         await _sessions.DeleteAsync(sid, cancellationToken);
+
+        // #2956: the session row and its indexed memory rows are two stores that only ever
+        // diverged in one direction - memory indexing had an insert path and no delete path - so
+        // deleting a session used to be cosmetic and its content stayed searchable forever.
+        // Prune here, in the same operation, and only after authorization has passed.
+        await PruneSessionMemoryAsync(session.AgentId.Value, sid.Value, cancellationToken);
+
         return NoContent();
+    }
+
+    /// <summary>
+    /// Removes the deleted session's indexed memory rows (#2956).
+    /// </summary>
+    /// <remarks>
+    /// Best-effort by design: the session row is already gone by the time this runs, so failing the
+    /// request would report a delete that did in fact happen and would make the endpoint
+    /// non-idempotent on retry for a fault the caller cannot act on. The divergence is logged
+    /// instead, and the startup reconciliation pass converges it on the next restart.
+    /// </remarks>
+    private async Task PruneSessionMemoryAsync(string agentId, string sessionId, CancellationToken cancellationToken)
+    {
+        if (_memoryStoreFactory is null)
+            return;
+
+        try
+        {
+            // #2608: a reaped sub-agent workspace has no store; opening it is unrecoverable.
+            if (!_memoryStoreFactory.StoreLocationExists(agentId))
+                return;
+
+            var store = _memoryStoreFactory.Create(agentId);
+            var pruned = await store.DeleteBySessionAsync(sessionId, cancellationToken);
+            if (pruned > 0)
+            {
+                _logger?.LogInformation(
+                    "Pruned {PrunedRows} memory row(s) for deleted session '{SessionId}'.",
+                    pruned,
+                    sessionId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(
+                ex,
+                "Failed to prune memory rows for deleted session '{SessionId}'; startup reconciliation will converge them.",
+                sessionId);
+        }
     }
 
     /// <summary>Suspends an active session.</summary>
