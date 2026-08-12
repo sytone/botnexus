@@ -26,12 +26,12 @@ docker compose up --build
 
 The gateway starts on `http://localhost:5000`. Open a browser and navigate to that URL to confirm it is running.
 
-> **Why 5000 and not 5005?** The container is the one place the gateway does *not* use its default
-> port. The shipped `Dockerfile` sets `ASPNETCORE_URLS=http://+:5000` and `EXPOSE 5000`, and
-> `docker-compose.yml` publishes `5000:5000`, so the container listens on 5000 by explicit
-> configuration - not by falling back to a default. A host-run gateway with no configured
-> `gateway.listenUrl` uses `http://localhost:5005` (issue #2929). The port numbers on this page are
-> the container's, and are correct as written.
+> **Why this page says 5000 while a host-run gateway uses a different default port.** The container
+> is the one place the gateway does *not* fall back to its default. The shipped `Dockerfile` sets
+> `ASPNETCORE_URLS=http://+:5000` and `EXPOSE 5000`, and `docker-compose.yml` publishes `5000:5000`,
+> so the container listens on 5000 by explicit configuration. The port numbers on this page are the
+> container's and are correct as written; see `docs/user-guide/troubleshooting.md` for the host-run
+> default (issue #2929).
 
 Stop it with `Ctrl+C` or `docker compose down`.
 

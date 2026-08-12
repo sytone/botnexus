@@ -147,13 +147,12 @@ Edit `~/.botnexus/config.json`:
 ```json
 {
   "gateway": {
-    "listenUrl": "http://localhost:5015"
+    "listenUrl": "http://localhost:5006"
   }
 }
 ```
 
-Any free port works; `5015` is an arbitrary example. Avoid `5006`, which the
-developer-run gateway probed by `LiveGatewayFixture` uses.
+Any free port works; `5006` is an arbitrary example, not a second default.
 
 **Option 2: Kill the process using the port**
 
