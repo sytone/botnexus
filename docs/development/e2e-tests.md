@@ -57,6 +57,63 @@ Current keys:
 - `MULTI_DELTA` — ~14 deltas with ~80 ms inter-delta delay, used to exercise
   the portal's streaming-assembly path.
 
+## Fixture-success skips are a mass-vacuity generator (issue #2491)
+
+An xUnit **collection fixture** is constructed once for an entire collection. When
+every test class in that collection opens with `Skip.IfNot(fixture.Succeeded, …)`,
+a single provisioning fault flips one boolean and the whole collection converts
+itself into skips. The runner then prints `Passed!` and exits `0`.
+
+This is repo history, not a hypothesis. The `NewUserExperience` collection —
+23 test classes — went fully dark on `main` **twice**:
+
+| Cause | Fixed by |
+|---|---|
+| `botnexus init` seeds the `assistant` agent, so the provisioning loop's re-add exited non-zero | #2738 |
+| The fixture's solution prebuild raced concurrent test hosts (`CS2012` / `MSB3883`) | #2749 |
+
+Both times CI was green throughout and the E2E run reported
+*"No test matches the given testcase filter"*. Roughly 56 genuinely broken tests
+stayed hidden behind that green.
+
+### The rule
+
+Skipping is legitimate when a suite is genuinely opt-in on external
+infrastructure. The rule is that **a skip must never be the only signal**: every
+fixture whose success flag gates a collection must also be watched by a test that
+*asserts*. Use a plain `[Fact]` — never `[SkippableFact]`, and with no `Skip.`
+call in its body — so it fails loudly and by name when provisioning fails.
+
+`BotNexus.Integration.E2E.Tests/FixtureHealthTests.cs` is the reference shape;
+`BotNexus.Integration.ExtensionBoot.Tests/ExtensionBootFixtureHealthTests.cs` is
+the same pattern applied to the extension-boot gate.
+
+This is enforced by
+`BotNexus.Architecture.Tests/FixtureSuccessSkipArchitectureTests.cs`, which sweeps
+every tracked test source, finds each `ICollectionFixture<T>` and its boolean
+success flags, and fails when a flag gates tests via `Skip` without a
+corresponding asserting health test. It resolves one level of indirection, so
+hiding the gate behind a `private bool ShouldSkip() => !_fx.Succeeded;` helper
+does not evade it.
+
+### Recorded audit findings (AC4)
+
+| Fixture | Project | Status |
+|---|---|---|
+| `NewUserExperienceFixture` | `Integration.E2E.Tests` | Skip-gated, **watched** by `FixtureHealthTests` |
+| `ExtensionBootFixture` | `Integration.ExtensionBoot.Tests` | Was skip-gated via `ShouldSkip()` indirection with **no** health test — fixed here |
+| `CliInstallFixture` | `Integration.Cli.Tests` | Not skip-gated; asserts `InstallSucceeded` directly. Compliant. |
+| `LocalCliInstallFixture` | `Integration.Cli.Tests` | Not skip-gated; asserts `Succeeded` via `AssertFixture()`. Compliant. |
+| `LiveGatewayFixture` | `Conversation.Tests` | **Permanently dark in CI** — registered exemption, see below |
+
+`LiveGatewayFixture` probes a *developer-run* gateway at `localhost:5006` that no
+CI or container gate ever starts, so `IsAvailable` is always `false` unattended
+and asserting it would fail every run. It is registered in the fence's
+`EnvironmentGatedFixtures` allowlist with that reason. The finding stands on its
+own merits: **that suite has never contributed gate signal** and should either be
+re-hosted on a self-provisioned fixture (as `NewUserExperienceFixture` does) or
+dropped from the gate scope. Tracked separately rather than fixed here.
+
 ## Followup work (issue #598)
 
 The PR that introduced this project landed a single Playwright assertion
