@@ -60,6 +60,12 @@ public sealed class ExecTool : IAgentTool
     /// Exec tool can run long processes — default to 10 minutes.
     public TimeSpan? DefaultTimeout => TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// The per-call <c>timeoutMs</c> argument is milliseconds. Declared explicitly because the
+    /// executor no longer infers a unit from the argument name (issue #2955).
+    /// </summary>
+    public ToolTimeoutArgument? TimeoutArgument => new("timeoutMs", ToolTimeoutUnit.Milliseconds);
+
     /// <inheritdoc />
     public string Label => "Exec";
 
