@@ -300,7 +300,7 @@ export function requiredSections(type) {
  * @param {{ title: string, body: string, changedPaths: string[] }} input
  * @returns {{ violations: {rule: string, message: string, advisory: boolean}[], uiPaths: string[] }}
  */
-export function evaluate({ title, body, changedPaths }) {
+export function evaluate({ title, body, changedPaths, openCriteriaIssues }) {
   /** @type {{rule: string, message: string, advisory: boolean}[]} */
   const violations = [];
   const add = (rule, message, advisory = false) =>
@@ -356,7 +356,130 @@ export function evaluate({ title, body, changedPaths }) {
     );
   }
 
+  // Clause-by-clause close rule (#2437). ADVISORY ONLY, and deliberately so:
+  // an unticked box is often a clause that shipped and was never ticked, and
+  // the guard cannot tell the difference. It prompts a re-read of the criteria
+  // rather than blocking a legitimate close.
+  const openCriteria = openCriteriaIssues ?? [];
+  if (openCriteria.length > 0) {
+    const list = openCriteria.map((n) => `#${n}`).join(", ");
+    add(
+      "clause-coverage",
+      `**Clause coverage** \u2014 this PR says \`Closes\` on ${list}, which still ` +
+        "have unticked acceptance-criteria checkboxes. Verify each clause " +
+        "individually against what actually shipped. If any clause is not covered, " +
+        "use `Refs #N` instead and name the uncovered clause in the close comment.",
+      true
+    );
+  }
+
   return { violations, uiPaths };
+}
+
+/**
+ * Resolves which of the issues a PR claims to close still have unticked
+ * acceptance-criteria boxes.
+ *
+ * FAILS OPEN by design: a deleted issue, a cross-repo number or a transient API
+ * error yields no advisory rather than a spurious one. This check exists to
+ * prompt a human re-read, so a false positive costs more than a false negative.
+ *
+ * @param {{ github: any, owner: string, repo: string, issueNumbers: number[], core: any, prNumber: number }} args
+ * @returns {Promise<number[]>}
+ */
+export async function resolveOpenCriteriaIssues({
+  github,
+  owner,
+  repo,
+  issueNumbers,
+  core,
+  prNumber,
+}) {
+  const flagged = [];
+  for (const number of issueNumbers ?? []) {
+    if (number === prNumber) {
+      continue; // a PR referencing itself is not an issue
+    }
+    try {
+      const res = await github.rest.issues.get({
+        owner,
+        repo,
+        issue_number: number,
+      });
+      if (res?.data?.pull_request) {
+        continue; // #N resolved to a PR, not an issue
+      }
+      if (hasUntickedAcceptanceCriteria(String(res?.data?.body ?? ""))) {
+        flagged.push(number);
+      }
+    } catch (err) {
+      core?.info?.(`Could not read issue #${number} for clause coverage: ${err}`);
+    }
+  }
+  return flagged;
+}
+
+/**
+ * Extracts the issue numbers a PR body claims to CLOSE (not merely reference).
+ *
+ * Only the true closing keywords count. `Refs #N` is the sanctioned marker for
+ * partial work (see the clause-by-clause rule in
+ * `docs/development/pr-and-commit-conventions.md`) and must never trigger the
+ * unticked-criteria advisory — that would penalise exactly the behaviour the
+ * rule asks for.
+ *
+ * @param {string} body
+ * @returns {number[]} unique issue numbers, in first-seen order
+ */
+export function parseClosesIssues(body) {
+  const text = stripComments(body);
+  const re = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
+  const seen = [];
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const n = Number(match[1]);
+    if (Number.isInteger(n) && n > 0 && !seen.includes(n)) {
+      seen.push(n);
+    }
+  }
+  return seen;
+}
+
+/**
+ * True when an ISSUE body still has an unticked `- [ ]` item under a heading
+ * whose text mentions "acceptance criteria".
+ *
+ * Scoped to that section on purpose: issue bodies routinely carry unticked
+ * boxes in "Out of scope", "Notes" or a task list, and treating those as
+ * unshipped scope would make the advisory pure noise. Scanning stops at the
+ * next heading of the same or shallower depth.
+ *
+ * @param {string} issueBody
+ * @returns {boolean}
+ */
+export function hasUntickedAcceptanceCriteria(issueBody) {
+  const lines = stripComments(issueBody).split(/\r?\n/);
+  let depth = 0;
+  let inSection = false;
+  for (const line of lines) {
+    const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+    if (heading) {
+      const level = heading[1].length;
+      if (/acceptance\s+criteria/i.test(heading[2])) {
+        inSection = true;
+        depth = level;
+        continue;
+      }
+      if (inSection && level <= depth) {
+        inSection = false;
+      }
+      continue;
+    }
+    if (inSection && /^\s*[-*+]\s+\[ \]/.test(line)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -427,11 +550,24 @@ export async function run({ github, context, core }) {
   });
   const changedPaths = changedFiles.map((f) => f.filename);
 
-  // 2. Evaluate the conventions. Title/body are inert text — matched, never run.
+  // 2. Clause-by-clause close rule (#2437): does any issue this PR claims to
+  //    CLOSE still carry an unticked acceptance-criteria box? Fails open.
+  const body = String(pr.body ?? "");
+  const openCriteriaIssues = await resolveOpenCriteriaIssues({
+    github,
+    owner,
+    repo,
+    issueNumbers: parseClosesIssues(body),
+    core,
+    prNumber,
+  });
+
+  // 3. Evaluate the conventions. Title/body are inert text — matched, never run.
   const { violations, uiPaths } = evaluate({
     title: String(pr.title ?? ""),
-    body: String(pr.body ?? ""),
+    body,
     changedPaths,
+    openCriteriaIssues,
   });
 
   if (violations.length === 0) {
@@ -447,7 +583,7 @@ export async function run({ github, context, core }) {
     return;
   }
 
-  // 3. An authorized maintainer may waive violations for the current head SHA.
+  // 4. An authorized maintainer may waive violations for the current head SHA.
   const comments = await github.paginate(github.rest.issues.listComments, {
     owner,
     repo,
