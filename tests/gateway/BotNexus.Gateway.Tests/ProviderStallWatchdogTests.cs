@@ -93,7 +93,7 @@ public sealed class ProviderStallWatchdogTests
         using var cts = new CancellationTokenSource();
 
         var results = new List<AgentStreamEvent>();
-        await foreach (var evt in watchdog.WrapAsync(InfiniteStream(), cts.Token))
+        await foreach (var evt in watchdog.WrapAsync(InfiniteStream(cts.Token), cts.Token))
         {
             results.Add(evt);
             cts.Cancel();
@@ -120,12 +120,28 @@ public sealed class ProviderStallWatchdogTests
         yield return new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }; // Never reached
     }
 
-    private static async IAsyncEnumerable<AgentStreamEvent> InfiniteStream()
+    /// <summary>
+    /// A long-running producer used to exercise cancellation. It honours the token so the iterator can
+    /// always terminate: an async iterator that yields forever leaves a MoveNextAsync pending once the
+    /// consumer stops reading, and disposing it in that state corrupts its value-task source and throws
+    /// InvalidOperationException on a ThreadPool thread -- crashing the test host rather than failing a
+    /// test (#2970). Fenced by TestConcurrencyFlakeFenceTests.
+    /// </summary>
+    private static async IAsyncEnumerable<AgentStreamEvent> InfiniteStream(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        while (true)
+        while (!cancellationToken.IsCancellationRequested)
         {
             yield return new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "." };
-            await Task.Delay(10);
+
+            try
+            {
+                await Task.Delay(10, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                yield break;
+            }
         }
     }
 }

@@ -180,6 +180,18 @@ public sealed class SubAgentIntegrationTests
 
         completed.ShouldNotBeNull();
         completed!.Status.ShouldBe(SubAgentStatus.Completed);
+
+        // The Completed status flip happens strictly BEFORE child cleanup
+        // (CleanupChildAgentAsync -> StopAsync -> TryCleanupWorkspace), so status is not a
+        // happens-before edge for the workspace call. Waiting only on status verified work that was
+        // still in flight, and failed intermittently in CI (#2969) with the tell-tale Moq message
+        // "expected once, but was 0 times" that then printed the invocation as having occurred.
+        // The sibling SpawnFailure_/SpawnTimeout_CleansWorkspace tests already wait on this second
+        // signal; this case was the only one missing it.
+        await WaitUntilAsync(
+            () => Task.FromResult(workspaceManager.Invocations.Count > 0),
+            TimeSpan.FromSeconds(30));
+
         supervisor.Verify(s => s.StopAsync(
                 It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
                 completed.ChildSessionId,

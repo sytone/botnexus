@@ -49,9 +49,14 @@ public sealed class DefaultSubAgentManagerTimeoutTests
     public async Task RunSubAgentAsync_EmptyResponseBeforeTimeout_ReportsFailed()
     {
         var handle = CreateHandle(_ => Task.FromResult(new AgentResponse { Content = "  " }));
-        var (manager, dispatcher) = CreateManager(handle);
+        // #2979: this is the only test in the file that needs the delegate to BEAT the deadline, so a
+        // 1-second budget made correctness depend on winning a wall-clock race against a loaded CI
+        // runner (observed: a synchronous delegate took 3s to be scheduled, and the run classified
+        // TimedOut instead of Failed). The timeout is never intended to fire here, so a large budget
+        // costs nothing and removes the race. The timeout-seeking tests keep the 1-second default.
+        var (manager, dispatcher) = CreateManager(handle, timeoutSeconds: NonExpiringTimeoutSeconds);
 
-        var result = await SpawnAndAwaitTerminalAsync(manager);
+        var result = await SpawnAndAwaitTerminalAsync(manager, timeoutSeconds: NonExpiringTimeoutSeconds);
         await WaitForDiagnosticAsync(dispatcher);
 
         result.Status.ShouldBe(SubAgentStatus.Failed);
@@ -93,19 +98,23 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         result.Status.ShouldNotBe(SubAgentStatus.Completed);
     }
 
-    private static async Task<SubAgentInfo> SpawnAndAwaitTerminalAsync(DefaultSubAgentManager manager)
+    private static async Task<SubAgentInfo> SpawnAndAwaitTerminalAsync(
+        DefaultSubAgentManager manager,
+        int timeoutSeconds = 1)
     {
         var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
         {
             ParentAgentId = AgentId.From("parent-agent"),
             ParentSessionId = SessionId.From("parent-session"),
             Task = "Do background work",
-            TimeoutSeconds = 1,
+            TimeoutSeconds = timeoutSeconds,
             Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("inherited-conversation")
         });
 
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        // Allow for the sub-agent's own budget plus scheduling slack, so a deliberately long budget
+        // is not cut short by the harness's own polling deadline.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds + 5);
         while (DateTimeOffset.UtcNow < deadline)
         {
             var current = await manager.GetAsync(spawned.SubAgentId);
@@ -161,7 +170,17 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         return handle;
     }
 
-    private static (DefaultSubAgentManager Manager, Mock<IChannelDispatcher> Dispatcher) CreateManager(Mock<IAgentHandle> handle)
+    /// <summary>
+    /// A sub-agent budget large enough that it can never plausibly expire during a test, used by the
+    /// cases that assert a classification the delegate must reach BEFORE the deadline (#2979). Any
+    /// value well above worst-case CI scheduling latency works; the point is that the timer is not
+    /// part of what the test is measuring.
+    /// </summary>
+    private const int NonExpiringTimeoutSeconds = 30;
+
+    private static (DefaultSubAgentManager Manager, Mock<IChannelDispatcher> Dispatcher) CreateManager(
+        Mock<IAgentHandle> handle,
+        int timeoutSeconds = 1)
     {
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(
@@ -186,8 +205,10 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             .Returns(Task.CompletedTask);
 
         var options = new GatewayOptions();
-        options.SubAgents.MaxTimeoutSeconds = 1;
-        options.SubAgents.DefaultTimeoutSeconds = 1;
+        // MaxTimeoutSeconds clamps the request, so it must move with the requested budget -- otherwise a
+        // deliberately long, non-expiring budget is silently clamped straight back down to the racy 1s.
+        options.SubAgents.MaxTimeoutSeconds = timeoutSeconds;
+        options.SubAgents.DefaultTimeoutSeconds = timeoutSeconds;
 
         return (new DefaultSubAgentManager(
             supervisor.Object,
