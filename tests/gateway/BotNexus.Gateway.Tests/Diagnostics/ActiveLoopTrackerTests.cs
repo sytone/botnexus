@@ -187,7 +187,7 @@ public class ActiveLoopTrackerTests
     /// never disagree - asserted here under concurrent starts and completions.
     /// </summary>
     [Fact]
-    public void GetSnapshot_CountAlwaysEqualsDetailListSize_UnderConcurrentStartsAndEnds()
+    public async Task GetSnapshot_CountAlwaysEqualsDetailListSize_UnderConcurrentStartsAndEnds()
     {
         var tracker = new ActiveLoopTracker();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -210,7 +210,7 @@ public class ActiveLoopTrackerTests
             snapshot.ActiveCount.ShouldBe(snapshot.ActiveLoops.Count);
         }
 
-        churn.GetAwaiter().GetResult();
+        await churn;
     }
 
     /// <summary>Minimal deterministic clock; avoids a dependency on the test-time package.</summary>
