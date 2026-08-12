@@ -86,22 +86,72 @@ public sealed class ProviderStallWatchdogTests
         results.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// Upper bound on elements the cancellation test will consume before giving up. It exists purely so
+    /// that a watchdog which ignores cancellation fails the assertion instead of hanging the run; a
+    /// correct watchdog never comes close to it.
+    /// </summary>
+    private const int CancellationSafetyCap = 50;
+
     [Fact]
     public async Task WrapAsync_CancellationRequested_TerminatesWithoutError()
     {
         var watchdog = new ProviderStallWatchdog(TimeSpan.FromSeconds(30));
-        using var cts = new CancellationTokenSource();
+
+        // Two independent tokens on purpose. The watchdog is given `consumerCts`, which is what the test
+        // cancels; the producer is given `producerCts`, which the test cancels only during teardown. That
+        // separation is what makes this a test of the *watchdog*: the upstream iterator keeps producing
+        // regardless of the consumer's cancellation, so ending the loop is something only the watchdog
+        // can do. (The producer still honours a token so it can always be torn down safely -- an iterator
+        // left with a pending MoveNextAsync kills the test host, see InfiniteStream / #2970.)
+        using var consumerCts = new CancellationTokenSource();
+        using var producerCts = new CancellationTokenSource();
 
         var results = new List<AgentStreamEvent>();
-        await foreach (var evt in watchdog.WrapAsync(InfiniteStream(cts.Token), cts.Token))
+        var hitSafetyCap = false;
+
+        try
         {
-            results.Add(evt);
-            cts.Cancel();
+            // Enumeration completing without throwing is itself half the "terminates without error"
+            // proof: external cancellation must not surface as an OperationCanceledException here.
+            await foreach (var evt in watchdog.WrapAsync(InfiniteStream(producerCts.Token), consumerCts.Token))
+            {
+                results.Add(evt);
+                consumerCts.Cancel();
+
+                if (results.Count >= CancellationSafetyCap)
+                {
+                    hitSafetyCap = true;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            await producerCts.CancelAsync();
         }
 
-        // Should get the first event, then cancellation stops iteration.
-        results.Count.ShouldBe(1);
+        // 1. Iteration ended because cancellation propagated, not because the test bailed out. This is
+        //    the deterministic replacement for the old exact-count assertion: it holds under any legal
+        //    scheduling (the producer may race ahead by any number of elements) yet still fails if the
+        //    watchdog stops honouring cancellation.
+        hitSafetyCap.ShouldBeFalse(
+            $"iteration did not terminate after cancellation; consumed {results.Count} events up to the safety cap");
+
+        // 2. Cancellation really was requested, so clause 1 cannot be satisfied by a stream that simply
+        //    ended on its own.
+        consumerCts.IsCancellationRequested.ShouldBeTrue();
+
+        // 3. At least one event was delivered before cancellation took effect, and it is a real payload
+        //    event -- the bounded form of the old `Count.ShouldBe(1)`.
+        results.ShouldNotBeEmpty();
         results[0].Type.ShouldBe(AgentStreamEventType.ContentDelta);
+
+        // 4. No synthetic error was surfaced. Cancellation is not a stall: the watchdog must terminate
+        //    silently rather than emit its stall Error event. True for however many elements raced
+        //    through before cancellation propagated.
+        results.ShouldAllBe(e => e.Type == AgentStreamEventType.ContentDelta);
+        results.ShouldNotContain(e => e.Type == AgentStreamEventType.Error);
     }
 
     private static async IAsyncEnumerable<AgentStreamEvent> ToAsync(IEnumerable<AgentStreamEvent> events)

@@ -116,13 +116,15 @@ else
     private string _editorMode = "create";
     private string? _editorAgentId;
 
+    // #2755: bound to the lean GET /api/agents projection (AgentListItem). SystemPrompt was
+    // declared here but never rendered or read; it is no longer served on the list endpoint.
+    // ApiProvider/ModelId are rendered as grid columns above and are projected for that reason.
     private record AgentRow(
         string? AgentId,
         string DisplayName,
         string? Description,
         string ApiProvider,
-        string ModelId,
-        string? SystemPrompt);
+        string ModelId);
 
     private List<AgentRow> _agents = [];
     private bool _loading = true;

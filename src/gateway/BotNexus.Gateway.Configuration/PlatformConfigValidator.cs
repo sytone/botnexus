@@ -338,8 +338,41 @@ public static class PlatformConfigValidator
         ValidateApiKeys(config.Gateway?.ApiKeys, errors);
         ValidatePromptTemplates(config.PromptTemplates, errors);
         ValidateCron(config.Cron, errors);
+        ValidateSecretRedaction(config.Gateway?.SecretRedaction, errors);
 
         return errors;
+    }
+
+    /// <summary>
+    /// Validates operator-supplied secret redaction patterns (#2727).
+    /// </summary>
+    /// <remarks>
+    /// Every offending pattern is reported, not just the first, because an operator fixing a
+    /// redaction list one startup-crash at a time is how redaction ends up switched off. The rules
+    /// themselves live in <see cref="SecretRedactionPatternRules"/> and are shared with
+    /// <see cref="SecretRedactionOptions.Compile"/>, so validation can never accept a pattern the
+    /// redactor would refuse to compile.
+    /// </remarks>
+    private static void ValidateSecretRedaction(SecretRedactionConfig? redaction, List<string> errors)
+    {
+        if (redaction is null)
+            return;
+
+        if (redaction.MatchTimeoutMilliseconds is { } timeout && timeout <= 0)
+        {
+            errors.Add(
+                "gateway.secretRedaction.matchTimeoutMilliseconds must be greater than zero " +
+                $"(was {timeout}).");
+        }
+
+        if (redaction.Patterns is not { Count: > 0 } patterns)
+            return;
+
+        for (var i = 0; i < patterns.Count; i++)
+        {
+            if (SecretRedactionPatternRules.TryGetError(patterns[i], i, out var error))
+                errors.Add($"gateway.secretRedaction.patterns: {error}");
+        }
     }
 
     /// <summary>

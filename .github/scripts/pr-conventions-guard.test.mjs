@@ -24,6 +24,9 @@ import {
   shaMatchesHead,
   stripComments,
   run,
+  parseClosesIssues,
+  hasUntickedAcceptanceCriteria,
+  resolveOpenCriteriaIssues,
   EXEMPT_AUTHORS,
   APPROVE_COMMAND,
 } from "./pr-conventions-guard.mjs";
@@ -406,4 +409,123 @@ test("run reports a clean pass with no warnings", async () => {
   assert.equal(state.failed, null);
   assert.equal(state.warnings.length, 0);
   assert.match(state.notices.join(" "), /passed/i);
+});
+
+// ------------------------------------------------- clause-by-clause (#2437)
+test("parseClosesIssues picks up closing keywords only, not Refs", () => {
+  assert.deepEqual(parseClosesIssues("Closes #12 and fixes #13. Resolved #14."), [12, 13, 14]);
+  assert.deepEqual(parseClosesIssues("Refs #99"), []);
+  assert.deepEqual(parseClosesIssues("Related to #99 but see #100"), []);
+});
+
+test("parseClosesIssues dedupes and ignores commented-out text", () => {
+  assert.deepEqual(parseClosesIssues("Closes #7\nCloses #7"), [7]);
+  assert.deepEqual(parseClosesIssues("<!-- Closes #8 -->"), []);
+});
+
+test("hasUntickedAcceptanceCriteria finds an unticked box in the criteria section", () => {
+  const body = "## Summary\ns\n## Acceptance criteria\n- [x] one\n- [ ] two\n";
+  assert.equal(hasUntickedAcceptanceCriteria(body), true);
+});
+
+test("hasUntickedAcceptanceCriteria is false when every criterion is ticked", () => {
+  const body = "## Acceptance criteria\n- [x] one\n- [x] two\n## Out of scope\n- [ ] later\n";
+  assert.equal(hasUntickedAcceptanceCriteria(body), false);
+});
+
+test("hasUntickedAcceptanceCriteria ignores unticked boxes outside the section", () => {
+  const body = "## Notes\n- [ ] stray\n## Acceptance criteria\n- [x] done\n";
+  assert.equal(hasUntickedAcceptanceCriteria(body), false);
+});
+
+test("hasUntickedAcceptanceCriteria keeps deeper subheadings inside the section", () => {
+  const body = "## Acceptance criteria\n### Phase 2\n- [ ] not yet\n";
+  assert.equal(hasUntickedAcceptanceCriteria(body), true);
+});
+
+test("evaluate raises the clause-coverage finding as ADVISORY, never blocking", () => {
+  const { violations } = evaluate({
+    title: "feat(portal): add a thing",
+    body: goodFeatBody,
+    changedPaths: ["src/gateway/Thing.cs"],
+    openCriteriaIssues: [10],
+  });
+  const finding = violations.find((v) => v.rule === "clause-coverage");
+  assert.ok(finding, "expected a clause-coverage finding");
+  assert.equal(finding.advisory, true);
+  assert.match(finding.message, /#10/);
+  assert.equal(violations.filter((v) => !v.advisory).length, 0);
+});
+
+test("evaluate stays silent on clause coverage when no issue is flagged", () => {
+  const { violations } = evaluate({
+    title: "feat(portal): add a thing",
+    body: goodFeatBody,
+    changedPaths: ["src/gateway/Thing.cs"],
+    openCriteriaIssues: [],
+  });
+  assert.equal(violations.some((v) => v.rule === "clause-coverage"), false);
+});
+
+test("resolveOpenCriteriaIssues flags only issues with unticked criteria", async () => {
+  const issues = {
+    10: { body: "## Acceptance criteria\n- [ ] pending\n" },
+    11: { body: "## Acceptance criteria\n- [x] done\n" },
+  };
+  const github = {
+    rest: { issues: { get: async ({ issue_number }) => ({ data: issues[issue_number] }) } },
+  };
+  const flagged = await resolveOpenCriteriaIssues({
+    github, owner: "o", repo: "r", issueNumbers: [10, 11], core: makeCore().core, prNumber: 1,
+  });
+  assert.deepEqual(flagged, [10]);
+});
+
+test("resolveOpenCriteriaIssues skips numbers that resolve to a pull request", async () => {
+  const github = {
+    rest: {
+      issues: {
+        get: async () => ({
+          data: { body: "## Acceptance criteria\n- [ ] pending\n", pull_request: { url: "x" } },
+        }),
+      },
+    },
+  };
+  const flagged = await resolveOpenCriteriaIssues({
+    github, owner: "o", repo: "r", issueNumbers: [10], core: makeCore().core, prNumber: 1,
+  });
+  assert.deepEqual(flagged, []);
+});
+
+test("resolveOpenCriteriaIssues FAILS OPEN when the issue cannot be read", async () => {
+  const github = {
+    rest: { issues: { get: async () => { throw new Error("404 not found"); } } },
+  };
+  const { state, core } = makeCore();
+  const flagged = await resolveOpenCriteriaIssues({
+    github, owner: "o", repo: "r", issueNumbers: [10], core, prNumber: 1,
+  });
+  assert.deepEqual(flagged, []);
+  assert.match(state.infos.join(" "), /clause coverage/i);
+});
+
+test("run surfaces the clause-coverage advisory without failing the check", async () => {
+  const { state, core } = makeCore();
+  const github = makeGithub({ files: [{ filename: "src/gateway/Thing.cs" }] });
+  github.rest.issues.get = async () => ({
+    data: { body: "## Acceptance criteria\n- [ ] the second clause\n" },
+  });
+  await run({
+    github,
+    context: makeContext({
+      number: 5,
+      title: "feat(portal): add a thing",
+      body: goodFeatBody,
+      head: { sha: "abc123def456" },
+      user: { login: "sytone" },
+    }),
+    core,
+  });
+  assert.equal(state.failed, null);
+  assert.match(state.warnings.join(" "), /convention/i);
 });

@@ -121,9 +121,10 @@ public static class ResponsesMessageConverter
         }
 
         var contentArray = new JsonArray();
+        var droppedImageCount = (user.Content.Blocks ?? []).Count(b => b is ImageContent);
         var supportsImages = ImageModalityGuard.AllowImages(
             model,
-            (user.Content.Blocks ?? []).Count(b => b is ImageContent),
+            droppedImageCount,
             "responses.user");
         foreach (var block in user.Content.Blocks ?? [])
         {
@@ -146,6 +147,15 @@ public static class ResponsesMessageConverter
                     });
                     break;
             }
+        }
+
+        // #2485 AC4: substitute an in-band notice for the removed images so the drop is visible to
+        // the user through the conversation, not only to an operator reading the log.
+        if (!supportsImages)
+        {
+            var notice = ImageModalityGuard.BuildDropNotice(model, droppedImageCount);
+            if (notice is not null)
+                contentArray.Add(new JsonObject { ["type"] = "input_text", ["text"] = notice });
         }
 
         return new JsonObject

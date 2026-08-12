@@ -1,4 +1,5 @@
 @inject HttpClient Http
+@inject NavigationManager Nav
 @implements IDisposable
 
 @*
@@ -20,8 +21,16 @@
     {
         <div class="platform-stats-grid">
             <div class="platform-stat" data-testid="stat-active-loops">
-                <span class="platform-stat-value">@_stats.ActiveAgentLoops</span>
-                <span class="platform-stat-label">Active agent loops</span>
+                <button type="button"
+                        class="platform-stat-disclosure"
+                        data-testid="active-loops-toggle"
+                        aria-expanded="@(_loopsExpanded ? "true" : "false")"
+                        aria-controls="active-loop-details"
+                        @onclick="ToggleLoops">
+                    <span class="platform-stat-value">@_stats.ActiveAgentLoops</span>
+                    <span class="platform-stat-label">Active agent loops</span>
+                    <span class="platform-stat-chevron" aria-hidden="true">@(_loopsExpanded ? "\u25be" : "\u25b8")</span>
+                </button>
             </div>
             <div class="platform-stat" data-testid="stat-active-subagents">
                 <span class="platform-stat-value">@_stats.ActiveSubAgents</span>
@@ -36,6 +45,50 @@
                 <span class="platform-stat-label">Completed loops</span>
             </div>
         </div>
+        @if (_loopsExpanded)
+        {
+            <div id="active-loop-details" class="platform-loop-details" data-testid="active-loop-details" role="region" aria-label="Active agent loop details">
+                @if (!_loaded)
+                {
+                    <div class="platform-loop-loading" data-testid="active-loop-loading">Loading active loops...</div>
+                }
+                else if (_stats.ActiveLoopDetails.Count == 0)
+                {
+                    <div class="platform-loop-empty" data-testid="active-loop-empty">No agent loops are currently running.</div>
+                }
+                else
+                {
+                    <ul class="platform-loop-list">
+                        @foreach (var loop in _stats.ActiveLoopDetails)
+                        {
+                            <li class="platform-loop-row" data-testid="active-loop-row">
+                                @if (!string.IsNullOrWhiteSpace(loop.ConversationId) && !string.IsNullOrWhiteSpace(loop.AgentId))
+                                {
+                                    <button type="button"
+                                            class="platform-loop-link"
+                                            data-testid="active-loop-link"
+                                            data-conversation-id="@loop.ConversationId"
+                                            @onclick="() => NavigateToLoop(loop)">
+                                        <span class="platform-loop-agent">@(loop.AgentId)</span>
+                                        <span class="platform-loop-conversation">@loop.ConversationId</span>
+                                    </button>
+                                }
+                                else
+                                {
+                                    <span class="platform-loop-agent">@(string.IsNullOrWhiteSpace(loop.AgentId) ? "(unknown agent)" : loop.AgentId)</span>
+                                    <span class="platform-loop-conversation">@(string.IsNullOrWhiteSpace(loop.ConversationId) ? "(no conversation)" : loop.ConversationId)</span>
+                                }
+                                <span class="platform-loop-age" data-testid="active-loop-age" title="@loop.StartedAtUtc.ToString("u")">@FormatAge(loop.StartedAtUtc)</span>
+                            </li>
+                        }
+                    </ul>
+                }
+                @if (_refreshError)
+                {
+                    <div class="platform-loop-stale" data-testid="active-loop-refresh-error">Refresh failed - showing last known loops.</div>
+                }
+            </div>
+        }
     }
 </section>
 
@@ -46,7 +99,33 @@
     private readonly CancellationTokenSource _cts = new();
     private PlatformStats _stats = new();
     private bool _loadError;
+    private bool _refreshError;
+    private bool _loaded;
+    // Disclosure state is component-owned and never reset by a poll, so a refresh cannot collapse
+    // the operator's chosen view (AC5).
+    private bool _loopsExpanded;
     private Timer? _timer;
+
+    private void ToggleLoops() => _loopsExpanded = !_loopsExpanded;
+
+    private void NavigateToLoop(ActiveLoopDetail loop)
+    {
+        if (string.IsNullOrWhiteSpace(loop.AgentId) || string.IsNullOrWhiteSpace(loop.ConversationId))
+            return;
+        Nav.NavigateTo($"/chat/{Uri.EscapeDataString(loop.AgentId)}/{Uri.EscapeDataString(loop.ConversationId)}");
+    }
+
+    private static string FormatAge(DateTimeOffset startedAtUtc)
+    {
+        var age = DateTimeOffset.UtcNow - startedAtUtc;
+        if (age < TimeSpan.Zero)
+            age = TimeSpan.Zero;
+        if (age.TotalMinutes < 1)
+            return $"{(int)age.TotalSeconds}s";
+        if (age.TotalHours < 1)
+            return $"{(int)age.TotalMinutes}m {age.Seconds}s";
+        return $"{(int)age.TotalHours}h {age.Minutes}m";
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -72,6 +151,8 @@
             {
                 _stats = stats;
                 _loadError = false;
+                _refreshError = false;
+                _loaded = true;
             }
         }
         catch (OperationCanceledException)
@@ -80,7 +161,12 @@
         }
         catch (Exception)
         {
-            _loadError = true;
+            // A first-load failure blanks the panel; a later failure keeps the last known rows on
+            // screen and flags them as stale rather than throwing the operator's view away (AC5).
+            if (_loaded)
+                _refreshError = true;
+            else
+                _loadError = true;
         }
     }
 
@@ -101,5 +187,16 @@
         public int PeakAgentLoops { get; set; }
         public long TotalCompletedLoops { get; set; }
         public int ActiveSubAgents { get; set; }
+        public List<ActiveLoopDetail> ActiveLoopDetails { get; set; } = [];
+    }
+
+    /// <summary>Per-loop operator detail mirroring the gateway's ActiveLoopDetailDto.</summary>
+    private sealed class ActiveLoopDetail
+    {
+        public string LoopId { get; set; } = "";
+        public string? AgentId { get; set; }
+        public string? ConversationId { get; set; }
+        public string? SessionId { get; set; }
+        public DateTimeOffset StartedAtUtc { get; set; }
     }
 }

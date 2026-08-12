@@ -41,6 +41,53 @@ public static class ImageModalityGuard
     public const string DropActivityEventName = "botnexus.provider.image_parts_dropped";
 
     /// <summary>
+    /// Format string for the in-band notice substituted for the dropped image parts (#2485 AC4).
+    /// <para>
+    /// AC1-AC3 made the drop observable to an <em>operator</em> (log warning + span event). AC4 is a
+    /// different requirement: the <em>user</em> must be able to tell "the platform lost my image"
+    /// from "this model cannot accept images". A log line they will never read does not do that.
+    /// </para>
+    /// <para>
+    /// The converters are static, run below the session/channel layer and have no route to the
+    /// portal, so there is no transport event they could raise. What they DO own is the content
+    /// array being sent to the model. Substituting a text part for the removed image parts puts the
+    /// explanation in the one place guaranteed to reach the user: the conversation itself. The agent
+    /// sees why the promised attachment is absent and can say so, instead of confabulating about an
+    /// image it never received.
+    /// </para>
+    /// <para>
+    /// Placeholders: <c>{0}</c> dropped count, <c>{1}</c> model id, <c>{2}</c> provider.
+    /// </para>
+    /// </summary>
+    public const string DropNoticeFormat =
+        "[botnexus] {0} image attachment(s) accompanying this message were not delivered: model " +
+        "'{1}' (provider '{2}') does not accept image input. The attachment(s) reached the platform " +
+        "but cannot be shown to this model. Do not guess at their contents - tell the user the " +
+        "image could not be delivered and that a vision-capable model is required to read it.";
+
+    /// <summary>
+    /// Builds the in-band user-visible notice describing an image drop, or <see langword="null"/>
+    /// when <paramref name="imageCount"/> is not positive (so the common text-only path adds
+    /// nothing to the request).
+    /// </summary>
+    /// <param name="model">The resolved model that cannot accept the images.</param>
+    /// <param name="imageCount">How many image content parts were discarded.</param>
+    /// <returns>The notice text to emit as a text content part, or null when there is nothing to say.</returns>
+    public static string? BuildDropNotice(LlmModel model, int imageCount)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+
+        return imageCount <= 0
+            ? null
+            : string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                DropNoticeFormat,
+                imageCount,
+                model.Id,
+                model.Provider);
+    }
+
+    /// <summary>
     /// True when <paramref name="model"/> declares the image input modality.
     /// </summary>
     public static bool SupportsImages(LlmModel model)

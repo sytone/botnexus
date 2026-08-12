@@ -58,10 +58,31 @@ public sealed class HttpSseMcpTransport : IMcpTransport
         _endpoint = endpoint;
         _headers = headers;
         _ownsHttpClient = httpClient is null;
-        _httpClient = httpClient ?? new HttpClient();
+        _httpClient = httpClient ?? CreateDefaultHttpClient();
         _connectTimeout = connectTimeout ?? TimeSpan.FromSeconds(30);
         _maxReconnectAttempts = maxReconnectAttempts;
     }
+
+    /// <summary>
+    /// Creates the redirect-refusing handler backing the HttpClient used when the caller
+    /// supplies none.
+    /// <para>
+    /// <b>Security (#3012):</b> auto-redirect is disabled. <see cref="HttpClient"/> defaults to
+    /// <c>AllowAutoRedirect = true</c>, and the configured headers — which on the auth path include
+    /// a resolved BotNexus provider API key as <c>Authorization: Bearer &lt;token&gt;</c> — are attached
+    /// to the request itself, so the handler would replay them verbatim to a redirect target on an
+    /// arbitrary host and scheme. A malicious or compromised MCP server could therefore harvest the
+    /// credential with a single 302. Refusing to follow redirects keeps the credential bound to the
+    /// exact endpoint the operator configured; a redirect now surfaces as a non-success status the
+    /// caller reports rather than a silent cross-host disclosure.
+    /// </para>
+    /// <para>Exposed internally so tests can pin the security posture directly (#3012 AC4).</para>
+    /// </summary>
+    internal static HttpClientHandler CreateDefaultHandler()
+        => new() { AllowAutoRedirect = false };
+
+    private static HttpClient CreateDefaultHttpClient()
+        => new(CreateDefaultHandler(), disposeHandler: true);
 
     /// <summary>Gets the session ID assigned by the server, if any.</summary>
     internal string? SessionId => _sessionId;

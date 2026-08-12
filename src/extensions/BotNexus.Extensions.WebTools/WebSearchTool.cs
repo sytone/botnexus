@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Domain.Text;
 using BotNexus.Extensions.WebTools.Search;
 using BotNexus.Agent.Providers.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -170,7 +171,18 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
                 output.AppendLine();
             }
 
-            return TextResult(output.ToString().TrimEnd());
+            // THE untrusted-content boundary for this tool (#2813). Titles, URLs and snippets are
+            // written by whoever ranks for the query, so they are attacker-influenced text about to
+            // be spliced into the turn - and, via the transcript, into durable memory.
+            //
+            // Applied EXACTLY ONCE, here, over the assembled document rather than per field or per
+            // provider. Four providers already carry four verbatim copies of the size-cap decision;
+            // a fifth duplicated decision - and five places for a new marker to be added to only
+            // four of - is the defect this issue exists to prevent. Sanitizing the whole document
+            // also catches markup a marker split ACROSS fields would smuggle past a per-field pass.
+            // ISearchProvider therefore stays a pure transport contract: providers parse, this tool
+            // sanitizes. WebSearchToolSanitizationTests pins that division.
+            return TextResult(UntrustedContentSanitizer.Sanitize(output.ToString().TrimEnd()));
         }
         catch (HttpRequestException ex)
         {

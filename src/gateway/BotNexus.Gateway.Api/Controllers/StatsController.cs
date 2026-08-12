@@ -33,12 +33,27 @@ public sealed class StatsController(
     [HttpGet]
     public IActionResult GetOverview()
     {
+        // #2794: ONE snapshot call. Reading ActiveCount separately from the detail list would let a
+        // concurrent start/completion land between the two reads and ship a count that disagrees
+        // with the rows the portal renders (AC2).
+        var snapshot = _activeLoopTracker?.GetSnapshot();
+
         return Ok(new PlatformStatsDto
         {
-            ActiveAgentLoops = _activeLoopTracker?.ActiveCount ?? 0,
-            PeakAgentLoops = _activeLoopTracker?.PeakCount ?? 0,
-            TotalCompletedLoops = _activeLoopTracker?.TotalCompleted ?? 0,
-            ActiveSubAgents = _subAgentManager?.ActiveSubAgentCount ?? 0
+            ActiveAgentLoops = snapshot?.ActiveCount ?? 0,
+            PeakAgentLoops = snapshot?.PeakCount ?? 0,
+            TotalCompletedLoops = snapshot?.TotalCompleted ?? 0,
+            ActiveSubAgents = _subAgentManager?.ActiveSubAgentCount ?? 0,
+            ActiveLoopDetails = snapshot is null
+                ? []
+                : [.. snapshot.ActiveLoops.Select(l => new ActiveLoopDetailDto
+                {
+                    LoopId = l.LoopId,
+                    AgentId = l.AgentId,
+                    ConversationId = l.ConversationId,
+                    SessionId = l.SessionId,
+                    StartedAtUtc = l.StartedAtUtc
+                })]
         });
     }
 }
@@ -61,4 +76,32 @@ public sealed class PlatformStatsDto
 
     /// <summary>Live number of sub-agents currently running across all parent sessions.</summary>
     public required int ActiveSubAgents { get; init; }
+
+    /// <summary>
+    /// One row per active agent loop, taken from the same snapshot as <see cref="ActiveAgentLoops"/>
+    /// so the headline count always equals this collection's size.
+    /// </summary>
+    public required IReadOnlyList<ActiveLoopDetailDto> ActiveLoopDetails { get; init; }
+}
+
+/// <summary>
+/// Operator-facing detail for a single in-flight agent loop: who is running, in which conversation
+/// and session, and since when. Enough to decide whether a gateway restart is safe.
+/// </summary>
+public sealed class ActiveLoopDetailDto
+{
+    /// <summary>Opaque run identity, stable for the lifetime of the loop.</summary>
+    public required string LoopId { get; init; }
+
+    /// <summary>Agent executing the loop, when known.</summary>
+    public string? AgentId { get; init; }
+
+    /// <summary>Conversation the loop belongs to; drives portal addressability when present.</summary>
+    public string? ConversationId { get; init; }
+
+    /// <summary>Session the loop is running under, when known.</summary>
+    public string? SessionId { get; init; }
+
+    /// <summary>UTC instant the loop started, used by the portal to derive run age.</summary>
+    public required DateTimeOffset StartedAtUtc { get; init; }
 }

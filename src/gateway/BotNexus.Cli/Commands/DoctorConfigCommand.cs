@@ -24,6 +24,7 @@ internal sealed class DoctorConfigCommand
         new CompactionModelCheck(),
         new CompactionModelMissingCheck(),
         new DevOriginEnforcementCheck(),
+        new FeatureFlagSeedCheck(),
     ];
 
     /// <summary>
@@ -34,6 +35,7 @@ internal sealed class DoctorConfigCommand
     internal static readonly IReadOnlyList<IConfigAdvisory> Advisories =
     [
         new WildcardListenUrlAdvisory(),
+        new UnknownFeatureFlagAdvisory(),
     ];
 
     /// <summary>

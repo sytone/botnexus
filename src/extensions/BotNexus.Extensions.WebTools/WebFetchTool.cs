@@ -3,6 +3,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Domain.Text;
 using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Extensions.WebTools;
@@ -270,7 +271,26 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
                 _config.MaxResponseBytes,
                 cancellationToken).ConfigureAwait(false);
 
-            var content = raw ? html : HtmlToText.Convert(html);
+            // THE untrusted-content boundary for this tool (#2813). Everything below this line is
+            // fully attacker-controlled: whoever owns the URL owns the bytes. The size cap above
+            // bounds only how MUCH hostile content arrives; it says nothing about what that content
+            // can DO once it is spliced into the turn - a page can embed <|im_start|> or a <system>
+            // block and, because tool output lands in the transcript that MemoryIndexer persists,
+            // reach durable memory through a second door.
+            //
+            // Applied EXACTLY ONCE, here, and specifically BEFORE HtmlToText.Convert. Order is
+            // load-bearing, not incidental:
+            //   * HtmlToText strips tag delimiters, so sanitizing afterwards would see a <system>
+            //     block already reduced to its bare inner text - the delimiters that identify it as
+            //     an injection block are gone, and the injected INSTRUCTIONS survive intact. The
+            //     block-form patterns can only remove inner content while the block is still whole.
+            //   * HtmlToText also HTML-decodes entities, which would turn an inert &lt;|im_start|&gt;
+            //     into a live marker AFTER any later pass. Sanitizing first means
+            //     EscapedMarkupNormalizer sees the escaped spelling and deletes it at source (#2808).
+            //   * raw mode bypasses HtmlToText entirely, so this position is also the only one that
+            //     covers the rawest path - the one returning verbatim attacker HTML.
+            var sanitizedBody = UntrustedContentSanitizer.Sanitize(html);
+            var content = raw ? sanitizedBody : HtmlToText.Convert(sanitizedBody);
 
             var totalLength = content.Length;
             var endIndex = Math.Min(startIndex + maxLength, totalLength);

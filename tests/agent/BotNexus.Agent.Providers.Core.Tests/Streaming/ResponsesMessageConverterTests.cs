@@ -55,8 +55,12 @@ public class ResponsesMessageConverterTests
         var result = ResponsesMessageConverter.ConvertMessages(messages, Model("text"));
 
         var contentArray = result[0]!["content"]!.AsArray();
-        contentArray.Count.ShouldBe(1);
+        // #2485 AC4: the image is still filtered out - original intent preserved - but a
+        // user-visible notice is substituted so the drop is not silent.
+        contentArray.Count.ShouldBe(2);
         contentArray[0]!["type"]!.GetValue<string>().ShouldBe("input_text");
+        contentArray.Select(n => n!["type"]!.GetValue<string>()).ShouldNotContain("input_image");
+        contentArray[1]!["text"]!.GetValue<string>().ShouldContain("were not delivered");
     }
 
     [Fact]
