@@ -25,7 +25,7 @@ public readonly record struct TranscriptRoleRecord(string Role, string Text);
 /// <para>
 /// The fix is to make the encoding unambiguous rather than to filter harder: each role payload is
 /// JSON-quoted, so no user-supplied text can ever produce a raw newline or an unquoted role prefix in the
-/// serialised form. <see cref="MemoryContentSanitizer"/> stays exactly where it is — sanitising is a markup
+/// serialised form. <see cref="UntrustedContentSanitizer"/> stays exactly where it is — sanitising is a markup
 /// concern and delimiting is an encoding concern, and both are wanted.
 /// </para>
 /// <para>

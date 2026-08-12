@@ -6,6 +6,7 @@ using BotNexus.Memory.Embeddings;
 using BotNexus.Memory.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using BotNexus.Domain.Text;
 
 namespace BotNexus.Memory;
 
@@ -184,8 +185,8 @@ public sealed class MarkdownAgentMemory : IAgentMemory
                     // Then delimit through the single shared encoder so no user text can forge an
                     // extra role record in the stored row (#2954).
                     Content = TranscriptTurnFormat.Encode(
-                        MemoryContentSanitizer.Sanitize(pendingUser.Content),
-                        MemoryContentSanitizer.Sanitize(turn.Content)),
+                        UntrustedContentSanitizer.Sanitize(pendingUser.Content),
+                        UntrustedContentSanitizer.Sanitize(turn.Content)),
                     MetadataJson = null,
                     Embedding = null,
                     CreatedAt = turn.Timestamp,

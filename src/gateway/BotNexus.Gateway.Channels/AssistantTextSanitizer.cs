@@ -32,7 +32,7 @@ public static class AssistantTextSanitizer
 
     // Leaked tool-call XML: some models (notably opus via github-copilot) serialise a tool call as
     // Anthropic <invoke>/<tool_use> markup inside the assistant TEXT channel instead of a structured
-    // tool_use block (issue #1698). Mirror the proven MemoryContentSanitizer filters so raw XML never
+    // tool_use block (issue #1698). Mirror the proven UntrustedContentSanitizer filters so raw XML never
     // reaches a channel. Block form first (removes nested <parameter> JSON), then stray open/close tags
     // including bare <parameter>.
     private static readonly Regex ToolCallBlockPattern = new(

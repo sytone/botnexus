@@ -285,7 +285,7 @@ public sealed class MemorySearchTool : IAgentTool
             var entry = entries[i];
             // Defence-in-depth: neutralize any control / role-injection markup in historical rows
             // (written before sanitization existed) on the recall path too (#1560).
-            var sanitized = MemoryContentSanitizer.Sanitize(entry.Content);
+            var sanitized = UntrustedContentSanitizer.Sanitize(entry.Content);
             var preview = TextTruncation.SafeTruncate(sanitized, 240, "...")!;
             preview = preview.Replace("\r\n", " ", StringComparison.Ordinal).Replace('\n', ' ');
 
