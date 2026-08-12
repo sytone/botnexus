@@ -436,7 +436,7 @@ The loop runner handles transient errors with automatic retry:
 - **Rate limits (HTTP 429):** Retry with exponential backoff.
 - **Service errors (502, 503, 504):** Retry with exponential backoff.
 - **Timeouts:** Retry with exponential backoff.
-- **Max retries:** 4 attempts, delays of 500ms, 1s, 2s (capped by `MaxRetryDelayMs`).
+- **Max retries:** 4 attempts, delays of 500ms, 1s, 2s plus bounded jitter (up to +25%, #3035), capped by `MaxRetryDelayMs`.
 
 ### Context overflow
 
@@ -500,7 +500,7 @@ public record AgentOptions(
     QueueMode FollowUpMode,                       // Queue drain mode for follow-ups
     string? SessionId,                            // Caller-provided session ID
     Action<string>? OnDiagnostic,                 // Non-fatal diagnostic callback
-    int? MaxRetryDelayMs                          // Max retry backoff delay (ms); null = uncapped
+    int? MaxRetryDelayMs                          // Max retry backoff delay (ms); also caps Retry-After. Defaults to 60,000 (#3035)
 );
 ```
 

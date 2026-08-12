@@ -45,6 +45,7 @@ public sealed class TransientHttpRetryHandler : DelegatingHandler
     private readonly ILogger<TransientHttpRetryHandler>? _logger;
     private readonly int _maxRetries;
     private readonly TimeSpan _baseDelay;
+    private readonly Func<double> _randomSource;
 
     /// <summary>Default number of retry attempts after the initial request.</summary>
     internal const int DefaultMaxRetries = 3;
@@ -58,14 +59,22 @@ public sealed class TransientHttpRetryHandler : DelegatingHandler
     /// <param name="logger">Optional logger for retry diagnostics.</param>
     /// <param name="maxRetries">Maximum retry attempts after the initial send. Defaults to <see cref="DefaultMaxRetries"/>.</param>
     /// <param name="baseDelay">Base backoff delay, scaled by attempt number. Defaults to <see cref="DefaultBaseDelay"/>.</param>
+    /// <param name="randomSource">
+    /// Injectable randomness source in <c>[0,1]</c> used for the backoff jitter (#3035). Defaults to
+    /// <see cref="RetryJitter.DefaultRandomSource"/>. Exists so the jitter is deterministically testable:
+    /// pinned to <c>0</c> the handler reproduces the historical 250/500/750ms schedule exactly, pinned to
+    /// <c>1</c> every delay is strictly longer and bounded by the jitter factor.
+    /// </param>
     public TransientHttpRetryHandler(
         ILogger<TransientHttpRetryHandler>? logger = null,
         int? maxRetries = null,
-        TimeSpan? baseDelay = null)
+        TimeSpan? baseDelay = null,
+        Func<double>? randomSource = null)
     {
         _logger = logger;
         _maxRetries = maxRetries is > 0 ? maxRetries.Value : DefaultMaxRetries;
         _baseDelay = baseDelay is { } d && d > TimeSpan.Zero ? d : DefaultBaseDelay;
+        _randomSource = randomSource ?? RetryJitter.DefaultRandomSource;
     }
 
     /// <inheritdoc/>
@@ -170,8 +179,23 @@ public sealed class TransientHttpRetryHandler : DelegatingHandler
         return false;
     }
 
-    private TimeSpan ComputeDelay(int attempt) =>
-        TimeSpan.FromMilliseconds(_baseDelay.TotalMilliseconds * (attempt + 1));
+    /// <summary>
+    /// Computes the backoff for a retry attempt: a linear ramp off the base delay, plus bounded
+    /// one-sided jitter drawn from the injected randomness source (#3035).
+    /// <para>
+    /// Without the jitter term every caller flowing through the shared provider <see cref="HttpClient"/>
+    /// retried a 421/502/503/504 on the identical 250/500/750ms schedule, so a provider-side blip that
+    /// hit many agents at once produced perfectly synchronised retry waves. The jitter spreads those
+    /// wake-ups without changing the shape of the ramp.
+    /// </para>
+    /// Exposed (rather than private) so the schedule can be asserted directly at both pinned bounds;
+    /// a range assertion on an awaited delay cannot distinguish "jitter applied" from "jitter removed".
+    /// </summary>
+    /// <param name="attempt">Zero-based retry attempt number.</param>
+    public TimeSpan ComputeDelay(int attempt) =>
+        RetryJitter.Apply(
+            TimeSpan.FromMilliseconds(_baseDelay.TotalMilliseconds * (attempt + 1)),
+            _randomSource());
 
     /// <summary>
     /// Prepares a request for retry: waits the backoff, then forces the next send onto a fresh

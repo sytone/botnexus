@@ -4,6 +4,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Resilience;
 using BotNexus.Agent.Providers.Core.Utilities;
 
 namespace BotNexus.Agent.Core.Loop;
@@ -463,6 +464,47 @@ public static class AgentLoopRunner
         }
     }
 
+    /// <summary>
+    /// Computes the wall-clock delay before a transient-failure retry (#3035).
+    /// <para>
+    /// Two defects motivated extracting this. First, the delay was <em>purely deterministic</em>, so every
+    /// agent throttled by the shared provider endpoint at the same instant slept for an identical interval
+    /// and woke in lockstep, re-triggering the throttle - a self-inflicted thundering herd. Bounded
+    /// one-sided jitter from <see cref="AgentLoopConfig.RetryRandomSource"/> desynchronises them.
+    /// </para>
+    /// <para>
+    /// Second, a server-supplied <c>Retry-After</c> was honoured <em>verbatim with no ceiling at all</em>,
+    /// so one malformed or hostile header could park a turn for hours. It is now clamped to the same
+    /// ceiling as the local backoff. Jitter is applied to the local backoff only: a <c>Retry-After</c> is
+    /// an explicit server instruction, and stretching it past what the server asked for would be the
+    /// caller second-guessing the provider. The clamp is applied <em>after</em> jitter so the ceiling is a
+    /// true hard bound rather than one the jitter can overshoot.
+    /// </para>
+    /// Internal rather than private so the schedule can be asserted directly at both pinned bounds of the
+    /// randomness source; the awaited delay alone cannot distinguish jitter applied from jitter removed.
+    /// </summary>
+    /// <param name="backoffMs">The current un-jittered exponential backoff (500/1000/2000...).</param>
+    /// <param name="retryAfter">The server-supplied <c>Retry-After</c>, when the provider sent one.</param>
+    /// <param name="config">Supplies the ceiling and the randomness seam.</param>
+    internal static int ComputeRetryDelayMs(int backoffMs, TimeSpan? retryAfter, AgentLoopConfig config)
+    {
+        var ceiling = config.EffectiveMaxRetryDelayMs;
+
+        double candidate;
+        if (retryAfter is { } after)
+        {
+            // A negative Retry-After is nonsense; floor it at zero rather than producing a negative delay.
+            candidate = Math.Max(0d, after.TotalMilliseconds);
+        }
+        else
+        {
+            var random = (config.RetryRandomSource ?? RetryJitter.DefaultRandomSource)();
+            candidate = RetryJitter.ApplyMs(backoffMs, random);
+        }
+
+        return (int)Math.Min(candidate, ceiling);
+    }
+
     private static async Task<AssistantAgentMessage> ExecuteWithRetryAsync(
         List<AgentMessage> messages,
         string? systemPrompt,
@@ -543,11 +585,7 @@ public static class AgentLoopRunner
             {
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 var retryAfterDelay = (ex as ProviderRateLimitException)?.RetryAfter;
-                var delayMs = retryAfterDelay is not null
-                    ? (int)retryAfterDelay.Value.TotalMilliseconds
-                    : config.MaxRetryDelayMs is > 0
-                        ? Math.Min(backoffMs, config.MaxRetryDelayMs.Value)
-                        : backoffMs;
+                var delayMs = ComputeRetryDelayMs(backoffMs, retryAfterDelay, config);
                 await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
                 attempt++;
                 backoffMs *= 2;

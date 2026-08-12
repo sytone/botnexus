@@ -26,8 +26,18 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="AfterToolCall">Optional post-tool-call hook for result transformation.</param>
 /// <param name="GenerationSettings">The generation settings for model calls (temperature, maxTokens, etc.).</param>
 /// <param name="MaxRetryDelayMs">
-/// Optional maximum delay in milliseconds for transient retry backoff.
-/// Must be greater than zero when set; null means uncapped retry delay.
+/// Maximum delay in milliseconds for transient retry backoff, and the ceiling applied to a
+/// server-supplied <c>Retry-After</c>. Must be greater than zero when set.
+/// Defaults to <see cref="AgentLoopConfig.DefaultMaxRetryDelayMs"/> rather than to "uncapped" (#3035):
+/// an uncapped ceiling let a single malformed or hostile upstream <c>Retry-After</c> header park a turn
+/// for as long as it asked, with no operator-visible bound. A null or non-positive value is treated as
+/// "use the default ceiling", so the delay is bounded on every path.
+/// </param>
+/// <param name="RetryRandomSource">
+/// Injectable randomness source in <c>[0,1]</c> for the transient-retry backoff jitter (#3035).
+/// Null uses <see cref="BotNexus.Agent.Providers.Core.Resilience.RetryJitter.DefaultRandomSource"/>.
+/// The seam exists so the jitter is deterministically testable rather than being untestable
+/// non-determinism: pinned to <c>0</c> the loop reproduces the historical 500/1000/2000ms sequence.
 /// </param>
 /// <param name="SkipInitialSteeringPoll">True to skip the first steering queue drain for this run.</param>
 /// <param name="ToolTimeout">Per-tool execution timeout. Null = no timeout (not recommended). Defaults to 120 seconds.</param>
@@ -77,7 +87,7 @@ public record AgentLoopConfig(
     BeforeToolCallDelegate? BeforeToolCall,
     AfterToolCallDelegate? AfterToolCall,
     SimpleStreamOptions GenerationSettings,
-    int? MaxRetryDelayMs = null,
+    int? MaxRetryDelayMs = AgentLoopConfig.DefaultMaxRetryDelayMs,
     bool SkipInitialSteeringPoll = false,
     TimeSpan? ToolTimeout = null,
     ClaimAuditOptions? ClaimAudit = null,
@@ -85,10 +95,28 @@ public record AgentLoopConfig(
     TimeSpan? BeforeToolCallTimeout = null,
     Action<string>? OnDiagnostic = null,
     BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
-    string? AuthProfile = null)
+    string? AuthProfile = null,
+    Func<double>? RetryRandomSource = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).
     /// </summary>
     public static readonly TimeSpan DefaultBeforeToolCallTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Default ceiling for transient retry backoff and for a server-supplied <c>Retry-After</c> (#3035).
+    /// <para>
+    /// Sixty seconds is comfortably above the loop's own worst-case backoff (500+1000+2000ms) so it never
+    /// truncates the normal schedule, while still bounding the pathological case the previous <c>null</c>
+    /// default allowed: a <c>Retry-After</c> of hours honoured verbatim, holding a turn open indefinitely.
+    /// </para>
+    /// </summary>
+    public const int DefaultMaxRetryDelayMs = 60_000;
+
+    /// <summary>
+    /// The effective retry-delay ceiling in milliseconds. Null or non-positive is normalised to
+    /// <see cref="DefaultMaxRetryDelayMs"/> so callers that explicitly opted into the old "uncapped"
+    /// behaviour by passing <c>null</c> are still bounded.
+    /// </summary>
+    public int EffectiveMaxRetryDelayMs => MaxRetryDelayMs is > 0 ? MaxRetryDelayMs.Value : DefaultMaxRetryDelayMs;
 }
