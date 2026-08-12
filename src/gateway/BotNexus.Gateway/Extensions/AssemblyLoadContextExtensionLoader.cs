@@ -163,7 +163,11 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             var assembly = loadContext.LoadFromAssemblyPath(extension.EntryAssemblyPath);
 
             var discoveredImplementations = DiscoverImplementations(assembly);
-            _logger.LogWarning(
+            // #2751: routine per-extension startup chatter. Emitted once per discovered extension
+            // (13 on a default boot), so at Warning it alone puts a permanent noise floor on every
+            // clean boot and hides genuinely new warnings. Discovering implementations is the
+            // expected outcome, not an anomaly - the anomalous cases already log at Error below.
+            _logger.LogInformation(
                 "Extension '{ExtensionId}' from '{Path}': discovered {Count} implementation(s){Details}",
                 extension.Manifest.Id,
                 extension.EntryAssemblyPath,
@@ -196,7 +200,9 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
                 _loaded[extension.Manifest.Id] = new LoadedExtensionRuntime(loadedExtension, loadContext);
             }
 
-            _logger.LogWarning(
+            // #2751: successful load is the success path; it belongs at Information (its original
+            // level, before the b78ff8a1 debug commit raised it) rather than Warning.
+            _logger.LogInformation(
                 "Loaded extension '{ExtensionId}' ({Name} v{Version}) with {ServiceCount} service registration(s).",
                 loadedExtension.ExtensionId,
                 loadedExtension.Name,
@@ -516,7 +522,12 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
 
             const string reason = "no public constructor whose parameters are all resolvable from the host container";
             pruned.Add((contract, implementation, reason));
-            _logger.LogWarning(
+            // #2751: pruning an optional registration the host cannot supply a dependency for is an
+            // EXPECTED outcome of this pass, not a fault - the pass exists precisely so those
+            // registrations are removed instead of aborting boot. It stays at Information (not
+            // Debug) so the boot record still names what was dropped, but it no longer counts as a
+            // warning on an otherwise clean boot.
+            _logger.LogInformation(
                 "Pruned extension service registration '{Contract}->{Implementation}' because it cannot be activated by the host container ({Reason}). The gateway will start without it.",
                 contract.Name,
                 implementation.FullName,
