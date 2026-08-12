@@ -135,6 +135,8 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(descriptor.AgentId.Value));
         var conversation = await ResolveConversationAsync(descriptor, executionContext, cancellationToken).ConfigureAwait(false);
+        // #2984: null for every non-cron session, so interactive prompt rendering is unchanged.
+        var runStartedAt = await ResolveRunStartedAtAsync(executionContext, cancellationToken).ConfigureAwait(false);
 
         // #2846: the caller's scope is a floor, not the last word. A conversation whose persisted
         // participant set already contains non-owner citizens is shared even if the caller did not
@@ -214,7 +216,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             ReasoningLevel = effectiveSettings?.ThinkingWireToken,
             MemoryPromptInjection = memoryPromptInjection,
             Scope = scope,
-            ConversationContext = ToConversationContext(conversation),
+            ConversationContext = ToConversationContext(conversation, runStartedAt),
             PromptMode = PromptMode.Full
         });
 
@@ -283,10 +285,31 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         return conversation;
     }
 
-    private static ConversationContext? ToConversationContext(Conversation? conversation)
+    /// <summary>
+    /// Start of the current run, for a session that IS one run of a recurring job (#2984).
+    /// </summary>
+    /// <remarks>
+    /// A cron job gets a fresh session per run but reuses one durable conversation, so the session's own
+    /// creation time IS the run boundary. Read from the session rather than parsed out of the session-id
+    /// string: the id format (<c>cron:{jobId}:{timestamp}:{guid}</c>, with a legacy jobId-less variant) is
+    /// an internal encoding, and a parser over it would silently start returning null the day it changes.
+    /// Returns null for every non-cron session, which keeps interactive prompts byte-identical.
+    /// </remarks>
+    private async Task<DateTimeOffset?> ResolveRunStartedAtAsync(
+        AgentExecutionContext? executionContext,
+        CancellationToken cancellationToken)
+    {
+        if (_sessionStore is null || executionContext is null || !executionContext.SessionId.IsCron)
+            return null;
+
+        var session = await _sessionStore.GetAsync(executionContext.SessionId, cancellationToken).ConfigureAwait(false);
+        return session?.CreatedAt;
+    }
+
+    private static ConversationContext? ToConversationContext(Conversation? conversation, DateTimeOffset? runStartedAt = null)
         => conversation is null
             ? null
-            : new ConversationContext(conversation.ConversationId.Value, conversation.Title, conversation.Purpose, conversation.Instructions, conversation.TodoJson);
+            : new ConversationContext(conversation.ConversationId.Value, conversation.Title, conversation.Purpose, conversation.Instructions, conversation.TodoJson, runStartedAt);
 
     /// <summary>
     /// Escalates the caller-supplied scope to <see cref="ConversationScope.Shared"/> when the

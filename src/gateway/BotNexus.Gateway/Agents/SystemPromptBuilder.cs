@@ -35,7 +35,12 @@ public sealed record RuntimeInfo
     public string? SessionKey { get; init; }
 }
 
-public sealed record ConversationContext(string ConversationId, string Title, string? Purpose, string? Instructions = null, string? Todo = null);
+/// <param name="RunStartedAt">
+/// Start of the current recurring run, when the conversation is driven by one (cron). Lets the todo
+/// section separate this run's agenda from earlier runs' minutes (#2984). <c>null</c> for every
+/// interactive caller, which preserves the original rendering exactly.
+/// </param>
+public sealed record ConversationContext(string ConversationId, string Title, string? Purpose, string? Instructions = null, string? Todo = null, DateTimeOffset? RunStartedAt = null);
 
 public sealed record SystemPromptParams
 {
@@ -777,7 +782,7 @@ public static class SystemPromptBuilder
     {
         var conversationContext = GetGatewayData(context).Parameters.ConversationContext;
         return conversationContext is not null
-               && TodoPromptFormatter.BuildSection(conversationContext.Todo).Count > 0;
+               && TodoPromptFormatter.BuildSection(conversationContext.Todo, conversationContext.RunStartedAt).Count > 0;
     }
 
     private static IReadOnlyList<string> BuildConversationTodoSection(PromptContext context)
@@ -785,7 +790,9 @@ public static class SystemPromptBuilder
         var conversationContext = GetGatewayData(context).Parameters.ConversationContext
             ?? throw new InvalidOperationException("ConversationContext is required for BuildConversationTodoSection.");
 
-        return TodoPromptFormatter.BuildSection(conversationContext.Todo);
+        // #2984: RunStartedAt (cron only) splits this run's agenda from earlier runs' minutes. The
+        // gate above must use the SAME arguments, or a section could be admitted and then render empty.
+        return TodoPromptFormatter.BuildSection(conversationContext.Todo, conversationContext.RunStartedAt);
     }
 
     private sealed class LambdaPromptSection(
