@@ -330,6 +330,21 @@ public sealed record SessionEntry
     /// </summary>
     public TriggerType? Trigger { get; init; }
 
+    /// <summary>
+    /// Optional origin attribution for this entry (issue #2840): who or what produced it, when the
+    /// producer is not simply "the human on the channel". <c>null</c> - the default and the value every
+    /// row persisted before #2840 reads back as - means no explicit attribution was supplied and the
+    /// entry's origin is whatever <see cref="Role"/> and the owning session already imply.
+    /// </summary>
+    /// <remarks>
+    /// This exists because a message that appears in a conversation with no provenance is worse than no
+    /// message: a reader cannot tell a scripted post from a human turn. It is deliberately a free-form
+    /// string rather than a typed citizen id - the callers that need it (cron command jobs, CI steps,
+    /// shell scripts) are not citizens and have no id in the world model. Treat it as untrusted display
+    /// text supplied by the caller; never as an authorization input.
+    /// </remarks>
+    public string? SenderId { get; init; }
+
     /// <summary>Tool name (when Role is <see cref="MessageRole.Tool"/>).</summary>
     public string? ToolName { get; init; }
 

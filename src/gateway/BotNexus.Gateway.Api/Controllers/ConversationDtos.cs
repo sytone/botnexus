@@ -139,6 +139,16 @@ public sealed class ConversationHistoryEntry
     public string? ThinkingContent { get; init; }
 
     /// <summary>
+    /// Origin attribution for this entry (issue #2840) - e.g. <c>api:cron:pr-doctor</c> for a message
+    /// posted through <c>POST /api/agents/{agentId}/conversations/{conversationId}/messages</c>.
+    /// <c>null</c> for ordinary channel turns and for every entry persisted before #2840.
+    /// </summary>
+    /// <remarks>
+    /// Caller-supplied display text. Render it as provenance; never treat it as an identity claim.
+    /// </remarks>
+    public string? SenderId { get; init; }
+
+    /// <summary>
     /// Orthogonal, typed presentation/delivery kind of the underlying transcript entry (issue
     /// #2149): <c>message</c> (ordinary/default), <c>subagent-completion</c> (the internal
     /// completion notification), or <c>subagent-response</c> (the parent agent's response to it).

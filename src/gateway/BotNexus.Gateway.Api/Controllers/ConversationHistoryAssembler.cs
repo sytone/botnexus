@@ -176,6 +176,9 @@ public sealed class ConversationHistoryAssembler : IConversationHistoryAssembler
                     ToolArgs = entry.ToolArgs,
                     ToolIsError = entry.ToolIsError,
                     ThinkingContent = entry.ThinkingContent,
+                    // #2840: surface the entry's origin attribution so a script-posted message is
+                    // distinguishable from a human turn by a history reader. Null for ordinary turns.
+                    SenderId = entry.SenderId,
                     IsFolded = entry.IsHistory,
                     // #2149: project the orthogonal typed kind so live delivery and history replay
                     // agree; ResolveKind maps legacy/unstamped entries to "message".

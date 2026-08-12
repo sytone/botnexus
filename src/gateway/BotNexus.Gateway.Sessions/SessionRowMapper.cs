@@ -111,6 +111,8 @@ internal static class SessionRowMapper
             IsCrashSentinel = GetBool(reader, "is_crash_sentinel"),
             IsHistory = GetBool(reader, "is_history"),
             Trigger = GetNullableString(reader, "trigger_type") is { } trigger ? TriggerType.FromString(trigger) : null,
+            // #2840: origin attribution. NULL for every pre-#2840 row and every ordinary channel turn.
+            SenderId = GetNullableString(reader, "sender_id"),
             ThinkingContent = GetNullableString(reader, "thinking_content"),
             // #2149: a NULL/absent message_kind reads back as an unstamped (null) Kind so an entry
             // saved with the default kind round-trips as null; SessionEntry.ResolveKind() maps null

@@ -1243,7 +1243,11 @@ public sealed class SqliteSessionStore : SessionStoreBase
                      // subagent-response). Idempotent ALTER so pre-#2149 DBs gain the column on
                      // the first post-upgrade open; a missing/NULL value reads back as the
                      // default MessageKind.Message.
-                     ("message_kind", "TEXT")
+                     ("message_kind", "TEXT"),
+                     // #2840: optional origin attribution for an entry ("api:cron:pr-doctor"), so a
+                     // message posted by a script is distinguishable from a human turn in history.
+                     // Idempotent ALTER; a missing/NULL value reads back as null (no attribution).
+                     ("sender_id", "TEXT")
                  })
         {
             try
@@ -1662,7 +1666,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind
+            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -1800,8 +1804,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
         await using var insertCommand = connection.CreateCommand();
         insertCommand.Transaction = transaction;
         insertCommand.CommandText = """
-            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind)
-            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind)
+            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id)
+            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind, $senderId)
             """;
         insertCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
         var pRole = insertCommand.Parameters.AddWithValue("$role", string.Empty);
@@ -1819,6 +1823,9 @@ public sealed class SqliteSessionStore : SessionStoreBase
         // #2149: persist the orthogonal typed message kind. NULL when the entry carries the
         // default MessageKind.Message so legacy/default rows stay compact and read back as the default.
         var pMessageKind = insertCommand.Parameters.AddWithValue("$messageKind", DBNull.Value);
+        // #2840: NULL when the producer supplied no attribution, which is every pre-#2840 row and
+        // every ordinary channel turn.
+        var pSenderId = insertCommand.Parameters.AddWithValue("$senderId", DBNull.Value);
 
         foreach (var entry in entries)
         {
@@ -1838,6 +1845,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
             pMessageKind.Value = entry.Kind is { } kind && !kind.Equals(MessageKind.Message)
                 ? kind.Value
                 : (object)DBNull.Value;
+            pSenderId.Value = (object?)entry.SenderId ?? DBNull.Value;
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
     }

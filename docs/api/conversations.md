@@ -31,6 +31,7 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/ConversationsController.cs
 | DELETE | `/api/conversations/{conversationId}/pin` | Unpin the conversation. |
 | GET | `/api/agents/{agentId}/conversations/{conversationId}/todo` | Get per-conversation todo state. |
 | GET | `/api/agents/{agentId}/conversations/{conversationId}/pending-ask-user` | Get pending `ask_user` prompt. |
+| POST | `/api/agents/{agentId}/conversations/{conversationId}/messages` | Post a message into an existing conversation. |
 
 ---
 
@@ -109,7 +110,14 @@ Returns `200 OK` with a paginated history response, `400 Bad Request` when
 `offset < 0` or `limit <= 0`, or `404 Not Found`.
 
 Each entry carries `kind` (`message`, `boundary`, or `compaction`) and, since
-#2936, an `isFolded` boolean. `isFolded` is true when the underlying transcript
+#2936, an `isFolded` boolean. Since #2840 a message entry also carries `senderId`
+— the origin attribution of a message posted through the
+[messages endpoint](#post-api-agents-agentid-conversations-conversationid-messages),
+e.g. `api:cron:pr-doctor`. It is `null` for ordinary channel turns and for every
+entry persisted before #2840. Treat it as caller-supplied display text: render it
+as provenance, never as an identity claim.
+
+`isFolded` is true when the underlying transcript
 entry was folded into a later compaction summary. **Folded entries are returned.**
 Compaction evicts an entry from the LLM context window; it does not delete the
 transcript, so pre-compaction history stays reachable by paging and clients are
@@ -154,6 +162,91 @@ Pin / unpin a conversation. Returns `204 No Content`, or `404 Not Found`.
 - `GET /api/agents/{agentId}/conversations/{conversationId}/pending-ask-user` —
   returns the raw pending `ask_user` JSON (`200 OK`), `204 No Content` when none,
   or `404 Not Found`.
+
+### `POST /api/agents/{agentId}/conversations/{conversationId}/messages`
+
+Posts a message into an **existing** conversation and, by default, lets the agent take
+a turn on it. This is the supported way for anything outside the gateway process — a
+shell script, a CI step, a cron `command` job — to hand an agent work in a specific
+thread.
+
+The conversation must already exist; this endpoint never creates one. Use
+`POST /api/conversations` for that.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `message` | string | — | **Required.** Blank or missing returns `400 Bad Request`. |
+| `wake` | bool | `true` | `true` schedules an agent turn. `false` appends the message to the conversation's session for history and audit without running the agent. |
+| `sender` | string | `null` | Optional caller attribution recorded as provenance in history, e.g. `cron:pr-doctor`. Stored namespaced as `api:{sender}`; omitted it records the bare origin `api`. |
+
+Returns `202 Accepted` with the resolved identifiers:
+
+```json
+{ "conversationId": "c_abc...", "sessionId": "s_def...", "wake": true }
+```
+
+The `sessionId` is the conversation's **already-bound** session, never a freshly
+minted one — successive posts continue one thread rather than accumulating orphan
+sessions, which is the failure mode `POST /api/chat` has when `sessionId` is omitted.
+
+The response does **not** wait for the agent's reply. A fire-and-forget caller — the
+common case — should not pay for the turn's latency; a caller that wants the reply
+polls [`GET /api/conversations/{conversationId}/history`](#get-api-conversations-conversationid-history)
+using the returned identifiers.
+
+| Status | When |
+|--------|------|
+| `202 Accepted` | Message accepted. |
+| `400 Bad Request` | Missing or blank `message`, or a malformed body. |
+| `401 Unauthorized` | No or wrong API key (when a key is configured). |
+| `403 Forbidden` | The key is scoped to other agents (see below). |
+| `404 Not Found` | The agent does not exist, or the conversation does not exist **or is not owned by the named agent**. |
+| `409 Conflict` | `wake:false` only — the conversation's session could not accept the append (e.g. it has been sealed). |
+
+> A conversation owned by a *different* agent returns `404`, not `403`. "Exists, but
+> not yours" would let a caller probe for other agents' conversation ids through a
+> route their key is otherwise authorized for.
+
+#### Calling it
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri 'http://localhost:5005/api/agents/pr-doctor/conversations/c_abc/messages' `
+  -Headers @{ 'X-Api-Key' = $env:BOTNEXUS_API_KEY } `
+  -ContentType 'application/json' `
+  -Body (@{ message = 'PR #123 has a failing check.'; wake = $true } | ConvertTo-Json)
+```
+
+**Where the API key comes from.** It is the gateway API key — the same one every other
+`/api/*` route accepts, configured under `Gateway:ApiKey` (see
+[Authentication](README.md#authentication)). Supply it as either `X-Api-Key: {key}` or
+`Authorization: Bearer {key}`.
+
+> [!WARNING]
+> **Keyless development mode.** When **no** API key is configured, the gateway runs in
+> development mode and allows *all* requests — including this one. A script written and
+> tested against a keyless dev gateway will therefore work with no credentials at all,
+> then fail with `401` the moment it is pointed at a gateway that has a key configured.
+> That is not a change in the endpoint; it is the key going from absent to present.
+> Send the key from the start.
+
+**There is no loopback exemption, by design.** Requests from `127.0.0.1` are
+authenticated exactly like any other. This endpoint can make an agent *act*, and an
+origin-based bypass on a write endpoint of that kind is the wrong trade — any local
+process, including one an attacker got a foothold in, would inherit the ability to
+drive agents.
+
+**Per-agent scoping applies automatically.** `agentId` is a route segment, so the
+gateway's existing per-agent authorization sees it: a key whose `AllowedAgents` list
+does not include the route agent receives `403 Forbidden`. A key scoped to one agent
+cannot post into another agent's conversation.
+
+#### `wake: false`
+
+Appends the message to the conversation's session without scheduling a turn. The
+message is durable and appears in `GET /api/conversations/{conversationId}/history`
+like any other entry; the agent simply does not run. Useful for audit trails and for
+aggregating context ahead of a single later wake.
 
 ---
 
