@@ -57,17 +57,52 @@ is **off by default**:
 ```
 
 The `FeatureManagement` section binds onto the same `IConfiguration` that `config.json` is
-loaded into, so no additional plumbing is required. Because the handler reads the flag through
-`IFeatureManager` on every request, toggling it takes effect **without a gateway restart** —
-which also serves as a safety valve if enforcement ever locks someone out.
+loaded into, so no separate provider or registration is needed. Because the handler reads the
+flag through `IFeatureManager` on every request, toggling it takes effect **without a gateway
+restart** — which also serves as a safety valve if enforcement ever locks someone out.
+
+::: warning The section name is PascalCase, and that is load-bearing
+`config.json` is validated at startup against a **closed** schema generated from `PlatformConfig`
+(`additionalProperties: false` at the root), so an unrecognised top-level key aborts the gateway
+rather than being ignored. `FeatureManagement` is a modelled property pinned to PascalCase with an
+explicit `[JsonPropertyName]`, because that is the section name `Microsoft.FeatureManagement`
+binds. Writing it as `featureManagement` — or having tooling camelCase it on your behalf — used to
+produce `NoAdditionalPropertiesAllowed: #/featureManagement` and a gateway that would not start
+(#3036, fixed in 0.44.0: schema normalisation now canonicalises the section name and preserves the
+casing of the flag names inside it). Flag names inside the section are matched **verbatim**, so a
+misspelling evaluates as absent rather than erroring.
+:::
+
+### Setting the flag without hand-editing JSON
+
+The CLI addresses the flag by dotted key and writes it in the correct shape and casing:
+
+```bash
+botnexus config get FeatureManagement.GatewayDevOriginEnforcement
+botnexus config set FeatureManagement.GatewayDevOriginEnforcement true
+```
+
+The environment-variable form is equivalent and is not subject to `config.json` schema validation
+at all, which makes it the safest way to toggle the flag on a gateway you cannot afford to have
+fail to start:
+
+```bash
+FeatureManagement__GatewayDevOriginEnforcement=true
+```
 
 ### Fail-open by design
 
-Two conditions deliberately treat the guard as disabled so a misconfiguration can never brick a
-keyless gateway:
+Two conditions deliberately treat the guard as disabled at **flag-evaluation time**, so a
+misconfigured *allow-list* can never lock you out of a keyless gateway:
 
 1. The flag is absent or `false` (the default).
 2. Feature-flag evaluation throws — the fault is logged and the guard is skipped.
+
+This guarantee is scoped to evaluation of the flag on a running gateway. It is not a guarantee
+about start-up: configuration that fails schema validation aborts the process before any flag is
+ever evaluated, and no fail-open path in this feature can rescue that. Use `botnexus config set`
+or the environment-variable form above rather than hand-editing, and see
+[Configuration](../configuration.md#feature-flags-featuremanagement) for the validation rules.
 
 ## Doctor recommendation
 

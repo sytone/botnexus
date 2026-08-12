@@ -284,6 +284,20 @@ Feature flags live in the `FeatureManagement` section of `config.json` and bind 
 `Microsoft.FeatureManagement`. Note the section name is **PascalCase**, unlike the rest of the
 file - that is the section name the binder reads.
 
+`FeatureManagement` is a modelled property on `PlatformConfig`, so it appears in the generated
+[schema](botnexus-config.schema.json) and is accepted by start-up validation. This matters because
+the schema root is `additionalProperties: false`: an *unrecognised* top-level key is fatal, not
+ignored. The PascalCase name is pinned with an explicit `[JsonPropertyName]` and is deliberately
+exempted from the camelCase normalisation applied to every other key - camelCasing it produced
+`NoAdditionalPropertiesAllowed: #/featureManagement` and a gateway that would not start (#3036,
+fixed in 0.44.0). The flag names *inside* the section are likewise preserved verbatim, because
+`Microsoft.FeatureManagement` matches them exactly; rewriting `ConfigStoreShadowMigration` to
+`configStoreShadowMigration` would silently unbind the flag while leaving the file looking correct.
+
+Prefer `botnexus config set` or the `FeatureManagement__<Flag>` environment-variable form over
+hand-editing: both produce the correct section name and casing, and the environment form is not
+subject to `config.json` schema validation at all.
+
 Every flag the platform declares is listed in one place in source (`FeatureFlags.All`), which is
 what lets the tooling tell an unrecognised flag from a real one. The current inventory:
 
@@ -346,8 +360,11 @@ There are three valid states, in order:
 3. **Both on** - the store is authoritative.
 
 The flags bind through `Microsoft.FeatureManagement` on the same `IConfiguration` that loads
-`config.json`, so they are set in the `FeatureManagement` section - the same mechanism as the
-[Dev-Mode Origin Guard](./features/dev-origin-guard.md):
+`config.json`, so they are set in the `FeatureManagement` section described
+[above](#feature-flags-featuremanagement) - the same mechanism as the
+[Dev-Mode Origin Guard](./features/dev-origin-guard.md). Mind the PascalCase section name and the
+verbatim flag names; `botnexus config set FeatureManagement.ConfigStoreShadowMigration true` or
+`FeatureManagement__ConfigStoreShadowMigration=true` avoid both hazards:
 
 ```jsonc
 {
