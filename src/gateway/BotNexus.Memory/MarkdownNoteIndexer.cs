@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BotNexus.Memory.Models;
+using BotNexus.Domain.Text;
 
 namespace BotNexus.Memory;
 
@@ -72,7 +73,7 @@ internal static class MarkdownNoteIndexer
                 SourceType = NoteSourceType,
                 // Same sanitisation contract as the conversation writer (#1560): note bodies can
                 // contain text an agent copied verbatim from an untrusted inbound message.
-                Content = MemoryContentSanitizer.Sanitize(section.Content),
+                Content = UntrustedContentSanitizer.Sanitize(section.Content),
                 MetadataJson = JsonSerializer.Serialize(new NoteMetadata(relativePath, section.Heading)),
                 Embedding = null,
                 CreatedAt = now,

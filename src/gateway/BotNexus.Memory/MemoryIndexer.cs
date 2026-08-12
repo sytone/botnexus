@@ -5,6 +5,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Memory.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using BotNexus.Domain.Text;
 
 namespace BotNexus.Memory;
 
@@ -174,8 +175,8 @@ public sealed class MemoryIndexer(
                     // extra role record in the stored row (#2954). Sanitising is a markup concern;
                     // encoding is a framing concern. Both are required.
                     Content = TranscriptTurnFormat.Encode(
-                        MemoryContentSanitizer.Sanitize(pendingUser.Content),
-                        MemoryContentSanitizer.Sanitize(entry.Content)),
+                        UntrustedContentSanitizer.Sanitize(pendingUser.Content),
+                        UntrustedContentSanitizer.Sanitize(entry.Content)),
                     MetadataJson = null,
                     Embedding = null,
                     CreatedAt = entry.Timestamp,

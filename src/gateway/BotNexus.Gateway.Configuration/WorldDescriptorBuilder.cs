@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BotNexus.Domain.Paths;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -93,7 +94,7 @@ public static class WorldDescriptorBuilder
             if (string.IsNullOrWhiteSpace(path))
                 return null;
 
-            var expanded = ExpandUserHome(path.Trim())
+            var expanded = HomePathExpander.ExpandRequired(path.Trim())
                 .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
             return Path.GetFullPath(expanded);
         }
@@ -273,34 +274,11 @@ public static class WorldDescriptorBuilder
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
-        var expanded = ExpandUserHome(path.Trim())
+        // ExpandRequired (not Expand): this caller has always failed loudly rather than build a path
+        // rooted at the empty string when the home directory is unknown. See issue #3013.
+        var expanded = HomePathExpander.ExpandRequired(path.Trim())
             .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
         return Path.GetFullPath(expanded);
-    }
-
-    private static string ExpandUserHome(string path)
-    {
-        if (!path.StartsWith('~'))
-            return path;
-
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(home))
-        {
-            // Fallback to HOME environment variable on Linux/Unix systems
-            home = Environment.GetEnvironmentVariable("HOME") ?? string.Empty;
-        }
-        
-        if (string.IsNullOrWhiteSpace(home))
-            throw new InvalidOperationException("Unable to determine user home directory.");
-        
-        if (path.Length == 1)
-            return home;
-
-        var first = path[1];
-        if (first == Path.DirectorySeparatorChar || first == Path.AltDirectorySeparatorChar)
-            return Path.Combine(home, path[2..]);
-
-        return path;
     }
 
     private static IReadOnlyList<CrossWorldPermission> ResolveCrossWorldPermissions(PlatformConfig config)

@@ -264,7 +264,23 @@ public static class GatewayServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<ToolPolicyHookHandler>>(),
                 sp.GetService<ISecurityEventSink>()));
         services.AddSingleton<AgentsMdPromptHookHandler>();
-        services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
+        // #2727: operator-supplied redaction patterns are compiled here, at startup. Compile()
+        // throws on a malformed/all-matching pattern, which surfaces as a startup failure naming the
+        // offending entry rather than an exception on the transcript-writing path later. The
+        // built-in pattern set is unconditional and unaffected by this configuration.
+        services.TryAddSingleton<ISecretRedactor>(sp =>
+        {
+            var redaction = sp.GetService<IOptions<PlatformConfig>>()?.Value?.Gateway?.SecretRedaction;
+            var options = redaction is null
+                ? null
+                : new SecretRedactionOptions(
+                    redaction.Patterns,
+                    redaction.MatchTimeoutMilliseconds is { } ms and > 0
+                        ? TimeSpan.FromMilliseconds(ms)
+                        : null);
+
+            return new SecretRedactor(sp.GetService<ISecurityEventSink>(), options);
+        });
 
         // #2557: opt-in cron failure alerts delivered into a configured conversation. Registered
         // here (not in AddBotNexusCron) because the delivery seam lives in the gateway assembly.
@@ -417,6 +433,13 @@ public static class GatewayServiceCollectionExtensions
         }
 
         services.TryAddSingleton<GatewayAuthManager>();
+
+        // #3015: singleton by design. The whole point of the exhaustion lane is that the condition
+        // is REMEMBERED between turns -- a per-scope registry would forget it immediately and
+        // restore the four-round-trips-per-turn tax the split exists to remove.
+        services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(
+            _ => new BotNexus.Agent.Core.Loop.ProviderSuspensionRegistry());
+
         services.TryAddSingleton<ILocationResolver>(serviceProvider =>
             new DefaultLocationResolver(
                 serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),

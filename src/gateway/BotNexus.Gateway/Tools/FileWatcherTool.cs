@@ -103,8 +103,6 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
                 return TextResult($"Error: file '{fullPath}' does not exist. Use event type 'created' or 'any' to watch for file creation.");
         }
 
-        onUpdate?.Invoke(TextResult($"Watching '{fullPath}' for {eventType} event (timeout: {timeout}s)..."));
-
         var stopwatch = Stopwatch.StartNew();
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         Timer? debounceTimer = null;
@@ -150,6 +148,12 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
             }
 
             watcher.EnableRaisingEvents = true;
+
+            // Announce readiness only AFTER the watcher is live. Emitting it earlier made the notice a
+            // lie: a caller that acted on it could still mutate the file before events were being
+            // raised, and would then wait out the full timeout having missed the change entirely. That
+            // is exactly how FileWatcherTool_DetectsFileDeletion failed on a loaded CI runner (#2988).
+            onUpdate?.Invoke(TextResult($"Watching '{fullPath}' for {eventType} event (timeout: {timeout}s)..."));
 
             // Link caller cancellation with timeout
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

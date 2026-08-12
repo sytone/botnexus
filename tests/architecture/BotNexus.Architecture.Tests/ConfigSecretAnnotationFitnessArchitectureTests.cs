@@ -72,6 +72,12 @@ public sealed class ConfigSecretAnnotationFitnessArchitectureTests
         // [ConfigField(Secret = true)] and is reached (and redacted) by the ConfigSecretMerge walk
         // through this section. Redacting the container node itself would be meaningless.
         "GatewaySettingsConfig.ApiKeys",
+        // #2727: a container for operator-supplied REDACTION PATTERNS - the regexes that FIND
+        // secrets - not a secret value itself. The patterns are deliberately operator-visible and
+        // must round-trip through GET/PUT /config unmasked, otherwise an operator could never read
+        // back or edit the list they configured. Masking it would break the feature while
+        // protecting nothing: no credential material is stored here.
+        "GatewaySettingsConfig.SecretRedaction",
     };
 
     [Fact]

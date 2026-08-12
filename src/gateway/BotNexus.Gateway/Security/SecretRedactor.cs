@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Gateway.Security;
 
@@ -84,6 +85,12 @@ public sealed partial class SecretRedactor : ISecretRedactor
     // any plaintext secret material.
     private readonly ISecurityEventSink? _securityEvents;
 
+    // Operator-supplied patterns (#2727). Applied AFTER the built-in set and never in place of it,
+    // so a configuration mistake can add noise but can never switch redaction off. Compiled once at
+    // construction with a match timeout, which is what keeps a pathological operator regex from
+    // hanging the transcript writer.
+    private readonly IReadOnlyList<Regex> _operatorPatterns;
+
     /// <summary>
     /// Creates a redactor. When a trusted <paramref name="securityEvents"/> sink is supplied, every
     /// <see cref="Redact(string)"/> call that replaces at least one secret emits exactly one
@@ -92,8 +99,17 @@ public sealed partial class SecretRedactor : ISecretRedactor
     /// resolves the registered sink) and tests that only exercise redaction need no changes.
     /// </summary>
     /// <param name="securityEvents">Trusted security-event sink, or null to disable emission.</param>
-    public SecretRedactor(ISecurityEventSink? securityEvents = null)
-        => _securityEvents = securityEvents;
+    /// <param name="options">
+    /// Operator-supplied additional patterns (#2727), or null for the built-in set only. Compiled
+    /// eagerly so an invalid pattern fails here - at startup, where an operator sees it - rather than
+    /// mid-transcript, where it would either throw on the logging path or silently stop redacting.
+    /// </param>
+    /// <exception cref="ArgumentException">An operator pattern is empty, malformed, or matches everything.</exception>
+    public SecretRedactor(ISecurityEventSink? securityEvents = null, SecretRedactionOptions? options = null)
+    {
+        _securityEvents = securityEvents;
+        _operatorPatterns = options?.Compile() ?? [];
+    }
 
     /// <inheritdoc />
     public string Redact(string input)
@@ -104,6 +120,8 @@ public sealed partial class SecretRedactor : ISecretRedactor
         var result = input;
         foreach (var pattern in Patterns)
             result = pattern.Replace(result, "[REDACTED]");
+
+        result = ApplyOperatorPatterns(result);
 
         // Emit one trusted security event only when a secret was actually replaced. A no-op Redact
         // (nothing matched) emits nothing. The event carries a non-sensitive SecretRef reference and
@@ -152,6 +170,38 @@ public sealed partial class SecretRedactor : ISecretRedactor
 
         return result;
     }
+    /// <summary>
+    /// Applies the operator-supplied patterns (#2727) on top of the built-in sweep.
+    /// </summary>
+    /// <remarks>
+    /// A timed-out pattern is skipped rather than propagated. That choice is deliberate: the caller
+    /// is a transcript/log writer, and throwing from here would take down the very path that is
+    /// trying to record what happened. Skipping degrades to "this one operator pattern did not
+    /// redact" while every built-in pattern has already been applied, which is strictly safer than
+    /// losing the write. Malformed patterns cannot reach this method at all - they are rejected at
+    /// construction - so the only reachable fault here is the bounded timeout.
+    /// </remarks>
+    private string ApplyOperatorPatterns(string input)
+    {
+        if (_operatorPatterns.Count == 0)
+            return input;
+
+        var result = input;
+        foreach (var pattern in _operatorPatterns)
+        {
+            try
+            {
+                result = pattern.Replace(result, "[REDACTED]");
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // Intentionally ignored - see remarks. The built-in patterns have already run.
+            }
+        }
+
+        return result;
+    }
+
     /// <summary>
     /// Records one <c>secret.redacted</c> event to the trusted sink. The target is a fixed,
     /// non-sensitive reference (the transcript being scrubbed) - never the matched secret value or a

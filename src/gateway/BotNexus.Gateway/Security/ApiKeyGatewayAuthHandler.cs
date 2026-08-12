@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
@@ -46,8 +47,10 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     /// cannot lock a keyless user out of the UI on restart. The <c>doctor config</c> command
     /// surfaces a recommendation to enable it, and a future release will flip the default on.
     /// Lives under the <c>FeatureManagement</c> section of config.json.
+    /// <para>Aliases the single declaration in <see cref="FeatureFlags"/> (#2767); the name is not
+    /// re-spelled here, so it cannot drift from the inventory or from <c>doctor config</c>.</para>
     /// </summary>
-    public const string DevOriginEnforcementFeature = "GatewayDevOriginEnforcement";
+    public const string DevOriginEnforcementFeature = FeatureFlags.GatewayDevOriginEnforcement;
 
     /// <summary>The target reference reported on every auth handshake event.</summary>
     private const string GatewayTarget = "gateway";
@@ -59,6 +62,20 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     private readonly IFeatureManager? _featureManager;
     private readonly ILogger<ApiKeyGatewayAuthHandler> _logger;
     private readonly ISecurityEventSink? _securityEvents;
+
+    /// <summary>
+    /// Latch ensuring the absent-flag notice (#2767 AC6) is emitted once per process rather than on
+    /// every authentication handshake. An int rather than a bool so it can be set with
+    /// <see cref="Interlocked.Exchange(ref int, int)"/> under concurrent handshakes.
+    /// </summary>
+    private int _absentFlagWarned;
+
+    /// <summary>
+    /// Feature flags captured from a snapshot <see cref="PlatformConfig"/> construction, where there
+    /// is no monitor to re-read. Without this the snapshot path could not tell an absent flag from a
+    /// configured one and would report every evaluation as unstated (#2767).
+    /// </summary>
+    private readonly Dictionary<string, JsonElement>? _staticFeatureFlags;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ApiKeyGatewayAuthHandler"/> class.
@@ -107,6 +124,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         _securityEvents = securityEvents;
         _featureManager = featureManager;
         _staticAllowedOrigins = ResolveAllowedOrigins(platformConfig.Gateway?.Cors?.AllowedOrigins);
+        _staticFeatureFlags = platformConfig.FeatureManagement;
         _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys, platformConfig.Gateway?.Satellites);
     }
 
@@ -213,6 +231,13 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     /// to <c>false</c> when no feature manager is wired (e.g. tests or non-DI construction) so
     /// the guard is inert unless an operator explicitly opts in via the
     /// <see cref="DevOriginEnforcementFeature"/> flag.
+    /// <para>Every fallback here is deliberately fail-OPEN (guard disabled) and #2767 does not
+    /// change that: a security guard that keys off the Origin header can lock an operator out of
+    /// their own gateway, so it must degrade to inert rather than to enforcing. What #2767 adds is
+    /// that the fallback is no longer silent - the absent-from-config path now logs once, naming
+    /// the flag and the default applied, so the effective state is observable without reading
+    /// source. The logging is throttled to one emission per process because this runs on every
+    /// authentication handshake.</para>
     /// </summary>
     private async Task<bool> IsDevOriginEnforcementEnabledAsync()
     {
@@ -221,6 +246,13 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
 
         try
         {
+            // Read the raw configured value first so "absent" can be distinguished from an
+            // explicit false. IsEnabledAsync collapses both to false, which is precisely the
+            // indistinguishability #2767 exists to remove; the evaluated result below is still
+            // what decides the guard, so behaviour is unchanged.
+            if (!IsFlagPresentInConfiguration(DevOriginEnforcementFeature))
+                WarnFlagAbsentOnce();
+
             return await _featureManager.IsEnabledAsync(DevOriginEnforcementFeature).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -230,6 +262,37 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             _logger.LogWarning(ex, "Failed to evaluate feature flag '{Feature}'; treating dev-mode origin enforcement as disabled.", DevOriginEnforcementFeature);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Returns whether the flag carries an explicit value in configuration. Absence is the common
+    /// case the operator cannot otherwise observe (#2767 AC6).
+    /// </summary>
+    private bool IsFlagPresentInConfiguration(string feature)
+    {
+        var flags = _platformConfig?.CurrentValue?.FeatureManagement ?? _staticFeatureFlags;
+        return flags is not null && flags.ContainsKey(feature);
+    }
+
+    /// <summary>
+    /// Emits the absent-flag notice at most once per process. This sits on the authentication hot
+    /// path, so an unthrottled warning would drown the log and teach operators to filter it out -
+    /// the opposite of making the decision visible.
+    /// </summary>
+    private void WarnFlagAbsentOnce()
+    {
+        if (Interlocked.Exchange(ref _absentFlagWarned, 1) != 0)
+            return;
+
+        _logger.LogWarning(
+            "Feature flag '{Feature}' is absent from configuration; applying its default of {Default}. "
+            + "Dev-mode origin enforcement is therefore disabled. Run 'botnexus doctor config' to record "
+            + "an explicit decision, or 'botnexus config set {SectionName}.{FlagName} true' to enable it "
+            + "(add every origin you use to gateway.cors.allowedOrigins first, or you will be locked out).",
+            DevOriginEnforcementFeature,
+            FeatureFlags.DefaultFor(DevOriginEnforcementFeature),
+            FeatureFlags.SectionName,
+            DevOriginEnforcementFeature);
     }
 
     private static Dictionary<string, GatewayCallerIdentity> BuildIdentityMap(

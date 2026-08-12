@@ -119,8 +119,14 @@ public class ImageModalityGuardTests : IDisposable
             null, model, [ImageUser(2)], new OpenAICompletionsCompat());
 
         var content = result[0]!["content"]!.AsArray();
-        content.Count.ShouldBe(1);
+        // #2485 AC4: the original text part PLUS the substituted user-visible drop notice. The
+        // images themselves are still absent - the notice explains why.
+        content.Count.ShouldBe(2);
         content[0]!["type"]!.GetValue<string>().ShouldBe("text");
+        content[1]!["type"]!.GetValue<string>().ShouldBe("text");
+        content[1]!["text"]!.GetValue<string>().ShouldContain("2 image attachment(s)");
+        content[1]!["text"]!.GetValue<string>().ShouldContain("test-model-1");
+        content.Select(n => n!["type"]!.GetValue<string>()).ShouldNotContain("image_url");
 
         var record = SingleWarning();
         record.State["DropSite"].ShouldBe("completions.user");
@@ -176,13 +182,69 @@ public class ImageModalityGuardTests : IDisposable
         var result = ResponsesMessageConverter.ConvertMessages([ImageUser(1)], model);
 
         var content = result[0]!["content"]!.AsArray();
-        content.Count.ShouldBe(1);
+        // #2485 AC4: original text part plus the substituted notice; no input_image survives.
+        content.Count.ShouldBe(2);
         content[0]!["type"]!.GetValue<string>().ShouldBe("input_text");
+        content[1]!["type"]!.GetValue<string>().ShouldBe("input_text");
+        content[1]!["text"]!.GetValue<string>().ShouldContain("1 image attachment(s)");
+        content.Select(n => n!["type"]!.GetValue<string>()).ShouldNotContain("input_image");
 
         var record = SingleWarning();
         record.State["DropSite"].ShouldBe("responses.user");
         record.State["DroppedImageCount"].ShouldBe("1");
         record.State["Api"].ShouldBe("openai-responses");
+    }
+
+    // ---- AC4: the drop is visible to the USER, not only in the log ------
+
+    [Fact]
+    public void BuildDropNotice_TextOnlyModel_NamesCountModelAndProvider()
+    {
+        var model = Model("openai-completions", "text");
+
+        var notice = ImageModalityGuard.BuildDropNotice(model, 3);
+
+        notice.ShouldNotBeNull();
+        notice.ShouldContain("3 image attachment(s)");
+        notice.ShouldContain("were not delivered");
+        notice.ShouldContain("test-model-1");
+        notice.ShouldContain("test-provider");
+        notice.ShouldContain("does not accept image input");
+    }
+
+    [Fact]
+    public void BuildDropNotice_ZeroImages_ReturnsNullSoCleanRequestsAreUnchanged()
+    {
+        var model = Model("openai-completions", "text");
+
+        ImageModalityGuard.BuildDropNotice(model, 0).ShouldBeNull();
+    }
+
+    [Fact]
+    public void CompletionsConverter_VisionModel_EmitsNoDropNotice()
+    {
+        var model = Model("openai-completions", "text", "image");
+
+        var result = CompletionsMessageConverter.Convert(
+            null, model, [ImageUser(2)], new OpenAICompletionsCompat());
+
+        var texts = result[0]!["content"]!.AsArray()
+            .Where(n => n!["type"]!.GetValue<string>() == "text")
+            .Select(n => n!["text"]!.GetValue<string>());
+        texts.ShouldNotContain(t => t.Contains("were not delivered", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ResponsesConverter_VisionModel_EmitsNoDropNotice()
+    {
+        var model = Model("openai-responses", "text", "image");
+
+        var result = ResponsesMessageConverter.ConvertMessages([ImageUser(1)], model);
+
+        var texts = result[0]!["content"]!.AsArray()
+            .Where(n => n!["type"]!.GetValue<string>() == "input_text")
+            .Select(n => n!["text"]!.GetValue<string>());
+        texts.ShouldNotContain(t => t.Contains("were not delivered", StringComparison.Ordinal));
     }
 
     [Fact]

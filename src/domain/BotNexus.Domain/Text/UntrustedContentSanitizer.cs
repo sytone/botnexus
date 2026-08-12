@@ -1,28 +1,45 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
-using BotNexus.Domain.Text;
 
-namespace BotNexus.Memory;
+namespace BotNexus.Domain.Text;
 
 /// <summary>
-/// Strips LLM control / role-injection markup from raw transcript text <b>before</b> it is
-/// persisted into the searchable memory store (and as defence-in-depth, when historical rows
-/// are recalled).
+/// Strips LLM control / role-injection markup from text that arrives from an untrusted source,
+/// applied once at each boundary where such text enters the model's context or the durable store.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Session transcript turn pairs are auto-indexed verbatim by <see cref="MemoryIndexer"/> and
-/// <see cref="MarkdownAgentMemory"/>. The user half of each turn is the <i>raw inbound message</i>,
-/// which is attacker-controllable on any channel. Without sanitization, a message that embeds model
-/// special tokens, tool-call directives, or role tags would be stored as trusted "memory" and
-/// replayed back to the model on a later turn via <c>memory_search</c> or the memory-dreaming
-/// consolidation prompt — a stored / delayed prompt-injection (memory-poisoning) vector (issue #1560).
+/// <b>Two boundaries, one filter.</b> Untrusted text enters the system at more than one place:
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// The <b>memory-write</b> boundary (issue #1560). Session transcript turn pairs are auto-indexed
+/// verbatim; the user half of each turn is the raw inbound message, attacker-controllable on any
+/// channel. Unsanitized, model special tokens or role tags would be stored as trusted "memory" and
+/// replayed to the model on a later turn via <c>memory_search</c> or the consolidation prompt — a
+/// stored / delayed prompt-injection (memory-poisoning) vector.
+/// </description></item>
+/// <item><description>
+/// The <b>web tool-output</b> boundary (issue #2813). A fetched page's content is fully controlled by
+/// whoever owns the URL, and search snippets by whoever ranks for the query. That text is returned
+/// as tool output directly into the turn, and lands in the transcript that the memory path then
+/// persists — so the same hostile page reaches durable memory through a second, independent door.
+/// </description></item>
+/// </list>
+/// <para>
+/// <b>Why it lives in <c>BotNexus.Domain</c>.</b> The filter was originally scoped to the memory
+/// path and named for it, which is precisely why the web tools were never wired to it: the sanitizer
+/// looked like a memory concern rather than an "untrusted content entering context" concern. It now
+/// sits beside <see cref="EscapedMarkupNormalizer"/> in the dependency-free domain leaf so every
+/// boundary — memory writers, channel adapters, and the web tools in the extension layer — can
+/// CONSUME the one definition. The alternative (a second sanitizer spelling under
+/// <c>BotNexus.Extensions.WebTools</c>) would give "what a marker looks like" a second definition
+/// that drifts, which is the exact defect class #2808 and this change exist to remove.
 /// </para>
 /// <para>
-/// This is the canonical filter shared by every memory writer so the indexer, the agent-memory
-/// provider, and any future writer apply one consistent strip. It is the C# analogue of OpenClaw's
-/// <c>sanitizeModelSpecialTokens</c> plus the tool-call / role-directive / media / <c>NO_REPLY</c>
-/// stripping added in their <c>sanitizeSessionMemoryTranscriptText</c> hook.
+/// It is the C# analogue of OpenClaw's <c>sanitizeModelSpecialTokens</c> plus the tool-call /
+/// role-directive / media / <c>NO_REPLY</c> stripping added in their
+/// <c>sanitizeSessionMemoryTranscriptText</c> hook.
 /// </para>
 /// <para>
 /// It intentionally removes only injection-class markup — ordinary angle brackets, pipes, and prose
@@ -37,7 +54,7 @@ namespace BotNexus.Memory;
 /// normalisation therefore lives in exactly one place and is consumed, never restated.
 /// </para>
 /// </remarks>
-public static class MemoryContentSanitizer
+public static class UntrustedContentSanitizer
 {
     // Special-token literals of the <|...|> family (im_start, im_end, endoftext, reserved_special_token_N,
     // fim_prefix, ...). Non-greedy, single line — these literals never span newlines.
@@ -87,8 +104,8 @@ public static class MemoryContentSanitizer
     /// Returns <paramref name="content"/> with all LLM control / role-injection markup removed.
     /// Null, empty, and markup-free input is returned unchanged (no allocation on the fast path).
     /// </summary>
-    /// <param name="content">Raw transcript text that may contain injection markup.</param>
-    /// <returns>The sanitized text, safe to persist into the memory store.</returns>
+    /// <param name="content">Untrusted text that may contain injection markup.</param>
+    /// <returns>The sanitized text, safe to return as tool output or persist into the memory store.</returns>
     [return: NotNullIfNotNull(nameof(content))]
     public static string? Sanitize(string? content)
     {

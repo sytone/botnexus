@@ -645,7 +645,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     }
 
                     var userMessage = BuildUserMessage(message, processedParts ?? originalParts, agentDescriptor);
-                    _activeLoopTracker?.TrackStart();
+                    // #2794: register the run with operator context so /api/stats can explain the count.
+                    var streamingLoopRegistration = _activeLoopTracker?.TrackStart(
+                        typedAgentId.Value,
+                        session.ConversationId.IsInitialized() ? session.ConversationId.Value : null,
+                        typedSessionId.Value) ?? ActiveLoopRegistration.None;
                     try
                     {
                     // #1598: write-time cap on per-tool-result size persisted to history.
@@ -732,14 +736,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     }
                     finally
                     {
-                        _activeLoopTracker?.TrackEnd();
+                        _activeLoopTracker?.TrackEnd(streamingLoopRegistration);
                     }
                     sessionSaved = true;
                 }
                 else
                 {
                     var userMessage = BuildUserMessage(message, processedParts ?? originalParts, agentDescriptor);
-                    _activeLoopTracker?.TrackStart();
+                    // #2794: same contextual registration on the non-streaming branch.
+                    var blockingLoopRegistration = _activeLoopTracker?.TrackStart(
+                        typedAgentId.Value,
+                        session.ConversationId.IsInitialized() ? session.ConversationId.Value : null,
+                        typedSessionId.Value) ?? ActiveLoopRegistration.None;
                     AgentResponse response;
                     try
                     {
@@ -753,7 +761,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     }
                     finally
                     {
-                        _activeLoopTracker?.TrackEnd();
+                        _activeLoopTracker?.TrackEnd(blockingLoopRegistration);
                     }
                     if (IsHeartbeatAck(response.Content))
                     {

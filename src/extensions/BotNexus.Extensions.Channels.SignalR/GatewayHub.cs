@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Text;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -199,7 +200,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         var connectionId = Context.ConnectionId;
         _logger.LogInformation("Hub SendMessage: agent={AgentId} channel={ChannelType} session={SessionId} connection={ConnectionId} content={Content}",
-            typedAgentId, typedChannelType, resolution.SessionId, connectionId, content.Length > 50 ? content[..50] + "..." : content);
+            typedAgentId, typedChannelType, resolution.SessionId, connectionId, GraphemeSafeTruncation.Truncate(content, 50, "..."));
 
         _ = SafeDispatchAsync(
             () => DispatchMessageAsync(typedAgentId, resolution.SessionId, content, "message", connectionId, normalizedConversationId, kind),

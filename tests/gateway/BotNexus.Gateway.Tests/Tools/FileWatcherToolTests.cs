@@ -28,14 +28,13 @@ public sealed class FileWatcherToolTests : IDisposable
         var path = Path.Combine(root, "watched.txt");
         await File.WriteAllTextAsync(path, "initial");
 
-        var watchTask = ExecuteAsync(tool, new Dictionary<string, object?>
+        var (watchTask, ready) = StartWatch(tool, new Dictionary<string, object?>
         {
             ["path"] = path,
             ["event"] = "modified",
             ["timeout"] = 5
         });
-
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await ready;
         await File.WriteAllTextAsync(path, "updated");
 
         var result = await watchTask;
@@ -49,14 +48,13 @@ public sealed class FileWatcherToolTests : IDisposable
         var root = CreateTempDirectory();
         var path = Path.Combine(root, "created.txt");
 
-        var watchTask = ExecuteAsync(tool, new Dictionary<string, object?>
+        var (watchTask, ready) = StartWatch(tool, new Dictionary<string, object?>
         {
             ["path"] = path,
             ["event"] = "created",
             ["timeout"] = 5
         });
-
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await ready;
         await File.WriteAllTextAsync(path, "created");
 
         var result = await watchTask;
@@ -71,17 +69,60 @@ public sealed class FileWatcherToolTests : IDisposable
         var path = Path.Combine(root, "deleted.txt");
         await File.WriteAllTextAsync(path, "delete me");
 
-        var watchTask = ExecuteAsync(tool, new Dictionary<string, object?>
+        var (watchTask, ready) = StartWatch(tool, new Dictionary<string, object?>
         {
             ["path"] = path,
             ["event"] = "deleted",
             ["timeout"] = 5
         });
-
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await ready;
         File.Delete(path);
 
         var result = await watchTask;
+        ReadText(result).ShouldContain("File deleted:");
+    }
+
+    /// <summary>
+    /// Pins the ordering contract of #2988: the readiness notice must not be emitted until the watcher is
+    /// actually raising events. This deletes the file synchronously ON the callback thread, so the
+    /// mutation is strictly ordered between the notice and whatever the tool does next. With the notice
+    /// emitted before <c>EnableRaisingEvents = true</c> the deletion is provably unobservable and the
+    /// watch always times out; the assertion therefore fails 100% of the time against the unfixed code
+    /// rather than merely narrowing a window.
+    /// </summary>
+    [Fact]
+    public async Task FileWatcherTool_ReadinessNotice_IsEmittedOnlyAfterWatcherIsArmed()
+    {
+        var tool = CreateTool();
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "armed.txt");
+        await File.WriteAllTextAsync(path, "delete me");
+
+        var deleted = false;
+
+        var result = await ExecuteAsync(
+            tool,
+            new Dictionary<string, object?>
+            {
+                ["path"] = path,
+                ["event"] = "deleted",
+                ["timeout"] = 5
+            },
+            CancellationToken.None,
+            update =>
+            {
+                var text = update.Content
+                    .FirstOrDefault(c => c.Type == AgentToolContentType.Text)?.Value;
+
+                if (deleted || text is null || !text.Contains("Watching '", StringComparison.Ordinal))
+                    return;
+
+                // Acting on the notice the instant it arrives is precisely what a real caller does.
+                deleted = true;
+                File.Delete(path);
+            });
+
+        deleted.ShouldBeTrue("the tool must emit a readiness notice");
         ReadText(result).ShouldContain("File deleted:");
     }
 
@@ -166,14 +207,13 @@ public sealed class FileWatcherToolTests : IDisposable
         var path = Path.Combine(root, "elapsed.txt");
         await File.WriteAllTextAsync(path, "initial");
 
-        var watchTask = ExecuteAsync(tool, new Dictionary<string, object?>
+        var (watchTask, ready) = StartWatch(tool, new Dictionary<string, object?>
         {
             ["path"] = path,
             ["event"] = "modified",
             ["timeout"] = 5
         });
-
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await ready;
         await File.WriteAllTextAsync(path, "updated");
 
         var result = await watchTask;
@@ -188,14 +228,13 @@ public sealed class FileWatcherToolTests : IDisposable
         var path = Path.Combine(root, "debounced.txt");
         await File.WriteAllTextAsync(path, "start");
 
-        var watchTask = ExecuteAsync(tool, new Dictionary<string, object?>
+        var (watchTask, ready) = StartWatch(tool, new Dictionary<string, object?>
         {
             ["path"] = path,
             ["event"] = "modified",
             ["timeout"] = 5
         });
-
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await ready;
         for (var i = 0; i < 5; i++)
         {
             await File.WriteAllTextAsync(path, $"change-{i}");
@@ -223,10 +262,54 @@ public sealed class FileWatcherToolTests : IDisposable
     private static async Task<AgentToolResult> ExecuteAsync(
         IAgentTool tool,
         IReadOnlyDictionary<string, object?> args,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
         var prepared = await tool.PrepareArgumentsAsync(args, cancellationToken);
-        return await tool.ExecuteAsync("call-watch-file-test", prepared, cancellationToken);
+        return await tool.ExecuteAsync("call-watch-file-test", prepared, cancellationToken, onUpdate);
+    }
+
+    /// <summary>
+    /// Starts a watch and returns once the tool has reported that its <see cref="FileSystemWatcher"/> is
+    /// armed, so the caller can mutate the file knowing the event will be observed (#2988).
+    /// </summary>
+    /// <remarks>
+    /// These tests previously slept for a fixed second between starting the watch and touching the file.
+    /// That is a guess, not a synchronisation primitive: the watcher is armed inside the background task,
+    /// so on a loaded CI runner the mutation could land BEFORE <c>EnableRaisingEvents = true</c>, the
+    /// event was never raised, and the test then sat out its full timeout and failed with
+    /// "Timeout after 5 seconds - no change detected". The tool already announces readiness through its
+    /// onUpdate callback, which is a real happens-before edge -- use it instead of sleeping.
+    /// </remarks>
+    private static (Task<AgentToolResult> Watch, Task Ready) StartWatch(
+        IAgentTool tool,
+        IReadOnlyDictionary<string, object?> args)
+    {
+        var armed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var watch = ExecuteAsync(
+            tool,
+            args,
+            CancellationToken.None,
+            update =>
+            {
+                // The tool emits exactly one "Watching '<path>' for <event> event..." notice, and only
+                // once EnableRaisingEvents is true. Anything else is ignored.
+                var text = update.Content
+                    .FirstOrDefault(c => c.Type == AgentToolContentType.Text)?.Value;
+
+                if (text is not null && text.Contains("Watching '", StringComparison.Ordinal))
+                    armed.TrySetResult();
+            });
+
+        // If the watch faults before ever arming, surface that instead of hanging on the gate.
+        _ = watch.ContinueWith(
+            t => armed.TrySetException(t.Exception!.GetBaseException()),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        return (watch, armed.Task);
     }
 
     private static IAgentTool CreateTool(

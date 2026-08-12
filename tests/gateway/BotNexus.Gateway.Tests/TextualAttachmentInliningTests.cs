@@ -4,6 +4,7 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Utilities;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Tests.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Tests;
@@ -25,6 +26,7 @@ namespace BotNexus.Gateway.Tests;
 /// <c>Skip=</c> attribute, or a catch-and-continue. Every test ends in an unconditional assertion.
 /// </para>
 /// </remarks>
+[Collection(ProviderDiagnosticsCollection.Name)]
 public sealed class TextualAttachmentInliningTests
 {
     private const string JsonSentinel = "__SENTINEL_JSON_PAYLOAD__";

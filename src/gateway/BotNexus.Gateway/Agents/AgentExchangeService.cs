@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Audit;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Tools;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -50,6 +51,15 @@ public sealed class AgentExchangeService : IAgentExchangeService
     private readonly AgentExchangeTurnEngine _turnEngine;
     private readonly ICrossWorldExchangeRouter _crossWorldRouter;
 
+    /// <summary>
+    /// The single execution-layer tool-audit sink (#2614 AC4). The local agent-exchange turn is a
+    /// blocking <c>PromptAsync</c> boundary, so before this slice a target agent could run any
+    /// number of side-effecting tools during an exchange and leave nothing but its final text
+    /// behind. Optional-with-fallback so the many direct-construction test call sites keep working
+    /// while production DI still supplies the one registered instance.
+    /// </summary>
+    private readonly IToolAuditSink _toolAudit;
+
     public AgentExchangeService(
         IAgentRegistry registry,
         IAgentSupervisor supervisor,
@@ -62,7 +72,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
         IOptions<AgentExchangeOptions>? exchangeOptions = null,
         AgentExchangeBudgetTracker? budgetTracker = null,
         AgentExchangeTurnEngine? turnEngine = null,
-        ICrossWorldExchangeRouter? crossWorldRouter = null)
+        ICrossWorldExchangeRouter? crossWorldRouter = null,
+        IToolAuditSink? toolAudit = null)
     {
         _registry = registry;
         _supervisor = supervisor;
@@ -72,6 +83,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         _logger = logger;
         _exchangeOptions = exchangeOptions ?? Options.Create(new AgentExchangeOptions());
         _budgetTracker = budgetTracker;
+        _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
 
         // The turn engine single-sources the shared loop/seal/archive; the router owns cross-world
         // federation. Both are injected in production DI. When omitted (the local-only construction
@@ -220,6 +232,9 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
                 var response = await targetHandle.PromptAsync(message, ct).ConfigureAwait(false);
                 var responseText = response.Content ?? string.Empty;
+                // #2614 AC4: capture the tool timeline this turn executed and hand it to the shared
+                // loop, which persists it between the user and assistant rows.
+                var toolEntries = _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response));
 
                 // Reload the session: the tool execution mutated Session.Metadata in the store via
                 // its own ISessionStore handle, so the in-memory copy here may be stale.
@@ -239,10 +254,10 @@ public sealed class AgentExchangeService : IAgentExchangeService
                             FinishedSummary = string.IsNullOrEmpty(finishSummary) ? null : finishSummary
                         };
                     }
-                    return new AgentExchangeTurnEngine.ExchangeTurnOutcome(responseText, Finished: true, finishReason, finishSummary);
+                    return new AgentExchangeTurnEngine.ExchangeTurnOutcome(responseText, Finished: true, finishReason, finishSummary, toolEntries);
                 }
 
-                return new AgentExchangeTurnEngine.ExchangeTurnOutcome(responseText, Finished: false, null, null);
+                return new AgentExchangeTurnEngine.ExchangeTurnOutcome(responseText, Finished: false, null, null, toolEntries);
             },
             beforeSeal: s => s.ExchangeCompletion = s.ExchangeCompletion is { } c
                 ? c with { ActiveExchangeId = null }

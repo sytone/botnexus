@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -96,8 +97,8 @@ public sealed class SkillsWorldDefaultCheck : IConfigCheck
 /// </summary>
 public sealed class DevOriginEnforcementCheck : IConfigCheck
 {
-    /// <summary>Feature-flag name; must match ApiKeyGatewayAuthHandler.DevOriginEnforcementFeature.</summary>
-    private const string FeatureName = "GatewayDevOriginEnforcement";
+    /// <summary>Feature-flag name; the single declaration shared with ApiKeyGatewayAuthHandler (#2767).</summary>
+    private const string FeatureName = FeatureFlags.GatewayDevOriginEnforcement;
     private const string DefaultOrigin = "http://localhost:5005";
 
     public string Id => "devmode-origin-enforcement";
@@ -129,8 +130,8 @@ public sealed class DevOriginEnforcementCheck : IConfigCheck
         }
 
         // Turn the flag on under the FeatureManagement section (Microsoft.FeatureManagement schema).
-        var featureManagement = root["FeatureManagement"] as JsonObject ?? new JsonObject();
-        root["FeatureManagement"] = featureManagement;
+        var featureManagement = root[FeatureFlags.SectionName] as JsonObject ?? new JsonObject();
+        root[FeatureFlags.SectionName] = featureManagement;
         featureManagement[FeatureName] = true;
     }
 
@@ -145,7 +146,7 @@ public sealed class DevOriginEnforcementCheck : IConfigCheck
 
     private static bool IsFeatureEnabled(JsonObject root)
     {
-        var fm = root["FeatureManagement"] as JsonObject;
+        var fm = root[FeatureFlags.SectionName] as JsonObject;
         if (fm is null)
             return false;
 

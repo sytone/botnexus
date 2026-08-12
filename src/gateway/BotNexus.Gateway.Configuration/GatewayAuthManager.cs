@@ -154,6 +154,50 @@ public sealed class GatewayAuthManager
         return string.IsNullOrWhiteSpace(apiKey) ? options : options with { ApiKey = apiKey };
     }
 
+    /// <summary>
+    /// Resolves a stable, non-secret identifier for the credential currently backing a provider (#3015).
+    /// </summary>
+    /// <remarks>
+    /// This is the <b>auth profile</b> half of a suspension's scope. A quota/billing/credential
+    /// exhaustion is a property of one credential, not of the provider and not of the instance, so a
+    /// suspension keyed on the provider alone would black-hole every agent the moment any one of
+    /// them ran out of credit.
+    /// <para>
+    /// The returned value is deliberately <b>derived, never the secret itself</b>: it is a truncated
+    /// SHA-256 digest of the resolved key. It is used as a dictionary key and may be
+    /// logged, so returning the credential would turn a diagnostics aid into a secret leak. A digest
+    /// is sufficient because the only question ever asked of it is "is this the same credential as
+    /// last time".
+    /// </para>
+    /// <para>
+    /// Returns <c>"default"</c> when no key is resolvable, so a provider using ambient/implicit
+    /// credentials still gets a single consistent scope rather than a null key.
+    /// </para>
+    /// </remarks>
+    /// <param name="provider">The provider whose credential is being identified.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<string> GetAuthProfileIdAsync(string provider, CancellationToken cancellationToken = default)
+    {
+        var apiKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        return DeriveAuthProfileId(apiKey);
+    }
+
+    /// <summary>
+    /// Derives the stable, non-secret auth-profile identifier from a resolved credential (#3015).
+    /// Pure and separately testable so the "never emit the secret" property can be pinned directly.
+    /// </summary>
+    /// <param name="apiKey">The resolved credential, or null/blank when none is configured.</param>
+    public static string DeriveAuthProfileId(string? apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return "default";
+        }
+
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(apiKey));
+        return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+    }
+
     private async Task<string?> ResolveProviderConfigApiKeyAsync(string provider, CancellationToken cancellationToken)
     {
         if (_platformConfig.CurrentValue.Providers is null)

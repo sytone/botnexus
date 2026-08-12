@@ -5,6 +5,7 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Extensions.Mcp;
 using BotNexus.Extensions.Mcp.Protocol;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Gateway.Abstractions.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -158,9 +159,9 @@ public sealed class McpInvokeTool : IAgentTool, IAsyncDisposable
             var lines = new List<string> { $"## Tools on '{serverId}' ({tools.Count})", "" };
             foreach (var tool in tools)
             {
-                var desc = tool.Description is not null && tool.Description.Length > 120
-                    ? tool.Description[..120] + "…"
-                    : tool.Description ?? "";
+                // #2924: cut on the shared grapheme-cluster boundary so a tool description ending
+                // in an emoji or combining sequence is not severed into a half-glyph.
+                var desc = GraphemeSafeTruncation.Truncate(tool.Description, 120, "…") ?? "";
                 lines.Add($"- **{tool.Name}**: {desc}");
             }
 

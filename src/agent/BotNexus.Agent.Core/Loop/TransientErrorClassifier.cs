@@ -65,6 +65,107 @@ public static class TransientErrorClassifier
     ];
 
     /// <summary>
+    /// Non-transient exhaustion vocabulary (#3015): conditions that will not clear by waiting.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately disjoint from <see cref="TransientPatterns"/>, and consulted only AFTER the
+    /// transient table has declined, so #3015 cannot reclassify a single string that
+    /// <see cref="IsTransient(string)"/> already matched. That ordering is what makes the split
+    /// additive: a provider that says "429 - you exceeded your current quota" keeps its historical
+    /// transient lane (the retry-table seam is owned by #2856), while "billing has been disabled"
+    /// -- which no transient pattern has ever matched -- now short-circuits instead of burning four
+    /// round-trips to relearn the same answer.
+    /// </remarks>
+    private static readonly Regex[] ExhaustionPatterns =
+    [
+        // Quota / credit exhaustion.
+        new(@"insufficient[_ ]quota", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"quota[_ ](?:exceeded|exhausted)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"exceeded your (?:current )?quota", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"out of credits?", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"credit balance is too low", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+
+        // Billing / plan.
+        new(@"billing (?:has been )?(?:disabled|inactive|not active)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"billing[_ ]hard[_ ]limit", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"payment required", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"\b402\b", RegexOptions.Compiled),
+
+        // Credentials rejected outright (as free-form text; the typed exception is handled above).
+        new(@"invalid[_ ]api[_ ]key", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"api key (?:not valid|is invalid|expired)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"account (?:has been )?(?:suspended|deactivated)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+    ];
+
+    /// <summary>
+    /// Classifies a provider failure into its retry lane (#3015).
+    /// </summary>
+    /// <remarks>
+    /// Evaluation order is load-bearing and must not be reversed:
+    /// <list type="number">
+    /// <item>A typed <see cref="ProviderRateLimitException"/> is <see cref="ProviderFailureClass.Transient"/>,
+    /// exactly as <see cref="IsTransient(Exception)"/> has always treated it.</item>
+    /// <item>A typed <see cref="ProviderAuthenticationException"/> is
+    /// <see cref="ProviderFailureClass.Exhausted"/> -- retrying with the same rejected credential is
+    /// definitionally pointless. Its message text matches no transient pattern, so this is not a
+    /// behaviour change for <see cref="IsTransient(Exception)"/>.</item>
+    /// <item>The transient text table, unchanged.</item>
+    /// <item>Only then the exhaustion table.</item>
+    /// </list>
+    /// Checking transient BEFORE exhaustion is the guarantee behind acceptance criterion 1: every
+    /// string that classified transient before #3015 still classifies transient after it. It is also
+    /// what keeps a provider <em>overload</em> out of the exhaustion lane, so an overload can never
+    /// cool an auth profile that is perfectly healthy.
+    /// </remarks>
+    /// <param name="exception">The exception raised while streaming a provider turn.</param>
+    public static ProviderFailureClass Classify(Exception? exception)
+    {
+        if (exception is null)
+        {
+            return ProviderFailureClass.Terminal;
+        }
+
+        if (exception is ProviderRateLimitException)
+        {
+            return ProviderFailureClass.Transient;
+        }
+
+        if (exception is ProviderAuthenticationException)
+        {
+            return ProviderFailureClass.Exhausted;
+        }
+
+        return Classify(exception.Message);
+    }
+
+    /// <summary>
+    /// Classifies provider error text into its retry lane (#3015).
+    /// </summary>
+    /// <param name="message">The provider error text to classify.</param>
+    public static ProviderFailureClass Classify(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return ProviderFailureClass.Terminal;
+        }
+
+        if (IsTransient(message))
+        {
+            return ProviderFailureClass.Transient;
+        }
+
+        foreach (var pattern in ExhaustionPatterns)
+        {
+            if (pattern.IsMatch(message))
+            {
+                return ProviderFailureClass.Exhausted;
+            }
+        }
+
+        return ProviderFailureClass.Terminal;
+    }
+
+    /// <summary>
     /// Returns <see langword="true"/> when the exception represents a retryable provider failure.
     /// </summary>
     /// <param name="exception">The exception raised while streaming a provider turn.</param>
