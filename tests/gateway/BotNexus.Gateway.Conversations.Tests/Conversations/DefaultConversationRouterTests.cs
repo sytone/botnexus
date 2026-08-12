@@ -41,7 +41,13 @@ public sealed class DefaultConversationRouterTests
         result.ShouldNotBeNull();
         result.Conversation.ShouldNotBeNull();
         result.Conversation.AgentId.ShouldBe(agentId);
-        result.Conversation.IsDefault.ShouldBeFalse(); // per-address conversation, not the default
+        // #2488: this agent had NO conversations, so the first one the router mints becomes its
+        // default. The original intent of this test - "every channel address gets its own
+        // conversation, bound to that address" - is unchanged and still asserted below; only the
+        // IsDefault expectation flips, because before #2488 nothing in production could ever set
+        // it. DefaultConversationRouterDefaultConversationTests pins that the SECOND address does
+        // not become a second default.
+        result.Conversation.IsDefault.ShouldBeTrue();
         result.Conversation.ChannelBindings.ShouldHaveSingleItem();
         result.Conversation.ChannelBindings[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-123"));
     }
