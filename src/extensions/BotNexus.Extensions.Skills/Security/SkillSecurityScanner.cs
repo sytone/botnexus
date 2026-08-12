@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
 using System.IO.Abstractions;
 
+using BotNexus.Gateway.Abstractions.Text;
+
 namespace BotNexus.Extensions.Skills.Security;
 
 /// <summary>Severity levels for security scan findings.</summary>
@@ -281,7 +283,7 @@ public static class SkillSecurityScanner
             if (matchLine == 0)
             {
                 matchLine = 1;
-                matchEvidence = source.Length > EvidenceMaxLength ? source[..EvidenceMaxLength] : source;
+                matchEvidence = GraphemeSafeTruncation.Truncate(source, EvidenceMaxLength)!;
             }
 
             findings.Add(new ScanFinding(
@@ -432,9 +434,9 @@ public static class SkillSecurityScanner
         => ScannableExtensions.Contains(Path.GetExtension(filePath));
 
     private static string TruncateEvidence(string evidence)
-        => evidence.Length <= EvidenceMaxLength
-            ? evidence
-            : evidence[..EvidenceMaxLength] + "…";
+        // #2924: shared boundary policy. Evidence is arbitrary skill-file text and is rendered to
+        // the user, so a cut inside a cluster shows as a mangled glyph in the scan report.
+        => GraphemeSafeTruncation.Truncate(evidence, EvidenceMaxLength, "…")!;
 
     private static List<string> CollectScannableFiles(string dirPath, int maxFiles, IFileSystem fileSystem)
     {

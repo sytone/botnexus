@@ -218,6 +218,13 @@ public sealed class ShellTool : IAgentTool
         {
             PythonPreflight.ThrowIfInvalid(inlinePyScript);
         }
+        // Same guard for inline `node -e` one-liners (issue #2762): unterminated string/template
+        // literals and unbalanced brackets are rejected before the runtime is spawned.
+        if (NodePreflight.IsNodeExecutable(invocation.FileName)
+            && NodePreflight.TryGetInlineScript(invocation.BaseArgs, invocation.Command, out var inlineJsScript))
+        {
+            NodePreflight.ThrowIfInvalid(inlineJsScript);
+        }
 
         // Combine the clamp warning (if any) with the shell-detection warning so both surface
         // on the tool result without threading two prefixes through every output build site.

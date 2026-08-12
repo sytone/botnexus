@@ -80,6 +80,36 @@ public sealed class PlatformConfig : IValidatableObject
     public WorkspacePortalConfig? Workspace { get; set; }
 
     /// <summary>
+    /// Feature flags, keyed by the names declared in <see cref="FeatureFlags"/> (#2767).
+    /// </summary>
+    /// <remarks>
+    /// <para>Modelled here so <c>botnexus config get/set FeatureManagement.&lt;Flag&gt;</c> can address
+    /// flags at all. Previously the section existed only in the raw document, so the CLI rejected
+    /// every path under it and the only ways to change a flag were hand-editing config.json or
+    /// <c>doctor config</c>'s bespoke raw-JSON write - an unmodelled write path of exactly the kind
+    /// that produced the dead <c>compaction</c> block in #2764.</para>
+    /// <para><b>The property name is load-bearing and must not be camelCased.</b> Every other
+    /// property here is written through <c>JsonNamingPolicy.CamelCase</c>, but
+    /// Microsoft.FeatureManagement binds the PascalCase <c>FeatureManagement</c> section, so the
+    /// explicit <see cref="JsonPropertyNameAttribute"/> is what stops a write from silently
+    /// renaming the section to <c>featureManagement</c> and unbinding every flag while leaving the
+    /// file looking correct.</para>
+    /// <para>Values are <see cref="JsonElement"/> rather than <see cref="bool"/> because
+    /// Microsoft.FeatureManagement accepts either a bool literal or an object carrying an
+    /// <c>EnabledFor</c> filter list. A bool-typed dictionary could not represent the filter form,
+    /// so a typed round trip would destroy it - the same data-loss shape #2816 fixed for channel
+    /// settings.</para>
+    /// </remarks>
+    [JsonPropertyName(FeatureFlags.SectionName)]
+    [Display(
+        Name = "Feature flags",
+        Description = "Feature flags keyed by name. Each declared flag should carry an explicit true/false; run 'botnexus doctor config' to report any that are absent.",
+        GroupName = "General",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "general", Order = 3)]
+    public Dictionary<string, JsonElement>? FeatureManagement { get; set; }
+
+    /// <summary>
     /// World-level agent defaults. Populated at load time from the <c>agents.defaults</c> reserved key.
     /// Not directly serialized — extracted separately from the agents dictionary.
     /// </summary>
@@ -255,6 +285,10 @@ public sealed class GatewaySettingsConfig
     public RateLimitConfig? RateLimit { get; set; }
     /// <summary>Explicit SignalR hub transport limits (frame size, parallel invocations, stream buffer).</summary>
     public SignalRConfig? SignalR { get; set; }
+    /// <summary>Operator-supplied additional secret redaction patterns (#2727).</summary>
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 10)]
+    public SecretRedactionConfig? SecretRedaction { get; set; }
+
     /// <summary>Logging level override.</summary>
     [Display(
         Name = "Log level",
@@ -636,6 +670,44 @@ public sealed class SignalRConfig
     /// the mobile-tuned default so a misconfig cannot make the server hang up prematurely.
     /// </summary>
     public int? ClientTimeoutIntervalSeconds { get; set; }
+}
+
+/// <summary>
+/// Operator-supplied additional secret redaction patterns (#2727).
+/// </summary>
+/// <remarks>
+/// Patterns here are applied <b>in addition to</b> the platform's built-in credential regexes and can
+/// never replace or disable them, so a deployment can teach the redactor its own secret shapes
+/// (internal service tokens, customer identifiers, bespoke API key formats) without a code change.
+/// Every pattern is validated at startup: a malformed or all-matching pattern is a configuration
+/// error naming the offending entry, because silently disabling redaction is the one outcome worse
+/// than not supporting custom patterns at all.
+/// </remarks>
+public sealed class SecretRedactionConfig
+{
+    /// <summary>
+    /// Additional .NET regular expressions whose matches are replaced with <c>[REDACTED]</c>.
+    /// Applied after the built-in pattern set. Empty or absent means "built-ins only".
+    /// </summary>
+    [Display(
+        Name = "Additional redaction patterns",
+        Description = "Extra .NET regular expressions whose matches are replaced with [REDACTED]. Applied in addition to the built-in credential patterns, never instead of them.",
+        GroupName = "Gateway",
+        Order = 10)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 10)]
+    public List<string>? Patterns { get; set; }
+
+    /// <summary>
+    /// Per-pattern match timeout in milliseconds applied to operator patterns so a
+    /// catastrophic-backtracking expression cannot hang the logging path. Defaults to 100ms.
+    /// </summary>
+    [Display(
+        Name = "Redaction match timeout (ms)",
+        Description = "Per-pattern match timeout for operator redaction patterns. Defaults to 100ms.",
+        GroupName = "Gateway",
+        Order = 11)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "gateway", Order = 11)]
+    public int? MatchTimeoutMilliseconds { get; set; }
 }
 
 /// <summary>Cron scheduler configuration.</summary>

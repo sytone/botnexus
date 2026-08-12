@@ -139,9 +139,10 @@ internal static class AnthropicMessageConverter
         else
         {
             var blocks = new List<object>();
+            var droppedImageCount = msg.Content.Blocks!.Count(b => b is ImageContent);
             var supportsImages = ImageModalityGuard.AllowImages(
                 model,
-                msg.Content.Blocks!.Count(b => b is ImageContent),
+                droppedImageCount,
                 "anthropic.user");
             foreach (var block in msg.Content.Blocks!)
             {
@@ -173,6 +174,16 @@ internal static class AnthropicMessageConverter
                         break;
                 }
             }
+
+            // #2485 AC4: substitute an in-band notice for the removed images so the user learns
+            // the attachment could not be delivered, rather than only an operator reading the log.
+            if (!supportsImages)
+            {
+                var notice = ImageModalityGuard.BuildDropNotice(model, droppedImageCount);
+                if (notice is not null)
+                    blocks.Add(new Dictionary<string, object?> { ["type"] = "text", ["text"] = notice });
+            }
+
             if (blocks.Count == 0)
                 return null;
 

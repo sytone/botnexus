@@ -260,6 +260,43 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
+    public async Task BuildSystemPromptAsync_WhenDailyNoteListedWithDotSlashPrefix_EmitsItOnce()
+    {
+        // #2940: "./memory/{today}.md" denotes the same file as "memory/{today}.md", so the
+        // de-dupe in AddContextFilesWithoutDuplicates must treat them as one identity.
+        var today = DateTime.Now.Date;
+        var yesterday = today.AddDays(-1);
+        var todayRelativePath = $"./memory/{today:yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            (Path.Combine("memory", $"{today:yyyy-MM-dd}.md"), "TODAY MEMORY ENTRY"),
+            (Path.Combine("memory", $"{yesterday:yyyy-MM-dd}.md"), "YESTERDAY MEMORY ENTRY"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                SystemPromptFiles = ["AGENTS.md", todayRelativePath]
+            });
+
+            // Yesterday's note is absent from the prompt-file list, so its presence proves the
+            // daily-memory pass actually ran and the count-of-one below is a real dedupe assertion.
+            result.ShouldContain("YESTERDAY MEMORY ENTRY");
+            CountOccurrences(result, "TODAY MEMORY ENTRY").ShouldBe(1);
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task BuildSystemPromptAsync_WithSingularPromptFile_StillIncludesRecentDailyMemoryFiles()
     {
         var today = DateTime.Now.Date;

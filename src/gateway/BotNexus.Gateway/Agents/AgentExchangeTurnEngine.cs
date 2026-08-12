@@ -53,11 +53,24 @@ public sealed class AgentExchangeTurnEngine
     /// Outcome of a single exchange turn: the assistant response text and whether the target
     /// signalled completion (via the local completion gate or a cross-world relay flag).
     /// </summary>
+    /// <param name="Response">The assistant response text for this turn.</param>
+    /// <param name="Finished">Whether the target signalled completion.</param>
+    /// <param name="FinishReason">The reason supplied with completion, when finished.</param>
+    /// <param name="FinishSummary">The optional summary supplied with completion.</param>
+    /// <param name="ToolEntries">
+    /// The sink-produced tool-audit rows for this turn (#2614 AC4), persisted immediately before
+    /// the assistant row so the exchange transcript orders as user -> tools -> assistant, exactly
+    /// like every other blocking call site. Empty for a turn whose tools are audited elsewhere:
+    /// the cross-world SENDER leaves this empty because the target agent runs in the remote
+    /// process and its tool rows are recorded by the receiver's own session, so populating it here
+    /// would duplicate an audit record rather than add one.
+    /// </param>
     public readonly record struct ExchangeTurnOutcome(
         string Response,
         bool Finished,
         string? FinishReason,
-        string? FinishSummary);
+        string? FinishSummary,
+        IReadOnlyList<SessionEntry>? ToolEntries = null);
 
     /// <summary>
     /// Drives the shared agent-exchange turn loop and end-of-exchange lifecycle for both the
@@ -103,6 +116,11 @@ public sealed class AgentExchangeTurnEngine
 
                 var outcome = await sendTurnAsync(turn, message, cancellationToken).ConfigureAwait(false);
                 finalResponse = outcome.Response;
+                // #2614 AC4: tool rows land between the user turn and the assistant turn. They are
+                // session-history only - the returned transcript stays a pure user/assistant
+                // dialogue, so the exchange RESULT shape is unchanged and this is purely additive.
+                foreach (var toolEntry in outcome.ToolEntries ?? [])
+                    session.AddEntry(toolEntry);
                 AddTurn(MessageRole.Assistant, finalResponse, transcript, session);
 
                 if (outcome.Finished)

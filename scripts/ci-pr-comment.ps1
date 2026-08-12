@@ -33,77 +33,27 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Rendering is factored into scripts/repo/CiCommentRendering.ps1 so it can be
+# exercised without touching GitHub. See issue #2997.
+. (Join-Path $PSScriptRoot 'repo/CiCommentRendering.ps1')
+
 $marker  = "<!-- farnsworth:ci-monitor-$PR -->"
 $nowUtc  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm UTC')
 
-# ---------------------------------------------------------------------------
-# 1. Render check table rows
-# ---------------------------------------------------------------------------
-$statusIcon = @{
-    'pass'    = 'pass'
-    'fail'    = 'FAIL'
-    'pending' = 'pending'
-    'skipped' = 'skipped'
-}
-
-# Known checks in display order; any extras from CheckRows appended at end
-$knownOrder = @(
-    'core-tests',
-    'CodeQL',
-    'Analyze (csharp)',
-    'Code Pattern Checks',
-    'Dependency Security Audit',
-    'Secret Scanning (TruffleHog)'
-)
-
-$checkMap = @{}
-foreach ($row in $CheckRows) { $checkMap[$row.name] = $row.status }
-
-# Build ordered list: known first, then any unknown checks
-$orderedNames = $knownOrder + ($checkMap.Keys | Where-Object { $_ -notin $knownOrder } | Sort-Object)
-
-$tableRows = $orderedNames | ForEach-Object {
-    $n = $_
-    $s = if ($checkMap.ContainsKey($n)) { $statusIcon[$checkMap[$n]] ?? $checkMap[$n] } else { 'skipped' }
-    "| $n | $s |"
-}
-$tableBody = $tableRows -join "`n"
-
-# ---------------------------------------------------------------------------
-# 2. Render bullet lists
-# ---------------------------------------------------------------------------
-function Format-Bullets([array]$items) {
-    ($items | ForEach-Object { "- $_" }) -join "`n"
-}
-
-$actionBullets  = Format-Bullets $Actions
-$blockerBullets = Format-Bullets $Blockers
-
-# ---------------------------------------------------------------------------
-# 3. Render full template (history block placeholder filled below)
-# ---------------------------------------------------------------------------
 function New-Body([string]$historyBlock) {
-    @"
-$marker
-## CI Health Check -- PR #$PR
-
-| Check | Status |
-|-------|--------|
-$tableBody
-
-**Branch:** ``$Branch`` | **Behind main:** $BehindBy commits | **Mergeable:** $Mergeable
-
-**Actions taken:**
-$actionBullets
-
-**Blockers for Jon:**
-$blockerBullets
-
----
-$historyBlock
----
-*Farnsworth (automated CI monitor) -- [BotNexus](https://github.com/Sytone/$($Repo.Split('/')[1])) -- Last updated: $nowUtc*
-"@
+    $renderArgs = @{
+        PR           = $PR
+        CheckRows    = $CheckRows
+        BehindBy     = $BehindBy
+        Mergeable    = $Mergeable
+        Actions      = $Actions
+        Blockers     = $Blockers
+        Branch       = $Branch
+        Repo         = $Repo
+        HistoryBlock = $historyBlock
+        NowUtc       = $nowUtc
+    }
+    New-CiHealthCheckBody @renderArgs
 }
 
 # ---------------------------------------------------------------------------

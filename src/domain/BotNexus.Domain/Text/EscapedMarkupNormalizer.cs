@@ -22,7 +22,7 @@ namespace BotNexus.Domain.Text;
 /// here: the two spellings drift, and the newer marker is only added to one of them. So the
 /// definition of "what a marker looks like" stays written exactly once, in literal form, and
 /// the definition of "what an encoding is" stays written exactly once, here. Every sanitizer
-/// (<c>MemoryContentSanitizer</c>, <c>AssistantTextSanitizer</c>) CONSUMES this seam rather than
+/// (<c>UntrustedContentSanitizer</c>, <c>AssistantTextSanitizer</c>) CONSUMES this seam rather than
 /// restating either half.
 /// </para>
 /// <para>

@@ -1,4 +1,4 @@
-using System.Globalization;
+using BotNexus.Gateway.Abstractions.Text;
 
 namespace BotNexus.Domain.Text;
 
@@ -56,58 +56,14 @@ public static class TextTruncation
 
         // Returning the original reference (not a copy) keeps the ASCII path allocation-free and
         // byte-identical to the raw slicing it replaces - see acceptance criterion 4 on #2883.
-        // A negative maxLength needs no clamp here: FindBoundaryAtOrBefore treats any limit <= 0
-        // as an empty retained portion, and the length comparison below is false for a negative
-        // limit on any string. Clamping as well would be unreachable code that no test can pin.
+        // Delegation to the shared boundary policy (#2924) preserves this exactly: the shared
+        // helper applies the identical short-circuit, and this one is kept so the reference-return
+        // guarantee is pinned at the domain seam too rather than inherited silently.
         if (value.Length <= maxLength)
         {
             return value;
         }
 
-        var cut = FindBoundaryAtOrBefore(value, maxLength);
-        return cut == 0 && suffix.Length == 0
-            ? string.Empty
-            : string.Concat(value.AsSpan(0, cut), suffix);
-    }
-
-    /// <summary>
-    /// Returns the largest index at or before <paramref name="limit"/> that does not fall inside a
-    /// surrogate pair or a grapheme cluster.
-    /// </summary>
-    /// <remarks>
-    /// Enumerating text elements from the start is O(limit) rather than O(value.Length), and is the
-    /// only way to be correct for clusters whose extent is not decidable by looking at the cut
-    /// point alone - a ZWJ emoji sequence is many code units wide and joins are only visible by
-    /// walking forward from a known boundary.
-    /// </remarks>
-    private static int FindBoundaryAtOrBefore(string value, int limit)
-    {
-        if (limit <= 0)
-        {
-            return 0;
-        }
-
-        var lastBoundary = 0;
-        var enumerator = StringInfo.GetTextElementEnumerator(value);
-        while (enumerator.MoveNext())
-        {
-            var start = enumerator.ElementIndex;
-            if (start >= limit)
-            {
-                // This cluster begins at or after the limit, so the previous boundary is the answer.
-                return start == limit ? limit : lastBoundary;
-            }
-
-            var end = start + ((string)enumerator.Current).Length;
-            if (end > limit)
-            {
-                // The limit lands inside this cluster; stop before the cluster starts.
-                return start;
-            }
-
-            lastBoundary = end;
-        }
-
-        return lastBoundary;
+        return GraphemeSafeTruncation.Truncate(value, maxLength, suffix);
     }
 }

@@ -42,6 +42,67 @@ public sealed class PromptPrimitivesTests
         });
     }
 
+    [Theory]
+    [InlineData("./memory/2026-08-11.md")]
+    [InlineData(".\\memory\\2026-08-11.md")]
+    [InlineData("  ./memory/2026-08-11.md  ")]
+    [InlineData(".//memory//2026-08-11.md")]
+    public void NormalizePath_CollapsesLeadingDotSlashAndRepeatedSeparators(string input)
+    {
+        // #2940: the identity consumer (AddContextFilesWithoutDuplicates) compares these under
+        // OrdinalIgnoreCase, so a leading "./" must not make an equivalent path look distinct.
+        ContextFileOrdering.NormalizePath(input)
+            .ShouldBe(ContextFileOrdering.NormalizePath("memory/2026-08-11.md"), StringCompareShould.IgnoreCase);
+    }
+
+    [Fact]
+    public void NormalizePath_DoesNotResolveParentSegments()
+    {
+        // #2940 AC6: workspace containment stays the sole responsibility of IsPathUnderWorkspace.
+        // Collapsing ".." here would split a security check across two files.
+        ContextFileOrdering.NormalizePath("memory/../secrets.md").ShouldBe("memory/../secrets.md");
+        ContextFileOrdering.NormalizePath("../outside.md").ShouldBe("../outside.md");
+    }
+
+    [Theory]
+    [InlineData("docs/./README.md", "docs/./README.md")]
+    [InlineData(".hidden/notes.md", ".hidden/notes.md")]
+    [InlineData("./", "")]
+    [InlineData("", "")]
+    public void NormalizePath_OnlyCollapsesLeadingDotSegments(string input, string expected)
+    {
+        // Sad paths: a mid-path "./" and a dot-prefixed directory name must survive untouched.
+        ContextFileOrdering.NormalizePath(input).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void ContextFileOrdering_TreatsDotSlashDailyNoteAsDailyNoteForOrdering()
+    {
+        // Collapsing also fixes IsDailyMemoryNote, which tests StartsWith("memory/"): before the
+        // fix "./memory/..." fell through to int.MaxValue. The companion file's basename is chosen
+        // to sort ORDINALLY BEFORE the note's, so the un-fixed int.MaxValue tie-break puts it first
+        // and this assertion genuinely discriminates (a "readme.md" companion would not).
+        var files = new List<ContextFile>
+        {
+            new("docs/0-intro.md", "intro"),
+            new("./memory/2024-05-08.md", "today"),
+            new("MEMORY.md", "long-term")
+        };
+
+        ContextFileOrdering.SortForPrompt(files).Select(f => f.Path)
+            .ShouldBe(new[] { "MEMORY.md", "./memory/2024-05-08.md", "docs/0-intro.md" });
+    }
+
+    [Fact]
+    public void ContextFileOrdering_SortForPromptPreservesOriginalPathStrings()
+    {
+        // Normalization is an ordering/identity key only; SortForPrompt must never rewrite Path.
+        var files = new List<ContextFile> { new(".\\docs\\README.md", "readme"), new("SOUL.md", "soul") };
+
+        ContextFileOrdering.SortForPrompt(files).Select(f => f.Path)
+            .ShouldBe(new[] { "SOUL.md", ".\\docs\\README.md" });
+    }
+
     [Fact]
     public void ToolNameRegistry_ResolvesCanonicalToolNames()
     {

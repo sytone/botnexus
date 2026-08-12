@@ -1817,7 +1817,21 @@ botnexus doctor locations
 botnexus doctor --cleanup-orphans
 ```
 
-Checks include: config validity, provider reachability, directory/location accessibility, persistent and sub-agent workspace health, extension loading, and port availability. Add new checks to the registry so the aggregate suite can never silently omit one.
+### Checks in the aggregate suite
+
+The suite is the ordered registry below - cheap configuration checks first, then filesystem and
+reconciliation checks - so scripted output and the final summary are stable across runs. Adding a
+check to the registry automatically includes it in the bare `doctor` run, so a diagnostic can never
+be silently omitted by a hardcoded parent handler.
+
+| Check | Reports |
+|---|---|
+| Configuration health | Validity of `config.json` and the settings the migration checks cover. |
+| World identity | The resolved world ID alongside the resolved home path, so several gateways on one machine can be told apart. A home that has not started yet has no ID; that is reported as a warning, not an error, because one is generated on next start. This check never writes. |
+| Secret file permissions | Whether secret files are readable by more than their owner. |
+| Location accessibility | That every resolved location (config, logs, sessions, agents) is accessible. Also available on its own as [`doctor locations`](#locations). |
+| Persistent agent folders | That persistent agent workspaces match the configured agents. Also available on its own as [`doctor agents`](#doctor-agents). |
+| Sub-agent workspaces | Health of the sub-agent workspace root. |
 
 ---
 

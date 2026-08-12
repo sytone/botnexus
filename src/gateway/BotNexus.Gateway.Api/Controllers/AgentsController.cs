@@ -3,6 +3,7 @@ using BotNexus.Cron;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Http;
@@ -67,14 +68,23 @@ public sealed class AgentsController : ControllerBase
     /// reviewer, writer, analyst). These are spawn/converse targets rather than top-level
     /// user-created agents and are hidden by default.
     /// </param>
+    /// <remarks>
+    /// #2755: this endpoint returns the lean <see cref="AgentListItem"/> projection, not the full
+    /// <see cref="AgentDescriptor"/>. The domain model was previously serialised directly, putting 36
+    /// properties per agent on the portal's cold-boot path where consumers read at most seven, and
+    /// broadcasting <c>systemPrompt</c>/<c>fileAccess</c>/<c>toolPolicy</c>/<c>extensionConfig</c> on a
+    /// call that is unauthenticated by default (#506). Clients needing the full shape use
+    /// <c>GET /api/agents/{agentId}</c>.
+    /// </remarks>
     [HttpGet]
-    public ActionResult<IReadOnlyList<AgentDescriptor>> List(
+    public ActionResult<IReadOnlyList<AgentListItem>> List(
         [FromQuery] bool includeSubAgents = false,
         [FromQuery] bool includeBuiltin = false)
     {
         var agents = _registry.GetAll()
             .Where(a => includeSubAgents || a.Kind != AgentKind.SubAgent)
             .Where(a => includeBuiltin || !a.IsBuiltIn)
+            .Select(AgentListItem.FromDescriptor)
             .ToList();
         return Ok(agents);
     }

@@ -43,12 +43,37 @@ public static class ContextFileOrdering
         IsDailyMemoryNote(pathValue);
 
     /// <summary>
-    /// Executes normalize path.
+    /// Produces the canonical comparison key for a context-file path: trimmed, forward-slashed,
+    /// with any leading <c>./</c> segments and repeated separators collapsed.
     /// </summary>
+    /// <remarks>
+    /// The seam serves two needs and one normalizer is safe for both (#2940). As an ORDERING key
+    /// (<see cref="SortForPrompt"/>, <see cref="GetBasename"/>) the leading <c>./</c> is pure noise
+    /// — collapsing it changes no relative order, and it makes <c>./memory/2026-08-11.md</c> match
+    /// the <c>memory/</c> daily-note prefix test as it always should have. As an IDENTITY key
+    /// (<c>AddContextFilesWithoutDuplicates</c>) the collapse is required, or an operator writing
+    /// <c>./memory/{date}.md</c> in <c>systemPromptFiles</c> defeats the de-duplication and the note
+    /// is emitted twice.
+    /// <para>
+    /// <c>..</c> segments are deliberately NOT resolved: workspace containment is the sole
+    /// responsibility of <c>IsPathUnderWorkspace</c>, and duplicating it here would split a security
+    /// check across two files. This returns a comparison key only — callers keep the original path.
+    /// </para>
+    /// </remarks>
     /// <param name="pathValue">The path value.</param>
-    /// <returns>The normalize path result.</returns>
-    public static string NormalizePath(string pathValue) =>
-        pathValue.Trim().Replace('\\', '/');
+    /// <returns>The normalized comparison key.</returns>
+    public static string NormalizePath(string pathValue)
+    {
+        var normalized = pathValue.Trim().Replace('\\', '/');
+
+        while (normalized.Contains("//", StringComparison.Ordinal))
+            normalized = normalized.Replace("//", "/", StringComparison.Ordinal);
+
+        while (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized[2..];
+
+        return normalized == "." ? string.Empty : normalized;
+    }
 
     /// <summary>
     /// Executes get basename.

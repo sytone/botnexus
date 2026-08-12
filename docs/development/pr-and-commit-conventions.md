@@ -113,6 +113,79 @@ Rules that matter more than the headings:
    fresh `origin/main` rather than pushing.
 5. **Edit agent output before requesting review.** Agents are verbose. Cut anything the diff says better.
 
+## Closing an issue: the clause-by-clause rule
+
+`Closes #N` is a claim that **every** clause of issue N is satisfied. It is not a claim that a PR
+related to N has landed. GitHub does not distinguish the two, so the discipline has to live here.
+
+An issue is closed correctly only when each clause of its title and each acceptance-criteria item has
+been individually verified against the code that actually shipped. A conjunction in the title
+("X **and** Y", "X / Y", "without A **or** B") is a list of separate obligations, not a single one.
+
+### Why this rule exists
+
+Three issues were closed on the strength of their first clause. None was caught by review; all three
+were caught months later by independent re-measurement, because a closed issue reads as settled and
+the unshipped half becomes invisible.
+
+| Issue | Clause that shipped | Clause that did not | How the gap surfaced |
+|---|---|---|---|
+| [#1780](https://github.com/Sytone/botnexus/issues/1780) | `Cache-Control` headers | **ETag** / `Last-Modified` — so conditional GETs stayed impossible and ~32 KB brotli was re-downloaded on every page load, on both surfaces, indefinitely | Weekly portal profiling → #2413 / PR #2422 |
+| [#2104](https://github.com/Sytone/botnexus/issues/2104) | retry-storm suppression | **branch deletion after failed removal** — still live, orphaned `fix/2248` and `fix/2293` | Weekly tool-failure forensics → #2419 |
+| [#2105](https://github.com/Sytone/botnexus/issues/2105) | M365 wrapper parameter schemas | **safe aliases** — failure rate went from 8/wk at close to 152/wk across 9 agents, the largest tool-failure cluster in the repo | Weekly tool-failure forensics → #2414 |
+
+#1780 is the sharpest case: the missing capability was **named in the issue title** and the issue was
+still closed without it. This is the same failure family as a vacuous test — a green signal that does
+not prove the property it is trusted to prove.
+
+### The rules
+
+1. **Partial work uses `Refs:`, never `Closes`.** If a PR satisfies only some clauses of an issue, its
+   body carries `Refs #N` and the issue stays open. Never `Closes #N` for partial scope, and never
+   "close now, follow up later" — the follow-up is exactly what stops happening. If the remainder is
+   genuinely a separate piece of work, file it as its own issue **first** and link it from the close
+   comment, then close the original.
+2. **The closing comment must enumerate clause coverage.** Walk the acceptance criteria in order and
+   state, per clause, what satisfies it and where. Any clause that is *not* covered must be named
+   explicitly along with the reason and the follow-up issue number. Silence about a clause is treated
+   as a defect, not as coverage.
+3. **Verify against what shipped, not against what the PR said.** Re-read the acceptance criteria at
+   close time and check each one against the merged code. "A PR referencing this issue merged" is not
+   evidence for any individual clause.
+4. **Prefer splitting at filing time.** An issue whose title needs a conjunction is usually two issues.
+   Decomposing at filing costs minutes; a clause discovered unshipped a quarter later costs a
+   regression, a re-file and a second implementation cycle. See
+   [issue-conventions.md](issue-conventions.md) for the acceptance-criteria format that makes clauses
+   individually checkable.
+5. **Re-measurement outranks closure.** Recurring analysis runs (tool-failure forensics, portal
+   profiling, log analysis) must re-check previously-closed findings rather than assume them resolved.
+   That is what caught all three cases above.
+
+### Worked example
+
+A PR that shipped `Cache-Control` but not `ETag` for #1780 should have carried `Refs #1780` in the
+body, left the issue open, and closed with a comment shaped like this:
+
+```markdown
+Clause coverage for #1780:
+
+- [x] `Cache-Control` on both static surfaces — `StaticAssetHeaders.cs`, PR #1801.
+- [ ] **ETag / `Last-Modified`** — NOT covered. Conditional GETs remain impossible;
+      the asset is re-downloaded on every load. Split out as #2413.
+
+Closing as partially superseded: remaining clause tracked in #2413.
+```
+
+The unticked box is the point. A close comment that lists only what shipped is indistinguishable from
+one where nothing was missed.
+
+### What CI checks
+
+The [PR conventions guard](#enforcement) raises an **advisory** warning when a PR body says
+`Closes #N` and issue N still has an unticked `- [ ]` acceptance-criteria checkbox. It is a prompt to
+re-read the criteria, not a gate: an unticked box is often legitimately satisfied but never ticked,
+and the guard cannot tell. It never blocks, and it fails open if the issue cannot be read.
+
 ## UI evidence
 
 A reviewer cannot tell from a `.razor` diff whether a UI change actually works. Any PR touching the
@@ -159,6 +232,7 @@ flips by changing `ENFORCEMENT_MODE` to `"block"` in `.github/scripts/pr-convent
 | `fix` PRs state a root cause | blocks |
 | UI-touching PRs carry visual evidence or an explicit no-visible-change note | blocks |
 | Numeric `Validated-by` evidence rather than "all tests pass" | advisory only |
+| `Closes #N` against an issue with an unticked acceptance-criteria box | advisory only |
 
 **Exemptions.** Automated external bot authors (Dependabot, Renovate, `github-actions[bot]`) are skipped:
 they open mechanical dependency PRs with no root cause or UI evidence to give. `agent-farnsworth[bot]` is

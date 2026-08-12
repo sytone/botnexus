@@ -156,9 +156,12 @@ public static class CompletionsMessageConverter
 
     private static JsonObject? ConvertUserMessage(UserMessage user, LlmModel model)
     {
+        var droppedImageCount = user.Content.IsText
+            ? 0
+            : user.Content.Blocks!.Count(b => b is ImageContent);
         var supportsImages = ImageModalityGuard.AllowImages(
             model,
-            user.Content.IsText ? 0 : user.Content.Blocks!.Count(b => b is ImageContent),
+            droppedImageCount,
             "completions.user");
 
         if (user.Content.IsText)
@@ -192,6 +195,16 @@ public static class CompletionsMessageConverter
                     });
                     break;
             }
+        }
+
+        // #2485 AC4: the drop must be visible to the USER, not only in the log. Substitute an
+        // in-band text part for the removed images so the agent can explain the absence instead of
+        // silently answering as though no attachment was ever sent.
+        if (!supportsImages)
+        {
+            var notice = ImageModalityGuard.BuildDropNotice(model, droppedImageCount);
+            if (notice is not null)
+                contentArray.Add(new JsonObject { ["type"] = "text", ["text"] = notice });
         }
 
         if (contentArray.Count == 0)
