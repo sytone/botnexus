@@ -5,6 +5,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Isolation;
+using BotNexus.Gateway.Tests.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
@@ -31,6 +32,7 @@ namespace BotNexus.Gateway.Tests.Isolation;
 /// removed.
 /// </para>
 /// </remarks>
+[Collection(ProviderDiagnosticsCollection.Name)]
 public sealed class AgentHandleImageDropGuardTests : IDisposable
 {
     private readonly CapturingLoggerProvider _capture = new();
