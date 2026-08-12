@@ -779,9 +779,12 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         try
         {
-            var result = await _hub.SubscribeAllAsync();
-            foreach (var session in result.Sessions)
-                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
+            // Re-join the hub groups. The returned Sessions payload is deliberately DISCARDED:
+            // portal session state is loaded over REST and only over REST (#2541 AC1), so writing
+            // it here would make the hub a second, unordered writer into the same store. The
+            // caller's reconnect path re-runs the REST roster walk.
+            _ = await _hub.SubscribeAllAsync();
+            await _hub.SubscribeAgentsAsync([.. _store.Agents.Keys]);
         }
         catch (Exception ex)
         {
