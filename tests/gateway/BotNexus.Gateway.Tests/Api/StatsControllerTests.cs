@@ -41,6 +41,67 @@ public sealed class StatsControllerTests
         dto.ActiveSubAgents.ShouldBe(5);
     }
 
+    /// <summary>
+    /// AC2 + AC7. The controller must project the tracker's detail rows, and the headline count must
+    /// equal the projected list size. Replacing the returned detail collection with an empty list
+    /// makes this test fail by name.
+    /// </summary>
+    [Fact]
+    public void GetOverview_ReturnsActiveLoopDetails_FromTheSameSnapshotAsTheHeadlineCount()
+    {
+        var started = new DateTimeOffset(2026, 1, 1, 9, 30, 0, TimeSpan.Zero);
+        var tracker = new FakeActiveLoopTracker
+        {
+            Snapshot = new ActiveLoopSnapshot
+            {
+                ActiveCount = 2,
+                PeakCount = 6,
+                TotalCompleted = 11,
+                ActiveLoops =
+                [
+                    new ActiveLoopDetail { LoopId = "L1", AgentId = "farnsworth", ConversationId = "c_abc", SessionId = "s_1", StartedAtUtc = started },
+                    new ActiveLoopDetail { LoopId = "L2", AgentId = "nova", ConversationId = null, SessionId = "s_2", StartedAtUtc = started.AddMinutes(1) }
+                ]
+            }
+        };
+
+        var controller = new StatsController(tracker, subAgentManager: null);
+
+        var dto = controller.GetOverview().ShouldBeOfType<OkObjectResult>().Value.ShouldBeOfType<PlatformStatsDto>();
+
+        dto.ActiveLoopDetails.Count.ShouldBe(2);
+        dto.ActiveAgentLoops.ShouldBe(dto.ActiveLoopDetails.Count);
+
+        dto.ActiveLoopDetails[0].LoopId.ShouldBe("L1");
+        dto.ActiveLoopDetails[0].AgentId.ShouldBe("farnsworth");
+        dto.ActiveLoopDetails[0].ConversationId.ShouldBe("c_abc");
+        dto.ActiveLoopDetails[0].SessionId.ShouldBe("s_1");
+        dto.ActiveLoopDetails[0].StartedAtUtc.ShouldBe(started);
+
+        dto.ActiveLoopDetails[1].AgentId.ShouldBe("nova");
+        dto.ActiveLoopDetails[1].ConversationId.ShouldBeNull();
+
+        // AC2: the endpoint must take exactly ONE snapshot; two reads could straddle a start/end.
+        tracker.SnapshotCalls.ShouldBe(1);
+    }
+
+    /// <summary>Sad path: an idle platform returns an empty detail list, not null.</summary>
+    [Fact]
+    public void GetOverview_WhenNoLoopsAreActive_ReturnsEmptyDetailList()
+    {
+        var tracker = new FakeActiveLoopTracker
+        {
+            Snapshot = new ActiveLoopSnapshot { ActiveCount = 0, PeakCount = 3, TotalCompleted = 8, ActiveLoops = [] }
+        };
+
+        var dto = new StatsController(tracker, null).GetOverview()
+            .ShouldBeOfType<OkObjectResult>().Value.ShouldBeOfType<PlatformStatsDto>();
+
+        dto.ActiveAgentLoops.ShouldBe(0);
+        dto.ActiveLoopDetails.ShouldNotBeNull();
+        dto.ActiveLoopDetails.ShouldBeEmpty();
+    }
+
     [Fact]
     public void GetOverview_WhenServicesAreNull_ReturnsZeros()
     {
@@ -72,12 +133,29 @@ public sealed class StatsControllerTests
 
     private sealed class FakeActiveLoopTracker : IActiveLoopTracker
     {
+        public ActiveLoopSnapshot? Snapshot { get; init; }
+        public int SnapshotCalls { get; private set; }
+
         public int ActiveCount { get; init; }
         public int PeakCount { get; init; }
         public long TotalCompleted { get; init; }
 
-        public void TrackStart() { }
-        public void TrackEnd() { }
+        public ActiveLoopRegistration TrackStart(string? agentId = null, string? conversationId = null, string? sessionId = null)
+            => ActiveLoopRegistration.None;
+
+        public void TrackEnd(ActiveLoopRegistration registration) { }
+
+        public ActiveLoopSnapshot GetSnapshot()
+        {
+            SnapshotCalls++;
+            return Snapshot ?? new ActiveLoopSnapshot
+            {
+                ActiveCount = ActiveCount,
+                PeakCount = PeakCount,
+                TotalCompleted = TotalCompleted,
+                ActiveLoops = []
+            };
+        }
     }
 
     // Minimal hand-rolled fake: only ActiveSubAgentCount matters for these tests; the remaining
