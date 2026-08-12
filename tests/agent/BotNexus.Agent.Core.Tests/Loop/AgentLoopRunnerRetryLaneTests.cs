@@ -49,7 +49,8 @@ public class AgentLoopRunnerRetryLaneTests
             throw new InvalidOperationException(errorMessage);
         });
 
-        var config = CreateConfig("exhaustion-once-test");
+        var registry = new ProviderSuspensionRegistry();
+        var config = CreateConfig("exhaustion-once-test", registry, authProfile: "profile-a");
 
         var act = () => AgentLoopRunner.RunAsync(
             [new AgentUserMessage("test")],
@@ -62,6 +63,13 @@ public class AgentLoopRunnerRetryLaneTests
         attempts.ShouldBe(
             1,
             $"non-transient exhaustion '{errorMessage}' must fail after ONE attempt, not four");
+
+        // Attempt count alone is NOT sufficient evidence: the pre-existing Terminal lane also fails
+        // after one attempt. The suspension is what distinguishes the exhaustion lane from it, so it
+        // is asserted here too -- otherwise this test would pass unchanged on code that never
+        // implemented the split at all.
+        registry.IsSuspended("test-provider", "profile-a")
+            .ShouldBeTrue($"'{errorMessage}' must be classified as exhaustion, not merely terminal");
     }
 
     /// <summary>
@@ -72,6 +80,7 @@ public class AgentLoopRunnerRetryLaneTests
     public async Task RunAsync_TypedAuthenticationFailure_InvokesProviderExactlyOnce()
     {
         var attempts = 0;
+        var registry = new ProviderSuspensionRegistry();
         using var _ = RegisterProvider("exhaustion-typed-test", (_, _, _) =>
         {
             Interlocked.Increment(ref attempts);
@@ -81,12 +90,66 @@ public class AgentLoopRunnerRetryLaneTests
         var act = () => AgentLoopRunner.RunAsync(
             [new AgentUserMessage("test")],
             new AgentContext(null, [], []),
-            CreateConfig("exhaustion-typed-test"),
+            CreateConfig("exhaustion-typed-test", registry, authProfile: "profile-a"),
             _ => Task.CompletedTask,
             CancellationToken.None);
 
         await act.ShouldThrowAsync<ProviderAuthenticationException>();
         attempts.ShouldBe(1, "a rejected credential must not be retried three more times");
+        registry.IsSuspended("test-provider", "profile-a")
+            .ShouldBeTrue("a rejected credential is an exhaustion condition, not a terminal one");
+    }
+
+    /// <summary>
+    /// AC2, the payoff clause. Once suspended, a subsequent run costs ZERO provider round-trips --
+    /// the loop short-circuits before the first call. Pre-#3015 this turn would have cost four.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WhenAlreadySuspended_MakesNoProviderCallAtAll()
+    {
+        var attempts = 0;
+        var registry = new ProviderSuspensionRegistry();
+        registry.Suspend("test-provider", "profile-a", TimeSpan.FromMinutes(15), "insufficient_quota");
+
+        using var _ = RegisterProvider("suspended-shortcircuit-test", (_, _, _) =>
+        {
+            Interlocked.Increment(ref attempts);
+            return TestStreamFactory.CreateTextResponse("should never be reached");
+        });
+
+        var act = () => AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("test")],
+            new AgentContext(null, [], []),
+            CreateConfig("suspended-shortcircuit-test", registry, authProfile: "profile-a"),
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        await act.ShouldThrowAsync<ProviderExhaustedException>();
+        attempts.ShouldBe(0, "a known-exhausted profile must cost zero provider round-trips");
+    }
+
+    /// <summary>
+    /// AC4 companion to the short-circuit: a suspension on profile-a must not short-circuit
+    /// profile-b. The second profile's turn runs normally and succeeds.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_SuspensionOnOneProfile_DoesNotShortCircuitAnother()
+    {
+        var registry = new ProviderSuspensionRegistry();
+        registry.Suspend("test-provider", "profile-a", TimeSpan.FromMinutes(15), "insufficient_quota");
+
+        using var _ = RegisterProvider("suspended-otherprofile-test", (_, _, _) =>
+            TestStreamFactory.CreateTextResponse("profile-b is healthy"));
+
+        var result = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("test")],
+            new AgentContext(null, [], []),
+            CreateConfig("suspended-otherprofile-test", registry, authProfile: "profile-b"),
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        result.OfType<AssistantAgentMessage>()
+            .ShouldContain(m => m.Content == "profile-b is healthy");
     }
 
     // --- AC3: the transient lane is unchanged ---
@@ -238,8 +301,12 @@ public class AgentLoopRunnerRetryLaneTests
     public async Task RunAsync_ProviderOverload_DoesNotSuspendTheAuthProfile(string errorMessage)
     {
         var registry = new ProviderSuspensionRegistry();
+        var attempts = 0;
         using var _ = RegisterProvider("overload-no-suspend-test", (_, _, _) =>
-            throw new InvalidOperationException(errorMessage));
+        {
+            Interlocked.Increment(ref attempts);
+            throw new InvalidOperationException(errorMessage);
+        });
 
         var act = () => AgentLoopRunner.RunAsync(
             [new AgentUserMessage("test")],
@@ -252,6 +319,11 @@ public class AgentLoopRunnerRetryLaneTests
 
         registry.IsSuspended("test-provider", "profile-a")
             .ShouldBeFalse($"provider overload '{errorMessage}' must never cool an auth profile");
+
+        // Both halves of the clause. "Not suspended" would also be true if the overload had been
+        // misrouted to the Terminal lane, which would silently destroy the retry budget, so the
+        // attempt count is pinned alongside it.
+        attempts.ShouldBe(4, $"overload '{errorMessage}' must stay in the retrying transient lane");
     }
 
     /// <summary>

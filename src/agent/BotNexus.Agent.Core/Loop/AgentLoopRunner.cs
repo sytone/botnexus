@@ -477,6 +477,17 @@ public static class AgentLoopRunner
         var backoffMs = 500;
         var overflowRecovered = false;
 
+        // #3015: the suspension's payoff. A provider + auth profile already known to be exhausted is
+        // short-circuited BEFORE the first provider call, so a wedged credential costs zero
+        // round-trips per turn rather than one. Without this read the registry would be a write-only
+        // record and the "subsequent turns short-circuit" half of the issue would be unimplemented.
+        // Only the exhaustion lane ever writes here, so a transient overload can never trip it.
+        if (config.SuspensionRegistry is not null
+            && config.SuspensionRegistry.IsSuspended(config.Model.Provider, config.AuthProfile ?? string.Empty))
+        {
+            throw new ProviderExhaustedException(config.Model.Provider);
+        }
+
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
