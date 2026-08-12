@@ -132,7 +132,8 @@ public sealed class SessionRowMapperTests
                 'cron' AS trigger_type,
                 'thinking...' AS thinking_content,
                 'subagent-response' AS message_kind,
-                'api:cron:pr-doctor' AS sender_id
+                'api:cron:pr-doctor' AS sender_id,
+                1 AS is_replay_banner
             """);
 
         var entry = SessionRowMapper.MapHistoryEntry(reader);
@@ -154,6 +155,8 @@ public sealed class SessionRowMapperTests
         entry.ResolveKind().ShouldBe(MessageKind.SubAgentResponse);
         // #2840: origin attribution maps from the sender_id column.
         entry.SenderId.ShouldBe("api:cron:pr-doctor");
+        // #3046: the restart-replay banner marker maps from the is_replay_banner column.
+        entry.IsReplayBanner.ShouldBeTrue();
     }
 
     [Fact]
@@ -166,7 +169,7 @@ public sealed class SessionRowMapperTests
                 NULL AS tool_call_id, 0 AS is_compaction_summary, NULL AS tool_args,
                 0 AS tool_is_error, 0 AS is_crash_sentinel, 0 AS is_history,
                 NULL AS trigger_type, NULL AS thinking_content, NULL AS message_kind,
-                NULL AS sender_id
+                NULL AS sender_id, 0 AS is_replay_banner
             """);
 
         var entry = SessionRowMapper.MapHistoryEntry(reader);
@@ -187,6 +190,8 @@ public sealed class SessionRowMapperTests
         entry.ResolveKind().ShouldBe(MessageKind.Message);
         // #2840: a NULL sender_id maps to null - no attribution, which is every pre-#2840 row.
         entry.SenderId.ShouldBeNull();
+        // #3046: an unset is_replay_banner maps to false - every ordinary row and every pre-#3046 row.
+        entry.IsReplayBanner.ShouldBeFalse();
     }
 
     [Fact]
