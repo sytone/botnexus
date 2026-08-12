@@ -157,6 +157,10 @@ public sealed class SignalRConversationChangedScopeTests : IAsyncDisposable
 
                     services.Replace(ServiceDescriptor.Singleton<ISessionStore, InMemorySessionStore>());
                     services.Replace(ServiceDescriptor.Singleton<IConversationStore, InMemoryConversationStore>());
+
+                    // The default host registration is the null notifier; these tests are ABOUT the
+                    // SignalR notifier's addressing, so it must be the one resolved.
+                    services.Replace(ServiceDescriptor.Singleton<IConversationChangeNotifier, SignalRConversationChangeNotifier>());
                 });
             });
 

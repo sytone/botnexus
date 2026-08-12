@@ -307,6 +307,12 @@ public sealed class PortalLoadService : IPortalLoadService
             });
             await Task.WhenAll(conversationTasks);
 
+            // REST load happens BEFORE the optional hub reconnect below, and deliberately so: the
+            // roster is the thing the user sees, and a failed re-dial must not also cost them the
+            // data refresh they asked for. Ordering this after the reconnect made a hub failure
+            // silently skip the whole session reload (#2541).
+            await ReloadSessionRosterAsync(cancellationToken);
+
             // Reconnect SignalR if needed
             if (!_hub.IsConnected)
             {
@@ -314,8 +320,6 @@ public sealed class PortalLoadService : IPortalLoadService
                 await _hub.SubscribeAllAsync();
                 await SubscribeAgentsForNotificationsAsync();
             }
-
-            await ReloadSessionRosterAsync(cancellationToken);
 
             _store.NotifyChanged();
             OnConnectionStateChanged?.Invoke();
