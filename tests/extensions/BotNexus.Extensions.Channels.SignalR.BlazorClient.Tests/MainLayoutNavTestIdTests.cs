@@ -147,10 +147,21 @@ public sealed class MainLayoutNavTestIdTests : IDisposable
     {
         var cut = RenderLayout();
 
-        var legacy = cut.Find("[data-testid='nav-cron-jobs']");
-        var derived = cut.Find("[data-testid-alias='nav-cron']");
+        // Both selectors must resolve to exactly one element, and to the SAME element. bUnit's Find
+        // returns a fresh wrapper object per call, so reference equality on the wrappers proves
+        // nothing - identity is asserted on the underlying DOM node instead.
+        var legacyMatches = cut.FindAll("[data-testid='nav-cron-jobs']");
+        var derivedMatches = cut.FindAll("[data-testid-alias='nav-cron']");
 
-        Assert.Same(legacy, derived);
+        Assert.Single(legacyMatches);
+        Assert.Single(derivedMatches);
+
+        var legacy = legacyMatches[0];
+        Assert.Same(legacy, derivedMatches[0]);
+
+        // The one element carries both keys, so either selector reaches the Cron anchor.
+        Assert.Equal("nav-cron-jobs", legacy.GetAttribute("data-testid"));
+        Assert.Equal("nav-cron", legacy.GetAttribute("data-testid-alias"));
         Assert.Equal("cron", legacy.GetAttribute("href"));
         Assert.Contains("Cron Jobs", legacy.TextContent);
     }
