@@ -735,6 +735,11 @@ static void LogGatewayStartup(
     var worldEmoji = string.IsNullOrWhiteSpace(worldIdentity.Emoji) ? "🌍" : worldIdentity.Emoji;
 
     app.Logger.LogWarning("{WorldEmoji} World: {WorldName} ({WorldId})", worldEmoji, worldIdentity.Name, worldIdentity.Id);
+
+    // #2833: the store-identity guard is installed during DI registration, before any logger exists,
+    // so it starts out silent. Hand it the real logger now that the pipeline is up, otherwise the
+    // one-time adoption warning for a pre-existing unstamped store would be written to nowhere.
+    BotNexus.Persistence.Sqlite.SqliteStoreIdentityGuard.SetLogger(app.Logger);
     app.Logger.LogWarning("📡 Gateway starting on {GatewayUrl}", gatewayUrl);
 
     app.Logger.LogInformation(

@@ -33,6 +33,7 @@ We use a lightweight [MADR](https://adr.github.io/madr/)-style format.
 | [0000](0000-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0001](0001-use-sqlite-for-persistence.md) | Use SQLite for platform persistence | Accepted |
 | [0002](0002-channel-centric-routing.md) | Route messages through channels (channel-centric routing) | Accepted |
+| [0003](0003-stamp-world-identity-on-sqlite-stores.md) | Stamp a world identity on every SQLite store and verify it on open | Accepted |
 
 > New ADRs should be appended to this table as they are accepted.
 

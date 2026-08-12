@@ -56,6 +56,30 @@ public static class SqliteConnectionFactory
     }
 
     /// <summary>
+    /// Creates a connection whose world identity is verified against <paramref name="storeKind"/>
+    /// rather than against the kind derived from the file name (#2833). Use this when the store's
+    /// file name does not name its kind.
+    /// </summary>
+    /// <param name="connectionString">The SQLite connection string.</param>
+    /// <param name="storeKind">The kind the caller believes it is opening (<c>cron</c>, <c>sessions</c>, ...).</param>
+    /// <param name="busyTimeoutMs">The <c>busy_timeout</c> to apply on open, in milliseconds.</param>
+    public static SqliteConnection Create(
+        string connectionString,
+        string storeKind,
+        int busyTimeoutMs = DefaultBusyTimeoutMs)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(storeKind);
+        var connection = Create(connectionString, busyTimeoutMs);
+        StoreKinds.Add(connection, storeKind);
+        return connection;
+    }
+
+    // Keyed on the connection instance so the declared kind travels with it into the StateChange
+    // handler without changing the shape of the handler's captured state, and is collected with the
+    // connection rather than leaking for the process lifetime.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SqliteConnection, string> StoreKinds = new();
+
+    /// <summary>
     /// Attaches the busy-timeout <c>StateChange</c> Open-handler to an existing connection without
     /// otherwise altering it. Exposed for stores that already own connection construction (e.g. a
     /// cached, long-lived connection) but still want the single shared timeout policy.
@@ -116,7 +140,18 @@ public static class SqliteConnectionFactory
                 // is a best-effort per-connection tuning pragma on a connection that is going away
                 // regardless; it must never throw out of a StateChange callback (#2977). Any other
                 // exception is a genuine fault and is deliberately left to propagate.
+                return;
             }
+
+            // #2833: world-identity verification runs HERE, on the single connection seam, rather
+            // than in each store. That is what makes clause 5 true - a store type added tomorrow
+            // with no identity code of its own is still verified, because it cannot open a
+            // connection without going through this handler. A mismatch deliberately throws out of
+            // the StateChange callback and onto the caller's Open stack: failing the open is the
+            // whole point, and is strictly better than the alternative of silently reading and
+            // writing another world's production data (#2819).
+            StoreKinds.TryGetValue(opened, out var declaredKind);
+            SqliteStoreIdentityGuard.Verify(opened, declaredKind);
         }
     }
 }

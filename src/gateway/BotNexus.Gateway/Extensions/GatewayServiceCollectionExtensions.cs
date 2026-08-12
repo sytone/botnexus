@@ -465,6 +465,15 @@ public static class GatewayServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Singleton(worldId));
         services.Replace(ServiceDescriptor.Singleton(new WorldIdOrigin(worldIdGenerated)));
         services.AddHostedService<WorldIdPersistenceService>();
+
+        // #2833: hand that SAME resolved value to the SQLite connection seam, so every store this
+        // process opens is stamped with - and verified against - this world. Installed here rather
+        // than from a hosted service because stores are opened during registration and early
+        // startup; a guard that arrives after the first open has already missed the failure it
+        // exists to catch. The logger is attached later (see SetLogger) since the logging pipeline
+        // does not exist yet at this point.
+        SqliteStoreIdentityGuard.Configure(
+            new SqliteStoreIdentity(worldId.Value, configDirectory));
         services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
