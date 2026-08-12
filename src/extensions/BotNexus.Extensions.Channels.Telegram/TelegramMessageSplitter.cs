@@ -1,5 +1,7 @@
 using System.Text;
 
+using BotNexus.Gateway.Abstractions.Text;
+
 namespace BotNexus.Extensions.Channels.Telegram;
 
 /// <summary>
@@ -35,32 +37,23 @@ internal static class TelegramMessageSplitter
 
     /// <summary>
     /// Returns a slice of <paramref name="content"/> starting at <paramref name="offset"/> that is at
-    /// most <paramref name="maxLength"/> UTF-16 code units long and never ends in the middle of a
-    /// surrogate pair. If taking <paramref name="maxLength"/> code units would split an astral
-    /// character (emoji / non-BMP glyph) - i.e. the last code unit is a high surrogate - the slice is
-    /// shortened by one so the whole pair moves into the next chunk instead of leaving a lone
-    /// surrogate that serializes to invalid UTF-16 (which Telegram rejects with
-    /// <c>400 can't parse entities</c>). Callers must advance by the returned slice's length, not by
-    /// a fixed <paramref name="maxLength"/>, so the deferred code unit is not skipped.
+    /// most <paramref name="maxLength"/> UTF-16 code units long and never ends inside a grapheme
+    /// cluster - so it can sever neither a surrogate pair nor a ZWJ emoji sequence, a flag pair or a
+    /// combining mark. A severed pair serializes to invalid UTF-16 and Telegram rejects the message
+    /// with <c>400 can't parse entities</c>. Callers must advance by the returned slice's length, not
+    /// by a fixed <paramref name="maxLength"/>, so the deferred code units are not skipped.
     /// </summary>
     /// <remarks>
-    /// At least one code unit is always returned (assuming <paramref name="maxLength"/> &gt;= 1 and
-    /// characters remain) to guarantee forward progress. The only case that can return a slice ending
-    /// on a high surrogate is the degenerate <paramref name="maxLength"/> == 1 with a surrogate pair
-    /// at <paramref name="offset"/>; a single-code-unit limit cannot physically hold a two-unit pair,
-    /// and real Telegram limits (4096 / 32768) never hit this.
+    /// #2924: the boundary calculation is <see cref="GraphemeSafeTruncation.FindChunkLength"/>, the
+    /// single product-wide policy shared with the gateway domain and the Blazor portal. It always
+    /// returns at least one code unit while characters remain, so the chunking loop above cannot
+    /// stall; the previous local implementation guaranteed only the weaker surrogate-pair property.
     /// </remarks>
     public static string SliceSurrogateSafe(string content, int offset, int maxLength)
     {
-        var remaining = content.Length - offset;
-        var length = Math.Min(maxLength, remaining);
-
-        // If the slice would end on a high surrogate whose low half lies in the next chunk, back off
-        // by one so the pair is not severed. Keep at least one code unit for forward progress.
-        if (length > 1 && offset + length < content.Length && char.IsHighSurrogate(content[offset + length - 1]))
-        {
-            length--;
-        }
+        var length = GraphemeSafeTruncation.FindChunkLength(
+            content.AsSpan(offset),
+            maxLength);
 
         return content.Substring(offset, length);
     }
@@ -76,22 +69,20 @@ internal static class TelegramMessageSplitter
     /// (<c>Buffer.ToString(0, maxLength)</c> + <c>Buffer.Remove(0, maxLength)</c>), which severed an
     /// emoji / astral glyph straddling the boundary into a lone high surrogate (this chunk) and an
     /// orphaned low surrogate (left at the head of the buffer) - both invalid UTF-16 that Telegram
-    /// rejects. This shares the same boundary-safe back-off as <see cref="SliceSurrogateSafe"/>: if the
-    /// cut would land between a surrogate pair, the cut is shortened by one so the whole pair moves
-    /// into the next chunk. The buffer is advanced by the actual chunk length, so the deferred code
-    /// unit is never skipped, and at least one code unit is always drained (forward progress).
+    /// rejects. This shares the exact boundary policy of <see cref="SliceSurrogateSafe"/> (#2924):
+    /// the cut moves back to a grapheme-cluster boundary so the whole cluster travels into the next
+    /// chunk. The buffer is advanced by the actual chunk length, so the deferred code units are never
+    /// skipped, and at least one code unit is always drained (forward progress).
     /// </remarks>
     public static string DrainStreamingBuffer(StringBuilder buffer, int maxLength)
     {
-        var available = Math.Min(maxLength, buffer.Length);
-        var length = available;
-
-        // Back off by one if the cut would split a surrogate pair (last code unit is a high surrogate
-        // whose low half is still in the buffer). Keep at least one unit so the drain always advances.
-        if (length > 1 && length < buffer.Length && char.IsHighSurrogate(buffer[length - 1]))
-        {
-            length--;
-        }
+        // The boundary walk must be able to see whether the cluster at the cut extends PAST
+        // maxLength, so the window handed to it cannot be capped at maxLength - doing that would
+        // make every cut look cluster-aligned and silently restore the severing bug. StringBuilder
+        // cannot be spanned, so the pending text is materialised once; it is bounded by the
+        // Telegram message limits (4096 / 32768 code units) that drive this drain.
+        var pending = buffer.ToString();
+        var length = GraphemeSafeTruncation.FindChunkLength(pending, maxLength);
 
         var chunk = buffer.ToString(0, length);
         buffer.Remove(0, length);

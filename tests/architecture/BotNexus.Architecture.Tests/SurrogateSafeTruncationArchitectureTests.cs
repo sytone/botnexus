@@ -10,8 +10,14 @@ namespace BotNexus.Architecture.Tests;
 /// <remarks>
 /// The defect's real shape was that the same one-liner had been copied to fourteen call sites, so
 /// there was no single place to fix. This fence exists to stop the fifteenth: any new
-/// range-truncation of content text under <c>src/gateway</c> must go through
-/// <c>TextTruncation.SafeTruncate</c>.
+/// range-truncation of content text under <c>src/gateway</c> OR <c>src/extensions</c> must go
+/// through the shared boundary policy.
+/// <para>
+/// #2924 widened the scan from <c>src/gateway</c> to <c>src/extensions</c> as well. The gateway-only
+/// scope was the reason two weaker copies (the Blazor portal's <c>SurrogateSafeText</c> and
+/// Telegram's <c>SliceSurrogateSafe</c>) could sit outside the fence indefinitely, and a fourth
+/// copy could have been added without failing anything.
+/// </para>
 /// </remarks>
 public sealed class SurrogateSafeTruncationArchitectureTests
 {
@@ -41,6 +47,27 @@ public sealed class SurrogateSafeTruncationArchitectureTests
             "TruncateId: conversation/session ids are generated ASCII (prefix + hex), never user text.",
         [Path.Combine("gateway", "BotNexus.Gateway", "Streaming", "StreamingSessionHelper.cs")] =
             "Already rune-aware: retainedChars is computed by walking Runes within a byte budget.",
+        [Path.Combine("extensions", "BotNexus.Extensions.Skills", "Security", "SkillTrustVerifier.cs")] =
+            "Hash prefixes: entry.Sha256[..12] slices generated lowercase hex, never user text (#2924).",
+    };
+
+    /// <summary>
+    /// The single permitted implementation of the boundary walk, and the delegating seams allowed to
+    /// name <c>char.IsHighSurrogate</c> in a truncation context (#2924 acceptance criterion 1).
+    /// </summary>
+    private static readonly string SharedImplementation =
+        Path.Combine("domain", "BotNexus.Domain.Wire", "GraphemeSafeTruncation.cs");
+
+    /// <summary>
+    /// Files under <c>src</c> permitted to call <c>char.IsHighSurrogate</c> at all. Each is a
+    /// non-truncation use: they classify or copy surrogates rather than choosing a cut point.
+    /// </summary>
+    private static readonly Dictionary<string, string> s_allowedSurrogateInspection = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [Path.Combine("agent", "BotNexus.Agent.Providers.Core", "Utilities", "UnicodeSanitizer.cs")] =
+            "Sanitisation, not truncation: walks pairs to copy or replace them, never picks a length.",
+        [Path.Combine("gateway", "BotNexus.Tools", "EditTool.cs")] =
+            "Normalisation index map: emits both halves of a pair together; no length limit involved.",
     };
 
     [Fact]
@@ -50,7 +77,7 @@ public sealed class SurrogateSafeTruncationArchitectureTests
         var candidates = 0;
         var violations = new List<string>();
 
-        foreach (var path in EnumerateGatewayCsFiles(srcRoot))
+        foreach (var path in EnumerateFencedCsFiles(srcRoot))
         {
             candidates++;
             var text = File.ReadAllText(path);
@@ -98,6 +125,104 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     }
 
     /// <summary>
+    /// #2924 acceptance criterion 1: exactly ONE grapheme-safe boundary implementation exists under
+    /// <c>src</c>, and no truncation-boundary surrogate back-off lives anywhere else. Before this
+    /// issue there were three: the domain's grapheme-correct walk, the portal's one-code-unit
+    /// back-off, and Telegram's. The two weaker ones split ZWJ sequences and flag pairs.
+    /// </summary>
+    [Fact]
+    public void GraphemeSafeBoundary_HasExactlyOneImplementation()
+    {
+        var srcRoot = FindSourceRoot();
+
+        var declaring = EnumerateAllCsFiles(srcRoot)
+            .Where(p => File.ReadAllText(p).Contains(
+                "char.IsHighSurrogate", StringComparison.Ordinal))
+            .Select(p => ToRelative(srcRoot, p))
+            .ToList();
+
+        // Non-vacuity: if the scan found nothing at all, either the source root resolved wrongly or
+        // the shared implementation was renamed away - both make this test pass while guarding
+        // nothing. The shared file MUST be among the hits.
+        declaring.ShouldContain(
+            SharedImplementation,
+            "#2924: the shared boundary implementation must be found by this scan. If it moved, " +
+            "update SharedImplementation - do not let the fence pass on an empty candidate set.");
+
+        var unexpected = declaring
+            .Where(rel =>
+                !string.Equals(rel, SharedImplementation, StringComparison.OrdinalIgnoreCase) &&
+                !s_allowedSurrogateInspection.ContainsKey(rel))
+            .ToList();
+
+        unexpected.ShouldBeEmpty(
+            "#2924: grapheme-safe truncation must have exactly ONE implementation, in " +
+            SharedImplementation + ". A surrogate back-off elsewhere is a second truncation " +
+            "policy and will diverge, exactly as the portal and Telegram copies did. If the use is " +
+            "genuinely NOT about choosing a truncation length, add it to " +
+            "s_allowedSurrogateInspection WITH a written reason.\nOffenders:\n  " +
+            string.Join("\n  ", unexpected));
+    }
+
+    /// <summary>
+    /// Every surrogate-inspection allow-list entry must name a file that exists and carry a reason,
+    /// so a rename cannot silently widen the exemption into a hole.
+    /// </summary>
+    [Fact]
+    public void SurrogateInspectionAllowList_EntriesAllExistAndAreJustified()
+    {
+        var srcRoot = FindSourceRoot();
+
+        var missing = s_allowedSurrogateInspection.Keys
+            .Where(rel => !File.Exists(Path.Combine(srcRoot, rel)))
+            .ToList();
+
+        missing.ShouldBeEmpty(
+            "#2924: allow-listed file(s) no longer exist - remove or update the entry:\n  "
+            + string.Join("\n  ", missing));
+
+        File.Exists(Path.Combine(srcRoot, SharedImplementation)).ShouldBeTrue(
+            "#2924: the shared implementation path must exist: " + SharedImplementation);
+
+        foreach (var (file, reason) in s_allowedSurrogateInspection)
+        {
+            reason.Length.ShouldBeGreaterThan(
+                30,
+                $"Allow-list entry '{file}' has no meaningful written justification (#2924).");
+        }
+    }
+
+    /// <summary>
+    /// #2924 acceptance criterion 5: the widened scope is real. The fence must actually be walking
+    /// files under <c>src/extensions</c>, not just declaring that it does - a scope widening that
+    /// enumerates nothing is the #2910 vacuity failure repeated.
+    /// </summary>
+    [Fact]
+    public void Fence_ActuallyScansExtensions_AndWouldFlagARawSliceThere()
+    {
+        var srcRoot = FindSourceRoot();
+
+        var extensionFiles = EnumerateFencedCsFiles(srcRoot)
+            .Where(p => ToRelative(srcRoot, p).StartsWith("extensions", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        extensionFiles.Count.ShouldBeGreaterThan(
+            100,
+            $"#2924: the fence scanned only {extensionFiles.Count} files under src/extensions. The " +
+            "widened scope must actually enumerate the extension tree, or criterion 5 is vacuous.");
+
+        // The exact shape a reintroduced raw-slice truncation in BlazorClient.Core would take.
+        s_truncateAndAppend.IsMatch(@"return value[..max] + ""..."";").ShouldBeTrue(
+            "#2924: a raw-slice truncation reintroduced in BlazorClient.Core must be detected.");
+        s_truncateAndAppend.IsMatch(
+            @"return GraphemeSafeTruncation.Truncate(value, max) ?? string.Empty;").ShouldBeFalse(
+            "#2924: delegating to the shared policy must NOT be flagged.");
+
+        FencedAreas.ShouldContain("extensions");
+        FencedAreas.ShouldContain("gateway");
+    }
+
+    /// <summary>
     /// Vacuity guard: the patterns must match the shapes they claim to, and must not fire on the
     /// parsing slices that are legitimately left alone.
     /// </summary>
@@ -133,8 +258,15 @@ public sealed class SurrogateSafeTruncationArchitectureTests
             + string.Join("\n  ", missing));
     }
 
-    private static IEnumerable<string> EnumerateGatewayCsFiles(string srcRoot) =>
-        EnumerateAllCsFiles(Path.Combine(srcRoot, "gateway"));
+    private static IEnumerable<string> EnumerateFencedCsFiles(string srcRoot) =>
+        FencedAreas.SelectMany(area => EnumerateAllCsFiles(Path.Combine(srcRoot, area)));
+
+    /// <summary>
+    /// The areas of <c>src</c> this fence scans. #2924 added <c>extensions</c>: the Blazor portal and
+    /// the Telegram channel both carried their own weaker truncation precisely because they sat
+    /// outside the original gateway-only scope.
+    /// </summary>
+    private static readonly string[] FencedAreas = ["gateway", "extensions"];
 
     private static IEnumerable<string> EnumerateAllCsFiles(string root) =>
         Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)

@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 
+using BotNexus.Gateway.Abstractions.Text;
+
 namespace BotNexus.Extensions.Qmd;
 
 /// <summary>
@@ -88,7 +90,7 @@ public sealed class InMemoryQmdBackend : IQmdBackend
     {
         var index = content.IndexOf(query, StringComparison.OrdinalIgnoreCase);
         if (index < 0)
-            return content.Length > 100 ? content[..100] + "..." : content;
+            return GraphemeSafeTruncation.Truncate(content, 100, "...")!;
 
         var start = Math.Max(0, index - 30);
         var end = Math.Min(content.Length, index + query.Length + 70);

@@ -1,5 +1,6 @@
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
+using BotNexus.Gateway.Abstractions.Text;
 
 namespace BotNexus.Extensions.Qmd;
 
@@ -157,8 +158,7 @@ public sealed class MemoryQmdBackend : IQmdBackend
     }
 
     private static string Truncate(string text, int maxLength)
-    {
-        if (text.Length <= maxLength) return text;
-        return text[..maxLength] + "...";
-    }
+        // #2924: the single shared boundary policy - a title cut mid-cluster renders as a
+        // half-glyph, and this one is displayed verbatim in knowledge_search results.
+        => GraphemeSafeTruncation.Truncate(text, maxLength, "...")!;
 }
