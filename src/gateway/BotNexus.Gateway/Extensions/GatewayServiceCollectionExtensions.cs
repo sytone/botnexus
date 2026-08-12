@@ -418,7 +418,12 @@ public static class GatewayServiceCollectionExtensions
             services.AddOptions<PlatformConfig>().Bind(configuration);
             services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
                 new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
-            services.AddSingleton<IValidateOptions<PlatformConfig>, PlatformConfigOptionsValidator>();
+            // Explicit factory: the validator has a second, internal constructor used only by
+            // tests, so resolve the logger deliberately rather than relying on constructor
+            // selection. Without the logger the #3037 unknown-property warning would be silent.
+            services.AddSingleton<IValidateOptions<PlatformConfig>>(sp =>
+                new PlatformConfigOptionsValidator(
+                    sp.GetService<ILogger<PlatformConfigOptionsValidator>>()));
         }
         else
         {
