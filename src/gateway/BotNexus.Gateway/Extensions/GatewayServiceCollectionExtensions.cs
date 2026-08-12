@@ -417,6 +417,13 @@ public static class GatewayServiceCollectionExtensions
         }
 
         services.TryAddSingleton<GatewayAuthManager>();
+
+        // #3015: singleton by design. The whole point of the exhaustion lane is that the condition
+        // is REMEMBERED between turns -- a per-scope registry would forget it immediately and
+        // restore the four-round-trips-per-turn tax the split exists to remove.
+        services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(
+            _ => new BotNexus.Agent.Core.Loop.ProviderSuspensionRegistry());
+
         services.TryAddSingleton<ILocationResolver>(serviceProvider =>
             new DefaultLocationResolver(
                 serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),

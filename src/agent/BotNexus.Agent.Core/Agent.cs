@@ -638,7 +638,9 @@ public sealed class Agent
             _options.ClaimAudit,
             _options.MaybeCompactAsync,
             _options.BeforeToolCallTimeout,
-            _options.OnDiagnostic);
+            _options.OnDiagnostic,
+            _options.SuspensionRegistry,
+            _options.AuthProfile);
     }
 
     private static SimpleStreamOptions CloneGenerationSettings(SimpleStreamOptions source)

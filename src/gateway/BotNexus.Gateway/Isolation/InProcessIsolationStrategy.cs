@@ -428,6 +428,23 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             };
         }
 
+        // #3015: resolve the non-secret auth-profile identity BEFORE building options so a
+        // suspension is scoped to the credential actually in use, not merely to the provider. Two
+        // agents sharing github-copilot but authenticating with different credentials must not cool
+        // each other. Failure here is non-fatal: a null profile degrades the scope to the provider's
+        // "default" profile rather than failing the run.
+        string? authProfileId = null;
+        try
+        {
+            authProfileId = await _authManager
+                .GetAuthProfileIdAsync(model.Provider, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not resolve auth profile id for provider '{Provider}'.", model.Provider);
+        }
+
         var options = new AgentOptions(
             InitialState: new AgentInitialState(
                 SystemPrompt: resumeSystemPrompt,
@@ -477,7 +494,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 descriptor.AgentId.Value, context.SessionId.Value, diagnostic),
             ToolTimeout: ResolveToolTimeout(descriptor),
             ClaimAudit: ResolveClaimAuditOptions(platformConfig?.Value.Gateway?.ClaimAudit),
-            MaybeCompactAsync: maybeCompactAsync);
+            MaybeCompactAsync: maybeCompactAsync,
+            // #3015: the exhaustion lane's memory. The registry is a gateway singleton so a
+            // suspension recorded on one turn is still visible on the next -- pre-#3015 all retry
+            // state lived in a local attempt counter and died with the call, which is precisely why
+            // a billing-disabled profile re-paid four provider round-trips plus 3.5s of backoff on
+            // every single turn, forever. Resolved defensively so unit tests that construct the
+            // strategy without the full service graph keep working (null simply records nothing;
+            // the one-attempt fail-fast still applies).
+            SuspensionRegistry: _serviceProvider.GetService<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(),
+            AuthProfile: authProfileId);
 
         var agent = new BotNexus.Agent.Core.Agent(options);
 

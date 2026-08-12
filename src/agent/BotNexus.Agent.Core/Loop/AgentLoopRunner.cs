@@ -507,7 +507,28 @@ public static class AgentLoopRunner
                 messages.AddRange(compacted);
                 continue;
             }
-            catch (Exception ex) when (IsTransientError(ex) && attempt < maxAttempts - 1)
+            catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Exhausted)
+            {
+                // #3015 -- the non-transient exhaustion lane. Quota exhausted / billing disabled /
+                // credential rejected will not clear by waiting, so spending the remaining three
+                // attempts plus 500+1000+2000ms of backoff buys exactly the same answer three more
+                // times. Fail after this ONE attempt and remember the condition, scoped to the
+                // provider + auth profile, so the next turn short-circuits instead of re-paying the
+                // full discovery cost. A transient failure never reaches here: Classify checks the
+                // transient table FIRST, so a provider overload keeps its retries and -- critically --
+                // cannot cool a perfectly healthy auth profile.
+                RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
+                config.SuspensionRegistry?.Suspend(
+                    config.Model.Provider,
+                    config.AuthProfile ?? string.Empty,
+                    ProviderSuspensionRegistry.DefaultDuration,
+                    ex.Message);
+                config.OnDiagnostic?.Invoke(
+                    $"Provider '{config.Model.Provider}' reported non-transient exhaustion; " +
+                    $"failing after one attempt and suspending this auth profile. {ex.Message}");
+                throw;
+            }
+            catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Transient && attempt < maxAttempts - 1)
             {
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 var retryAfterDelay = (ex as ProviderRateLimitException)?.RetryAfter;
@@ -551,9 +572,11 @@ public static class AgentLoopRunner
     }
 
     /// <summary>
-    /// Delegates to <see cref="TransientErrorClassifier"/> so the loop's retry decision and the
-    /// classifier's tested pattern table can never drift apart (issue #2856).
+    /// Resolves the retry lane for a provider failure (#3015). Delegates to
+    /// <see cref="TransientErrorClassifier"/> so the loop's retry decision and the classifier's
+    /// tested pattern table can never drift apart (issue #2856) -- the loop must never grow a
+    /// second, divergent copy of the classification rules.
     /// </summary>
-    private static bool IsTransientError(Exception exception)
-        => TransientErrorClassifier.IsTransient(exception);
+    private static ProviderFailureClass ClassifyFailure(Exception exception)
+        => TransientErrorClassifier.Classify(exception);
 }

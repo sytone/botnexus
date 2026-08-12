@@ -47,6 +47,20 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Optional non-fatal diagnostic sink. Used to surface hook-budget breaches (#2518) so a slow or
 /// wedged policy provider is diagnosable rather than silently stalling the loop.
 /// </param>
+/// <param name="SuspensionRegistry">
+/// Optional provider-exhaustion suspension registry (#3015). When set, a non-transient exhaustion
+/// failure (quota exhausted, billing disabled, credential rejected) fails after exactly ONE attempt
+/// and records a time-bounded suspension scoped to the model's provider plus
+/// <paramref name="AuthProfile"/>. Null means no suspension is recorded; the one-attempt lane still
+/// applies, because not spending three pointless round-trips is correct regardless of whether
+/// anything is listening.
+/// </param>
+/// <param name="AuthProfile">
+/// Optional auth-profile identifier used with <paramref name="SuspensionRegistry"/> to scope a
+/// suspension. Two agents sharing a provider but using different credentials must not cool each
+/// other, so this is part of the suspension key rather than an afterthought. Null is normalised to
+/// the empty profile.
+/// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -69,7 +83,9 @@ public record AgentLoopConfig(
     ClaimAuditOptions? ClaimAudit = null,
     Func<CancellationToken, Task>? MaybeCompactAsync = null,
     TimeSpan? BeforeToolCallTimeout = null,
-    Action<string>? OnDiagnostic = null)
+    Action<string>? OnDiagnostic = null,
+    BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
+    string? AuthProfile = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).

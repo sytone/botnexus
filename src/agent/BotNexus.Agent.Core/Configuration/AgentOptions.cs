@@ -42,6 +42,14 @@ namespace BotNexus.Agent.Core.Configuration;
 /// the top of each outer-loop iteration so a long dispatch re-checks the compaction threshold
 /// between turns. Null means no mid-loop re-check.
 /// </param>
+/// <param name="SuspensionRegistry">
+/// Optional provider-exhaustion suspension registry (#3015). Flows to the loop config; when set, a
+/// non-transient exhaustion failure records a time-bounded suspension scoped to provider +
+/// <paramref name="AuthProfile"/> instead of re-burning the retry budget every turn.
+/// </param>
+/// <param name="AuthProfile">
+/// Optional auth-profile identifier scoping suspensions (#3015). Null means the empty profile.
+/// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState - changes to InitialState after construction have no effect.
@@ -67,4 +75,6 @@ public record AgentOptions(
     TimeSpan? ToolTimeout = null,
     Diagnostics.ClaimAuditOptions? ClaimAudit = null,
     Func<CancellationToken, Task>? MaybeCompactAsync = null,
-    TimeSpan? BeforeToolCallTimeout = null);
+    TimeSpan? BeforeToolCallTimeout = null,
+    Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
+    string? AuthProfile = null);
