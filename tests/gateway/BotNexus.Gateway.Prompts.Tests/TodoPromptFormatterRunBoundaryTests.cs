@@ -142,8 +142,12 @@ public sealed class TodoPromptFormatterRunBoundaryTests
         var lines = TodoPromptFormatter.BuildSection(json, ThisRun);
         var joined = string.Join('\n', lines);
 
-        // Not one of the five may appear as a ticked agenda entry.
-        joined.ShouldNotContain("[x]");
+        // Not one of the five may appear as a ticked agenda ENTRY. Asserted per-item on the rendered
+        // item lines only: the advisory line legitimately contains the literal "[x]" while explaining
+        // that narration cannot flip a box, so a blanket scan of the whole section would match
+        // instruction text and pass/fail for the wrong reason.
+        var itemLines = lines.Where(static l => l.StartsWith("- ", StringComparison.Ordinal)).ToList();
+        itemLines.ShouldNotContain(l => l.StartsWith("- [x]", StringComparison.Ordinal));
         // The open item survives as the agenda.
         joined.ShouldContain("[~] Report to Jon");
         // And the prior work is restated as context, explicitly not credited to this run.
@@ -164,7 +168,9 @@ public sealed class TodoPromptFormatterRunBoundaryTests
         var joined = string.Join('\n', lines);
 
         joined.ShouldNotContain(TodoPromptFormatter.SectionHeading);
-        joined.ShouldNotContain("[x]");
+        // Per-item assertion for the same reason as the incident-shape test: the advisory line carries
+        // a literal "[x]", so only rendered item lines are meaningful evidence here.
+        lines.ShouldNotContain(l => l.StartsWith("- [x]", StringComparison.Ordinal));
         joined.ShouldContain(TodoPromptFormatter.PriorRunHeading);
     }
 }
