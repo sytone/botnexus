@@ -609,7 +609,24 @@ public static class AgentLoopRunner
         messages.RemoveRange(expectedCount, messages.Count - expectedCount);
     }
 
-    private static IReadOnlyList<AgentMessage> CompactForOverflow(IReadOnlyList<AgentMessage> messages)
+    /// <summary>
+    /// Truncates the transcript after a provider context-overflow so the retry has room, keeping the
+    /// most recent messages.
+    /// <para>
+    /// The cut index is <em>aligned forward</em> to the next turn boundary (#3014). A raw count-based
+    /// cut can land in the middle of a tool turn, leaving the retained tail beginning with a
+    /// <see cref="ToolResultAgentMessage"/> whose originating assistant tool call was dropped.
+    /// Anthropic and the Copilot messages API reject that shape with a hard 400, and overflow
+    /// recovery is allowed exactly once, so the recoverable overflow would become a terminal turn
+    /// failure. Advancing past any leading tool results costs at most a few extra dropped messages
+    /// and guarantees a structurally valid transcript at the seam that produced it.
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so the boundary invariant can be asserted directly; the cut index
+    /// is not observable from <c>RunAsync</c> alone.
+    /// </remarks>
+    internal static IReadOnlyList<AgentMessage> CompactForOverflow(IReadOnlyList<AgentMessage> messages)
     {
         if (messages.Count <= 12)
         {
@@ -617,7 +634,17 @@ public static class AgentLoopRunner
         }
 
         var keep = Math.Max(8, messages.Count / 3);
-        return messages.Skip(messages.Count - keep).ToList();
+        var start = messages.Count - keep;
+
+        // Advance past any tool results stranded at the head of the retained tail. Their originating
+        // assistant tool call sits before the cut and is being dropped, so emitting them would produce
+        // an orphan tool_result block.
+        while (start < messages.Count && messages[start] is ToolResultAgentMessage)
+        {
+            start++;
+        }
+
+        return messages.Skip(start).ToList();
     }
 
     /// <summary>

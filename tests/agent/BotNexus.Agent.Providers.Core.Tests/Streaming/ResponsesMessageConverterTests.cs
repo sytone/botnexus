@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 namespace BotNexus.Agent.Providers.Core.Tests.Streaming;
 
@@ -232,6 +233,14 @@ public class ResponsesMessageConverterTests
     {
         // A tool-result with no prior tool-call (orphan) -- symmetric malformation. The Responses
         // API also rejects a function_call_output with no matching function_call.
+        //
+        // #3014 behaviour parity: the drop moved OUT of this converter and into the shared
+        // MessageTransformer seam that every Responses call site (ResponsesStreamEngine and
+        // CopilotResponsesProvider) runs before converting. The assertion is unchanged - no
+        // function_call_output reaches the wire, and only the user message survives - but it is now
+        // exercised through the real pipeline rather than the converter in isolation, which is what
+        // production actually does. Asserting the converter alone would pin a seam production never
+        // uses on its own.
         var messages = new Message[]
         {
             new UserMessage(new UserMessageContent("hi"), Ts),
@@ -240,10 +249,41 @@ public class ResponsesMessageConverterTests
                 Content: [new TextContent("orphan result")], IsError: false, Timestamp: Ts),
         };
 
-        var result = ResponsesMessageConverter.ConvertMessages(messages, Model());
+        var result = ResponsesMessageConverter.ConvertMessages(
+            MessageTransformer.TransformMessages(messages, Model()),
+            Model());
 
         result.Where(n => n!["type"]!.GetValue<string>() == "function_call_output").ShouldBeEmpty();
         result.Count.ShouldBe(1); // only the user message survives
+    }
+
+    [Fact]
+    public void TransformThenConvert_PairedToolCallAndResult_StillReachTheWire()
+    {
+        // Non-vacuity companion to the parity test above: routing through the shared seam must not
+        // drop a WELL-PAIRED call/result. Without this, a seam that discarded every tool result
+        // would keep the orphan test green.
+        var messages = new Message[]
+        {
+            new UserMessage(new UserMessageContent("do it"), Ts),
+            new AssistantMessage(
+                Content: [new ToolCallContent("call_ok|fc_5", "do_thing", new Dictionary<string, object?>())],
+                Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+                Usage: Usage.Empty(), StopReason: StopReason.ToolUse,
+                ErrorMessage: null, ResponseId: null, Timestamp: Ts),
+            new ToolResultMessage(
+                ToolCallId: "call_ok|fc_5", ToolName: "do_thing",
+                Content: [new TextContent("done")], IsError: false, Timestamp: Ts),
+        };
+
+        var result = ResponsesMessageConverter.ConvertMessages(
+            MessageTransformer.TransformMessages(messages, Model()),
+            Model());
+
+        result.Single(n => n!["type"]!.GetValue<string>() == "function_call")!["call_id"]!
+            .GetValue<string>().ShouldBe("call_ok");
+        result.Single(n => n!["type"]!.GetValue<string>() == "function_call_output")!["call_id"]!
+            .GetValue<string>().ShouldBe("call_ok");
     }
 
     [Fact]
