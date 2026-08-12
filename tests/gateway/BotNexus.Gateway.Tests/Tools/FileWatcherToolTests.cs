@@ -82,6 +82,50 @@ public sealed class FileWatcherToolTests : IDisposable
         ReadText(result).ShouldContain("File deleted:");
     }
 
+    /// <summary>
+    /// Pins the ordering contract of #2988: the readiness notice must not be emitted until the watcher is
+    /// actually raising events. This deletes the file synchronously ON the callback thread, so the
+    /// mutation is strictly ordered between the notice and whatever the tool does next. With the notice
+    /// emitted before <c>EnableRaisingEvents = true</c> the deletion is provably unobservable and the
+    /// watch always times out; the assertion therefore fails 100% of the time against the unfixed code
+    /// rather than merely narrowing a window.
+    /// </summary>
+    [Fact]
+    public async Task FileWatcherTool_ReadinessNotice_IsEmittedOnlyAfterWatcherIsArmed()
+    {
+        var tool = CreateTool();
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "armed.txt");
+        await File.WriteAllTextAsync(path, "delete me");
+
+        var deleted = false;
+
+        var result = await ExecuteAsync(
+            tool,
+            new Dictionary<string, object?>
+            {
+                ["path"] = path,
+                ["event"] = "deleted",
+                ["timeout"] = 5
+            },
+            CancellationToken.None,
+            update =>
+            {
+                var text = update.Content
+                    .FirstOrDefault(c => c.Type == AgentToolContentType.Text)?.Value;
+
+                if (deleted || text is null || !text.Contains("Watching '", StringComparison.Ordinal))
+                    return;
+
+                // Acting on the notice the instant it arrives is precisely what a real caller does.
+                deleted = true;
+                File.Delete(path);
+            });
+
+        deleted.ShouldBeTrue("the tool must emit a readiness notice");
+        ReadText(result).ShouldContain("File deleted:");
+    }
+
     [Fact]
     public async Task FileWatcherTool_TimesOut()
     {

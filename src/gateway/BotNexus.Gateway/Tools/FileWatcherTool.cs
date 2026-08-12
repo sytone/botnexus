@@ -147,13 +147,10 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
                 watcher.Renamed += (_, _) => HandleEvent("renamed");
             }
 
-            watcher.EnableRaisingEvents = true;
-
-            // Announce readiness only AFTER the watcher is live. Emitting it earlier made the notice a
-            // lie: a caller that acted on it could still mutate the file before events were being
-            // raised, and would then wait out the full timeout having missed the change entirely. That
-            // is exactly how FileWatcherTool_DetectsFileDeletion failed on a loaded CI runner (#2988).
+            // PROVEN-RED MUTATION (#2988) - temporary, to be restored.
             onUpdate?.Invoke(TextResult($"Watching '{fullPath}' for {eventType} event (timeout: {timeout}s)..."));
+
+            watcher.EnableRaisingEvents = true;
 
             // Link caller cancellation with timeout
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
