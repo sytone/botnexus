@@ -167,7 +167,7 @@ and leaves no row in the store.
 |----------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable/disable the cron service globally |
 | `tickIntervalSeconds` | int | `60` | How often the scheduler wakes to evaluate due jobs (seconds) |
-| `defaultJobTimeoutSeconds` | int | `3600` | Timeout applied to a run when the job declares none |
+| `defaultJobTimeoutSeconds` | int | `3600` | Timeout applied to a run when the job declares none. A job can override it - or opt out of it entirely - via `metadata.timeoutSeconds`, see [Per-job timeout](#_3-2-1-per-job-timeout-timeoutseconds). |
 | `orphanedRunThresholdSeconds` | int | `86400` | How far a run's `started_at` may deviate from now (in **either** direction) before the scheduler treats a still-`running` row as orphaned and stamps it as an error (#2410). The bound is symmetric, so a clock skew forward widens the reap window rather than nulling live runs. |
 | `maxConcurrentJobs` | int | `5` | Aggregate cap on how many due jobs the scheduler executes concurrently on a single tick (#2670). Jobs beyond the cap **queue and run as slots free** - none are dropped. A value of `0` or less degrades to the default of `5` rather than to unbounded fan-out. Independent of the per-job lock, which separately prevents two runs of the *same* job from overlapping. |
 | `jobs` | dict | `{}` | Config-defined job registry (key → job descriptor, see §3.2) |
@@ -197,11 +197,46 @@ and leaves no row in the store.
 | `system` | bool | `false` | Marks a job as system-provisioned (e.g. `heartbeat`, `skill-review`). System jobs are hidden from `cron` tool `list` output unless `includeSystem` is set. |
 | `timeZone` | string | `null` | IANA timezone the schedule is evaluated in (UTC when omitted) |
 | `createdBy` | string | `null` | Provenance marker for who created the job |
-| `metadata` | dict | `{}` | Free-form metadata carried with the job |
+| `metadata` | dict | `{}` | Free-form metadata carried with the job. The key `timeoutSeconds` overrides `defaultJobTimeoutSeconds` for this job - see [Per-job timeout](#_3-2-1-per-job-timeout-timeoutseconds). |
 | `deleteAfterRun` | bool | `false` | Opt-in cleanup for ephemeral jobs: when `true`, the scheduler deletes the run's agent session and its transcript after the run completes (across success / timeout / error / abort), provided the run produced a cron-scoped (`cron:`) session. Prevents run-scoped sessions from accumulating transcript entries indefinitely. Leave off for long-lived reporting jobs that intentionally persist context across runs — use compaction for those. Only ever deletes `cron:`-prefixed sessions, so a misconfigured flag cannot remove an unrelated long-lived session. |
 | `deleteJobAfterRun` | bool | `false` | Opt-in **job-level** one-shot disposition: when `true`, the scheduler deletes the **job itself** after its first terminal run - success, timeout, error, or host abort alike - from the same post-run teardown that already owns the run. Deliberately **not** `deleteAfterRun`, which removes the run's ephemeral *session* and leaves the job scheduled forever; the two compose. Use this instead of writing "delete this cron job after running" into the prompt: a prompt instruction has no enforcement and no retry if the turn ends early, this flag does. Off by default, and rows written before the column existed read `false`, so nothing is ever removed without an explicit opt-in. |
 | `executionClass` | bool | `false` | Marks the job as **execution-class**: its contract is to *perform work*, so a run that completes having made **zero tool calls** records `no_tool_calls` instead of `ok` (see [Zero-tool-call runs](#11b-zero-tool-call-runs-2985)). Off by default, and rows written before the column existed read `false`, so an unmarked job is completely unaffected and may legitimately finish with no tool call. Only meaningful for `agent-prompt` jobs -- `command` and `webhook` actions report no tool count at all and can never reach the outcome. |
 | `expiresAt` | string (ISO-8601) | `null` | Optional hard expiry instant. Once `now >= expiresAt` the job **stops executing**: the scheduler suppresses the fire and never invokes the action. Expiry **suppresses only** - it does not delete or disable the row, so the job stays visible with its history intact for a human to inspect and extend. Checked at both schedule time (cheap early-out) and fire time (the authoritative gate, so a past-due job or a manual run cannot leak through). `null` means no expiry - exactly today's behaviour. Pair with `deleteJobAfterRun` if removal is actually wanted. |
+
+### 3.2.1 Per-Job Timeout (`metadata.timeoutSeconds`)
+
+A job overrides the scheduler's `defaultJobTimeoutSeconds` by carrying a `timeoutSeconds` value in
+its `metadata`. `command` jobs use the same key, with their own lower default of **120 seconds**.
+
+| Value | Meaning |
+|-------|---------|
+| absent / `null` | Use the default (`defaultJobTimeoutSeconds`, or `120` for `command` jobs). |
+| positive integer | Cancel the run after that many seconds. |
+| **`0`** | **Unlimited** - no timeout is armed at all (#2904). |
+| negative / unparseable | Invalid. A **warning** is logged naming the job id and the offending value, and the default is used. |
+
+`0` is an **explicit sentinel**, deliberately distinguished from "unset": it is how an operator says
+"this job legitimately runs long". Before this existed the only way to express it was an arbitrary
+large magic number, and a `0` was silently discarded.
+
+**Unlimited removes the per-job cap, not all cancellation.** An unlimited run is still bounded by
+the ambient cancellation token, so gateway shutdown, scheduler stop, and an explicit cancel all
+still end it promptly. It will not, however, be stopped by anything else - use it only for jobs
+whose runtime is genuinely unbounded, and prefer a generous positive value where you can name one.
+
+The value is accepted in every shape job metadata can carry it in - JSON number, JSON string, `int`,
+`long`, `double`, `string` - so the sentinel behaves identically whether the job came from
+`config.json`, the `cron` tool, or the API.
+
+```json
+"long-running-watch": {
+  "name": "Long running watch",
+  "schedule": "0 7 * * *",
+  "actionType": "command",
+  "shellCommand": "pwsh -NoProfile -File ./scripts/watch.ps1",
+  "metadata": { "timeoutSeconds": 0 }
+}
+```
 
 ### 3.3 Complete Configuration Example
 
