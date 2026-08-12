@@ -28,6 +28,11 @@ public sealed class OpenAIStreamProcessor
     /// surface fields beyond the OpenAI shape (e.g. Copilot's
     /// <c>copilot_usage</c>) without coupling Core to those providers.
     /// </param>
+    /// <param name="normalizeTextDelta">
+    /// Optional transport-compatibility hook applied to each text delta before it is accumulated or
+    /// emitted, so a provider whose wire framing needs stripping declares it once and every
+    /// transport applies the same implementation (#2443). Null means byte-identical accumulation.
+    /// </param>
     /// <returns>The parse open ai completions async result.</returns>
     public async Task ParseOpenAiCompletionsAsync(
         LlmStream stream,
@@ -40,7 +45,8 @@ public sealed class OpenAIStreamProcessor
         Action<LlmStream, LlmModel, string, List<ContentBlock>?> emitError,
         Action? onMalformedChunk,
         CancellationToken ct,
-        Action<JsonElement>? inspectChunk = null)
+        Action<JsonElement>? inspectChunk = null,
+        Func<LlmModel, string, string>? normalizeTextDelta = null)
     {
         var contentBlocks = new PartialContentTracker();
         var usage = Usage.Empty();
@@ -208,6 +214,8 @@ public sealed class OpenAIStreamProcessor
                         contentProp.ValueKind == JsonValueKind.String)
                     {
                         var text = contentProp.GetString() ?? "";
+                        if (normalizeTextDelta is not null)
+                            text = normalizeTextDelta(model, text);
                         if (text.Length > 0)
                         {
                             if (currentThinkingIndex >= 0)

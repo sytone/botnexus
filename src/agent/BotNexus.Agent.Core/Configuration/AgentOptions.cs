@@ -28,8 +28,10 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="SessionId">Optional caller-provided session identifier (overrides GenerationSettings.SessionId if set).</param>
 /// <param name="OnDiagnostic">Optional callback for non-fatal runtime diagnostics.</param>
 /// <param name="MaxRetryDelayMs">
-/// Optional maximum delay in milliseconds for transient retry backoff.
-/// Must be greater than zero when set; null means uncapped retry delay.
+/// Maximum delay in milliseconds for transient retry backoff, and the ceiling applied to a
+/// server-supplied <c>Retry-After</c>. Must be greater than zero when set.
+/// Defaults to <see cref="AgentLoopConfig.DefaultMaxRetryDelayMs"/> rather than to "uncapped" (#3035);
+/// a null value is normalised to that same ceiling, so the retry delay is bounded on every path.
 /// </param>
 /// <param name="ToolTimeout">
 /// Per-tool execution timeout. Defaults to 120 seconds. Set to null to disable (not recommended).
@@ -71,7 +73,7 @@ public record AgentOptions(
     QueueMode FollowUpMode,
     string? SessionId = null,
     Action<string>? OnDiagnostic = null,
-    int? MaxRetryDelayMs = null,
+    int? MaxRetryDelayMs = AgentLoopConfig.DefaultMaxRetryDelayMs,
     TimeSpan? ToolTimeout = null,
     Diagnostics.ClaimAuditOptions? ClaimAudit = null,
     Func<CancellationToken, Task>? MaybeCompactAsync = null,

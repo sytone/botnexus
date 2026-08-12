@@ -71,7 +71,29 @@ public static class PlatformConfigSchema
         return NormalizeNode(node)?.ToJsonString() ?? "{}";
     }
 
-    private static JsonNode? NormalizeNode(JsonNode? node)
+    /// <summary>
+    /// Recursively camelCases property names so a hand-edited config that uses PascalCase still
+    /// validates against the camelCase schema, while leaving values untouched.
+    /// </summary>
+    /// <remarks>
+    /// <para>#3036: normalisation must NOT touch the <c>FeatureManagement</c> section. Every other
+    /// property is serialised through <c>JsonNamingPolicy.CamelCase</c>, but
+    /// <see cref="PlatformConfig.FeatureManagement"/> carries an explicit
+    /// <see cref="JsonPropertyNameAttribute"/> pinning it to PascalCase because
+    /// Microsoft.FeatureManagement binds the PascalCase section name. NJsonSchema generates the
+    /// schema from that same attribute, so the schema expects <c>FeatureManagement</c> - and
+    /// camelCasing it here produced a key the closed root schema had never heard of, failing with
+    /// <c>NoAdditionalPropertiesAllowed: #/featureManagement</c> and aborting startup at the first
+    /// <c>IOptionsMonitor&lt;PlatformConfig&gt;.CurrentValue</c>. The normaliser was un-naming the one
+    /// property that was explicitly named to resist being un-named, which made EVERY feature flag
+    /// unsettable by every route (doctor --fix, hand edit, env var, <c>botnexus config set</c>).</para>
+    /// <para>The section's <em>contents</em> are exempt for a second, independent reason: flag names
+    /// are free-form keys (the subschema is <c>additionalProperties: {}</c>) matched verbatim by
+    /// <see cref="FeatureFlags"/>, so rewriting <c>ConfigStoreShadowMigration</c> to
+    /// <c>configStoreShadowMigration</c> would silently unbind the flag while leaving the file
+    /// looking correct - the same silent-drift shape as #2764 and #2816.</para>
+    /// </remarks>
+    private static JsonNode? NormalizeNode(JsonNode? node, bool preserveCasing = false)
     {
         if (node is null)
             return null;
@@ -81,10 +103,18 @@ public static class PlatformConfigSchema
             var normalized = new JsonObject();
             foreach (var property in jsonObject)
             {
-                var key = property.Key.StartsWith('$')
-                    ? property.Key
-                    : ToCamelCase(property.Key);
-                normalized[key] = NormalizeNode(property.Value);
+                // '$'-prefixed keys ($schema) keep their casing. The FeatureManagement section is
+                // canonicalised to its PascalCase section name (so a hand-edited lowercase
+                // "featureManagement" is repaired rather than rejected), and once inside that
+                // section every descendant key is preserved verbatim.
+                var isFeatureSection = !preserveCasing
+                    && string.Equals(property.Key, FeatureFlags.SectionName, StringComparison.OrdinalIgnoreCase);
+                var key = isFeatureSection
+                    ? FeatureFlags.SectionName
+                    : preserveCasing || property.Key.StartsWith('$')
+                        ? property.Key
+                        : ToCamelCase(property.Key);
+                normalized[key] = NormalizeNode(property.Value, preserveCasing || isFeatureSection);
             }
 
             return normalized;
@@ -94,7 +124,7 @@ public static class PlatformConfigSchema
         {
             var normalizedArray = new JsonArray();
             foreach (var item in jsonArray)
-                normalizedArray.Add(NormalizeNode(item));
+                normalizedArray.Add(NormalizeNode(item, preserveCasing));
             return normalizedArray;
         }
 

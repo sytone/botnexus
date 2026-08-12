@@ -50,6 +50,63 @@ public class TransientHttpRetryHandlerTests
             Content = new StringContent(body, Encoding.UTF8, "application/json")
         };
 
+    // ----- #3035: bounded jitter on the transport-level backoff -----
+
+    /// <summary>
+    /// AC3 (deterministic bound) - pinned to <c>0</c> the handler must reproduce the historical linear
+    /// 250/500/750ms ramp exactly, so adding jitter is provably not a schedule change.
+    /// </summary>
+    [Fact]
+    public void ComputeDelay_RandomPinnedToZero_ReproducesTheHistoricalLinearRamp()
+    {
+        var handler = new TransientHttpRetryHandler(
+            logger: null,
+            baseDelay: TimeSpan.FromMilliseconds(250),
+            randomSource: () => 0d);
+
+        handler.ComputeDelay(0).TotalMilliseconds.ShouldBe(250);
+        handler.ComputeDelay(1).TotalMilliseconds.ShouldBe(500);
+        handler.ComputeDelay(2).TotalMilliseconds.ShouldBe(750);
+    }
+
+    /// <summary>
+    /// AC3 (jittered bound) - pinned to the maximum, every delay is strictly longer than the un-jittered
+    /// value and no more than <c>(1 + jitterFactor)</c> times it.
+    /// </summary>
+    [Theory]
+    [InlineData(0, 250d)]
+    [InlineData(1, 500d)]
+    [InlineData(2, 750d)]
+    public void ComputeDelay_RandomPinnedToMax_IsStrictlyLongerAndBoundedByTheJitterFactor(
+        int attempt, double unJitteredMs)
+    {
+        var handler = new TransientHttpRetryHandler(
+            logger: null,
+            baseDelay: TimeSpan.FromMilliseconds(250),
+            randomSource: () => 1d);
+
+        var delay = handler.ComputeDelay(attempt).TotalMilliseconds;
+
+        delay.ShouldBeGreaterThan(unJitteredMs);
+        delay.ShouldBeLessThanOrEqualTo(unJitteredMs * (1 + RetryJitter.DefaultJitterFactor));
+    }
+
+    /// <summary>
+    /// The default construction path must actually be randomised. This is the assertion that would fail if
+    /// someone wired the seam but left the default source constant - the whole point of the change is that
+    /// concurrent retriers draw <em>different</em> values.
+    /// </summary>
+    [Fact]
+    public void ComputeDelay_DefaultRandomSource_ProducesVaryingDelaysAcrossDraws()
+    {
+        var handler = new TransientHttpRetryHandler(logger: null);
+
+        var draws = Enumerable.Range(0, 64).Select(_ => handler.ComputeDelay(0).TotalMilliseconds).ToList();
+
+        draws.Distinct().Count().ShouldBeGreaterThan(1, "the default jitter source must desynchronise retriers");
+        draws.ShouldAllBe(d => d >= 250 && d <= 250 * (1 + RetryJitter.DefaultJitterFactor));
+    }
+
     // ----- 421 retry behaviour (the motivating case) -----
 
     [Fact]

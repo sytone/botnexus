@@ -1,4 +1,7 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Configuration.Shadow;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Options;
 
@@ -245,5 +248,87 @@ public sealed class SchemaValidationTests
         }
     }
 
+    // ---------------------------------------------------------------------------------------
+    // #3036: the FeatureManagement section must survive schema normalisation.
+    //
+    // PlatformConfig.FeatureManagement carries an explicit [JsonPropertyName("FeatureManagement")]
+    // because Microsoft.FeatureManagement binds the PascalCase section, and NJsonSchema generates
+    // the schema from that same attribute. PlatformConfigSchema.NormalizePropertyCasing used to
+    // camelCase EVERY key, rewriting it to "featureManagement" - a key the closed root schema had
+    // never heard of. Result: NoAdditionalPropertiesAllowed at #/featureManagement, thrown from the
+    // first IOptionsMonitor<PlatformConfig>.CurrentValue, aborting gateway startup (exit 134).
+    // Every route that sets a flag hit it: doctor --fix, hand edit, env var, botnexus config set.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void ValidateObject_WithFeatureFlagsSet_ReturnsNoErrors()
+    {
+        var config = new PlatformConfig
+        {
+            FeatureManagement = new Dictionary<string, JsonElement>
+            {
+                [ConfigStoreFeatures.ShadowMigration] = JsonSerializer.SerializeToElement(true),
+                [ConfigStoreFeatures.Authoritative] = JsonSerializer.SerializeToElement(false)
+            }
+        };
+
+        PlatformConfigSchema.ValidateObject(config).ShouldBeEmpty();
+    }
+
+    [Theory]
+    // The exact document doctor --fix writes (#1943 DevOriginEnforcementCheck).
+    [InlineData("""{"version":1,"FeatureManagement":{"GatewayDevOriginEnforcement":true}}""")]
+    // A hand-edited lowercase section is canonicalised, not rejected.
+    [InlineData("""{"version":1,"featureManagement":{"GatewayDevOriginEnforcement":true}}""")]
+    // Microsoft.FeatureManagement also accepts the object/EnabledFor filter form.
+    [InlineData("""{"version":1,"FeatureManagement":{"Flag":{"EnabledFor":[{"Name":"Percentage"}]}}}""")]
+    public void ValidateJson_WithFeatureManagementSection_ReturnsNoErrors(string json)
+    {
+        PlatformConfigSchema.ValidateJson(json).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ValidateJson_PreservesFlagNameCasing_SoFlagsStayBound()
+    {
+        // Flag names are free-form keys (subschema is additionalProperties:{}) matched verbatim by
+        // FeatureFlags. camelCasing them would leave the file looking correct while silently
+        // unbinding every flag - the drift shape of #2764/#2816.
+        var config = new PlatformConfig
+        {
+            FeatureManagement = new Dictionary<string, JsonElement>
+            {
+                [ConfigStoreFeatures.ShadowMigration] = JsonSerializer.SerializeToElement(true)
+            }
+        };
+
+        var json = JsonSerializer.Serialize(config, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        });
+
+        json.ShouldContain($"\"{FeatureFlags.SectionName}\"");
+        json.ShouldContain($"\"{ConfigStoreFeatures.ShadowMigration}\"");
+        PlatformConfigSchema.ValidateJson(json).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ValidateJson_StillCamelCasesOrdinaryPascalCaseSections()
+    {
+        // Negative control: the exemption must be scoped to FeatureManagement only. Normalisation
+        // still repairs PascalCase elsewhere, which is the behaviour the normaliser exists for.
+        PlatformConfigSchema
+            .ValidateJson("""{"version":1,"Gateway":{"ListenUrl":"http://localhost:5005"}}""")
+            .ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ValidateJson_StillRejectsGenuinelyUnknownRootProperties()
+    {
+        // Negative control: the fix must not degrade into "accept anything at the root".
+        PlatformConfigSchema
+            .ValidateJson("""{"version":1,"totallyBogusRootKey":true}""")
+            .ShouldNotBeEmpty();
+    }
 }
 

@@ -45,6 +45,34 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
     private static readonly string[] s_genericSourceTrees = ["gateway", "domain", "agent", "persistence"];
 
     /// <summary>
+    /// #2700: the non-gateway generic source trees, scanned WHOLE. Unlike <c>gateway</c> - which
+    /// contains composition roots and hosts that are not orchestration and are therefore curated by
+    /// <see cref="s_orchestrationProjects"/> - these trees have no legitimate reason to name a
+    /// concrete channel, so every file in them is in scope.
+    /// </summary>
+    private static readonly string[] s_nonGatewayGenericTrees =
+        [.. s_genericSourceTrees.Where(t => t != "gateway")];
+
+    /// <summary>
+    /// #2700 Rule 2 scope: the curated gateway orchestration projects PLUS every non-gateway generic
+    /// tree (<c>domain</c>, <c>agent</c>, <c>persistence</c>).
+    ///
+    /// <para><b>Why not simply <see cref="s_genericSourceTrees"/>?</b> Because its <c>gateway</c>
+    /// entry names the whole tree, which re-admits the ten projects
+    /// <see cref="s_orchestrationProjects"/> deliberately excludes - the HTTP host, the CLI, the cron
+    /// host and BotNexus.Gateway.Telemetry. Telemetry legitimately writes
+    /// <c>AddOtlpExporter("agent365", ...)</c>: an OpenTelemetry EXPORTER name that merely collides
+    /// with a channel key. Scanning the whole tree would fail the fence on a line carrying no channel
+    /// coupling at all, and a fence with false positives gets disabled.</para>
+    ///
+    /// <para>So the gateway half stays curated and the genuinely generic half is scanned whole. That
+    /// is what closes the #2700 hole: a literal relocated out of <c>src/gateway</c> into
+    /// <c>src/domain</c> is now observed rather than silently permitted.</para>
+    /// </summary>
+    private static readonly string[] s_rule2Scopes =
+        [.. s_orchestrationProjects, .. s_nonGatewayGenericTrees];
+
+    /// <summary>
     /// Rule 4 scope: the conversation/session model surfaces. Extension-local recipient concepts
     /// (SignalR connection/group ids, Service Bus pending reply queues) must never appear here.
     /// Deliberately does NOT include Gateway/Satellites - satellite connection ids are a separate
@@ -92,6 +120,13 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
         // Deleted when outbound binding fan-out is retired.
         new("R2", Path.Combine("gateway", "BotNexus.Gateway.Conversations", "DefaultConversationRouter.cs"),
             "conversation-first routing key set containing \"signalr\"", "#2091"),
+
+        // #2700: BotNexus.Domain - the deepest generic layer in the solution - normalises three legacy
+        // spellings of the web chat channel onto the concrete key "signalr". Invisible to the fence
+        // until Rule 2's scope was widened to the non-gateway generic trees. Deleted with the rest of
+        // the SignalR special-casing when SignalR becomes an ordinary conversation event projection.
+        new("R2", Path.Combine("domain", "BotNexus.Domain", "Primitives", "ChannelKey.cs"),
+            "Aliases table maps \"web chat\"/\"web-chat\"/\"webchat\" onto the concrete key \"signalr\"", "#2089"),
 
         // ---- Rule 3: concrete channel resolved for observer/fan-out behaviour ----
 
@@ -234,6 +269,146 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
 
         ChannelExtensionProjects().Count.ShouldBeGreaterThan(4,
             "rule 7 must find the channel extension host projects");
+    }
+
+    /// <summary>
+    /// #2700 AC1: Rule 2's enumeration must actually reach every non-gateway generic tree. A rule
+    /// that silently stops scanning a tree is the precise failure this issue exists to prevent - it
+    /// reads as green while the coupling it was meant to observe sits unobserved one directory over.
+    /// Asserted per-tree so a single vanished tree cannot hide behind the others' totals.
+    /// </summary>
+    [Fact]
+    public void Rule2Scope_EnumeratesEveryNonGatewayGenericTree()
+    {
+        var src = SourceRoot();
+
+        foreach (var tree in s_nonGatewayGenericTrees)
+        {
+            Directory.Exists(Path.Combine(src, tree)).ShouldBeTrue(
+                $"#2700: generic source tree '{tree}' not found under {src} (renamed? update s_genericSourceTrees)");
+
+            var count = CsFiles(Path.Combine(src, tree)).Count();
+            count.ShouldBeGreaterThan(0,
+                $"#2700 AC1: Rule 2 enumerated {count} .cs files for the '{tree}' tree. A scope that scans " +
+                "nothing passes vacuously - the fence would go green precisely because it stopped looking.");
+        }
+
+        // The domain tree specifically is the one PR #2678 relocated a literal into (AC1 names it).
+        CsFiles(Path.Combine(src, "domain")).Count().ShouldBeGreaterThan(0,
+            "#2700 AC1: the domain tree file count must be greater than zero");
+
+        // A widening that adds no scope is a rename, not a widening.
+        s_rule2Scopes.Length.ShouldBeGreaterThan(s_orchestrationProjects.Length,
+            "#2700: the Rule 2 scope must ADD trees to the orchestration project list, not merely restate it");
+    }
+
+    /// <summary>
+    /// #2700 AC2: a concrete channel key literal introduced anywhere under <c>src/domain</c> must be
+    /// reported by <see cref="Rule2_Orchestration_ContainsNoConcreteChannelKeyLiterals"/>.
+    ///
+    /// <para>This pins the SCOPE rather than the current contents of the repo: it asserts the domain
+    /// tree is enumerated by Rule 2's scan AND that the Rule 2 detector reports the forbidden shape.
+    /// Those are exactly the two halves that were disconnected before this change - the detector
+    /// always worked, it was simply never pointed at <c>domain</c>.</para>
+    /// </summary>
+    [Fact]
+    public void Rule2_CatchesAConcreteChannelKeyLiteralPlacedInTheDomainTree()
+    {
+        var src = SourceRoot();
+
+        // Half 1: domain files are inside Rule 2's enumeration.
+        var scanned = s_rule2Scopes
+            .SelectMany(s => CsFiles(Path.Combine(src, s)))
+            .Select(f => Rel(src, f))
+            .ToList();
+
+        scanned.ShouldContain(
+            f => f.StartsWith("domain" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase),
+            "#2700 AC2: Rule 2's scan must enumerate files under src/domain");
+
+        // The known subject of #2678/#2700 is enumerated, by path.
+        scanned.ShouldContain(
+            Path.Combine("domain", "BotNexus.Domain", "Primitives", "ChannelKey.cs"),
+            StringComparer.OrdinalIgnoreCase,
+            "#2700 AC2: ChannelKey.cs - where PR #2678 relocated the literal - must be scanned by Rule 2");
+
+        // Half 2: the detector reports the exact shape PR #2678 moved into src/domain.
+        ChannelKeyLiterals("""public static ChannelKey Observer { get; } = From("signalr");""")
+            .ShouldNotBeEmpty("#2700 AC2: the literal PR #2678 moved into src/domain must be detected");
+
+        // ...and the pre-existing domain literals genuinely surface as live R2 violations today.
+        // They are baselined (AC3), which is not the same as being invisible.
+        FindRule2Violations().ShouldContain(
+            v => v.Rule == "R2"
+                 && v.RelativePath.StartsWith("domain" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase),
+            "#2700 AC2: the pre-existing domain literals must surface as R2 violations, not fall outside the scan");
+    }
+
+    /// <summary>
+    /// #2700 AC4: the in/out decision for comment-only channel mentions, stated and pinned.
+    ///
+    /// <para><b>DECISION: comment-only and XML-doc mentions are PERMITTED.</b> A channel name inside
+    /// <c>//</c>, <c>/* */</c> or <c>///</c> is prose describing the system, not behaviour that
+    /// couples to it; deleting the comment changes nothing that compiles. Requiring otherwise would
+    /// make the fence demand documentation edits to describe an architecture it cannot verify. The
+    /// exemption is narrow and mechanical - it is <see cref="StripComments"/> applied before the
+    /// detector runs - and it cannot be widened by accident because it keys on lexical comment syntax
+    /// alone, never on a file, folder or namespace.</para>
+    ///
+    /// <para>Widening Rule 2 to <c>src/domain</c> is what makes the decision load-bearing: the domain
+    /// tree carries illustrative <c>e.g. "signalr", "telegram"</c> mentions in XML docs on
+    /// <c>GatewaySession</c>, <c>Messages</c> and <c>ChannelIdentity</c>. Under the old scope they
+    /// were out of scope by ACCIDENT; they are now permitted by a stated rule.</para>
+    ///
+    /// <para>This test fails if the classification changes in EITHER direction.</para>
+    /// </summary>
+    [Fact]
+    public void Rule2_CommentOnlyChannelMentions_ArePermittedByExplicitDecision()
+    {
+        // --- The decision, both directions, on synthetic source ---
+        ChannelKeyLiterals("""/// <summary>The channel (e.g., "signalr", "telegram").</summary>""")
+            .ShouldBeEmpty("#2700 AC4: XML-doc mentions are PERMITTED - prose, not behaviour");
+        ChannelKeyLiterals("""// falls back to "signalr" when nothing resolves""")
+            .ShouldBeEmpty("#2700 AC4: single-line comment mentions are PERMITTED");
+        ChannelKeyLiterals("""/* historically this was "telegram" only */""")
+            .ShouldBeEmpty("#2700 AC4: block comment mentions are PERMITTED");
+
+        // The identical token as CODE stays forbidden - the exemption is about comment syntax, nothing else.
+        ChannelKeyLiterals("""var fallback = "signalr";""")
+            .ShouldNotBeEmpty("#2700 AC4: the identical literal in CODE must remain a violation");
+        ChannelKeyLiterals("""["webchat"] = "signalr",""")
+            .ShouldNotBeEmpty("#2700 AC4: an alias table entry is code, not prose - it must remain a violation");
+
+        // A trailing comment must not launder the code preceding it on the same line.
+        ChannelKeyLiterals("""var fallback = "signalr"; // legacy""")
+            .ShouldNotBeEmpty("#2700 AC4: a trailing comment must not exempt the code before it");
+
+        // --- The decision applied to the real domain files the widening newly reaches ---
+        var src = SourceRoot();
+        string[] commentOnlyDomainFiles =
+        [
+            Path.Combine("domain", "BotNexus.Domain", "Gateway", "Models", "GatewaySession.cs"),
+            Path.Combine("domain", "BotNexus.Domain", "Gateway", "Models", "Messages.cs"),
+            Path.Combine("domain", "BotNexus.Domain", "World", "ChannelIdentity.cs"),
+        ];
+
+        foreach (var rel in commentOnlyDomainFiles)
+        {
+            var full = Path.Combine(src, rel);
+            File.Exists(full).ShouldBeTrue($"#2700 AC4: expected {rel} to exist (moved? update this list)");
+
+            var raw = File.ReadAllText(full);
+
+            // Non-vacuity: the file must really mention a channel name, else this pin proves nothing.
+            s_channelKeys.ShouldContain(
+                k => raw.Contains('"' + k + '"', StringComparison.OrdinalIgnoreCase),
+                $"#2700 AC4: {rel} no longer mentions any channel name - this pin has gone vacuous, remove it from the list");
+
+            // ...and it is permitted, because every mention sits inside a comment.
+            ChannelKeyLiterals(raw).ShouldBeEmpty(
+                $"#2700 AC4: {rel} now carries a channel key literal in CODE, not just in prose. " +
+                "Comment-only mentions are exempt by decision; code literals are not.");
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -413,8 +588,11 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
         return found;
     }
 
+    // #2700: Rule 2 scans the widened scope. R3/R5/R6 are orchestration-BEHAVIOUR rules and keep the
+    // narrow orchestration project list - they concern what generic orchestration DOES, not what
+    // names appear in leaf types.
     private static IReadOnlyList<Violation> FindRule2Violations() =>
-        ScanOrchestration("R2", ChannelKeyLiterals, "concrete channel key literal(s)");
+        ScanScopes(s_rule2Scopes, "R2", ChannelKeyLiterals, "concrete channel key literal(s)");
 
     private static IReadOnlyList<Violation> FindRule3Violations() =>
         ScanOrchestration("R3", ChannelSpecificObserverSymbols, "channel-specific observer/fan-out symbol(s)");
@@ -463,10 +641,15 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
 
     private static IReadOnlyList<Violation> ScanOrchestration(
         string rule, Func<string, IReadOnlyList<string>> detector, string label)
+        => ScanScopes(s_orchestrationProjects, rule, detector, label);
+
+    /// <summary>#2700: scan an arbitrary set of scope paths (project dirs or whole trees).</summary>
+    private static IReadOnlyList<Violation> ScanScopes(
+        string[] scopes, string rule, Func<string, IReadOnlyList<string>> detector, string label)
     {
         var src = SourceRoot();
         var found = new List<Violation>();
-        foreach (var project in s_orchestrationProjects)
+        foreach (var project in scopes)
         {
             foreach (var file in CsFiles(Path.Combine(src, project)))
             {

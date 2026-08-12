@@ -44,6 +44,13 @@ public sealed class SessionContextProjectorTests
         IsCompactionSummary = true,
     };
 
+    private static SessionEntry ReplayBanner(string content = "banner") => new()
+    {
+        Role = MessageRole.System,
+        Content = content,
+        IsReplayBanner = true,
+    };
+
     [Fact]
     public void IsVisibleOnResume_ExcludesIsHistory()
     {
@@ -82,6 +89,41 @@ public sealed class SessionContextProjectorTests
     public void IsVisibleOnResume_ExcludesNonSummarySystem()
     {
         SessionContextProjector.IsVisibleOnResume(RawSystem()).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// #3046: a restart-replay banner is gateway-authored System content that MUST reach the model on
+    /// cold resume - it carries the only signal telling the agent its prior turn was cut off at an
+    /// unknown point. Without this the banner persists, renders in the transcript UI, and is silently
+    /// dropped before the LLM call.
+    /// </summary>
+    [Fact]
+    public void IsVisibleOnResume_IncludesReplayBanner_AsSystem()
+    {
+        SessionContextProjector.IsVisibleOnResume(ReplayBanner()).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// #3046 non-widening guard: the carve-out admits ONLY flagged system entries. A system entry with
+    /// neither flag set must still be excluded, so the exception cannot silently grow into
+    /// "all system entries pass" - which would push the rebuilt system prompt back into the message list.
+    /// </summary>
+    [Fact]
+    public void IsVisibleOnResume_ExcludesSystem_WithNeitherFlag()
+    {
+        var entry = RawSystem() with { IsCompactionSummary = false, IsReplayBanner = false };
+        SessionContextProjector.IsVisibleOnResume(entry).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// #3046: the banner is still a projection candidate, not a privileged row. Once folded into a
+    /// compaction summary it must drop out like anything else.
+    /// </summary>
+    [Fact]
+    public void IsVisibleOnResume_ExcludesReplayBanner_WhenHistory()
+    {
+        var entry = ReplayBanner() with { IsHistory = true };
+        SessionContextProjector.IsVisibleOnResume(entry).ShouldBeFalse();
     }
 
     [Fact]

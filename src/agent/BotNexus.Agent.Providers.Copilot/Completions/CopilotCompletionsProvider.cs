@@ -90,5 +90,9 @@ public sealed class CopilotCompletionsProvider(
             ProviderHttpErrorHelper.ThrowForFailedResponse(response, providerError, "Copilot Completions", redactor),
         OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current),
         InspectChunk: static root => CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
-        SecretRedactor: secretRedactor);
+        SecretRedactor: secretRedactor,
+        // Third transport, same single normalizer (#2443). Responses and Messages already applied
+        // it; Completions did not, which is the asymmetry that let #2170 reproduce #2049 verbatim
+        // after model discovery switched endpoints.
+        NormalizeTextDelta: static (model, delta) => CopilotTextDeltaNormalizer.Normalize(model.Id, delta));
 }
