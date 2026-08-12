@@ -143,10 +143,15 @@ public static class GraphemeSafeTruncation
     /// therefore outranks cluster integrity in the degenerate case, and the fallback still refuses
     /// to sever a surrogate pair - the correctness floor is never breached, only the stronger
     /// grapheme guarantee, and only when the limit physically cannot hold one cluster.
-    /// </para>
     /// <para>
-    /// Real limits make the fallback unreachable in practice: Telegram's are 4096 / 32768 code
-    /// units and no grapheme cluster approaches that.
+    /// <b>Overshoot in the degenerate case.</b> When the limit cannot hold even one whole surrogate
+    /// pair (<paramref name="maxLength"/> == 1 in front of an astral character), this returns 2 -
+    /// one code unit MORE than asked. That is deliberate: the alternatives are to return a lone
+    /// surrogate (invalid UTF-16, which Telegram rejects outright with
+    /// <c>400 can't parse entities</c>) or to return 0 and hang the caller's loop. Overshooting a
+    /// one-unit budget by one unit is the only option that is both well-formed and terminating. The
+    /// previous per-call-site implementations chose the lone surrogate; #2924 changes that. Real
+    /// limits make this unreachable - Telegram's are 4096 / 32768 code units.
     /// </para>
     /// </remarks>
     public static int FindChunkLength(ReadOnlySpan<char> value, int maxLength)
@@ -170,9 +175,11 @@ public static class GraphemeSafeTruncation
         // The first cluster alone exceeds maxLength. Take maxLength units but never end on a lone
         // high surrogate - this is the ONLY surrogate back-off in the product (#2924 criterion 1).
         var length = maxLength;
-        if (length > 1 && char.IsHighSurrogate(value[length - 1]))
+        if (char.IsHighSurrogate(value[length - 1]))
         {
-            length--;
+            // Backing off would yield 0 at maxLength == 1 and stall the caller, so take the whole
+            // pair instead. See the overshoot note above.
+            length = length > 1 ? length - 1 : Math.Min(2, value.Length);
         }
 
         return length;

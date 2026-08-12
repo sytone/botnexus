@@ -187,6 +187,22 @@ public sealed class GraphemeSafeTruncationParityTests
     }
 
     /// <summary>
+    /// The degenerate case that a lone-surrogate back-off cannot serve: a one-code-unit budget in
+    /// front of a two-code-unit pair. The pre-#2924 implementations returned the lone high surrogate
+    /// here (their back-off was guarded by <c>length > 1</c>), producing invalid UTF-16 that Telegram
+    /// rejects. The shared policy overshoots the budget by one unit instead, which is the only
+    /// outcome that is both well-formed and terminating.
+    /// </summary>
+    [Fact]
+    public void ChunkingPath_WithABudgetTooSmallForOnePair_OvershootsRatherThanSeveringIt()
+    {
+        var chunk = TelegramMessageSplitter.SliceSurrogateSafe("\U0001F600tail", 0, 1);
+
+        chunk.ShouldBe("\U0001F600", "a one-unit budget must take the whole pair, not half of it.");
+        AssertNoLoneSurrogates(chunk, "degenerate one-unit chunk");
+    }
+
+    /// <summary>
     /// The streaming drain shares the same policy, and reassembly stays lossless.
     /// </summary>
     [Fact]
