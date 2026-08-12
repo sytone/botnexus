@@ -217,6 +217,13 @@ public sealed class ExecTool : IAgentTool
         {
             PythonPreflight.ThrowIfInvalid(inlinePyScript);
         }
+        // Same guard for inline `node -e` one-liners (issue #2762): unterminated string/template
+        // literals and unbalanced brackets are rejected before the runtime is spawned.
+        if (NodePreflight.IsNodeExecutable(command[0])
+            && NodePreflight.TryGetInlineScript(processArgs, inlineScript: null, out var inlineJsScript))
+        {
+            NodePreflight.ThrowIfInvalid(inlineJsScript);
+        }
 
         var startInfo = new ProcessStartInfo
         {
