@@ -1,3 +1,4 @@
+using BotNexus.Domain.Paths;
 using BotNexus.Domain.World;
 using Microsoft.Data.Sqlite;
 
@@ -118,7 +119,7 @@ internal static class LocationProbe
             var dataSource = builder.DataSource?.Trim();
             if (!string.IsNullOrWhiteSpace(dataSource) && !dataSource.Equals(":memory:", StringComparison.OrdinalIgnoreCase))
             {
-                var expandedPath = ExpandUserHome(dataSource);
+                var expandedPath = HomePathExpander.Expand(dataSource);
                 if (!Path.IsPathRooted(expandedPath))
                     expandedPath = Path.GetFullPath(expandedPath);
                 if (!File.Exists(expandedPath))
@@ -189,19 +190,4 @@ internal static class LocationProbe
         return false;
     }
 
-    private static string ExpandUserHome(string path)
-    {
-        if (!path.StartsWith('~'))
-            return path;
-
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (path.Length == 1)
-            return home;
-
-        var first = path[1];
-        if (first == Path.DirectorySeparatorChar || first == Path.AltDirectorySeparatorChar)
-            return Path.Combine(home, path[2..]);
-
-        return path;
-    }
 }

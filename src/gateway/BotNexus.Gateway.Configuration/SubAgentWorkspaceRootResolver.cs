@@ -1,4 +1,5 @@
 using System.IO.Abstractions;
+using BotNexus.Domain.Paths;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -40,32 +41,8 @@ public static class SubAgentWorkspaceRootResolver
         if (string.IsNullOrWhiteSpace(configuredRoot))
             return fileSystem.Path.Combine(fileSystem.Path.GetTempPath(), DefaultDirectoryName);
 
-        var expanded = ExpandUserHome(Environment.ExpandEnvironmentVariables(configuredRoot.Trim()));
+        var expanded = HomePathExpander.Expand(Environment.ExpandEnvironmentVariables(configuredRoot.Trim()));
         return fileSystem.Path.GetFullPath(expanded);
     }
 
-    /// <summary>
-    /// Expands a leading <c>~</c> (optionally followed by a separator) to the current user's home
-    /// directory, mirroring the expansion used by other BotNexus path settings
-    /// (<see cref="BotNexus.Gateway.Security.DefaultPathValidator"/>). A bare <c>~</c> maps to the
-    /// home directory; anything else is returned unchanged.
-    /// </summary>
-    private static string ExpandUserHome(string path)
-    {
-        if (!path.StartsWith('~'))
-            return path;
-
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(home))
-            home = Environment.GetEnvironmentVariable("HOME") ?? string.Empty;
-
-        if (path.Length == 1)
-            return home;
-
-        var first = path[1];
-        if (first == Path.DirectorySeparatorChar || first == Path.AltDirectorySeparatorChar)
-            return Path.Combine(home, path[2..]);
-
-        return path;
-    }
 }

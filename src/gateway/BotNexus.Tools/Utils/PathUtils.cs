@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Abstractions;
+using BotNexus.Domain.Paths;
 using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Tools.Utils;
@@ -34,6 +35,21 @@ public static class PathUtils
     /// <param name="relative">The user path, absolute or relative.</param>
     /// <param name="workingDirectory">The repository root used as the containment boundary.</param>
     /// <returns>A normalized absolute path guaranteed to remain under <paramref name="workingDirectory"/>.</returns>
+    /// <remarks>
+    /// <para>
+    /// A leading <c>~</c> is expanded to the user's home directory via
+    /// <see cref="HomePathExpander"/> <em>before</em> the containment check runs (issue #3013).
+    /// The order is load-bearing in both directions and is pinned by tests: expanding after the check
+    /// would report a legitimate home path as escaping the workspace, while skipping the check for
+    /// expanded paths would turn <c>~</c> into a workspace-escape primitive. Containment is therefore
+    /// evaluated against the <em>expanded</em> path, so <c>~/...</c> succeeds only when the home
+    /// directory genuinely lies inside the workspace root and still throws otherwise.
+    /// </para>
+    /// <para>
+    /// Before this, <see cref="SanitizePath"/> treated <c>~</c> as an ordinary path segment, so
+    /// <c>~/notes.md</c> silently resolved to a literal directory named <c>~</c> inside the workspace.
+    /// </para>
+    /// </remarks>
     /// <exception cref="ArgumentException">Thrown when inputs are empty.</exception>
     /// <exception cref="InvalidOperationException">Thrown when path traversal escapes the root boundary.</exception>
     public static string ResolvePath(string relative, string workingDirectory, IFileSystem? fileSystem = null)
@@ -49,7 +65,12 @@ public static class PathUtils
         }
 
         var root = Path.GetFullPath(workingDirectory);
-        var sanitizedInput = SanitizePath(relative);
+
+        // Expand '~' FIRST: the containment check below must see the real home path, not the literal
+        // tilde segment. See the ordering note in this method's remarks.
+        var usedHomeToken = HomePathExpander.StartsWithHomeToken(relative.Trim());
+        var expandedInput = HomePathExpander.Expand(relative.Trim());
+        var sanitizedInput = SanitizePath(expandedInput);
 
         var resolved = Path.IsPathRooted(sanitizedInput)
             ? Path.GetFullPath(sanitizedInput)
@@ -57,8 +78,11 @@ public static class PathUtils
 
         if (!IsUnderRoot(resolved, root))
         {
-            throw new InvalidOperationException(
-                $"Path '{relative}' resolves outside working directory '{root}'.");
+            // Name '~' explicitly when the caller used it: the expanded absolute path alone does not
+            // tell them which part of their input produced it.
+            throw new InvalidOperationException(usedHomeToken
+                ? $"Path '{relative}' expands the '~' home directory to '{resolved}', which is outside working directory '{root}'."
+                : $"Path '{relative}' resolves outside working directory '{root}'.");
         }
 
         var resolvedFinal = ResolveFinalTargetPath(resolved, fileSystem);
