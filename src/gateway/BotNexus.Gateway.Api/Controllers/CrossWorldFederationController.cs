@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Agents;
+using BotNexus.Gateway.Audit;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Tools;
@@ -51,8 +52,15 @@ public sealed class CrossWorldFederationController(
     ISessionWriteLock sessionWriteLock,
     CrossWorldInboundAuthService inboundAuthService,
     IOptionsMonitor<PlatformConfig> platformConfig,
-    ILogger<CrossWorldFederationController> logger) : ControllerBase
+    ILogger<CrossWorldFederationController> logger,
+    IToolAuditSink? toolAudit = null) : ControllerBase
 {
+    /// <summary>
+    /// The single execution-layer tool-audit sink (#2614 AC4). Optional-with-fallback so the
+    /// receiver's audit trail does not depend on this controller being resolved from DI.
+    /// </summary>
+    private readonly IToolAuditSink _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
+
     private const string ConversationTitle = "Cross-world agent exchange";
     private static readonly ChannelKey CrossWorldChannel = ChannelKey.From("cross-world");
 
@@ -191,6 +199,12 @@ public sealed class CrossWorldFederationController(
 
             var handle = await supervisor.GetOrCreateAsync(session.AgentId, sessionId, cancellationToken).ConfigureAwait(false);
             var response = await handle.PromptAsync(request.Message, cancellationToken).ConfigureAwait(false);
+            // #2614 AC4: the cross-world RECEIVER is a blocking PromptAsync boundary. The tools a
+            // remote peer's request caused to execute locally are exactly the ones an operator most
+            // needs a durable record of, and before this slice the receiver session recorded only
+            // the final text. Ordered before the assistant row, matching every other blocking site.
+            foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
+                session.AddEntry(toolEntry);
             session.AddEntry(new SessionEntry
             {
                 Role = MessageRole.Assistant,

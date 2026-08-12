@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Audit;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
@@ -35,6 +36,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly DefaultToolPolicyProvider? _policyProvider;
     private readonly TimeProvider _timeProvider;
     private readonly ISessionStore? _sessionStore;
+
+    /// <summary>
+    /// The single execution-layer tool-audit sink (#2614 AC4).
+    /// </summary>
+    private readonly IToolAuditSink _toolAudit;
     // #2338: the child run mints its own conversation through ConversationFactory and persists it
     // here. Optional so hosts/tests without a conversation store behave exactly as before apart
     // from the row not being written - the id is still minted so the child never shares the
@@ -80,7 +86,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         TimeProvider? timeProvider = null,
         ISecurityEventSink? securityEvents = null,
         IConversationStore? conversationStore = null,
-        ModelRegistry? modelRegistry = null)
+        ModelRegistry? modelRegistry = null,
+        IToolAuditSink? toolAudit = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -95,6 +102,45 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _securityEvents = securityEvents;
         _conversationStore = conversationStore;
         _modelRegistry = modelRegistry;
+        _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
+    }
+
+    /// <summary>
+    /// Persists the sub-agent run's tool timeline onto its own child session (#2614 AC4).
+    /// </summary>
+    /// <remarks>
+    /// Best-effort by design, matching every other persistence side-effect on this path: a failed
+    /// audit write must not change the run's terminal disposition, because doing so would let an
+    /// unrelated store fault turn a successful delegated run into a failure. A no-op when no
+    /// session store is configured or the run executed no tools.
+    /// </remarks>
+    /// <param name="response">The completed blocking run.</param>
+    /// <param name="record">The run record carrying the child session to write to.</param>
+    private async Task PersistToolAuditAsync(AgentResponse response, SubAgentRecord record)
+    {
+        if (_sessionStore is null || response.ToolCalls.Count == 0)
+            return;
+
+        try
+        {
+            var childSessionId = record.Info.ChildSessionId;
+            var childSession = await _sessionStore.GetAsync(childSessionId, CancellationToken.None).ConfigureAwait(false);
+            if (childSession is null)
+                return;
+
+            foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
+                childSession.AddEntry(toolEntry);
+
+            await _sessionStore.SaveAsync(childSession, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed persisting the tool-audit timeline for sub-agent '{SubAgentId}' on child session '{ChildSessionId}'.",
+                record.Info.SubAgentId,
+                record.Info.ChildSessionId);
+        }
     }
 
     /// <summary>
@@ -1034,6 +1080,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         try
         {
             var response = await handle.PromptAsync(task, timeoutCts.Token);
+
+            // #2614 AC4: a sub-agent run is a blocking PromptAsync boundary and is the path with
+            // the LEAST oversight - the parent sees only the returned summary, which the child
+            // itself authored. Persisting the sink-produced tool timeline on the child session is
+            // what makes "what did the sub-agent actually do" answerable from the store instead of
+            // from the child's own self-report. Written before any terminal classification below so
+            // a run that timed out or exhausted its budget still records the tools it ran.
+            await PersistToolAuditAsync(response, record).ConfigureAwait(false);
             if (record.BudgetExhausted)
             {
                 await CompleteBudgetExhaustedAsync(subAgentId, maxTurns);

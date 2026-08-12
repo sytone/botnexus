@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Audit;
 using BotNexus.Domain.Primitives;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using Microsoft.AspNetCore.Mvc;
@@ -22,16 +23,24 @@ public sealed class ChatController : ControllerBase
 {
     private readonly IAgentSupervisor _supervisor;
     private readonly ISessionStore _sessions;
+    private readonly IToolAuditSink _toolAudit;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatController"/> class.
     /// </summary>
     /// <param name="supervisor">The agent supervisor for managing agent instances.</param>
     /// <param name="sessions">The session store for persisting conversation history.</param>
-    public ChatController(IAgentSupervisor supervisor, ISessionStore sessions)
+    /// <param name="toolAudit">
+    /// The single execution-layer tool-audit sink (#2614 AC4). Optional so the many existing
+    /// direct-construction call sites in tests keep compiling; it falls back to the same shared
+    /// instance gateway composition registers, so the audit guarantee never depends on whether
+    /// this controller happened to be resolved from DI.
+    /// </param>
+    public ChatController(IAgentSupervisor supervisor, ISessionStore sessions, IToolAuditSink? toolAudit = null)
     {
         _supervisor = supervisor;
         _sessions = sessions;
+        _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
     }
 
     /// <summary>
@@ -92,6 +101,13 @@ public sealed class ChatController : ControllerBase
             var session = await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, CancellationToken.None);
             session.SessionType = SessionType.UserAgent;
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = request.Message });
+            // #2614 AC4: the REST chat path is a blocking PromptAsync boundary, so before this
+            // slice it persisted final text ONLY - a run that shelled out, wrote files and then
+            // summarised left no durable evidence the tools ran. Route it through the same sink
+            // both other transports use, so the audit record no longer depends on transport choice.
+            // Ordered before the assistant row, matching every other blocking call site.
+            foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
+                session.AddEntry(toolEntry);
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
             await _sessions.SaveAsync(session, CancellationToken.None);
 
