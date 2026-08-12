@@ -117,6 +117,15 @@ public sealed class CronTrigger(
             {
                 response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
 
+                // #2985: report the turn's tool-invocation count back to the caller (the cron
+                // scheduler, via AgentPromptAction) BEFORE any early-return path below, so the
+                // no-op-turn branch - the very shape that produced the fabricated maintenance
+                // runs - still reports its zero. The count is taken from the same
+                // response.ToolCalls collection the transcript projection uses, so the recorded
+                // outcome and the persisted tool rows can never disagree.
+                if (request is not null)
+                    request.ToolInvocationCount = response.ToolCalls.Count;
+
                 // #2522 residual: the blocking path must stamp the provider's reported prompt-token
                 // count exactly as the streaming path does at MessageEnd. Without it, long-lived
                 // cron sessions - the ones that compact most often - present a null provider count

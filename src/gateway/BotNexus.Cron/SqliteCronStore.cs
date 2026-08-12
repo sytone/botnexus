@@ -72,7 +72,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     failure_alerts_enabled INTEGER NOT NULL DEFAULT 0,
                      failure_alert_conversation_id TEXT NULL,
                      delete_job_after_run INTEGER NOT NULL DEFAULT 0,
-                     expires_at TEXT NULL
+                     expires_at TEXT NULL,
+                     execution_class INTEGER NOT NULL DEFAULT 0
                  );
 
                 CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled_next_run_at
@@ -217,6 +218,20 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             try { await migrateExpiresAt.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
             catch (SqliteException) { /* column already exists */ }
 
+            // Migrate existing databases: add execution_class column if missing (#2985).
+            // Defaults to 0 (not execution-class) so a row written before the column existed
+            // behaves byte-identically to today: a zero-tool run of an existing job still
+            // records 'ok'. Defaulting to 1 would retroactively reclassify every reporting or
+            // classification job on the platform as failing - the exact opposite of the signal
+            // this column exists to add, and the same NULL/absent-means-inert rule #2554/#2557/
+            // #2634 each had to learn here.
+            await using var migrateExecutionClass = connection.CreateCommand();
+            migrateExecutionClass.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN execution_class INTEGER NOT NULL DEFAULT 0;
+                """;
+            try { await migrateExecutionClass.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
             _initialized = true;
         }
         finally
@@ -256,12 +271,12 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                 INSERT INTO cron_jobs (
                     id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                     enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                    failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at
+                    failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class
                 )
                 VALUES (
                     $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
                     $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId, $deleteAfterRun, $scheduleActivatedAt,
-                    $failureAlertsEnabled, $failureAlertConversationId, $deleteJobAfterRun, $expiresAt
+                    $failureAlertsEnabled, $failureAlertConversationId, $deleteJobAfterRun, $expiresAt, $executionClass
                 )
                 """;
             BindJob(command, created);
@@ -290,7 +305,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at
+                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class
             FROM cron_jobs
             WHERE id = $id
             """;
@@ -312,7 +327,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at
+                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class
             FROM cron_jobs
             WHERE $agentId IS NULL OR agent_id = $agentId
             ORDER BY created_at DESC
@@ -371,6 +386,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     failure_alert_conversation_id = $failureAlertConversationId,
                     delete_job_after_run = $deleteJobAfterRun,
                     expires_at = $expiresAt,
+                    execution_class = $executionClass,
                     metadata_json = $metadataJson,
                     -- #2554: schedule_activated_at is STORE-owned. The inbound record's value is
                     -- never bound; instead it is re-stamped in SQL, atomically with the write,
@@ -746,6 +762,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             job.FailureAlertConversationId.HasValue ? (object)job.FailureAlertConversationId.Value.Value : DBNull.Value);
         command.Parameters.AddWithValue("$deleteJobAfterRun", job.DeleteJobAfterRun ? 1 : 0);
         command.Parameters.AddWithValue("$expiresAt", ToNullableString(job.ExpiresAt));
+        command.Parameters.AddWithValue("$executionClass", job.ExecutionClass ? 1 : 0);
         command.Parameters.AddWithValue("$metadataJson", SerializeMetadata(job.Metadata));
     }
 
@@ -781,6 +798,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             job.FailureAlertConversationId.HasValue ? (object)job.FailureAlertConversationId.Value.Value : DBNull.Value);
         command.Parameters.AddWithValue("$deleteJobAfterRun", job.DeleteJobAfterRun ? 1 : 0);
         command.Parameters.AddWithValue("$expiresAt", ToNullableString(job.ExpiresAt));
+        command.Parameters.AddWithValue("$executionClass", job.ExecutionClass ? 1 : 0);
     }
 
     private CronJob ReadJob(SqliteDataReader reader)
@@ -831,7 +849,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             // suppression. A row written before these columns existed therefore schedules and
             // executes byte-identically to today - the safety property that makes this shippable.
             DeleteJobAfterRun = !reader.IsDBNull(26) && reader.GetInt32(26) != 0,
-            ExpiresAt = reader.IsDBNull(27) ? null : ParseDate(reader.GetString(27))
+            ExpiresAt = reader.IsDBNull(27) ? null : ParseDate(reader.GetString(27)),
+            // #2985: absent/NULL reads as NOT execution-class. Same inert-default rule as the
+            // columns above - an upgrade must never start demoting existing jobs' runs to a
+            // non-success status nobody opted into.
+            ExecutionClass = !reader.IsDBNull(28) && reader.GetInt32(28) != 0
         };
     }
 
@@ -944,12 +966,16 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             DELETE FROM cron_runs
             WHERE completed_at IS NOT NULL
               AND completed_at < $cutoff
-              AND status IN ($statusOk, $statusError, $statusTimedOut)
+              AND status IN ($statusOk, $statusError, $statusTimedOut, $statusNoToolCalls)
             """;
         command.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
         command.Parameters.AddWithValue("$statusOk", CronRunStatus.Ok);
         command.Parameters.AddWithValue("$statusError", CronRunStatus.Error);
         command.Parameters.AddWithValue("$statusTimedOut", CronRunStatus.TimedOut);
+        // #2985: no_tool_calls is a TERMINAL status. Omitting it here would make those rows
+        // permanently immune to retention - the same unbounded-growth trap #2410 found for
+        // orphaned 'running' rows.
+        command.Parameters.AddWithValue("$statusNoToolCalls", CronRunStatus.NoToolCalls);
         var deleted = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         if (deleted > 0)
             _logger.LogDebug("Purged {Count} cron run record(s) older than {Cutoff}.", deleted, cutoff);

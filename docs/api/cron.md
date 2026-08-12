@@ -119,6 +119,32 @@ X-Api-Key: <key>
 Location: /api/cron/daily-briefing
 ```
 
+**Mark a job execution-class (#2985)**
+
+Set `executionClass: true` on a job whose contract is to *perform work*. A run of such a job that
+completes having made zero tool calls is recorded with status `no_tool_calls` instead of `ok`, and
+drives the existing `failureAlertConversationId` path. The field is optional and defaults to
+`false`, so an existing payload that omits it is unaffected. See
+[Zero-tool-call runs](../cron-and-scheduling.md#11b-zero-tool-call-runs-2985).
+
+```http
+POST /api/cron
+Content-Type: application/json
+X-Api-Key: <key>
+
+{
+  "name": "Autonomous maintenance",
+  "schedule": "0 * * * *",
+  "actionType": "agent-prompt",
+  "agentId": "farnsworth",
+  "message": "Perform the hourly maintenance pass.",
+  "executionClass": true,
+  "failureAlertsEnabled": true,
+  "failureAlertConversationId": "c_ops_alerts",
+  "enabled": true
+}
+```
+
 **Create a command (script) job without supplying an id**
 
 ```http

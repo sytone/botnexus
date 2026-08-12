@@ -27,6 +27,27 @@ public static class CronRunStatus
 
     /// <summary>The run exceeded its configured timeout and was cancelled.</summary>
     public const string TimedOut = "timed_out";
+    /// <summary>
+    /// #2985: an <b>execution-class</b> run that completed without throwing but performed zero tool
+    /// invocations. For a job whose contract is to do work, that is by definition a run that did
+    /// nothing - yet the turn completed, so the pre-#2985 outcome was <see cref="Ok"/> with a null
+    /// error, byte-identical to a healthy run.
+    ///
+    /// <para>
+    /// This is a <b>terminal non-success</b> outcome: it is written to run history, it is what
+    /// <c>LastRunStatus</c> shows, it participates in the failure-alert streak alongside
+    /// <see cref="Error"/>, and it is purgeable by retention like any other terminal row. It is a
+    /// separate value rather than a reuse of <see cref="Error"/> so run history distinguishes
+    /// "the action threw" from "the action returned having done nothing" - two different
+    /// operator responses.
+    /// </para>
+    /// <para>
+    /// Only ever written for a job with <c>ExecutionClass = true</c> whose action reported a tool
+    /// count. A job that is not execution-class, or an action that reports no count at all
+    /// (command/webhook), can never reach this status.
+    /// </para>
+    /// </summary>
+    public const string NoToolCalls = "no_tool_calls";
 
     /// <summary>The run has been started and stamped but has not yet reached a terminal state.</summary>
     public const string Running = "running";

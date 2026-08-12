@@ -100,6 +100,13 @@ public sealed class SoulTrigger(
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
         var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
 
+        // #2985: report the turn's tool-invocation count back to the caller. AgentPromptAction
+        // routes soul-enabled agents through THIS trigger rather than CronTrigger, so without
+        // this line the execution-class zero-tool rule would be silently inert for exactly the
+        // agents most likely to run maintenance loops.
+        if (request is not null)
+            request.ToolInvocationCount = response.ToolCalls.Count;
+
         // #2522 residual: stamp the provider's reported prompt-token count on the blocking path so
         // the compactor's unit normalisation has a real ratio to work with (parity with the
         // streaming path's MessageEnd recording).

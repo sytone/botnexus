@@ -356,7 +356,23 @@ public sealed class CronScheduler(
 
                 _logger.LogInformation("Cron job executed: {JobName} ({JobId}) action={ActionType} trigger={TriggerType}",
                     jobForRun.Name, jobForRun.Id, jobForRun.ActionType, triggerType);
-                await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Ok, sessionId: context.SessionId, ct: ct).ConfigureAwait(false);
+
+                // #2985: the terminal outcome of a completed action is no longer unconditionally
+                // Ok. For an execution-class job whose action reported ZERO tool invocations, the
+                // run did nothing despite completing, so it terminates as no_tool_calls with a
+                // reason naming the condition. Every other case - not execution-class, or a count
+                // that is null (action reports none) or positive - maps to Ok exactly as before.
+                var zeroToolCallOutcome = DetectZeroToolCallOutcome(jobForRun, context);
+                var terminalStatus = zeroToolCallOutcome is null ? CronRunStatus.Ok : CronRunStatus.NoToolCalls;
+
+                if (zeroToolCallOutcome is not null)
+                {
+                    _logger.LogWarning(
+                        "Cron job '{JobId}' ({JobName}) completed with zero tool invocations and is marked execution-class; recording status '{Status}'.",
+                        jobForRun.Id, jobForRun.Name, CronRunStatus.NoToolCalls);
+                }
+
+                await _cronStore.RecordRunCompleteAsync(run.Id, terminalStatus, zeroToolCallOutcome, sessionId: context.SessionId, ct: ct).ConfigureAwait(false);
 
                 // Pinback via CAS: if the trigger created a new conversation for this run and the job
                 // has no pinned ConversationId yet, atomically stamp ours onto the job. If another
@@ -364,10 +380,19 @@ public sealed class CronScheduler(
                 var winningConversationId = await TryPinConversationAsync(job.Id, jobForRun, context, scope.ServiceProvider, ct)
                     .ConfigureAwait(false);
 
-                await FinalizeRunAsync(job.Id, jobForRun, triggeredAt, CronRunStatus.Ok, error: null,
+                await FinalizeRunAsync(job.Id, jobForRun, triggeredAt, terminalStatus, error: zeroToolCallOutcome,
                     conversationId: winningConversationId, ct: ct).ConfigureAwait(false);
 
-                return run with { Status = CronRunStatus.Ok, CompletedAt = DateTimeOffset.UtcNow, SessionId = context.SessionId };
+                if (zeroToolCallOutcome is not null)
+                {
+                    // Reuse the EXISTING failure-alert path (#2557) rather than adding a parallel
+                    // notification channel: the whole point of #2985 is that run status is the
+                    // input to alerting, so making the outcome non-success is what makes alerting
+                    // possible at all. Delivery remains best-effort and never fails the run.
+                    await MaybeSendFailureAlertAsync(jobForRun, triggeredAt, zeroToolCallOutcome, ct).ConfigureAwait(false);
+                }
+
+                return run with { Status = terminalStatus, CompletedAt = DateTimeOffset.UtcNow, Error = zeroToolCallOutcome, SessionId = context.SessionId };
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -579,13 +604,26 @@ public sealed class CronScheduler(
             // as a break, so a parallel run cannot silently reset the backoff.
             if (string.Equals(entry.Status, CronRunStatus.Running, StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (!string.Equals(entry.Status, CronRunStatus.Error, StringComparison.OrdinalIgnoreCase))
+            // #2985: a no_tool_calls run is a non-success outcome and belongs to the same streak
+            // as an error. Counting only Error here would restart the backoff at 1 on every
+            // zero-tool run, so a job stuck in the do-nothing state would alert on EVERY run -
+            // reproducing the noise the #2557 backoff exists to prevent.
+            if (!IsAlertableFailureStatus(entry.Status))
                 break;
             streak++;
         }
 
         return streak == 0 ? 1 : streak;
     }
+
+    /// <summary>
+    /// Terminal statuses that count toward the failure-alert streak (#2557 + #2985): the action
+    /// threw, or an execution-class run completed having done nothing. Both are non-success and
+    /// both are things an operator wants alerted on with the same backoff.
+    /// </summary>
+    private static bool IsAlertableFailureStatus(string status)
+        => string.Equals(status, CronRunStatus.Error, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, CronRunStatus.NoToolCalls, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Backoff schedule (AC5): alert on the FIRST failure of a streak, then on positions that are
@@ -607,6 +645,51 @@ public sealed class CronScheduler(
     /// more conservative.
     /// </summary>
     private const int FailureAlertHistoryWindow = 64;
+
+    /// <summary>
+    /// #2985 clause 1: decides whether a completed action must terminate as
+    /// <see cref="CronRunStatus.NoToolCalls"/> instead of <see cref="CronRunStatus.Ok"/>, and
+    /// returns the human-readable reason recorded on the run (naming the zero-tool-call condition)
+    /// or <c>null</c> when the run is a normal success.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// BOTH conditions are required, and each guards a different way of getting this wrong:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// <c>ExecutionClass</c> (clause 4) - an unmarked job is untouched. A reporting or
+    /// classification job may legitimately answer from context with no tool call, and demoting
+    /// those would make the signal worthless within a day.
+    /// </description></item>
+    /// <item><description>
+    /// A <b>non-null</b> count - <c>null</c> means the action reported nothing (command, webhook,
+    /// or an interrupted turn that already has its own terminal outcome). Reading that silence as
+    /// zero would classify every shell job on the platform as a do-nothing run. Null is not zero.
+    /// </description></item>
+    /// </list>
+    /// </remarks>
+    private static string? DetectZeroToolCallOutcome(CronJob job, CronExecutionContext context)
+    {
+        if (!job.ExecutionClass)
+            return null;
+
+        if (context.ToolInvocationCount is not { } toolInvocationCount)
+            return null;
+
+        if (toolInvocationCount > 0)
+            return null;
+
+        return ZeroToolCallReason;
+    }
+
+    /// <summary>
+    /// Reason text recorded on a <see cref="CronRunStatus.NoToolCalls"/> run (#2985 clause 1: the
+    /// recorded reason must name the zero-tool-call condition). Held as a constant so the test
+    /// that pins the clause and the producer cannot drift apart.
+    /// </summary>
+    internal const string ZeroToolCallReason =
+        "Execution-class cron run completed with zero tool calls - the run performed no work.";
 
     /// <summary>
     /// Executes the action under its per-job timeout, discriminating a <i>timeout</i> from a
@@ -1261,6 +1344,7 @@ public sealed class CronScheduler(
                     DeleteAfterRun = configuredJob.DeleteAfterRun,
                     DeleteJobAfterRun = configuredJob.DeleteJobAfterRun,
                     ExpiresAt = ParseConfiguredExpiry(configuredJob.ExpiresAt, jobId),
+                    ExecutionClass = configuredJob.ExecutionClass,
                 FailureAlertsEnabled = configuredJob.FailureAlertsEnabled,
                 FailureAlertConversationId = string.IsNullOrWhiteSpace(configuredJob.FailureAlertConversationId)
                     ? null
@@ -1291,6 +1375,7 @@ public sealed class CronScheduler(
                 DeleteAfterRun = configuredJob.DeleteAfterRun,
                 DeleteJobAfterRun = configuredJob.DeleteJobAfterRun,
                 ExpiresAt = ParseConfiguredExpiry(configuredJob.ExpiresAt, jobId),
+                ExecutionClass = configuredJob.ExecutionClass,
                 FailureAlertsEnabled = configuredJob.FailureAlertsEnabled,
                 FailureAlertConversationId = string.IsNullOrWhiteSpace(configuredJob.FailureAlertConversationId)
                     ? null

@@ -92,6 +92,55 @@ public sealed class AgentPromptActionTests
             value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ForwardsTriggerReportedToolInvocationCount_ToTheExecutionContext()
+    {
+        // #2985: the scheduler's zero-tool rule can only fire if the count actually crosses the
+        // action seam. Without this forwarding the marker would be accepted, persisted, documented
+        // -- and completely inert, which is the most expensive way to ship a detection fix.
+        var action = new AgentPromptAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+
+        trigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
+        trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .Callback<AgentId, string, CancellationToken, InternalTriggerRequest?>((_, _, _, request) =>
+            {
+                // Stand in for the trigger writing back its turn's tool count.
+                if (request is not null)
+                    request.ToolInvocationCount = 0;
+            })
+            .ReturnsAsync(SessionId.From("cron:job-1:run-1"));
+        registry.Setup(value => value.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+
+        var context = CreateContext(BuildServices(trigger.Object, registry.Object));
+
+        await action.ExecuteAsync(context);
+
+        context.ToolInvocationCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTriggerReportsNoToolCount_LeavesContextCountNull()
+    {
+        // #2985: null must stay null across the seam. If the action defaulted an unreported count
+        // to zero, every command/webhook-shaped run would look like a do-nothing run.
+        var action = new AgentPromptAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+
+        trigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
+        trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .ReturnsAsync(SessionId.From("cron:job-1:run-1"));
+        registry.Setup(value => value.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+
+        var context = CreateContext(BuildServices(trigger.Object, registry.Object));
+
+        await action.ExecuteAsync(context);
+
+        context.ToolInvocationCount.ShouldBeNull();
+    }
+
     private static IServiceProvider BuildServices(IInternalTrigger trigger, IAgentRegistry? registry = null)
         => new ServiceCollection()
             .AddSingleton<IInternalTrigger>(trigger)

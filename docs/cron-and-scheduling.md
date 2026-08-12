@@ -200,6 +200,7 @@ and leaves no row in the store.
 | `metadata` | dict | `{}` | Free-form metadata carried with the job |
 | `deleteAfterRun` | bool | `false` | Opt-in cleanup for ephemeral jobs: when `true`, the scheduler deletes the run's agent session and its transcript after the run completes (across success / timeout / error / abort), provided the run produced a cron-scoped (`cron:`) session. Prevents run-scoped sessions from accumulating transcript entries indefinitely. Leave off for long-lived reporting jobs that intentionally persist context across runs — use compaction for those. Only ever deletes `cron:`-prefixed sessions, so a misconfigured flag cannot remove an unrelated long-lived session. |
 | `deleteJobAfterRun` | bool | `false` | Opt-in **job-level** one-shot disposition: when `true`, the scheduler deletes the **job itself** after its first terminal run - success, timeout, error, or host abort alike - from the same post-run teardown that already owns the run. Deliberately **not** `deleteAfterRun`, which removes the run's ephemeral *session* and leaves the job scheduled forever; the two compose. Use this instead of writing "delete this cron job after running" into the prompt: a prompt instruction has no enforcement and no retry if the turn ends early, this flag does. Off by default, and rows written before the column existed read `false`, so nothing is ever removed without an explicit opt-in. |
+| `executionClass` | bool | `false` | Marks the job as **execution-class**: its contract is to *perform work*, so a run that completes having made **zero tool calls** records `no_tool_calls` instead of `ok` (see [Zero-tool-call runs](#11b-zero-tool-call-runs-2985)). Off by default, and rows written before the column existed read `false`, so an unmarked job is completely unaffected and may legitimately finish with no tool call. Only meaningful for `agent-prompt` jobs -- `command` and `webhook` actions report no tool count at all and can never reach the outcome. |
 | `expiresAt` | string (ISO-8601) | `null` | Optional hard expiry instant. Once `now >= expiresAt` the job **stops executing**: the scheduler suppresses the fire and never invokes the action. Expiry **suppresses only** - it does not delete or disable the row, so the job stays visible with its history intact for a human to inspect and extend. Checked at both schedule time (cheap early-out) and fire time (the authoritative gate, so a past-due job or a manual run cannot leak through). `null` means no expiry - exactly today's behaviour. Pair with `deleteJobAfterRun` if removal is actually wanted. |
 
 ### 3.3 Complete Configuration Example
@@ -1039,6 +1040,80 @@ before the alert is attempted, and every exception out of the delivery sink is c
 at `Error` level.
 
 ---
+
+## 11b. Zero-Tool-Call Runs (#2985)
+
+A cron run that throws is visible and retried. A cron run that **completes having done nothing** was
+not: before #2985 a job of action type `agent-prompt` whose turn produced one text reply and made no
+tool calls recorded `status: ok`, `error: null` -- byte-identical to a healthy run.
+
+That is not hypothetical. On 2026-08-11 the autonomous-maintenance job had **four consecutive runs**
+of 9-11 seconds (healthy runs of the same job take 200-550s) that made zero tool calls, each recorded
+as a success, each emitting a detailed report of PR rebases and dispatches that never happened. The
+discrepancy was found days later only by hand-counting `session_history` rows. Because run status is
+the input to the [failure-alert path](#11a-failure-alerts-2557), alerting could not fire on it either.
+
+### The `executionClass` marker
+
+The rule cannot be applied to every `agent-prompt` job: a genuine **reporting or classification** job
+may legitimately answer from context without calling a tool, and demoting those would make the signal
+worthless. So the operator declares the job's class and the scheduler enforces it:
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `executionClass` | bool | `false` | When `true`, a run that completes with zero tool invocations is recorded as `no_tool_calls` rather than `ok`. |
+
+**Off by default.** A job without the marker behaves exactly as it did before, and rows written
+before the column existed read `false` -- an upgrade never retroactively reclassifies an existing
+job's runs as failing.
+
+```json
+{
+  "cron": {
+    "jobs": {
+      "autonomous-maintenance": {
+        "name": "Autonomous Issue & PR Maintenance",
+        "schedule": "0 * * * *",
+        "actionType": "agent-prompt",
+        "agentId": "farnsworth",
+        "message": "Perform the hourly maintenance pass.",
+        "executionClass": true,
+        "failureAlertsEnabled": true,
+        "failureAlertConversationId": "c_ops_alerts"
+      }
+    }
+  }
+}
+```
+
+The same flag is available on `POST /api/cron` and on the `cron` tool's `create` / `update` actions.
+On update, omitting `executionClass` leaves the stored classification alone, so an unrelated edit
+(rename, reschedule, enable/disable) can never silently un-mark an execution-class job.
+
+### The `no_tool_calls` outcome
+
+`no_tool_calls` is a **terminal, non-success** run status alongside `ok`, `error`, and `timed_out`:
+
+| Property | Behaviour |
+| --- | --- |
+| Run history | Written as a normal terminal row, with an `error` reason naming the zero-tool-call condition. Not `null`. |
+| `lastRunStatus` | Set on the job, so the portal's run-status badge distinguishes it without anyone reading `session_history`. |
+| Failure alerts | Participates in the existing `failureAlertConversationId` path with the same power-of-two backoff. There is deliberately **no** second notification channel. |
+| Streak counting | Counts toward the alert streak alongside `error`, so a job stuck in the do-nothing state does not alert on every single run. |
+| Retention | Purged by `PurgeRunsOlderThanAsync` like any other terminal status -- it is not immune to cleanup. |
+
+### When the rule does *not* fire
+
+Two conditions must both hold, and each guards a distinct way of getting this wrong:
+
+1. **The job is marked `executionClass`.** An unmarked job is untouched (a reporting job may
+   legitimately make no tool call).
+2. **The action actually reported a tool count.** `command` and `webhook` actions have no tool
+   concept and report nothing; an interrupted turn already carries its own terminal outcome. That
+   silence means *not applicable*, and is never read as "zero tools" -- otherwise every shell job on
+   the platform would be classified as a do-nothing run.
+
+A run that invokes one or more tools continues to record `ok` exactly as before.
 
 ## 12. Observability
 

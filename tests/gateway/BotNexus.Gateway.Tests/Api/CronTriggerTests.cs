@@ -923,6 +923,72 @@ public sealed class CronTriggerTests
     }
 
     /// <summary>
+    /// #2985: the trigger reports the turn's tool-invocation count back on the request so the cron
+    /// scheduler can apply the execution-class zero-tool rule. A text-only turn reports ZERO -
+    /// this is the exact shape of the four fabricated 2026-08-11 maintenance runs, each of which
+    /// produced one assistant reply, no tool rows, and a recorded status of ok.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_TextOnlyTurn_ReportsZeroToolInvocationCount()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse { Content = "a detailed report of work that never happened" });
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+        var request = new InternalTriggerRequest { CronJobId = JobId.From("job-zero"), JobName = "Zero" };
+
+        await trigger.CreateSessionAsync(AgentId.From("agent-a"), "do the maintenance work", request: request);
+
+        request.ToolInvocationCount.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// #2985: a turn that actually invoked tools reports its real count, so the scheduler keeps
+    /// recording ok for healthy runs (clause 3).
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_TurnWithTools_ReportsTheToolInvocationCount()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse
+            {
+                Content = "done",
+                ToolCalls =
+                [
+                    new AgentToolCallInfo("call-1", "shell", false, "{}", "ok"),
+                    new AgentToolCallInfo("call-2", "read", false, "{}", "ok")
+                ]
+            });
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+        var request = new InternalTriggerRequest { CronJobId = JobId.From("job-work"), JobName = "Work" };
+
+        await trigger.CreateSessionAsync(AgentId.From("agent-a"), "do the work", request: request);
+
+        request.ToolInvocationCount.ShouldBe(2);
+    }
+
+    /// <summary>
+    /// #2985: the count must be reported even on the #1722 no-op-turn branch, which returns EARLY
+    /// and skips persistence entirely. A turn that produced nothing at all is the most extreme
+    /// zero-tool run there is; reporting the count after the early return would have left exactly
+    /// that case silent.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_NoOpTurn_StillReportsZeroToolInvocationCount()
+    {
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse { Content = "NO_REPLY" });
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+        var request = new InternalTriggerRequest { CronJobId = JobId.From("job-noop"), JobName = "NoOp" };
+
+        await trigger.CreateSessionAsync(AgentId.From("agent-a"), "anything", request: request);
+
+        request.ToolInvocationCount.ShouldBe(0);
+    }
+
+    /// <summary>
     /// #2118: a NO_REPLY turn that executed a tool is not a no-op - the tool row must still be
     /// persisted (existing suppression guard preserved) in addition to the user/assistant rows.
     /// </summary>

@@ -79,6 +79,7 @@ public sealed class CronTool(
                 "enabled": { "type": "boolean", "description": "Whether the job is enabled." },
                 "deleteJobAfterRun": { "type": "boolean", "description": "One-shot lifecycle. When true, the SCHEDULER deletes this job itself after its first terminal run (success, timeout, error, or abort alike). Use this instead of writing 'delete this cron job after running' into the prompt - a prompt instruction has no enforcement and no retry if the turn ends early. Distinct from 'deleteAfterRun'; this removes the JOB. Default: false." },
                 "expiresAt": { "type": "string", "description": "Optional hard expiry instant (ISO-8601, e.g. '2026-12-31T00:00:00Z'). From that instant on the job stops executing: the scheduler suppresses the fire and never invokes the action. The job is NOT deleted or disabled, so it stays visible for a human to extend. Omit for no expiry (the default, identical to today's behaviour); pass an empty string on update to clear an existing expiry." },
+                "executionClass": { "type": "boolean", "description": "Marks this as an EXECUTION-class job: its contract is to perform work, so a run that finishes having made ZERO tool calls is recorded with status 'no_tool_calls' instead of 'ok' and drives the existing failure-alert path. Leave false for a reporting or classification job that may legitimately answer from context without calling a tool. Default: false." },
                 "deleteAfterRun": { "type": "boolean", "description": "Ephemeral run-SESSION cleanup. When true, the run's cron-scoped session and transcript are deleted after each run. This does NOT delete the job - for that use 'deleteJobAfterRun'. Default: false." },
                 "limit": { "type": "integer", "description": "Maximum number of history entries to return (for history action). Default: 20, max: 100." }
               },
@@ -121,6 +122,11 @@ public sealed class CronTool(
         // expiry" on update -- survives instead of being swallowed as blank.
         if (arguments.TryGetValue("deleteJobAfterRun", out var deleteJobAfterRun) && deleteJobAfterRun is not null)
             prepared["deleteJobAfterRun"] = ReadBool(deleteJobAfterRun, "deleteJobAfterRun");
+
+        // #2985: normalise executionClass through the same ReadBool coercion as the other boolean
+        // flags so a string "true" from a model-authored payload is not silently dropped.
+        if (arguments.TryGetValue("executionClass", out var executionClass) && executionClass is not null)
+            prepared["executionClass"] = ReadBool(executionClass, "executionClass");
 
         if (arguments.TryGetValue("deleteAfterRun", out var deleteAfterRun) && deleteAfterRun is not null)
             prepared["deleteAfterRun"] = ReadBool(deleteAfterRun, "deleteAfterRun");
@@ -220,6 +226,8 @@ public sealed class CronTool(
             // to a create today.
             DeleteJobAfterRun = arguments.TryGetValue("deleteJobAfterRun", out var djar) && djar is bool b1 && b1,
             DeleteAfterRun = arguments.TryGetValue("deleteAfterRun", out var dar) && dar is bool b2 && b2,
+            // #2985: off by default, so a create that omits it behaves exactly as before.
+            ExecutionClass = arguments.TryGetValue("executionClass", out var exc) && exc is bool b3 && b3,
             ExpiresAt = ParseExpiresAt(ReadString(arguments, "expiresAt")),
             TimeZone = timeZone,
             CreatedBy = _agentId.Value,
@@ -314,7 +322,12 @@ public sealed class CronTool(
                 : existing.DeleteAfterRun,
             ExpiresAt = arguments.ContainsKey("expiresAt")
                 ? ParseExpiresAt(ReadString(arguments, "expiresAt"))
-                : existing.ExpiresAt
+                : existing.ExpiresAt,
+            // #2985: omitted leaves the stored classification alone, matching the lifecycle-field
+            // rule above - an unrelated edit must never silently un-mark an execution-class job.
+            ExecutionClass = arguments.TryGetValue("executionClass", out var exc) && exc is bool b3
+                ? b3
+                : existing.ExecutionClass
         };
 
         // #2133: a tool definition update is a narrow write that never touches scheduler-owned

@@ -55,6 +55,13 @@ public sealed record ConfiguredCronJob
     /// exactly today's behaviour. An unparseable value degrades to no expiry with a warning.
     /// </summary>
     public string? ExpiresAt { get; init; }
+    /// <summary>
+    /// #2985: opt-in execution-class marker. Declares that the job's contract is to perform work,
+    /// so a run completing with zero tool invocations records <c>no_tool_calls</c> instead of
+    /// <c>ok</c>. Off by default - an unmarked job is completely unaffected.
+    /// </summary>
+    public bool ExecutionClass { get; init; }
+
     /// <summary>#2557: opt-in failure alerting. Off by default.</summary>
     public bool FailureAlertsEnabled { get; init; }
     /// <summary>#2557: conversation id that failure alerts for this job are delivered to.</summary>

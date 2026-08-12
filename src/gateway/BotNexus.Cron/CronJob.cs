@@ -150,4 +150,29 @@ public sealed record CronJob
     /// </para>
     /// </summary>
     public DateTimeOffset? ExpiresAt { get; init; }
+
+    /// <summary>
+    /// Opt-in <b>execution-class</b> marker (#2985). Declares that this job's contract is to
+    /// <i>perform work</i>, so a run of it that completes having made <b>zero tool invocations</b>
+    /// has by definition done nothing and must not be recorded as
+    /// <see cref="CronRunStatus.Ok"/>. Such a run terminates as
+    /// <see cref="CronRunStatus.NoToolCalls"/> and flows through the existing
+    /// <see cref="FailureAlertConversationId"/> path like any other non-success outcome - there is
+    /// deliberately no second notification channel.
+    ///
+    /// <para>
+    /// The marker exists because the rule cannot be applied blindly to every <c>agent-prompt</c>
+    /// job: a genuine reporting or classification job may legitimately answer from context with no
+    /// tool call at all, and flagging those would make the signal worthless. The operator declares
+    /// the class; the scheduler enforces it.
+    /// </para>
+    /// <para>
+    /// <b>Off by default.</b> Rows written before this column existed read as <c>false</c>, which
+    /// is byte-identical to today's behaviour: zero-tool runs of an unmarked job still record
+    /// <c>ok</c>. It is also inert for action types that report no tool count (<c>command</c>,
+    /// <c>webhook</c>) - see <c>CronExecutionContext.ToolInvocationCount</c>, where <c>null</c>
+    /// means "not reported" and is never read as zero.
+    /// </para>
+    /// </summary>
+    public bool ExecutionClass { get; init; }
 }

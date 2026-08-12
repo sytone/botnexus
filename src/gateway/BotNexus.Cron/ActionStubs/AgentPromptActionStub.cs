@@ -81,6 +81,13 @@ public sealed class AgentPromptAction : ICronAction
         // scheduler can persist it to the job record, eliminating the lookup on future runs.
         if (triggerRequest.ResolvedConversationId is { } resolvedConversationId)
             context.RecordConversationId(resolvedConversationId);
+
+        // #2985: forward the turn's tool-invocation count to the execution context so the
+        // scheduler can apply the execution-class zero-tool rule at the existing run-outcome
+        // seam. Only agent-prompt reports a count; command/webhook actions leave it null, which
+        // the scheduler reads as "not applicable" rather than as zero.
+        if (triggerRequest.ToolInvocationCount is { } toolInvocationCount)
+            context.RecordToolInvocationCount(toolInvocationCount);
     }
 
     private static bool IsInQuietHours(QuietHoursConfig config, string timezoneId)

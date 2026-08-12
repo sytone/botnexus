@@ -74,6 +74,14 @@ public sealed record CronJobCreateRequest
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }
 
     /// <summary>
+    /// Opt-in execution-class marker (#2985). Mirrors <see cref="CronJob.ExecutionClass"/>: when
+    /// true, a run of this job that completes with zero tool invocations records
+    /// <see cref="CronRunStatus.NoToolCalls"/> rather than <see cref="CronRunStatus.Ok"/>.
+    /// Defaults to false, so an existing client payload that omits it is unaffected.
+    /// </summary>
+    public bool ExecutionClass { get; init; }
+
+    /// <summary>
     /// Opt-in per-job failure alerting (#2557). Mirrors <see cref="CronJob.FailureAlertsEnabled"/>.
     /// </summary>
     public bool FailureAlertsEnabled { get; init; }
@@ -116,6 +124,7 @@ public sealed record CronJobCreateRequest
         CreatedBy = CreatedBy,
         CreatedAt = CreatedAt,
         NextRunAt = NextRunAt,
+        ExecutionClass = ExecutionClass,
         FailureAlertsEnabled = FailureAlertsEnabled,
         FailureAlertConversationId = string.IsNullOrWhiteSpace(FailureAlertConversationId)
             ? null

@@ -62,6 +62,20 @@ public sealed record InternalTriggerRequest
     public ConversationId? ResolvedConversationId { get; set; }
 
     /// <summary>
+    /// Written back by the trigger after the turn completes: the number of tool invocations the
+    /// turn performed (#2985). <c>null</c> means the trigger never reported one - e.g. the turn
+    /// was interrupted and re-surfaced as a cancellation, in which case the run has its own
+    /// terminal outcome already and the zero-tool rule must not second-guess it.
+    ///
+    /// <para>
+    /// Consumed by <c>AgentPromptAction</c>, which forwards it to
+    /// <c>CronExecutionContext.RecordToolInvocationCount</c> so the scheduler can apply the
+    /// execution-class zero-tool rule at the existing run-outcome seam.
+    /// </para>
+    /// </summary>
+    public int? ToolInvocationCount { get; set; }
+
+    /// <summary>
     /// Identifier (raw string from <see cref="BotNexus.Cron.CronJob.CreatedBy"/>) of the
     /// citizen who scheduled this trigger. Used by triggers that create a fresh conversation
     /// to record the proxy initiator — per directive G-5, a cron run is "a proxy message
