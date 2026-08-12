@@ -111,6 +111,9 @@ public static class ResponsesStreamParser
         var textStates = new Dictionary<string, (int ContentIndex, StringBuilder Text)>(StringComparer.Ordinal);
         var thinkingStates = new Dictionary<string, (int ContentIndex, StringBuilder Text)>(StringComparer.Ordinal);
         var toolStates = new Dictionary<string, ToolState>(StringComparer.Ordinal);
+        // Per-text-item delta counts, carried solely so the assembly-conformance diagnostic can
+        // report how many fragments produced a mismatched buffer (#2443).
+        var textDeltaCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
         AssistantMessage BuildPartial() => new(
             Content: contentBlocks.ToList(),
@@ -270,7 +273,10 @@ public static class ResponsesStreamParser
                     contentBlocks[state.ContentIndex] = new TextContent(state.Text.ToString());
                     stream.Push(new TextDeltaEvent(state.ContentIndex, delta, BuildPartial()));
                     if (itemId is not null)
+                    {
                         textStates[itemId] = state;
+                        textDeltaCounts[itemId] = textDeltaCounts.GetValueOrDefault(itemId) + 1;
+                    }
                     continue;
                 }
 
@@ -311,6 +317,38 @@ public static class ResponsesStreamParser
                     continue;
                 }
 
+                // The provider's own authoritative text for the block. Comparing it against what we
+                // accumulated is a free per-response checksum that we previously discarded (#2443):
+                // it is what turns a silent assembly defect into a named, self-reporting event
+                // instead of a multi-issue archaeology dig across transports.
+                if (evt.Event is "response.output_text.done")
+                {
+                    var itemId = GetString(root, "item_id");
+                    var finalText = GetString(root, "text");
+                    if (itemId is null || finalText is null || !textStates.TryGetValue(itemId, out var doneState))
+                        continue;
+
+                    var assembled = doneState.Text.ToString();
+                    var canonical = StreamAssemblyConformance.Reconcile(
+                        assembled,
+                        finalText,
+                        model.Provider,
+                        model.Id,
+                        api,
+                        "responses",
+                        textDeltaCounts.GetValueOrDefault(itemId),
+                        logger);
+
+                    if (!ReferenceEquals(canonical, assembled))
+                    {
+                        doneState.Text.Clear();
+                        doneState.Text.Append(canonical);
+                        contentBlocks[doneState.ContentIndex] = new TextContent(canonical);
+                        textStates[itemId] = doneState;
+                    }
+
+                    continue;
+                }
                 if (evt.Event is "response.output_item.done")
                 {
                     if (!root.TryGetProperty("item", out var item)) continue;
