@@ -25,7 +25,7 @@ public sealed class AgentsControllerTests
         var result = controller.List();
 
         var okResult = result.Result.ShouldBeOfType<OkObjectResult>();
-        var agents = okResult.Value.ShouldBeAssignableTo<IReadOnlyList<AgentDescriptor>>();
+        var agents = okResult.Value.ShouldBeAssignableTo<IReadOnlyList<AgentListItem>>();
         agents.ShouldNotBeNull();
         var registeredAgents = agents ?? throw new InvalidOperationException("Expected agent list.");
         registeredAgents.Count.ShouldBe(1);

@@ -83,7 +83,7 @@ public sealed class AgentsListProjectionTests
 
         // Sad path corollary: the secret value itself must be absent from the raw payload, not merely
         // absent under its own property name.
-        json.ShouldNotContain("SUPER-SECRET-SYSTEM-PROMPT");
+        json.ShouldNotContain(SecretSystemPrompt);
         json.ShouldNotContain("/etc/secrets");
     }
 
@@ -135,7 +135,8 @@ public sealed class AgentsListProjectionTests
 
         // SystemPrompt is a full-descriptor-ONLY property: it is explicitly excluded from the list
         // projection, so its presence here proves the detail endpoint was not narrowed alongside it.
-        descriptor.SystemPrompt.ShouldBe("SUPER-SECRET-SYSTEM-PROMPT");
+        descriptor.SystemPrompt.ShouldNotBeNull();
+        descriptor.SystemPrompt.ShouldStartWith(SecretSystemPrompt);
 
         var json = JsonSerializer.Serialize(descriptor, SerializerOptions);
         using var doc = JsonDocument.Parse(json);
@@ -208,6 +209,12 @@ public sealed class AgentsListProjectionTests
     }
 
     /// <summary>
+    /// Sentinel prefix of the fixture system prompt. Asserted absent from the list payload and
+    /// present on the per-agent payload, so the two AC1/AC2 clauses key off one value.
+    /// </summary>
+    private const string SecretSystemPrompt = "SUPER-SECRET-SYSTEM-PROMPT";
+
+    /// <summary>
     /// A descriptor populated with the properties issue #2755 identifies as the payload cost and the
     /// disclosure risk, so a missing projection is unmissable in both the field and the size assertions.
     /// </summary>
@@ -219,7 +226,7 @@ public sealed class AgentsListProjectionTests
         Description = "a description",
         ModelId = "test-model",
         ApiProvider = "test-provider",
-        SystemPrompt = "SUPER-SECRET-SYSTEM-PROMPT" + new string('p', 4_000),
+        SystemPrompt = SecretSystemPrompt + new string('p', 4_000),
         ToolIds = ["read", "write", "shell", "exec", "grep", "glob"],
         FileAccess = new FileAccessPolicy
         {
