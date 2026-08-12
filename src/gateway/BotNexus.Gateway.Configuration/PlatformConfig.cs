@@ -255,6 +255,10 @@ public sealed class GatewaySettingsConfig
     public RateLimitConfig? RateLimit { get; set; }
     /// <summary>Explicit SignalR hub transport limits (frame size, parallel invocations, stream buffer).</summary>
     public SignalRConfig? SignalR { get; set; }
+    /// <summary>Operator-supplied additional secret redaction patterns (#2727).</summary>
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 10)]
+    public SecretRedactionConfig? SecretRedaction { get; set; }
+
     /// <summary>Logging level override.</summary>
     [Display(
         Name = "Log level",
@@ -636,6 +640,44 @@ public sealed class SignalRConfig
     /// the mobile-tuned default so a misconfig cannot make the server hang up prematurely.
     /// </summary>
     public int? ClientTimeoutIntervalSeconds { get; set; }
+}
+
+/// <summary>
+/// Operator-supplied additional secret redaction patterns (#2727).
+/// </summary>
+/// <remarks>
+/// Patterns here are applied <b>in addition to</b> the platform's built-in credential regexes and can
+/// never replace or disable them, so a deployment can teach the redactor its own secret shapes
+/// (internal service tokens, customer identifiers, bespoke API key formats) without a code change.
+/// Every pattern is validated at startup: a malformed or all-matching pattern is a configuration
+/// error naming the offending entry, because silently disabling redaction is the one outcome worse
+/// than not supporting custom patterns at all.
+/// </remarks>
+public sealed class SecretRedactionConfig
+{
+    /// <summary>
+    /// Additional .NET regular expressions whose matches are replaced with <c>[REDACTED]</c>.
+    /// Applied after the built-in pattern set. Empty or absent means "built-ins only".
+    /// </summary>
+    [Display(
+        Name = "Additional redaction patterns",
+        Description = "Extra .NET regular expressions whose matches are replaced with [REDACTED]. Applied in addition to the built-in credential patterns, never instead of them.",
+        GroupName = "Gateway",
+        Order = 10)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 10)]
+    public List<string>? Patterns { get; set; }
+
+    /// <summary>
+    /// Per-pattern match timeout in milliseconds applied to operator patterns so a
+    /// catastrophic-backtracking expression cannot hang the logging path. Defaults to 100ms.
+    /// </summary>
+    [Display(
+        Name = "Redaction match timeout (ms)",
+        Description = "Per-pattern match timeout for operator redaction patterns. Defaults to 100ms.",
+        GroupName = "Gateway",
+        Order = 11)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "gateway", Order = 11)]
+    public int? MatchTimeoutMilliseconds { get; set; }
 }
 
 /// <summary>Cron scheduler configuration.</summary>

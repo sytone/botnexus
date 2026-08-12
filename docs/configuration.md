@@ -813,6 +813,8 @@ Gateway HTTP server settings.
 | `SignalR.MaximumReceiveMessageSizeBytes` | long | 10485760 (10 MB) | Maximum size of a single inbound SignalR hub frame. Non-positive values fall back to the default. |
 | `SignalR.MaximumParallelInvocationsPerClient` | int | 10 | Maximum hub method invocations a single connection may run in parallel. Non-positive values fall back to the default. |
 | `SignalR.StreamBufferCapacity` | int | 10 | Maximum items buffered for client upload streams before processing blocks. Non-positive values fall back to the default. |
+| `SecretRedaction.Patterns` | string[] | _(none)_ | Additional operator-supplied .NET regular expressions whose matches are replaced with `[REDACTED]`. Applied **in addition to** the built-in credential patterns — never instead of them. Validated at startup (issue #2727). |
+| `SecretRedaction.MatchTimeoutMilliseconds` | int | 100 | Per-pattern match timeout for operator patterns, so a catastrophic-backtracking expression cannot hang the logging path. Must be greater than zero. |
 | `EnableProviderRequestLogging` | bool | false | When true, every provider HTTP request and response is logged at **Debug** level for observability (issue #453). Auth headers (`x-api-key`, `Authorization`, `Proxy-Authorization`) are always redacted by name, and request/response bodies are additionally passed through the shared `SecretRedactor` so leaked keys/tokens are scrubbed. Non-streamed responses also log a best-effort token `usage` summary and elapsed ms. Streaming (`text/event-stream`) responses log status + headers + duration only — the body is never buffered, so streaming is never broken. Off by default; enable only for debugging unexpected provider responses (never at Info in production). |
 
 
@@ -1779,6 +1781,46 @@ Options:
   export BotNexus__providers__openai__apiKey=sk-...
   ```
 - **Secret management** (Azure Key Vault, HashiCorp Vault, etc.)
+
+#### Deployment-specific redaction patterns
+
+The gateway scrubs secret-shaped values from transcripts, logs, and cron external delivery using a
+built-in set of credential regexes (OpenAI, Anthropic, GitHub, GitLab, AWS, Google, Slack, Stripe,
+Telegram, `Authorization` headers, generic `api_key=`). Every deployment also has secret shapes the
+platform cannot know about — internal service tokens, deployment identifiers, bespoke API key
+formats. Declare those in `~/.botnexus/config.json`:
+
+```json
+{
+  "gateway": {
+    "secretRedaction": {
+      "patterns": [
+        "deployment-secret-[a-z-]+",
+        "cust-[0-9]{6}"
+      ],
+      "matchTimeoutMilliseconds": 100
+    }
+  }
+}
+```
+
+Behaviour and guarantees:
+
+- **Additive only.** Operator patterns are applied *after* the built-in set. Configuring them can
+  never disable, replace, or weaken a built-in pattern.
+- **Validated at startup, loudly.** A malformed regex, an empty entry, or a pattern that matches the
+  empty string (`.*`, `a?` — which would redact all text) is a configuration **error** that names the
+  offending pattern and its index. The gateway fails to start rather than running with redaction
+  silently degraded.
+- **Bounded.** Each operator pattern runs under `matchTimeoutMilliseconds` (default 100ms), so a
+  catastrophic-backtracking expression cannot hang the logging path. If a pattern does time out at
+  redaction time it is skipped for that string — the built-in patterns have already been applied —
+  rather than throwing and taking down the write.
+- **Duplicates are harmless.** Exact repeats are de-duplicated; a pattern duplicating a built-in
+  simply matches text that was already redacted.
+
+Write patterns that require at least one character and anchor where you can. Prefer
+`deployment-secret-[a-z-]+` over `deployment-secret.*`.
 
 ### 2. API Key Authentication
 
