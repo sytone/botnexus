@@ -218,4 +218,108 @@ public sealed class AutoReplayInterruptedTurnsTests
 
         orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Never);
     }
+
+    // ── #3046: restart-replay banner ───────────────────────────────────────
+
+    /// <summary>
+    /// #3046 clause 5. The replayed message alone is indistinguishable from the user simply repeating
+    /// themselves, so the gateway must append its own System entry - flagged IsReplayBanner so the
+    /// projector admits it on cold resume - naming the restart, refusing to assert the prior work's
+    /// completion state, requiring verification first, and carrying the original message.
+    /// </summary>
+    [Fact]
+    public async Task AutoReplay_AppendsReplayBanner_AsFlaggedSystemEntry()
+    {
+        var session = CreateSession("sess-7", "agent-g", withSentinel: true,
+            channelType: ChannelKey.From("signalr"), lastUserContent: "revert the token argument only");
+        var store = CreateStore(session);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = true, MaxAutoReplayAttempts = 2 };
+        var service = CreateService(store.Object, CreateRegistry("agent-g"), options, orchestrator.Object);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        var banner = session.History.SingleOrDefault(e => e.IsReplayBanner);
+        banner.ShouldNotBeNull("auto-replay must append exactly one gateway-authored restart banner");
+        banner.Role.ShouldBe(MessageRole.System,
+            "the banner is gateway-authored; attributing it to the user would forge provenance");
+
+        // The banner must actually reach the model, which is the entire point of the flag.
+        SessionContextProjector.IsVisibleOnResume(banner).ShouldBeTrue();
+
+        banner.Content.ShouldContain("PLATFORM RESTART");
+        banner.Content.Contains("unknown point", StringComparison.Ordinal).ShouldBeTrue(
+            "the banner must state the completion state is unknown rather than claiming the work failed");
+        banner.Content.Contains("verify", StringComparison.Ordinal).ShouldBeTrue(
+            "the banner must instruct verification before acting, or a side-effecting step can be re-run");
+        banner.Content.Contains("revert the token argument only", StringComparison.Ordinal).ShouldBeTrue(
+            "the banner must reproduce the original message that started the interrupted loop");
+        banner.Content.Contains("1 of 2", StringComparison.Ordinal).ShouldBeTrue(
+            "the banner must surface the replay attempt budget");
+    }
+
+    /// <summary>
+    /// #3046 clauses 6 and 7. The banner is additive: the user's own entry and the replayed payload
+    /// both stay byte-for-byte verbatim. Prefixing the banner onto either would produce a transcript in
+    /// which the user's turn contains words the user never wrote.
+    /// </summary>
+    [Fact]
+    public async Task AutoReplay_LeavesUserEntryAndReplayedContentVerbatim()
+    {
+        const string original = "revert the token argument only";
+        var session = CreateSession("sess-8", "agent-h", withSentinel: true,
+            channelType: ChannelKey.From("signalr"), lastUserContent: original);
+        var store = CreateStore(session);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = true, MaxAutoReplayAttempts = 2 };
+        var service = CreateService(store.Object, CreateRegistry("agent-h"), options, orchestrator.Object);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        var userEntry = session.History.Single(e => e.Role == MessageRole.User && !e.IsCrashSentinel);
+        userEntry.Content.ShouldBe(original, "the user's own entry must never be rewritten in place");
+        userEntry.IsReplayBanner.ShouldBeFalse();
+
+        orchestrator.Verify(o => o.Post(It.Is<InboundMessage>(m => m.Content == original)), Times.Once);
+    }
+
+    /// <summary>
+    /// #3046 clause 8. The notification-only path is unchanged: with the toggle off, no banner is
+    /// written at all, so a disabled feature leaves no trace in the transcript.
+    /// </summary>
+    [Fact]
+    public async Task AutoReplay_WhenDisabled_WritesNoBanner()
+    {
+        var session = CreateSession("sess-9", "agent-i", withSentinel: true,
+            channelType: ChannelKey.From("signalr"), lastUserContent: "hello");
+        var store = CreateStore(session);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = false };
+        var service = CreateService(store.Object, CreateRegistry("agent-i"), options, orchestrator.Object);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        session.History.ShouldNotContain(e => e.IsReplayBanner);
+        session.History.ShouldContain(e => e.Role == MessageRole.Notification);
+    }
+
+    /// <summary>
+    /// #3046: at the attempt ceiling there is no replay, so there must be no banner either - a banner
+    /// with no accompanying replay would tell the agent to continue work nothing is going to re-dispatch.
+    /// </summary>
+    [Fact]
+    public async Task AutoReplay_WhenMaxAttemptsReached_WritesNoBanner()
+    {
+        var session = CreateSession("sess-10", "agent-j", withSentinel: true,
+            channelType: ChannelKey.From("signalr"), lastUserContent: "retry this",
+            existingReplayCount: 2);
+        var store = CreateStore(session);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = true, MaxAutoReplayAttempts = 2 };
+        var service = CreateService(store.Object, CreateRegistry("agent-j"), options, orchestrator.Object);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        session.History.ShouldNotContain(e => e.IsReplayBanner);
+    }
 }

@@ -37,6 +37,37 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
 
     internal const string MetadataKeyReplayCount = "interruption_replay_count";
 
+    /// <summary>
+    /// Gateway-authored banner (#3046) prepended to the session as a <see cref="MessageRole.System"/>
+    /// entry flagged <see cref="SessionEntry.IsReplayBanner"/> immediately before an interrupted turn is
+    /// auto-replayed. <c>{0}</c> is the replay attempt number, <c>{1}</c> the configured maximum, and
+    /// <c>{2}</c> the original user message verbatim.
+    /// </summary>
+    /// <remarks>
+    /// The wording deliberately refuses to claim the prior work was incomplete. The gateway knows only
+    /// that the process died mid-turn, not how far the turn got; asserting "you did not finish" invites
+    /// the agent to redo steps that already applied, which for a side-effecting turn (a file mutation, a
+    /// revert, a push) is exactly the damage this banner exists to prevent. Stating the completion state
+    /// as UNKNOWN and requiring verification closes both the "already done" and the "do it twice" reading.
+    /// </remarks>
+    internal const string ReplayBannerTemplate =
+        "[PLATFORM RESTART - AUTOMATIC REPLAY {0} of {1}]\n" +
+        "The gateway restarted while your previous turn was still running, so that turn was cut off at an " +
+        "unknown point. Some of the work described above may have completed and some may not have. Do not " +
+        "assume either. Before taking any action - especially anything that writes, mutates, or is otherwise " +
+        "not safely repeatable - verify the current state directly with your tools, then continue from " +
+        "wherever you actually are.\n\n" +
+        "This is the original message that started the interrupted loop, repeated verbatim below:\n\n{2}";
+
+    /// <summary>Builds the restart-replay banner for a given attempt and original message.</summary>
+    internal static string BuildReplayBanner(string originalContent, int attempt, int maxAttempts)
+        => string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            ReplayBannerTemplate,
+            attempt,
+            maxAttempts,
+            originalContent);
+
     private readonly ISessionStore _sessions;
     private readonly IAgentRegistry _agentRegistry;
     private readonly IActivityBroadcaster _broadcaster;
@@ -247,6 +278,19 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
 
         // Increment the replay counter in metadata.
         session.Metadata[MetadataKeyReplayCount] = replayCount + 1;
+
+        // #3046: append the gateway-authored banner as its OWN System entry, flagged so
+        // SessionContextProjector.IsVisibleOnResume admits it to the LLM view. The user's original
+        // entry is left untouched and the replayed Content below stays byte-for-byte verbatim - the
+        // agent must be able to tell what the platform said from what the user said, since misread
+        // provenance is the defect being fixed.
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.System,
+            Content = BuildReplayBanner(lastUser.Content, replayCount + 1, _options.MaxAutoReplayAttempts),
+            Timestamp = DateTimeOffset.UtcNow,
+            IsReplayBanner = true
+        });
 
         var channelType = session.ChannelType ?? ChannelKey.From("internal");
         var callerId = session.CallerId ?? session.SessionId.Value;

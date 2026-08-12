@@ -26,7 +26,9 @@ public static class SessionContextProjector
     /// <item><see cref="SessionEntry.IsCrashSentinel"/> = true (recovery placeholder).</item>
     /// <item>Raw <see cref="MessageRole.System"/> entries (the agent's system prompt is
     /// rebuilt separately by <c>SystemPromptBuilder</c>); compaction-summary system
-    /// entries are kept because they carry the folded context.</item>
+    /// entries are kept because they carry the folded context, and #3046 restart-replay
+    /// banners are kept because they carry the only signal telling the agent its prior
+    /// work was interrupted at an unknown point.</item>
     /// <item><see cref="MessageRole.Tool"/> entries. On cold-start resume, the
     /// Assistant <see cref="SessionEntry"/> only persists the response text and not
     /// the structured <c>tool_use</c> blocks, so the following Tool entry would
@@ -43,7 +45,7 @@ public static class SessionContextProjector
 
         return entry.Role.Equals(MessageRole.User)
             || entry.Role.Equals(MessageRole.Assistant)
-            || (entry.Role.Equals(MessageRole.System) && entry.IsCompactionSummary);
+            || (entry.Role.Equals(MessageRole.System) && (entry.IsCompactionSummary || entry.IsReplayBanner));
     }
 
     /// <summary>

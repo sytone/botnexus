@@ -1004,6 +1004,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
                     tool_name TEXT,
                     tool_call_id TEXT,
                     is_compaction_summary INTEGER NOT NULL DEFAULT 0,
+                    is_replay_banner INTEGER NOT NULL DEFAULT 0,
                     is_crash_sentinel INTEGER NOT NULL DEFAULT 0,
                     is_history INTEGER NOT NULL DEFAULT 0,
                     trigger_type TEXT,
@@ -1229,6 +1230,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
                      ("tool_name", "TEXT"),
                      ("tool_call_id", "TEXT"),
                      ("is_compaction_summary", "INTEGER NOT NULL DEFAULT 0"),
+                     // #3046: marks a gateway-authored restart-replay banner so the projector can
+                     // admit it to the LLM view on cold resume. Idempotent ALTER so pre-#3046 DBs
+                     // gain the column on first open; existing rows read back as false.
+                     ("is_replay_banner", "INTEGER NOT NULL DEFAULT 0"),
                      ("tool_args", "TEXT"),
                      ("tool_is_error", "INTEGER NOT NULL DEFAULT 0"),
                      ("is_crash_sentinel", "INTEGER NOT NULL DEFAULT 0"),
@@ -1666,7 +1671,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id
+            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -1804,8 +1809,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
         await using var insertCommand = connection.CreateCommand();
         insertCommand.Transaction = transaction;
         insertCommand.CommandText = """
-            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id)
-            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind, $senderId)
+            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner)
+            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind, $senderId, $isReplayBanner)
             """;
         insertCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
         var pRole = insertCommand.Parameters.AddWithValue("$role", string.Empty);
@@ -1826,6 +1831,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
         // #2840: NULL when the producer supplied no attribution, which is every pre-#2840 row and
         // every ordinary channel turn.
         var pSenderId = insertCommand.Parameters.AddWithValue("$senderId", DBNull.Value);
+        // #3046: gateway-authored restart-replay banner marker; 0 for every ordinary entry.
+        var pIsReplayBanner = insertCommand.Parameters.AddWithValue("$isReplayBanner", 0);
 
         foreach (var entry in entries)
         {
@@ -1846,6 +1853,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 ? kind.Value
                 : (object)DBNull.Value;
             pSenderId.Value = (object?)entry.SenderId ?? DBNull.Value;
+            pIsReplayBanner.Value = entry.IsReplayBanner ? 1 : 0;
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
     }

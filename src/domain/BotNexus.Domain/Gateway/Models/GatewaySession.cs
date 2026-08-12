@@ -367,6 +367,24 @@ public sealed record SessionEntry
     public bool IsCompactionSummary { get; init; }
 
     /// <summary>
+    /// True if this entry is a gateway-authored banner explaining that the turn was interrupted by an
+    /// unclean restart and is being auto-replayed (#3046). Like <see cref="IsCompactionSummary"/>, this
+    /// marks a <see cref="MessageRole.System"/> entry that MUST survive into the LLM view on cold resume
+    /// even though raw system entries are otherwise dropped there (the agent's system prompt is rebuilt
+    /// separately by <c>SystemPromptBuilder</c>).
+    /// </summary>
+    /// <remarks>
+    /// This exists as its own flag rather than reusing an existing role because the two honest choices
+    /// were both worse: prefixing the banner onto the replayed user message produces a transcript in
+    /// which the user's turn contains words the user never wrote, and emitting it as a
+    /// <see cref="MessageRole.User"/> entry fabricates a user turn outright. The whole defect being
+    /// fixed is the agent misreading provenance after a restart, so the fix must not forge provenance
+    /// to achieve it. <see cref="MessageRole.Notification"/> cannot carry it either - that role is
+    /// deliberately never forwarded to the LLM.
+    /// </remarks>
+    public bool IsReplayBanner { get; init; }
+
+    /// <summary>
     /// True if this entry is a crash sentinel written before an agent turn begins.
     /// A sentinel that survives a gateway restart indicates the previous run was interrupted.
     /// Sentinels are removed on clean turn completion and must not be forwarded to the LLM.

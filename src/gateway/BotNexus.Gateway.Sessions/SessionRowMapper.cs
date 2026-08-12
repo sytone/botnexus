@@ -106,6 +106,8 @@ internal static class SessionRowMapper
             ToolName = GetNullableString(reader, "tool_name"),
             ToolCallId = GetNullableString(reader, "tool_call_id"),
             IsCompactionSummary = GetBool(reader, "is_compaction_summary"),
+            // #3046: gateway-authored restart-replay banner. False for every pre-#3046 row.
+            IsReplayBanner = GetBool(reader, "is_replay_banner"),
             ToolArgs = GetNullableString(reader, "tool_args"),
             ToolIsError = GetBool(reader, "tool_is_error"),
             IsCrashSentinel = GetBool(reader, "is_crash_sentinel"),
