@@ -100,9 +100,10 @@ public sealed class DefaultConversationRouterDefaultConversationTests
         var agentId = Agent();
 
         var first = await router.ResolveInboundAsync(agentId, Channel(), ChannelAddress.From("chat-1"));
-        var existing = await store.GetAsync(first.Conversation.ConversationId);
-        existing!.Status = ConversationStatus.Archived;
-        await store.SaveAsync(existing);
+        // Archive through the store's own archive path: SaveAsync refuses to persist an archived
+        // conversation that still has an active session assigned, so hand-rolling the status flip
+        // would test an invalid state rather than a real archived default.
+        await store.ArchiveAsync(first.Conversation.ConversationId);
 
         var second = await router.ResolveInboundAsync(agentId, Channel(), ChannelAddress.From("chat-2"));
 
