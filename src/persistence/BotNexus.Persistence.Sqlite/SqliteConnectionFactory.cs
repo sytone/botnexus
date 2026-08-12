@@ -60,10 +60,17 @@ public static class SqliteConnectionFactory
     /// rather than against the kind derived from the file name (#2833). Use this when the store's
     /// file name does not name its kind.
     /// </summary>
+    /// <remarks>
+    /// Deliberately <b>not</b> an overload of <see cref="Create(string, int)"/>. Extensions resolve
+    /// this type across load contexts and bind <c>Create</c> by reflection; #2481 was diagnosed from
+    /// a <c>MissingMethodException: SqliteConnectionFactory.Create(String, Int32)</c>, and a
+    /// name-only <c>GetMethod("Create", ...)</c> lookup throws <c>AmbiguousMatchException</c> the
+    /// moment a second <c>Create</c> exists. A distinct name keeps that binding surface single-valued.
+    /// </remarks>
     /// <param name="connectionString">The SQLite connection string.</param>
     /// <param name="storeKind">The kind the caller believes it is opening (<c>cron</c>, <c>sessions</c>, ...).</param>
     /// <param name="busyTimeoutMs">The <c>busy_timeout</c> to apply on open, in milliseconds.</param>
-    public static SqliteConnection Create(
+    public static SqliteConnection CreateForStoreKind(
         string connectionString,
         string storeKind,
         int busyTimeoutMs = DefaultBusyTimeoutMs)

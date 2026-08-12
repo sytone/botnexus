@@ -112,7 +112,7 @@ public sealed class SqliteStoreIdentityGuardTests : IDisposable
 
         SqliteStoreIdentityGuard.Configure(new SqliteStoreIdentity(WorldA, _directory));
 
-        using var connection = SqliteConnectionFactory.Create(ConnectionString(path), storeKind: "cron");
+        using var connection = SqliteConnectionFactory.CreateForStoreKind(ConnectionString(path), storeKind: "cron");
         var ex = Assert.Throws<SqliteStoreIdentityMismatchException>(() => connection.Open());
 
         Assert.Contains("sessions", ex.Message, StringComparison.OrdinalIgnoreCase);
