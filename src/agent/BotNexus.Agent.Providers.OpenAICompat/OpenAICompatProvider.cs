@@ -351,11 +351,12 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         var parts = new List<object>();
         if (user.Content.Blocks is not null)
         {
+            var droppedImageCount = user.Content.Blocks.Count(b => b is ImageContent);
             if (!supportsImages)
             {
                 ImageModalityGuard.ReportDropped(
                     model,
-                    user.Content.Blocks.Count(b => b is ImageContent),
+                    droppedImageCount,
                     "openai-compat.user");
             }
 
@@ -382,6 +383,15 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                         // Server doesn't declare the image modality — dropped, reported above (#2485).
                         break;
                 }
+            }
+
+            // #2485 AC4: substitute an in-band notice for the removed images so the drop reaches
+            // the user through the conversation, not only an operator reading the log.
+            if (!supportsImages)
+            {
+                var notice = ImageModalityGuard.BuildDropNotice(model, droppedImageCount);
+                if (notice is not null)
+                    parts.Add(new Dictionary<string, object?> { ["type"] = "text", ["text"] = notice });
             }
         }
 

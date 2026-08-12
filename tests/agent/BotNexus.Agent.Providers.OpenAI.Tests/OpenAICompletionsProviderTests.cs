@@ -108,7 +108,7 @@ public class OpenAICompletionsProviderTests
     }
 
     [Fact]
-    public void ConvertMessages_NonVisionModel_FiltersImageOnlyUserMessage()
+    public void ConvertMessages_NonVisionModel_FiltersImageOnlyUserMessageButExplainsTheDrop()
     {
         // #1540: converter unified into the public CompletionsMessageConverter in Providers.Core.
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -131,7 +131,15 @@ public class OpenAICompletionsProviderTests
             null, model, new Message[] { userWithOnlyImage }, new OpenAICompletionsCompat());
 
         converted.ShouldNotBeNull();
-        converted.ShouldBeEmpty();
+        // #2485 AC4: the image is still filtered (the model cannot receive it), but the message no
+        // longer vanishes without trace - it now carries the user-visible explanation instead of
+        // being dropped whole, which is precisely the silence this issue exists to remove.
+        converted.Count.ShouldBe(1);
+        var content = converted[0]!["content"]!.AsArray();
+        content.Count.ShouldBe(1);
+        content[0]!["type"]!.GetValue<string>().ShouldBe("text");
+        content[0]!["text"]!.GetValue<string>().ShouldContain("were not delivered");
+        content.Select(n => n!["type"]!.GetValue<string>()).ShouldNotContain("image_url");
     }
 
     [Fact]
