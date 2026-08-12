@@ -53,6 +53,15 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly ISessionStore _sessions;
     private readonly IActivityBroadcaster _activity;
     private readonly IConversationRouter _conversationRouter;
+
+    /// <summary>
+    /// Upper bound on the best-effort binding-mute sweep performed during
+    /// <see cref="OnDisconnectedAsync"/> (#3039). The sweep scans every conversation for every
+    /// agent, so it is given its own budget rather than the connection's already-cancelled abort
+    /// token; a slow or wedged store degrades to the existing fan-out self-healing path instead of
+    /// stalling hub teardown.
+    /// </summary>
+    private static readonly TimeSpan MuteBindingsOnDisconnectTimeout = TimeSpan.FromSeconds(10);
     private readonly IConversationStore? _conversationStore;
     private readonly IAskUserPromptResolver? _askUserPromptResolver;
     private readonly IAskUserCheckpointService? _askUserCheckpointService;
@@ -958,6 +967,14 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // Best-effort: mute any Interactive/NotifyOnly bindings keyed to this connection ID.
         // If the store lookup fails, fan-out self-healing via StaleChannelConnectionException
         // will catch remaining deliveries on the next send attempt.
+        //
+        // #3039: this cleanup must NOT observe Context.ConnectionAborted. ASP.NET Core signals that
+        // token *before* invoking OnDisconnectedAsync, so passing it here hands the handler the very
+        // token whose cancellation triggered it -- the conversation scan then reliably throws
+        // TaskCanceledException and the binding is never muted. Use an independent, bounded token:
+        // the scan walks every conversation for every agent, so a pathological store must not be
+        // able to stall hub teardown either.
+        using var muteCts = new CancellationTokenSource(MuteBindingsOnDisconnectTimeout);
         try
         {
             await _conversationRouter.MuteBindingByAddressAsync(
@@ -965,7 +982,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 agentId: null,
                 ChannelKey.From("signalr"),
                 ChannelAddress.From(Context.ConnectionId),
-                Context.ConnectionAborted);
+                muteCts.Token);
         }
         catch (Exception ex)
         {
