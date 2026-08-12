@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Memory;
+using BotNexus.Memory.Embeddings;
 using BotNexus.Memory.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -118,6 +119,9 @@ public sealed class SessionsControllerMemoryDeleteTests
             => Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
         public Task<IReadOnlyList<MemoryEntry>> SearchAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
+        // Required (not default-implemented) on IMemoryStore by design - see the remarks there.
+        public Task<IReadOnlyList<ScoredMemoryEntry>> SearchScoredAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<ScoredMemoryEntry>>([]);
         public Task DeleteAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
         public Task ClearAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task<MemoryStoreStats> GetStatsAsync(CancellationToken ct = default)
