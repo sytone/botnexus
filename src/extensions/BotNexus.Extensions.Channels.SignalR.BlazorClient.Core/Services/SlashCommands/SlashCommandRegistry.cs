@@ -9,10 +9,23 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashComman
 /// Per Jon's confirmed direction (2026-06-24) the registry exposes the full command surface,
 /// not just the four original quick actions. Commands that the gateway command pipeline owns
 /// (<c>/help</c>, <c>/status</c>, <c>/agents</c>, <c>/context</c>, <c>/model</c>,
-/// <c>/reasoning</c>, <c>/prompts</c>) are dispatched by sending the command text to the agent
-/// via <see cref="IAgentInteractionService.SendMessageAsync"/>; client-side actions
-/// (<c>/new</c>, <c>/compact</c>, <c>/clear</c>) call the dedicated interaction methods directly,
-/// preserving the exact desktop behaviour.
+/// <c>/reasoning</c>) are classified <see cref="SlashCommandKind.GatewayCommand"/> and dispatched
+/// through <c>POST /api/commands/execute</c>, so the gateway's own <c>CommandResult</c> is
+/// rendered and no model turn is consumed; client-side actions (<c>/new</c>, <c>/compact</c>,
+/// <c>/clear</c>) call the dedicated interaction methods directly, preserving the exact desktop
+/// behaviour.
+/// <para>
+/// #2873: these gateway-owned commands were previously classified
+/// <see cref="SlashCommandKind.SendToAgent"/>, which delivered the literal command text to the
+/// model as a user message. The command pipeline was never invoked from chat, so every gateway
+/// command silently degraded into an improvised, non-authoritative model reply. Classifying a
+/// gateway-owned command as <c>SendToAgent</c> reintroduces that defect.
+/// </para>
+/// <para>
+/// <c>/prompts</c> is deliberately NOT a gateway command: no <c>ICommandContributor</c> declares a
+/// <c>/prompts</c> descriptor, so the pipeline would reject it as unknown. It remains
+/// <see cref="SlashCommandKind.SendToAgent"/> until a contributor owns it.
+/// </para>
 /// </remarks>
 public static class SlashCommandRegistry
 {
@@ -28,13 +41,13 @@ public static class SlashCommandRegistry
         new("/clear", "Clear local messages", SlashCommandKind.ClearLocalMessages),
         new("/prompts", "Browse reusable prompt templates", SlashCommandKind.SendToAgent),
 
-        // ── Remaining gateway command surface (handled by the gateway pipeline) ──
-        new("/help", "List all available commands", SlashCommandKind.SendToAgent),
-        new("/status", "Show gateway health and runtime status", SlashCommandKind.SendToAgent),
-        new("/agents", "List registered agents and their models", SlashCommandKind.SendToAgent),
-        new("/context", "Show context window usage for the current session", SlashCommandKind.SendToAgent),
-        new("/model", "Show, set, or clear the per-conversation model override", SlashCommandKind.SendToAgent),
-        new("/reasoning", "Show, set, or clear the per-conversation thinking override", SlashCommandKind.SendToAgent)
+        // ── Remaining gateway command surface (dispatched to the gateway command pipeline) ──
+        new("/help", "List all available commands", SlashCommandKind.GatewayCommand),
+        new("/status", "Show gateway health and runtime status", SlashCommandKind.GatewayCommand),
+        new("/agents", "List registered agents and their models", SlashCommandKind.GatewayCommand),
+        new("/context", "Show context window usage for the current session", SlashCommandKind.GatewayCommand),
+        new("/model", "Show, set, or clear the per-conversation model override", SlashCommandKind.GatewayCommand),
+        new("/reasoning", "Show, set, or clear the per-conversation thinking override", SlashCommandKind.GatewayCommand)
     ];
 
     /// <summary>

@@ -11,8 +11,8 @@ public interface ISlashCommandDispatcher
     /// Executes <paramref name="command"/> for the given <paramref name="agentId"/> by invoking the
     /// corresponding interaction-service method. Behaviour is a verbatim lift of the original desktop
     /// switch: <c>/new</c> resets the session, <c>/compact</c> compacts, <c>/clear</c> clears local
-    /// messages, and every other command is sent to the agent as its command text so the gateway
-    /// command pipeline handles it.
+    /// messages, gateway-owned commands execute through the gateway command pipeline (#2873), and
+    /// <see cref="SlashCommandKind.SendToAgent"/> commands are sent to the agent as message text.
     /// <para>
     /// When <see cref="SlashCommand.RequiresApproval"/> is set the dispatcher first consults the
     /// injected <see cref="ISlashCommandApprovalHook"/> (issue #1950); if the hook denies the command
@@ -62,6 +62,7 @@ public sealed class SlashCommandDispatcher(
         SlashCommandKind.CompactSession => _interaction.CompactSessionAsync(agentId),
         SlashCommandKind.ClearLocalMessages => ClearLocal(agentId),
         SlashCommandKind.SendToAgent => _interaction.SendMessageAsync(agentId, command.Name),
+        SlashCommandKind.GatewayCommand => _interaction.ExecuteGatewayCommandAsync(agentId, command.Name),
         _ => Task.CompletedTask
     };
 
