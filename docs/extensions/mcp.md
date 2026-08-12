@@ -71,9 +71,9 @@ Configure MCP servers in your agent's extension config:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `url` | string | — | URL for the MCP server endpoint. |
+| `url` | string | — | URL for the MCP server endpoint. Must be `https` when the server carries credentials (see [Auth Injection](#auth-injection)); loopback `http` is exempt. |
 | `headers` | object | — | Additional HTTP headers for requests. |
-| `auth` | string | — | BotNexus provider key for automatic Bearer token injection. |
+| `auth` | string | — | BotNexus provider key for automatic Bearer token injection. Requires an `https` (or loopback) `url`. |
 | `initTimeoutMs` | integer | 30000 | Timeout for server initialization. |
 | `callTimeoutMs` | integer | 60000 | Timeout for tool calls. |
 
@@ -97,8 +97,37 @@ For HTTP/SSE servers, set the `auth` field to a BotNexus provider key. At sessio
 
 An explicit `Authorization` header in the `headers` config takes precedence over `auth`.
 
+### TLS requirement for credentialed servers
+
+A resolved provider API key is a full BotNexus provider credential, not a scoped token, so it must
+only ever leave the process over TLS. When a server carries credentials — either `auth` is set or
+`headers` contains an `Authorization` entry — its `url` **must** use `https`. The one exception is
+loopback (`http://localhost`, `http://127.0.0.1`, `http://[::1]`), which stays permitted as a
+deliberate developer affordance for local MCP servers that have no certificate.
+
+A credentialed server configured with a plaintext non-loopback `url` is **skipped**: it contributes
+no tools, the credential is never resolved for it, and a warning naming the server id is logged:
+
+```
+MCP server 'remote-api' has auth=my-provider-key configured but its url is not usable for
+credentials: url scheme 'http' would transmit credentials in cleartext to non-loopback host
+'mcp.example.com'; https is required. Skipping server.
+```
+
+Servers with **no** credentials are unaffected — a plaintext `url` without `auth` or an
+`Authorization` header continues to work as before.
+
+BotNexus also disables HTTP auto-redirect on the HTTP/SSE transport's own client. Following a
+redirect would replay the `Authorization` header to whatever host the server nominated, so a
+redirect is surfaced to the caller instead of followed.
+
 ## Security Considerations
 
+- **Credentialed servers require `https`**: an `auth` or `Authorization` server on a plaintext
+  non-loopback `url` is refused rather than leaking a provider API key in cleartext. See
+  [TLS requirement for credentialed servers](#tls-requirement-for-credentialed-servers).
+- **No auto-redirect**: the transport does not follow HTTP redirects, so a configured bearer token
+  cannot be replayed to a different host.
 - **`inheritEnv: true` (default)**: The MCP subprocess inherits all parent environment variables, which may include secrets not intended for the server. Set to `false` for production servers.
 - **Tool prefixing**: When multiple servers expose tools with the same name, prefixing prevents collisions and makes tool provenance clear.
 - **Timeouts**: Configure `initTimeoutMs` and `callTimeoutMs` to prevent hung servers from blocking agent sessions.
