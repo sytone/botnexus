@@ -80,6 +80,36 @@ public sealed class PlatformConfig : IValidatableObject
     public WorkspacePortalConfig? Workspace { get; set; }
 
     /// <summary>
+    /// Feature flags, keyed by the names declared in <see cref="FeatureFlags"/> (#2767).
+    /// </summary>
+    /// <remarks>
+    /// <para>Modelled here so <c>botnexus config get/set FeatureManagement.&lt;Flag&gt;</c> can address
+    /// flags at all. Previously the section existed only in the raw document, so the CLI rejected
+    /// every path under it and the only ways to change a flag were hand-editing config.json or
+    /// <c>doctor config</c>'s bespoke raw-JSON write - an unmodelled write path of exactly the kind
+    /// that produced the dead <c>compaction</c> block in #2764.</para>
+    /// <para><b>The property name is load-bearing and must not be camelCased.</b> Every other
+    /// property here is written through <c>JsonNamingPolicy.CamelCase</c>, but
+    /// Microsoft.FeatureManagement binds the PascalCase <c>FeatureManagement</c> section, so the
+    /// explicit <see cref="JsonPropertyNameAttribute"/> is what stops a write from silently
+    /// renaming the section to <c>featureManagement</c> and unbinding every flag while leaving the
+    /// file looking correct.</para>
+    /// <para>Values are <see cref="JsonElement"/> rather than <see cref="bool"/> because
+    /// Microsoft.FeatureManagement accepts either a bool literal or an object carrying an
+    /// <c>EnabledFor</c> filter list. A bool-typed dictionary could not represent the filter form,
+    /// so a typed round trip would destroy it - the same data-loss shape #2816 fixed for channel
+    /// settings.</para>
+    /// </remarks>
+    [JsonPropertyName(FeatureFlags.SectionName)]
+    [Display(
+        Name = "Feature flags",
+        Description = "Feature flags keyed by name. Each declared flag should carry an explicit true/false; run 'botnexus doctor config' to report any that are absent.",
+        GroupName = "General",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "general", Order = 3)]
+    public Dictionary<string, JsonElement>? FeatureManagement { get; set; }
+
+    /// <summary>
     /// World-level agent defaults. Populated at load time from the <c>agents.defaults</c> reserved key.
     /// Not directly serialized — extracted separately from the agents dictionary.
     /// </summary>

@@ -278,6 +278,52 @@ concurrently.
 
 ---
 
+### Feature flags (`FeatureManagement`)
+
+Feature flags live in the `FeatureManagement` section of `config.json` and bind through
+`Microsoft.FeatureManagement`. Note the section name is **PascalCase**, unlike the rest of the
+file - that is the section name the binder reads.
+
+Every flag the platform declares is listed in one place in source (`FeatureFlags.All`), which is
+what lets the tooling tell an unrecognised flag from a real one. The current inventory:
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `GatewayDevOriginEnforcement` | off | Enforces the browser `Origin` header on keyless (dev-mode) requests, protecting the auto-granted `gateway-dev` admin identity from DNS-rebind and CSRF. See [Dev-Mode Origin Guard](./features/dev-origin-guard.md). |
+
+#### Reading and writing flags
+
+```bash
+botnexus config get FeatureManagement.GatewayDevOriginEnforcement
+botnexus config set FeatureManagement.GatewayDevOriginEnforcement true
+```
+
+#### Absence is an unstated decision, not a setting
+
+A flag missing from `config.json` is not distinguishable, by reading the file, from one that was
+deliberately turned off - both evaluate identically at runtime. `botnexus doctor config` therefore
+reports every declared flag that is absent and can seed it with its documented default:
+
+```bash
+botnexus doctor config          # report absent flags
+botnexus doctor config --yes    # seed them explicitly
+```
+
+Seeding is behaviour-preserving: the value written is the default that was already being applied
+implicitly. An existing value - including a deliberate `false`, and including the richer
+`EnabledFor` filter form - is never overwritten.
+
+`doctor config` also reports any key under `FeatureManagement` that matches no declared flag. This
+is usually a typo: a misspelled `GatewayDevOriginEnforcment` evaluates as *absent*, so the feature
+silently stays at its default while the setting appears to have been applied. Such keys are
+reported but never removed automatically, since one may belong to an extension.
+
+When a declared flag is absent at evaluation time, the gateway logs a warning once at startup
+naming the flag and the default applied, so the effective state is observable without reading
+source.
+
+---
+
 ### Configuration store (shadow migration)
 
 A SQLite-backed configuration store is being introduced alongside `config.json` (issues #2646, #2766).
