@@ -243,7 +243,7 @@ public sealed class GatewaySettingsConfig
     /// <summary>Gateway HTTP listen URL.</summary>
     [Display(
         Name = "Listen URL",
-        Description = "HTTP(S) URL the gateway binds to (for example http://localhost:5005). Supports Kestrel wildcards such as http://+:5000.",
+        Description = "HTTP(S) URL the gateway binds to (for example " + GatewayDefaults.LoopbackListenUrl + "). Supports Kestrel wildcards such as http://+:5000.",
         GroupName = "Gateway",
         Order = 0)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 0)]

@@ -309,7 +309,7 @@ public static class PlatformConfigValidator
             }
             else if (!Uri.TryCreate(listenUrl, UriKind.Absolute, out var listenUri))
             {
-                errors.Add("gateway.listenUrl must be a valid absolute URL (example: http://localhost:5005).");
+                errors.Add($"gateway.listenUrl must be a valid absolute URL (example: {GatewayDefaults.LoopbackListenUrl}).");
             }
             else if (!(listenUri.Scheme == Uri.UriSchemeHttp || listenUri.Scheme == Uri.UriSchemeHttps))
             {

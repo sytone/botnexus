@@ -147,10 +147,13 @@ Edit `~/.botnexus/config.json`:
 ```json
 {
   "gateway": {
-    "listenUrl": "http://localhost:5006"
+    "listenUrl": "http://localhost:5015"
   }
 }
 ```
+
+Any free port works; `5015` is an arbitrary example. Avoid `5006`, which the
+developer-run gateway probed by `LiveGatewayFixture` uses.
 
 **Option 2: Kill the process using the port**
 
@@ -529,7 +532,7 @@ The entry carries the message, stack (where available), URL, and user-agent. You
 can also retrieve recent channel/render errors through the diagnostics API:
 
 ```bash
-curl http://localhost:5000/api/diagnostics/log-patterns?hours=1
+curl http://localhost:5005/api/diagnostics/log-patterns?hours=1
 ```
 
 **Notes:**

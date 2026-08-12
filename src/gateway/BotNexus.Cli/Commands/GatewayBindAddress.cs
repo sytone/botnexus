@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Commands;
 
@@ -24,14 +25,14 @@ public static class GatewayBindAddress
     /// interface keeps the portal, SignalR hub, agent REST API and admin endpoints off the local
     /// network until an operator explicitly opts in.
     /// </summary>
-    public const string LoopbackListenUrl = "http://localhost:5005";
+    public const string LoopbackListenUrl = GatewayDefaults.LoopbackListenUrl;
 
     /// <summary>
     /// The all-interfaces listen URL an operator opts into for remote/mesh (NetBird, Tailscale,
     /// reverse proxy) access. Byte-identical to the value <c>init</c> generated before #2798, so an
     /// operator who wants the previous behaviour gets exactly the previous field value.
     /// </summary>
-    public const string WildcardListenUrl = "http://0.0.0.0:5005";
+    public const string WildcardListenUrl = GatewayDefaults.WildcardListenUrl;
 
     /// <summary>
     /// The surface a wildcard bind exposes to every reachable network. Named explicitly so the
