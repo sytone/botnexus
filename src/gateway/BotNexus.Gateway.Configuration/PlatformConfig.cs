@@ -34,6 +34,24 @@ public sealed class PlatformConfig : IValidatableObject
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "general", Order = 0)]
     public int PlatformVersion { get; set; } = 1;
 
+    /// <summary>
+    /// Stable identity of this BotNexus world, generated and persisted on first start (#2834).
+    /// </summary>
+    /// <remarks>
+    /// Present here so the value is a recognised <c>config.json</c> property and appears in the
+    /// generated schema and the portal config UI. Runtime consumers must take the injected
+    /// <c>WorldIdentity</c> dependency rather than reading this property or the raw configuration key -
+    /// the whole point of the token is that it has exactly one derivation.
+    /// </remarks>
+    [JsonPropertyName("worldId")]
+    [Display(
+        Name = "World ID",
+        Description = "Stable GUID identifying this BotNexus world. Generated automatically on first start; do not copy it between installations.",
+        GroupName = "General",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 2)]
+    public string? WorldId { get; set; }
+
     /// <summary>Gateway-specific settings.</summary>
     public GatewaySettingsConfig? Gateway { get; set; }
 

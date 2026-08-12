@@ -456,6 +456,15 @@ public static class GatewayServiceCollectionExtensions
             CreatePlatformConfigWriter(
                 resolvedConfigPath,
                 serviceProvider.GetRequiredService<IFileSystem>())));
+
+        // #2834: the world identity is resolved EXACTLY ONCE, here, against the same resolved config
+        // path the writer uses. Both the injected value and the bootstrap write below consume this
+        // single resolution - nothing re-derives it - so a broken resolver cannot produce two
+        // independently-wrong answers that agree with each other.
+        var worldId = WorldIdResolver.Resolve(resolvedConfigPath, fileSystem, out var worldIdGenerated);
+        services.Replace(ServiceDescriptor.Singleton(worldId));
+        services.Replace(ServiceDescriptor.Singleton(new WorldIdOrigin(worldIdGenerated)));
+        services.AddHostedService<WorldIdPersistenceService>();
         services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();

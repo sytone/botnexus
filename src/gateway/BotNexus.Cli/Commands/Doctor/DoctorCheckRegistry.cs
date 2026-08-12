@@ -19,6 +19,7 @@ internal static class DoctorCheckRegistry
     public static IReadOnlyList<IDoctorCheck> CreateDefault() =>
     [
         new ConfigHealthCheck(),
+        new WorldIdCheck(),
         new SecretFilePermissionCheck(),
         new LocationAccessibilityCheck(),
         new PersistentAgentFolderCheck(),
