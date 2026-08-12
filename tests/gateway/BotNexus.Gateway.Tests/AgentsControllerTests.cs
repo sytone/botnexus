@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -43,7 +44,10 @@ public sealed class AgentsControllerTests
 
         agents.Count.ShouldBe(1);
         agents.ShouldContain(a => a.AgentId == "user-agent");
-        agents.ShouldNotContain(a => a.Kind == AgentKind.SubAgent);
+        // #2755: the list projection does not carry Kind, so sub-agent exclusion is asserted by the
+        // absence of the registered sub-agent's id. Original intent (sub-agents and built-ins are
+        // filtered out of the default list) is unchanged.
+        agents.ShouldNotContain(a => a.AgentId == "parent--subagent--coder--abc");
         agents.ShouldNotContain(a => a.IsBuiltIn);
     }
 
@@ -59,7 +63,8 @@ public sealed class AgentsControllerTests
         var agents = ExtractAgents(controller.List(includeSubAgents: true));
 
         agents.Count.ShouldBe(2);
-        agents.ShouldContain(a => a.Kind == AgentKind.SubAgent);
+        // #2755: Kind is not projected; the sub-agent's presence is asserted by its id instead.
+        agents.ShouldContain(a => a.AgentId == "parent--subagent--coder--abc");
         agents.ShouldNotContain(a => a.IsBuiltIn);
     }
 
@@ -76,7 +81,8 @@ public sealed class AgentsControllerTests
 
         agents.Count.ShouldBe(2);
         agents.ShouldContain(a => a.IsBuiltIn);
-        agents.ShouldNotContain(a => a.Kind == AgentKind.SubAgent);
+        // #2755: Kind is not projected; sub-agent exclusion is asserted by id instead.
+        agents.ShouldNotContain(a => a.AgentId == "parent--subagent--coder--abc");
     }
 
     [Fact]
@@ -123,7 +129,7 @@ public sealed class AgentsControllerTests
         var getResult = controller.Get("agent-a");
 
         var listOk = listResult.Result.ShouldBeOfType<OkObjectResult>();
-        var agents = listOk.Value.ShouldBeAssignableTo<IReadOnlyList<AgentDescriptor>>();
+        var agents = listOk.Value.ShouldBeAssignableTo<IReadOnlyList<AgentListItem>>();
         agents.ShouldNotBeNull();
         agents.ShouldContain(agent => agent.AgentId == "agent-a");
         var getOk = getResult.Result.ShouldBeOfType<OkObjectResult>();
@@ -217,7 +223,7 @@ public sealed class AgentsControllerTests
 
         updateResult.Result.ShouldBeOfType<OkObjectResult>();
         var listOk = listResult.Result.ShouldBeOfType<OkObjectResult>();
-        var agents = listOk.Value.ShouldBeAssignableTo<IReadOnlyList<AgentDescriptor>>();
+        var agents = listOk.Value.ShouldBeAssignableTo<IReadOnlyList<AgentListItem>>();
         agents.ShouldNotBeNull();
         var listDescriptor = agents.Single(agent => agent.AgentId == "agent-a");
         listDescriptor.DisplayName.ShouldBe("updated-display");
@@ -543,11 +549,11 @@ public sealed class AgentsControllerTests
             Metadata = new Dictionary<string, object?> { ["role"] = agentId, ["builtin"] = true }
         };
 
-    private static IReadOnlyList<AgentDescriptor> ExtractAgents(
-        ActionResult<IReadOnlyList<AgentDescriptor>> result)
+    private static IReadOnlyList<AgentListItem> ExtractAgents(
+        ActionResult<IReadOnlyList<AgentListItem>> result)
     {
         var ok = result.Result.ShouldBeOfType<OkObjectResult>();
-        var agents = ok.Value.ShouldBeAssignableTo<IReadOnlyList<AgentDescriptor>>();
+        var agents = ok.Value.ShouldBeAssignableTo<IReadOnlyList<AgentListItem>>();
         return agents ?? throw new InvalidOperationException("Expected agent list.");
     }
 
