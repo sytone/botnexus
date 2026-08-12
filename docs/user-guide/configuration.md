@@ -43,6 +43,25 @@ export BOTNEXUS_HOME=/opt/botnexus
 
 ---
 
+## World identity
+
+Each BotNexus home has a `worldId` at the root of `config.json`:
+
+```json
+{
+  "worldId": "9c3a7c1e-4d2b-4f18-9f0a-2c5b6d7e8f90"
+}
+```
+
+You do not set this by hand. The gateway generates it on first start against a home that has none and
+persists it; a home that already has one is never modified. It is **per home, not per machine** — a dev
+home, a test home and the live home on the same machine each get their own — which is what makes it
+possible to tell which world a process is operating in. Do not copy it between installations.
+
+`botnexus doctor` prints the resolved world ID next to the resolved home path.
+
+---
+
 ## Gateway Settings
 
 Gateway-level settings control the HTTP server, routing, and runtime behavior.

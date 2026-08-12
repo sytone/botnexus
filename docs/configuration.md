@@ -211,6 +211,7 @@ services.AddSingleton(botNexusConfig);
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Version` | int | `1` | Configuration schema version for forward compatibility |
+| `worldId` | string (GUID) | generated | Stable identity of this BotNexus world. Generated and persisted on first gateway start; see [World identity](#world-identity) |
 | `ExtensionsPath` | string | `~/.botnexus/extensions` | Path to extension discovery folder (dynamic loading) |
 | `Extensions` | ExtensionLoadingConfig | — | Extension loader behavior (signing, max assemblies) |
 | `Agents` | AgentDefaults | — | Agent defaults and named agent configurations |
@@ -220,6 +221,32 @@ services.AddSingleton(botNexusConfig);
 | `Tools` | ToolsConfig | — | Tool/extension tool settings (exec, web search, MCP) |
 | `Api` | ApiConfig | — | OpenAI-compatible REST API (optional) |
 | `Cron` | CronConfig | — | Scheduled job execution (agent prompts, system actions, maintenance) |
+
+---
+
+### World identity {#world-identity}
+
+Every BotNexus home carries a `worldId` — a GUID that identifies *this installation*.
+
+```json
+{
+  "worldId": "9c3a7c1e-4d2b-4f18-9f0a-2c5b6d7e8f90"
+}
+```
+
+- **Generated once, automatically.** If `config.json` has no `worldId`, the gateway generates one on
+  start, persists it, and logs the creation at information level. A home that already has one is left
+  untouched — the file is not rewritten at all.
+- **Per home, not per machine.** Two gateways run against two different homes on the same box have two
+  different world IDs. That is the entire point: it is what lets a store say *"you are not my world"*.
+- **Do not copy it between installations.** Cloning a home and keeping its `worldId` makes two worlds
+  indistinguishable again.
+- **Resolved once and injected.** Runtime code takes the `WorldId` dependency; nothing re-reads the
+  `worldId` key from configuration. An architecture fitness test enforces this, because two independent
+  derivations of the same value can agree with each other while both being wrong.
+
+To see which world a process believes it is in, run `botnexus doctor` — the **World identity** section
+prints the resolved world ID alongside the resolved home path.
 
 ---
 

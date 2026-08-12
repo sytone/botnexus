@@ -30,21 +30,29 @@ public sealed class WorldIdSingleDerivationArchitectureTests
     private static readonly string[] AllowedFiles =
     [
         "src/gateway/BotNexus.Gateway.Configuration/WorldId.cs",
-        "src/gateway/BotNexus.Gateway.Configuration/WorldIdPersistenceService.cs",
         "src/gateway/BotNexus.Gateway.Configuration/PlatformConfig.cs",
     ];
 
-    /// <summary>Matches a raw read of the configuration key in any of its casings/forms.</summary>
-    private static readonly Regex RawKeyRead = new(
-        @"""worldId""|\bWorldId\s*=|\.WorldId\b|\[""worldId""\]",
-        RegexOptions.Compiled);
+    /// <summary>
+    /// Matches a raw read of the root <c>worldId</c> configuration key.
+    /// <para>Deliberately the literal key and nothing else. An earlier draft also matched
+    /// <c>.WorldId</c>, which produced twelve false positives: <c>CrossWorldPeerConfig.WorldId</c> and
+    /// the pre-existing display-oriented <c>WorldIdentity.Id</c> surface are different values that
+    /// merely share a name. A fence that flags unrelated members would be disabled or allow-listed into
+    /// uselessness within a release. The literal key IS the derivation surface: a consumer can only
+    /// re-derive this value by reading it.</para>
+    /// </summary>
+    private static readonly Regex RawKeyRead = new("\"worldId\"", RegexOptions.Compiled);
+
+    /// <summary>Strips line comments so a doc-comment mentioning the legacy key is not an offence.</summary>
+    private static readonly Regex LineComment = new(@"^\s*(///|//).*$", RegexOptions.Compiled | RegexOptions.Multiline);
 
     [Fact]
     public void NoProductionCodeReadsWorldIdFromConfigurationDirectly()
     {
         var offenders = Directory
             .EnumerateFiles(Path.Combine(RepoRoot, "src"), "*.cs", SearchOption.AllDirectories)
-            .Select(path => (Path: Relative(path), Text: File.ReadAllText(path)))
+            .Select(path => (Path: Relative(path), Text: LineComment.Replace(File.ReadAllText(path), string.Empty)))
             .Where(file => !AllowedFiles.Contains(file.Path))
             .Where(file => RawKeyRead.IsMatch(file.Text))
             .Select(file => file.Path)
@@ -69,7 +77,7 @@ public sealed class WorldIdSingleDerivationArchitectureTests
         {
             var absolute = Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
             File.Exists(absolute).ShouldBeTrue($"Allow-listed file '{relative}' does not exist.");
-            RawKeyRead.IsMatch(File.ReadAllText(absolute))
+            RawKeyRead.IsMatch(LineComment.Replace(File.ReadAllText(absolute), string.Empty))
                 .ShouldBeTrue($"Allow-listed file '{relative}' no longer references worldId - remove it from the allow-list.");
         }
     }

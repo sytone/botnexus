@@ -4,6 +4,8 @@ using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.FeatureManagement;
+using Shouldly;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -106,11 +108,12 @@ public sealed class WorldIdTests
 
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IFeatureManager>(new AllOffFeatureManager());
+        services.AddSingleton<IFileSystem>(new FileSystem());
         services.AddPlatformConfiguration(home.ConfigPath);
         await using var provider = services.BuildServiceProvider();
 
-        foreach (var hosted in provider.GetServices<IHostedService>().OfType<WorldIdPersistenceService>())
-            await hosted.StartAsync(CancellationToken.None);
+        await RunWorldIdBootstrapAsync(services, provider);
 
         var first = provider.GetRequiredService<WorldId>();
         var second = provider.GetRequiredService<WorldId>();
@@ -127,13 +130,55 @@ public sealed class WorldIdTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IFeatureManager>(new AllOffFeatureManager());
+        services.AddSingleton<IFileSystem>(new FileSystem());
         services.AddPlatformConfiguration(configPath);
         await using var provider = services.BuildServiceProvider();
 
-        foreach (var hosted in provider.GetServices<IHostedService>().OfType<WorldIdPersistenceService>())
-            await hosted.StartAsync(CancellationToken.None);
+        await RunWorldIdBootstrapAsync(services, provider);
 
         return (provider.GetRequiredService<WorldId>(), provider.GetRequiredService<WorldIdOrigin>());
+    }
+
+    /// <summary>
+    /// Runs the world-identity bootstrap exactly as a real host start would.
+    /// </summary>
+    /// <remarks>
+    /// The registration is asserted through the descriptor list rather than by enumerating
+    /// <see cref="IHostedService"/> from the provider: enumerating would activate every other hosted
+    /// service the gateway registers (agent reconciliation, config hydration, the shadow migration),
+    /// dragging in the entire runtime graph to test one bootstrap. Checking the descriptor keeps the
+    /// registration itself under test - remove <c>AddHostedService&lt;WorldIdPersistenceService&gt;()</c>
+    /// and this fails - while activating only the service in question.
+    /// </remarks>
+    private static async Task RunWorldIdBootstrapAsync(IServiceCollection services, IServiceProvider provider)
+    {
+        services.ShouldContain(
+            descriptor => descriptor.ServiceType == typeof(IHostedService)
+                && descriptor.ImplementationType == typeof(WorldIdPersistenceService),
+            "WorldIdPersistenceService must be registered as a hosted service so the identity is persisted on start.");
+
+        var bootstrap = ActivatorUtilities.CreateInstance<WorldIdPersistenceService>(provider);
+        await bootstrap.StartAsync(CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Every flag off. <c>AddPlatformConfiguration</c> registers the config-shadow gate, which takes an
+    /// <see cref="IFeatureManager"/> the host normally supplies; these tests are not exercising that
+    /// path and an all-off manager keeps the shadow migration inert, which is also its production
+    /// default.
+    /// </summary>
+    private sealed class AllOffFeatureManager : IFeatureManager
+    {
+        public async IAsyncEnumerable<string> GetFeatureNamesAsync()
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+
+        public Task<bool> IsEnabledAsync(string feature) => Task.FromResult(false);
+
+        public Task<bool> IsEnabledAsync<TContext>(string feature, TContext context) => Task.FromResult(false);
     }
 
     private static string? ReadWorldIdFromFile(string configPath)

@@ -12,8 +12,8 @@ namespace BotNexus.Cli.Tests.Commands.Doctor;
 /// </summary>
 public sealed class WorldIdCheckTests
 {
-    private const string ConfigPath = "/home/world/config.json";
-    private const string HomePath = "/home/world";
+    private const string ConfigPath = "/srv/botnexus-world/config.json";
+    private const string HomePath = "/srv/botnexus-world";
 
     [Fact]
     public async Task Reports_ResolvedWorldId_AndResolvedHomePath()
