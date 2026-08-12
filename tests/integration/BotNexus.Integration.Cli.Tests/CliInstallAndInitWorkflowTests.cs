@@ -142,7 +142,17 @@ public sealed class CliInstallAndInitWorkflowTests : IAsyncLifetime
 
         // gateway block
         root.TryGetProperty("gateway", out var gateway).ShouldBeTrue("config.json missing 'gateway'.");
-        gateway.GetProperty("listenUrl").GetString().ShouldBe("http://0.0.0.0:5005");
+        // #2798 made a loopback bind the init default and the wildcard an explicit
+        // --listen-all-interfaces opt-in, so a fresh install no longer publishes the portal, the
+        // SignalR hub and the gateway admin endpoints on every interface. This assertion still
+        // pinned the pre-#2798 wildcard value and reddened main (#3041).
+        //
+        // The literal is repeated rather than read from GatewayBindAddress.LoopbackListenUrl on
+        // purpose: this project deliberately carries NO ProjectReference to BotNexus.Cli because it
+        // validates the SHIPPED nuget package, not the local build. Importing the constant would
+        // let the test agree with a locally-built default that the published tool does not have,
+        // which is precisely the drift it exists to catch.
+        gateway.GetProperty("listenUrl").GetString().ShouldBe("http://localhost:5005");
         gateway.GetProperty("defaultAgentId").GetString().ShouldBe("assistant");
         gateway.GetProperty("enableProviderRequestLogging").GetBoolean().ShouldBeFalse();
 
