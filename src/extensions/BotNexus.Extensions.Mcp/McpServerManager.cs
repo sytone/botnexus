@@ -40,7 +40,15 @@ public sealed class McpServerManager : IAsyncDisposable
             // Wrap entire per-server initialization in try/catch to isolate failures
             try
             {
-                var transport = CreateTransport(serverConfig);
+                if (!TryCreateTransport(serverConfig, out var transport, out var transportError))
+                {
+                    _logger.LogWarning(
+                        "MCP server '{ServerId}' has an insecure or invalid url: {ErrorMessage} Skipping server.",
+                        serverId,
+                        transportError);
+                    continue;
+                }
+
                 if (transport is null)
                     continue;
 
@@ -116,7 +124,15 @@ public sealed class McpServerManager : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        var transport = CreateTransport(serverConfig);
+        if (!TryCreateTransport(serverConfig, out var transport, out var transportError))
+        {
+            _logger.LogWarning(
+                "MCP server '{ServerId}' has an insecure or invalid url: {ErrorMessage} Skipping server.",
+                serverId,
+                transportError);
+            return [];
+        }
+
         if (transport is null)
             return [];
 
@@ -191,20 +207,47 @@ public sealed class McpServerManager : IAsyncDisposable
 
     /// <summary>
     /// Creates the appropriate transport for a server configuration.
-    /// Returns null if neither command nor URL is configured.
+    /// Returns null if neither command nor URL is configured, or if the URL fails
+    /// <see cref="McpUrlSecurity"/> validation.
     /// </summary>
     public static IMcpTransport? CreateTransport(McpServerConfig serverConfig)
+        => TryCreateTransport(serverConfig, out var transport, out _) ? transport : null;
+
+    /// <summary>
+    /// Creates the appropriate transport for a server configuration, reporting why the URL was
+    /// rejected when validation fails so the caller can log a warning naming the server id.
+    /// </summary>
+    /// <param name="serverConfig">The server configuration.</param>
+    /// <param name="transport">The created transport, or <c>null</c>.</param>
+    /// <param name="error">The rejection reason when a URL was configured but refused.</param>
+    /// <returns><c>false</c> only when a configured URL was rejected by validation.</returns>
+    public static bool TryCreateTransport(
+        McpServerConfig serverConfig,
+        out IMcpTransport? transport,
+        out string? error)
     {
+        transport = null;
+        error = null;
+
         if (!string.IsNullOrWhiteSpace(serverConfig.Url))
         {
-            return new HttpSseMcpTransport(
-                new Uri(serverConfig.Url),
-                serverConfig.Headers?.AsReadOnly());
+            // A transport built here carries whatever headers the caller merged in, which for the
+            // auth path includes a resolved provider API key. Validate the scheme at the single
+            // seam before any credential can leave the process (#3012).
+            var carriesCredentials =
+                McpUrlSecurity.HeadersCarryCredentials(serverConfig.Headers)
+                || !string.IsNullOrWhiteSpace(serverConfig.Auth);
+
+            if (!McpUrlSecurity.TryValidate(serverConfig.Url, carriesCredentials, out var endpoint, out error))
+                return false;
+
+            transport = new HttpSseMcpTransport(endpoint!, serverConfig.Headers?.AsReadOnly());
+            return true;
         }
 
         if (!string.IsNullOrWhiteSpace(serverConfig.Command))
         {
-            return new StdioMcpTransport(
+            transport = new StdioMcpTransport(
                 serverConfig.Command,
                 serverConfig.Args,
                 serverConfig.Env,
@@ -212,7 +255,7 @@ public sealed class McpServerManager : IAsyncDisposable
                 serverConfig.InheritEnv);
         }
 
-        return null;
+        return true;
     }
 
     /// <inheritdoc />
