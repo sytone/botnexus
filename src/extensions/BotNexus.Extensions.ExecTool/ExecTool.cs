@@ -231,6 +231,19 @@ public sealed class ExecTool : IAgentTool
             NodePreflight.ThrowIfInvalid(inlineJsScript);
         }
 
+        // File-based `pwsh -File <path>` invocations (issue #2758): pwsh reports a missing script as
+        // an ARGUMENT-parsing error plus its generic usage banner, naming neither the skill nor any
+        // candidate. Diagnose it here instead - name the skill and the closest existing wrapper names
+        // enumerated from the skill's scripts/ directory. A near match is reported, never substituted.
+        if (SkillScriptPreflight.TryGetFileTarget(processArgs, out var scriptTarget))
+        {
+            var probeRoot = workingDir ?? _workingDirectory;
+            var resolvedTarget = Path.IsPathRooted(scriptTarget) || string.IsNullOrWhiteSpace(probeRoot)
+                ? scriptTarget
+                : Path.GetFullPath(scriptTarget, probeRoot);
+            SkillScriptPreflight.ThrowIfMissing(resolvedTarget);
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
