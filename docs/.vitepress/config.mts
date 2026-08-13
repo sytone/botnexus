@@ -191,6 +191,7 @@ export default defineConfig({
           { text: 'Per-Conversation Todo', link: '/features/todo' },
           { text: 'Agent Exchange', link: '/features/agent-exchange' },
           { text: 'Security-Event Diagnostics', link: '/features/security-event-diagnostics' },
+          { text: 'Tool-Audit Write-Ahead', link: '/features/tool-audit-write-ahead' },
           { text: 'Dev-Mode Origin Guard', link: '/features/dev-origin-guard' },
           { text: 'AGENTS.md Conventions', link: '/features/agents-md-conventions' },
           { text: 'Agent 365 Observability', link: '/features/agent365-observability' },
