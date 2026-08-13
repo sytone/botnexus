@@ -169,7 +169,7 @@ internal sealed class SessionCommands
             return 2;
         }
 
-        var sessionId = SessionId.From(id.Trim());
+        var sessionId = SessionId.From(id);
         var existing = await store.GetAsync(sessionId, ct).ConfigureAwait(false);
         if (existing is null)
         {
@@ -203,7 +203,7 @@ internal sealed class SessionCommands
             return 2;
         }
 
-        var sessionId = SessionId.From(id.Trim());
+        var sessionId = SessionId.From(id);
         var existing = await store.GetAsync(sessionId, ct).ConfigureAwait(false);
         if (existing is null)
         {
