@@ -650,6 +650,25 @@ public sealed partial class CronControllerTests
             return Task.FromResult<IReadOnlyList<CronRun>>(runs);
         }
 
+        public Task<IReadOnlyList<CronRun>> GetRecentRunsAsync(
+            IReadOnlyCollection<JobId> jobIds,
+            IReadOnlyCollection<string>? statuses = null,
+            int limit = 20,
+            CancellationToken ct = default)
+        {
+            // An empty scope means "no jobs", never "no filter" - mirrors the SQLite contract.
+            if (jobIds.Count == 0)
+                return Task.FromResult<IReadOnlyList<CronRun>>([]);
+
+            var recent = _runs.Values
+                .Where(run => jobIds.Contains(run.JobId))
+                .Where(run => statuses is null || statuses.Contains(run.Status, StringComparer.Ordinal))
+                .OrderByDescending(run => run.StartedAt)
+                .Take(limit)
+                .ToList();
+            return Task.FromResult<IReadOnlyList<CronRun>>(recent);
+        }
+
         // #2477: idempotent by (jobId, scheduled occurrence) - a repeat scan must not add a row.
         public Task<bool> TryRecordMissedRunAsync(JobId jobId, DateTimeOffset scheduledOccurrenceUtc, CancellationToken ct = default)
         {

@@ -545,6 +545,13 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         promptInjection.Equals(MemoryPromptInjectionNone, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Approximate token cap on daily-note memory injected into the system prompt (#2871).
+    /// Matches the contract default; stated here so the budget in force is greppable from the
+    /// call site rather than being an invisible parameter default.
+    /// </summary>
+    private const int DailyMemoryTokenBudget = 4000;
+
+    /// <summary>
     /// Loads daily memory context, delegating to IAgentMemory when available,
     /// falling back to direct file I/O for backward compatibility.
     /// </summary>
@@ -558,7 +565,13 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             try
             {
                 var agentMemory = _agentMemoryFactory.Create(descriptor.AgentId.Value);
-                var request = new AgentMemoryPromptRequest(descriptor.AgentId.Value);
+
+                // Pass the budget explicitly rather than leaning on the record default, so the
+                // cap that reaches the provider is visible at the call site and a change to the
+                // default cannot silently move it (#2871).
+                var request = new AgentMemoryPromptRequest(
+                    descriptor.AgentId.Value,
+                    MaxTokenBudget: DailyMemoryTokenBudget);
                 var context = await agentMemory.GetPromptContextAsync(request, cancellationToken).ConfigureAwait(false);
                 return MapMemoryContextToFiles(context, descriptor.Memory?.Path);
             }

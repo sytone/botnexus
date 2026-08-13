@@ -690,6 +690,13 @@ Creates a new job.
 - `deleteAfterRun`: Delete the run's ephemeral cron-scoped **session** and transcript after each run (optional; default `false`)
 - `deleteJobAfterRun`: One-shot lifecycle - the scheduler deletes the **job itself** after its first terminal run (optional; default `false`)
 - `expiresAt`: ISO-8601 instant (e.g. `"2026-12-31T00:00:00Z"`) after which the job stops firing (optional; omit for no expiry)
+- `failureAlertsEnabled`: Master opt-in for this job's failure alerts (optional; default `false`)
+- `failureAlertConversationId`: Conversation the alert is delivered to (optional). Must resolve to an existing conversation - an unresolvable target is refused at the tool seam by the same shared validator the REST API uses, because an alert that could never deliver is worse than none.
+
+::: warning Alerting needs BOTH fields
+`failureAlertsEnabled: true` with no `failureAlertConversationId` delivers nothing - there is
+deliberately no implicit fallback conversation. Set both, or the job stays silently unalertable.
+:::
 
 ::: tip Prefer `deleteJobAfterRun` over a self-delete prompt
 Writing "delete this cron job after running" into a job's prompt is a request with no
@@ -722,7 +729,9 @@ current value.
 - Any of the `create` fields above
 
 Passing an **empty string** for `expiresAt` clears an existing expiry; omitting the field
-leaves the current expiry untouched.
+leaves the current expiry untouched. The same rule applies to `failureAlertConversationId`:
+an empty string clears the alert target, an omitted field leaves it (and `failureAlertsEnabled`)
+exactly as stored, so an unrelated edit can never silently un-alert a job.
 
 Updating prompt-irrelevant fields (`schedule`, `timeZone`, `name`, `enabled`) on a
 `command` job does **not** require a `message` or `templateName`, and preserves the
@@ -779,14 +788,15 @@ Returns the resulting run record serialized as JSON.
 
 #### `history`
 
-Retrieves execution history for a specific job.
+Retrieves execution history for one job, or recent runs across every job the caller may manage.
 
 **Arguments:**
 - `action` = `"history"`
-- `jobId`: Job identifier (required)
+- `jobId`: Job identifier (**optional**). Omit it to query across jobs.
 - `limit`: Maximum entries to return (1–100, default: 20)
+- `failedOnly`: Return only runs that did not succeed - `error`, `timed_out`, `no_tool_calls`, and `missed` (optional; default `false`)
 
-**Example:**
+**Example - one job:**
 ```json
 {
   "action": "history",
@@ -794,6 +804,19 @@ Retrieves execution history for a specific job.
   "limit": 10
 }
 ```
+
+**Example - "which of my jobs have failed recently?":**
+```json
+{
+  "action": "history",
+  "failedOnly": true,
+  "limit": 50
+}
+```
+
+Without a `jobId` the query is scoped to the jobs the caller may manage, using the same
+authorisation rule as the per-job path; an agent with no manageable jobs gets an empty result
+rather than every job's history.
 
 Returns the matching run records serialized as JSON, newest first.
 
@@ -1006,6 +1029,11 @@ Two job fields control it:
 Both must be set: enabling alerts without a conversation id delivers nothing and logs a warning.
 There is deliberately **no** implicit fallback to the job's own `conversationId`, so turning alerts
 on can never accidentally retarget a job's long-lived run conversation.
+
+Both fields are writable from **every** authoring surface: the config file, `POST`/`PUT /api/cron`,
+and the agent-facing `cron` tool's `create` and `update` actions (#2838). Before #2838 the tool
+declared neither parameter, so no agent-created job could ever be made alertable - silent cron
+death was the default failure mode for the only surface agents have.
 
 Configuration example:
 

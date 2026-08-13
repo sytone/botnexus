@@ -39,6 +39,17 @@ public sealed class CopilotCompletionsProvider(
 
     public string Api => "github-copilot-completions";
 
+    /// <summary>
+    /// OpenAI-shaped completions over the Copilot transport: system prompt as the first message.
+    /// Leaked-tool-call recovery is DECLARED because Copilot model discovery routes a given model
+    /// to whichever of the three Copilot transports the account exposes, so the Claude model that
+    /// produced the #1709 capture can arrive here too; #2170 is the precedent for a Copilot fix
+    /// applied to one transport recurring the moment discovery selected another (#2432).
+    /// </summary>
+    public ProviderCapabilities Capabilities { get; } = new(
+        RecoversLeakedToolCallMarkup: true,
+        SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
+
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
         => CompletionsStreamEngine.StreamAsync(BuildProfile(secretRedactor), _httpClient, logger, model, context, options);
 

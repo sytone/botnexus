@@ -7,8 +7,12 @@ namespace BotNexus.Gateway.Contracts.Memory;
 /// <param name="SessionId">The current session identifier for relevance scoping.</param>
 /// <param name="ConversationId">Optional conversation identifier for topic filtering.</param>
 /// <param name="MaxTokenBudget">
-/// Maximum approximate token budget for the returned context.
-/// The provider should respect this limit when assembling content.
+/// Maximum approximate token budget for the returned context, estimated at four characters per
+/// token. Providers <b>must</b> respect this limit when assembling content and <b>must</b>
+/// disclose in the returned content that trimming occurred - see
+/// <c>BotNexus.Memory.MemoryPromptBudget</c> for the trimming order and disclosure format (#2871).
+/// A value of zero or below means explicitly unbounded, so "no cap" is a deliberate caller choice
+/// that is distinguishable from an ignored parameter.
 /// </param>
 public sealed record AgentMemoryPromptRequest(
     string AgentId,
