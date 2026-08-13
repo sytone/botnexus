@@ -13,6 +13,7 @@ public static class MessageTransformer
     /// - Converts thinking blocks to text when switching providers
     /// - Normalizes tool call IDs
     /// - Inserts synthetic tool results for orphaned tool calls
+    /// - Drops orphaned tool results whose originating call is absent (#3014)
     /// - Skips errored/aborted assistant messages
     /// </summary>
     /// <param name="messages">Input messages to transform.</param>
@@ -60,6 +61,7 @@ public static class MessageTransformer
         }
 
         var result = new List<Message>(transformed.Count);
+        var seenToolCallIds = new HashSet<string>(StringComparer.Ordinal);
         var pendingToolCalls = new List<ToolCallContent>();
         var existingToolResultIds = new HashSet<string>(StringComparer.Ordinal);
 
@@ -81,6 +83,12 @@ public static class MessageTransformer
                     pendingToolCalls = assistant.Content
                         .OfType<ToolCallContent>()
                         .ToList();
+
+                    foreach (var call in pendingToolCalls)
+                    {
+                        seenToolCallIds.Add(BaseCallId(call.Id));
+                    }
+
                     if (pendingToolCalls.Count > 0)
                     {
                         existingToolResultIds = new HashSet<string>(StringComparer.Ordinal);
@@ -90,6 +98,20 @@ public static class MessageTransformer
                     break;
 
                 case ToolResultMessage toolResult:
+                    // ORPHAN-TOOL-RESULT-DROP-SITE (#3014). The single, shared place where a tool
+                    // result whose originating call is absent from the retained transcript is
+                    // dropped. Anthropic and the Copilot messages API reject such an orphan with a
+                    // hard 400, and overflow compaction is exactly the moment one appears: the
+                    // truncated tail can begin after the assistant turn that issued the call.
+                    // Every provider converter routes through TransformMessages, so implementing
+                    // the guard here - next to FlushOrphanedToolCalls, which owns the inverse
+                    // calls-without-results direction - gives all four converters the same
+                    // behaviour instead of one converter having it and three not.
+                    if (!seenToolCallIds.Contains(BaseCallId(toolResult.ToolCallId)))
+                    {
+                        break;
+                    }
+
                     existingToolResultIds.Add(toolResult.ToolCallId);
                     result.Add(toolResult);
                     break;
@@ -199,6 +221,18 @@ public static class MessageTransformer
         }
 
         return assistant with { Content = transformedContent };
+    }
+
+    /// <summary>
+    /// Returns the pairing key for a tool call id: the segment before the first <c>|</c>.
+    /// Providers that carry a composite id (the Responses API packs <c>call_id|item_id</c>) must
+    /// still pair against the base id, matching how the Responses converter derives the wire
+    /// <c>call_id</c>. Ids without a pipe are their own base id.
+    /// </summary>
+    private static string BaseCallId(string id)
+    {
+        var pipe = id.IndexOf('|');
+        return pipe < 0 ? id : id[..pipe];
     }
 
     private static void FlushOrphanedToolCalls(

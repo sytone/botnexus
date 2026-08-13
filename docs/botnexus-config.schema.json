@@ -11,8 +11,19 @@
       ]
     },
     "version": {
+      "title": "Config schema version",
       "type": "integer",
-      "format": "int32"
+      "description": "Configuration schema version for forward compatibility. Bumped only when the config shape changes incompatibly.",
+      "format": "int32",
+      "default": 1
+    },
+    "worldId": {
+      "title": "World ID",
+      "type": [
+        "null",
+        "string"
+      ],
+      "description": "Stable GUID identifying this BotNexus world. Generated automatically on first start; do not copy it between installations."
     },
     "gateway": {
       "oneOf": [
@@ -66,6 +77,34 @@
           "$ref": "#/definitions/CronConfig"
         }
       ]
+    },
+    "promptTemplates": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "additionalProperties": {
+        "$ref": "#/definitions/PromptTemplateConfig"
+      }
+    },
+    "workspace": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/WorkspacePortalConfig"
+        }
+      ]
+    },
+    "FeatureManagement": {
+      "title": "Feature flags",
+      "type": [
+        "null",
+        "object"
+      ],
+      "description": "Feature flags keyed by name. Each declared flag should carry an explicit true/false; run 'botnexus doctor config' to report any that are absent.",
+      "additionalProperties": {}
     }
   },
   "definitions": {
@@ -74,16 +113,20 @@
       "additionalProperties": false,
       "properties": {
         "listenUrl": {
+          "title": "Listen URL",
           "type": [
             "null",
             "string"
-          ]
+          ],
+          "description": "HTTP(S) URL the gateway binds to (for example http://localhost:5005). Supports Kestrel wildcards such as http://+:5000."
         },
         "defaultAgentId": {
+          "title": "Default agent",
           "type": [
             "null",
             "string"
-          ]
+          ],
+          "description": "Agent ID to route to when an incoming message does not specify one."
         },
         "agentsDirectory": {
           "type": [
@@ -107,6 +150,15 @@
             }
           ]
         },
+        "walCheckpointIntervalMinutes": {
+          "title": "WAL checkpoint interval (min)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Minutes between periodic PASSIVE SQLite WAL checkpoints. A TRUNCATE checkpoint also runs on graceful shutdown. Default 30.",
+          "format": "int32"
+        },
         "subAgents": {
           "oneOf": [
             {
@@ -124,6 +176,26 @@
             },
             {
               "$ref": "#/definitions/CompactionOptions"
+            }
+          ]
+        },
+        "toolResultPersistence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/ToolResultPersistenceConfig"
+            }
+          ]
+        },
+        "claimAudit": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/ClaimAuditConfig"
             }
           ]
         },
@@ -147,11 +219,33 @@
             }
           ]
         },
+        "signalR": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/SignalRConfig"
+            }
+          ]
+        },
+        "secretRedaction": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/SecretRedactionConfig"
+            }
+          ]
+        },
         "logLevel": {
+          "title": "Log level",
           "type": [
             "null",
             "string"
-          ]
+          ],
+          "description": "Minimum log level override. One of Trace, Debug, Information, Warning, Error, Critical."
         },
         "apiKeys": {
           "type": [
@@ -224,9 +318,69 @@
           "type": [
             "null",
             "string"
+          ]
+        },
+        "shellCommand": {
+          "type": [
+            "array",
+            "null"
           ],
-          "enum": [null, "auto", "pwsh", "bash"],
-          "description": "Preferred shell for command execution on Windows. 'auto' (default) prefers bash when available; 'pwsh' always uses PowerShell; 'bash' always uses bash. Ignored on non-Windows."
+          "items": {
+            "type": "string"
+          }
+        },
+        "autoUpdate": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/AutoUpdateConfig"
+            }
+          ]
+        },
+        "auxiliary": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/AuxiliaryConfig"
+            }
+          ]
+        },
+        "defaultTimezone": {
+          "title": "Default timezone",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "Server-wide default IANA timezone ID used when an agent has no timezone configured. Falls back to UTC when blank or invalid."
+        },
+        "enableProviderRequestLogging": {
+          "title": "Log provider requests",
+          "type": "boolean",
+          "description": "When on, all provider HTTP requests and responses are logged at Debug level. Auth headers are always redacted. For debugging only.",
+          "default": false
+        },
+        "dateTimeInjection": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/DateTimeInjectionConfig"
+            }
+          ]
+        },
+        "satellites": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": {
+            "$ref": "#/definitions/SatelliteConfig"
+          }
         }
       }
     },
@@ -258,18 +412,87 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "maxConcurrentPerSession": { "type": "integer", "minimum": 1 },
-        "defaultMaxTurns": { "type": "integer", "minimum": 1 },
-        "maxTurnsCeiling": { "type": "integer" },
-        "defaultTimeoutSeconds": { "type": "integer", "minimum": 1 },
-        "maxTimeoutSeconds": { "type": "integer" },
-        "maxDepth": { "type": "integer", "minimum": 1 },
-        "defaultModel": { "type": "string" },
-        "completedRecordRetentionMinutes": { "type": "integer" },
-        "maxRetainedCompletedRecords": { "type": "integer" },
+        "maxConcurrentPerSession": {
+          "title": "Max concurrent per session",
+          "type": "integer",
+          "description": "Maximum number of concurrent sub-agents allowed per parent session.",
+          "format": "int32",
+          "default": 5,
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        },
+        "defaultMaxTurns": {
+          "title": "Default max turns",
+          "type": "integer",
+          "description": "Default maximum turn budget applied to sub-agent runs when a spawn request does not specify one.",
+          "format": "int32",
+          "default": 30,
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        },
+        "maxTurnsCeiling": {
+          "title": "Max turns ceiling",
+          "type": "integer",
+          "description": "Hard upper bound for an agent-supplied maxTurns on a spawn request. A value of zero or less disables the ceiling.",
+          "format": "int32",
+          "default": 30
+        },
+        "defaultTimeoutSeconds": {
+          "title": "Default timeout (seconds)",
+          "type": "integer",
+          "description": "Default timeout, in seconds, applied to sub-agent runs when a spawn request does not specify one.",
+          "format": "int32",
+          "default": 600,
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        },
+        "maxTimeoutSeconds": {
+          "title": "Max timeout (seconds)",
+          "type": "integer",
+          "description": "Hard upper bound, in seconds, for an agent-supplied timeoutSeconds on a spawn request. A value of zero or less disables the ceiling.",
+          "format": "int32",
+          "default": 1800
+        },
+        "maxDepth": {
+          "title": "Max depth",
+          "type": "integer",
+          "description": "Maximum allowed nested sub-agent depth.",
+          "format": "int32",
+          "default": 1,
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        },
+        "defaultModel": {
+          "title": "Default model",
+          "type": "string",
+          "description": "Default model for sub-agent runs. Empty uses the parent agent's model."
+        },
+        "completedRecordRetentionMinutes": {
+          "title": "Completed record retention (minutes)",
+          "type": "integer",
+          "description": "How long, in minutes, a finished sub-agent record is retained in memory for status queries. A value of zero or less disables time-based eviction.",
+          "format": "int32",
+          "default": 15
+        },
+        "maxRetainedCompletedRecords": {
+          "title": "Max retained completed records",
+          "type": "integer",
+          "description": "Maximum number of completed sub-agent records to retain regardless of age. A value of zero or less disables the cap.",
+          "format": "int32",
+          "default": 200
+        },
+        "workspaceRoot": {
+          "title": "Workspace root",
+          "type": "string",
+          "description": "Temporary root directory for sub-agent workspaces. Empty uses <OS temp>/botnexus-subagent-workspaces. Supports ~ and environment-variable expansion."
+        },
         "parentOverrides": {
+          "title": "Parent budget overrides",
           "type": "object",
-          "additionalProperties": { "$ref": "#/definitions/SubAgentParentOverrideOptions" }
+          "description": "Trusted sub-agent budget overrides keyed by spawning parent agent ID.",
+          "additionalProperties": {
+            "$ref": "#/definitions/SubAgentParentOverrideOptions"
+          }
         }
       }
     },
@@ -277,11 +500,51 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "defaultTimeoutSeconds": { "type": ["integer", "null"], "minimum": 1 },
-        "maxTimeoutSeconds": { "type": ["integer", "null"], "minimum": 1 },
-        "defaultMaxTurns": { "type": ["integer", "null"], "minimum": 1 },
-        "maxTurnsCeiling": { "type": ["integer", "null"], "minimum": 1 },
-        "maxConcurrentPerSession": { "type": ["integer", "null"], "minimum": 1 }
+        "defaultTimeoutSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        },
+        "maxTimeoutSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        },
+        "defaultMaxTurns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        },
+        "maxTurnsCeiling": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        },
+        "maxConcurrentPerSession": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        }
       }
     },
     "CompactionOptions": {
@@ -304,6 +567,10 @@
           "type": "integer",
           "format": "int32"
         },
+        "largestEntryBytesThreshold": {
+          "type": "integer",
+          "format": "int32"
+        },
         "summarizationModel": {
           "type": [
             "null",
@@ -315,6 +582,65 @@
             "null",
             "string"
           ]
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "circuitBreakerCooldownSeconds": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "cronLlmIdleTimeoutMs": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "memoryFlush": {
+          "$ref": "#/definitions/MemoryFlushOptions"
+        }
+      }
+    },
+    "MemoryFlushOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "promptText": {
+          "type": "string"
+        },
+        "sessionEndPromptText": {
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "ToolResultPersistenceConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxBytes": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "ClaimAuditConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string"
         }
       }
     },
@@ -338,14 +664,93 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "title": "Enable rate limiting",
+          "type": "boolean",
+          "description": "Whether per-client request rate limiting is active.",
+          "default": false
         },
         "requestsPerMinute": {
+          "title": "Requests per minute",
           "type": "integer",
-          "format": "int32"
+          "description": "Maximum requests allowed within a window for a single client.",
+          "format": "int32",
+          "default": 300,
+          "maximum": 2147483647.0,
+          "minimum": 1.0
         },
         "windowSeconds": {
           "type": "integer",
+          "format": "int32"
+        },
+        "maxEntries": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "SignalRConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maximumReceiveMessageSizeBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "maximumParallelInvocationsPerClient": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "streamBufferCapacity": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "keepAliveIntervalSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "clientTimeoutIntervalSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      }
+    },
+    "SecretRedactionConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "patterns": {
+          "title": "Additional redaction patterns",
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "Extra .NET regular expressions whose matches are replaced with [REDACTED]. Applied in addition to the built-in credential patterns, never instead of them.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "matchTimeoutMilliseconds": {
+          "title": "Redaction match timeout (ms)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Per-pattern match timeout for operator redaction patterns. Defaults to 100ms.",
           "format": "int32"
         }
       }
@@ -355,10 +760,12 @@
       "additionalProperties": false,
       "properties": {
         "apiKey": {
+          "title": "API key",
           "type": [
             "null",
             "string"
-          ]
+          ],
+          "description": "The raw API key value used for gateway authentication. Sensitive: stored and shown masked."
         },
         "tenantId": {
           "type": [
@@ -661,6 +1068,185 @@
         }
       }
     },
+    "AutoUpdateConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "title": "Enable auto-update",
+          "type": "boolean",
+          "description": "Enables background GitHub polling and the self-update endpoint.",
+          "default": false
+        },
+        "checkIntervalMinutes": {
+          "title": "Check interval (minutes)",
+          "type": "integer",
+          "description": "How often to poll GitHub for a new commit, in minutes. Minimum 5.",
+          "format": "int32",
+          "default": 60,
+          "maximum": 2147483647.0,
+          "minimum": 5.0
+        },
+        "repositoryOwner": {
+          "type": "string"
+        },
+        "repositoryName": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "cliPath": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "sourcePath": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "channel": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "shutdownDelaySeconds": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "AuxiliaryConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "titling": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/TitlingConfig"
+            }
+          ]
+        },
+        "compression": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "TitlingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "DateTimeInjectionConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "title": "Enable datetime injection",
+          "type": "boolean",
+          "description": "When on, the current datetime is prepended to every user message so the agent always has reliable temporal context.",
+          "default": false
+        },
+        "timezone": {
+          "title": "Timezone",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "IANA timezone ID used when formatting the injected datetime (for example UTC or America/Los_Angeles). Falls back to the gateway default timezone, then UTC, when blank."
+        },
+        "format": {
+          "title": "Datetime format",
+          "type": "string",
+          "description": "Output format for the injected datetime. Only iso8601 is supported today; rfc2822 and custom patterns are reserved for future use.",
+          "default": "iso8601"
+        }
+      }
+    },
+    "SatelliteConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "displayName": {
+          "title": "Display name",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "Human-readable display name for this satellite."
+        },
+        "platform": {
+          "title": "Platform",
+          "type": "string",
+          "description": "Platform the satellite runs on. One of windows, macos, or linux.",
+          "default": "windows"
+        },
+        "apiKey": {
+          "title": "API key",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "API key the satellite uses to authenticate with the gateway. Sensitive: stored and shown masked."
+        },
+        "capabilities": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "ownerUserId": {
+          "title": "Owner user ID",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "User ID of the satellite's owner. Events are filtered server-side to this user's conversations."
+        },
+        "staleTimeoutSeconds": {
+          "title": "Stale timeout (seconds)",
+          "type": "integer",
+          "description": "Seconds without a heartbeat before the satellite is marked stale.",
+          "format": "int32",
+          "default": 120,
+          "maximum": 2147483647.0,
+          "minimum": 1.0
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean",
+          "description": "Whether this satellite is enabled. Disabled satellites are rejected on connect.",
+          "default": true
+        }
+      }
+    },
     "AgentDefinitionConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -672,10 +1258,12 @@
           ]
         },
         "displayName": {
+          "title": "Display name",
           "type": [
             "null",
             "string"
-          ]
+          ],
+          "description": "Human-readable display name shown for this agent in clients."
         },
         "emoji": {
           "type": [
@@ -690,10 +1278,12 @@
           ]
         },
         "model": {
+          "title": "Model",
           "type": [
             "null",
             "string"
-          ]
+          ],
+          "description": "Model identifier this agent uses (for example gpt-4.1)."
         },
         "allowedModels": {
           "type": [
@@ -728,7 +1318,23 @@
             "type": "string"
           }
         },
+        "toolTimeoutSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
         "subAgents": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "subAgentRoles": {
           "type": [
             "array",
             "null"
@@ -742,6 +1348,33 @@
             "null",
             "string"
           ]
+        },
+        "cacheRetention": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/CacheRetention"
+            }
+          ]
+        },
+        "thinking": {
+          "title": "Thinking level",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "Default reasoning effort this agent requests (validated against the model's capabilities)."
+        },
+        "contextWindow": {
+          "title": "Context window",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Default context-window size (tokens) this agent requests (validated against the model's capabilities).",
+          "format": "int32"
         },
         "maxConcurrentSessions": {
           "type": [
@@ -767,7 +1400,10 @@
           ]
         },
         "enabled": {
-          "type": "boolean"
+          "title": "Enabled",
+          "type": "boolean",
+          "description": "Whether this agent is enabled and available for routing.",
+          "default": true
         },
         "memory": {
           "oneOf": [
@@ -789,6 +1425,26 @@
             }
           ]
         },
+        "heartbeat": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/HeartbeatAgentConfig"
+            }
+          ]
+        },
+        "dateTimeInjection": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/DateTimeInjectionConfig"
+            }
+          ]
+        },
         "sessionAccess": {
           "oneOf": [
             {
@@ -805,7 +1461,7 @@
               "type": "null"
             },
             {
-              "$ref": "#/definitions/SessionAccessConfig"
+              "$ref": "#/definitions/ConversationAccessConfig"
             }
           ]
         },
@@ -818,6 +1474,15 @@
               "$ref": "#/definitions/FileAccessPolicyConfig"
             }
           ]
+        },
+        "shellCommand": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
         },
         "extensions": {
           "type": [
@@ -835,8 +1500,52 @@
               "$ref": "#/definitions/ToolPolicyConfig"
             }
           ]
+        },
+        "kind": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/AgentKind"
+            }
+          ]
         }
       }
+    },
+    "CacheRetention": {
+      "type": "string",
+      "description": "",
+      "x-enum-names": [
+        "None",
+        "Short",
+        "Long"
+      ],
+      "x-enum-varnames": [
+        "None",
+        "Short",
+        "Long"
+      ],
+      "x-enumNames": [
+        "None",
+        "Short",
+        "Long"
+      ],
+      "x-enum-descriptions": [
+        null,
+        null,
+        null
+      ],
+      "x-enumDescriptions": [
+        null,
+        null,
+        null
+      ],
+      "enum": [
+        "none",
+        "short",
+        "long"
+      ]
     },
     "MemoryAgentConfig": {
       "type": "object",
@@ -845,16 +1554,14 @@
         "enabled": {
           "type": "boolean"
         },
+        "path": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
         "indexing": {
           "type": "string"
-        },
-        "promptInjection": {
-          "type": "string",
-          "enum": [
-            "full",
-            "summary",
-            "none"
-          ]
         },
         "search": {
           "oneOf": [
@@ -865,6 +1572,12 @@
               "$ref": "#/definitions/MemorySearchAgentConfig"
             }
           ]
+        },
+        "promptInjection": {
+          "type": [
+            "null",
+            "string"
+          ]
         }
       }
     },
@@ -873,6 +1586,14 @@
       "additionalProperties": false,
       "properties": {
         "defaultTopK": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "maxTopK": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "maxLimit": {
           "type": "integer",
           "format": "int32"
         },
@@ -925,7 +1646,107 @@
         }
       }
     },
+    "HeartbeatAgentConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "intervalMinutes": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "prompt": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "quietHours": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/QuietHoursConfig"
+            }
+          ]
+        },
+        "activeHours": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/ActiveHoursConfig"
+            }
+          ]
+        },
+        "ackMaxChars": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "QuietHoursConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "start": {
+          "type": "string"
+        },
+        "end": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "ActiveHoursConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "type": "string"
+        },
+        "end": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
     "SessionAccessConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string"
+        },
+        "allowedAgents": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ConversationAccessConfig": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -975,19 +1796,12 @@
           }
         },
         "askFallback": {
-          "description": "Posture applied when a tool requires approval but no approval workflow can service the request. 'allow' (default) permits execution with an audit record; 'deny' fails closed with an ask-fallback-deny reason. Leave unset for unattended agents.",
           "type": [
-            "string",
-            "null"
-          ],
-          "enum": [
-            "allow",
-            "deny",
-            null
+            "null",
+            "string"
           ]
         },
         "askFallbackAllow": {
-          "description": "Tools exempted from askFallback=deny; these fall back to allow instead of being refused.",
           "type": [
             "array",
             "null"
@@ -998,30 +1812,67 @@
         }
       }
     },
+    "AgentKind": {
+      "type": "string",
+      "description": "",
+      "x-enum-names": [
+        "Named",
+        "SubAgent"
+      ],
+      "x-enum-varnames": [
+        "Named",
+        "SubAgent"
+      ],
+      "x-enumNames": [
+        "Named",
+        "SubAgent"
+      ],
+      "x-enum-descriptions": [
+        null,
+        null
+      ],
+      "x-enumDescriptions": [
+        null,
+        null
+      ],
+      "enum": [
+        "Named",
+        "SubAgent"
+      ]
+    },
     "ProviderConfig": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "title": "Enabled",
+          "type": "boolean",
+          "description": "Whether this provider is enabled. Disabled providers are hidden from the API.",
+          "default": true
         },
         "apiKey": {
+          "title": "API key",
           "type": [
             "null",
             "string"
-          ]
+          ],
+          "description": "API key for this provider, or a reference to an auth.json entry. Sensitive: stored and shown masked."
         },
         "baseUrl": {
+          "title": "Base URL",
           "type": [
             "null",
             "string"
-          ]
+          ],
+          "description": "Optional base URL override for this provider's API endpoint."
         },
         "defaultModel": {
+          "title": "Default model",
           "type": [
             "null",
             "string"
-          ]
+          ],
+          "description": "Default model identifier used for this provider when an agent does not specify one."
         },
         "models": {
           "type": [
@@ -1031,12 +1882,52 @@
           "items": {
             "type": "string"
           }
+        },
+        "input": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "api": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "reasoning": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "supportsExtraHighThinking": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "supportsExtendedContextWindow": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "contextWindow": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
         }
       }
     },
     "ChannelConfig": {
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": {},
       "properties": {
         "type": {
           "type": [
@@ -1045,16 +1936,17 @@
           ]
         },
         "enabled": {
-          "type": "boolean"
+          "title": "Enabled",
+          "type": "boolean",
+          "description": "Whether this channel is enabled.",
+          "default": true
         },
         "settings": {
           "type": [
             "null",
             "object"
           ],
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": {}
         }
       }
     },
@@ -1063,11 +1955,19 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "title": "Enable cron",
+          "type": "boolean",
+          "description": "Whether the cron scheduler runs scheduled jobs.",
+          "default": true
         },
         "tickIntervalSeconds": {
+          "title": "Tick interval (seconds)",
           "type": "integer",
-          "format": "int32"
+          "description": "How often the scheduler wakes to evaluate due jobs, in seconds.",
+          "format": "int32",
+          "default": 60,
+          "maximum": 2147483647.0,
+          "minimum": 1.0
         },
         "jobs": {
           "type": [
@@ -1114,6 +2014,27 @@
             "string"
           ]
         },
+        "templateName": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "templateParameters": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "model": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
         "webhookUrl": {
           "type": [
             "null",
@@ -1143,6 +2064,73 @@
           "additionalProperties": {
             "type": "string"
           }
+        }
+      }
+    },
+    "PromptTemplateConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prompt": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "description": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "defaults": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "parameters": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": {
+            "$ref": "#/definitions/PromptTemplateParameterConfig"
+          }
+        }
+      }
+    },
+    "PromptTemplateParameterConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "default": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "WorkspacePortalConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxReportFileSizeBytes": {
+          "type": "integer",
+          "format": "int32"
         }
       }
     }

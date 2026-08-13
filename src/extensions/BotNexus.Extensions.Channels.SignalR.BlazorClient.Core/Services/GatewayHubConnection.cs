@@ -242,8 +242,22 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     }
 
     /// <summary>Subscribe to all active sessions. Returns current session list.</summary>
+    /// <remarks>
+    /// The returned <c>Sessions</c> payload is deliberately NOT written into the client store by the
+    /// portal load paths (#2541) -- REST owns session/conversation LOAD. See
+    /// <c>PortalLoadService</c> for why. This verb is retained for its GROUP-JOINING side effect,
+    /// which is the only thing the hub is responsible for on that path.
+    /// </remarks>
     public async Task<SubscribeAllResult> SubscribeAllAsync()
         => await _connection!.InvokeAsync<SubscribeAllResult>("SubscribeAll");
+
+    /// <summary>
+    /// Joins the per-agent notification groups so this connection receives
+    /// <c>ConversationChanged</c> for the given agents only (#2541). Idempotent server-side, so it
+    /// is safe to call on every connect, reconnect and rebuild.
+    /// </summary>
+    public async Task SubscribeAgentsAsync(IReadOnlyList<string> agentIds)
+        => await _connection!.InvokeAsync("SubscribeAgents", agentIds);
 
     /// <summary>
     /// Performs a lightweight liveness round-trip against the hub (#1838). Invokes the server

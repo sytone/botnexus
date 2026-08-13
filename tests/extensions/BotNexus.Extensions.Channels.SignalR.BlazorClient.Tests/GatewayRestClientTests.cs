@@ -475,6 +475,39 @@ public sealed class GatewayRestClientTests
 
         success.ShouldBeFalse();
     }
+    [Fact]
+    public async Task ExecuteCommandAsync_posts_to_the_command_pipeline_and_returns_the_result()
+    {
+        // #2873: this seam did not exist, so CommandsController was unreachable from the portal.
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/commands/execute", JsonSerializer.Serialize(new
+        {
+            title = "Gateway Status",
+            body = "Uptime: 3h",
+            isError = false
+        }));
+
+        var result = await client.ExecuteCommandAsync(new CommandExecuteRequestDto("/status", "a1", "s1"));
+
+        handler.LastRequestUrl.ShouldContain("/api/commands/execute");
+        handler.LastRequestMethod.ShouldBe("POST");
+        result.ShouldNotBeNull();
+        result!.Title.ShouldBe("Gateway Status");
+        result.Body.ShouldBe("Uptime: 3h");
+        result.IsError.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteCommandAsync_returns_null_on_a_non_success_status()
+    {
+        // Sad path: an unstubbed path yields 404. Must return null so the caller can render a
+        // visible error rather than falling through to the agent.
+        var (client, _) = CreateClient();
+
+        var result = await client.ExecuteCommandAsync(new CommandExecuteRequestDto("/status", "a1", "s1"));
+
+        result.ShouldBeNull();
+    }
 }
 
 /// <summary>Minimal HTTP handler for stubbing REST responses by URL path.</summary>

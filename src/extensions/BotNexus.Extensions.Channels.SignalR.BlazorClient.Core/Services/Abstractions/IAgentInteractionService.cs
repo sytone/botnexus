@@ -39,6 +39,22 @@ public interface IAgentInteractionService
     /// <summary>Redirects with optional draft attachments, matching the send media overload (#2484).</summary>
     Task InterruptAndSteerAsync(string agentId, string message, IReadOnlyList<DraftAttachment> attachments);
     Task ResetSessionAsync(string agentId);
+
+    /// <summary>
+    /// Executes <paramref name="commandText"/> through the gateway command pipeline
+    /// (<c>POST /api/commands/execute</c>) and appends the returned <c>CommandResult</c> to the
+    /// active conversation as a locally-rendered row (#2873).
+    /// </summary>
+    /// <remarks>
+    /// No model turn is consumed: the command text is never delivered to the agent. When the
+    /// pipeline rejects the command, is unreachable, or the client has no active conversation, an
+    /// <c>Error</c> row is appended so the failure is visible rather than silent. This method must
+    /// never fall back to <see cref="SendMessageAsync(string, string)"/> - that fallback is exactly
+    /// the #2873 defect.
+    /// </remarks>
+    /// <returns><see langword="true"/> when the pipeline returned a non-error result.</returns>
+    Task<bool> ExecuteGatewayCommandAsync(string agentId, string commandText);
+
     Task<CompactSessionResult?> CompactSessionAsync(string agentId);
     Task<string?> CreateConversationAsync(string agentId, string? title = null, bool select = true);
     Task SelectConversationAsync(string agentId, string conversationId);

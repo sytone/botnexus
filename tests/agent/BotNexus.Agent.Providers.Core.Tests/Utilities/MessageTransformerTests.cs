@@ -238,16 +238,136 @@ public class MessageTransformerTests
     }
 
     [Fact]
-    public void OrphanToolResultMessages_ArePreservedWithoutFailure()
+    public void OrphanToolResultMessages_AreDroppedWithoutFailure()
     {
+        // #3014 reverses this case's expectation. It previously asserted the orphan was PRESERVED;
+        // that shape is exactly what makes Anthropic and the Copilot messages API return a hard 400.
+        // The original intent - transforming an orphan must not throw, and the surrounding transcript
+        // must survive intact - is preserved and strengthened: the orphan is now dropped instead.
         var orphan = new ToolResultMessage("missing-id", "test", [new TextContent("ok")], false, Ts);
         var model = MakeModel();
 
         var result = MessageTransformer.TransformMessages([orphan, MakeUser("continue")], model);
 
-        result.Count().ShouldBe(2);
-        result[0].ShouldBe(orphan);
-        result[1].ShouldBeOfType<UserMessage>();
+        result.Count().ShouldBe(1);
+        result.ShouldNotContain(orphan);
+        result[0].ShouldBeOfType<UserMessage>();
+    }
+
+    [Fact]
+    public void OrphanToolResult_IsDropped_WhenLeadingTruncatedTranscript()
+    {
+        // The #3014 shape produced by overflow compaction: the retained tail begins with a tool
+        // result whose originating assistant tool call was cut away, followed by a legitimate
+        // paired turn. Only the orphan is dropped.
+        var paired = new ToolCallContent("tc-kept", "tool", new Dictionary<string, object?>());
+        var messages = new Message[]
+        {
+            new ToolResultMessage("tc-dropped", "tool", [new TextContent("stranded")], false, Ts),
+            MakeAssistant([paired], reason: StopReason.ToolUse),
+            new ToolResultMessage("tc-kept", "tool", [new TextContent("kept")], false, Ts),
+        };
+
+        var result = MessageTransformer.TransformMessages(messages, MakeModel());
+
+        result.OfType<ToolResultMessage>().Select(r => r.ToolCallId).ShouldBe(["tc-kept"]);
+        result.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void OrphanToolResult_DropIsKeyedOnBaseCallId_NotTheCompositeId()
+    {
+        // The Responses API packs "call_id|item_id". Pairing must use the segment before the pipe,
+        // otherwise every composite-id result would look orphaned and be dropped wholesale.
+        var call = new ToolCallContent("call_x|fc_1", "tool", new Dictionary<string, object?>());
+        var messages = new Message[]
+        {
+            MakeAssistant([call], reason: StopReason.ToolUse),
+            new ToolResultMessage("call_x|fc_9", "tool", [new TextContent("ok")], false, Ts),
+        };
+
+        var result = MessageTransformer.TransformMessages(messages, MakeModel());
+
+        result.OfType<ToolResultMessage>().ShouldHaveSingleItem()
+            .ToolCallId.ShouldBe("call_x|fc_9");
+    }
+
+    [Fact]
+    public void OrphanToolResult_DropSurvivesToolCallIdNormalization()
+    {
+        // The pairing set is populated from the POST-normalization tool call ids, and the tool result
+        // id is rewritten by the same map earlier in the pass. A result that pairs before
+        // normalization must still pair after it, or normalization itself would manufacture orphans.
+        var call = new ToolCallContent("abc!@#", "tool", new Dictionary<string, object?>());
+        var messages = new Message[]
+        {
+            MakeAssistant([call], provider: "openai", api: "openai-completions", reason: StopReason.ToolUse),
+            new ToolResultMessage("abc!@#", "tool", [new TextContent("done")], false, Ts),
+        };
+
+        var result = MessageTransformer.TransformMessages(
+            messages,
+            MakeModel("anthropic", "anthropic-messages"),
+            (id, _, _) => id.Replace("!", "").Replace("@", "").Replace("#", ""));
+
+        result.OfType<ToolResultMessage>().ShouldHaveSingleItem().ToolCallId.ShouldBe("abc");
+    }
+
+    [Fact]
+    public void OrphanToolResult_FromSkippedErroredAssistant_IsDropped()
+    {
+        // Sad path: the assistant turn that issued the call is skipped for StopReason.Error, so its
+        // tool call never reaches the output. Its result is then an orphan and must go too - keeping
+        // it would emit a tool_result with no originating call, the exact 400 shape.
+        var call = new ToolCallContent("tc-errored", "tool", new Dictionary<string, object?>());
+        var messages = new Message[]
+        {
+            MakeUser("go"),
+            MakeAssistant([call], reason: StopReason.Error),
+            new ToolResultMessage("tc-errored", "tool", [new TextContent("ignored")], false, Ts),
+        };
+
+        var result = MessageTransformer.TransformMessages(messages, MakeModel());
+
+        result.OfType<ToolResultMessage>().ShouldBeEmpty();
+        result.OfType<AssistantMessage>().ShouldBeEmpty();
+        result.ShouldHaveSingleItem().ShouldBeOfType<UserMessage>();
+    }
+
+    [Fact]
+    public void OrphanToolResult_ForwardReferenceToLaterCall_IsDropped()
+    {
+        // A tool result may only pair with a call that PRECEDES it. A result naming a call that only
+        // appears later in the transcript is still invalid on the wire and must be dropped.
+        var call = new ToolCallContent("tc-late", "tool", new Dictionary<string, object?>());
+        var messages = new Message[]
+        {
+            new ToolResultMessage("tc-late", "tool", [new TextContent("early")], false, Ts),
+            MakeAssistant([call], reason: StopReason.ToolUse),
+        };
+
+        var result = MessageTransformer.TransformMessages(messages, MakeModel());
+
+        result.OfType<ToolResultMessage>().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void PairedToolResults_AreUnaffectedByTheOrphanDrop()
+    {
+        // Non-vacuity guard for the drop: a well-formed call/result pair must pass through untouched,
+        // so a mutation that dropped every tool result would redden here rather than pass silently.
+        var call = new ToolCallContent("tc-ok", "tool", new Dictionary<string, object?>());
+        var messages = new Message[]
+        {
+            MakeUser("go"),
+            MakeAssistant([call], reason: StopReason.ToolUse),
+            new ToolResultMessage("tc-ok", "tool", [new TextContent("done")], false, Ts),
+        };
+
+        var result = MessageTransformer.TransformMessages(messages, MakeModel());
+
+        result.Count.ShouldBe(3);
+        result.OfType<ToolResultMessage>().ShouldHaveSingleItem().ToolCallId.ShouldBe("tc-ok");
     }
 
     [Fact]

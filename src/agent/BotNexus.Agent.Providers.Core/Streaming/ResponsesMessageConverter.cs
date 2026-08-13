@@ -27,14 +27,23 @@ public static class ResponsesMessageConverter
     /// <c>function_call_output</c>, or a <c>function_call_output</c> with no prior <c>function_call</c>.
     /// A transcript can carry such a dangling call when a turn was aborted/crashed mid-tool-execution
     /// (the result was never persisted) and the conversation later continued. To keep every replayed
-    /// request well-formed we run a whole-transcript pairing pass first and drop any unpaired tool
-    /// item rather than emit it verbatim, which would permanently wedge the session on this provider.
-    /// Pairing is keyed on the base call id (the segment before <c>|</c>), matching how
-    /// <see cref="SplitToolCallId"/> derives the wire <c>call_id</c>.
+    /// request well-formed we run a whole-transcript pairing pass first and drop any unpaired
+    /// <c>function_call</c> rather than emit it verbatim, which would permanently wedge the session
+    /// on this provider. Pairing is keyed on the base call id (the segment before <c>|</c>), matching
+    /// how <see cref="SplitToolCallId"/> derives the wire <c>call_id</c>.
+    /// <para>
+    /// The <em>inverse</em> direction - a <c>function_call_output</c> whose originating call is absent -
+    /// is no longer handled here (#3014). It now lives in the single shared
+    /// <c>MessageTransformer.TransformMessages</c> seam that every provider converter already calls,
+    /// so Anthropic and the Copilot messages API inherit the same protection instead of this converter
+    /// being the only one with it. Both Responses call sites (<c>ResponsesStreamEngine</c> and
+    /// <c>CopilotResponsesProvider</c>) transform before converting, so behaviour on the wire is
+    /// unchanged.
+    /// </para>
     /// </remarks>
     public static JsonArray ConvertMessages(IReadOnlyList<Message> messages, LlmModel model)
     {
-        var (callIds, resultCallIds) = CollectToolCallPairing(messages);
+        var resultCallIds = CollectResultCallIds(messages);
         var result = new JsonArray();
 
         foreach (var message in messages)
@@ -51,9 +60,6 @@ public static class ResponsesMessageConverter
                     break;
 
                 case ToolResultMessage toolResult:
-                    // Drop an orphan result whose originating call is absent from the transcript.
-                    if (!callIds.Contains(BaseCallId(toolResult.ToolCallId)))
-                        break;
                     result.Add(ConvertToolResultMessage(toolResult, model));
                     break;
             }
@@ -64,35 +70,20 @@ public static class ResponsesMessageConverter
 
     /// <summary>
     /// Walks the whole transcript once and returns the set of base call ids that appear as a
-    /// <c>function_call</c> (from assistant <see cref="ToolCallContent"/>) and the set that appear as
-    /// a <c>function_call_output</c> (from <see cref="ToolResultMessage"/>). The intersection is the
-    /// set of well-paired calls; anything only in one set is unpaired and must be dropped.
+    /// <c>function_call_output</c> (from <see cref="ToolResultMessage"/>). An assistant
+    /// <c>function_call</c> whose base id is not in this set is unpaired and must be dropped.
     /// </summary>
-    private static (HashSet<string> CallIds, HashSet<string> ResultCallIds) CollectToolCallPairing(
-        IReadOnlyList<Message> messages)
+    private static HashSet<string> CollectResultCallIds(IReadOnlyList<Message> messages)
     {
-        var callIds = new HashSet<string>(StringComparer.Ordinal);
         var resultCallIds = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var message in messages)
         {
-            switch (message)
-            {
-                case AssistantMessage assistant:
-                    foreach (var block in assistant.Content)
-                    {
-                        if (block is ToolCallContent toolCall)
-                            callIds.Add(BaseCallId(toolCall.Id));
-                    }
-                    break;
-
-                case ToolResultMessage toolResult:
-                    resultCallIds.Add(BaseCallId(toolResult.ToolCallId));
-                    break;
-            }
+            if (message is ToolResultMessage toolResult)
+                resultCallIds.Add(BaseCallId(toolResult.ToolCallId));
         }
 
-        return (callIds, resultCallIds);
+        return resultCallIds;
     }
 
     private static string BaseCallId(string id)

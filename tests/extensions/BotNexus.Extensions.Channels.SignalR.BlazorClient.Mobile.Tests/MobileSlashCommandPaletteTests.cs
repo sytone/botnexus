@@ -116,7 +116,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
     }
 
     [Fact]
-    public async Task Palette_executes_send_to_agent_command_through_interaction()
+    public async Task Palette_executes_gateway_command_through_the_command_pipeline()
     {
         var cut = _ctx.Render<Chat>();
 
@@ -125,8 +125,10 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
             .First(i => i.QuerySelector(".command-name")!.TextContent == "/help")
             .Click();
 
-        // /help is a gateway command dispatched as its command text via SendMessageAsync.
-        await _interaction.Received(1).SendMessageAsync("agent-1", "/help");
+        // #2873: /help is gateway-owned, so clicking it must reach the command pipeline and NOT
+        // the model. This previously asserted SendMessageAsync, which was the defect itself.
+        await _interaction.Received(1).ExecuteGatewayCommandAsync("agent-1", "/help");
+        await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
     }
 
     [Fact]

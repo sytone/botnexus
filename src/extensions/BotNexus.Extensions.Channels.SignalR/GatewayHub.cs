@@ -147,6 +147,44 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     }
 
     /// <summary>
+    /// Joins the connection to the per-agent notification groups for the agents it renders, so it
+    /// receives <c>ConversationChanged</c> for those agents and no others (#2541).
+    /// </summary>
+    /// <remarks>
+    /// This is a SEPARATE verb from <see cref="SubscribeAll"/> on purpose. The conversation groups
+    /// SubscribeAll joins are derived from EXISTING sessions, so they can never cover a conversation
+    /// that has not been created yet -- and "created" is one of the change types this event carries.
+    /// The agent is the smallest scope that can name a not-yet-existing conversation.
+    /// <para>
+    /// Idempotent: SignalR's <c>AddToGroupAsync</c> is a no-op for a connection already in the group,
+    /// so the reconnect/rebuild paths may call this on every dial without accumulating anything.
+    /// </para>
+    /// </remarks>
+    /// <param name="agentIds">The agents the caller observes. Blank entries are ignored.</param>
+    public async Task SubscribeAgents(IReadOnlyList<string> agentIds)
+    {
+        ArgumentNullException.ThrowIfNull(agentIds);
+
+        var joined = 0;
+        foreach (var agentId in agentIds)
+        {
+            if (string.IsNullOrWhiteSpace(agentId))
+                continue;
+
+            await Groups.AddToGroupAsync(
+                Context.ConnectionId,
+                SignalRChannelAdapter.GetAgentGroup(agentId),
+                Context.ConnectionAborted);
+            joined++;
+        }
+
+        _logger.LogInformation(
+            "Hub SubscribeAgents: connection={ConnectionId} agents={AgentCount}",
+            Context.ConnectionId,
+            joined);
+    }
+
+    /// <summary>
     /// Sends a message to an agent, optionally routing into a specific conversation.
     /// When conversationId is provided, the router looks up the conversation directly
     /// without a binding scan. When null, routes via the default (agentId, channelType) binding.

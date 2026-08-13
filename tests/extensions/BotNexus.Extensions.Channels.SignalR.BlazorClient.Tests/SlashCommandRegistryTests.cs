@@ -131,14 +131,19 @@ public class SlashCommandDispatcherTests
     [InlineData("/context")]
     [InlineData("/model")]
     [InlineData("/reasoning")]
-    public async Task Gateway_commands_are_sent_to_agent(string name)
+    public async Task Gateway_commands_are_dispatched_to_the_command_pipeline(string name)
     {
+        // #2873: this previously asserted the command reached SendMessageAsync, i.e. the model.
+        // That WAS the defect - the gateway command pipeline was never invoked from chat. The
+        // original intent (each gateway command dispatches to exactly one interaction call) is
+        // preserved; only the destination changes, and the negative assertion is strengthened.
         var (sut, interaction) = CreateSut();
         var cmd = SlashCommandRegistry.All.First(c => c.Name == name);
 
         await sut.ExecuteAsync(AgentId, cmd);
 
-        await interaction.Received(1).SendMessageAsync(AgentId, name);
+        await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, name);
+        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
     }
 
     [Fact]

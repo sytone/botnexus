@@ -112,14 +112,51 @@ if ($existingBody -and ((Strip-Volatile $existingBody) -eq (Strip-Volatile $newB
 # ---------------------------------------------------------------------------
 # 7. Create or patch
 # ---------------------------------------------------------------------------
+# A write that cannot be confirmed is a FAILED write, not a successful one (#3005).
+# `gh` reports auth/EMU failures on stderr and a non-zero exit code; neither is
+# surfaced by `| Out-Null`, and $ErrorActionPreference = 'Stop' does not apply to
+# native exit codes. Both the exit code and the verification read are therefore
+# checked explicitly, and either failing produces action='failed' + exit 1.
+function Write-CiCommentFailure {
+    param([string]$Reason, [string]$Detail)
+    if ($Detail) { [Console]::Error.WriteLine($Detail.TrimEnd()) }
+    @{ action = 'failed'; commentId = $null; pr = $PR; error = $Reason } | ConvertTo-Json -Compress
+    exit 1
+}
+
+# Runs a native gh command, capturing stderr to a temp file so it can be replayed
+# rather than discarded. Returns the captured stderr text via [ref]; the caller
+# inspects $LASTEXITCODE.
+function Invoke-GhCapture {
+    param([string[]]$GhArgs, [ref]$Stderr)
+    $errPath = [IO.Path]::GetTempFileName()
+    try {
+        & gh @GhArgs 2> $errPath | Out-Null
+        $Stderr.Value = (Get-Content -LiteralPath $errPath -Raw -ErrorAction SilentlyContinue)
+    } finally {
+        Remove-Item -LiteralPath $errPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$ghErr = $null
 if ($existingId) {
-    gh api "repos/$Repo/issues/comments/$existingId" -X PATCH -f body=$newBody | Out-Null
+    Invoke-GhCapture -GhArgs @('api', "repos/$Repo/issues/comments/$existingId", '-X', 'PATCH', '-f', "body=$newBody") -Stderr ([ref]$ghErr)
+    if ($LASTEXITCODE -ne 0) {
+        Write-CiCommentFailure -Reason 'patch-failed' -Detail $ghErr
+    }
     @{ action = 'updated'; commentId = $existingId; pr = $PR } | ConvertTo-Json -Compress
 } else {
-    $result = gh pr comment $PR --repo $Repo --body $newBody | Out-Null
-    # Fetch the new comment id
+    Invoke-GhCapture -GhArgs @('pr', 'comment', "$PR", '--repo', $Repo, '--body', $newBody) -Stderr ([ref]$ghErr)
+    if ($LASTEXITCODE -ne 0) {
+        Write-CiCommentFailure -Reason 'create-failed' -Detail $ghErr
+    }
+    # Verification read: the comment id IS the proof the write landed.
     $newId = (gh api "repos/$Repo/issues/$PR/comments" --paginate 2>$null |
         ConvertFrom-Json | Where-Object { $_.body -match [regex]::Escape($marker) } |
         Select-Object -Last 1).id
+    if (-not $newId) {
+        Write-CiCommentFailure -Reason 'comment-not-found-after-create' `
+            -Detail "gh pr comment exited 0 but no comment carrying marker $marker could be found on PR $PR."
+    }
     @{ action = 'created'; commentId = $newId; pr = $PR } | ConvertTo-Json -Compress
 }

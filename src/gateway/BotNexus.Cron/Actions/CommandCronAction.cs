@@ -25,7 +25,9 @@ namespace BotNexus.Cron.Actions;
 /// Process management:
 /// <list type="bullet">
 ///   <item>Uses <c>pwsh -NoProfile -c</c> as the default shell (cross-platform via .NET Process).</item>
-///   <item>Timeout defaults to 120 seconds; configurable via <see cref="CronJob.Metadata"/> key "timeoutSeconds".</item>
+///   <item>Timeout defaults to 120 seconds; configurable via <see cref="CronJob.Metadata"/> key "timeoutSeconds".
+///   A value of <c>0</c> means <b>unlimited</b> (#2904): no timeout is armed and the run is bounded only
+///   by the ambient cancellation token. A negative or unparseable value warns and falls back to the default.</item>
 ///   <item>On timeout: kills the process tree (Windows: taskkill /T, POSIX: process group -KILL).</item>
 ///   <item>Captures stdout + stderr and records the combined output in the cron run.</item>
 /// </list>
@@ -72,11 +74,11 @@ public sealed class CommandCronAction : ICronAction
                 $"Cron command job '{context.Job.Id}' was denied by the command authorization policy: {decision.Reason}");
         }
 
-        var timeoutSeconds = ResolveTimeout(context.Job);
+        var timeoutSeconds = ResolveTimeout(context.Job, logger);
 
         logger?.LogInformation(
-            "CommandCronAction: executing command for job '{JobId}' (timeout={Timeout}s).",
-            context.Job.Id, timeoutSeconds);
+            "CommandCronAction: executing command for job '{JobId}' (timeout={Timeout}).",
+            context.Job.Id, DescribeTimeout(timeoutSeconds));
 
         var result = await RunProcessAsync(command, timeoutSeconds, cancellationToken).ConfigureAwait(false);
 
@@ -109,9 +111,13 @@ public sealed class CommandCronAction : ICronAction
     /// <summary>
     /// Runs the command in a subprocess with timeout and output capture.
     /// </summary>
+    /// <param name="timeoutSeconds">
+    /// Seconds to allow the process, or <c>null</c> for an unlimited run (#2904). When null no
+    /// <c>CancelAfter</c> is armed, so only <paramref name="cancellationToken"/> can end the wait.
+    /// </param>
     internal static async Task<CommandResult> RunProcessAsync(
         string command,
-        int timeoutSeconds,
+        int? timeoutSeconds,
         CancellationToken cancellationToken)
     {
         using var process = new Process();
@@ -153,7 +159,12 @@ public sealed class CommandCronAction : ICronAction
         process.BeginErrorReadLine();
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+        // #2904: null is the explicit "unlimited" sentinel - arm nothing, leaving the ambient token
+        // as the only thing that can cancel the wait. The kill path below is unchanged and still
+        // fires for every armed timeout.
+        if (timeoutSeconds is int armedTimeout)
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(armedTimeout));
 
         try
         {
@@ -197,24 +208,18 @@ public sealed class CommandCronAction : ICronAction
         }
     }
 
-    private static int ResolveTimeout(CronJob job)
-    {
-        if (job.Metadata is not null
-            && job.Metadata.TryGetValue("timeoutSeconds", out var rawTimeout)
-            && rawTimeout is not null)
-        {
-            if (rawTimeout is int intVal && intVal > 0)
-                return intVal;
+    /// <summary>
+    /// Resolves this job's process timeout. Returns <c>null</c> for an explicit unlimited run
+    /// (<c>timeoutSeconds: 0</c>, #2904). Delegates to <see cref="CronTimeoutResolver"/> so the
+    /// scheduler and this action agree on both the sentinel and the set of accepted value shapes -
+    /// this site previously accepted neither <c>double</c> nor <c>JsonElement</c>.
+    /// </summary>
+    private static int? ResolveTimeout(CronJob job, ILogger? logger)
+        => CronTimeoutResolver.Resolve(job, DefaultTimeoutSeconds, logger);
 
-            if (rawTimeout is long longVal && longVal > 0)
-                return (int)Math.Min(longVal, int.MaxValue);
-
-            if (rawTimeout is string strVal && int.TryParse(strVal, out var parsed) && parsed > 0)
-                return parsed;
-        }
-
-        return DefaultTimeoutSeconds;
-    }
+    /// <summary>Renders a resolved timeout for logging, so "unlimited" is not logged as a bare blank.</summary>
+    private static string DescribeTimeout(int? timeoutSeconds)
+        => timeoutSeconds is int s ? $"{s}s" : "unlimited";
 
     private static string TruncateForError(string output)
     {

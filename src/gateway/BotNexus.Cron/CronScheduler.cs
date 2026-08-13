@@ -701,11 +701,16 @@ public sealed class CronScheduler(
     private async Task<string?> ExecuteActionWithTimeoutAsync(
         ICronAction action,
         CronExecutionContext context,
-        int timeoutSeconds,
+        int? timeoutSeconds,
         CancellationToken ct)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+        // #2904: a null timeout is the explicit "unlimited" sentinel. Arming no CancelAfter is the
+        // whole point - the linked source still exists so the ambient token (gateway shutdown /
+        // explicit cancel) cancels the run promptly, but nothing else can end it (AC2).
+        if (timeoutSeconds is int armedTimeout)
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(armedTimeout));
 
         try
         {
@@ -1207,21 +1212,15 @@ public sealed class CronScheduler(
     // directly and pass _logger so a degradation to UTC is reported rather than swallowed.
     // Guarded by CronSchedulerTimeZoneResolutionTests.
 
-    private int ResolveJobTimeout(CronJob job)
+    private int? ResolveJobTimeout(CronJob job)
     {
-        if (job.Metadata is not null &&
-            job.Metadata.TryGetValue("timeoutSeconds", out var raw) &&
-            raw is not null)
-        {
-            if (raw is int i && i > 0) return i;
-            if (raw is long l && l > 0) return (int)Math.Min(l, int.MaxValue);
-            if (raw is double d && d > 0) return (int)d;
-            if (raw is System.Text.Json.JsonElement je && je.TryGetInt32(out var parsed) && parsed > 0) return parsed;
-            if (raw is string s && int.TryParse(s, out var ps) && ps > 0) return ps;
-        }
-
         var options = _optionsMonitor.CurrentValue ?? new CronOptions();
-        return options.DefaultJobTimeoutSeconds > 0 ? options.DefaultJobTimeoutSeconds : 3600;
+        var fallback = options.DefaultJobTimeoutSeconds > 0 ? options.DefaultJobTimeoutSeconds : 3600;
+
+        // #2904: shape handling, the 0-means-unlimited sentinel and the invalid-value warning live
+        // in CronTimeoutResolver so this site and CommandCronAction cannot answer the same metadata
+        // value differently - they already had, the command action never accepted double/JsonElement.
+        return CronTimeoutResolver.Resolve(job, fallback, _logger);
     }
 
     /// <summary>

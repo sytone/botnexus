@@ -154,6 +154,20 @@ public class ImageModalityGuardTests : IDisposable
     public void CompletionsConverter_ToolResultImageOnTextOnlyModel_DropsAndWarnsWithToolResultSite()
     {
         var model = Model("openai-completions", "text");
+        // #3014: the transcript must carry the originating tool call, otherwise the tool result is an
+        // orphan and is dropped by the shared MessageTransformer seam before the image guard is ever
+        // reached. The fixture previously omitted it; the assertions below are unchanged in intent
+        // (the tool-role message survives and the image is dropped with the tool-result drop site).
+        var toolCall = new AssistantMessage(
+            Content: [new ToolCallContent("call_1", "screenshot", new Dictionary<string, object?>())],
+            Api: "openai-completions",
+            Provider: "openai",
+            ModelId: "gpt-4o",
+            Usage: Usage.Empty(),
+            StopReason: StopReason.ToolUse,
+            ErrorMessage: null,
+            ResponseId: null,
+            Timestamp: Ts);
         var toolResult = new ToolResultMessage(
             ToolCallId: "call_1",
             ToolName: "screenshot",
@@ -162,10 +176,10 @@ public class ImageModalityGuardTests : IDisposable
             Timestamp: Ts);
 
         var result = CompletionsMessageConverter.Convert(
-            null, model, [toolResult], new OpenAICompletionsCompat());
+            null, model, [toolCall, toolResult], new OpenAICompletionsCompat());
 
-        result.Count.ShouldBe(1);
-        result[0]!["role"]!.GetValue<string>().ShouldBe("tool");
+        result.Count(n => n!["role"]!.GetValue<string>() == "tool").ShouldBe(1);
+        result.Last()!["role"]!.GetValue<string>().ShouldBe("tool");
 
         var record = SingleWarning();
         record.State["DropSite"].ShouldBe("completions.tool-result");
