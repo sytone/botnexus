@@ -138,6 +138,10 @@ public sealed class CronJobDeleteSessionCleanupTests
         // best-effort reclamation that failed.
         await scheduler.DeleteJobAsync(JobId.From("job-1"));
 
+        // Non-vacuity: the cleanup must actually have been ATTEMPTED and hit the throwing delete.
+        // Without this the test passes identically on a build that performs no cleanup at all.
+        sessions.DeleteAttempts.ShouldBe(["cron:job-1:20260801:aaa"]);
+
         // And the job row is gone regardless, so the delete is not silently a no-op the caller
         // would have to retry forever against a permanently broken session store.
         (await context.Store.GetAsync(JobId.From("job-1"))).ShouldBeNull();
@@ -155,6 +159,9 @@ public sealed class CronJobDeleteSessionCleanupTests
 
         await scheduler.DeleteJobAsync(JobId.From("job-1"));
 
+        // Non-vacuity: the enumeration was attempted (and threw). A build with no cleanup at all
+        // would never call ListAsync and would pass this test for the wrong reason.
+        sessions.ListCalls.ShouldBe(1);
         (await context.Store.GetAsync(JobId.From("job-1"))).ShouldBeNull();
     }
 
@@ -184,6 +191,7 @@ public sealed class CronJobDeleteSessionCleanupTests
         await scheduler.DeleteJobAsync(JobId.From("job-1"));
 
         archived.ShouldHaveSingleItem().Value.ShouldBe("conv-abc");
+        sessions.DeleteAttempts.ShouldBe(["cron:job-1:20260801:aaa"]);
         (await context.Store.GetAsync(JobId.From("job-1"))).ShouldBeNull();
     }
 
@@ -199,6 +207,10 @@ public sealed class CronJobDeleteSessionCleanupTests
 
         await scheduler.DeleteJobAsync(JobId.From("job-1"));
 
+        // The no-op is an OBSERVED empty sweep, not an absent one: the cleanup ran, enumerated the
+        // job's sessions, and found nothing eligible. Asserting only `Deleted.ShouldBeEmpty()`
+        // would hold just as well on a build that never looks.
+        sessions.ListCalls.ShouldBe(1);
         sessions.Deleted.ShouldBeEmpty();
     }
 
@@ -228,6 +240,7 @@ public sealed class CronJobDeleteSessionCleanupTests
 
         await scheduler.DeleteJobAsync(JobId.From("job-1"));
         var afterFirst = sessions.Deleted.Count;
+        afterFirst.ShouldBe(1);
 
         await scheduler.DeleteJobAsync(JobId.From("job-1"));
 
@@ -299,6 +312,13 @@ public sealed class CronJobDeleteSessionCleanupTests
 
         public List<SessionId> Deleted { get; } = [];
 
+        /// <summary>
+        /// Every id the cleanup asked to delete, recorded <b>before</b> <see cref="ThrowOnDelete"/>
+        /// is honoured. This is what makes the sad-path tests non-vacuous: it distinguishes "the
+        /// cleanup ran and the store refused" from "no cleanup ran at all".
+        /// </summary>
+        public List<string> DeleteAttempts { get; } = [];
+
         public int ListCalls { get; private set; }
 
         public Exception? ThrowOnDelete { get; init; }
@@ -328,6 +348,8 @@ public sealed class CronJobDeleteSessionCleanupTests
 
         public Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default)
         {
+            DeleteAttempts.Add(sessionId.Value);
+
             if (ThrowOnDelete is not null)
                 throw ThrowOnDelete;
 
