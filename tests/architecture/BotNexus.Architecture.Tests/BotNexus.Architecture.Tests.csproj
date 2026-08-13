@@ -10,6 +10,8 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Xunit.SkippableFact" />
     <PackageReference Include="NetArchTest.Rules" />
+    <!-- #2616: the agent-execution fence enumerates call sites from IL, not from file names. -->
+    <PackageReference Include="Mono.Cecil" />
     <PackageReference Include="Vogen" />
   </ItemGroup>
 
@@ -24,6 +26,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
+    <!-- #2616: controllers and triggers are execution call sites, so their assembly must be scanned. -->
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Api\BotNexus.Gateway.Api.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
