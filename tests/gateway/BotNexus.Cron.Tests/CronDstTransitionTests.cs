@@ -45,11 +45,10 @@ public sealed class CronDstTransitionTests
     [Fact]
     public void SpringForward_NonexistentLocalTime_FiresExactlyOnceAtTheTransitionInstant()
     {
-        var occurrences = CronNextRunCalculator.EnumerateOccurrencesUtc(
-            Daily("30 2 * * *"),
+        var occurrences = Daily("30 2 * * *").RunsBetweenUtc(
             Utc(2026, 3, 7, 0, 0),
             Utc(2026, 3, 10, 0, 0),
-            maxOccurrences: 50,
+            maxRuns: 50,
             Pacific);
 
         occurrences.ShouldBe(
@@ -68,11 +67,10 @@ public sealed class CronDstTransitionTests
     [Fact]
     public void SpringForward_TransitionDay_ContributesExactlyOneOccurrence()
     {
-        var occurrences = CronNextRunCalculator.EnumerateOccurrencesUtc(
-            Daily("30 2 * * *"),
+        var occurrences = Daily("30 2 * * *").RunsBetweenUtc(
             Utc(2026, 3, 8, 0, 0),
             Utc(2026, 3, 9, 0, 0),
-            maxOccurrences: 50,
+            maxRuns: 50,
             Pacific);
 
         occurrences.Count.ShouldBe(1);
@@ -91,11 +89,10 @@ public sealed class CronDstTransitionTests
     [Fact]
     public void FallBack_AmbiguousLocalTime_FiresExactlyOnceOnTheFirstPass()
     {
-        var occurrences = CronNextRunCalculator.EnumerateOccurrencesUtc(
-            Daily("30 1 * * *"),
+        var occurrences = Daily("30 1 * * *").RunsBetweenUtc(
             Utc(2026, 10, 31, 0, 0),
             Utc(2026, 11, 3, 0, 0),
-            maxOccurrences: 50,
+            maxRuns: 50,
             Pacific);
 
         occurrences.ShouldBe(
@@ -116,11 +113,10 @@ public sealed class CronDstTransitionTests
     [Fact]
     public void FallBack_TransitionDay_ContributesExactlyOneOccurrence()
     {
-        var occurrences = CronNextRunCalculator.EnumerateOccurrencesUtc(
-            Daily("30 1 * * *"),
+        var occurrences = Daily("30 1 * * *").RunsBetweenUtc(
             Utc(2026, 11, 1, 0, 0),
             Utc(2026, 11, 2, 0, 0),
-            maxOccurrences: 50,
+            maxRuns: 50,
             Pacific);
 
         occurrences.Count.ShouldBe(1);
@@ -136,11 +132,10 @@ public sealed class CronDstTransitionTests
     [Fact]
     public void FallBack_HourlyJob_FiresOnEveryElapsedHourIncludingTheRepeatedOne()
     {
-        var occurrences = CronNextRunCalculator.EnumerateOccurrencesUtc(
-            Daily("0 * * * *"),
+        var occurrences = Daily("0 * * * *").RunsBetweenUtc(
             Utc(2026, 11, 1, 7, 0),
             Utc(2026, 11, 1, 11, 0),
-            maxOccurrences: 50,
+            maxRuns: 50,
             Pacific);
 
         // 08:00Z = 01:00 PDT, 09:00Z = 01:00 PST (the repeat), 10:00Z = 02:00 PST.
@@ -192,8 +187,7 @@ public sealed class CronDstTransitionTests
         // window always contains the transition rather than ending on it.
         var to = Utc(toYear, toMonth, toDay, 0, 0).AddDays(1);
 
-        var walked = CronNextRunCalculator.EnumerateOccurrencesUtc(
-            expression, from, to, maxOccurrences: 500, Pacific);
+        var walked = expression.RunsBetweenUtc( from, to, maxRuns: 500, Pacific);
 
         var forward = expression
             .GetOccurrences(from, to, Pacific, fromInclusive: false, toInclusive: false)
@@ -260,8 +254,8 @@ public sealed class CronDstTransitionTests
         var expression = Daily("30 2 * * *");
         var after = new DateTimeOffset(Utc(2026, 3, 7, 12, 0));
 
-        var zoned = CronNextRunCalculator.GetNextOccurrence(expression, after, Pacific);
-        var utc = CronNextRunCalculator.GetNextOccurrence(expression, after, TimeZoneInfo.Utc);
+        var zoned = expression.NextRun(after, Pacific);
+        var utc = expression.NextRun(after, TimeZoneInfo.Utc);
 
         zoned.ShouldBe(new DateTimeOffset(Utc(2026, 3, 8, 10, 0)));
         utc.ShouldBe(new DateTimeOffset(Utc(2026, 3, 8, 2, 30)));
@@ -286,7 +280,7 @@ public sealed class CronDstTransitionTests
     {
         var cursor = DateTime.SpecifyKind(new DateTime(2026, 3, 7, 12, 0, 0), kind);
 
-        var next = CronNextRunCalculator.GetNextOccurrenceUtc(Daily("30 2 * * *"), cursor, Pacific);
+        var next = Daily("30 2 * * *").NextRunUtc(cursor, Pacific);
 
         next.ShouldBe(Utc(2026, 3, 8, 10, 0));
     }
@@ -303,8 +297,8 @@ public sealed class CronDstTransitionTests
         var utcCursor = Utc(2026, 3, 7, 12, 0);
         var localCursor = utcCursor.ToLocalTime();
 
-        var fromLocal = CronNextRunCalculator.GetNextOccurrenceUtc(Daily("30 2 * * *"), localCursor, Pacific);
-        var fromUtc = CronNextRunCalculator.GetNextOccurrenceUtc(Daily("30 2 * * *"), utcCursor, Pacific);
+        var fromLocal = Daily("30 2 * * *").NextRunUtc(localCursor, Pacific);
+        var fromUtc = Daily("30 2 * * *").NextRunUtc(utcCursor, Pacific);
 
         fromLocal.ShouldBe(fromUtc);
     }

@@ -19,10 +19,10 @@ namespace BotNexus.Cron.Tests;
 /// </summary>
 public sealed class CronNextRunSingleDefinitionTests
 {
-    private const string CalculatorFileName = "CronNextRunCalculator.cs";
+    private const string CalculatorFileName = "CronExpressionExtensions.cs";
 
     /// <summary>
-    /// Clause 5. Only the calculator may call Cronos' occurrence API directly.
+    /// Clause 5. Only the extensions file may call Cronos' occurrence API directly.
     /// <para>
     /// The scan covers the gateway source tree, not just <c>BotNexus.Cron</c>, because the
     /// seventh call site found during the premise check lived in
@@ -67,15 +67,19 @@ public sealed class CronNextRunSingleDefinitionTests
     }
 
     /// <summary>
-    /// Matches a DIRECT call to Cronos' occurrence API, not a doc comment naming it and not a
-    /// delegating call to the canonical calculator.
+    /// Matches a DIRECT call to Cronos' occurrence API, not a doc comment naming it.
     /// <para>
-    /// Both exclusions are load-bearing rather than cosmetic. Without the comment filter, the
-    /// calculator's own explanation of the policy and this file's explanation of the fence would
-    /// be indistinguishable from a violation. Without the delegation filter, the fence would be
-    /// red BY CONSTRUCTION the moment the fix existed - every site now reads
-    /// <c>CronNextRunCalculator.GetNextOccurrence(...)</c>, which is the compliant shape, not the
-    /// forbidden one. A fence that fires on its own remedy tempts the next author to delete it.
+    /// The comment filter is load-bearing rather than cosmetic: without it, the extensions' own
+    /// explanation of the policy and this file's explanation of the fence would be
+    /// indistinguishable from a violation.
+    /// </para>
+    /// <para>
+    /// No exclusion is needed for compliant call sites, because the extensions deliberately use
+    /// DIFFERENT verbs (<c>NextRun</c> / <c>NextRunUtc</c> / <c>RunsBetweenUtc</c>) from Cronos'
+    /// <c>GetNextOccurrence</c>. Had they reused Cronos' name, a compliant
+    /// <c>expression.GetNextOccurrence(now, tz)</c> would be textually identical to the raw call
+    /// this fence forbids, and the fence would need an exclusion that any new violation could
+    /// trivially adopt. Distinct verbs make the distinction structural instead.
     /// </para>
     /// </summary>
     private static bool IsOccurrenceCall(string line)
@@ -84,10 +88,6 @@ public sealed class CronNextRunSingleDefinitionTests
         if (trimmed.StartsWith("//", StringComparison.Ordinal) ||
             trimmed.StartsWith("///", StringComparison.Ordinal) ||
             trimmed.StartsWith("*", StringComparison.Ordinal))
-            return false;
-
-        // Delegation to the single definition is the compliant shape.
-        if (trimmed.Contains("CronNextRunCalculator.", StringComparison.Ordinal))
             return false;
 
         return trimmed.Contains(".GetNextOccurrence(", StringComparison.Ordinal)

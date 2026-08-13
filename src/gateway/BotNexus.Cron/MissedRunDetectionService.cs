@@ -174,11 +174,11 @@ public sealed class MissedRunDetectionService(
 
         // #2810: this walk advances a cursor through HISTORY, so it is the one next-run computation
         // that necessarily crosses past DST transitions. It is therefore defined in
-        // CronNextRunCalculator alongside the forward computation - the two must agree instant for
+        // CronExpressionExtensions alongside the forward computation - the two must agree instant for
         // instant, and a local loop here could drift from the forward path without anything noticing.
         // The cap still bounds runaway iteration for frequent schedules after long downtime.
-        return CronNextRunCalculator
-            .EnumerateOccurrencesUtc(expression, floor.Value, now.UtcDateTime, MaxMissedRunsPerJob, tz)
+        return expression
+            .RunsBetweenUtc(floor.Value, now.UtcDateTime, MaxMissedRunsPerJob, tz)
             .Select(occurrence => new DateTimeOffset(occurrence, TimeSpan.Zero))
             .ToList();
     }
@@ -209,7 +209,7 @@ public sealed class MissedRunDetectionService(
 
         // Continue from the last recorded occurrence, which the shared floor already bounded
         // (#2554) — WasTruncated must never look at a window GetMissedRuns refused to scan.
-        var next = CronNextRunCalculator.GetNextOccurrenceUtc(expression, missed[^1].UtcDateTime, tz);
+        var next = expression.NextRunUtc(missed[^1].UtcDateTime, tz);
         return next is not null && next.Value < now.UtcDateTime;
     }
 

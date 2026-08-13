@@ -4,7 +4,15 @@ namespace BotNexus.Cron;
 
 /// <summary>
 /// The single canonical definition of "when does this cron job next run", including its
-/// behaviour across daylight-saving transitions.
+/// behaviour across daylight-saving transitions, expressed as extension methods so a next-run
+/// question reads as a question asked OF a <see cref="CronExpression"/>:
+/// <c>expression.NextRun(now, tz)</c>.
+/// <para>
+/// These are extension methods rather than instance methods because <see cref="CronExpression"/>
+/// is Cronos' sealed type, not ours - extending it in place is not available, and wrapping it in
+/// a bespoke value type would add a second thing to keep in sync with the schedule. Extensions
+/// give the instance-call shape at every site without owning the type.
+/// </para>
 /// <para>
 /// Issue #2810: the repository computed next-run times at seven independent
 /// <c>CronExpression.GetNextOccurrence</c> call sites (scheduler due-scan, scheduler
@@ -19,7 +27,7 @@ namespace BotNexus.Cron;
 /// </para>
 /// <para>
 /// <b>The policy, verified against Cronos 0.11.1 rather than assumed.</b> Cronos'
-/// timezone-aware overloads already implement the correct semantics; this type exists to
+/// timezone-aware overloads already implement the correct semantics; these methods exist to
 /// state them once, pin them with tests, and stop each site re-deriving them:
 /// </para>
 /// <list type="bullet">
@@ -43,13 +51,15 @@ namespace BotNexus.Cron;
 /// </list>
 /// <para>
 /// <b>The two things that DO have to be got right at every site</b>, and are the reason this
-/// is a shared helper rather than a comment:
+/// is shared code rather than a comment:
 /// </para>
 /// <list type="number">
 /// <item>
 /// The timezone-aware overload must actually be used. Dropping the
 /// <see cref="TimeZoneInfo"/> argument computes the schedule in UTC, which is silently
 /// correct for eleven months of the year and wrong by an hour either side of a transition.
+/// Making the zone a required parameter of every method here removes the overload that made
+/// that mistake expressible.
 /// </item>
 /// <item>
 /// A <see cref="DateTime"/> cursor handed to Cronos must be <see cref="DateTimeKind.Utc"/>.
@@ -58,15 +68,23 @@ namespace BotNexus.Cron;
 /// turns a scheduling question into an exception inside a background service.
 /// </item>
 /// </list>
+/// <para>
+/// <b>Naming note (load-bearing).</b> These deliberately do NOT reuse Cronos' verb
+/// <c>GetNextOccurrence</c>. <c>CronNextRunSingleDefinitionTests</c> fences the invariant that
+/// only this file calls Cronos' occurrence API directly, and it does so by scanning source text;
+/// an extension sharing the name would make a compliant <c>expression.GetNextOccurrence(now, tz)</c>
+/// textually indistinguishable from the raw call it is meant to forbid. Distinct verbs keep the
+/// fence able to tell the remedy from the violation.
+/// </para>
 /// </summary>
-internal static class CronNextRunCalculator
+internal static class CronExpressionExtensions
 {
     /// <summary>
-    /// The next occurrence strictly after <paramref name="after"/>, in the job's timezone,
+    /// The next run strictly after <paramref name="after"/>, in the job's timezone,
     /// or <see langword="null"/> when the expression has no further occurrence.
     /// </summary>
-    internal static DateTimeOffset? GetNextOccurrence(
-        CronExpression expression,
+    internal static DateTimeOffset? NextRun(
+        this CronExpression expression,
         DateTimeOffset after,
         TimeZoneInfo timeZone)
     {
@@ -76,7 +94,7 @@ internal static class CronNextRunCalculator
     }
 
     /// <summary>
-    /// The next occurrence strictly after a UTC <paramref name="afterUtc"/> cursor.
+    /// The next run strictly after a UTC <paramref name="afterUtc"/> cursor.
     /// <para>
     /// The kind is normalised rather than asserted: a cursor may have travelled through a
     /// <see cref="DateTimeOffset"/> conversion or a persisted column on its way here, and an
@@ -84,8 +102,8 @@ internal static class CronNextRunCalculator
     /// would abort catch-up for every job, not just the one with the odd cursor.
     /// </para>
     /// </summary>
-    internal static DateTime? GetNextOccurrenceUtc(
-        CronExpression expression,
+    internal static DateTime? NextRunUtc(
+        this CronExpression expression,
         DateTime afterUtc,
         TimeZoneInfo timeZone)
     {
@@ -95,9 +113,8 @@ internal static class CronNextRunCalculator
     }
 
     /// <summary>
-    /// Enumerates every occurrence in the half-open UTC window
-    /// (<paramref name="afterUtc"/>, <paramref name="beforeUtc"/>), capped at
-    /// <paramref name="maxOccurrences"/>.
+    /// Every run in the half-open UTC window (<paramref name="afterUtc"/>,
+    /// <paramref name="beforeUtc"/>), capped at <paramref name="maxRuns"/>.
     /// <para>
     /// This is the catch-up walk. It is a cursor loop rather than a range query because the
     /// caller needs the cap to bound iteration after long downtime, but it is defined HERE so
@@ -106,29 +123,29 @@ internal static class CronNextRunCalculator
     /// that happen to agree today.
     /// </para>
     /// </summary>
-    internal static List<DateTime> EnumerateOccurrencesUtc(
-        CronExpression expression,
+    internal static List<DateTime> RunsBetweenUtc(
+        this CronExpression expression,
         DateTime afterUtc,
         DateTime beforeUtc,
-        int maxOccurrences,
+        int maxRuns,
         TimeZoneInfo timeZone)
     {
         ArgumentNullException.ThrowIfNull(expression);
         ArgumentNullException.ThrowIfNull(timeZone);
-        var occurrences = new List<DateTime>();
-        if (maxOccurrences <= 0)
-            return occurrences;
+        var runs = new List<DateTime>();
+        if (maxRuns <= 0)
+            return runs;
         var cursor = NormaliseToUtcKind(afterUtc);
         var limit = NormaliseToUtcKind(beforeUtc);
-        while (occurrences.Count < maxOccurrences)
+        while (runs.Count < maxRuns)
         {
-            var next = GetNextOccurrenceUtc(expression, cursor, timeZone);
+            var next = expression.NextRunUtc(cursor, timeZone);
             if (next is null || next.Value >= limit)
                 break;
-            occurrences.Add(next.Value);
+            runs.Add(next.Value);
             cursor = next.Value;
         }
-        return occurrences;
+        return runs;
     }
 
     /// <summary>

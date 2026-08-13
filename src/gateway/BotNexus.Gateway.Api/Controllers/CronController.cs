@@ -288,7 +288,7 @@ public sealed class CronController(
 
     // #2133: recompute NextRunAt for a schedule/timezone change on the definition-update path.
     // #2810: the computation itself, INCLUDING its DST-transition policy, is delegated to
-    // CronNextRunCalculator so this path cannot drift from the scheduler that will actually fire
+    // CronExpressionExtensions so this path cannot drift from the scheduler that will actually fire
     // the job. A bad schedule yields null - the scheduler's Phase-1 tick re-derives NextRunAt on
     // the next pass.
     private DateTimeOffset? ComputeNextRunAt(string schedule, string? timeZone, JobId jobId)
@@ -301,7 +301,7 @@ public sealed class CronController(
             // invisible to that issue's single-definition fence.
             var tz = CronTimeZoneResolver.Resolve(timeZone, logger, jobId);
             var expr = Cronos.CronExpression.Parse(schedule, Cronos.CronFormat.Standard);
-            return CronNextRunCalculator.GetNextOccurrence(expr, DateTimeOffset.UtcNow, tz);
+            return expr.NextRun(DateTimeOffset.UtcNow, tz);
         }
         catch
         {
