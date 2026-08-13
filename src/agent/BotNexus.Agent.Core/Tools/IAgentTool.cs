@@ -104,6 +104,24 @@ public interface IAgentTool
     TimeSpan? DefaultTimeout => null;
 
     /// <summary>
+    /// Optional declaration of the invocation argument that carries a caller-requested timeout,
+    /// together with the unit that argument is expressed in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>ToolExecutor</c> consults this - and only this - when deciding whether to widen its
+    /// per-tool cancellation budget for an explicitly requested longer run. Returning <c>null</c>
+    /// (the default) means the tool opts out: the executor inspects no arguments at all.
+    /// </para>
+    /// <para>
+    /// The executor must never infer a unit from an argument's name. <c>timeout</c> means seconds
+    /// in <c>ShellTool</c> and milliseconds in <c>ProcessTool</c>, so name-based inference inflated
+    /// millisecond budgets by 1000x and silently disabled the safety cap (issue #2955).
+    /// </para>
+    /// </remarks>
+    ToolTimeoutArgument? TimeoutArgument => null;
+
+    /// <summary>
     /// Optional one-line snippet for system prompt tool listing.
     /// </summary>
     string? GetPromptSnippet() => null;

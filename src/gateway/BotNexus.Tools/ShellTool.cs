@@ -102,6 +102,12 @@ public sealed class ShellTool : IAgentTool
     /// doesn't kill legitimate long operations. The tool's own per-call timeout still applies.
     public TimeSpan? DefaultTimeout => TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// The per-call <c>timeout</c> argument is seconds. Declared explicitly because the executor no
+    /// longer infers a unit from the argument name (issue #2955).
+    /// </summary>
+    public ToolTimeoutArgument? TimeoutArgument => new("timeout", ToolTimeoutUnit.Seconds);
+
     public string Name => _shellPreference == ShellPreference.Pwsh
         ? "shell"
         : "bash";

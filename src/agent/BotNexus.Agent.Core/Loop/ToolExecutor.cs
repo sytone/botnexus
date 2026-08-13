@@ -335,6 +335,69 @@ internal static class ToolExecutor
             false);
     }
 
+    /// <summary>
+    /// Computes the per-tool cancellation budget as the largest of the configured safety cap, the
+    /// tool's declared <see cref="IAgentTool.DefaultTimeout"/>, and any caller-requested timeout
+    /// read from the argument the tool declares via <see cref="IAgentTool.TimeoutArgument"/>.
+    /// </summary>
+    /// <remarks>
+    /// The unit of a requested timeout is taken from the tool's declaration, never inferred from the
+    /// argument's name. <c>timeout</c> means seconds to <c>ShellTool</c> and milliseconds to
+    /// <c>ProcessTool</c>; inferring seconds from the bare name inflated the budget 1000x for the
+    /// latter and silently defeated the safety cap (issue #2955). A tool that declares no timeout
+    /// argument has none of its arguments inspected.
+    /// </remarks>
+    internal static TimeSpan? ResolveEffectiveTimeout(
+        IAgentTool tool,
+        IReadOnlyDictionary<string, object?> args,
+        TimeSpan? toolTimeout)
+    {
+        var effectiveTimeout = toolTimeout;
+
+        // Tool-declared default — long-running tools (shell, exec, mcp) set this.
+        if (tool.DefaultTimeout.HasValue)
+        {
+            effectiveTimeout = effectiveTimeout.HasValue
+                ? TimeSpan.FromTicks(Math.Max(effectiveTimeout.Value.Ticks, tool.DefaultTimeout.Value.Ticks))
+                : tool.DefaultTimeout;
+        }
+
+        if (!effectiveTimeout.HasValue || !toolTimeout.HasValue)
+        {
+            return effectiveTimeout;
+        }
+
+        var declaration = tool.TimeoutArgument;
+        if (declaration is null)
+        {
+            return effectiveTimeout;
+        }
+
+        // Only the declared argument is consulted, and only in the declared unit. The deprecated
+        // alias is a fallback used solely when the canonical argument is absent.
+        TimeSpan? requested = null;
+        if (args.TryGetValue(declaration.ArgumentName, out var rawCanonical))
+        {
+            requested = declaration.ToTimeSpan(rawCanonical);
+        }
+
+        if (requested is null
+            && declaration.DeprecatedAliasName is { } alias
+            && args.TryGetValue(alias, out var rawAlias))
+        {
+            requested = declaration.ToTimeSpan(rawAlias);
+        }
+
+        if (requested.HasValue && requested.Value > toolTimeout.Value)
+        {
+            // Agent explicitly requested a longer timeout — honour it with a 10s buffer so the
+            // tool's own timeout fires before the safety cap.
+            effectiveTimeout = requested.Value + TimeSpan.FromSeconds(10);
+        }
+
+        return effectiveTimeout;
+    }
+
     private static async Task<(AgentToolResult Result, bool IsError)> ExecutePreparedToolCallAsync(
         PreparedToolCall prepared,
         Func<AgentEvent, Task> emit,
@@ -345,44 +408,9 @@ internal static class ToolExecutor
         var isError = false;
         var updateTasks = new ConcurrentBag<Task>();
 
-        // If the tool call includes an explicit timeout argument, respect it.
-        // Tools like ShellTool (timeout: seconds) and ExecTool (timeoutMs: ms) expose this.
-        // Also check tool.DefaultTimeout — tools declare their own expected duration.
-        // Use the largest of: configured safety cap, tool default, agent-requested arg timeout.
-        var effectiveTimeout = toolTimeout;
-
-        // Tool-declared default — long-running tools (shell, exec, mcp) set this
-        if (prepared.Tool.DefaultTimeout.HasValue)
-        {
-            effectiveTimeout = effectiveTimeout.HasValue
-                ? (TimeSpan?)TimeSpan.FromTicks(Math.Max(effectiveTimeout.Value.Ticks, prepared.Tool.DefaultTimeout.Value.Ticks))
-                : prepared.Tool.DefaultTimeout;
-        }
-
-        // Agent-specified timeout in arguments (timeout: seconds or timeoutMs: ms)
-        // Honours explicit agent intent — e.g. "run this deploy script, timeout: 600"
-        if (effectiveTimeout.HasValue)
-        {
-            TimeSpan? requested = null;
-            if (prepared.ValidatedArgs.TryGetValue("timeout", out var rawSec) && rawSec is not null
-                && int.TryParse(rawSec.ToString(), out var sec) && sec > 0)
-            {
-                requested = TimeSpan.FromSeconds(sec);
-            }
-            else if (prepared.ValidatedArgs.TryGetValue("timeoutMs", out var rawMs) && rawMs is not null
-                && int.TryParse(rawMs.ToString(), out var ms) && ms > 0)
-            {
-                requested = TimeSpan.FromMilliseconds(ms);
-            }
-
-            if (requested.HasValue && toolTimeout.HasValue && requested.Value > toolTimeout.Value)
-            {
-                // Agent explicitly requested a longer timeout — honour it with a 10s buffer
-                // so the tool's own timeout fires before the safety cap.
-                effectiveTimeout = requested.Value + TimeSpan.FromSeconds(10);
-            }
-        }
-
+        // Resolve the per-tool cancellation budget from the configured safety cap, the tool's own
+        // declared default, and any caller-requested timeout argument the tool declares.
+        var effectiveTimeout = ResolveEffectiveTimeout(prepared.Tool, prepared.ValidatedArgs, toolTimeout);
         // Create a linked CancellationTokenSource for the per-tool timeout if configured.
         using var timeoutCts = effectiveTimeout.HasValue
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)

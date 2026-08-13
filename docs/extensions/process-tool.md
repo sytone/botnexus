@@ -26,7 +26,8 @@ The Process Tool enables agents to manage background processes that were started
 | `pid` | integer | Conditional | Process ID. Required for `status`, `output`, `input`, and `kill`. |
 | `content` | string | Conditional | Content to send to stdin (for `input` action). |
 | `tail` | integer | No | Number of lines from end of output (for `output` action). Default: 50. Values above the configured ceiling (`MaxTail`, default 10,000) are clamped; `tail <= 0` still returns the full captured buffer. |
-| `timeout` | integer | No | For `status` action: wait up to N ms for the process to produce output. Default: 0 (no wait). |
+| `timeoutMs` | integer | No | For `status` action: wait up to N **milliseconds** for the process to produce output. Default: 0 (no wait). |
+| `timeout` | integer | No | **Deprecated** alias for `timeoutMs`, interpreted as milliseconds. Use `timeoutMs` instead; the alias is retained for one release. |
 
 ## Actions
 
@@ -37,6 +38,11 @@ Returns all tracked background processes with their PIDs, commands, and running 
 ### `status`
 
 Returns whether a process is running or exited, its exit code (if exited), and duration. Optionally waits for output with a timeout.
+
+> **Unit note.** `timeoutMs` is milliseconds, unlike the `shell` and `watch_file` tools whose `timeout`
+> argument is seconds. The argument was renamed so the unit is unambiguous from the name: the agent
+> runtime previously inferred seconds from the bare name `timeout`, which inflated this tool's
+> cancellation budget by 1000x (issue #2955). Each tool now declares its own unit to the executor.
 
 ### `output`
 
@@ -73,7 +79,7 @@ Captured output is bounded two ways:
 {
   "action": "status",
   "pid": 12345,
-  "timeout": 5000
+  "timeoutMs": 5000
 }
 ```
 

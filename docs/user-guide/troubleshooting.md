@@ -152,6 +152,8 @@ Edit `~/.botnexus/config.json`:
 }
 ```
 
+Any free port works; `5006` is an arbitrary example, not a second default.
+
 **Option 2: Kill the process using the port**
 
 On Windows:
@@ -529,7 +531,7 @@ The entry carries the message, stack (where available), URL, and user-agent. You
 can also retrieve recent channel/render errors through the diagnostics API:
 
 ```bash
-curl http://localhost:5000/api/diagnostics/log-patterns?hours=1
+curl http://localhost:5005/api/diagnostics/log-patterns?hours=1
 ```
 
 **Notes:**

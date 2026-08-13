@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Cli.Services;
@@ -25,7 +26,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     // real process is ever inspected or signalled.
     private readonly Func<IEnumerable<IGatewayProcessHandle>> _processEnumerator;
     // Default health URL used for status probing when no override is provided.
-    internal const string DefaultHealthUrl = "http://localhost:5005/health";
+    internal const string DefaultHealthUrl = GatewayDefaults.LoopbackListenUrl + "/health";
 
     public GatewayProcessManager(
         IHealthChecker healthChecker,
