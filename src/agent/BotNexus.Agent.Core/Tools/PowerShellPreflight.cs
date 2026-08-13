@@ -191,6 +191,26 @@ public static class PowerShellPreflight
                 continue;
             }
 
+            // Here-string: @' ... '@ (literal) or @" ... "@ (expandable). Issue #2905: the body of
+            // a here-string is ORDINARY TEXT - a lone ' or " inside it is not a delimiter and does
+            // not open a string - so the plain quote scanners below must never see it. Modelling
+            // the region is what the real parser does; without it, the single most common durable
+            // write idiom on the platform (append a multi-line markdown block to a file) was
+            // refused with "The string is missing the terminator" 11 times in one week.
+            //
+            // An opener is only a here-string when the quote is followed by end-of-line; anything
+            // else (e.g. @'x') is left to the ordinary scanners, keeping this rule conservative.
+            if (c == '@' && i + 1 < n && (s[i + 1] == '\'' || s[i + 1] == '"') && IsHereStringOpener(s, i + 2))
+            {
+                var hereError = ScanHereString(s, ref i, s[i + 1]);
+                if (hereError is not null)
+                {
+                    return hereError;
+                }
+
+                continue;
+            }
+
             // Single-quoted string: literal, '' escapes a quote, no interpolation.
             if (c == '\'')
             {
@@ -355,6 +375,53 @@ public static class PowerShellPreflight
         var end = Math.Min(script.Length, offset + 12);
         var snippet = script.Substring(start, end - start).Replace("\r", " ").Replace("\n", " ");
         return $", near: \u2026{snippet}\u2026";
+    }
+
+    // A here-string opener requires end-of-line immediately after the quote (trailing horizontal
+    // whitespace is tolerated by the real parser, a trailing token is not).
+    private static bool IsHereStringOpener(string s, int afterQuote)
+    {
+        var k = afterQuote;
+        while (k < s.Length && (s[k] == ' ' || s[k] == '\t' || s[k] == '\r'))
+        {
+            k++;
+        }
+
+        return k < s.Length && s[k] == '\n';
+    }
+
+    // Consumes a here-string beginning at s[i] == '@'. The body ends at the first line whose first
+    // two characters are the matching quote followed by '@'. On success i lands on that '@' so the
+    // caller's loop increment resumes after the terminator. An unterminated here-string is a real
+    // parser error and is still refused, with the parser's own "'@" / '"@' terminator wording.
+    private static PreflightError? ScanHereString(string s, ref int i, char quote)
+    {
+        var n = s.Length;
+        var start = i;
+        var lineStart = s.IndexOf('\n', i);
+        if (lineStart >= 0)
+        {
+            lineStart++;
+            while (lineStart < n)
+            {
+                if (s[lineStart] == quote && lineStart + 1 < n && s[lineStart + 1] == '@')
+                {
+                    i = lineStart + 1;
+                    return null;
+                }
+
+                var next = s.IndexOf('\n', lineStart);
+                if (next < 0)
+                {
+                    break;
+                }
+
+                lineStart = next + 1;
+            }
+        }
+
+        i = n;
+        return new PreflightError($"The string is missing the terminator: {quote}@.", start);
     }
 
     // A '#' only begins a comment when it starts a token (preceded by whitespace, start, or a
