@@ -50,6 +50,7 @@
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.AgentConcurrencyLimitExceededException))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.AgentWorkspace))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.ContextDiagnostics))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.ContextWindowResolver))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationSource))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentExchangeService))]

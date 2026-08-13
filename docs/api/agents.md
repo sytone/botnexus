@@ -127,16 +127,19 @@ diagnostics. Both preconditions return `404 Not Found` with a plain-text reason:
 
 ### `GET /api/agents/{agentId}/sessions/{sessionId}/context`
 
-`200 OK`, with a token-usage summary. Note that `contextWindowTokens` is a fixed reference
-value of `128000` used to compute `usagePercent`.
+`200 OK`, with a token-usage summary. `contextWindowTokens` is the context window of the model
+the session is actually bound to (after the conversation > agent override stack), and
+`usagePercent` is computed against it. When the window cannot be resolved - for example the
+handle exposes no model binding - both fields are `null` rather than a placeholder value, so a
+consumer can tell "unknown" apart from a real number (#3091).
 
 ```json
 {
   "agentId": "farnsworth",
   "sessionId": "sess-123",
   "totalEstimatedTokens": 24310,
-  "contextWindowTokens": 128000,
-  "usagePercent": 19.0,
+  "contextWindowTokens": 200000,
+  "usagePercent": 12.2,
   "sections": {
     "systemPrompt": { "tokens": 4120, "chars": 16480 },
     "toolDefinitions": { "tokens": 8600, "toolCount": 42 },

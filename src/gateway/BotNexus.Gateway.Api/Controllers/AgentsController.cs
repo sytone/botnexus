@@ -357,7 +357,8 @@ public sealed class AgentsController : ControllerBase
         if (handle is null) return NotFound("No active handle.");
         var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
         if (diag is null) return NotFound("Handle does not support diagnostics.");
-        return Ok(BuildContextResponse(agentId, sessionId, diag));
+        var window = (handle as IAgentHandleInspector)?.GetContextWindowTokens();
+        return Ok(BuildContextResponse(agentId, sessionId, diag, window));
     }
 
     /// <summary>
@@ -381,17 +382,35 @@ public sealed class AgentsController : ControllerBase
     /// (<c>ChannelKnowledgeFenceArchitectureTests.Rule1_GenericProjects_DoNotReferenceConcreteChannelExtensions</c>).
     /// The fence is right and must not be widened, so the helper is exposed instead.
     /// </para>
+    /// <para>
+    /// #3091: <paramref name="contextWindowTokens"/> is supplied by the caller from the resolved
+    /// model - there is deliberately no default literal here. When it is <see langword="null"/> the
+    /// window is genuinely unknown, and both it and the derived <c>usagePercent</c> are emitted as
+    /// JSON <c>null</c> rather than as a plausible-looking constant, because a consumer can detect an
+    /// absent number and cannot detect a wrong one.
+    /// </para>
     /// </remarks>
-    public static object BuildContextResponse(string agentId, string sessionId, ContextDiagnostics diag)
+    /// <param name="agentId">The agent the session belongs to.</param>
+    /// <param name="sessionId">The session being reported on.</param>
+    /// <param name="diag">The handle's context diagnostics.</param>
+    /// <param name="contextWindowTokens">
+    /// The resolved context window in tokens, or <see langword="null"/> when unresolvable.
+    /// </param>
+    public static object BuildContextResponse(
+        string agentId,
+        string sessionId,
+        ContextDiagnostics diag,
+        int? contextWindowTokens = null)
     {
-        const int contextWindowTokens = 128000;
         return new
         {
             agentId,
             sessionId,
             totalEstimatedTokens = diag.TotalEstimatedTokens,
             contextWindowTokens,
-            usagePercent = Math.Round((double)diag.TotalEstimatedTokens / contextWindowTokens * 100, 1),
+            usagePercent = contextWindowTokens is > 0
+                ? Math.Round((double)diag.TotalEstimatedTokens / contextWindowTokens.Value * 100, 1)
+                : (double?)null,
             sections = new
             {
                 systemPrompt = new { tokens = diag.SystemPromptTokens, chars = diag.SystemPromptChars },

@@ -140,4 +140,25 @@ public sealed class AgentConfigContractTests
         doc.RootElement.TryGetProperty("systemPromptTokens", out _).ShouldBeFalse();
         doc.RootElement.GetProperty("sections").GetProperty("systemPrompt").GetProperty("tokens").GetInt32().ShouldBe(7);
     }
+
+    [Fact]
+    public void ContextInfoDto_still_binds_when_the_context_window_is_unresolvable()
+    {
+        // #3091 changed contextWindowTokens/usagePercent from always-present numbers to nullable
+        // values. The panel binds sections.systemPrompt.tokens and totalEstimatedTokens; a null
+        // window must not break that binding, or the whole panel blanks on an unresolvable model.
+        var json = JsonSerializer.Serialize(
+            BotNexus.Gateway.Api.Controllers.AgentsController.BuildContextResponse(
+                "a", "s", new ContextDiagnostics { SystemPromptTokens = 7, TotalEstimatedTokens = 9 }, null),
+            Wire);
+
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.GetProperty("contextWindowTokens").ValueKind.ShouldBe(JsonValueKind.Null);
+        doc.RootElement.GetProperty("usagePercent").ValueKind.ShouldBe(JsonValueKind.Null);
+
+        var dto = JsonSerializer.Deserialize<ContextInfoDto>(json, Wire);
+        dto.ShouldNotBeNull();
+        dto.Sections?.SystemPrompt?.Tokens.ShouldBe(7);
+        dto.TotalEstimatedTokens.ShouldBe(9);
+    }
 }
