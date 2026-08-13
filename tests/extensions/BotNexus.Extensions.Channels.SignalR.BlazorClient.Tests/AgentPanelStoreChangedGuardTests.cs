@@ -1,6 +1,7 @@
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
@@ -41,6 +42,8 @@ public sealed class AgentPanelStoreChangedGuardTests : IDisposable
         _ctx.Services.AddSingleton<NavigationManager>(_nav);
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp =>
+            new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient { BaseAddress = new Uri(BaseUri) });
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -70,9 +73,12 @@ public sealed class AgentPanelStoreChangedGuardTests : IDisposable
         // re-parse from inside HandleStoreChanged.
         _nav.SetUriSilently(ConversationUri + "?tab=canvas");
 
-        // A store mutation that leaves the sub-agent classification untouched.
+        // A store mutation that leaves the sub-agent classification untouched. Note there is no
+        // explicit re-render here: forcing one would run OnParametersSet, which re-applies the tab
+        // through a DIFFERENT path and would mask what HandleStoreChanged did. A guarded handler
+        // renders nothing at all; an unguarded one re-applies the tab and calls StateHasChanged
+        // itself, which is precisely the difference being asserted.
         _store.NotifyChanged();
-        cut.Render();
 
         Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='conversation']"));
         Assert.Empty(cut.FindAll(".agent-panel-tab.active[data-tab='canvas']"));
@@ -101,9 +107,9 @@ public sealed class AgentPanelStoreChangedGuardTests : IDisposable
         // control through.
         SeedRegularAgent();
         _store.NotifyChanged();
-        cut.Render();
 
-        Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='canvas']"));
+        cut.WaitForAssertion(() =>
+            Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='canvas']")));
     }
 
     /// <summary>
