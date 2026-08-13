@@ -210,7 +210,7 @@ public sealed class CronController(
         if (!string.Equals(updated.Schedule, existing.Schedule, StringComparison.Ordinal)
             || !string.Equals(updated.TimeZone ?? string.Empty, existing.TimeZone ?? string.Empty, StringComparison.Ordinal))
         {
-            var nextRunAt = ComputeNextRunAt(updated.Schedule, updated.TimeZone);
+            var nextRunAt = ComputeNextRunAt(updated.Schedule, updated.TimeZone, updated.Id);
             await store.SetNextRunAtAsync(typedJobId, nextRunAt, cancellationToken);
             saved = await store.GetAsync(typedJobId, cancellationToken) ?? saved;
         }
@@ -287,46 +287,25 @@ public sealed class CronController(
         => value >= MinAllowedTimestamp && value <= MaxAllowedTimestamp;
 
     // #2133: recompute NextRunAt for a schedule/timezone change on the definition-update path.
-    // Mirrors the scheduler/tool computation (Cronos + IANA/Windows timezone fallback). A bad
-    // schedule yields null - the scheduler's Phase-1 tick re-derives NextRunAt on the next pass.
-    private static DateTimeOffset? ComputeNextRunAt(string schedule, string? timeZone)
+    // #2810: the computation itself, INCLUDING its DST-transition policy, is delegated to
+    // CronNextRunCalculator so this path cannot drift from the scheduler that will actually fire
+    // the job. A bad schedule yields null - the scheduler's Phase-1 tick re-derives NextRunAt on
+    // the next pass.
+    private DateTimeOffset? ComputeNextRunAt(string schedule, string? timeZone, JobId jobId)
     {
         try
         {
-            var tz = ResolveTimeZone(timeZone);
+            // #2748/#2810: the canonical resolver, not a local copy. This controller previously
+            // carried its own FindSystemTimeZoneById cascade, which is the same duplication #2748
+            // removed from the scheduler and the tool - and being outside BotNexus.Cron, it was
+            // invisible to that issue's single-definition fence.
+            var tz = CronTimeZoneResolver.Resolve(timeZone, logger, jobId);
             var expr = Cronos.CronExpression.Parse(schedule, Cronos.CronFormat.Standard);
-            return expr.GetNextOccurrence(DateTimeOffset.UtcNow, tz);
+            return CronNextRunCalculator.GetNextOccurrence(expr, DateTimeOffset.UtcNow, tz);
         }
         catch
         {
             return null;
         }
-    }
-
-    private static TimeZoneInfo ResolveTimeZone(string? timeZone)
-    {
-        if (string.IsNullOrWhiteSpace(timeZone)
-            || timeZone.Equals("UTC", StringComparison.OrdinalIgnoreCase))
-            return TimeZoneInfo.Utc;
-
-        try { return TimeZoneInfo.FindSystemTimeZoneById(timeZone); }
-        catch (TimeZoneNotFoundException) { }
-        catch (InvalidTimeZoneException) { }
-
-        if (TimeZoneInfo.TryConvertWindowsIdToIanaId(timeZone, out var ianaId))
-        {
-            try { return TimeZoneInfo.FindSystemTimeZoneById(ianaId); }
-            catch (TimeZoneNotFoundException) { }
-            catch (InvalidTimeZoneException) { }
-        }
-
-        if (TimeZoneInfo.TryConvertIanaIdToWindowsId(timeZone, out var windowsId))
-        {
-            try { return TimeZoneInfo.FindSystemTimeZoneById(windowsId); }
-            catch (TimeZoneNotFoundException) { }
-            catch (InvalidTimeZoneException) { }
-        }
-
-        return TimeZoneInfo.Utc;
     }
 }

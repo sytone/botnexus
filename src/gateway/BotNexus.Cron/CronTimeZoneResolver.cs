@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Cron;
@@ -36,8 +37,8 @@ internal static class CronTimeZoneResolver
     /// share this one definition rather than growing a second one.
     /// </para>
     /// </summary>
-    internal static TimeZoneInfo Resolve(string? timezoneId, ILogger? logger = null)
-        => Resolve(timezoneId, TimeZoneInfo.FindSystemTimeZoneById, logger);
+    internal static TimeZoneInfo Resolve(string? timezoneId, ILogger? logger = null, JobId? jobId = null)
+        => Resolve(timezoneId, TimeZoneInfo.FindSystemTimeZoneById, logger, jobId);
 
     /// <summary>
     /// Resolution against an explicit host-database lookup. The seam exists so tests can
@@ -48,7 +49,8 @@ internal static class CronTimeZoneResolver
     internal static TimeZoneInfo Resolve(
         string? timezoneId,
         Func<string, TimeZoneInfo> hostLookup,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        JobId? jobId = null)
     {
         ArgumentNullException.ThrowIfNull(hostLookup);
 
@@ -70,10 +72,15 @@ internal static class CronTimeZoneResolver
 
         // Warning-grade, not debug: the job will now fire at a different hour than its author
         // intended. Silence here is what made #2748 undiagnosable in production logs.
+        // #2810 clause 4: the failing id ALONE is not actionable - an operator reading this line
+        // needs to know WHICH job is now firing on the wrong hour. The job id is therefore named
+        // here, and "(unspecified)" is emitted rather than omitting the field, so a call site that
+        // forgot to pass one is visible in the log instead of looking like a job with no id.
         logger?.LogWarning(
-            "Cron timezone '{TimeZoneId}' could not be resolved as either a Windows or IANA id on " +
-            "this host; falling back to UTC. Scheduling for this job will use UTC, which may differ " +
-            "from the intended local time.",
+            "Cron job '{JobId}': timezone '{TimeZoneId}' could not be resolved as either a Windows " +
+            "or IANA id on this host; falling back to UTC. Scheduling for this job will use UTC, " +
+            "which may differ from the intended local time.",
+            jobId?.Value is { Length: > 0 } id ? id : "(unspecified)",
             timezoneId);
 
         return TimeZoneInfo.Utc;

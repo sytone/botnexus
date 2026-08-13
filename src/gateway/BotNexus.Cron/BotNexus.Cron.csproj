@@ -21,6 +21,7 @@
     <Compile Include="ISkillReviewProvisioner.cs" />
     <Compile Include="CronScheduler.cs" />
     <Compile Include="CronTimeZoneResolver.cs" />
+    <Compile Include="CronNextRunCalculator.cs" />
     <Compile Include="CronTimeoutResolver.cs" />
     <Compile Include="Prompts\IPromptTemplateResolver.cs" />
     <Compile Include="Prompts\CronOptionsPromptTemplateResolver.cs" />

@@ -163,8 +163,7 @@ public sealed class MissedRunDetectionService(
             return [];
         }
 
-        var tz = CronTimeZoneResolver.Resolve(job.TimeZone);
-        var missedRuns = new List<DateTimeOffset>();
+        var tz = CronTimeZoneResolver.Resolve(job.TimeZone, jobId: job.Id);
 
         // Scan from the shared floor (#2554): max(lastRunAt, scheduleActivatedAt).
         var floor = GetScanFloorUtc(job);
@@ -173,23 +172,15 @@ public sealed class MissedRunDetectionService(
             return [];
         }
 
-        var cursor = floor.Value;
-        var limit = now.UtcDateTime;
-
-        // Cap missed runs to avoid runaway iteration for very frequent schedules after long downtime.
-        while (missedRuns.Count < MaxMissedRunsPerJob)
-        {
-            var next = expression.GetNextOccurrence(cursor, tz);
-            if (next is null || next.Value >= limit)
-            {
-                break;
-            }
-
-            missedRuns.Add(new DateTimeOffset(next.Value, TimeSpan.Zero));
-            cursor = next.Value;
-        }
-
-        return missedRuns;
+        // #2810: this walk advances a cursor through HISTORY, so it is the one next-run computation
+        // that necessarily crosses past DST transitions. It is therefore defined in
+        // CronNextRunCalculator alongside the forward computation - the two must agree instant for
+        // instant, and a local loop here could drift from the forward path without anything noticing.
+        // The cap still bounds runaway iteration for frequent schedules after long downtime.
+        return CronNextRunCalculator
+            .EnumerateOccurrencesUtc(expression, floor.Value, now.UtcDateTime, MaxMissedRunsPerJob, tz)
+            .Select(occurrence => new DateTimeOffset(occurrence, TimeSpan.Zero))
+            .ToList();
     }
 
     /// <summary>
@@ -214,11 +205,11 @@ public sealed class MissedRunDetectionService(
             return false;
         }
 
-        var tz = CronTimeZoneResolver.Resolve(job.TimeZone);
+        var tz = CronTimeZoneResolver.Resolve(job.TimeZone, jobId: job.Id);
 
         // Continue from the last recorded occurrence, which the shared floor already bounded
         // (#2554) — WasTruncated must never look at a window GetMissedRuns refused to scan.
-        var next = expression.GetNextOccurrence(missed[^1].UtcDateTime, tz);
+        var next = CronNextRunCalculator.GetNextOccurrenceUtc(expression, missed[^1].UtcDateTime, tz);
         return next is not null && next.Value < now.UtcDateTime;
     }
 
