@@ -99,15 +99,36 @@ should be settled before the alert is declared resolved.
    az containerapp job execution list -g botnexus-buildtest -n bnx-buildtest-runner `
      --subscription $sub --query "[?properties.status=='Running']" -o json   # must be []
    ```
-2. **Deploy.** The template creates the public IP, NAT gateway and delegated subnet, then attaches
-   it to the existing environment. No resource is deleted.
+2. **Deploy the network prerequisites FIRST**, using `network.bicep` — not `main.bicep`. The TSG
+   requires the subnet attach to be the only change in its request, and a full `main.bicep`
+   deployment also re-evaluates the ACR, storage, role assignments and job.
+
+   > **`az deployment group create` HANGS against this subscription when run synchronously.**
+   > Observed 2026-08-13: the call never returned, and it had submitted **nothing** — no
+   > deployment was recorded and no resource created. That failure mode looks alarming (an
+   > apparent timeout mid-deploy) but is safe: nothing is half-applied. Always use `--no-wait`
+   > and poll. Do not retry synchronously, and do not assume a hang means a partial deployment.
+
    ```powershell
-   $oid = az ad signed-in-user show --query id -o tsv
-   az deployment group create --subscription $sub -g botnexus-buildtest `
-     --template-file infra/buildtest/main.bicep --parameters operatorObjectId=$oid
+   az deployment group create --subscription $sub -g botnexus-buildtest --no-wait `
+     --name buildtest-network --template-file infra/buildtest/network.bicep
+   # poll until Succeeded:
+   az deployment group show --subscription $sub -g botnexus-buildtest `
+     --name buildtest-network --query properties.provisioningState -o tsv
    ```
-   Expect several minutes while the environment reconfigures. Existing jobs and their definitions
-   survive; the ACR, storage account, managed identity and role assignments are untouched.
+
+2b. **Attach the subnet as the ONLY change in its own request.**
+   ```powershell
+   $subnetId = az network vnet subnet show -g botnexus-buildtest --subscription $sub `
+     --vnet-name bnx-buildtest-vnet -n bnx-buildtest-aca-subnet --query id -o tsv
+   ```
+   Then PATCH `vnetConfiguration` (`internal: false`, `infrastructureSubnetId: $subnetId`) onto
+   the existing environment via ARM. Expect several minutes while it reconfigures. Existing jobs
+   and their definitions survive; the ACR, storage account, managed identity and role assignments
+   are untouched.
+
+   Verified 2026-08-13: both `bnx-buildtest-runner` and `bn-reloadprobe-job` came through the
+   attach with `provisioningState: Succeeded`.
 3. **Verify the subnet attached:**
    ```powershell
    az containerapp env show -g botnexus-buildtest -n bnx-buildtest-env --subscription $sub `
@@ -133,6 +154,38 @@ path is to recreate it from the pre-change template, which restores the gate and
 alert.
 
 This is the strongest argument for running step 1 properly: once started, the change is one-way.
+
+## BCDR — rebuilding from scratch
+
+**A from-scratch deploy of `main.bicep` produces a compliant environment with no extra steps.**
+The network resources are declared in `main.bicep` itself, and the environment declares its
+`vnetConfiguration` inline, so a greenfield deployment creates the public IP, NAT gateway and
+delegated subnet and brings the environment up already inside them. There is no post-deployment
+attach to remember and no ordering constraint to get right — ARM resolves the dependency from the
+`vnet.properties.subnets[0].id` reference.
+
+Verified 2026-08-13: `az bicep build` compiles `main.bicep` clean to **14 ARM resources**,
+including `Microsoft.Network/publicIPAddresses`, `natGateways` and `virtualNetworks`.
+
+```powershell
+$oid = az ad signed-in-user show --query id -o tsv
+az deployment group create --subscription $sub -g botnexus-buildtest --no-wait `
+  --name buildtest-platform --template-file infra/buildtest/main.bicep `
+  --parameters operatorObjectId=$oid suffix=<suffix> runnerImageTag=<tag>
+```
+
+The two-step `network.bicep` + PATCH procedure above exists **only** for attaching a subnet to an
+environment that already exists. Do not use it for a rebuild.
+
+### Caveats a rebuild must account for
+
+- **`bn-reloadprobe-job` is not in the template.** It was created by hand on 2026-08-05. A
+  from-scratch deploy will not recreate it.
+- **The IPAM service-tag question is unresolved** (see above). A rebuild inherits it.
+- **`Deploy-BuildTestInfrastructure.ps1` does not use `--no-wait`** and will therefore hang on
+  this subscription. Run the `az deployment group create` above directly until that is fixed,
+  or expect to interrupt the script and poll manually.
+
 
 ## Unresolved / needs a decision
 
