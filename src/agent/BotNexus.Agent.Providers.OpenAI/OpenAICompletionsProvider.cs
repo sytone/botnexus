@@ -36,6 +36,16 @@ public sealed class OpenAICompletionsProvider(
 
     public string Api => "openai-completions";
 
+    /// <summary>
+    /// OpenAI Completions places the system prompt as the first message (see
+    /// <c>OpenAICompletionsRequestBuilder</c>). No leaked-tool-call recovery: the #1709 markup leak
+    /// was never observed on the OpenAI-direct API, which returns tool calls in the structured
+    /// <c>tool_calls</c> field (#2432).
+    /// </summary>
+    public ProviderCapabilities Capabilities { get; } = new(
+        RecoversLeakedToolCallMarkup: false,
+        SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
+
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
         => CompletionsStreamEngine.StreamAsync(BuildProfile(secretRedactor), _httpClient, logger, model, context, options);
 
