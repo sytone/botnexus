@@ -18,7 +18,8 @@ public partial class Settings : IDisposable
 {
     private JsonObject? _config;
     private JsonObject? _schema;
-    private HashSet<string>? _rawSections;
+    private string? _revision;
+    private readonly ConfigDirtyPathTracker _dirtyPaths = new();
     private bool _loading = true;
     private bool _saving;
     private bool _dirty;
@@ -41,16 +42,18 @@ public partial class Settings : IDisposable
     {
         _loading = true;
         _dirty = false;
+        _dirtyPaths.Reset();
         SetStatus("Loading...", "");
         StateHasChanged();
 
         _schema = await ConfigService.LoadSchemaAsync();
         _config = await ConfigService.LoadAsync();
 
-        // Load raw config to know which sections actually exist on disk, so we only persist sections
-        // the user materialised rather than default-injected ones.
-        var raw = await ConfigService.LoadRawAsync();
-        _rawSections = raw?.Select(kv => kv.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Load the raw snapshot for its REVISION, not to decide what may be saved (#2059). Mirrors
+        // the desktop page exactly: the save set is now what the operator edited, and the revision
+        // is what makes that save safe against a concurrent writer.
+        var snapshot = await ConfigService.LoadSnapshotAsync();
+        _revision = snapshot?.Revision;
 
         _loading = false;
         if (_config is null || _schema is null)
@@ -69,6 +72,9 @@ public partial class Settings : IDisposable
         StateHasChanged();
     }
 
+    // Records WHICH path changed (#2059) so the save can patch exactly that and nothing else.
+    private void OnPathChanged(string path) => _dirtyPaths.Mark(path);
+
     private async Task SaveAll()
     {
         if (_config is null || !_dirty) return;
@@ -76,35 +82,35 @@ public partial class Settings : IDisposable
         SetStatus("Saving...", "");
         StateHasChanged();
 
-        // Persist every top-level section that exists on disk (raw) and is user-editable. The schema
-        // form mutates the whole tree, so without per-section dirty tracking we save the materialised
-        // sections; default-only sections are skipped to avoid writing injected defaults to disk.
-        var sectionsToSave = _config
-            .Select(kv => kv.Key)
-            .Where(key => !NonPersistedSections.Contains(key))
-            .Where(key => _rawSections is null || _rawSections.Contains(key))
-            .ToList();
-
-        var allOk = true;
-        foreach (var section in sectionsToSave)
-        {
-            var node = _config[section];
-            if (node is null) continue;
-            var (success, error) = await ConfigService.SaveSectionAsync(section, node.DeepClone());
-            if (!success)
-            {
-                SetStatus($"Failed to save {section}: {error}", "error");
-                allOk = false;
-                break;
-            }
-        }
+        // One atomic patch of exactly the edited paths, guarded by the loaded revision. Shares the
+        // ConfigDirtyPathTracker + PatchAsync seam with the desktop page so the two surfaces cannot
+        // drift into two different save semantics again.
+        var operations = _dirtyPaths.BuildOperations(_config);
+        var outcome = await ConfigService.PatchAsync(operations, _revision);
 
         _saving = false;
-        if (allOk)
+        if (outcome.Success)
         {
             _dirty = false;
+            _dirtyPaths.Reset();
+            _revision = outcome.Revision;
             SetStatus("Saved successfully", "success", autoHide: true);
+            await LoadConfig();
+            return;
         }
+
+        if (outcome.IsConflict)
+        {
+            // Keep the dirty paths: the edits are still unsaved and must not look committed.
+            SetStatus(
+                "Configuration changed elsewhere since this page loaded. Reload to see the current values, then re-apply your changes.",
+                "error");
+        }
+        else
+        {
+            SetStatus($"Failed to save: {outcome.Error}", "error");
+        }
+
         StateHasChanged();
     }
 

@@ -99,6 +99,86 @@ public sealed class PlatformConfigService
         }
     }
 
+    /// <summary>
+    /// Load the raw platform config together with the revision token it was read at (#2059).
+    /// </summary>
+    /// <remarks>
+    /// The settings page saves with <see cref="PatchAsync"/> quoting this revision, so a save built
+    /// on a snapshot another writer has since superseded is rejected as a conflict instead of
+    /// silently overwriting them.
+    /// </remarks>
+    public async Task<ConfigSnapshot?> LoadSnapshotAsync()
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<ConfigSnapshot>("/api/config/snapshot", s_jsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Save a batch of addressed config changes as one atomic, optimistically-concurrent write
+    /// (#2059).
+    /// </summary>
+    /// <remarks>
+    /// Replaces the per-section save loop the settings pages used to run. Only the edited paths are
+    /// sent, so a section the operator never touched is not part of the write and cannot be
+    /// clobbered; a stale revision comes back as <see cref="ConfigPatchOutcome.IsConflict"/> so the
+    /// page can reload rather than overwrite.
+    /// </remarks>
+    public async Task<ConfigPatchOutcome> PatchAsync(
+        IReadOnlyList<ConfigPatchOperationDto> operations,
+        string? expectedRevision)
+    {
+        ArgumentNullException.ThrowIfNull(operations);
+
+        if (operations.Count == 0)
+            return new ConfigPatchOutcome(true, false, expectedRevision, null);
+
+        try
+        {
+            var response = await _http.PatchAsJsonAsync(
+                "/api/config",
+                new ConfigPatchRequestDto(operations, expectedRevision),
+                s_jsonOptions);
+
+            var payload = await ReadPatchResponseAsync(response);
+
+            if (response.IsSuccessStatusCode)
+                return new ConfigPatchOutcome(true, false, payload?.Revision, null);
+
+            var message = payload?.Errors is { Count: > 0 }
+                ? string.Join("; ", payload.Errors)
+                : $"HTTP {(int)response.StatusCode}";
+
+            return new ConfigPatchOutcome(
+                false,
+                response.StatusCode == System.Net.HttpStatusCode.Conflict,
+                payload?.Revision,
+                message);
+        }
+        catch (Exception ex)
+        {
+            return new ConfigPatchOutcome(false, false, null, ex.Message);
+        }
+    }
+
+    private static async Task<ConfigPatchResponseDto?> ReadPatchResponseAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<ConfigPatchResponseDto>(s_jsonOptions);
+        }
+        catch
+        {
+            // A non-JSON error body (proxy page, plain-text 500) must not mask the status code.
+            return null;
+        }
+    }
+
     /// <summary>Save a single entry within a section (e.g. a single provider).</summary>
     public async Task<(bool Success, string? Error)> SaveSectionEntryAsync(string section, string key, JsonNode value)
     {
@@ -222,6 +302,18 @@ public sealed class PlatformConfigService
             return null;
         }
     }
+
+    /// <summary>A raw config document plus the revision it was read at (#2059).</summary>
+    /// <param name="Revision">Compare-and-swap token to quote on the next save.</param>
+    /// <param name="Config">The raw config document, secrets redacted.</param>
+    public sealed record ConfigSnapshot(string Revision, JsonObject Config);
+
+    /// <summary>Result of an attempted config patch (#2059).</summary>
+    /// <param name="Success">Whether the batch committed.</param>
+    /// <param name="IsConflict">Whether the save was rejected because the revision was stale.</param>
+    /// <param name="Revision">The revision now on disk, when the server reported one.</param>
+    /// <param name="Error">Presentable failure message; null on success.</param>
+    public sealed record ConfigPatchOutcome(bool Success, bool IsConflict, string? Revision, string? Error);
 
     public sealed record ConfigValidationResult
     {

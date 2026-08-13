@@ -1635,6 +1635,74 @@ Each summary carries the run's task lineage (`parentAgentId` / `childAgentId`), 
 
 ---
 
+### Config Snapshot (with revision)
+
+**Endpoint:** `GET /api/config/snapshot`
+
+**Description:** Returns the raw configuration document (secrets redacted) together with the
+revision token it was read at. Pair with `PATCH /api/config` to save with optimistic concurrency.
+
+**Response:** 200 OK
+```json
+{
+  "revision": "9F2A...C41",
+  "config": { "gateway": { "logLevel": "Information" } }
+}
+```
+
+---
+
+### Config Patch (atomic dirty-path save)
+
+**Endpoint:** `PATCH /api/config`
+
+**Description:** Applies a batch of addressed changes as one all-or-nothing write. Only the paths
+you send are written, so a section nobody edited cannot be clobbered by a stale snapshot. When
+`expectedRevision` is supplied the save is a compare-and-swap.
+
+This is the endpoint the settings UI uses. It replaced a per-section `PUT /api/config/{section}`
+loop that rewrote every materialized section on every save.
+
+**Request:**
+```http
+PATCH /api/config
+X-Api-Key: your-api-key
+Content-Type: application/json
+
+{
+  "expectedRevision": "9F2A...C41",
+  "operations": [
+    { "path": "gateway.logLevel", "value": "Debug" },
+    { "path": "providers.openai", "value": { "enabled": true } },
+    { "path": "channels.telegram.bots.ops", "remove": true }
+  ]
+}
+```
+
+- `path` — dotted path with optional `[index]` array segments.
+- `value` — the value to write; ignored when `remove` is `true`.
+- `remove` — delete the addressed node instead of setting it.
+- Intermediate objects are created as needed, so a change can materialize a section that is absent
+  from the file on disk.
+- A secret submitted as the redaction placeholder `***` never overwrites the real stored value.
+- `agents` is not addressable here — use `/api/agents`.
+
+**Response (committed):** 200 OK
+```json
+{ "success": true, "revision": "11B7...9E0", "errors": [] }
+```
+
+**Response (stale revision):** 409 Conflict — nothing was written. Reload the snapshot, re-apply
+your changes, and retry.
+```json
+{ "success": false, "revision": "11B7...9E0", "errors": ["Configuration '...' was modified by another writer since it was read..."] }
+```
+
+**Response (rejected batch):** 400 Bad Request — nothing was written; no operation from the batch
+is partially committed.
+
+---
+
 ### Config Validation
 
 **Endpoint:** `GET /api/config/validate`

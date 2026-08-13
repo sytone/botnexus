@@ -146,24 +146,59 @@ public sealed class MobileSettingsPageTests : IDisposable
     }
 
     [Fact]
-    public void Saving_edits_round_trips_through_put_config_section()
+    public void Saving_edits_patches_only_the_edited_path_with_the_loaded_revision()
     {
-        // AC #3 + AC #5 of issue #1615: mobile save must go through the existing per-section
-        // PUT /api/config/{section} endpoint (the same hot-reload-without-restart path the desktop
-        // uses -- no mobile-specific save code).
+        // Re-points the former "round trips through PUT /api/config/{section}" test onto the save
+        // contract issue #2059 replaced it with. The original intent -- mobile must save through the
+        // shared client seam, with no mobile-specific save code -- is preserved and STRENGTHENED:
+        // it is no longer enough that the edited section was written; the batch must contain ONLY
+        // the edited path and must quote the revision the page loaded, which is what stops a
+        // one-field edit from reverting a concurrent change elsewhere.
         var handler = new FakeConfigApiHandler(BuildSchema(), SampleConfig());
         ConfigureServices(handler);
 
         var cut = _ctx.Render<Settings>();
         cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
 
-        // Edit a materialised section, then save.
         cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:9999");
         cut.WaitForAssertion(() => cut.Find("button.primary").HasAttribute("disabled").ShouldBeFalse());
         cut.Find("button.primary").Click();
 
-        // The edited "gateway" section must have been PUT back to the config API.
-        cut.WaitForAssertion(() => handler.SavedSections.ShouldContain("gateway"));
+        cut.WaitForAssertion(() => handler.Patches.ShouldNotBeEmpty());
+
+        var patch = handler.Patches[0];
+        patch["expectedRevision"]!.GetValue<string>().ShouldBe(FakeConfigApiHandler.Revision);
+
+        var paths = patch["operations"]!.AsArray().Select(o => o!["path"]!.GetValue<string>()).ToList();
+        paths.ShouldBe(["gateway.listenUrl"]);
+
+        // No section-wide PUT may accompany the patch: a whole-section write is the defect.
+        handler.SavedSections.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A save rejected as a conflict must NOT be reported as success and must not clear the dirty
+    /// state - the operator's edits are still unsaved (#2059).
+    /// </summary>
+    [Fact]
+    public void Conflicting_save_reports_a_conflict_and_keeps_the_edits_pending()
+    {
+        var handler = new FakeConfigApiHandler(BuildSchema(), SampleConfig()) { ConflictOnPatch = true };
+        ConfigureServices(handler);
+
+        var cut = _ctx.Render<Settings>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
+
+        cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:9999");
+        cut.WaitForAssertion(() => cut.Find("button.primary").HasAttribute("disabled").ShouldBeFalse());
+        cut.Find("button.primary").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Markup.ShouldContain("changed elsewhere");
+            // Still dirty: the Save button stays enabled so the edits can be re-applied.
+            cut.Find("button.primary").HasAttribute("disabled").ShouldBeFalse();
+        });
     }
 
     private void ConfigureServices(FakeConfigApiHandler handler)
@@ -200,10 +235,18 @@ public sealed class MobileSettingsPageTests : IDisposable
 
     internal sealed class FakeConfigApiHandler : HttpMessageHandler
     {
+        internal const string Revision = "REV-1";
+
         private readonly JsonObject _schema;
         private readonly JsonObject _config;
 
         public List<string> SavedSections { get; } = [];
+
+        /// <summary>Patch request bodies observed, in order (#2059).</summary>
+        public List<JsonObject> Patches { get; } = [];
+
+        /// <summary>When set, the patch endpoint answers 409 to exercise the conflict path.</summary>
+        public bool ConflictOnPatch { get; init; }
 
         public FakeConfigApiHandler(JsonObject schema, JsonObject config)
         {
@@ -211,26 +254,52 @@ public sealed class MobileSettingsPageTests : IDisposable
             _config = config;
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
 
             if (path == "/api/config/schema" && request.Method == HttpMethod.Get)
-                return Task.FromResult(Json(_schema));
+                return Json(_schema);
+            if (path == "/api/config/snapshot" && request.Method == HttpMethod.Get)
+                return Json(new JsonObject { ["revision"] = Revision, ["config"] = _config.DeepClone() });
             if (path == "/api/config" && request.Method == HttpMethod.Get)
-                return Task.FromResult(Json(_config));
+                return Json(_config);
             if (path == "/api/config/raw" && request.Method == HttpMethod.Get)
-                return Task.FromResult(Json(_config));
+                return Json(_config);
+            if (path == "/api/config" && request.Method == HttpMethod.Patch)
+            {
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                Patches.Add(JsonNode.Parse(body)!.AsObject());
+
+                if (ConflictOnPatch)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.Conflict)
+                    {
+                        Content = new StringContent(
+                            "{\"success\":false,\"revision\":\"REV-2\",\"errors\":[\"stale\"]}",
+                            Encoding.UTF8,
+                            "application/json"),
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"success\":true,\"revision\":\"REV-2\",\"errors\":[]}",
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+            }
             if (path.StartsWith("/api/config/", StringComparison.Ordinal) && request.Method == HttpMethod.Put)
             {
                 SavedSections.Add(Uri.UnescapeDataString(path["/api/config/".Length..]));
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("{\"message\":\"ok\"}", Encoding.UTF8, "application/json"),
-                });
+                };
             }
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
 
         private static HttpResponseMessage Json(JsonObject obj) =>

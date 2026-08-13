@@ -49,6 +49,25 @@ else
     public EventCallback<JsonObject> ValueChanged { get; set; }
 
     /// <summary>
+    /// Raised with the JSON path of every node the user actually edits (issue #2059).
+    /// </summary>
+    /// <remarks>
+    /// The page needs to know <em>what changed</em>, not merely <em>that something changed</em>.
+    /// Without this the only honest save was "write back every section I loaded", which reverted
+    /// concurrent edits to sections the operator never touched. Collection lifecycle operations
+    /// report the collection's own path, because an add/remove/rename/reorder is a change to the
+    /// container rather than to one member.
+    /// </remarks>
+    [Parameter]
+    public EventCallback<string> PathChanged { get; set; }
+
+    private void MarkDirty(string path)
+    {
+        if (PathChanged.HasDelegate)
+            PathChanged.InvokeAsync(path);
+    }
+
+    /// <summary>
     /// When set, renders only the single root section with this property key (e.g. <c>"providers"</c>)
     /// instead of the whole config tree. Drives the sidebar-sectioned layout (#1892): the page keys
     /// a nav off the root schema properties and feeds the selected section here. Null/empty or an
@@ -445,6 +464,7 @@ else
             var obj = cur as JsonObject ?? throw new InvalidOperationException($"Path segment '{last}' expects an object at '{path}'.");
             obj[last] = value;
         }
+        MarkDirty(path);
         ValueChanged.InvokeAsync(Value);
     }
 
@@ -476,6 +496,7 @@ else
         var arr = EnsureArray(path);
         arr.Add(DefaultForSchema(itemSchema));
         _collectionErrors[path] = null;
+        MarkDirty(path);
         ValueChanged.InvokeAsync(Value);
     }
 
@@ -484,6 +505,7 @@ else
         if (Resolve(path) is JsonArray arr && index >= 0 && index < arr.Count)
         {
             arr.RemoveAt(index);
+            MarkDirty(path);
             ValueChanged.InvokeAsync(Value);
         }
     }
@@ -501,6 +523,7 @@ else
         arr.RemoveAt(index);
         var clone = node?.DeepClone();
         arr.Insert(target, clone);
+        MarkDirty(path);
         ValueChanged.InvokeAsync(Value);
     }
 
@@ -517,6 +540,7 @@ else
         target[key] = DefaultForSchema(valueSchema);
         _newKeys[path] = string.Empty;
         _collectionErrors[path] = null;
+        MarkDirty(path);
         ValueChanged.InvokeAsync(Value);
     }
 
@@ -526,6 +550,7 @@ else
         {
             dict.Remove(key);
             _collectionErrors[path] = null;
+            MarkDirty(path);
             ValueChanged.InvokeAsync(Value);
         }
     }
@@ -561,6 +586,7 @@ else
         }
         _renameKeys.Remove(renameStateKey);
         _collectionErrors[path] = null;
+        MarkDirty(path);
         ValueChanged.InvokeAsync(Value);
     }
 
