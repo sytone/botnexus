@@ -118,7 +118,15 @@ resource artifacts 'Microsoft.Storage/storageAccounts/blobServices/containers@20
 // to privileged resources outright. Flagged 2026-08-13, cluster thankfulisland-09134225 (westus2).
 //
 // TSG: eng.ms/.../azure-container-apps-tsg/firstparty/1pappaccessaad
-// `internal` MUST be false or omitted -- the managed environment needs a public IP.
+// Procedure: eng.ms/.../azure-container-apps-tsg/firstparty/addsubnettoexistingenv
+//
+// This attaches IN PLACE -- no rebuild. See infra/buildtest/README-migration.md, and note the TSG
+// constraints that bind this template: the subnet MUST be delegated to Microsoft.App/environments,
+// a NAT gateway MUST be attached to it, `internal` MUST be false (the environment needs a public
+// IP), and the CIDR must avoid the AKS-reserved ranges plus the workload-profile reservations at
+// 100.100.0.0/17 and 100.100.128.0/19, .160.0/19, .192.0/19. 10.0.0.0/16 clears all of them.
+// Attaching the subnet also CHANGES the environment's frontend IP, and removing a subnet later is
+// not supported -- this is one-way.
 resource publicIp 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
   name: publicIpName
   location: location
@@ -195,9 +203,14 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
       internal: false
       infrastructureSubnetId: vnet.properties.subnets[0].id
     }
-    // NOTE: a Consumption-ONLY environment cannot accept a subnet. Applying this template to the
-    // existing environment therefore REPLACES it (see infra/buildtest/README-migration.md); the
-    // Consumption profile is kept so `workloadProfileName: 'Consumption'` on the job still binds.
+    // This environment is a WORKLOAD-PROFILES environment whose only profile happens to be named
+    // 'Consumption' -- NOT a legacy Consumption-only environment. The distinction decides whether
+    // a subnet can be attached in place, and reading the profile NAME instead of the array's
+    // presence produced a wrong "must recreate" call first time round. A legacy Consumption-only
+    // environment has `workloadProfiles` absent; ours has it populated, so the in-place path in
+    // the addsubnettoexistingenv TSG applies. Verified against the control plane: PATCHing a
+    // vnetConfiguration onto the live environment fails on the SUBNET being missing, not on the
+    // environment type.
     workloadProfiles: [
       {
         name: 'Consumption'
