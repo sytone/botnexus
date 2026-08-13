@@ -30,7 +30,7 @@ public class SkillScriptPreflightTests
     ];
 
     private const string TeamsScriptPath =
-        @"C:\Users\agent\.botnexus\skills\teams\scripts\ListMessages.ps1";
+        @"C:\Users\username\.botnexus\skills\teams\scripts\ListMessages.ps1";
 
     private static Func<string, bool> ExistsNever => _ => false;
 
@@ -86,7 +86,7 @@ public class SkillScriptPreflightTests
     [Fact]
     public void Validate_GetChatMessagesTypo_SuggestsTheSingularWrapper()
     {
-        var path = @"C:\Users\agent\.botnexus\skills\teams\scripts\GetChatMessages.ps1";
+        var path = @"C:\Users\username\.botnexus\skills\teams\scripts\GetChatMessages.ps1";
 
         var message = SkillScriptPreflight.Validate(path, ExistsNever, ListsTeams);
 
@@ -177,7 +177,7 @@ public class SkillScriptPreflightTests
     // === Skill-context detection ===
 
     [Theory]
-    [InlineData(@"C:\Users\agent\.botnexus\skills\teams\scripts\X.ps1", "teams")]
+    [InlineData(@"C:\Users\username\.botnexus\skills\teams\scripts\X.ps1", "teams")]
     [InlineData("/home/agent/.botnexus/skills/ado-msdata/scripts/X.ps1", "ado-msdata")]
     [InlineData(@"skills\botnexus-maintenance\scripts\New-BotNexusPr.ps1", "botnexus-maintenance")]
     [InlineData("agents/tinker/skills/worktree/scripts/New-DevWorktree.ps1", "worktree")]
