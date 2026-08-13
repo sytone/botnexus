@@ -99,8 +99,8 @@ public sealed class MemoryStoreTests : IDisposable
     {
         await using var context = await MemoryStoreTestContext.CreateAsync();
         var now = DateTimeOffset.UtcNow;
-        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-old", "agent-a", "rankingkeyword", createdAt: now.AddDays(-90)));
-        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-recent", "agent-a", "rankingkeyword", createdAt: now.AddHours(-1)));
+        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-old", "agent-a", "rankingkeyword about the old release", createdAt: now.AddDays(-90)));
+        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry("entry-recent", "agent-a", "rankingkeyword regarding fresh telemetry", createdAt: now.AddHours(-1)));
 
         var results = await context.Store.SearchAsync("rankingkeyword", 2);
 

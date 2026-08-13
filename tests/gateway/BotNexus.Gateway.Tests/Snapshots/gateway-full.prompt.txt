@@ -163,6 +163,6 @@ If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the aler
 <runtime>
 INTERNAL_RUNTIME_CONTEXT_BEGIN
 Runtime: agent=agent-a | host=host-a | os=Windows (x64) | provider=openai | model=gpt-5 | default_model=gpt-5-mini | shell=pwsh | channel=telegram | capabilities=inlinebuttons,reactions
-Reasoning: medium (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.
+Reasoning: thinking level medium (per-conversation override: /reasoning <minimal|low|medium|high|xhigh|max> or /reasoning clear).
 INTERNAL_RUNTIME_CONTEXT_END
 </runtime>

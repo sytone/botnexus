@@ -192,6 +192,7 @@ export default defineConfig({
           { text: 'Agent Exchange', link: '/features/agent-exchange' },
           { text: 'Security-Event Diagnostics', link: '/features/security-event-diagnostics' },
           { text: 'Dev-Mode Origin Guard', link: '/features/dev-origin-guard' },
+          { text: 'Portal Boot Diagnostics', link: '/features/portal-boot-diagnostics' },
           { text: 'AGENTS.md Conventions', link: '/features/agents-md-conventions' },
           { text: 'Agent 365 Observability', link: '/features/agent365-observability' },
           { text: 'Session Consistency', link: '/features/session-consistency' },
