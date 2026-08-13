@@ -118,6 +118,7 @@ export default defineConfig({
           { text: 'Exec Tool', link: '/extensions/exec-tool' },
           { text: 'Process Tool', link: '/extensions/process-tool' },
           { text: 'Web Tools', link: '/extensions/web-tools' },
+          { text: 'Browser Tools', link: '/extensions/browser-tools' },
           { text: 'Data Store', link: '/extensions/data-store' },
           { text: 'Skills', link: '/extensions/skills' },
           { text: 'MCP', link: '/extensions/mcp' },

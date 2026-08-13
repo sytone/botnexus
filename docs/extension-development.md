@@ -488,7 +488,7 @@ Configure the extension by its manifest `id` in `~/.botnexus/config.json`:
 `extensionTypes` allow-list, so a provider cannot be manifest-loaded at all.
 
 **Authoring a provider is documented in exactly one place:**
-[Provider Development Guide](training/11-provider-development-guide.md). This page does not restate it.
+[Provider Development Guide](internals/11-provider-development-guide.md). This page does not restate it.
 
 Reference implementations:
 
