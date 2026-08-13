@@ -906,11 +906,11 @@
 
     // #2305 (epic #2300): grouping derives ONLY from the immutable server-supplied origin signal via
     // the typed projection, plus the authoritative cron-job -> conversation-id mapping returned by
-    // the cron API. The transitional conversation-id prefix probe and the mutable virtual-session
-    // flag are both deleted; no string sniffing of origin remains here.
+    // the cron API. #3073: both clauses now live in the shared PortalConversationGrouping.IsScheduled
+    // so the mobile picker classifies identically; this is a CALL of the single client-wide cron
+    // predicate, not a copy of it.
     private bool IsCronConversation(ConversationState c) =>
-        c.Project(Store.ActiveSelectionSource).Group == ConversationListGroup.Scheduled ||
-        _cronConversationIds.Contains(c.ConversationId);
+        PortalConversationGrouping.IsScheduled(c, Store.ActiveSelectionSource, _cronConversationIds);
 
     // #2122: webhook membership reads the SAME typed projection as the cron check above. There is
     // one classifier (ConversationRenderProjection) and this is a read of it, not a copy of it.
@@ -1345,9 +1345,7 @@
         try
         {
             var (jobs, _) = await CronApi.ListAsync();
-            _cronConversationIds = jobs
-                .Where(j => !string.IsNullOrEmpty(j.ConversationId))
-                .Select(j => j.ConversationId!)
+            _cronConversationIds = PortalConversationGrouping.CronConversationIds(jobs)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
         catch { _cronConversationIds = new(StringComparer.OrdinalIgnoreCase); }
