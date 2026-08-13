@@ -39,9 +39,24 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/AgentsController.cs`.
 | `includeSubAgents` | query | bool | `false` | Include runtime-spawned sub-agent descriptors (e.g. "Farnsworth (coder)"). These are ephemeral children created via `spawn_subagent` and are hidden by default. |
 | `includeBuiltin` | query | bool | `false` | Include built-in platform archetype agents (researcher, coder, planner, reviewer, writer, analyst). They are spawn/converse targets rather than top-level user-created agents. |
 
-Returns `200 OK` with an array of `AgentDescriptor`. By default only first-class,
-user-facing agents are returned, so the portal agent picker is not cluttered with
-infrastructure descriptors.
+Returns `200 OK` with an array of `AgentListItem` - a **lean list projection**, not the full
+`AgentDescriptor` (#2755). The domain model was previously serialised directly, putting 36
+properties per agent on the portal's cold-boot path where consumers read at most seven, and
+broadcasting `systemPrompt` / `fileAccess` / `toolPolicy` / `extensionConfig` on a call that is
+unauthenticated by default. Clients needing the full shape use `GET /api/agents/{agentId}`.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `agentId` | string | Stable agent identifier. |
+| `displayName` | string | Human-readable name shown in pickers and the sidebar. |
+| `emoji` | string? | Optional emoji rendered beside the display name. |
+| `description` | string? | Optional short description shown in the agent list. |
+| `isBuiltIn` | bool | Whether this is a built-in platform archetype agent. |
+| `apiProvider` | string | Provider instance key. |
+| `modelId` | string | Model identifier. |
+
+By default only first-class, user-facing agents are returned, so the portal agent picker is not
+cluttered with infrastructure descriptors.
 
 ### `GET /api/agents/{agentId}`
 
@@ -127,8 +142,20 @@ diagnostics. Both preconditions return `404 Not Found` with a plain-text reason:
 
 ### `GET /api/agents/{agentId}/sessions/{sessionId}/context`
 
-`200 OK`, with a token-usage summary. Note that `contextWindowTokens` is a fixed reference
-value of `128000` used to compute `usagePercent`.
+`200 OK`, with a token-usage summary.
+
+> [!WARNING]
+> **`contextWindowTokens` is a hardcoded placeholder — do not budget against it.**
+> `AgentsController.BuildContextResponse` declares `const int contextWindowTokens = 128000`
+> and never consults the resolved model. The value is `128000` for every agent, on every
+> model, always. `usagePercent` is derived from it and is therefore equally unreliable:
+> against a 200k-window model it over-reports usage, and against a 32k-window model it
+> under-reports it by a factor of four — silently, with no error.
+>
+> Treat `totalEstimatedTokens` and the per-section counts as the only load-bearing numbers
+> here, and obtain the real context window from the model configuration instead.
+> Returning the resolved model's actual window is tracked as
+> [#3091](https://github.com/Sytone/botnexus/issues/3091).
 
 ```json
 {

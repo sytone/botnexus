@@ -184,6 +184,63 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
         });
     }
 
+    /// <summary>
+    /// The desktop save must patch only the edited path, quoting the loaded revision, and must not
+    /// issue any whole-section PUT (#2059). This is the assertion the previous implementation could
+    /// not satisfy: it wrote every materialised section on every save.
+    /// </summary>
+    [Fact]
+    public void Saving_patches_only_the_edited_path_and_never_writes_a_whole_section()
+    {
+        var handler = new FakeConfigApiHandler(BuildSchema(), SampleConfig());
+        ConfigureServices(handler);
+
+        var cut = _ctx.Render<Configuration>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
+
+        cut.Find(".config-sidebar-item[data-section='gateway']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
+        cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:9999");
+        cut.WaitForAssertion(() => cut.Find("button.primary").HasAttribute("disabled").ShouldBeFalse());
+        cut.Find("button.primary").Click();
+
+        cut.WaitForAssertion(() => handler.Patches.ShouldNotBeEmpty());
+
+        var patch = handler.Patches[0];
+        patch["expectedRevision"]!.GetValue<string>().ShouldBe(FakeConfigApiHandler.Revision);
+        patch["operations"]!.AsArray().Select(o => o!["path"]!.GetValue<string>())
+            .ShouldBe(["gateway.listenUrl"]);
+
+        // The load path may read sections; the SAVE path must write none of them wholesale.
+        handler.SavedSections.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A stale save is surfaced as a conflict and leaves the edits pending, rather than being
+    /// reported as a successful save that silently overwrote another writer (#2059).
+    /// </summary>
+    [Fact]
+    public void Conflicting_save_surfaces_a_conflict_and_keeps_the_edits_pending()
+    {
+        var handler = new FakeConfigApiHandler(BuildSchema(), SampleConfig()) { ConflictOnPatch = true };
+        ConfigureServices(handler);
+
+        var cut = _ctx.Render<Configuration>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
+
+        cut.Find(".config-sidebar-item[data-section='gateway']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
+        cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:9999");
+        cut.WaitForAssertion(() => cut.Find("button.primary").HasAttribute("disabled").ShouldBeFalse());
+        cut.Find("button.primary").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Markup.ShouldContain("changed elsewhere");
+            cut.Find("button.primary").HasAttribute("disabled").ShouldBeFalse();
+        });
+    }
+
     private void ConfigureServices(FakeConfigApiHandler handler)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://gateway.test") };
@@ -218,9 +275,17 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
 
     internal sealed class FakeConfigApiHandler : HttpMessageHandler
     {
+        internal const string Revision = "REV-1";
+
         private readonly JsonObject _schema;
         private readonly JsonObject _config;
         public List<string> SavedSections { get; } = [];
+
+        /// <summary>Patch request bodies observed, in order (#2059).</summary>
+        public List<JsonObject> Patches { get; } = [];
+
+        /// <summary>When set, the patch endpoint answers 409 to exercise the conflict path.</summary>
+        public bool ConflictOnPatch { get; init; }
 
         public FakeConfigApiHandler(JsonObject schema, JsonObject config)
         {
@@ -228,24 +293,50 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
             _config = config;
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
             if (path == "/api/config/schema" && request.Method == HttpMethod.Get)
-                return Task.FromResult(Json(_schema));
+                return Json(_schema);
+            if (path == "/api/config/snapshot" && request.Method == HttpMethod.Get)
+                return Json(new JsonObject { ["revision"] = Revision, ["config"] = _config.DeepClone() });
             if (path == "/api/config" && request.Method == HttpMethod.Get)
-                return Task.FromResult(Json(_config));
+                return Json(_config);
             if (path == "/api/config/raw" && request.Method == HttpMethod.Get)
-                return Task.FromResult(Json(_config));
+                return Json(_config);
+            if (path == "/api/config" && request.Method == HttpMethod.Patch)
+            {
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                Patches.Add(JsonNode.Parse(body)!.AsObject());
+
+                if (ConflictOnPatch)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.Conflict)
+                    {
+                        Content = new StringContent(
+                            "{\"success\":false,\"revision\":\"REV-2\",\"errors\":[\"stale\"]}",
+                            Encoding.UTF8,
+                            "application/json"),
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"success\":true,\"revision\":\"REV-2\",\"errors\":[]}",
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+            }
             if (path.StartsWith("/api/config/", StringComparison.Ordinal) && request.Method == HttpMethod.Put)
             {
                 SavedSections.Add(Uri.UnescapeDataString(path["/api/config/".Length..]));
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("{\"message\":\"ok\"}", Encoding.UTF8, "application/json"),
-                });
+                };
             }
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
 
         private static HttpResponseMessage Json(JsonObject obj) =>

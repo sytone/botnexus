@@ -31,13 +31,42 @@ public static class ModelFamilyDetector
     public const string Unknown = "unknown";
 
     /// <summary>
-    /// Determines the model family from a model identifier.
-    /// Detection is case-insensitive and matches on common prefixes and substrings.
+    /// Maps a provider identifier to the model family that provider exclusively serves.
+    /// Only providers whose entire catalog belongs to one family appear here: a provider that
+    /// serves models from several vendors (openrouter, huggingface, a local gateway) proves
+    /// nothing about the family and is deliberately absent, so it still resolves <see cref="Unknown"/>.
     /// </summary>
-    /// <param name="modelId">The model identifier (e.g. "claude-sonnet-4-20250514", "gpt-4o", "gemini-2.5-pro").</param>
-    /// <returns>One of the family constants, or <see cref="Unknown"/> if no match.</returns>
-    public static string GetModelFamily(string? modelId)
+    private static readonly Dictionary<string, string> ProviderFamilies = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["anthropic"] = Claude,
+        ["openai"] = Gpt,
+        ["azure-openai-responses"] = Gpt,
+        ["google"] = Gemini,
+        ["deepseek"] = DeepSeek,
+        ["github-copilot"] = Copilot,
+        ["github-copilot-completions"] = Copilot,
+        ["github-copilot-messages"] = Copilot,
+    };
+
+    /// <summary>
+    /// Determines the model family from a model identifier, falling back to the provider identity
+    /// when the id alone does not resolve a family.
+    /// </summary>
+    /// <remarks>
+    /// Matching the model id alone misses models served under vanity ids that carry no family
+    /// substring (#3104) -- those sessions silently lost their family guidance because
+    /// <see cref="ModelGuidanceSection"/> drops the whole section on <see cref="Unknown"/>.
+    /// The model id is still consulted first and still wins whenever it resolves, so every
+    /// existing id-only mapping is unchanged; the provider is consulted only as a fallback,
+    /// and only for providers that serve exactly one family.
+    /// </remarks>
+    /// <param name="modelId">The model identifier (e.g. "claude-sonnet-4-20250514", "gpt-4o", "gemini-2.5-pro").</param>
+    /// <param name="providerId">Optional provider identifier (e.g. "anthropic", "github-copilot").</param>
+    /// <returns>One of the family constants, or <see cref="Unknown"/> if no match.</returns>
+    public static string GetModelFamily(string? modelId, string? providerId = null)
+    {
+        // A blank model id identifies no model at all; a known provider must not invent a family
+        // for it, or every unconfigured run would inherit that provider's guidance.
         if (string.IsNullOrWhiteSpace(modelId))
             return Unknown;
 
@@ -66,6 +95,10 @@ public static class ModelFamilyDetector
 
         if (id.Contains("llama", StringComparison.OrdinalIgnoreCase))
             return Llama;
+
+        if (!string.IsNullOrWhiteSpace(providerId) &&
+            ProviderFamilies.TryGetValue(providerId.Trim(), out var providerFamily))
+            return providerFamily;
 
         return Unknown;
     }

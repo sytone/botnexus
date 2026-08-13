@@ -28,6 +28,12 @@ builder.Services.AddScoped<IPortalLoadService, PortalLoadService>();
 // (GET /api/config/schema + PUT /api/config/{section}) -- the same client service the desktop uses.
 builder.Services.AddScoped<PlatformConfigService>();
 
+// #3073: the mobile conversation picker needs the authoritative cron-job -> conversation-id map to
+// classify a channel-created conversation later adopted by a cron job (its write-once Source stays
+// Channel - #2304). Same client the desktop registers; one fetch on Chat init, and a failure
+// degrades to projection-only grouping.
+builder.Services.AddScoped<CronApiClient>();
+
 // #1893: dynamic option sources for schema-driven config select widgets (provider model dropdowns).
 // Same abstraction the desktop registers; SchemaForm lives in Core and depends on it, so mobile
 // must provide an implementation too.

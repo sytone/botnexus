@@ -1,69 +1,39 @@
-using System.Text.Json.Serialization;
-using BotNexus.Domain.Serialization;
+using Vogen;
 
 namespace BotNexus.Domain.Primitives;
 
-[JsonConverter(typeof(ToolNameJsonConverter))]
 /// <summary>
-/// Represents struct.
+/// Names a tool an agent may invoke - the identifier the model emits in a tool call and the
+/// executor dispatches on. Construct via <see cref="From(string)"/>; the value must be non-null,
+/// non-empty and non-whitespace, and is stored trimmed and lower-cased.
 /// </summary>
-public readonly record struct ToolName : IComparable<ToolName>, IEquatable<ToolName>
+/// <remarks>
+/// <para>
+/// <b>Why lower-cased.</b> Tool dispatch throughout the agent loop is case-insensitive - the
+/// per-turn tool set in <c>AgentLoopRunner</c> is an <see cref="StringComparer.OrdinalIgnoreCase"/>
+/// set, and the executor matches registered tools the same way. The previous hand-rolled struct
+/// expressed that by overriding <c>Equals</c>/<c>GetHashCode</c> with an ordinal-ignore-case
+/// comparer while preserving the caller's casing in <c>Value</c>. Vogen generates equality from the
+/// underlying primitive and does not accept a hand-written <c>Equals</c>, so the same contract is
+/// preserved by canonicalising the value instead: <c>ToolName.From("Read_File")</c> and
+/// <c>ToolName.From("read_file")</c> remain equal. This follows the existing
+/// <see cref="ChannelKey"/> precedent, which canonicalises the same way for the same reason.
+/// </para>
+/// <para>
+/// Migrated from a hand-rolled <c>readonly record struct</c> to Vogen in #502 (primitive obsession
+/// phase 3) so construction, validation, JSON and equality are generated rather than duplicated.
+/// The wire representation is unchanged - a bare JSON string, exactly as the retired
+/// <c>ToolNameJsonConverter</c> emitted.
+/// </para>
+/// </remarks>
+[ValueObject<string>(conversions: Conversions.SystemTextJson)]
+public readonly partial struct ToolName
 {
-    /// <summary>
-    /// Gets the value.
-    /// </summary>
-    public string Value { get; }
+    private static Validation Validate(string value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? Validation.Invalid("ToolName cannot be null, empty, or whitespace.")
+            : Validation.Ok;
 
-    public ToolName(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            throw new ArgumentException("ToolName cannot be empty", nameof(value));
-
-        Value = value.Trim();
-    }
-
-    /// <summary>
-    /// Executes from.
-    /// </summary>
-    /// <param name="value">The value.</param>
-    /// <returns>The from result.</returns>
-    public static ToolName From(string value) => new(value);
-
-    /// <summary>
-    /// Performs the declared conversion or operator operation.
-    /// </summary>
-    /// <param name="toolName">The tool name.</param>
-    /// <returns>The operator string result.</returns>
-    public static implicit operator string(ToolName toolName) => toolName.Value;
-    /// <summary>
-    /// Performs the declared conversion or operator operation.
-    /// </summary>
-    /// <param name="value">The value.</param>
-    /// <returns>The operator tool name result.</returns>
-    public static explicit operator ToolName(string value) => From(value);
-
-    /// <summary>
-    /// Executes equals.
-    /// </summary>
-    /// <param name="other">The other.</param>
-    /// <returns>The equals result.</returns>
-    public bool Equals(ToolName other) =>
-        string.Equals(Value, other.Value, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Executes get hash code.
-    /// </summary>
-    /// <returns>The get hash code result.</returns>
-    public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(Value);
-    /// <summary>
-    /// Executes to string.
-    /// </summary>
-    /// <returns>The to string result.</returns>
-    public override string ToString() => Value;
-    /// <summary>
-    /// Executes compare to.
-    /// </summary>
-    /// <param name="other">The other.</param>
-    /// <returns>The compare to result.</returns>
-    public int CompareTo(ToolName other) => string.Compare(Value, other.Value, StringComparison.OrdinalIgnoreCase);
+    private static string NormalizeInput(string input) =>
+        input is null ? input! : input.Trim().ToLowerInvariant();
 }

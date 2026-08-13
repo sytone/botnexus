@@ -129,12 +129,17 @@ public sealed class LlmSessionCompactorAuxModelTests
             new SessionEntry { Role = MessageRole.User, Content = "latest" }
         ]);
 
-        // Cycle 2: the prompt should contain the prior summary as ## Prior Summary
+        // Cycle 2: the prompt should carry the prior summary inside the <prior-summary> delimiter.
+        // #3103 replaced the old `## Prior Summary` markdown heading, which collided with the `##`
+        // required-sections list the summariser is asked to emit.
         await compactor.CompactAsync(session, new CompactionOptions { PreservedTurns = 1 });
 
         capturedPrompt.ShouldNotBeNull();
-        capturedPrompt!.ShouldContain("## Prior Summary");
+        capturedPrompt!.ShouldContain(LlmSessionCompactor.PriorSummaryOpenTag);
+        capturedPrompt.ShouldContain(LlmSessionCompactor.PriorSummaryCloseTag);
         capturedPrompt.ShouldContain("cycle1-summary");
+        capturedPrompt.ShouldNotContain("## Prior Summary");
+        capturedPrompt.ShouldContain("CONFLICT RULE");
     }
 
     [Fact]

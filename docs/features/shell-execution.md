@@ -547,4 +547,4 @@ Some commands write errors to stderr which BotNexus captures. Check if:
 - [Configuration Reference](/configuration) — Gateway-level shell settings
 - [User Guide: Configuration](/user-guide/configuration) — Per-agent shell configuration
 - [Agent Execution](/development/agent-execution) — How agents invoke tools
-- [Tool Security](/training/tool-security) — Security considerations for shell execution
+- [Tool Security](/internals/tool-security) — Security considerations for shell execution

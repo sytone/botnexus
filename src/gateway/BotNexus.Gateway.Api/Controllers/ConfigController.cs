@@ -69,6 +69,76 @@ public sealed class ConfigController : ControllerBase
     }
 
     /// <summary>
+    /// Get the raw platform configuration together with the revision token it was read at
+    /// (issue #2059).
+    /// </summary>
+    /// <remarks>
+    /// The settings UI must be able to prove that nothing else committed between the snapshot it
+    /// rendered and the save it submits. It therefore loads through this endpoint and returns the
+    /// revision with its patch; see <see cref="PatchConfig"/>.
+    /// </remarks>
+    [HttpGet("snapshot")]
+    public async Task<ActionResult<ConfigSnapshotResponse>> GetSnapshot(
+        [FromServices] PlatformConfigWriter writer,
+        CancellationToken ct)
+    {
+        var (config, revision) = await writer.ReadWithRevisionAsync(ct);
+        RedactSecrets(config);
+        return Ok(new ConfigSnapshotResponse(revision, config));
+    }
+
+    /// <summary>
+    /// Applies a batch of addressed config changes as one atomic, optimistically-concurrent save
+    /// (issue #2059).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Replaces the settings UI's previous save shape, which PUT every materialised top-level
+    /// section of a snapshot loaded minutes earlier. That reverted concurrent edits to sections the
+    /// operator never touched, could not materialise a section absent from the raw document, and
+    /// half-committed when a later section failed.
+    /// </para>
+    /// <para>
+    /// A stale <c>expectedRevision</c> returns <c>409 Conflict</c> so the client can reload and
+    /// re-apply rather than silently overwriting the other writer. A rejected batch writes nothing.
+    /// </para>
+    /// </remarks>
+    [HttpPatch]
+    public async Task<ActionResult<ConfigPatchResponse>> PatchConfig(
+        [FromBody] ConfigPatchRequest request,
+        [FromServices] PlatformConfigWriter writer,
+        CancellationToken ct)
+    {
+        if (request?.Operations is null || request.Operations.Count == 0)
+            return BadRequest(new ConfigPatchResponse(false, null, ["A config patch must contain at least one operation."]));
+
+        // agents remain owned by /api/agents; a patch must not become a side door into that tree.
+        foreach (var operation in request.Operations)
+        {
+            var root = ConfigPatchApplier.Tokenize(operation.Path).FirstOrDefault();
+            if (string.Equals(root, "agents", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new ConfigPatchResponse(false, null, ["Use /api/agents for agent management."]));
+        }
+
+        var operations = request.Operations
+            .Select(o => new ConfigPatchOperation(o.Path, o.Value, o.Remove))
+            .ToList();
+
+        try
+        {
+            var result = await writer.ApplyPatchAsync(operations, "before-config-patch", request.ExpectedRevision, ct);
+            if (!result.Success)
+                return BadRequest(new ConfigPatchResponse(false, null, result.Errors));
+
+            return Ok(new ConfigPatchResponse(true, result.Revision, []));
+        }
+        catch (PlatformConfigConcurrencyException ex)
+        {
+            return Conflict(new ConfigPatchResponse(false, ex.ActualRevision, [ex.Message]));
+        }
+    }
+
+    /// <summary>
     /// Get a specific config section.
     /// </summary>
     [HttpGet("{section}")]
@@ -407,6 +477,36 @@ public sealed class ConfigController : ControllerBase
     private static void RedactSecrets(JsonObject config)
         => ConfigSecretMerge.Redact(config);
 }
+
+/// <summary>
+/// A raw configuration snapshot plus the revision token it was read at (issue #2059).
+/// </summary>
+/// <param name="Revision">Compare-and-swap token to send back with a patch.</param>
+/// <param name="Config">The raw configuration document, secrets redacted.</param>
+public sealed record ConfigSnapshotResponse(string Revision, JsonObject Config);
+
+/// <summary>
+/// One addressed change in a config patch request (issue #2059).
+/// </summary>
+/// <param name="Path">Dotted path with optional <c>[index]</c> segments, e.g. <c>gateway.port</c>.</param>
+/// <param name="Value">The value to write; ignored when <paramref name="Remove"/> is true.</param>
+/// <param name="Remove">Remove the addressed node instead of setting it.</param>
+public sealed record ConfigPatchOperationDto(string Path, JsonNode? Value = null, bool Remove = false);
+
+/// <summary>
+/// An atomic batch of config changes with an optional optimistic-concurrency token (issue #2059).
+/// </summary>
+/// <param name="Operations">The changes to apply, in order. All or nothing.</param>
+/// <param name="ExpectedRevision">Revision the client's snapshot was read at, or null to skip the check.</param>
+public sealed record ConfigPatchRequest(IReadOnlyList<ConfigPatchOperationDto> Operations, string? ExpectedRevision = null);
+
+/// <summary>
+/// Outcome of a config patch (issue #2059).
+/// </summary>
+/// <param name="Success">Whether the batch committed.</param>
+/// <param name="Revision">The revision now on disk: the new one on success, the current one on conflict.</param>
+/// <param name="Errors">Rejection messages; empty on success.</param>
+public sealed record ConfigPatchResponse(bool Success, string? Revision, IReadOnlyList<string> Errors);
 
 /// <summary>
 /// Result of a platform configuration validation check.

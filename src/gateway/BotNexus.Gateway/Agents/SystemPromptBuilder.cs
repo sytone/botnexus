@@ -167,7 +167,8 @@ public static class SystemPromptBuilder
                     inlineButtonsEnabled,
                     stableContextFiles,
                     dynamicContextFiles),
-                [ModelGuidanceSection.ModelIdExtensionKey] = @params.Runtime?.Model
+                [ModelGuidanceSection.ModelIdExtensionKey] = @params.Runtime?.Model,
+                [ModelGuidanceSection.ProviderIdExtensionKey] = @params.Runtime?.Provider
             }
         };
 

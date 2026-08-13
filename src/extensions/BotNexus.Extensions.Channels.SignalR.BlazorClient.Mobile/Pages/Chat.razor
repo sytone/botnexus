@@ -44,12 +44,16 @@ else
     var agentEntries = Store.Agents.ToArray().OrderForDisplay().ToArray();
     var streamState = activeConvId is not null ? Store.GetStreamState(activeConvId) : null;
     @* #2327: the picker groups exactly as the desktop sidebar does (Pinned / Conversations /
-       Scheduled) via the shared PortalConversationGrouping helper, so the two form factors cannot
-       drift. Native <optgroup> keeps the OS touch picker rather than replacing it with a
+       Scheduled) via the shared PortalConversationGrouping helper. #3073: the cron-job ->
+       conversation-id map is threaded in too, so a channel-created conversation later adopted by a
+       cron job (Source stays Channel forever - #2304) groups under Scheduled here exactly as it
+       does on desktop. A failed cron fetch leaves the set empty and degrades to projection-only
+       grouping. Native <optgroup> keeps the OS touch picker rather than replacing it with a
        bottom-sheet. Empty groups are dropped by the helper, so no empty <optgroup> is emitted. *@
     var conversationGroups = PortalConversationGrouping.ForPicker(
         activeAgent?.Conversations.Values.ToArray().Where(c => c.Status == "Active") ?? [],
-        Store.ActiveSelectionSource);
+        Store.ActiveSelectionSource,
+        _cronConversationIds);
     <div class="mobile-app">
         <!-- DISCONNECTED INDICATOR -->
         @if (!PortalLoad.IsSignalRConnected)
@@ -352,6 +356,14 @@ else
     private bool _appResumeListenerRegistered;
     private bool _canvasOpen;
 
+    // #3073: the authoritative cron-job -> conversation-id map, fetched ONCE on init exactly as the
+    // desktop sidebar does. Resolved optionally so mobile bUnit fixtures that do not register the
+    // client keep rendering; a missing client or a failed fetch leaves this empty, which degrades
+    // grouping to the render projection alone rather than throwing or emptying the picker.
+    private IReadOnlySet<string> _cronConversationIds = PortalConversationGrouping.CronConversationIds(null);
+
+    private CronApiClient? CronApi => Services.GetService(typeof(CronApiClient)) as CronApiClient;
+
     // Route application guard -- prevents re-applying the same route key twice.
     private string? _appliedRouteKey;
 
@@ -381,7 +393,27 @@ else
         // hub build so a tunnelled, backgrounded PWA stops churning through sub-second reconnects.
         PortalLoad.Tuning = HubTuning.ToTuning();
         await PortalLoad.InitializeAsync(hubUrl);
+        await LoadCronConversationIdsAsync();
         await ApplyRouteSelectionAsync();
+    }
+
+    // #3073: mirrors MainLayout.LoadCronConversationIdsAsync. CronApiClient.ListAsync already swallows
+    // transport failures and returns an empty list plus an error string, so the catch here is the
+    // belt-and-braces equivalent of the desktop's.
+    private async Task LoadCronConversationIdsAsync()
+    {
+        var client = CronApi;
+        if (client is null) return;
+        try
+        {
+            var (jobs, _) = await client.ListAsync();
+            _cronConversationIds = PortalConversationGrouping.CronConversationIds(jobs);
+            StateHasChanged();
+        }
+        catch
+        {
+            _cronConversationIds = PortalConversationGrouping.CronConversationIds(null);
+        }
     }
 
     /// <summary>

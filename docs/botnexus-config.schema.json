@@ -120,6 +120,14 @@
           ],
           "description": "HTTP(S) URL the gateway binds to (for example http://localhost:5005). Supports Kestrel wildcards such as http://+:5000."
         },
+        "publicBaseUrl": {
+          "title": "Public base URL",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "External base URL the portal is reached on (for example https://portal.example.com). Used to build canvas deep links. Leave unset on a purely local install."
+        },
         "defaultAgentId": {
           "title": "Default agent",
           "type": [

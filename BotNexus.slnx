@@ -6,6 +6,7 @@
     <Project Path="src/extensions/BotNexus.Extensions.Mcp/BotNexus.Extensions.Mcp.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.McpInvoke/BotNexus.Extensions.McpInvoke.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.WebTools/BotNexus.Extensions.WebTools.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.BrowserTools/BotNexus.Extensions.BrowserTools.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.ProcessTool/BotNexus.Extensions.ProcessTool.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.DataStore/BotNexus.Extensions.DataStore.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.DebugTool/BotNexus.Extensions.DebugTool.csproj" />
@@ -95,6 +96,7 @@
     <Project Path="tests/extensions/BotNexus.Extensions.Plugins.Tests/BotNexus.Extensions.Plugins.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Skills.Tests/BotNexus.Extensions.Skills.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.WebTools.Tests/BotNexus.Extensions.WebTools.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.BrowserTools.Tests/BotNexus.Extensions.BrowserTools.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.ServiceBus.Tests/BotNexus.Extensions.Channels.ServiceBus.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.Agent365.Tests/BotNexus.Extensions.Channels.Agent365.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Qmd.Tests/BotNexus.Extensions.Qmd.Tests.csproj" />

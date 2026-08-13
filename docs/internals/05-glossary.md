@@ -11,7 +11,7 @@ Quick reference for all key terms used in the BotNexus codebase. Terms are organ
 Hook invoked after tool execution completes. Can transform the result by returning an `AfterToolCallResult` with overridden `Content`, `Details`, or `IsError` fields.
 
 **Source:** `BotNexus.Agent.Core` — Agent hook delegates
-**Training:** [Agent Core — Hooks](02-agent-core.md)
+**Internals:** [Agent Core — Hooks](02-agent-core.md)
 
 ---
 
@@ -20,7 +20,7 @@ Hook invoked after tool execution completes. Can transform the result by returni
 Stateful wrapper that manages a conversation loop — prompt → LLM → tools → repeat. Enforces single-run concurrency via `SemaphoreSlim`. Exposes `PromptAsync`, `ContinueAsync`, `Steer`, and `FollowUp` APIs for controlling the conversation.
 
 **Source:** `BotNexus.Agent.Core.Agent`
-**Training:** [Agent Core](02-agent-core.md) · [Build Your Own Agent](04-building-your-own.md)
+**Internals:** [Agent Core](02-agent-core.md) · [Build Your Own Agent](04-building-your-own.md)
 
 ---
 
@@ -29,7 +29,7 @@ Stateful wrapper that manages a conversation loop — prompt → LLM → tools �
 Immutable snapshot (`record`) of the current agent state: system prompt, messages, and tools. Passed to the loop and tools so they operate on a consistent view of the world.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — State Management](02-agent-core.md)
+**Internals:** [Agent Core — State Management](02-agent-core.md)
 
 ---
 
@@ -38,7 +38,7 @@ Immutable snapshot (`record`) of the current agent state: system prompt, message
 Base type for all lifecycle events emitted during an agent run. Subtypes include `AgentStartEvent`, `TurnStartEvent`, `MessageStartEvent`, `MessageUpdateEvent`, `MessageEndEvent`, `TurnEndEvent`, `AgentEndEvent`, `ToolExecutionStartEvent`, `ToolExecutionUpdateEvent`, and `ToolExecutionEndEvent`.
 
 **Source:** `BotNexus.Agent.Core.Events`
-**Training:** [Agent Core — Events](02-agent-core.md)
+**Internals:** [Agent Core — Events](02-agent-core.md)
 
 ---
 
@@ -47,7 +47,7 @@ Base type for all lifecycle events emitted during an agent run. Subtypes include
 Static class that implements the core turn loop: drain steering messages → call the LLM → execute any tool calls → repeat until the LLM stops or an abort is requested.
 
 **Source:** `BotNexus.Agent.Core.Loop`
-**Training:** [Agent Core — The Loop](02-agent-core.md)
+**Internals:** [Agent Core — The Loop](02-agent-core.md)
 
 ---
 
@@ -56,7 +56,7 @@ Static class that implements the core turn loop: drain steering messages → cal
 Record containing all configuration for creating an `Agent`: model, `LlmClient`, delegates, hooks, generation settings, and queue modes.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core](02-agent-core.md) · [Build Your Own Agent](04-building-your-own.md)
+**Internals:** [Agent Core](02-agent-core.md) · [Build Your Own Agent](04-building-your-own.md)
 
 ---
 
@@ -65,7 +65,7 @@ Record containing all configuration for creating an `Agent`: model, `LlmClient`,
 Mutable runtime state held by an `Agent`. Includes `SystemPrompt`, `Model`, `ThinkingLevel`, `Tools`, `Messages`, `IsStreaming`, `StreamingMessage`, `PendingToolCalls`, and `ErrorMessage`.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — State Management](02-agent-core.md)
+**Internals:** [Agent Core — State Management](02-agent-core.md)
 
 ---
 
@@ -74,7 +74,7 @@ Mutable runtime state held by an `Agent`. Includes `SystemPrompt`, `Model`, `Thi
 Record returned by `IAgentTool.ExecuteAsync`. Contains `Content` (a list of `AgentToolContent`) plus optional `Details` metadata that gets forwarded as tool-result details.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — Tool Execution](02-agent-core.md)
+**Internals:** [Agent Core — Tool Execution](02-agent-core.md)
 
 ---
 
@@ -83,7 +83,7 @@ Record returned by `IAgentTool.ExecuteAsync`. Contains `Content` (a list of `Age
 Instance-based, thread-safe registry that maps API format strings to `IApiProvider` instances. Backed by `ConcurrentDictionary` for safe concurrent access.
 
 **Source:** `BotNexus.Agent.Providers.Core`
-**Training:** [Provider System — Registry](01-providers.md)
+**Internals:** [Provider System — Registry](01-providers.md)
 
 ---
 
@@ -92,7 +92,7 @@ Instance-based, thread-safe registry that maps API format strings to `IApiProvid
 Provider-level record for LLM responses. Carries `Content` (`ContentBlock[]`), `Api`, `Provider`, `ModelId`, `Usage`, `StopReason`, `ErrorMessage`, `ResponseId`, and `Timestamp`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System — Message Types](01-providers.md)
+**Internals:** [Provider System — Message Types](01-providers.md)
 
 ---
 
@@ -101,7 +101,7 @@ Provider-level record for LLM responses. Carries `Content` (`ContentBlock[]`), `
 Base type for all streaming events emitted from an `LlmStream`. Subtypes: `StartEvent`, `TextStartEvent`, `TextDeltaEvent`, `TextEndEvent`, `ThinkingStartEvent`, `ThinkingDeltaEvent`, `ThinkingEndEvent`, `ToolCallStartEvent`, `ToolCallDeltaEvent`, `ToolCallEndEvent`, `DoneEvent`, `ErrorEvent`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Streaming`
-**Training:** [Provider System — Streaming](01-providers.md)
+**Internals:** [Provider System — Streaming](01-providers.md)
 
 ---
 
@@ -110,7 +110,7 @@ Base type for all streaming events emitted from an `LlmStream`. Subtypes: `Start
 CodingAgent hook that logs tool call timing and results to the session log for diagnostics and observability.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — Hooks](03-coding-agent.md)
+**Internals:** [Coding Agent — Hooks](03-coding-agent.md)
 
 ---
 
@@ -119,7 +119,7 @@ CodingAgent hook that logs tool call timing and results to the session log for d
 Hook invoked before tool execution. Can block a tool call by returning `BeforeToolCallResult(Block: true)`, preventing the tool from running.
 
 **Source:** `BotNexus.Agent.Core` — Agent hook delegates
-**Training:** [Agent Core — Hooks](02-agent-core.md)
+**Internals:** [Agent Core — Hooks](02-agent-core.md)
 
 ---
 
@@ -128,7 +128,7 @@ Hook invoked before tool execution. Can block a tool call by returning `BeforeTo
 Enum controlling provider-side prompt caching behavior. Values: `Short` and `Long`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System](01-providers.md)
+**Internals:** [Provider System](01-providers.md)
 
 ---
 
@@ -137,7 +137,7 @@ Enum controlling provider-side prompt caching behavior. Values: `Short` and `Lon
 Static factory class that creates a fully configured `Agent` with built-in tools, hooks, and system prompt. The primary entry point is `CreateAsync`.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md)
+**Internals:** [Coding Agent](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md)
 
 ---
 
@@ -146,7 +146,7 @@ Static factory class that creates a fully configured `Agent` with built-in tools
 Configuration record for the coding agent. Includes `Model`, `Provider`, `MaxToolIterations`, `MaxContextTokens`, `AllowedCommands`, `BlockedPaths`, and `Custom` settings.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — Configuration](03-coding-agent.md)
+**Internals:** [Coding Agent — Configuration](03-coding-agent.md)
 
 ---
 
@@ -155,7 +155,7 @@ Configuration record for the coding agent. Includes `Model`, `Provider`, `MaxToo
 Polymorphic base record for message content. Subtypes: `TextContent`, `ThinkingContent`, `ImageContent`, and `ToolCallContent`. Used throughout both provider and agent layers.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System — Message Types](01-providers.md) · [Architecture Overview](../architecture/overview.md)
+**Internals:** [Provider System — Message Types](01-providers.md) · [Architecture Overview](../architecture/overview.md)
 
 ---
 
@@ -164,7 +164,7 @@ Polymorphic base record for message content. Subtypes: `TextContent`, `ThinkingC
 Record sent to providers containing the full LLM request payload: `SystemPrompt`, `Messages`, and `Tools`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System](01-providers.md)
+**Internals:** [Provider System](01-providers.md)
 
 ---
 
@@ -173,7 +173,7 @@ Record sent to providers containing the full LLM request payload: `SystemPrompt`
 Transforms an `AgentContext` to a provider `Context` at the LLM call boundary. Bridges the agent layer and provider layer models.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — The Loop](02-agent-core.md)
+**Internals:** [Agent Core — The Loop](02-agent-core.md)
 
 ---
 
@@ -182,7 +182,7 @@ Transforms an `AgentContext` to a provider `Context` at the LLM call boundary. B
 Delegate that maps `AgentMessage[]` to provider `Message[]` for the LLM call, enabling custom message transformation before requests are sent.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core](02-agent-core.md)
+**Internals:** [Agent Core](02-agent-core.md)
 
 ---
 
@@ -191,7 +191,7 @@ Delegate that maps `AgentMessage[]` to provider `Message[]` for the LLM call, en
 An `IExtension` plugin that hooks into the agent lifecycle — tool calls, sessions, compaction, and model requests. Extensions are loaded from DLL assemblies at runtime.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — Extensions](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md)
+**Internals:** [Coding Agent — Extensions](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md)
 
 ---
 
@@ -200,7 +200,7 @@ An `IExtension` plugin that hooks into the agent lifecycle — tool calls, sessi
 Scans DLL assemblies in `.botnexus-agent/extensions/` and discovers `IExtension` implementations via reflection.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — Extensions](03-coding-agent.md)
+**Internals:** [Coding Agent — Extensions](03-coding-agent.md)
 
 ---
 
@@ -209,7 +209,7 @@ Scans DLL assemblies in `.botnexus-agent/extensions/` and discovers `IExtension`
 Orchestrates lifecycle hooks across all loaded extensions, delegating events in registration order.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — Extensions](03-coding-agent.md)
+**Internals:** [Coding Agent — Extensions](03-coding-agent.md)
 
 ---
 
@@ -218,7 +218,7 @@ Orchestrates lifecycle hooks across all loaded extensions, delegating events in 
 Delegate for runtime API key resolution. Signature: `(provider, CancellationToken) → string?`. Lets the host supply keys dynamically rather than at configuration time.
 
 **Source:** `BotNexus.Agent.Providers.Core`
-**Training:** [Provider System](01-providers.md)
+**Internals:** [Provider System](01-providers.md)
 
 ---
 
@@ -227,7 +227,7 @@ Delegate for runtime API key resolution. Signature: `(provider, CancellationToke
 A callback invoked before or after tool execution for validation, logging, or result transformation. See [BeforeToolCallDelegate](#beforetoolcalldelegate) and [AfterToolCallDelegate](#aftertoolcalldelegate).
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — Hooks](02-agent-core.md)
+**Internals:** [Agent Core — Hooks](02-agent-core.md)
 
 ---
 
@@ -236,7 +236,7 @@ A callback invoked before or after tool execution for validation, logging, or re
 Interface for tools the agent can invoke. Requires `PrepareArgumentsAsync` (validate and transform args) and `ExecuteAsync` (run the tool). Properties: `Name`, `Label`, `Definition`. Optional members: `GetPromptSnippet`, `GetPromptGuidelines`.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — Tool Execution](02-agent-core.md) · [Build Your Own Agent](04-building-your-own.md)
+**Internals:** [Agent Core — Tool Execution](02-agent-core.md) · [Build Your Own Agent](04-building-your-own.md)
 
 ---
 
@@ -245,7 +245,7 @@ Interface for tools the agent can invoke. Requires `PrepareArgumentsAsync` (vali
 Interface for LLM provider implementations. Property: `Api` (routing key). Methods: `Stream` and `StreamSimple` for sending requests and receiving streamed responses.
 
 **Source:** `BotNexus.Agent.Providers.Core`
-**Training:** [Provider System](01-providers.md)
+**Internals:** [Provider System](01-providers.md)
 
 ---
 
@@ -254,7 +254,7 @@ Interface for LLM provider implementations. Property: `Api` (routing key). Metho
 Plugin interface for CodingAgent extensions. Methods: `GetTools`, `OnToolCallAsync`, `OnToolResultAsync`, `OnSessionStartAsync`, `OnSessionEndAsync`, `OnCompactionAsync`, `OnModelRequestAsync`.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — Extensions](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md)
+**Internals:** [Coding Agent — Extensions](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md)
 
 ---
 
@@ -263,7 +263,7 @@ Plugin interface for CodingAgent extensions. Methods: `GetTools`, `OnToolCallAsy
 Instance-based entry point that routes LLM requests to the correct provider. Accepts `ApiProviderRegistry` and `ModelRegistry` via constructor. All LLM calls flow through this class.
 
 **Source:** `BotNexus.Agent.Providers.Core`
-**Training:** [Provider System](01-providers.md) · [Architecture Overview](../architecture/overview.md)
+**Internals:** [Provider System](01-providers.md) · [Architecture Overview](../architecture/overview.md)
 
 ---
 
@@ -272,7 +272,7 @@ Instance-based entry point that routes LLM requests to the correct provider. Acc
 Record describing an LLM model: `Id`, `Name`, `Api` (routing key), `Provider`, `BaseUrl`, `Reasoning`, input modalities, `Cost`, `ContextWindow`, `MaxTokens`, `SupportsExtraHighThinking`, optional `Headers` and `Compat`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System — Model Registry](01-providers.md)
+**Internals:** [Provider System — Model Registry](01-providers.md)
 
 ---
 
@@ -281,7 +281,7 @@ Record describing an LLM model: `Id`, `Name`, `Api` (routing key), `Provider`, `
 Channel-based `IAsyncEnumerable` of `AssistantMessageEvent`. Providers push events via `Push()`; consumers iterate via `await foreach`. Built on `System.Threading.Channels` for backpressure-aware streaming.
 
 **Source:** `BotNexus.Agent.Providers.Core.Streaming`
-**Training:** [Provider System — Streaming](01-providers.md)
+**Internals:** [Provider System — Streaming](01-providers.md)
 
 ---
 
@@ -290,7 +290,7 @@ Channel-based `IAsyncEnumerable` of `AssistantMessageEvent`. Providers push even
 Abstract base record for conversation messages. Subtypes: `UserMessage`, `AssistantMessage`, `ToolResultMessage`. Uses `[JsonPolymorphic]` with a `"role"` discriminator for serialization.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System — Message Types](01-providers.md)
+**Internals:** [Provider System — Message Types](01-providers.md)
 
 ---
 
@@ -299,7 +299,7 @@ Abstract base record for conversation messages. Subtypes: `UserMessage`, `Assist
 Converts between agent-level messages (`AgentMessage`) and provider-level messages (`Message`). Used at the boundary between AgentCore and Providers.Core.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core](02-agent-core.md)
+**Internals:** [Agent Core](02-agent-core.md)
 
 ---
 
@@ -308,7 +308,7 @@ Converts between agent-level messages (`AgentMessage`) and provider-level messag
 Record with per-million-token pricing: `Input`, `Output`, `CacheRead`, `CacheWrite`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System — Model Registry](01-providers.md)
+**Internals:** [Provider System — Model Registry](01-providers.md)
 
 ---
 
@@ -317,7 +317,7 @@ Record with per-million-token pricing: `Input`, `Output`, `CacheRead`, `CacheWri
 Instance-based registry mapping `(provider, modelId)` pairs to `LlmModel` definitions. Backed by `ConcurrentDictionary` for thread-safe lookups.
 
 **Source:** `BotNexus.Agent.Providers.Core`
-**Training:** [Provider System — Model Registry](01-providers.md) · [Architecture Overview](../architecture/overview.md)
+**Internals:** [Provider System — Model Registry](01-providers.md) · [Architecture Overview](../architecture/overview.md)
 
 ---
 
@@ -326,7 +326,7 @@ Instance-based registry mapping `(provider, modelId)` pairs to `LlmModel` defini
 Thread-safe queue for steering and follow-up messages injected into the agent loop. Supports `QueueMode.All` (drain everything) and `QueueMode.OneAtATime` (one message per boundary) drain modes.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — Steering](02-agent-core.md)
+**Internals:** [Agent Core — Steering](02-agent-core.md)
 
 ---
 
@@ -335,7 +335,7 @@ Thread-safe queue for steering and follow-up messages injected into the agent lo
 An `IApiProvider` implementation that communicates with a specific LLM API (Anthropic, OpenAI, GitHub Copilot, etc.). Each provider translates between the BotNexus streaming protocol and the vendor's wire format.
 
 **Source:** `BotNexus.Agent.Providers.*`
-**Training:** [Provider System](01-providers.md)
+**Internals:** [Provider System](01-providers.md)
 
 ---
 
@@ -344,7 +344,7 @@ An `IApiProvider` implementation that communicates with a specific LLM API (Anth
 Enum controlling message queue drainage behavior. `All` drains every pending message at once; `OneAtATime` drains one message per turn boundary.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — Steering](02-agent-core.md)
+**Internals:** [Agent Core — Steering](02-agent-core.md)
 
 ---
 
@@ -353,7 +353,7 @@ Enum controlling message queue drainage behavior. `All` drains every pending mes
 CodingAgent hook that enforces path blocking, command restrictions, and write size warnings to prevent the agent from performing dangerous operations.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — Safety](03-coding-agent.md)
+**Internals:** [Coding Agent — Safety](03-coding-agent.md)
 
 ---
 
@@ -362,7 +362,7 @@ CodingAgent hook that enforces path blocking, command restrictions, and write si
 Summarizes older messages when conversation history exceeds context window limits. Supports LLM-driven summarization and a heuristic fallback when the LLM is unavailable.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — Sessions](03-coding-agent.md)
+**Internals:** [Coding Agent — Sessions](03-coding-agent.md)
 
 ---
 
@@ -371,7 +371,7 @@ Summarizes older messages when conversation history exceeds context window limit
 JSONL-based session persistence with DAG branching support. Methods: `Create`, `Save`, `Resume`, `List`, `Branch`, `Switch`, `Delete`.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — Sessions](03-coding-agent.md)
+**Internals:** [Coding Agent — Sessions](03-coding-agent.md)
 
 ---
 
@@ -380,7 +380,7 @@ JSONL-based session persistence with DAG branching support. Methods: `Create`, `
 Extended `StreamOptions` that adds `Reasoning` (`ThinkingLevel`) and `ThinkingBudgets` for reasoning model support.
 
 **Source:** `BotNexus.Agent.Providers.Core`
-**Training:** [Provider System — Streaming](01-providers.md)
+**Internals:** [Provider System — Streaming](01-providers.md)
 
 ---
 
@@ -389,7 +389,7 @@ Extended `StreamOptions` that adds `Reasoning` (`ThinkingLevel`) and `ThinkingBu
 A markdown file with instructions injected into the system prompt to teach the agent domain-specific knowledge. Skills are loaded at agent startup and become part of the system prompt context.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent](03-coding-agent.md)
+**Internals:** [Coding Agent](03-coding-agent.md)
 
 ---
 
@@ -398,7 +398,7 @@ A markdown file with instructions injected into the system prompt to teach the a
 Enum indicating why the LLM stopped generating. Values: `Stop`, `Length`, `ToolUse`, `Error`, `Aborted`, `Refusal`, `PauseTurn`, `Sensitive`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System — Streaming](01-providers.md)
+**Internals:** [Provider System — Streaming](01-providers.md)
 
 ---
 
@@ -407,7 +407,7 @@ Enum indicating why the LLM stopped generating. Values: `Stop`, `Length`, `ToolU
 Converts `LlmStream` events into `AgentEvent` instances and a final `AssistantAgentMessage`. Bridges the provider streaming layer and the agent event system.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — Events](02-agent-core.md) · [Provider System — Streaming](01-providers.md)
+**Internals:** [Agent Core — Events](02-agent-core.md) · [Provider System — Streaming](01-providers.md)
 
 ---
 
@@ -416,7 +416,7 @@ Converts `LlmStream` events into `AgentEvent` instances and a final `AssistantAg
 Record controlling LLM generation parameters: `Temperature`, `MaxTokens`, `CancellationToken`, `ApiKey`, `Transport`, `CacheRetention`, `SessionId`, `OnPayload`, `Headers`, `MaxRetryDelayMs`, `Metadata`.
 
 **Source:** `BotNexus.Agent.Providers.Core`
-**Training:** [Provider System](01-providers.md)
+**Internals:** [Provider System](01-providers.md)
 
 ---
 
@@ -425,7 +425,7 @@ Record controlling LLM generation parameters: `Temperature`, `MaxTokens`, `Cance
 Assembles the system prompt from multiple sources: environment context, tool contributions, skill files, and custom instructions. Produces the final string passed as the system prompt to the LLM.
 
 **Source:** `BotNexus.CodingAgent`
-**Training:** [Coding Agent — System Prompt](03-coding-agent.md)
+**Internals:** [Coding Agent — System Prompt](03-coding-agent.md)
 
 ---
 
@@ -434,7 +434,7 @@ Assembles the system prompt from multiple sources: environment context, tool con
 Record defining a tool for the LLM at the provider level: `Name`, `Description`, `Parameters` (`JsonElement` JSON Schema). This is the wire-format representation sent to the LLM.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System](01-providers.md)
+**Internals:** [Provider System](01-providers.md)
 
 ---
 
@@ -443,7 +443,7 @@ Record defining a tool for the LLM at the provider level: `Name`, `Description`,
 `ContentBlock` subtype representing an LLM tool call. Contains `Id`, `Name`, `Arguments` (`Dictionary`), and `ThoughtSignature`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System — Message Types](01-providers.md)
+**Internals:** [Provider System — Message Types](01-providers.md)
 
 ---
 
@@ -452,7 +452,7 @@ Record defining a tool for the LLM at the provider level: `Name`, `Description`,
 Enum controlling tool execution strategy: `Sequential` (one tool at a time) or `Parallel` (concurrent execution with sequential prepare phase).
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — Tool Execution](02-agent-core.md)
+**Internals:** [Agent Core — Tool Execution](02-agent-core.md)
 
 ---
 
@@ -461,7 +461,7 @@ Enum controlling tool execution strategy: `Sequential` (one tool at a time) or `
 Runs tool calls through the full pipeline: lookup → prepare arguments → before hook → execute → after hook → result. Supports both sequential and parallel execution modes.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — Tool Execution](02-agent-core.md)
+**Internals:** [Agent Core — Tool Execution](02-agent-core.md)
 
 ---
 
@@ -470,7 +470,7 @@ Runs tool calls through the full pipeline: lookup → prepare arguments → befo
 Provider-level record for tool execution results. Contains `ToolCallId`, `ToolName`, `Content`, `IsError`, and `Details`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System — Message Types](01-providers.md)
+**Internals:** [Provider System — Message Types](01-providers.md)
 
 ---
 
@@ -479,7 +479,7 @@ Provider-level record for tool execution results. Contains `ToolCallId`, `ToolNa
 Delegate for pre-LLM context transformation such as compaction or message filtering. Invoked just before the context is sent to the provider.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core](02-agent-core.md)
+**Internals:** [Agent Core](02-agent-core.md)
 
 ---
 
@@ -488,7 +488,7 @@ Delegate for pre-LLM context transformation such as compaction or message filter
 One LLM invocation plus optional tool execution within an agent run. The agent loop consists of repeated turns until the LLM produces a final response or an abort is triggered.
 
 **Source:** `BotNexus.Agent.Core`
-**Training:** [Agent Core — The Loop](02-agent-core.md)
+**Internals:** [Agent Core — The Loop](02-agent-core.md)
 
 ---
 
@@ -497,7 +497,7 @@ One LLM invocation plus optional tool execution within an agent run. The agent l
 Token usage tracking record: `Input`, `Output`, `CacheRead`, `CacheWrite`, `TotalTokens`, `Cost`. Accumulated per-turn and per-session.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System](01-providers.md)
+**Internals:** [Provider System](01-providers.md)
 
 ---
 
@@ -506,7 +506,7 @@ Token usage tracking record: `Input`, `Output`, `CacheRead`, `CacheWrite`, `Tota
 Union type for user message payloads: either a plain `string` or an array of `ContentBlock[]` for multimodal inputs (text + images).
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Provider System — Message Types](01-providers.md)
+**Internals:** [Provider System — Message Types](01-providers.md)
 
 ---
 
@@ -515,7 +515,7 @@ Union type for user message payloads: either a plain `string` or an array of `Co
 Automatic mechanism that scans the working directory for project documentation (README.md, copilot-instructions.md, docs/*.md) and injects them into the system prompt. Respects a token budget and truncates files that exceed available space.
 
 **Source:** `BotNexus.CodingAgent.Utils`
-**Training:** [Context File Discovery](06-context-file-discovery.md)
+**Internals:** [Context File Discovery](06-context-file-discovery.md)
 
 ---
 
@@ -524,7 +524,7 @@ Automatic mechanism that scans the working directory for project documentation (
 Enum controlling reasoning intensity for models that support extended thinking: `Minimal`, `Low`, `Medium`, `High`, `ExtraHigh`. Each level has a corresponding thinking token budget.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Thinking Levels](07-thinking-levels.md) · [Provider System](01-providers.md)
+**Internals:** [Thinking Levels](07-thinking-levels.md) · [Provider System](01-providers.md)
 
 ---
 
@@ -533,7 +533,7 @@ Enum controlling reasoning intensity for models that support extended thinking: 
 Token allocation for internal LLM reasoning at a specific thinking level. For example, `ThinkingLevel.High` has a default budget of 16,384 tokens. Custom budgets can be provided via `ThinkingBudgets`.
 
 **Source:** `BotNexus.Agent.Providers.Core.Models`
-**Training:** [Thinking Levels](07-thinking-levels.md)
+**Internals:** [Thinking Levels](07-thinking-levels.md)
 
 ---
 
@@ -542,7 +542,7 @@ Token allocation for internal LLM reasoning at a specific thinking level. For ex
 Extended `StreamOptions` that adds reasoning support via `Reasoning` (`ThinkingLevel`) and `ThinkingBudgets` fields. Used when calling LLMs that support extended thinking.
 
 **Source:** `BotNexus.Agent.Providers.Core`
-**Training:** [Thinking Levels](07-thinking-levels.md)
+**Internals:** [Thinking Levels](07-thinking-levels.md)
 
 ---
 
@@ -551,4 +551,4 @@ Extended `StreamOptions` that adds reasoning support via `Reasoning` (`ThinkingL
 Utility class that calculates thinking budgets, clamps reasoning levels to supported ranges, and adjusts maxTokens to ensure room for both thinking and output tokens. Port of pi-mono's providers/simple-options.ts.
 
 **Source:** `BotNexus.Agent.Providers.Core.Utilities`
-**Training:** [Thinking Levels](07-thinking-levels.md)
+**Internals:** [Thinking Levels](07-thinking-levels.md)

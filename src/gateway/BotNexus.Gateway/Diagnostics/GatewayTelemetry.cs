@@ -60,12 +60,14 @@ public static class GatewayTelemetry
         description: "Sub-agent completion wake events dispatched to session queue.");
 
     /// <summary>
-    /// Tracks sub-agent tool starts that could not be durably persisted before execution.
+    /// Tracks tool starts that could not be durably persisted before execution (#2615). Non-zero
+    /// means the fail-closed write-ahead either blocked a side-effecting tool or admitted a
+    /// read-only one without an audit record - both are durability incidents worth alerting on.
     /// </summary>
-    public static readonly Counter<long> SubAgentToolWriteAheadFailures = Meter.CreateCounter<long>(
-        "botnexus.subagent.tool.write_ahead.failures",
+    public static readonly Counter<long> ToolAuditWriteAheadFailures = Meter.CreateCounter<long>(
+        "botnexus.tool.write_ahead.failures",
         unit: "{failure}",
-        description: "Sub-agent tool invocations that could not be durably recorded before execution.");
+        description: "Tool invocations that could not be durably recorded before execution.");
 
     /// <summary>
     /// Tracks sub-agent completion wake events that could not be delivered through the gateway dispatch pipeline.

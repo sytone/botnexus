@@ -15,10 +15,34 @@ public sealed record PortalConversationGroup(string Label, IReadOnlyList<Convers
 /// <remarks>
 /// <para>
 /// Fixes #2327: the mobile picker rendered one flat option list while <c>MainLayout.razor</c> already
-/// grouped the same conversations. The grouping inputs are exactly the desktop's: pinned is
-/// <see cref="ConversationState.IsPinned"/>, and scheduled is the
-/// <see cref="ConversationRenderProjection.Group"/> projection over the immutable server-supplied
-/// <c>(Kind, Source)</c> origin pair (never a session-id prefix probe - epic #2300 / #2305).
+/// grouped the same conversations.
+/// </para>
+/// <para>
+/// <b>Signals consulted (#3073).</b> Exactly two, and both are required:
+/// <list type="number">
+///   <item>
+///     the <see cref="ConversationRenderProjection.Group"/> projection over the immutable
+///     server-supplied <c>(Kind, Source)</c> origin pair (never a session-id prefix probe - epic
+///     #2300 / #2305); and
+///   </item>
+///   <item>
+///     the authoritative cron-job to conversation-id map from <c>GET /api/cron</c>, passed in by
+///     the caller.
+///   </item>
+/// </list>
+/// The second is not redundant. <c>Source</c> is write-once (#2304), so a conversation created
+/// through a channel binding and LATER adopted by a cron job keeps <c>Source = Channel</c>
+/// permanently and can never be identified from the projection alone. #2327 extracted only clause 1
+/// from <c>MainLayout.IsCronConversation</c>, which mis-grouped 61 conversations on the reporting
+/// instance; #3073 restored the missing clause here and made the desktop consume this helper, so
+/// there is now exactly one cron-classification predicate in the client. That is the mechanism by
+/// which the form factors agree - not an inherent property, which is what an earlier revision of
+/// this comment wrongly claimed.
+/// </para>
+/// <para>
+/// The cron id set is a parameter rather than a fetch: this type stays purely functional, callers
+/// keep their single existing <c>CronApiClient.ListAsync()</c> call, and a failed fetch degrades to
+/// an empty set (i.e. projection-only grouping) instead of throwing.
 /// </para>
 /// <para>
 /// Pinning wins over scheduling, matching the sidebar, which filters pinned conversations out first
@@ -27,9 +51,9 @@ public sealed record PortalConversationGroup(string Label, IReadOnlyList<Convers
 /// without a per-group emptiness check.
 /// </para>
 /// <para>
-/// This is additive and purely functional: the desktop sidebar keeps its own rendering (it needs
-/// collapse state, filter bars and per-row affordances a native picker cannot express) and is
-/// deliberately left untouched.
+/// The desktop sidebar keeps its own rendering (it needs collapse state, filter bars and per-row
+/// affordances a native picker cannot express) but shares the classification via
+/// <see cref="IsScheduled"/>.
 /// </para>
 /// </remarks>
 public static class PortalConversationGrouping
@@ -54,17 +78,23 @@ public static class PortalConversationGrouping
     /// site, exactly as with <see cref="PortalListOrdering"/>.
     /// </param>
     /// <param name="selectionSource">The current view-selection source, fed to the render projection.</param>
+    /// <param name="cronConversationIds">
+    /// The authoritative cron-job to conversation-id map from <c>GET /api/cron</c>, projected with
+    /// <see cref="CronConversationIds"/>. <see langword="null"/> or empty (a failed fetch) degrades
+    /// to projection-only grouping rather than throwing or emptying the picker.
+    /// </param>
     /// <returns>The non-empty groups in display order.</returns>
     public static IReadOnlyList<PortalConversationGroup> ForPicker(
         IEnumerable<ConversationState> conversations,
-        SelectionSource selectionSource)
+        SelectionSource selectionSource,
+        IReadOnlySet<string>? cronConversationIds = null)
     {
         ArgumentNullException.ThrowIfNull(conversations);
 
         var all = conversations.ToList();
         var pinned = all.Where(c => c.IsPinned).ToList();
         var scheduled = all
-            .Where(c => !c.IsPinned && c.Project(selectionSource).Group == ConversationListGroup.Scheduled)
+            .Where(c => !c.IsPinned && IsScheduled(c, selectionSource, cronConversationIds))
             .ToList();
         var normal = all.Where(c => !c.IsPinned && !scheduled.Contains(c)).ToList();
 
@@ -74,6 +104,50 @@ public static class PortalConversationGrouping
         AddIfAny(groups, ScheduledLabel, scheduled);
         return groups;
     }
+
+    /// <summary>
+    /// The ONE cron-classification predicate in the client (#3073, AC3). A conversation is
+    /// scheduled if the render projection says so <em>or</em> if its id is the target of a cron job.
+    /// </summary>
+    /// <remarks>
+    /// The second clause exists because <c>ConversationState.Source</c> is write-once (#2304): a
+    /// channel-created conversation later adopted by a cron job is invisible to the projection
+    /// forever. Do not add a third variant of this rule - call this.
+    /// </remarks>
+    /// <param name="conversation">The conversation to classify.</param>
+    /// <param name="selectionSource">The current view-selection source, fed to the render projection.</param>
+    /// <param name="cronConversationIds">
+    /// Cron-mapped conversation ids; <see langword="null"/> or empty means "unknown", which falls
+    /// back to the projection alone.
+    /// </param>
+    public static bool IsScheduled(
+        ConversationState conversation,
+        SelectionSource selectionSource,
+        IReadOnlySet<string>? cronConversationIds)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+
+        return conversation.Project(selectionSource).Group == ConversationListGroup.Scheduled
+            || (cronConversationIds is { Count: > 0 }
+                && conversation.ConversationId is { Length: > 0 } id
+                && cronConversationIds.Contains(id));
+    }
+
+    /// <summary>
+    /// Projects a cron job list into the case-insensitive conversation-id set
+    /// <see cref="IsScheduled"/> consumes, matching the desktop sidebar's original projection.
+    /// </summary>
+    /// <param name="jobs">
+    /// The jobs from <c>CronApiClient.ListAsync()</c>. <see langword="null"/> (a failed fetch)
+    /// yields an empty set, which degrades grouping to projection-only.
+    /// </param>
+    public static IReadOnlySet<string> CronConversationIds(IEnumerable<CronJobDto>? jobs)
+        => jobs is null
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : jobs
+                .Where(j => !string.IsNullOrEmpty(j.ConversationId))
+                .Select(j => j.ConversationId!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static void AddIfAny(List<PortalConversationGroup> groups, string label, List<ConversationState> members)
     {

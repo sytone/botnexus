@@ -14,7 +14,7 @@ export default defineConfig({
     /\/scripts\//,
     // srcExclude'd content directories: referenced as related reading but not
     // part of the deployed docs build (kept in repo, see srcExclude below)
-    /\/training\//,
+    /\/internals\//,
     /\/api\//,
     // Repo-root and nested AGENTS.md convention files referenced from dev/architecture
     // docs but outside the docs source tree
@@ -24,7 +24,7 @@ export default defineConfig({
   ],
   srcExclude: [
     '**/planning/**',
-    '**/training/**',
+    '**/internals/**',
     '**/archive/**',
     '**/archived/**',
     '**/sample-config.json',
@@ -191,6 +191,7 @@ export default defineConfig({
           { text: 'Per-Conversation Todo', link: '/features/todo' },
           { text: 'Agent Exchange', link: '/features/agent-exchange' },
           { text: 'Security-Event Diagnostics', link: '/features/security-event-diagnostics' },
+          { text: 'Tool-Audit Write-Ahead', link: '/features/tool-audit-write-ahead' },
           { text: 'Dev-Mode Origin Guard', link: '/features/dev-origin-guard' },
           { text: 'Portal Boot Diagnostics', link: '/features/portal-boot-diagnostics' },
           { text: 'AGENTS.md Conventions', link: '/features/agents-md-conventions' },

@@ -91,10 +91,14 @@ public record AgentDescriptor
 
 **Loading Pipeline:**
 
-1. `PlatformConfigAgentSource`: Loads from `platform-config.json`
-2. `FileAgentConfigurationSource`: Loads from `~/.botnexus/agents/*.json`
-3. `IAgentRegistry.Register()`: Validates and registers descriptors
-4. `AgentConfigurationHostedService`: Watches for file changes
+1. `PlatformConfigAgentSource`: the single registered `IAgentConfigurationSource`, projecting
+   the `agents` section of `~/.botnexus/config.json` into descriptors
+2. `IAgentRegistry.Register()`: Validates and registers descriptors
+3. `AgentConfigurationHostedService`: watches every registered source for changes and
+   synchronizes the registry
+
+Additional sources can be contributed by an extension; the hosted service fans out over all
+of them and tracks each source's latest descriptor set separately.
 
 **Validation:**
 
@@ -466,8 +470,6 @@ public async Task<BeforeToolCallResult> BeforeToolCallAsync(BeforeToolCallContex
 **Built-in Handlers:**
 
 - `ToolPolicyHookHandler`: Enforces tool policies
-- (Future) `AuditHookHandler`: Logs all tool calls
-- (Future) `RateLimitHookHandler`: Throttles expensive operations
 
 ## Performance Characteristics
 

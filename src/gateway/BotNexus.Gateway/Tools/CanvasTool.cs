@@ -58,7 +58,7 @@ public sealed class CanvasTool(
 
     public Tool Definition => new(
         Name,
-        "Publish Canvas tab HTML for the current agent scope. Use action='render' with html content to replace output, or action='clear' to clear output. Use set_state/get_state/clear_state for persistent key-value state. Rendered HTML has access to a 'window.canvasState' JavaScript API (get/set/delete/getAll/clear) that persists state server-side; the iframe can read and write the same state keys the agent uses via set_state/get_state. The canvasState bridge is injected synchronously before user scripts execute, so it is safe to use immediately without polling or ready-event checks. The bridge also exposes canvasState.submitToAgent({prompt, instructions}), which injects a user message into THIS conversation - and only this conversation - so the user can hand a completed form back to you with one click. USER-INITIATED ONLY: wire it to a button or an explicit user action. Do NOT call it from a timer, an interval, a render path, or automatically on load. The prompt is INSTRUCTION TEXT ONLY and must not carry canvas data - write the data into canvas state and tell the agent which keys to read back via get_state. Supply the prompt text yourself when you render the canvas (e.g. 'The user has completed the review form.') plus optional instructions naming the state keys holding the answers. It is rejected while you are mid-turn.",
+        "Publish Canvas tab HTML for the current agent scope. Use action='render' with html content to replace output, or action='clear' to clear output. Use set_state/get_state/clear_state for persistent key-value state. A successful 'render' returns a canvasUrl deep link to the Canvas tab for this conversation: INCLUDE that link in your reply so the user knows where to look, and still carry the substance of your answer in the reply itself rather than deferring entirely to the canvas. When no canvasUrl is returned, say what you rendered without inventing a URL. Rendered HTML has access to a 'window.canvasState' JavaScript API (get/set/delete/getAll/clear) that persists state server-side; the iframe can read and write the same state keys the agent uses via set_state/get_state. The canvasState bridge is injected synchronously before user scripts execute, so it is safe to use immediately without polling or ready-event checks. The bridge also exposes canvasState.submitToAgent({prompt, instructions}), which injects a user message into THIS conversation - and only this conversation - so the user can hand a completed form back to you with one click. USER-INITIATED ONLY: wire it to a button or an explicit user action. Do NOT call it from a timer, an interval, a render path, or automatically on load. The prompt is INSTRUCTION TEXT ONLY and must not carry canvas data - write the data into canvas state and tell the agent which keys to read back via get_state. Supply the prompt text yourself when you render the canvas (e.g. 'The user has completed the review form.') plus optional instructions naming the state keys holding the answers. It is rejected while you are mid-turn.",
         ToolSchema);
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
@@ -124,7 +124,30 @@ public sealed class CanvasTool(
                 .ConfigureAwait(false);
         }
 
-        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "Canvas rendered for current agent.")]);
+        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, BuildRenderMessage())]);
+    }
+
+    /// <summary>
+    /// Composes the render result: the existing confirmation plus either the canvas deep link or a
+    /// stated reason for its absence (#2975).
+    /// </summary>
+    /// <remarks>
+    /// The confirmation is emitted unchanged and FIRST in every branch. A missing link is a missing
+    /// convenience, not a failed render, and a result that led with the failure would read to the
+    /// model as though the canvas had not been published.
+    /// </remarks>
+    private string BuildRenderMessage()
+    {
+        const string Rendered = "Canvas rendered for current agent.";
+
+        if (_conversationId is null)
+            return $"{Rendered} {CanvasDeepLink.NoConversationReason}";
+
+        var baseUrl = CanvasDeepLink.ResolveBaseUrl(_options.PublicBaseUrl, _options.ListenUrl);
+        if (!CanvasDeepLink.TryBuild(baseUrl, _agentId.Value, _conversationId.Value.Value, out var link))
+            return $"{Rendered} {CanvasDeepLink.UnresolvableBaseUrlReason}";
+
+        return $"{Rendered} canvasUrl: {link} - include this link in your reply so the user can open the canvas.";
     }
 
     private async Task<AgentToolResult> ExecuteClearCanvasAsync(CancellationToken cancellationToken)

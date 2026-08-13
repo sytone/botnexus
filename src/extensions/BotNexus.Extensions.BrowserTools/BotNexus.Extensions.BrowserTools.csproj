@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>BotNexus.Extensions.BrowserTools</RootNamespace>
+    <Description>Guard layer for BotNexus agent-browser automation: SSRF validation, secret-prefix and credential-parameter rejection, post-navigation URL re-validation, and the untrusted-content envelope.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Extensions.BrowserTools.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- #3030 AC2: the SSRF policy is CONSUMED from Gateway.Contracts, never respelled here.
+         A second copy of the private-range/metadata rules is how one copy drifts and the
+         other keeps passing its tests; BrowserToolsUrlGuard therefore has no address
+         arithmetic of its own and an architecture fence pins that. -->
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+    <!-- Untrusted page text passes the same injection filter as any other inbound external
+         text (#2813). Domain is a dependency-free leaf, so naming it adds no assembly. -->
+    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+  </ItemGroup>
+</Project>

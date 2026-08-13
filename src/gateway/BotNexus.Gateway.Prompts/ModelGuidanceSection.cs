@@ -30,6 +30,14 @@ public static class ModelGuidanceSection
     /// </summary>
     public const string ModelIdExtensionKey = "modelId";
 
+    /// <summary>
+    /// The <see cref="PromptContext.Extensions"/> key used to pass the provider identifier
+    /// through to the section builder. Without it, a model served under a vanity id by a
+    /// family-specific provider resolves <see cref="ModelFamilyDetector.Unknown"/> and loses
+    /// its guidance silently (#3104).
+    /// </summary>
+    public const string ProviderIdExtensionKey = "providerId";
+
     private static readonly string[] ClaudeGuidance =
     [
         "Prefer the edit tool over write for modifying existing files — it preserves context and is more precise.",
@@ -58,19 +66,17 @@ public static class ModelGuidanceSection
     public static LambdaPromptSection Create() =>
         new(SectionOrder, BuildLines, sectionId: Id, shouldIncludeFunc: ShouldInclude, xmlTag: Tag);
 
-    private static bool ShouldInclude(PromptContext context)
-    {
-        var modelId = context.Get<string>(ModelIdExtensionKey);
-        var family = ModelFamilyDetector.GetModelFamily(modelId);
-        return family != ModelFamilyDetector.Unknown;
-    }
+    private static bool ShouldInclude(PromptContext context) =>
+        ResolveFamily(context) != ModelFamilyDetector.Unknown;
+
+    private static string ResolveFamily(PromptContext context) =>
+        ModelFamilyDetector.GetModelFamily(
+            context.Get<string>(ModelIdExtensionKey),
+            context.Get<string>(ProviderIdExtensionKey));
 
     private static IReadOnlyList<string> BuildLines(PromptContext context)
     {
-        var modelId = context.Get<string>(ModelIdExtensionKey);
-        var family = ModelFamilyDetector.GetModelFamily(modelId);
-
-        return family switch
+        return ResolveFamily(context) switch
         {
             ModelFamilyDetector.Claude => ClaudeGuidance,
             ModelFamilyDetector.Gpt => GptGuidance,

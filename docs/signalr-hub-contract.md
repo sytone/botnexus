@@ -33,6 +33,7 @@ responds directly (most stream their results back as server events instead).
 | Method | Purpose |
 |---|---|
 | `SubscribeAll()` → `SubscribeAllResult` | Subscribe to all agent/session groups. Call after connecting and on every reconnect. |
+| `SubscribeAgents(agentIds)` | Join the per-agent notification groups for the agents this connection renders, so it receives `ConversationChanged` for those agents and no others (#2541). A **separate verb** from `SubscribeAll` on purpose: the conversation groups `SubscribeAll` joins are derived from *existing* sessions, so they can never cover a conversation that has not been created yet - and `created` is one of the change types the event carries. The agent is the smallest scope that can name a not-yet-existing conversation. Idempotent (rejoining a group is a no-op), so the reconnect and rebuild paths may call it on every dial. Blank entries are ignored. |
 | `GetAgents()` → `AgentDescriptor[]` | List the agents registered on this gateway. |
 | `SendMessage(agentId, channelType, content, conversationId?)` → `SendMessageResult` | Send a text message to an agent, optionally targeting a specific conversation. |
 | `SendMessageWithMedia(agentId, channelType, content, contentParts)` → `SendMessageResult` | Send a message with attached media (`MediaContentPartDto[]`). |
