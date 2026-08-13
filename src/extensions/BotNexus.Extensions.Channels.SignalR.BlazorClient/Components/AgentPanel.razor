@@ -168,8 +168,14 @@
     private void HandleStoreChanged()
     {
         var currentIsSubAgent = CurrentAgent is not null ? IsSubAgent : (bool?)null;
+        // #3084: this early-out lost its `return;` in a reformat, so the `if` bound to the
+        // assignment below and control fell through on every store notification. The braces are
+        // deliberate: an empty-bodied `if` is legal C# and neither the compiler nor review can see
+        // the difference.
         if (currentIsSubAgent == _lastIsSubAgent)
-    
+        {
+            return;
+        }
 
         _lastIsSubAgent = currentIsSubAgent;
 
