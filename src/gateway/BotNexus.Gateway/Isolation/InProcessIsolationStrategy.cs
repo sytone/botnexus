@@ -615,7 +615,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 _llmClient),
             new ToolProviders.CanvasToolProvider(
                 _serviceProvider.GetService<IConversationStore>(),
-                _serviceProvider.GetServices<IAgentCanvasNotifier>()),
+                _serviceProvider.GetServices<IAgentCanvasNotifier>(),
+                _serviceProvider.GetService<IOptions<PlatformConfig>>()),
             new ToolProviders.TodoToolProvider(
                 _serviceProvider.GetService<IConversationStore>(),
                 _serviceProvider.GetServices<IAgentTodoNotifier>()),

@@ -523,7 +523,8 @@ internal sealed class AgentManagementToolProvider(
 /// </summary>
 internal sealed class CanvasToolProvider(
     IConversationStore? conversationStore,
-    IEnumerable<IAgentCanvasNotifier> canvasNotifiers) : IToolProvider
+    IEnumerable<IAgentCanvasNotifier> canvasNotifiers,
+    IOptions<PlatformConfig>? platformConfigOptions = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context) => context.ToolAllowed("canvas");
@@ -536,7 +537,18 @@ internal sealed class CanvasToolProvider(
         {
             canvasConversationId = await context.ResolveConversationId(conversationStore).ConfigureAwait(false);
         }
-        return [new CanvasTool(context.AgentId, canvasConversationId, conversationStore, canvasNotifiers.ToArray())];
+
+        // #2975: the deep link needs the portal's external origin, which lives in gateway config, not
+        // in the tool's own options block. Both candidates are carried onto CanvasToolOptions so the
+        // tool stays a pure function of its options and remains constructible in tests without DI.
+        var gateway = platformConfigOptions?.Value?.Gateway;
+        var options = new CanvasToolOptions
+        {
+            PublicBaseUrl = gateway?.PublicBaseUrl,
+            ListenUrl = gateway?.ListenUrl,
+        };
+
+        return [new CanvasTool(context.AgentId, canvasConversationId, conversationStore, canvasNotifiers.ToArray(), options)];
     }
 }
 
