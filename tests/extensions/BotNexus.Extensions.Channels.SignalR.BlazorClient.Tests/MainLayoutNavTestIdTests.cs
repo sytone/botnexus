@@ -68,6 +68,7 @@ public sealed class MainLayoutNavTestIdTests : IDisposable
         _ctx.Services.AddSingleton(_features);
         _ctx.Services.AddSingleton(new CronApiClient(http));
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
+        _ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
         _ctx.Services.AddSingleton(new ToolsApiClient(new HttpClient(new EmptyJsonHandler("[]")) { BaseAddress = new Uri("http://localhost/") }));
         _ctx.Services.AddSingleton(new NavOrderApiClient(new HttpClient(new EmptyJsonHandler("{\"order\":[]}")) { BaseAddress = new Uri("http://localhost/") }));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
