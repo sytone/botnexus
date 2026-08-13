@@ -1114,12 +1114,34 @@ The `compaction` section tunes when and how a session's history is summarised to
 | `preservedTurns` | int | 3 | Number of most recent user turns preserved verbatim (never summarised). |
 | `maxSummaryChars` | int | 16000 | Maximum characters for the compaction summary. |
 | `tokenThresholdRatio` | double | 0.6 | Fraction of the context window (0.0–1.0) at which the token-count trigger fires. |
-| `contextWindowTokens` | int | 128000 | Approximate context window size (tokens) used for the token-count trigger. |
+| `contextWindowTokens` | int | 128000 | **Fallback** context window size (tokens) for the token-count trigger, used only when no scoped window is resolved. See [Scoped context windows](#scoped-context-windows) below. |
 | `largestEntryBytesThreshold` | int | 65536 (64 KiB) | A single visible entry at or above this UTF-8 byte size triggers compaction on its own, independently of the token-count threshold. Measured in bytes (not characters) so multibyte payloads are accounted for accurately. A value of 0 or less disables the bloat-aware trigger, leaving only the token-count threshold. |
 | `circuitBreakerCooldownSeconds` | int | 600 | How long the per-session compaction circuit breaker stays open after repeated failures before retrying. |
 | `cronLlmIdleTimeoutMs` | int | 60000 (60s) | Stream-setup idle cap (milliseconds) applied to the compaction summarization model call when the resolved candidate is a **cloud** provider. Wires the first-token watchdog so a cloud model that stalls mid-stream (or never emits a first token) is aborted early, well inside the per-attempt `timeoutSeconds` window, so the model fallback chain can still try the next candidate. Intentionally **not** applied to local/self-hosted providers (localhost / 127.0.0.1 - e.g. ollama, vllm, lmstudio, sglang), which are legitimately slow to warm up. A value of 0 or less disables the cap entirely. |
 
-The section is optional — when absent, the defaults above apply. The bloat-aware trigger complements [Tool Result Persistence](#tool-result-persistence): write-time truncation prevents most oversized entries from ever being persisted, while the bloat-aware trigger ensures any already-accumulated (or un-capped) large entry still becomes eligible for summarisation.
+The section is optional - when absent, the defaults above apply. The bloat-aware trigger complements [Tool Result Persistence](#tool-result-persistence): write-time truncation prevents most oversized entries from ever being persisted, while the bloat-aware trigger ensures any already-accumulated (or un-capped) large entry still becomes eligible for summarisation.
+
+##### Scoped context windows
+
+`contextWindowTokens` is a process-global fallback, not the value every agent is measured against. The
+token-count trigger budgets against the **most specific context window that applies to the session**,
+using the same precedence chain the dispatch path already uses:
+
+1. The conversation's `contextWindowOverride`, when one is set.
+2. Otherwise the agent's own `contextWindow` (`agents.<id>.contextWindow`).
+3. Otherwise the registered model's own context window.
+4. Otherwise `gateway.compaction.contextWindowTokens`.
+
+Only the *base window* is scope-aware. `tokenThresholdRatio` is applied to whichever window was
+resolved, and `largestEntryBytesThreshold` is byte-based and unaffected. An agent with no scoped
+window at any layer behaves exactly as it did before this precedence existed.
+
+Without this, an agent pinned to a 32k model under a 200k global setting would reach provider
+overflow while the compactor still believed compaction was not yet due, forcing the lossy reactive
+overflow-compaction path instead of compacting on schedule.
+
+A value of 0 or less at any layer is treated as unset and falls through to the next layer.
+
 
 
 #### Conversation Auto-Title

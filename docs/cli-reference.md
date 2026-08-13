@@ -64,37 +64,38 @@ You should see the root command help listing all available subcommands.
 12. [agent export](#agent-export) — Export an agent as a redacted template
 13. [agent import](#agent-import) — Import an agent from a redacted template
 14. [conversation](#conversation) — Manage conversations via the gateway REST API
-15. [config get](#config-get) — Read a config value
-16. [config set](#config-set) — Set a config value
-17. [config schema](#config-schema) — Generate JSON schema
-18. [gateway](#gateway) — Manage the gateway lifecycle
-19. [provider](#provider) — Show or set up providers
-20. [provider setup](#provider-setup) — Interactive provider setup wizard
-21. [provider list](#provider-list) — List configured providers
-22. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-23. [provider remove](#provider-remove) — Remove a provider non-interactively
-24. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
-25. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-26. [prompt](#prompt) — Manage prompt templates
-27. [prompt list](#prompt-list) — List available prompt templates
-28. [prompt render](#prompt-render) — Render a prompt template
-29. [prompt run](#prompt-run) — Render and execute a prompt template
-30. [satellite](#satellite) — Manage satellite nodes
-31. [doctor](#doctor) — Run the complete CLI diagnostic suite
-32. [doctor config](#doctor-config) — Guided config migration
-33. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
-34. [locations](#locations) — Manage configured locations
-35. [update](#update) — Pull, build, and restart the gateway
-36. [memory](#memory) — Backfill agent memory stores
-37. [cron](#cron-command) — Manage cron jobs from the CLI
-38. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
-39. [debug sessions](#debug-sessions) — Inspect session SQLite database
-40. [debug logs](#debug-logs) — Inspect log files
-41. [debug memory](#debug-memory) — Inspect agent memory directories
-42. [debug db](#debug-db) — Inspect raw databases
-43. [debug gateway](#debug-gateway) — Live gateway diagnostics
-44. [debug cron](#debug-cron) — Cron scheduler diagnostics
-45. [Examples](#examples)
+15. [session](#session) — List, archive, and delete sessions via the session store
+16. [config get](#config-get) — Read a config value
+17. [config set](#config-set) — Set a config value
+18. [config schema](#config-schema) — Generate JSON schema
+19. [gateway](#gateway) — Manage the gateway lifecycle
+20. [provider](#provider) — Show or set up providers
+21. [provider setup](#provider-setup) — Interactive provider setup wizard
+22. [provider list](#provider-list) — List configured providers
+23. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+24. [provider remove](#provider-remove) — Remove a provider non-interactively
+25. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
+26. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+27. [prompt](#prompt) — Manage prompt templates
+28. [prompt list](#prompt-list) — List available prompt templates
+29. [prompt render](#prompt-render) — Render a prompt template
+30. [prompt run](#prompt-run) — Render and execute a prompt template
+31. [satellite](#satellite) — Manage satellite nodes
+32. [doctor](#doctor) — Run the complete CLI diagnostic suite
+33. [doctor config](#doctor-config) — Guided config migration
+34. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
+35. [locations](#locations) — Manage configured locations
+36. [update](#update) — Pull, build, and restart the gateway
+37. [memory](#memory) — Backfill agent memory stores
+38. [cron](#cron-command) — Manage cron jobs from the CLI
+39. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
+40. [debug sessions](#debug-sessions) — Inspect session SQLite database
+41. [debug logs](#debug-logs) — Inspect log files
+42. [debug memory](#debug-memory) — Inspect agent memory directories
+43. [debug db](#debug-db) — Inspect raw databases
+44. [debug gateway](#debug-gateway) — Live gateway diagnostics
+45. [debug cron](#debug-cron) — Cron scheduler diagnostics
+46. [Examples](#examples)
 
 ---
 
@@ -819,6 +820,105 @@ botnexus conversation archive c_7d3196db3c8940959c8c1a19456cc1e4
 | `<ID>` | Conversation ID to archive. |
 
 Returns exit code `1` if the conversation is not found or the gateway is unreachable.
+
+---
+
+## session
+
+Manage the lifecycle of **sessions** — the durable transcript records the platform accumulates.
+
+Every `session` subcommand operates through the gateway's **session store abstraction**, the same seam
+the gateway itself writes through, resolved from `gateway.sessionStore` in `config.json`. It does not
+open `sessions.db` directly and it does not require a running gateway. This matters: the store enforces
+invariants a hand-written SQL statement cannot — archiving drains any agent run bound to the session
+before sealing it, and deleting removes the transcript rows alongside the session row.
+
+> `botnexus debug sessions` is a different command and stays a **read-only** offline dump that opens the
+> SQLite file directly for diagnostics. Use `session` for anything that changes state.
+
+### Usage
+
+```powershell
+botnexus session <COMMAND> [OPTIONS]
+```
+
+| Subcommand | Description |
+|---|---|
+| `list` | List sessions via the session store. |
+| `archive <ID>` | Archive (seal) a session, preserving its transcript. |
+| `delete <ID>` | Permanently delete a session and its transcript. |
+
+### Archive vs. delete
+
+These are not two strengths of the same operation — they have different outcomes and different
+reversibility:
+
+| | `session archive <ID>` | `session delete <ID>` |
+|---|---|---|
+| Transcript | **Preserved.** | **Removed.** |
+| Session row | Sealed — kept, no longer accepts new turns. | Gone. |
+| Still visible to `session list` | Yes, with status `Sealed`. | No. |
+| Reversible | Effectively — the data is still there. | **No.** |
+| Repeating the command | Idempotent: succeeds and changes nothing. | Reports not found, exit code `1`. |
+
+Archive when a conversation is finished but its history still matters. Delete only when the transcript
+itself must not survive.
+
+### session list
+
+```powershell
+botnexus session list
+botnexus session list --agent farnsworth
+botnexus session list --limit 50 --format json
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--agent <ID>` | (all) | Filter by agent ID. |
+| `--limit <N>` | `20` | Maximum sessions to show, newest-updated first. |
+| `--format <FMT>` | `table` | `table` or `json`. |
+
+### session archive
+
+Seals the session in place. The transcript is retained and the session stops accepting new turns.
+
+```powershell
+botnexus session archive s_09e5891862a14a4c91dd61a2046df733
+```
+
+| Argument | Description |
+|---|---|
+| `<ID>` | Exact session ID to archive. |
+
+**Idempotent.** Archiving a session that is already archived succeeds (exit code `0`) and leaves the
+session exactly as it was, including its `UpdatedAt` timestamp — safe to run from a retrying script.
+
+### session delete
+
+Permanently removes the session and its transcript. There is no undo.
+
+```powershell
+botnexus session delete s_09e5891862a14a4c91dd61a2046df733
+```
+
+| Argument | Description |
+|---|---|
+| `<ID>` | **Exact** session ID to delete. |
+
+Delete requires one explicit id and **refuses ambiguous selectors**. An empty or whitespace-only id, an
+id containing a wildcard or pattern character (`*`, `?`, `%`), a comma-separated list, or any id
+containing whitespace is rejected with exit code `2` and **nothing is deleted**. Bulk and pattern-based
+deletion is deliberately unsupported: an over-matching glob against session transcripts is not
+recoverable.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Succeeded (including an already-archived session). |
+| `1` | Session not found, or the config/session store could not be opened. |
+| `2` | Refused — empty or ambiguous selector. Nothing was changed. |
+
 
 ---
 

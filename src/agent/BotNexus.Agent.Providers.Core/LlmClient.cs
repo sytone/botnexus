@@ -101,6 +101,23 @@ public sealed class LlmClient
         return await stream.GetResultAsync();
     }
 
+    /// <summary>
+    /// The capabilities declared by the provider that will serve <paramref name="model"/> (#2432).
+    /// <para>
+    /// Returns <see cref="ProviderCapabilities.Default"/> -- every quirk workaround OFF -- when no
+    /// provider is registered for the model's api. This read is a QUERY, made on the way into a
+    /// turn, and must not throw where the subsequent stream call will already throw a far better
+    /// diagnostic naming the missing api.
+    /// </para>
+    /// </summary>
+    /// <param name="model">The model whose serving provider is being asked.</param>
+    /// <returns>The declared capabilities, or the default when the api is unregistered.</returns>
+    public ProviderCapabilities GetCapabilities(LlmModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        return ApiProviders.Get(model.Api)?.Capabilities ?? ProviderCapabilities.Default;
+    }
+
     private IApiProvider ResolveProvider(string api)
     {
         return ApiProviders.Get(api)

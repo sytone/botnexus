@@ -18,6 +18,25 @@ public sealed class HybridMemoryRankerTests
         CreatedAt = DateTimeOffset.UtcNow
     };
 
+    private static MemoryEntry Entry(string id, string content, DateTimeOffset createdAt) => new()
+    {
+        Id = id,
+        AgentId = "agent",
+        SourceType = "conversation",
+        Content = content,
+        CreatedAt = createdAt
+    };
+
+    /// <summary>
+    /// The observed defect shape: one recurring cron prompt indexed once per firing, so the rows
+    /// differ only by the embedded date. Long enough to be realistic - a two-token snippet cannot
+    /// distinguish "near-identical" from "unrelated" under any token-overlap measure.
+    /// </summary>
+    private static string CronPrompt(string date)
+        => "Meeting Transcript Processing and Proactive Action. Review the meeting transcripts "
+           + "captured today, extract decisions and commitments, and file any action items against "
+           + $"the owning work item. Run date {date}.";
+
     private const double Lambda = 0.0231d; // ~30 day half-life, matching the store default.
 
     [Fact]
@@ -167,6 +186,160 @@ public sealed class HybridMemoryRankerTests
         ];
 
         Assert.Equal(2, HybridMemoryRanker.Rank(candidates, 2, Lambda).Count);
+    }
+
+    [Fact]
+    public void Rank_CollapsesNearDuplicateContent_ToASingleRepresentative()
+    {
+        // AC1: three rows differing only by an embedded date must not occupy three slots.
+        List<MemoryRankingCandidate> candidates =
+        [
+            new(Entry("cron-1", CronPrompt("2026-07-16"), DateTimeOffset.UtcNow.AddDays(-3)), 9d, 0.9d, 0d),
+            new(Entry("cron-2", CronPrompt("2026-07-17"), DateTimeOffset.UtcNow.AddDays(-2)), 9d, 0.9d, 0d),
+            new(Entry("cron-3", CronPrompt("2026-07-18"), DateTimeOffset.UtcNow.AddDays(-1)), 9d, 0.9d, 0d)
+        ];
+
+        var ranked = HybridMemoryRanker.Rank(candidates, 10, Lambda);
+
+        Assert.Single(ranked);
+    }
+
+    [Fact]
+    public void Rank_KeepsTheMostRecent_RepresentativeOfANearDuplicateGroup()
+    {
+        // AC2: the survivor is chosen by recency, not by arrival order or score order. The oldest
+        // row carries the strongest lexical score precisely so that "most recent" is the only
+        // rule that can produce the asserted CreatedAt.
+        var newest = DateTimeOffset.UtcNow.AddDays(-1);
+
+        List<MemoryRankingCandidate> candidates =
+        [
+            new(Entry("cron-old", CronPrompt("2026-07-16"), DateTimeOffset.UtcNow.AddDays(-9)), 12d, 0.9d, 0d),
+            new(Entry("cron-new", CronPrompt("2026-07-18"), newest), 4d, 0.9d, 0d)
+        ];
+
+        var ranked = HybridMemoryRanker.Rank(candidates, 10, Lambda);
+
+        Assert.Single(ranked);
+        Assert.Equal("cron-new", ranked[0].Id);
+        Assert.Equal(newest, ranked[0].CreatedAt);
+    }
+
+    [Fact]
+    public void Rank_DoesNotSuppressDissimilarContent_WithNearEqualScores()
+    {
+        // AC3 - the sad path, and the more dangerous failure mode: an over-aggressive diversity
+        // pass that eats real results is worse than the crowding it fixes. Near-equal fused
+        // scores must never be mistaken for near-identical content.
+        List<MemoryRankingCandidate> candidates =
+        [
+            new(
+                Entry(
+                    "azure",
+                    "The deployment gate failed because the storage account firewall rejected the runner subnet.",
+                    DateTimeOffset.UtcNow),
+                5d,
+                0.90d,
+                0d),
+            new(
+                Entry(
+                    "recipe",
+                    "Sourdough starter needs feeding twice daily once the kitchen is warmer than twenty degrees.",
+                    DateTimeOffset.UtcNow),
+                5d,
+                0.90d,
+                0d)
+        ];
+
+        var ranked = HybridMemoryRanker.Rank(candidates, 10, Lambda);
+
+        Assert.Equal(2, ranked.Count);
+        Assert.Equal(["azure", "recipe"], ranked.Select(e => e.Id).OrderBy(id => id, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void Rank_FreesSuppressedSlots_RatherThanShrinkingTheResultSet()
+    {
+        // AC4: 3 near-duplicates + 4 distinct rows at topK=5 must still return 5 results, and the
+        // freed slots must go to the distinct rows - not simply return 5 minus the suppressions.
+        var now = DateTimeOffset.UtcNow;
+
+        List<MemoryRankingCandidate> candidates =
+        [
+            new(Entry("cron-1", CronPrompt("2026-07-16"), now.AddDays(-3)), 10d, 0.99d, 0d),
+            new(Entry("cron-2", CronPrompt("2026-07-17"), now.AddDays(-2)), 10d, 0.99d, 0d),
+            new(Entry("cron-3", CronPrompt("2026-07-18"), now.AddDays(-1)), 10d, 0.99d, 0d),
+            new(Entry("d1", "Kusto cluster ingestion latency spiked during the regional failover drill.", now), 8d, 0.8d, 0d),
+            new(Entry("d2", "Sourdough starter needs feeding twice daily in a warm kitchen.", now), 7d, 0.7d, 0d),
+            new(Entry("d3", "Passport renewal appointment moved to the downtown office next Thursday.", now), 6d, 0.6d, 0d),
+            new(Entry("d4", "Bicycle rear derailleur cable frayed and should be replaced before the ride.", now), 5d, 0.5d, 0d)
+        ];
+
+        var ranked = HybridMemoryRanker.Rank(candidates, 5, Lambda);
+
+        Assert.Equal(5, ranked.Count);
+        Assert.Equal(["d1", "d2", "d3", "d4"], ranked.Select(e => e.Id).Where(id => id.StartsWith('d')).OrderBy(id => id, StringComparer.Ordinal));
+        Assert.Single(ranked, e => e.Id.StartsWith("cron", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Rank_CollapsesNearDuplicates_OnTheDegradedLexicalOnlyPath()
+    {
+        // The defect is not vector-specific: with embeddings unavailable the same recurring rows
+        // crowd the same slots, so the diversity pass applies to the degraded path too. Clause 5
+        // is about the SCORING formula being unchanged, which it is.
+        var now = DateTimeOffset.UtcNow;
+
+        List<MemoryRankingCandidate> candidates =
+        [
+            new(Entry("cron-1", CronPrompt("2026-07-16"), now.AddDays(-2)), 9d, null, 0d),
+            new(Entry("cron-2", CronPrompt("2026-07-17"), now.AddDays(-1)), 9d, null, 0d),
+            new(Entry("other", "Bicycle rear derailleur cable frayed before the ride.", now), 3d, null, 0d)
+        ];
+
+        var ranked = HybridMemoryRanker.Rank(candidates, 10, Lambda);
+
+        Assert.Equal(2, ranked.Count);
+        Assert.Equal("cron-2", ranked[0].Id);
+        Assert.Equal("other", ranked[1].Id);
+    }
+
+    [Fact]
+    public void Rank_TreatsShortContentAsDistinct_UnlessItIsAnExactMatch()
+    {
+        // Token-overlap is unreliable on very short strings: "deploy prod" and "deploy staging"
+        // share half their tokens without being duplicates. Below the minimum token count only an
+        // exact content match may collapse, which is what keeps terse notes addressable.
+        List<MemoryRankingCandidate> candidates =
+        [
+            new(Entry("short-a", "deploy prod", DateTimeOffset.UtcNow), 5d, 0.9d, 0d),
+            new(Entry("short-b", "deploy staging", DateTimeOffset.UtcNow), 5d, 0.9d, 0d)
+        ];
+
+        var ranked = HybridMemoryRanker.Rank(candidates, 10, Lambda);
+
+        Assert.Equal(2, ranked.Count);
+    }
+
+    [Fact]
+    public void RankWithScores_RetainsTheStrongestScore_OfACollapsedGroup()
+    {
+        // Collapsing must not demote the group: the representative inherits the best score in its
+        // group, so suppressing a duplicate can never cost the group its ranking position.
+        var now = DateTimeOffset.UtcNow;
+
+        List<MemoryRankingCandidate> candidates =
+        [
+            new(Entry("cron-strong-old", CronPrompt("2026-07-16"), now.AddDays(-5)), 10d, 0.99d, 0d),
+            new(Entry("cron-weak-new", CronPrompt("2026-07-18"), now), 1d, 0.10d, 0d),
+            new(Entry("rival", "Kusto ingestion latency spiked during the regional failover drill.", now), 9d, 0.95d, 0d)
+        ];
+
+        var ranked = HybridMemoryRanker.RankWithScores(candidates, 10, Lambda);
+
+        Assert.Equal(2, ranked.Count);
+        Assert.Equal("cron-weak-new", ranked[0].Entry.Id);
+        Assert.True(ranked[0].Score > ranked[1].Score);
     }
 
     [Fact]

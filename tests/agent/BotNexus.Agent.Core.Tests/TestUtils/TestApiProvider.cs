@@ -13,14 +13,23 @@ internal sealed class TestApiProvider : IApiProvider
     public TestApiProvider(
         string api,
         Func<LlmModel, Context, SimpleStreamOptions?, LlmStream>? simpleStreamFactory = null,
-        Func<LlmModel, Context, StreamOptions?, LlmStream>? streamFactory = null)
+        Func<LlmModel, Context, StreamOptions?, LlmStream>? streamFactory = null,
+        ProviderCapabilities? capabilities = null)
     {
         Api = api;
+        Capabilities = capabilities ?? ProviderCapabilities.Default;
         _simpleStreamFactory = simpleStreamFactory ?? ((_, _, _) => TestStreamFactory.CreateTextResponse("ok"));
         _streamFactory = streamFactory ?? ((model, context, options) => _simpleStreamFactory(model, context, options as SimpleStreamOptions));
     }
 
     public string Api { get; }
+
+    /// <summary>
+    /// The capabilities this double declares (#2432). Defaults to
+    /// <see cref="ProviderCapabilities.Default"/> -- every quirk workaround OFF -- so a test that
+    /// wants a declared quirk must ask for it explicitly, exactly as a real provider must.
+    /// </summary>
+    public ProviderCapabilities Capabilities { get; }
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
     {

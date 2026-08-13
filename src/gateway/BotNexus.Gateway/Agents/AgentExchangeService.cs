@@ -132,7 +132,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         var isLocalTarget = _registry.Contains(request.TargetId);
         var hasCrossWorldTarget = CrossWorldAgentReference.TryParse(request.TargetId, out var parsedCrossWorldTarget);
         if (!isLocalTarget && !hasCrossWorldTarget)
-            throw new KeyNotFoundException($"Target agent '{request.TargetId}' is not registered.");
+            throw new KeyNotFoundException(BuildTargetResolutionFailureMessage(request.TargetId));
         var targetDescriptor = isLocalTarget ? _registry.Get(request.TargetId) : null;
 
         if (!_exchangeOptions.Value.IsOpen)
@@ -264,6 +264,54 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 : null,
             onSealSuccess: static _ => { },
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Builds the diagnostic thrown when an <c>agent_converse</c> target id resolves to nothing (#2877).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This throw site sits BEFORE any policy evaluation, so a bare "is not registered" was
+    /// indistinguishable from an authorization denial: the caller's rational next step was to stop
+    /// trying rather than to correct the identifier. The registry already holds the display name of
+    /// every agent, so the information needed to redirect the caller is in hand right here.
+    /// </para>
+    /// <para>
+    /// This is a DIAGNOSTIC only - it deliberately does not resolve a display name to an id, which
+    /// is a separate enhancement. An exchange addressed by display name still fails; it now fails
+    /// with the id to retry with. Ambiguity is reported as ambiguity rather than collapsed into an
+    /// arbitrary single choice, because silently picking one of two same-named agents would route a
+    /// conversation to the wrong peer.
+    /// </para>
+    /// </remarks>
+    private string BuildTargetResolutionFailureMessage(AgentId targetId)
+    {
+        var prefix = $"Target agent '{targetId}' is not registered.";
+
+        // Defensive against a registry stub that returns no collection: a diagnostic must never be
+        // the thing that throws instead of the diagnostic.
+        var displayNameMatches = (_registry.GetAll() ?? [])
+            .Where(d => string.Equals(d.DisplayName, targetId.Value, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (displayNameMatches.Count == 1)
+        {
+            var match = displayNameMatches[0];
+            return $"{prefix} Did you mean '{match.AgentId.Value}' (display name: {match.DisplayName})? "
+                + "agent_converse resolves targets by agent id, not display name.";
+        }
+
+        if (displayNameMatches.Count > 1)
+        {
+            var candidates = string.Join(", ", displayNameMatches
+                .Select(d => $"'{d.AgentId.Value}'")
+                .Order(StringComparer.Ordinal));
+            return $"{prefix} Multiple registered agents have that display name: {candidates}. "
+                + "agent_converse resolves targets by agent id, not display name - specify one of those ids.";
+        }
+
+        return $"{prefix} No registered agent has that id, and none has it as a display name either - "
+            + "this is a target-resolution failure, not a policy denial. Call list_agents for the valid agent ids.";
     }
 
     private static IReadOnlyList<AgentId> NormalizeChain(IReadOnlyList<AgentId> chain, AgentId initiatorId)

@@ -35,7 +35,7 @@ silently disarm the gate, so it is gated too.
 | --- | --- | --- |
 | `literal-drift` | A port or config key instructed inside a fenced code block in `docs/**` must appear somewhere in `src/**`. A literal that lives only in docs is stale by definition. | `localhost:18790` on `getting-started-release.md`; the `BotNexus.Cron.Jobs` config key the binder never read. |
 | `intra-page-contradiction` | For a registry of high-value facts, one page states at most one distinct value. **Hard failure, not a warning** — a reader cannot tell which half is true, so both halves are worthless. | `cron-and-scheduling.md` giving `tickIntervalSeconds` as 60 in a table and 10 in a diagram. |
-| `legacy-marker` | A "legacy" / "deprecated" / "non-functional" / "do not copy" disclosure inside a how-to section must appear **above** the code sample, not below it. | The `LlmProviderBase` sample in `extension-development.md`, disclosed as non-functional only after the fence. |
+| `legacy-marker` | A "legacy" / "deprecated" / "non-functional" / "do not copy" disclosure inside a how-to section must appear **above** the code sample, not below it. | Historical: the `LlmProviderBase` sample in `extension-development.md`, disclosed as non-functional only after the fence (removed in #2862). |
 | docs-vs-source trigger | A PR touching an extension manifest, a provider interface or a controller route must change a `docs/` page or state `no-docs-impact` in the body. | Extension layout drift; `IApiProvider` vs `LlmProviderBase`; `/api/exchanges/budget`. |
 
 The first three are content rules in the lint script. The fourth is not a content rule and lives

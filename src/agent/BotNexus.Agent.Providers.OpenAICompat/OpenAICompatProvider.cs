@@ -32,6 +32,18 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
 
     public string Api => "openai-compat";
 
+    /// <summary>
+    /// The OpenAI-compatible endpoint prepends a <c>system</c>-role message to the message list
+    /// (see <c>BuildMessages</c> in this file). This is also the api that serves GitHub Models
+    /// (<c>GitHubModelsProvider</c> registers every model with <c>Api: "openai-compat"</c> rather
+    /// than registering a provider of its own), so this declaration is GitHub Models' declaration
+    /// too. No leaked-tool-call recovery: the #1709 markup leak was observed on the Copilot
+    /// transports, not here (#2432).
+    /// </summary>
+    public ProviderCapabilities Capabilities { get; } = new(
+        RecoversLeakedToolCallMarkup: false,
+        SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
+
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
     {
         var stream = new LlmStream();

@@ -49,26 +49,89 @@ public class ExecToolPreflightTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_FileInvocation_IsNotPreflighted()
+    public async Task ExecuteAsync_FileInvocation_IsNotInlineSyntaxPreflighted()
     {
-        // -File takes a script path; a would-be inline syntax error is irrelevant and must not be
-        // preflighted. We only assert the preflight does not throw (the process itself will fail to
-        // find the bogus path, which is fine - that is not a preflight rejection).
+        // -File takes a script path; the INLINE syntax rules (empty pipe element, malformed ${...},
+        // unbalanced braces) are irrelevant to it and must never be applied. Original intent of this
+        // test preserved: point at a REAL script whose content would trip every inline rule and
+        // assert no inline-preflight rejection occurs.
+        var script = Path.Combine(Path.GetTempPath(), "bn-2758-" + Guid.NewGuid().ToString("N") + ".ps1");
+        await File.WriteAllTextAsync(script, "Get-Process | Sort-Ob |");
+        try
+        {
+            var args = await _tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+            {
+                ["command"] = new List<string> { "pwsh", "-NoProfile", "-File", script },
+            });
+
+            try
+            {
+                var result = await _tool.ExecuteAsync("file-call", args);
+                result.ShouldNotBeNull();
+            }
+            catch (Exception ex)
+            {
+                ex.ShouldNotBeOfType<ArgumentException>();
+            }
+        }
+        finally
+        {
+            File.Delete(script);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MissingFileTarget_IsRejectedWithAPathDiagnosis()
+    {
+        // Issue #2758: pwsh reports a missing -File target as an argument-parsing error plus its
+        // generic usage banner, which names neither the skill nor any candidate. The tool now
+        // diagnoses it up front. This REPLACES the previous assertion that a missing -File target
+        // produced no ArgumentException - that is the behaviour #2758 exists to reverse.
         var args = await _tool.PrepareArgumentsAsync(new Dictionary<string, object?>
         {
             ["command"] = new List<string> { "pwsh", "-NoProfile", "-File", "definitely-not-a-real-script.ps1" },
         });
 
-        // Should NOT throw ArgumentException from preflight. Any process-start failure surfaces as a
-        // Win32Exception / non-zero result, not an ArgumentException.
+        var ex = await Should.ThrowAsync<ArgumentException>(() => _tool.ExecuteAsync("file-call", args));
+
+        ex.Message.ShouldContain("definitely-not-a-real-script.ps1");
+        // Not under a skill scripts/ directory, so no candidate list is invented (AC5).
+        ex.Message.Contains("Closest matches", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MissingSkillWrapper_NamesSkillAndClosestMatches()
+    {
+        // AC1/AC2: candidates are enumerated from the skill's scripts/ directory at failure time, so
+        // a wrapper added later appears automatically without a code change.
+        var root = Path.Combine(Path.GetTempPath(), "bn-2758-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "skills", "teams", "scripts");
+        Directory.CreateDirectory(scripts);
+        foreach (var name in new[] { "ListChatMessages.ps1", "ListChannelMessages.ps1", "GetChatMessage.ps1" })
+        {
+            await File.WriteAllTextAsync(Path.Combine(scripts, name), "# wrapper");
+        }
+
         try
         {
-            var result = await _tool.ExecuteAsync("file-call", args);
-            result.ShouldNotBeNull();
+            var args = await _tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+            {
+                ["command"] = new List<string>
+                {
+                    "pwsh", "-NoProfile", "-File", Path.Combine(scripts, "ListMessages.ps1"),
+                },
+            });
+
+            var ex = await Should.ThrowAsync<ArgumentException>(() => _tool.ExecuteAsync("wrapper-call", args));
+
+            ex.Message.ShouldContain("teams");
+            ex.Message.ShouldContain("ListChatMessages.ps1");
+            ex.Message.ShouldContain("ListChannelMessages.ps1");
+            ex.Message.Contains("NOT executed", StringComparison.OrdinalIgnoreCase).ShouldBeTrue();
         }
-        catch (Exception ex)
+        finally
         {
-            ex.ShouldNotBeOfType<ArgumentException>();
+            Directory.Delete(root, recursive: true);
         }
     }
 
