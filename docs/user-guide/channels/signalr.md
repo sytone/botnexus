@@ -24,7 +24,7 @@ The SignalR channel is enabled by default when the gateway starts. The Blazor po
 ```json
 {
   "gateway": {
-    "urls": "http://localhost:5000"
+    "listenUrl": "http://localhost:5005"
   }
 }
 ```

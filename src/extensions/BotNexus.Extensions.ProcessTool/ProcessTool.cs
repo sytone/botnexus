@@ -52,14 +52,28 @@ public sealed class ProcessTool : IAgentTool
                   "type": "integer",
                   "description": "Number of lines from end of output (for output action). Default: 50. Values above the configured ceiling are clamped."
                 },
+                "timeoutMs": {
+                  "type": "integer",
+                  "description": "For status action: wait up to N milliseconds for process to produce output before returning. Default: 0 (no wait)."
+                },
                 "timeout": {
                   "type": "integer",
-                  "description": "For status action: wait up to N ms for process to produce output before returning. Default: 0 (no wait)."
+                  "description": "Deprecated alias for timeoutMs, interpreted as milliseconds. Use timeoutMs instead."
                 }
               },
               "required": ["action"]
             }
             """).RootElement.Clone());
+
+    /// <summary>
+    /// The status action's wait is expressed in milliseconds. Declaring the unit stops
+    /// <c>ToolExecutor</c> reading the legacy <c>timeout</c> spelling as seconds, which inflated the
+    /// cancellation budget 1000x (issue #2955).
+    /// </summary>
+    public ToolTimeoutArgument? TimeoutArgument => new(
+        "timeoutMs",
+        ToolTimeoutUnit.Milliseconds,
+        DeprecatedAliasName: "timeout");
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
         IReadOnlyDictionary<string, object?> arguments,
@@ -119,7 +133,9 @@ public sealed class ProcessTool : IAgentTool
         if (process is null)
             return TextResult($"No tracked process with PID {pid}.");
 
-        var timeout = ReadInt(arguments, "timeout") ?? 0;
+        // timeoutMs is canonical; the bare `timeout` spelling remains accepted as a deprecated
+        // alias with identical millisecond semantics (issue #2955).
+        var timeout = ReadInt(arguments, "timeoutMs") ?? ReadInt(arguments, "timeout") ?? 0;
         if (timeout > 0 && process.IsRunning)
             process.WaitForExit(timeout);
 

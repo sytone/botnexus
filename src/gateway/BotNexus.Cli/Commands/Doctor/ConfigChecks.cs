@@ -99,13 +99,13 @@ public sealed class DevOriginEnforcementCheck : IConfigCheck
 {
     /// <summary>Feature-flag name; the single declaration shared with ApiKeyGatewayAuthHandler (#2767).</summary>
     private const string FeatureName = FeatureFlags.GatewayDevOriginEnforcement;
-    private const string DefaultOrigin = "http://localhost:5005";
+    private const string DefaultOrigin = GatewayDefaults.LoopbackListenUrl;
 
     public string Id => "devmode-origin-enforcement";
     public string Description =>
         "Gateway runs keyless (dev mode) with the browser-Origin guard disabled - the gateway-dev admin identity is reachable from any web origin (DNS-rebind/CSRF risk).";
     public string FixDescription =>
-        "Enable FeatureManagement.GatewayDevOriginEnforcement and seed gateway.cors.allowedOrigins = [\"http://localhost:5005\"]. WARNING: if you reach the UI over a non-localhost origin (LAN hostname / reverse proxy / netbird), add that origin to gateway.cors.allowedOrigins FIRST or you will be locked out on restart.";
+        "Enable FeatureManagement.GatewayDevOriginEnforcement and seed gateway.cors.allowedOrigins = [\"" + DefaultOrigin + "\"]. WARNING: if you reach the UI over a non-localhost origin (LAN hostname / reverse proxy / netbird), add that origin to gateway.cors.allowedOrigins FIRST or you will be locked out on restart.";
 
     public bool IsApplicable(JsonObject root)
     {
