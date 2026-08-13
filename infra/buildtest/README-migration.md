@@ -182,9 +182,9 @@ environment that already exists. Do not use it for a rebuild.
 - **`bn-reloadprobe-job` is not in the template.** It was created by hand on 2026-08-05. A
   from-scratch deploy will not recreate it.
 - **The IPAM service-tag question is unresolved** (see above). A rebuild inherits it.
-- **`Deploy-BuildTestInfrastructure.ps1` does not use `--no-wait`** and will therefore hang on
-  this subscription. Run the `az deployment group create` above directly until that is fixed,
-  or expect to interrupt the script and poll manually.
+- **`Deploy-BuildTestInfrastructure.ps1` submits with `--no-wait` and polls** (#3118). It no
+  longer hangs on this subscription, so the script is a valid rebuild path. It fails with the
+  ARM error detail on a failed deployment and throws on a bounded timeout rather than stalling.
 
 
 ## Unresolved / needs a decision
