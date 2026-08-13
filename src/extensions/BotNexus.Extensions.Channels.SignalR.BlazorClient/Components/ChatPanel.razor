@@ -548,12 +548,46 @@
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
 
+    /// <summary>
+    /// #3062: the conversation this pane binds to, supplied by <c>AgentPanel</c> from its
+    /// route-aware <c>EffectiveConversationId</c>. Before this the pane re-derived its identity from
+    /// <c>AgentState.ActiveConversationId</c>, so a deep link to
+    /// <c>/agent/{AgentId}/conversation/{ConversationId}</c> could render the routed conversation's
+    /// canvas beside a DIFFERENT conversation's transcript, title, steering queue and paging.
+    ///
+    /// Optional rather than required because the parameter is a display binding, not an identity the
+    /// component may invent: when it is null (a standalone render with no owning panel) the pane
+    /// falls back to the agent's active conversation, which is the pre-#3062 behaviour and the same
+    /// fallback <c>AgentPanel.EffectiveConversationId</c> itself applies for a conversation-less
+    /// route. In the portal the parameter is always supplied, so the fallback never decides.
+    /// </summary>
+    [Parameter]
+    public string? ConversationId { get; set; }
+
     private AgentState? Agent => Store.GetAgent(AgentId);
 
     protected override void OnInitialized()
     {
         Store.OnChanged += HandleStoreChanged;
     }
+
+    /// <summary>
+    /// #3062: conversation switches now arrive as a parameter change, so the scroll reset can be
+    /// armed here instead of being discovered by comparing ids render-over-render. The render-time
+    /// comparison below is retained because the ambient fallback path (and store-driven selection
+    /// changes that do not re-render the parent) can still move the conversation without a
+    /// parameter change.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        if (!string.Equals(ConversationId, _lastParameterConversationId, StringComparison.Ordinal))
+        {
+            _lastParameterConversationId = ConversationId;
+            _forceScrollNext = true;
+        }
+    }
+
+    private string? _lastParameterConversationId;
 
     private void HandleStoreChanged()
     {
@@ -570,7 +604,7 @@
         _attachmentPasteRef?.Dispose();
     }
     private ConversationState? ActiveConversation =>
-        Agent?.ActiveConversationId is not null ? Agent.Conversations.GetValueOrDefault(Agent.ActiveConversationId) : null;
+        ActiveConversationId is string convId ? Agent?.Conversations.GetValueOrDefault(convId) : null;
 
     private string DisplayName => Agent?.DisplayName ?? AgentId;
 
@@ -589,11 +623,15 @@
 
         return role;
     }
-    private string? ActiveConversationId => Agent?.ActiveConversationId;
+    /// <summary>
+    /// The single resolution point for this pane's conversation identity (#3062). The route-owned
+    /// parameter wins; the ambient active conversation is only the null-parameter fallback.
+    /// </summary>
+    private string? ActiveConversationId => ConversationId ?? Agent?.ActiveConversationId;
     private bool HasActiveConversation => ActiveConversation is not null;
     private string? ActiveConversationTitle => ActiveConversation?.Title;
 private bool IsStreaming =>
-        Agent?.ActiveConversationId is string activeConvId
+        ActiveConversationId is string activeConvId
             ? Store.GetStreamState(activeConvId).IsTurnActive
             : false; // no active conversation = not in turn
     // #2248: read-only is a VIEW concern, not a session-type-data concern. It is true when EITHER

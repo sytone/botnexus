@@ -14,7 +14,8 @@ public sealed class CronTool(
     AgentId agentId,
     bool allowCrossAgentCron = false,
     ModelRegistry? modelRegistry = null,
-    ICommandCronAuthorizer? commandAuthorizer = null) : IAgentTool
+    ICommandCronAuthorizer? commandAuthorizer = null,
+    ICronAlertTargetResolver? alertTargetResolver = null) : IAgentTool
 {
     private readonly AgentId _agentId = agentId;
 
@@ -56,7 +57,7 @@ public sealed class CronTool(
                   "type": "string",
                   "enum": ["list", "create", "update", "delete", "run", "history"]
                 },
-                "jobId": { "type": "string", "description": "Optional - for update/delete/run." },
+                "jobId": { "type": "string", "description": "Optional - for update/delete/run. Also optional on 'history': omit it to get recent runs across every job you may manage instead of one job's history." },
                 "includeSystem": { "type": "boolean", "description": "When true, include system-provisioned jobs (e.g., heartbeat) in list output. Default: false." },
                 "name": { "type": "string", "description": "Job name (for create)." },
                 "schedule": { "type": "string", "description": "Standard 5-field cron expression (minute hour day month weekday). The expression is evaluated in the timezone specified by 'timeZone', or UTC if omitted. Example: '30 22 * * *' with timeZone 'America/Los_Angeles' fires at 10:30 PM Pacific daily." },
@@ -79,9 +80,12 @@ public sealed class CronTool(
                 "enabled": { "type": "boolean", "description": "Whether the job is enabled." },
                 "deleteJobAfterRun": { "type": "boolean", "description": "One-shot lifecycle. When true, the SCHEDULER deletes this job itself after its first terminal run (success, timeout, error, or abort alike). Use this instead of writing 'delete this cron job after running' into the prompt - a prompt instruction has no enforcement and no retry if the turn ends early. Distinct from 'deleteAfterRun'; this removes the JOB. Default: false." },
                 "expiresAt": { "type": "string", "description": "Optional hard expiry instant (ISO-8601, e.g. '2026-12-31T00:00:00Z'). From that instant on the job stops executing: the scheduler suppresses the fire and never invokes the action. The job is NOT deleted or disabled, so it stays visible for a human to extend. Omit for no expiry (the default, identical to today's behaviour); pass an empty string on update to clear an existing expiry." },
+                "failureAlertsEnabled": { "type": "boolean", "description": "When true, a run of this job that terminates as a failure delivers a cron failure alert to 'failureAlertConversationId'. Alerting is opt-in and BOTH this flag and a valid target conversation are required - there is no implicit fallback conversation. Omitting this on update leaves the stored value alone. Default: false." },
+                "failureAlertConversationId": { "type": "string", "description": "Conversation that receives this job's failure alerts. Must resolve to an existing conversation or the write is refused, because an unresolvable target could never deliver. Omitting this on update leaves the stored value alone; pass an empty string to clear it." },
                 "executionClass": { "type": "boolean", "description": "Marks this as an EXECUTION-class job: its contract is to perform work, so a run that finishes having made ZERO tool calls is recorded with status 'no_tool_calls' instead of 'ok' and drives the existing failure-alert path. Leave false for a reporting or classification job that may legitimately answer from context without calling a tool. Default: false." },
                 "deleteAfterRun": { "type": "boolean", "description": "Ephemeral run-SESSION cleanup. When true, the run's cron-scoped session and transcript are deleted after each run. This does NOT delete the job - for that use 'deleteJobAfterRun'. Default: false." },
-                "limit": { "type": "integer", "description": "Maximum number of history entries to return (for history action). Default: 20, max: 100." }
+                "limit": { "type": "integer", "description": "Maximum number of history entries to return (for history action). Default: 20, max: 100." },
+                "failedOnly": { "type": "boolean", "description": "For the history action: return only runs that did not succeed (errors, timeouts, zero-tool execution-class runs, and missed occurrences). Default: false." }
               },
               "required": ["action"]
             }
@@ -130,6 +134,18 @@ public sealed class CronTool(
 
         if (arguments.TryGetValue("deleteAfterRun", out var deleteAfterRun) && deleteAfterRun is not null)
             prepared["deleteAfterRun"] = ReadBool(deleteAfterRun, "deleteAfterRun");
+
+        // #2838: the alert flag is normalised like every other boolean. The target id is copied
+        // through ContainsKey (not CopyString) for the same reason as expiresAt - an explicit
+        // empty string means "clear the target" and must survive rather than be swallowed as blank.
+        if (arguments.TryGetValue("failureAlertsEnabled", out var failureAlertsEnabled) && failureAlertsEnabled is not null)
+            prepared["failureAlertsEnabled"] = ReadBool(failureAlertsEnabled, "failureAlertsEnabled");
+
+        if (arguments.ContainsKey("failureAlertConversationId"))
+            prepared["failureAlertConversationId"] = ReadString(arguments, "failureAlertConversationId") ?? string.Empty;
+
+        if (arguments.TryGetValue("failedOnly", out var failedOnly) && failedOnly is not null)
+            prepared["failedOnly"] = ReadBool(failedOnly, "failedOnly");
 
         if (arguments.ContainsKey("expiresAt"))
             prepared["expiresAt"] = ReadString(arguments, "expiresAt") ?? string.Empty;
@@ -209,6 +225,12 @@ public sealed class CronTool(
         var targetAgentIdString = ReadString(arguments, "agentId");
         var targetAgentId = ResolveTargetAgentId(targetAgentIdString, _agentId);
 
+        // #2838: validated BEFORE the store write, through the SHARED CronAlertTarget validator
+        // the REST seams already use, so an unresolvable target leaves no row behind and the tool
+        // does not introduce a second validation spelling.
+        var alertConversationId = ParseAlertConversationId(arguments);
+        await EnsureAlertTargetValidAsync(alertConversationId, cancellationToken).ConfigureAwait(false);
+
         var job = new CronJob
         {
             Id = JobId.From(Guid.NewGuid().ToString("N")),
@@ -229,6 +251,10 @@ public sealed class CronTool(
             // #2985: off by default, so a create that omits it behaves exactly as before.
             ExecutionClass = arguments.TryGetValue("executionClass", out var exc) && exc is bool b3 && b3,
             ExpiresAt = ParseExpiresAt(ReadString(arguments, "expiresAt")),
+            // #2838: alerting stays opt-in, so a create that omits both fields is byte-identical
+            // to a create today.
+            FailureAlertsEnabled = arguments.TryGetValue("failureAlertsEnabled", out var fae) && fae is bool b4 && b4,
+            FailureAlertConversationId = alertConversationId,
             TimeZone = timeZone,
             CreatedBy = _agentId.Value,
             CreatedAt = now,
@@ -299,6 +325,17 @@ public sealed class CronTool(
             ? existing.AgentId
             : ResolveTargetAgentId(newAgentIdString, _agentId);
 
+        // #2838 + #2634: an omitted alert field leaves the stored value alone, so an unrelated edit
+        // can never silently un-alert a job. An explicit empty string clears the target.
+        var newAlertConversationId = arguments.ContainsKey("failureAlertConversationId")
+            ? ParseAlertConversationId(arguments)
+            : existing.FailureAlertConversationId;
+
+        // Only a caller-supplied target is preflighted: re-validating a retained one would make a
+        // job whose alert conversation was later deleted permanently uneditable.
+        if (arguments.ContainsKey("failureAlertConversationId"))
+            await EnsureAlertTargetValidAsync(newAlertConversationId, cancellationToken).ConfigureAwait(false);
+
         var updated = existing with
         {
             Name = ReadString(arguments, "name") ?? existing.Name,
@@ -327,7 +364,11 @@ public sealed class CronTool(
             // rule above - an unrelated edit must never silently un-mark an execution-class job.
             ExecutionClass = arguments.TryGetValue("executionClass", out var exc) && exc is bool b3
                 ? b3
-                : existing.ExecutionClass
+                : existing.ExecutionClass,
+            FailureAlertsEnabled = arguments.TryGetValue("failureAlertsEnabled", out var fae) && fae is bool b4
+                ? b4
+                : existing.FailureAlertsEnabled,
+            FailureAlertConversationId = newAlertConversationId
         };
 
         // #2133: a tool definition update is a narrow write that never touches scheduler-owned
@@ -387,18 +428,75 @@ public sealed class CronTool(
 
     private async Task<AgentToolResult> HistoryAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
-        var jobId = JobId.From(ReadRequired(arguments, "jobId"));
-        var existing = await cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
-
-        EnsureCanManage(existing);
-
         var limit = ReadInt(arguments, "limit", defaultValue: 20);
         if (limit < 1) limit = 1;
         if (limit > 100) limit = 100;
 
-        var runs = await cronStore.GetRunHistoryAsync(jobId, limit, cancellationToken).ConfigureAwait(false);
-        return TextResult(JsonSerializer.Serialize(runs, JsonOptions));
+        var failedOnly = arguments.TryGetValue("failedOnly", out var failedOnlyValue) && failedOnlyValue is bool fo && fo;
+        var statuses = failedOnly ? FailureStatuses : null;
+
+        // #2838: jobId is now OPTIONAL. Omitting it asks 'which of my jobs have failed recently',
+        // which previously required one call per job and was therefore only ever asked after a
+        // human noticed something missing.
+        var jobIdValue = ReadString(arguments, "jobId");
+        if (!string.IsNullOrWhiteSpace(jobIdValue))
+        {
+            var jobId = JobId.From(jobIdValue);
+            var existing = await cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
+
+            EnsureCanManage(existing);
+
+            var runs = statuses is null
+                ? await cronStore.GetRunHistoryAsync(jobId, limit, cancellationToken).ConfigureAwait(false)
+                : await cronStore.GetRecentRunsAsync([jobId], statuses, limit, cancellationToken).ConfigureAwait(false);
+            return TextResult(JsonSerializer.Serialize(runs, JsonOptions));
+        }
+
+        // The cross-job scope is derived by applying the SAME CanManage rule the per-job path
+        // applies, rather than by handing the store a second notion of ownership. An agent with no
+        // manageable jobs therefore gets an empty scope - which the store treats as 'no jobs',
+        // never as 'no filter'.
+        var manageable = (await cronStore.ListAsync(ct: cancellationToken).ConfigureAwait(false))
+            .Where(CanManage)
+            .Select(job => job.Id)
+            .ToList();
+
+        var recent = await cronStore.GetRecentRunsAsync(manageable, statuses, limit, cancellationToken).ConfigureAwait(false);
+        return TextResult(JsonSerializer.Serialize(recent, JsonOptions));
+    }
+
+    /// <summary>
+    /// The run statuses that mean 'this did not succeed' for the failed-only history view (#2838).
+    /// Bound from the CronRunStatus constants so the filter cannot drift from the producers, and
+    /// deliberately broader than Error alone: a timeout, an execution-class run that did nothing
+    /// (#2985), and an occurrence missed while the gateway was down are all things the operator
+    /// asking 'what broke' needs to see.
+    /// </summary>
+    private static readonly string[] FailureStatuses =
+    [
+        CronRunStatus.Error,
+        CronRunStatus.TimedOut,
+        CronRunStatus.NoToolCalls,
+        CronRunStatus.Missed
+    ];
+
+    // #2838: the single alert-target parse. Blank means 'no target' (and on update an explicit
+    // empty string clears an existing one), matching the expiresAt spelling.
+    private static ConversationId? ParseAlertConversationId(IReadOnlyDictionary<string, object?> arguments)
+    {
+        var raw = ReadString(arguments, "failureAlertConversationId");
+        return string.IsNullOrWhiteSpace(raw) ? null : ConversationId.From(raw);
+    }
+
+    // #2671: delegates to THE shared validator every other authoring seam uses. Adding a second
+    // spelling here is exactly what that issue exists to prevent, so the tool only translates the
+    // validator's verdict into the tool's error channel.
+    private async Task EnsureAlertTargetValidAsync(ConversationId? conversationId, CancellationToken ct)
+    {
+        var validation = await CronAlertTarget.ValidateAsync(alertTargetResolver, conversationId, ct).ConfigureAwait(false);
+        if (!validation.IsValid)
+            throw new ArgumentException(validation.Error);
     }
 
     // #2634: parses the caller-supplied expiry. Null/blank means "no expiry" (and on update, an
@@ -450,13 +548,20 @@ public sealed class CronTool(
 
     private void EnsureCanManage(CronJob job)
     {
+        if (!CanManage(job))
+            throw new UnauthorizedAccessException("You can only manage cron jobs created by or targeting this agent.");
+    }
+
+    // The authorisation predicate behind EnsureCanManage, extracted so the cross-job history scope
+    // (#2838) is derived from the SAME rule rather than a parallel reimplementation of it.
+    private bool CanManage(CronJob job)
+    {
         if (allowCrossAgentCron)
-            return;
+            return true;
 
         var isCreator = string.Equals(job.CreatedBy, _agentId.Value, StringComparison.OrdinalIgnoreCase);
         var isTarget = job.AgentId.HasValue && job.AgentId.Value == _agentId;
-        if (!isCreator && !isTarget)
-            throw new UnauthorizedAccessException("You can only manage cron jobs created by or targeting this agent.");
+        return isCreator || isTarget;
     }
 
     private static AgentToolResult TextResult(string text)

@@ -5,6 +5,7 @@ using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Streaming;
 
 namespace BotNexus.Agent.Core.Tests.Loop;
@@ -19,6 +20,12 @@ using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 /// XML from the visible text, and dispatch the tool. This is the executing complement to the
 /// Tier 1 sanitizer (#1699) which only strips the markup before delivery. Mirrors the truncated
 /// tool-call guard precedent (#1666) so a clean tool turn is behaviour-preserving.
+/// <para>
+/// #2432: recovery now fires only for a provider that DECLARES
+/// <c>RecoversLeakedToolCallMarkup</c>. Every test below therefore registers a DECLARING provider,
+/// which is what pins behaviour parity for the transport that actually needed the workaround; the
+/// complementary non-declaring case lives in <see cref="AgentLoopRunnerCapabilityGatingTests"/>.
+/// </para>
 /// </summary>
 [Collection(ApiProviderRegistryCollection.Name)]
 public class AgentLoopRunnerLeakedToolCallTests
@@ -54,15 +61,26 @@ public class AgentLoopRunnerLeakedToolCallTests
     }
 
     private static IDisposable RegisterScriptedProvider(string apiId, params LlmStream[] responses)
+        => RegisterScriptedProvider(apiId, recoversLeakedMarkup: true, responses);
+
+    /// <summary>
+    /// Registers a scripted provider that DECLARES (or withholds) the #2432
+    /// <c>RecoversLeakedToolCallMarkup</c> capability, so the same scripted stream can be replayed
+    /// against a declaring and a non-declaring provider.
+    /// </summary>
+    private static IDisposable RegisterScriptedProvider(string apiId, bool recoversLeakedMarkup, params LlmStream[] responses)
     {
         var index = -1;
         return TestHelpers.RegisterProvider(
-            new TestApiProvider(apiId, simpleStreamFactory: (_, _, _) =>
-            {
-                var next = Interlocked.Increment(ref index);
-                var slot = Math.Min(next, responses.Length - 1);
-                return responses[slot];
-            }));
+            new TestApiProvider(
+                apiId,
+                simpleStreamFactory: (_, _, _) =>
+                {
+                    var next = Interlocked.Increment(ref index);
+                    var slot = Math.Min(next, responses.Length - 1);
+                    return responses[slot];
+                },
+                capabilities: new ProviderCapabilities(RecoversLeakedToolCallMarkup: recoversLeakedMarkup)));
     }
 
     private static AgentContext ContextWithRecordingTool(RecordingTool tool)

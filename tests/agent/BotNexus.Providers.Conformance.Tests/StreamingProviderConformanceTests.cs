@@ -194,6 +194,60 @@ public abstract class StreamingProviderConformanceTests
 
     protected virtual bool SupportsStreamingSequence => true;
 
+    // --- Capability declaration conformance (#2432) ---
+
+    /// <summary>
+    /// Every real provider must DECLARE a <see cref="ProviderCapabilities"/> rather than inheriting
+    /// the interface default. This is the #2432 acceptance criterion "ProviderCapabilities surfaced
+    /// by all real providers", and it lives on the shared conformance base precisely so that a new
+    /// provider added to the suite cannot quietly skip declaring one.
+    /// <para>
+    /// Reference equality against <see cref="ProviderCapabilities.Default"/> is the load-bearing
+    /// assertion: <c>Default</c> is a single cached instance, so a provider that constructs its own
+    /// record -- even one whose field values happen to match the defaults -- passes, while a
+    /// provider that declares nothing at all and falls through to the interface default fails. A
+    /// value-equality check would have been vacuous, because most providers legitimately declare
+    /// values identical to the defaults.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Provider_DeclaresItsOwnCapabilities()
+    {
+        var provider = CreateProvider(new NeverCalledHandler());
+
+        var capabilities = provider.Capabilities;
+
+        capabilities.ShouldNotBeNull();
+        ReferenceEquals(capabilities, ProviderCapabilities.Default).ShouldBeFalse(
+            $"{provider.GetType().Name} must declare its own ProviderCapabilities (#2432) rather than " +
+            "inheriting the IApiProvider default, so the platform can answer capability questions " +
+            "without issuing a request and reading what comes back.");
+    }
+
+    /// <summary>
+    /// The declared capabilities must be stable across reads. The agent loop queries them once per
+    /// turn; a provider that recomputed or reallocated them per read would make a capability a
+    /// moving target and defeat the point of declaring it.
+    /// </summary>
+    [Fact]
+    public void Provider_CapabilitiesAreStableAcrossReads()
+    {
+        var provider = CreateProvider(new NeverCalledHandler());
+
+        provider.Capabilities.ShouldBe(provider.Capabilities);
+    }
+
+    /// <summary>
+    /// A handler for capability tests, which must never issue a request. Throwing rather than
+    /// returning a canned response means a capability read that secretly probes the network fails
+    /// loudly instead of passing quietly.
+    /// </summary>
+    private sealed class NeverCalledHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("Reading ProviderCapabilities must not issue an HTTP request.");
+    }
+
     protected virtual IReadOnlyList<string> ExpectedTextEventSequence =>
         ["start", "text_start", "text_delta", "text_end", "done"];
 
