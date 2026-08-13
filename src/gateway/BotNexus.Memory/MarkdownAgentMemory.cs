@@ -47,7 +47,7 @@ public sealed class MarkdownAgentMemory : IAgentMemory
     {
         ct.ThrowIfCancellationRequested();
         var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(request.AgentId));
-        return LoadDailyMemoryContextAsync(workspacePath, ct);
+        return LoadDailyMemoryContextAsync(workspacePath, request.MaxTokenBudget, ct);
     }
 
     /// <inheritdoc />
@@ -211,7 +211,17 @@ public sealed class MarkdownAgentMemory : IAgentMemory
         return Task.CompletedTask;
     }
 
-    private async Task<AgentMemoryContext> LoadDailyMemoryContextAsync(string workspacePath, CancellationToken ct)
+    /// <summary>
+    /// Assembles the daily-note context and applies the caller's token budget (#2871).
+    /// </summary>
+    /// <remarks>
+    /// Budgeting is applied here, at the single point where assembled content becomes the returned
+    /// context, rather than at the caller. Enforcing it at the provider means every consumer of
+    /// <see cref="IAgentMemory"/> gets the bound the contract advertises, and a future second
+    /// caller cannot silently opt out of it by forgetting to trim. The trimming order and the
+    /// disclosure rule are documented on <see cref="MemoryPromptBudget"/>.
+    /// </remarks>
+    private async Task<AgentMemoryContext> LoadDailyMemoryContextAsync(string workspacePath, int maxTokenBudget, CancellationToken ct)
     {
         var memoryRoot = ResolveMemoryRoot(workspacePath);
         if (!_fileSystem.Directory.Exists(memoryRoot))
@@ -235,7 +245,6 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             .ToList();
 
         var dailyNotes = new List<AgentMemoryDailyNote>();
-        var totalChars = 0;
 
         foreach (var file in files)
         {
@@ -259,14 +268,24 @@ public sealed class MarkdownAgentMemory : IAgentMemory
                 if (DateOnly.TryParse(file.Name, out var date))
                 {
                     dailyNotes.Add(new AgentMemoryDailyNote(date, trimmed));
-                    totalChars += trimmed.Length;
                 }
             }
         }
 
-        // Rough token estimate: ~4 chars per token
-        var approxTokens = totalChars / 4;
-        return new AgentMemoryContext(null, dailyNotes, approxTokens);
+        // Rough token estimate: ~4 chars per token, computed by the budget helper so the reported
+        // count and the enforced cap are expressed in identical units.
+        var budgeted = MemoryPromptBudget.Apply(dailyNotes, maxTokenBudget);
+
+        if (budgeted.WasTrimmed)
+        {
+            _logger.LogInformation(
+                "Memory prompt context for agent {AgentId} exceeded the {Budget}-token budget and was trimmed to ~{Tokens} tokens.",
+                _agentId,
+                maxTokenBudget,
+                budgeted.ApproximateTokenCount);
+        }
+
+        return new AgentMemoryContext(null, budgeted.Notes, budgeted.ApproximateTokenCount);
     }
 
     private string ResolveWorkspaceDirectory(string workspacePath)

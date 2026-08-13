@@ -40,6 +40,30 @@ public interface ICronStore
     Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default);
 
     /// <summary>
+    /// Cross-job recent-run query (#2838). Returns the newest runs across <paramref name="jobIds"/>,
+    /// optionally narrowed to <paramref name="statuses"/>, newest first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every pre-#2838 run query was keyed on a single job id, so "which of my jobs have failed
+    /// recently" cost one call per job and was only ever asked after a human noticed something
+    /// missing. The #2819 hijack therefore ran for ~2 days across at least 4 jobs with no signal.
+    /// </para>
+    /// <para>
+    /// The scope is passed in as an explicit job-id set rather than an agent id: authorisation is
+    /// the caller's to decide (the tool applies the same <c>EnsureCanManage</c> rule as the per-job
+    /// path), and the store must not carry a second, subtly different notion of ownership.
+    /// An EMPTY <paramref name="jobIds"/> means "no jobs" and must return nothing - never
+    /// "no filter", which is how a scoped query silently becomes a global one.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyList<CronRun>> GetRecentRunsAsync(
+        IReadOnlyCollection<JobId> jobIds,
+        IReadOnlyCollection<string>? statuses = null,
+        int limit = 20,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Atomically stamps <paramref name="conversationId"/> onto a job whose
     /// <c>ConversationId</c> is currently <c>null</c>. Returns the winning conversation
     /// id (which may differ from <paramref name="conversationId"/> if a concurrent run

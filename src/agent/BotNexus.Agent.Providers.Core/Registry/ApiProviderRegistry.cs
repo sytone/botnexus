@@ -14,6 +14,7 @@ public sealed class ApiProviderRegistry
     private sealed class GuardedProvider(IApiProvider inner) : IApiProvider
     {
         public string Api => inner.Api;
+        public ProviderCapabilities Capabilities => inner.Capabilities;
 
         /// <summary>
         /// Executes stream.

@@ -416,10 +416,19 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         {
             var compactSessionId = context.SessionId;
             var compactAgentId = descriptor.AgentId;
+            // #2896: this path has already resolved the effective window through
+            // ModelOverrideResolver above (conversation override > agent descriptor), so reuse it
+            // rather than re-reading the stores, falling back to the registered model's own window.
+            // Null leaves CompactionOptions.ContextWindowTokens exactly as configured.
+            var scopedContextWindow = ScopedCompactionWindow.Resolve(
+                conversationOverride: null,
+                agentWindow: effectiveModel.ContextWindow,
+                modelWindow: model.ContextWindow);
             maybeCompactAsync = async cancellationToken =>
             {
                 var liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
-                if (liveSession is null || !compactor.ShouldCompact(liveSession.Session, compactionOptions.CurrentValue))
+                var scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
+                if (liveSession is null || !compactor.ShouldCompact(liveSession.Session, scopedOptions))
                 {
                     return;
                 }
@@ -577,7 +586,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 _serviceProvider.GetService<ICronStore>(),
                 _serviceProvider.GetService<CronScheduler>(),
                 _serviceProvider.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
-                _serviceProvider.GetService<BotNexus.Cron.Actions.ICommandCronAuthorizer>()),
+                _serviceProvider.GetService<BotNexus.Cron.Actions.ICommandCronAuthorizer>(),
+                _serviceProvider.GetService<BotNexus.Cron.ICronAlertTargetResolver>()),
             new ToolProviders.SessionToolProvider(sessionStore),
             new ToolProviders.ConversationToolProvider(
                 conversationStore,
