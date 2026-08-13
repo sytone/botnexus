@@ -19,6 +19,10 @@ var storageName = 'bnxbt${suffix}sa'
 var identityName = 'bnx-buildtest-runner'
 var environmentName = 'bnx-buildtest-env'
 var jobName = 'bnx-buildtest-runner'
+var vnetName = 'bnx-buildtest-vnet'
+var subnetName = 'bnx-buildtest-aca-subnet'
+var natGatewayName = 'bnx-buildtest-nat'
+var publicIpName = 'bnx-buildtest-nat-pip'
 var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 var blobContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 
@@ -105,17 +109,102 @@ resource artifacts 'Microsoft.Storage/storageAccounts/blobServices/containers@20
   }
 }
 
+// ---------------------------------------------------------------- networking
+// The ACA environment MUST sit in a delegated subnet behind a NAT gateway carrying OUR public IP.
+//
+// Azure Container Apps is a HOBO (Hosted-On-Behalf-Of) service: with no subnet, outbound traffic
+// leaves on IPs owned by the Container Apps team, and those IPs are being marked UNPRIVILEGED.
+// When the network team sets the cutover date, an environment still on a platform IP loses access
+// to privileged resources outright. Flagged 2026-08-13, cluster thankfulisland-09134225 (westus2).
+//
+// TSG: eng.ms/.../azure-container-apps-tsg/firstparty/1pappaccessaad
+// `internal` MUST be false or omitted -- the managed environment needs a public IP.
+resource publicIp 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
+  name: publicIpName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIPAllocationMethod: 'Static'
+  }
+}
+
+resource natGateway 'Microsoft.Network/natGateways@2023-11-01' = {
+  name: natGatewayName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIpAddresses: [
+      {
+        id: publicIp.id
+      }
+    ]
+    idleTimeoutInMinutes: 4
+  }
+}
+
+resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
+  name: vnetName
+  location: location
+  tags: tags
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        '10.0.0.0/16'
+      ]
+    }
+    subnets: [
+      {
+        name: subnetName
+        properties: {
+          // Workload-profile environments need at least a /27; /23 leaves headroom for scale-out.
+          addressPrefix: '10.0.0.0/23'
+          natGateway: {
+            id: natGateway.id
+          }
+          serviceEndpoints: []
+          delegations: [
+            {
+              name: 'Microsoft.App.environments'
+              properties: {
+                serviceName: 'Microsoft.App/environments'
+              }
+              type: 'Microsoft.Network/virtualNetworks/subnets/delegations'
+            }
+          ]
+        }
+        type: 'Microsoft.Network/virtualNetworks/subnets'
+      }
+    ]
+    virtualNetworkPeerings: []
+    enableDdosProtection: false
+  }
+}
+
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
   tags: tags
   properties: {
+    vnetConfiguration: {
+      internal: false
+      infrastructureSubnetId: vnet.properties.subnets[0].id
+    }
+    // NOTE: a Consumption-ONLY environment cannot accept a subnet. Applying this template to the
+    // existing environment therefore REPLACES it (see infra/buildtest/README-migration.md); the
+    // Consumption profile is kept so `workloadProfileName: 'Consumption'` on the job still binds.
     workloadProfiles: [
       {
         name: 'Consumption'
         workloadProfileType: 'Consumption'
       }
     ]
+    zoneRedundant: false
   }
 }
 
