@@ -84,13 +84,19 @@ public sealed class ContextWindowReportingTests
     [Fact]
     public void UsagePercent_is_computed_against_the_per_session_window_not_128000()
     {
-        // 10,000 / 32,000 = 31.3%. Against the old 128,000 literal it would have been 7.8%.
-        var narrow = Response(10_000, 32_000).RootElement;
-        narrow.GetProperty("usagePercent").GetDouble().ShouldBe(31.3);
+        // 8,000 / 32,000 = 25.0%. Against the old 128,000 literal it would have been 6.3%.
+        // Deliberately not a .x5 midpoint: this test pins the DENOMINATOR, not Math.Round's
+        // banker's-rounding tie behaviour, which would be an unrelated contract to encode here.
+        var narrow = Response(8_000, 32_000).RootElement;
+        narrow.GetProperty("usagePercent").GetDouble().ShouldBe(25.0);
 
-        // 10,000 / 200,000 = 5.0%, versus 7.8% under the old literal.
-        var wide = Response(10_000, 200_000).RootElement;
-        wide.GetProperty("usagePercent").GetDouble().ShouldBe(5.0);
+        // 8,000 / 200,000 = 4.0%, versus 6.3% under the old literal.
+        var wide = Response(8_000, 200_000).RootElement;
+        wide.GetProperty("usagePercent").GetDouble().ShouldBe(4.0);
+
+        // The old constant is neither answer, so neither number can be produced by the defect.
+        narrow.GetProperty("usagePercent").GetDouble().ShouldNotBe(6.3);
+        wide.GetProperty("usagePercent").GetDouble().ShouldNotBe(6.3);
     }
 
     [Fact]
