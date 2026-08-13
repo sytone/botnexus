@@ -5730,6 +5730,20 @@ h3.conversation-title.editable:hover {
     text-transform: lowercase;
 }
 
+/* #3105: the originator id qualifying the origin badge it follows. Deliberately NOT a .activity-badge:
+   a badge is a bounded categorical signal, whereas this is a variable-length identifier, and giving it
+   badge chrome would make two adjacent pills read as two categories. Monospace + low emphasis marks it
+   as a literal to be copied or looked up, subordinate to the badge it qualifies. */
+.activity-source-id {
+    display: inline-block;
+    /* Mirrors .activity-badge: a variable-length id must never shrink or displace the title. */
+    flex: 0 0 auto;
+    margin-left: 0.3rem;
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+    font-size: 0.68rem;
+    opacity: 0.75;
+}
+
 .activity-badge {
     display: inline-block;
     /* #2528: badge is fixed-width signal - it must not shrink or be pushed out by a long title. */

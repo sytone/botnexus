@@ -195,6 +195,16 @@
                                       data-origin="@ActivityDashboardProjection.OriginModifier(row)"
                                       title="@OriginTooltip(row)">@originLabel</span>
                             }
+                            @if (ActivityDashboardProjection.SourceLabel(row) is { } sourceLabel)
+                            {
+                                @* #3105: WHICH job or registration minted this row, as opposed to the
+                                   origin badge's WHAT KIND. Rendered immediately after the origin badge
+                                   it qualifies, and only ever when that badge is present. *@
+                                <span class="activity-source-id"
+                                      data-testid="activity-source-id"
+                                      data-source-id="@row.SourceId"
+                                      title="@OriginTooltip(row)">@sourceLabel</span>
+                            }
                         </td>
                         <td class="activity-cell-agents">
                             @foreach (var agent in row.InvolvedAgents)
@@ -458,11 +468,22 @@
     }
 
     /// <summary>
-    /// Full <c>(source, kind)</c> pair as hover detail behind the short badge. The badge answers the
-    /// question at a glance; the tooltip keeps the underlying typed values inspectable without
-    /// lengthening the row.
+    /// Full <c>(source, kind)</c> pair as hover detail behind the short badge, plus the untruncated
+    /// originator id when the row is attributable (#3105). The badge answers the question at a
+    /// glance; the tooltip keeps the underlying typed values inspectable without lengthening the row.
+    /// The originator joins the <em>existing</em> tooltip rather than getting a second hover target,
+    /// so a reader has one place to look for a row's provenance.
     /// </summary>
-    private static string OriginTooltip(ActivityRow row) => $"Source: {row.Source} \u00b7 Kind: {row.Kind}";
+    private static string OriginTooltip(ActivityRow row)
+    {
+        var pair = $"Source: {row.Source} \u00b7 Kind: {row.Kind}";
+
+        // Gated on SourceLabel, not on SourceId, so the tooltip can never attribute a row the badge
+        // declined to attribute - one rule, evaluated once.
+        return ActivityDashboardProjection.SourceLabel(row) is null
+            ? pair
+            : $"{pair} \u00b7 Originator: {row.SourceId}";
+    }
 
     private static string FormatRelative(DateTimeOffset ts)
     {

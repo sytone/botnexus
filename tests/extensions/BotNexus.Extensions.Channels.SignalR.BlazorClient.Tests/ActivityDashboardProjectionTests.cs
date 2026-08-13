@@ -25,7 +25,9 @@ public sealed class ActivityDashboardProjectionTests
         string source = "Channel",
         string kind = "HumanAgent",
         // #2692: visibility is server-stamped and already on the wire; fixtures set it explicitly.
-        string visibility = "UserFacing") =>
+        string visibility = "UserFacing",
+        // #3105: the originating job / registration id, server-stamped alongside source (#2121).
+        string? sourceId = null) =>
         new(
             ConversationId: id,
             AgentId: agentId,
@@ -39,7 +41,8 @@ public sealed class ActivityDashboardProjectionTests
             Source: source,
             Kind: kind,
             Visibility: visibility,
-            Participants: participants);
+            Participants: participants,
+            SourceId: sourceId);
 
     // ── Cron detection ─────────────────────────────────────────────────────
 
@@ -1212,5 +1215,171 @@ public sealed class ActivityDashboardProjectionTests
     public void Summarize_empty_rows_yields_zero_live_count()
     {
         Assert.Equal(0, ActivityDashboardProjection.Summarize(Array.Empty<ActivityRow>()).LiveCount);
+    }
+
+    // ── #3105: originator attribution (SourceId) ───────────────────────────
+
+    private static ActivityRow ProjectOne(ConversationSummaryDto conv) =>
+        ActivityDashboardProjection.Project(
+            [conv], new ActivityDashboardFilter(IncludeCron: true), Now).Single();
+
+    /// <summary>
+    /// AC2: the server-stamped originator reaches the row. Without this the label has nothing to
+    /// read and every other clause is vacuous.
+    /// </summary>
+    [Fact]
+    public void Project_carries_the_server_stamped_source_id_onto_the_row()
+    {
+        var row = ProjectOne(Conv("c1", source: "Cron", sourceId: "daily-log-analysis"));
+
+        Assert.Equal("daily-log-analysis", row.SourceId);
+    }
+
+    /// <summary>
+    /// AC3 (positive, cron): a cron row carrying an originator is attributed verbatim.
+    /// </summary>
+    [Fact]
+    public void SourceLabel_attributes_a_cron_row_to_its_job_id()
+    {
+        var row = ProjectOne(Conv("c1", source: "Cron", sourceId: "daily-log-analysis"));
+
+        Assert.Equal("daily-log-analysis", ActivityDashboardProjection.SourceLabel(row));
+    }
+
+    /// <summary>
+    /// AC3 (positive, webhook): the other source that names an originator registry. Asserted
+    /// separately from cron because the two are independent arms of the guard - a fix that
+    /// attributed only cron would pass a cron-only test.
+    /// </summary>
+    [Fact]
+    public void SourceLabel_attributes_a_webhook_row_to_its_registration_id()
+    {
+        var row = ProjectOne(Conv("c1", source: "Webhook", sourceId: "wh_farnsworth_1"));
+
+        Assert.Equal("wh_farnsworth_1", ActivityDashboardProjection.SourceLabel(row));
+    }
+
+    /// <summary>
+    /// AC3 (negative, the load-bearing one): SourceId is meaningful ONLY paired with a source that
+    /// names an originator registry. A value on a Channel- or Agent-sourced row is not attributable
+    /// to anything a reader could look up, so rendering it would invite a lookup that cannot
+    /// succeed. This is the clause that distinguishes "attribute the pair" from "print the field".
+    /// </summary>
+    [Theory]
+    [InlineData("Channel")]
+    [InlineData("Agent")]
+    public void SourceLabel_refuses_to_attribute_a_row_whose_source_names_no_registry(string source)
+    {
+        var row = ProjectOne(Conv("c1", source: source, sourceId: "not-attributable"));
+
+        Assert.Equal("not-attributable", row.SourceId);
+        Assert.Null(ActivityDashboardProjection.SourceLabel(row));
+    }
+
+    /// <summary>
+    /// AC3 / AC7: blank and absent must collapse to the same answer, or an empty element appears on
+    /// rows the server declined to attribute. Whitespace is the case a null-check alone misses.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void SourceLabel_is_null_when_the_originator_is_blank_or_absent(string? sourceId)
+    {
+        var row = ProjectOne(Conv("c1", source: "Cron", sourceId: sourceId));
+
+        Assert.Null(ActivityDashboardProjection.SourceLabel(row));
+    }
+
+    /// <summary>
+    /// AC4: an id at exactly the bound renders whole - the boundary a truncation off-by-one would
+    /// break, and the case that proves the elision is not applied indiscriminately.
+    /// </summary>
+    [Fact]
+    public void SourceLabel_renders_an_id_at_the_bound_untruncated()
+    {
+        var id = new string('j', ActivityDashboardProjection.SourceIdDisplayLength);
+        var row = ProjectOne(Conv("c1", source: "Cron", sourceId: id));
+
+        Assert.Equal(id, ActivityDashboardProjection.SourceLabel(row));
+    }
+
+    /// <summary>
+    /// AC4: a longer id is elided so a pathological originator cannot grow the row, and the ellipsis
+    /// marks it as clipped rather than letting a bare prefix read as a complete id.
+    /// </summary>
+    [Fact]
+    public void SourceLabel_elides_an_id_longer_than_the_bound()
+    {
+        var id = new string('j', ActivityDashboardProjection.SourceIdDisplayLength + 10);
+        var row = ProjectOne(Conv("c1", source: "Cron", sourceId: id));
+
+        var label = ActivityDashboardProjection.SourceLabel(row);
+
+        Assert.NotNull(label);
+        Assert.EndsWith("\u2026", label, StringComparison.Ordinal);
+        Assert.Equal(ActivityDashboardProjection.SourceIdDisplayLength + 1, label.Length);
+        // The untruncated value stays on the row so the tooltip can still show it in full.
+        Assert.Equal(id, row.SourceId);
+    }
+
+    /// <summary>
+    /// AC1: a payload from a server that predates the field still deserialises, and the row is
+    /// simply unattributed. Guards the additive-DTO contract rather than asserting it by inspection.
+    /// </summary>
+    [Fact]
+    public void A_payload_without_the_field_deserialises_to_an_unattributed_row()
+    {
+        const string json = """
+        {
+          "conversationId": "c1",
+          "agentId": "alpha",
+          "title": "Chat",
+          "isDefault": false,
+          "status": "Active",
+          "activeSessionId": null,
+          "bindingCount": 0,
+          "createdAt": "2026-07-10T11:55:00+00:00",
+          "updatedAt": "2026-07-10T12:00:00+00:00",
+          "source": "Cron"
+        }
+        """;
+
+        var dto = System.Text.Json.JsonSerializer.Deserialize<ConversationSummaryDto>(json);
+
+        Assert.NotNull(dto);
+        Assert.Null(dto.SourceId);
+        Assert.Null(ActivityDashboardProjection.SourceLabel(ProjectOne(dto)));
+    }
+
+    /// <summary>
+    /// AC1: the field round-trips off the wire under its documented JSON name. A property declared
+    /// with the wrong <c>JsonPropertyName</c> would leave every other clause green while the real
+    /// gateway payload silently produced null.
+    /// </summary>
+    [Fact]
+    public void The_wire_field_binds_from_its_documented_json_name()
+    {
+        const string json = """
+        {
+          "conversationId": "c1",
+          "agentId": "alpha",
+          "title": "Chat",
+          "isDefault": false,
+          "status": "Active",
+          "activeSessionId": null,
+          "bindingCount": 0,
+          "createdAt": "2026-07-10T11:55:00+00:00",
+          "updatedAt": "2026-07-10T12:00:00+00:00",
+          "source": "Cron",
+          "sourceId": "daily-log-analysis"
+        }
+        """;
+
+        var dto = System.Text.Json.JsonSerializer.Deserialize<ConversationSummaryDto>(json);
+
+        Assert.NotNull(dto);
+        Assert.Equal("daily-log-analysis", dto.SourceId);
+        Assert.Equal("daily-log-analysis", ActivityDashboardProjection.SourceLabel(ProjectOne(dto)));
     }
 }

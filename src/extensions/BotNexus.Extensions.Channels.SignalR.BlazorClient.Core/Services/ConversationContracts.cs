@@ -19,7 +19,8 @@ public sealed record ConversationSummaryDto(
     [property: JsonPropertyName("visibility")] string Visibility = "UserFacing",
     [property: JsonPropertyName("isPinned")] bool IsPinned = false,
     [property: JsonPropertyName("pinnedAt")] DateTimeOffset? PinnedAt = null,
-    [property: JsonPropertyName("participants")] IReadOnlyList<ParticipantDto>? Participants = null);
+    [property: JsonPropertyName("participants")] IReadOnlyList<ParticipantDto>? Participants = null,
+    [property: JsonPropertyName("sourceId")] string? SourceId = null);
 
 public sealed record ParticipantDto(
     [property: JsonPropertyName("kind")] string Kind,
