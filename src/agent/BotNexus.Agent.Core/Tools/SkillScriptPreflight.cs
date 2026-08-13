@@ -311,7 +311,7 @@ public static class SkillScriptPreflight
             $"Skill wrapper not found: '{context.ScriptFileName}' does not exist in the "
             + $"'{context.SkillName}' skill's scripts directory ({context.ScriptsDirectory}).";
 
-        if (false && suggestions.Count > 0)
+        if (suggestions.Count > 0)
         {
             message += $" Closest matches: {string.Join(", ", suggestions)}."
                        + " These were NOT executed - re-issue the call with the exact name you intend.";
