@@ -390,7 +390,7 @@ public sealed class ConversationGroupingTests : IDisposable
         ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         ctx.Services.AddSingleton(new CronApiClient(httpWithMock));
         ctx.Services.AddSingleton(new SectionsApiClient(httpWithMock));
-        _ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
+        ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
         ctx.Services.AddSingleton(new ToolsApiClient(httpWithMock));
         ctx.Services.AddStubNavOrderApiClient();
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;

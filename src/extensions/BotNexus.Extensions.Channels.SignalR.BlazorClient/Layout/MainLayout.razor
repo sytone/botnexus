@@ -722,6 +722,11 @@
         ExtensionFeatures.OnChanged += HandleStateChanged;
         Hub.OnAgentsChanged += HandleSidebarAgentsChanged;
         Prefs.OnChanged += HandleStateChanged;
+        // #2325: the assign menu now resolves sections from the lifted ConversationSectionsState
+        // rather than a panel @ref, so the layout must re-render on its changes itself. Without
+        // this the menu renders whatever was loaded at first paint and silently goes stale - the
+        // component ref it replaced got re-render coupling for free by being in the render tree.
+        SectionsState.Changed += HandleStateChanged;
     }
 
     // Tools and nav order load independently of the JS-driven first-render pipeline so the nav
@@ -1309,6 +1314,7 @@
         ExtensionFeatures.OnChanged -= HandleStateChanged;
         Hub.OnAgentsChanged -= HandleSidebarAgentsChanged;
         Prefs.OnChanged -= HandleStateChanged;
+        SectionsState.Changed -= HandleStateChanged;
     }
 
     private bool IsAgentActive(string agentId)
