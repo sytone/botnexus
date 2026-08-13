@@ -52,6 +52,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly IChannelManager _channelManager;
     private readonly ISessionCompactor _compactor;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
+    private readonly ISessionContextWindowResolver? _contextWindowResolver;
     private readonly ILogger<GatewayHost> _logger;
     private readonly IAgentRegistry? _registry;
     private readonly IMediaPipeline? _mediaPipeline;
@@ -99,8 +100,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         GatewayAuthManager? authManager = null,
         IOutboundResponseDeliverer? outboundResponseDeliverer = null,
         Sessions.ISessionTurnTracker? turnTracker = null,
-        ChannelStartupReport? startupReport = null)
+        ChannelStartupReport? startupReport = null,
+        ISessionContextWindowResolver? contextWindowResolver = null)
     {
+        _contextWindowResolver = contextWindowResolver;
         _supervisor = supervisor;
         _router = router;
         _sessions = sessions;
@@ -1088,6 +1091,30 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         DispatchResult? Dispatch);
 
     /// <summary>
+    /// #2896: resolves the compaction options for one turn, with ContextWindowTokens narrowed to
+    /// the scoped context window for this agent/conversation (conversation override, then agent
+    /// descriptor, then resolved model window). When no resolver is registered, or no layer supplies
+    /// a window, the configured global options are returned unchanged so behaviour is byte-identical
+    /// to the pre-#2896 path.
+    /// </summary>
+    private async Task<CompactionOptions> ResolveScopedCompactionOptionsAsync(
+        AgentId agentId,
+        ConversationId conversationId,
+        CancellationToken cancellationToken)
+    {
+        var options = _compactionOptions.CurrentValue;
+        if (_contextWindowResolver is null)
+        {
+            return options;
+        }
+
+        var scoped = await _contextWindowResolver
+            .ResolveAsync(agentId, conversationId, cancellationToken)
+            .ConfigureAwait(false);
+        return ScopedCompactionWindow.Apply(options, scoped);
+    }
+
+    /// <summary>
     /// Runs the pre-execution "prepare turn" steps for a single agent dispatch, extracted from
     /// <see cref="ProcessAsync"/> (#1503 increment 2, follow-up to #1381). In strict order:
     /// (1) auto-compaction when <see cref="ISessionCompactor.ShouldCompact"/> is true (best-effort:
@@ -1106,7 +1133,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         string sessionId,
         CancellationToken cancellationToken)
     {
-        if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
+        // #2896: narrow the compaction budget to this agent/conversation's own context window
+        // before asking ShouldCompact. The compactor's arithmetic is unchanged - only the base
+        // window it multiplies TokenThresholdRatio against becomes scope-aware, so an agent with
+        // no scoped window behaves exactly as before.
+        var turnCompactionOptions = await ResolveScopedCompactionOptionsAsync(
+            session.AgentId,
+            session.ConversationId,
+            cancellationToken).ConfigureAwait(false);
+
+        if (_compactor.ShouldCompact(session.Session, turnCompactionOptions))
         {
             _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
             try

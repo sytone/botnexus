@@ -127,4 +127,11 @@
     } else {
         watchErrorBanner();
     }
+
+    // #2880: expose the same deduped, capped send so bootDiagnostics.js can report a CLASSIFIED
+    // boot failure through this one seam. Without it a pre-start failure either reports nothing
+    // (the promise rejection is handled, so listener 2 never fires) or reports the erased
+    // "TypeError: Failed to fetch" with no indication that the real cause was an auth interstitial.
+    window.BotNexusErrorReporting = window.BotNexusErrorReporting || {};
+    window.BotNexusErrorReporting.report = report;
 })();

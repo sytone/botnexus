@@ -35,6 +35,15 @@ public sealed class OpenAIResponsesProvider(
 {
     public string Api => "openai-responses";
 
+    /// <summary>
+    /// OpenAI Responses places the system prompt as the first message, carrying the <c>system</c> or
+    /// <c>developer</c> role (see <c>OpenAIResponsesRequestBuilder</c>). No leaked-tool-call
+    /// recovery: the #1709 markup leak was never observed on the OpenAI-direct API (#2432).
+    /// </summary>
+    public ProviderCapabilities Capabilities { get; } = new(
+        RecoversLeakedToolCallMarkup: false,
+        SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
+
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
         => ResponsesStreamEngine.StreamAsync(BuildProfile(logger, secretRedactor), httpClient, logger, model, context, options);
 

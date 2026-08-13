@@ -219,15 +219,22 @@ public static class AgentLoopRunner
 
                 newMessages.Add(assistantMessage);
 
-                // #1709: opus (via github-copilot) sometimes leaks a tool call as invoke/tool_use
+                // #1709 / #2432: some Copilot transports deliver a tool call as invoke/tool_use
                 // XML in the assistant TEXT channel with a non-ToolUse finish reason, so the
                 // continuation guard below never dispatches it. Recover such leaked calls before the
                 // guard: parse the markup into real tool calls, strip it from the text, and promote
-                // the turn to ToolUse. Behaviour-preserving for a genuine ToolUse turn or any turn
-                // with no recoverable markup. Complements the Tier 1 sanitizer (#1699) that only
-                // strips the markup for delivery.
+                // the turn to ToolUse. Complements the Tier 1 sanitizer (#1699) that only strips the
+                // markup for delivery.
+                //
+                // #2432: this now fires from a DECLARED capability rather than speculatively for
+                // every provider. Before, every provider in the platform paid a regex scan of every
+                // assistant turn -- and, worse, risked having genuine prose containing well-formed
+                // invoke markup rewritten into an executed tool call -- to compensate for one
+                // transport's defect. Providers that declare RecoversLeakedToolCallMarkup keep the
+                // exact previous behaviour; everyone else gets their text left alone.
                 if (assistantMessage.FinishReason != StopReason.ToolUse
-                    && assistantMessage.ToolCalls is not { Count: > 0 })
+                    && assistantMessage.ToolCalls is not { Count: > 0 }
+                    && config.LlmClient.GetCapabilities(config.Model).RecoversLeakedToolCallMarkup)
                 {
                     var recovery = LeakedToolCallRecovery.Recover(assistantMessage.Content);
                     if (recovery.RecoveredCalls.Count > 0)
