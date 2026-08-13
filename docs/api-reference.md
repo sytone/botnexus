@@ -193,29 +193,31 @@ GET /api/agents?includeSubAgents=true&includeBuiltin=true
 ```
 
 **Response:** 200 OK
+
+A **lean list projection** (`AgentListItem`), not the full `AgentDescriptor` (#2755). Fields
+such as `systemPrompt`, `fileAccess`, `toolPolicy`, and `extensionConfig` are deliberately **not**
+returned here - this call is unauthenticated by default and the portal reads at most seven
+fields. Use `GET /api/agents/{agentId}` for the full descriptor.
+
 ```json
 [
   {
     "agentId": "assistant",
     "displayName": "Assistant",
-    "modelId": "gpt-4.1",
+    "emoji": "🤖",
+    "description": "General purpose assistant",
+    "isBuiltIn": false,
     "apiProvider": "copilot",
-    "systemPrompt": null,
-    "isolationStrategy": "in-process",
-    "toolIds": [],
-    "subAgentIds": [],
-    "maxConcurrentSessions": 0
+    "modelId": "gpt-4.1"
   },
   {
     "agentId": "analyzer",
     "displayName": "Analyzer",
-    "modelId": "claude-sonnet-4-5",
+    "emoji": null,
+    "description": null,
+    "isBuiltIn": false,
     "apiProvider": "anthropic",
-    "systemPrompt": null,
-    "isolationStrategy": "in-process",
-    "toolIds": [],
-    "subAgentIds": [],
-    "maxConcurrentSessions": 0
+    "modelId": "claude-sonnet-4-5"
   }
 ]
 ```
@@ -1615,6 +1617,55 @@ Each summary carries the run's task lineage (`parentAgentId` / `childAgentId`), 
   "commitShort": "7068c755",
   "version": "0.28.0",
   "defaultAgentId": "assistant"
+}
+```
+
+---
+
+### Platform Stats Overview
+
+**Endpoint:** `GET /api/stats`
+
+**Description:** Read-only platform-wide stats overview for the portal stats section. Aggregates
+signals that already exist - active agent loops and the platform-wide active sub-agent tally -
+into a single call, so a client can show live in-flight work without stitching several
+diagnostics calls together.
+
+Always returns `200 OK`, with **zeros** for any signal that is not registered, so a client can
+render a stable panel and poll it on a light interval rather than handling a `404`.
+
+The headline count and the detail rows come from **one snapshot**, so `activeAgentLoops` always
+equals the length of `activeLoopDetails` - reading the count separately from the list would let
+a concurrent start or completion land between the two reads.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `activeAgentLoops` | int | Live number of agent loops currently executing across the platform. |
+| `peakAgentLoops` | int | Peak concurrent agent-loop count observed since gateway startup. |
+| `totalCompletedLoops` | long | Total agent loops completed since gateway startup. |
+| `activeSubAgents` | int | Live number of sub-agents running across all parent sessions. |
+| `activeLoopDetails` | array | One row per active agent loop, taken from the same snapshot. |
+
+Each `activeLoopDetails` row carries `loopId` (opaque run identity, stable for the loop's
+lifetime), `agentId`, `conversationId`, `sessionId` (each nullable when not known), and
+`startedAtUtc` - enough to derive run age and decide whether a gateway restart is safe.
+
+**Response:** 200 OK
+```json
+{
+  "activeAgentLoops": 1,
+  "peakAgentLoops": 4,
+  "totalCompletedLoops": 812,
+  "activeSubAgents": 0,
+  "activeLoopDetails": [
+    {
+      "loopId": "loop_9f2c...",
+      "agentId": "farnsworth",
+      "conversationId": "c_abc...",
+      "sessionId": "s_def...",
+      "startedAtUtc": "2026-08-13T06:41:12Z"
+    }
+  ]
 }
 ```
 

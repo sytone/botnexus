@@ -20,17 +20,50 @@ public interface ISessionStore
     Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken ct = default);
     Task<GatewaySession> GetOrCreateAsync(SessionId sessionId, AgentId agentId, CancellationToken ct = default);
     Task SaveAsync(GatewaySession session, CancellationToken ct = default);
+    Task<SessionSaveOutcome> SaveAsync(GatewaySession session, SessionWriteFence fence, CancellationToken ct = default);
     Task DeleteAsync(SessionId sessionId, CancellationToken ct = default);
-    
+
+    // Atomic mutations (read-modify-write under the store's own lock)
+    Task<SessionAppendMutationResult> AppendEntriesAsync(...);
+    Task<SessionMetadataMutationResult> PatchMetadataAsync(...);
+    Task<SessionStatusMutationResult> TransitionStatusAsync(...);
+
     // Queries
-    Task<IReadOnlyList<GatewaySession>> ListAsync(AgentId agentId, CancellationToken ct = default);
-    Task<IReadOnlyList<GatewaySession>> QueryAsync(ExistenceQuery query, CancellationToken ct = default);
-    
+    Task<IReadOnlyList<GatewaySession>> ListAsync(AgentId? agentId = null, CancellationToken ct = default);
+    Task<IReadOnlyList<SessionSummary>> ListSummariesAsync(...);
+    Task<SessionSummaryPage> ListSummaryPageAsync(...);
+    Task<IReadOnlyList<GatewaySession>> ListByChannelAsync(...);
+    Task<IReadOnlyList<GatewaySession>> ListByConversationAsync(...);
+    Task<IReadOnlyList<GatewaySession>> GetExistenceAsync(...);
+    Task<SessionStats?> GetStatsAsync(AgentId? agentId = null, CancellationToken ct = default);
+
     // Lifecycle
     Task ArchiveAsync(SessionId sessionId, CancellationToken ct = default);
-    Task<int> CleanupExpiredAsync(TimeSpan retention, CancellationToken ct = default);
+
+    // Sub-agent session records
+    Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken ct = default);
+    Task UpdateSubAgentSessionAsync(...);
+    Task<IReadOnlyList<SubAgentSessionSummary>> ListSubAgentSessionsAsync(...);
+    Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(...);
 }
 ```
+
+See [ISessionStore.cs](../../src/gateway/BotNexus.Gateway.Contracts/Sessions/ISessionStore.cs)
+for the authoritative signatures and per-member contracts.
+
+### The fenced save overload
+
+`SaveAsync(session, fence, ct)` is the write path the gateway's post-run finalizer uses. It
+persists **only if** the on-disk row still matches the run identity captured in the
+`SessionWriteFence` at run start. When the row was deleted, sealed by a competing reset, or
+rebound to a different conversation while the run was in flight, the write is skipped and
+`SessionSaveOutcome.Rebound` is returned rather than resurrecting or clobbering the row
+(issue #1518). The unfenced `SaveAsync` keeps unconditional create-or-update semantics for
+pre-run write-ahead saves that must be able to create the row.
+
+The default implementation re-reads via `GetAsync` and applies the fence before delegating.
+Stores that can do the re-read and the write under a single lock - the SQLite store - override
+it to close the check-then-write window atomically.
 
 ## GatewaySession Model
 
@@ -80,7 +113,18 @@ public record SessionParticipant
 
 ## SessionStoreBase
 
-Abstract base class that implements common logic: `GetOrCreateAsync` (auto-create sessions on demand), `ArchiveAsync` (seal sessions). Defines abstract methods (`GetInternalAsync`, `SaveInternalAsync`, `DeleteInternalAsync`, `ListInternalAsync`) for subclasses to implement storage-specific behavior.
+Abstract base class implementing the query, mutation, and lifecycle logic that is identical
+across every backing store, so a concrete store only implements storage access. Its abstract
+members are `GetAsync`, `GetOrCreateAsync`, `SaveAsync`, `DeleteAsync`, `ArchiveAsync`, and the
+protected `EnumerateSessionsAsync`. Everything else - the fenced `SaveAsync` overload, the three
+atomic mutations (`AppendEntriesAsync`, `PatchMetadataAsync`, `TransitionStatusAsync`), the
+summary/paging/channel/conversation queries, and the sub-agent session records - is `virtual`,
+so a store overrides only what it can do better (the SQLite store overrides the fenced save and
+the mutations to close the check-then-write window under one lock).
+
+It also owns the **archive drain**: `ConfigureArchiveDrain(runDrain, drainTimeout)` lets the
+gateway supply a drain so `ArchiveAsync` waits for an in-flight run to finish before sealing,
+bounded by `DefaultArchiveDrainTimeout` (30 seconds).
 
 See [SessionStoreBase.cs](../../src/gateway/BotNexus.Gateway.Sessions/SessionStoreBase.cs)
 
@@ -143,7 +187,7 @@ CREATE INDEX idx_sessions_session_type ON sessions(session_type);
 CREATE INDEX idx_sessions_created_at ON sessions(created_at);
 ```
 
-**Key behaviors:** Parameterized queries throughout, `INSERT OR REPLACE` for upserts, JSON serialization for complex fields (`participants_json`, `metadata`). Session history stored in the separate `session_history` table. Lazy schema initialization via `EnsureSchemaAsync`, and ISO 8601 date formatting.
+**Key behaviors:** Parameterized queries throughout, `INSERT OR REPLACE` for upserts, JSON serialization for complex fields (`participants_json`, `metadata`). Session history stored in the separate `session_history` table. Lazy schema initialization via `EnsureCreatedAsync`, and ISO 8601 date formatting.
 
 ### History entry flags
 
@@ -185,44 +229,57 @@ See [SqliteSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/SqliteSe
 **Example Queries:**
 
 ```csharp
-// Find all active UserAgent sessions for an agent
-var query = new ExistenceQuery
+var agentId = AgentId.From("my-agent");
+
+// Find all active UserAgent sessions the agent owns or participates in
+var activeQuery = new ExistenceQuery
 {
-    AgentId = AgentId.From("my-agent"),
     SessionType = SessionType.UserAgent,
     Status = SessionStatus.Active
 };
-var sessions = await _sessionStore.QueryAsync(query, ct);
+var sessions = await _sessionStore.GetExistenceAsync(agentId, activeQuery, ct);
 
-// Find all soul sessions created in the last 7 days
-var query = new ExistenceQuery
+// Find that agent's soul sessions created in the last 7 days
+var soulQuery = new ExistenceQuery
 {
     SessionType = SessionType.Soul,
     CreatedAfter = DateTimeOffset.UtcNow.AddDays(-7),
     Limit = 100
 };
-var recentSoulSessions = await _sessionStore.QueryAsync(query, ct);
+var recentSoulSessions = await _sessionStore.GetExistenceAsync(agentId, soulQuery, ct);
 ```
 
 ## Session Cleanup
 
 **Automatic Cleanup:**
 
-`CleanupExpiredAsync` deletes sessions with expired status and `updated_at` older than the retention cutoff. See [SqliteSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs)
+There is no store-level bulk-expiry method. Cleanup is driven entirely by
+`SessionCleanupService`, which enumerates sessions and calls `DeleteAsync` per session for the
+rows that qualify.
 
 **SessionCleanupService:**
 
-`BackgroundService` that periodically calls `CleanupExpiredAsync` with configurable interval and retention period. Logs results and handles errors with 5-minute retry backoff.
+A `BackgroundService` that wakes on `CheckInterval` and calls `RunCleanupOnceAsync`. Each pass
+**skips any session with an agent run in flight** (logged, retried next pass) and then deletes:
+
+- sessions idle beyond `SessionTtl`;
+- closed sessions older than `ClosedSessionRetention`, when configured;
+- cron sessions whose run did no work, older than `CronNoopRetention`.
+
+Each deletion emits a `SessionLifecycleEventType.Deleted` event. A failed iteration is logged as
+a warning and retried on the next interval rather than terminating the service.
 
 See [SessionCleanupService.cs](../../src/gateway/BotNexus.Gateway/SessionCleanupService.cs)
 
 **SessionCleanupOptions:**
 
 ```csharp
-public record SessionCleanupOptions
+public sealed class SessionCleanupOptions
 {
-    public TimeSpan CleanupInterval { get; init; } = TimeSpan.FromHours(1);
-    public TimeSpan RetentionPeriod { get; init; } = TimeSpan.FromDays(30);
+    public TimeSpan CheckInterval { get; set; } = TimeSpan.FromMinutes(5);
+    public TimeSpan SessionTtl { get; set; } = TimeSpan.FromHours(24);
+    public TimeSpan? ClosedSessionRetention { get; set; }
+    public TimeSpan? CronNoopRetention { get; set; } = TimeSpan.FromDays(7);
 }
 ```
 

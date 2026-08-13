@@ -127,6 +127,8 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `fileAccess.allowedWritePaths` | array | `[]` | Default write paths for all agents (world-level) |
 | `fileAccess.deniedPaths` | array | `[]` | Default denied paths for all agents (world-level) |
 | `rateLimit.enabled` | bool | `false` | Enable per-client rate limiting (opt-in) |
+| `secretRedaction.patterns` | array | `[]` | Extra operator-supplied .NET regexes whose matches are replaced with `[REDACTED]`. Applied **in addition to** the built-in credential patterns, never instead of them. Validated at startup |
+| `secretRedaction.matchTimeoutMilliseconds` | int | `100` | Per-pattern match timeout, so a catastrophic-backtracking regex cannot hang the logging path. Must be greater than zero |
 
 ### Remote and mesh access
 

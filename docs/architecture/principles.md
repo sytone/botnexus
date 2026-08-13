@@ -126,8 +126,8 @@ AgentCore and Providers are **independent libraries** — they have no knowledge
 
 **Application:**
 
-- `IAgentTool` has only `Name`, `Definition`, `ExecuteAsync` (no lifecycle methods)
-- `IHookHandler` has only `BeforeAsync`, `AfterAsync` (no state management)
+- `IAgentTool` has only `Name`, `Label`, `Definition`, `PrepareArgumentsAsync`, `ExecuteAsync` (no lifecycle methods)
+- `IHookHandler<TEvent, TResult>` has only `Priority` and `HandleAsync` (no state management)
 - `IPromptSection` has only `Order`, `ShouldInclude`, `Build` (no pipeline logic)
 - `IChannelAdapter` has focused methods for send/receive (no business logic)
 

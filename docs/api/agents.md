@@ -39,9 +39,24 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/AgentsController.cs`.
 | `includeSubAgents` | query | bool | `false` | Include runtime-spawned sub-agent descriptors (e.g. "Farnsworth (coder)"). These are ephemeral children created via `spawn_subagent` and are hidden by default. |
 | `includeBuiltin` | query | bool | `false` | Include built-in platform archetype agents (researcher, coder, planner, reviewer, writer, analyst). They are spawn/converse targets rather than top-level user-created agents. |
 
-Returns `200 OK` with an array of `AgentDescriptor`. By default only first-class,
-user-facing agents are returned, so the portal agent picker is not cluttered with
-infrastructure descriptors.
+Returns `200 OK` with an array of `AgentListItem` - a **lean list projection**, not the full
+`AgentDescriptor` (#2755). The domain model was previously serialised directly, putting 36
+properties per agent on the portal's cold-boot path where consumers read at most seven, and
+broadcasting `systemPrompt` / `fileAccess` / `toolPolicy` / `extensionConfig` on a call that is
+unauthenticated by default. Clients needing the full shape use `GET /api/agents/{agentId}`.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `agentId` | string | Stable agent identifier. |
+| `displayName` | string | Human-readable name shown in pickers and the sidebar. |
+| `emoji` | string? | Optional emoji rendered beside the display name. |
+| `description` | string? | Optional short description shown in the agent list. |
+| `isBuiltIn` | bool | Whether this is a built-in platform archetype agent. |
+| `apiProvider` | string | Provider instance key. |
+| `modelId` | string | Model identifier. |
+
+By default only first-class, user-facing agents are returned, so the portal agent picker is not
+cluttered with infrastructure descriptors.
 
 ### `GET /api/agents/{agentId}`
 
