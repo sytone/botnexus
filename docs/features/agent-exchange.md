@@ -95,13 +95,18 @@ GET /api/exchanges/budget?initiator=agent-a&target=agent-b
 ```
 
 Returns current budget state for all or specific agent pairs, including:
-- Exchanges today
-- Remaining daily quota
-- Cooldown status and expiry
-- Loop detection window state
+- Turns used today and the cap they are measured against
+- Cooldown status and the seconds remaining
+- Loop detection counter
+- The end of the pair's last exchange
+
+The authoritative request and response shape — verified against `ExchangesController` — lives in
+the [Exchanges API reference](/api/exchanges). Note in particular that the response is an object
+wrapping a `pairs` array, not a bare array.
 
 ## Related
 
+- [Exchanges API reference](/api/exchanges) — controller-verified shape of `/api/exchanges/budget`
 - [Built-in Agents](/features/built-in-agents) — Agents available out of the box
 - [Sub-Agent Spawning](/features/sub-agent-spawning) — Ephemeral sub-agent delegation
 - [Cron & Scheduling](/cron-and-scheduling) — Scheduled job configuration

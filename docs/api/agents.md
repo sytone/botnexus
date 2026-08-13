@@ -127,8 +127,20 @@ diagnostics. Both preconditions return `404 Not Found` with a plain-text reason:
 
 ### `GET /api/agents/{agentId}/sessions/{sessionId}/context`
 
-`200 OK`, with a token-usage summary. Note that `contextWindowTokens` is a fixed reference
-value of `128000` used to compute `usagePercent`.
+`200 OK`, with a token-usage summary.
+
+> [!WARNING]
+> **`contextWindowTokens` is a hardcoded placeholder — do not budget against it.**
+> `AgentsController.BuildContextResponse` declares `const int contextWindowTokens = 128000`
+> and never consults the resolved model. The value is `128000` for every agent, on every
+> model, always. `usagePercent` is derived from it and is therefore equally unreliable:
+> against a 200k-window model it over-reports usage, and against a 32k-window model it
+> under-reports it by a factor of four — silently, with no error.
+>
+> Treat `totalEstimatedTokens` and the per-section counts as the only load-bearing numbers
+> here, and obtain the real context window from the model configuration instead.
+> Returning the resolved model's actual window is tracked as
+> [#3091](https://github.com/Sytone/botnexus/issues/3091).
 
 ```json
 {

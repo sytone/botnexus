@@ -116,6 +116,7 @@ this exception — they go through the normal API-key check.
 | Agents | `api/agents` | [agents.md](agents.md) |
 | Conversations | `api/conversations` | [conversations.md](conversations.md) |
 | Cron | `api/cron` | [cron.md](cron.md) |
+| Exchanges (agent-to-agent budget diagnostics) | `api/exchanges` | [exchanges.md](exchanges.md) |
 | Satellites | `api/satellites` | [satellites.md](satellites.md) |
 | Sessions + Sub-agents | `api/sessions`, `api/subagents` | [sessions.md](sessions.md) |
 | Webhooks (management + inbound delivery) | `api/webhooks` | [webhooks.md](webhooks.md) |
