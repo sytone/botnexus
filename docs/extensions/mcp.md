@@ -48,6 +48,26 @@ Configure MCP servers in your agent's extension config:
 }
 ```
 
+### Config is not manifest-validated
+
+`botnexus-mcp`'s `botnexus-extension.json` declares `configSchema: []`, so none of the keys below are
+validated or defaulted by the extension loader. This is a limitation of the manifest schema, not an
+oversight in this extension: `ExtensionConfigValidator` only inspects **top-level** field presence —
+it warns on an absent `required` field and applies a string `default` to an absent optional one. It
+does not type-check values and does not descend into nested objects. MCP's configuration is a nested
+`servers` map keyed by arbitrary server IDs, which that flat model cannot express.
+
+Practical consequences:
+
+- A typo in a server key, a missing `command`/`url`, or a wrong value type produces no startup warning.
+- Defaults documented below are applied by the extension's own binding (`McpExtensionConfig`), not by
+  the manifest.
+- Validation failures surface at server start/connect time, per server, as warnings — a failing server
+  is skipped and the others continue.
+
+See [the manifest contract](/extension-development#configschema) for what `configSchema` can and
+cannot express.
+
 ### Top-Level Settings
 
 | Key | Type | Default | Description |

@@ -51,7 +51,15 @@
             return Promise.resolve(false);
         };
     </script>
-    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+    <script src="js/bootDiagnostics.js"></script>
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js" autostart="false"></script>
+    <script>
+        // #2880: default autostart leaves a failed boot as an unhandled rejection, so the static
+        // .loading-screen above is never torn down and the user sees the spinner forever. Starting
+        // explicitly through BotNexusBoot attaches a rejection handler that replaces #app with an
+        // actionable panel, and distinguishes an auth-proxy login interstitial from a real fault.
+        window.BotNexusBoot.startBlazor();
+    </script>
     <script src="js/swUpdate.js"></script>
     <script>
         // Register the PWA service worker so Edge/Chromium treats the portal as installable.

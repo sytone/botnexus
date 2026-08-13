@@ -99,7 +99,8 @@ internal sealed class CronToolProvider(
     ICronStore? cronStore,
     CronScheduler? cronScheduler,
     BotNexus.Agent.Providers.Core.Registry.ModelRegistry? modelRegistry = null,
-    BotNexus.Cron.Actions.ICommandCronAuthorizer? commandAuthorizer = null) : IToolProvider
+    BotNexus.Cron.Actions.ICommandCronAuthorizer? commandAuthorizer = null,
+    BotNexus.Cron.ICronAlertTargetResolver? alertTargetResolver = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context)
@@ -117,7 +118,10 @@ internal sealed class CronToolProvider(
             // #2462: the command-authoring gate is threaded in here so the model-facing cron tool
             // refuses to persist a shellCommand the exec-tool policy would deny. A null authorizer
             // fails closed inside CronTool.
-            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer)];
+            // #2838: the alert-target resolver is threaded in so the tool can validate a
+            // failureAlertConversationId through the SAME CronAlertTarget seam the REST API uses.
+            // A null resolver fails closed inside CronTool for any supplied target.
+            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer, alertTargetResolver)];
         return Task.FromResult(tools);
     }
 

@@ -181,7 +181,7 @@ public sealed class SystemPromptBuilderSnapshotTests
 
         var beginIndex = prompt.IndexOf("INTERNAL_RUNTIME_CONTEXT_BEGIN", StringComparison.Ordinal);
         var runtimeLineIndex = prompt.IndexOf("Runtime: agent=agent-a", StringComparison.Ordinal);
-        var reasoningIndex = prompt.IndexOf("Reasoning: medium", StringComparison.Ordinal);
+        var reasoningIndex = prompt.IndexOf("Reasoning: thinking level medium", StringComparison.Ordinal);
         var endIndex = prompt.IndexOf("INTERNAL_RUNTIME_CONTEXT_END", StringComparison.Ordinal);
 
         beginIndex.ShouldBeGreaterThanOrEqualTo(0);
@@ -229,7 +229,10 @@ public sealed class SystemPromptBuilderSnapshotTests
             {
                 AgentId = "agent-a",
                 Channel = "signalr"
-            }
+            },
+            // #2874: the Reasoning line is now conditional on a resolvable thinking level, so this
+            // test must supply one to exercise "END closes the body after the last body line".
+            ReasoningLevel = "medium"
         });
 
         var lines = prompt

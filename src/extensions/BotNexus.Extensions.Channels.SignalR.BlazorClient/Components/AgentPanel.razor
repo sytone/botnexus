@@ -28,7 +28,7 @@
                  data-testid="agent-panel-conversation"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Conversation) ? "active" : "")"
                  role="tabpanel">
-            <ChatPanel AgentId="@AgentId" />
+            <ChatPanel AgentId="@AgentId" ConversationId="@EffectiveConversationId" />
         </section>
 
         @if (!IsSubAgent)
@@ -60,7 +60,7 @@
                  data-testid="agent-panel-todo"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Todo) ? "active" : "")"
                  role="tabpanel">
-            <TodoPanel AgentId="@AgentId" ConversationId="@Agent?.ActiveConversationId" />
+            <TodoPanel AgentId="@AgentId" ConversationId="@EffectiveConversationId" />
         </section>
     </div>
 </div>
@@ -81,7 +81,9 @@
     public string? RoutedConversationId { get; set; }
 
     /// <summary>
-    /// Resolves which conversation the per-conversation panes bind to.
+    /// Resolves which conversation the per-conversation panes bind to. #3062 extends this from the
+    /// canvas pane alone to the chat and todo panes, so a deep link can no longer render the routed
+    /// conversation's canvas beside a different conversation's transcript and checklist.
     ///
     /// The routed id is honoured ONLY when it belongs to THIS agent. That guard is load-bearing, not
     /// defensive padding: Home.razor renders one AgentPanel per agent in Store.Agents, while the route
