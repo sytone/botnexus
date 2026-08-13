@@ -152,8 +152,12 @@ public sealed class AgentExecutionToolAuditFenceArchitectureTests
         var assembly = typeof(BypassingProbe).Assembly.Location;
         using var module = ModuleDefinition.ReadModule(assembly);
 
-        var type = module.Types.First(t => t.Name == nameof(BypassingProbe));
-        var sites = type.Methods
+        // The probes are async, so the PromptAsync call lives in the compiler-generated
+        // <RunAsync>d__N.MoveNext nested inside the probe type - exactly as it does for every real
+        // call site in the gateway. Flatten, as the production scan does; looking only at the
+        // top-level type would inspect an empty kickoff stub and find nothing.
+        var sites = Flatten(module.Types.First(t => t.Name == nameof(BypassingProbe)))
+            .SelectMany(t => t.Methods)
             .Where(m => m.HasBody)
             .SelectMany(m => ExecutionCallSites(m, module))
             .ToList();
@@ -164,8 +168,8 @@ public sealed class AgentExecutionToolAuditFenceArchitectureTests
 
         // ...and the compliant probe in the same assembly must NOT be flagged, so the detector is
         // discriminating rather than simply reporting everything.
-        var compliant = module.Types.First(t => t.Name == nameof(CompliantProbe));
-        var compliantSites = compliant.Methods
+        var compliantSites = Flatten(module.Types.First(t => t.Name == nameof(CompliantProbe)))
+            .SelectMany(t => t.Methods)
             .Where(m => m.HasBody)
             .SelectMany(m => ExecutionCallSites(m, module))
             .ToList();
