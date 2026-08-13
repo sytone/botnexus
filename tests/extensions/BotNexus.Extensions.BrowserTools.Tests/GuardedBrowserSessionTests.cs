@@ -9,6 +9,14 @@ namespace BotNexus.Extensions.BrowserTools.Tests;
 /// </summary>
 public sealed class GuardedBrowserSessionTests
 {
+    /// <summary>
+    /// Workspace root for the fake filesystem. Built from the running platform's own temp root
+    /// rather than a hard-coded <c>C:\</c>: these tests execute on a Windows workstation AND in
+    /// the Linux gate container, and a drive-letter path is not absolute in the latter.
+    /// </summary>
+    private static readonly string WorkspaceRoot =
+        Path.Combine(Path.GetTempPath(), "botnexus-browserguard-ws");
+
     private static (GuardedBrowserSession Session, MockFileSystem Fs) CreateSession(
         FakeBrowserDriver driver,
         BrowserToolsConfig? config = null,
@@ -16,7 +24,7 @@ public sealed class GuardedBrowserSessionTests
     {
         var fs = new MockFileSystem();
         var session = new GuardedBrowserSession(
-            driver, @"C:\ws", config, state, fs, () => DateTimeOffset.UnixEpoch);
+            driver, WorkspaceRoot, config, state, fs, () => DateTimeOffset.UnixEpoch);
         return (session, fs);
     }
 
@@ -162,10 +170,18 @@ public sealed class GuardedBrowserSessionTests
             "an absolute path would leak the host layout and is not what the read tool takes.");
 
         // (3) that path really holds the FULL text - a truncation that loses the remainder is
-        //     data loss dressed up as a budget control
-        var spilled = fs.GetFile(Path.Combine(@"C:\ws", snapshot.SpillPath.Replace('/', '\\')));
-        spilled.ShouldNotBeNull();
-        spilled.TextContents.ShouldBe(full);
+        //     data loss dressed up as a budget control.
+        //     The file is located by its NAME rather than by re-assembling the absolute path in
+        //     the test: the guard combines paths through IFileSystem.Path, whose separator differs
+        //     between this workstation and the Linux gate container, and a test that hard-codes
+        //     one separator asserts the platform rather than the behaviour.
+        var spillFileName = snapshot.SpillPath.Split('/')[^1];
+        var spilledPath = fs.AllFiles.ShouldHaveSingleItem();
+        spilledPath.ShouldEndWith(spillFileName);
+        spilledPath.Replace('\\', '/')
+            .Contains("tmp/browser/", StringComparison.Ordinal)
+            .ShouldBeTrue("the spill must land under the agent workspace tmp/browser/ directory.");
+        fs.GetFile(spilledPath).TextContents.ShouldBe(full);
 
         // (4) and the model is TOLD where it went, or it can never page through it
         snapshot.Content!.ShouldContain(snapshot.SpillPath);

@@ -15,11 +15,19 @@ namespace BotNexus.Extensions.BrowserTools.Tests;
 /// </remarks>
 public sealed class BrowserToolsNavigationGuardTests
 {
+    /// <summary>
+    /// Workspace root for the fake filesystem. Built from the running platform's own root rather
+    /// than a hard-coded <c>C:\</c>: these tests execute on this Windows workstation AND in the
+    /// Linux gate container, and a drive-letter path is not a valid absolute path in the latter.
+    /// </summary>
+    private static readonly string WorkspaceRoot =
+        Path.Combine(Path.GetTempPath(), "botnexus-browserguard-ws");
+
     private static GuardedBrowserSession CreateSession(
         FakeBrowserDriver driver,
         BrowserToolsConfig? config = null,
         BrowserGuardState? state = null)
-        => new(driver, @"C:\ws", config, state, new MockFileSystem(), () => DateTimeOffset.UnixEpoch);
+        => new(driver, WorkspaceRoot, config, state, new MockFileSystem(), () => DateTimeOffset.UnixEpoch);
 
     // ---- AC1(a): SsrfValidator rejection -------------------------------------------------
 
