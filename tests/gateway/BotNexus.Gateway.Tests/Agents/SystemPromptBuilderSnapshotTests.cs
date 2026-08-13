@@ -229,7 +229,10 @@ public sealed class SystemPromptBuilderSnapshotTests
             {
                 AgentId = "agent-a",
                 Channel = "signalr"
-            }
+            },
+            // #2874: the Reasoning line is now conditional on a resolvable thinking level, so this
+            // test must supply one to exercise "END closes the body after the last body line".
+            ReasoningLevel = "medium"
         });
 
         var lines = prompt
