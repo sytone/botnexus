@@ -33,6 +33,10 @@ namespace BotNexus.Persistence.Sqlite;
 /// <c>busy_timeout</c> is intentionally <b>not</b> managed here: it is a per-connection setting
 /// that must be re-applied on every fresh connection, so each store keeps applying it in its own
 /// connection path (see #1450). This helper only owns the database-level journal-mode concern.
+/// <para>
+/// Every pragma this helper issues goes through <see cref="TryExecutePragmaCoreAsync{T}"/>, the
+/// single disposal-race seam described there (#3124).
+/// </para>
 /// </remarks>
 public sealed class SqliteWalMaintenance
 {
@@ -90,7 +94,10 @@ public sealed class SqliteWalMaintenance
     /// Defaults to <see cref="DefaultJournalSizeLimitBytes"/> (64 MiB). Pass
     /// <see cref="UnlimitedJournalSizeLimit"/> (-1) to opt out of the bound entirely.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A <see cref="JournalModeResult"/> describing the requested vs effective mode.</returns>
+    /// <returns>A <see cref="JournalModeResult"/> describing the requested vs effective mode. When
+    /// the connection's native handle is already released the pragmas are skipped and the result
+    /// reports an empty effective mode, so <see cref="JournalModeResult.Applied"/> is <c>false</c>
+    /// rather than falsely claiming a verified mode (#3124).</returns>
     public async Task<JournalModeResult> ApplyJournalModeAsync(
         SqliteConnection connection,
         string databasePath,
@@ -121,21 +128,21 @@ public sealed class SqliteWalMaintenance
         // journaling (DELETE) is the safe, portable fallback there.
         var requestedMode = isNetwork ? "delete" : "wal";
 
-        await using (var setMode = connection.CreateCommand())
-        {
-            setMode.CommandText = $"PRAGMA journal_mode = {requestedMode};";
-            await setMode.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
+        var modeExecuted = await TryExecutePragmaAsync(
+            connection,
+            $"PRAGMA journal_mode = {requestedMode};",
+            cancellationToken).ConfigureAwait(false);
 
         int? appliedAutocheckpoint = null;
         long? appliedJournalSizeLimit = null;
-        if (!isNetwork)
+        if (modeExecuted && !isNetwork)
         {
             // Bound -wal growth so a long-lived writer cannot let the WAL balloon unbounded.
-            await using (var autoCp = connection.CreateCommand())
+            if (await TryExecutePragmaAsync(
+                    connection,
+                    $"PRAGMA wal_autocheckpoint = {walAutocheckpoint};",
+                    cancellationToken).ConfigureAwait(false))
             {
-                autoCp.CommandText = $"PRAGMA wal_autocheckpoint = {walAutocheckpoint};";
-                await autoCp.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
                 appliedAutocheckpoint = walAutocheckpoint;
             }
 
@@ -143,19 +150,33 @@ public sealed class SqliteWalMaintenance
             // on-disk size too: SQLite truncates back to this bound when a fully-checkpointed WAL
             // resets, which is the only thing that reclaims a pathological high-water mark short of
             // closing the database (#2370).
-            await using (var sizeLimit = connection.CreateCommand())
+            if (await TryExecutePragmaAsync(
+                    connection,
+                    $"PRAGMA journal_size_limit = {journalSizeLimitBytes.ToString(CultureInfo.InvariantCulture)};",
+                    cancellationToken).ConfigureAwait(false))
             {
-                sizeLimit.CommandText = $"PRAGMA journal_size_limit = {journalSizeLimitBytes.ToString(CultureInfo.InvariantCulture)};";
-                await sizeLimit.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
                 appliedJournalSizeLimit = journalSizeLimitBytes;
             }
         }
 
-        var effectiveMode = await QueryEffectiveJournalModeAsync(connection, cancellationToken).ConfigureAwait(false);
+        var (verified, effectiveMode) =
+            await QueryEffectiveJournalModeAsync(connection, cancellationToken).ConfigureAwait(false);
 
         var result = new JournalModeResult(requestedMode, effectiveMode, isNetwork, appliedAutocheckpoint, appliedJournalSizeLimit);
 
-        if (!result.Applied)
+        if (!verified)
+        {
+            // The native handle went away before the effective mode could be re-read, so the mode
+            // was never verified. EffectiveMode is deliberately left empty - never the requested
+            // mode - which keeps JournalModeResult.Applied false: an unverified mode must not be
+            // reported to the caller as a verified one (#3124).
+            _logger.LogDebug(
+                "SQLite journal_mode verification for {DatabasePath} was skipped: the connection's native " +
+                "handle was already released, so 'PRAGMA journal_mode;' could not be re-read. " +
+                "Requested '{Requested}'.",
+                databasePath, requestedMode);
+        }
+        else if (!result.Applied)
         {
             _logger.LogWarning(
                 "SQLite journal_mode for {DatabasePath} did not take: requested '{Requested}' but effective mode is " +
@@ -177,7 +198,8 @@ public sealed class SqliteWalMaintenance
     /// Runs a WAL checkpoint against an <b>already-open</b> <paramref name="connection"/>. Exposed
     /// for the Step 3 periodic checkpoint service and for graceful-shutdown reclamation; this helper
     /// does not schedule checkpoints itself. A no-op (returns without error) when the database is not
-    /// in WAL mode - <c>wal_checkpoint</c> is harmless on rollback-journalled databases.
+    /// in WAL mode - <c>wal_checkpoint</c> is harmless on rollback-journalled databases - and equally
+    /// a no-op when the connection's native handle has already been released (#3124).
     /// </summary>
     /// <param name="connection">An open SQLite connection to the target database.</param>
     /// <param name="mode">Checkpoint aggressiveness - see <see cref="SqliteCheckpointMode"/>.</param>
@@ -196,24 +218,103 @@ public sealed class SqliteWalMaintenance
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported checkpoint mode."),
         };
 
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandText = $"PRAGMA wal_checkpoint({modeKeyword});";
-        // wal_checkpoint returns a result row (busy, log, checkpointed); execute as a reader so the
-        // row is consumed, but we do not need the values for a fire-and-forget checkpoint.
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            // drain
-        }
+        await TryExecutePragmaCoreAsync<object?>(
+            connection,
+            $"PRAGMA wal_checkpoint({modeKeyword});",
+            static async (cmd, ct) =>
+            {
+                // wal_checkpoint returns a result row (busy, log, checkpointed); execute as a reader
+                // so the row is consumed, but we do not need the values for a fire-and-forget
+                // checkpoint.
+                await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    // drain
+                }
+
+                return (object?)null;
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<string> QueryEffectiveJournalModeAsync(
+    private static async Task<(bool Verified, string Mode)> QueryEffectiveJournalModeAsync(
         SqliteConnection connection,
         CancellationToken cancellationToken)
     {
-        await using var query = connection.CreateCommand();
-        query.CommandText = "PRAGMA journal_mode;";
-        var value = await query.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-        return value?.ToString()?.ToLowerInvariant() ?? string.Empty;
+        var (executed, value) = await TryExecutePragmaCoreAsync<object?>(
+            connection,
+            "PRAGMA journal_mode;",
+            static (cmd, ct) => cmd.ExecuteScalarAsync(ct),
+            cancellationToken).ConfigureAwait(false);
+
+        if (!executed)
+        {
+            return (false, string.Empty);
+        }
+
+        return (true, value?.ToString()?.ToLowerInvariant() ?? string.Empty);
+    }
+
+    /// <summary>
+    /// The single seam through which <b>every</b> pragma issued by this helper is executed (#3124).
+    /// </summary>
+    /// <remarks>
+    /// A managed <see cref="SqliteConnection"/> can report <c>Open</c> while its underlying
+    /// <c>SQLitePCL.sqlite3</c> handle has already been released (observed under parallel load in
+    /// the core gate). Preparing a statement against that handle throws
+    /// <see cref="ObjectDisposedException"/> out of what is only best-effort per-connection tuning,
+    /// on a connection that is going away regardless. The same lesson was learned at the
+    /// <c>busy_timeout</c> site in <see cref="SqliteConnectionFactory"/> (#2977) and applied there
+    /// alone, leaving these sibling pragmas unguarded; expressing the guard once here means a
+    /// pragma added later inherits it instead of repeating the defect.
+    /// <para>
+    /// The handle pre-check is cheap; the <see cref="ObjectDisposedException"/> catch closes the
+    /// race window between that check and the prepare. <b>Only</b>
+    /// <see cref="ObjectDisposedException"/> is swallowed - any other exception is a genuine fault
+    /// (a real journal-mode misconfiguration, say) and deliberately propagates to the caller.
+    /// </para>
+    /// </remarks>
+    /// <returns><c>false</c> when the pragma was skipped because the native handle was already
+    /// released; otherwise <c>true</c> together with the delegate's result.</returns>
+    private static async Task<(bool Executed, T? Result)> TryExecutePragmaCoreAsync<T>(
+        SqliteConnection connection,
+        string commandText,
+        Func<SqliteCommand, CancellationToken, Task<T>> execute,
+        CancellationToken cancellationToken)
+    {
+        if (connection.Handle is null || connection.Handle.IsInvalid || connection.Handle.IsClosed)
+        {
+            return (false, default);
+        }
+
+        try
+        {
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = commandText;
+            var result = await execute(cmd, cancellationToken).ConfigureAwait(false);
+            return (true, result);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Lost the race with disposal between the handle pre-check and the prepare (#3124).
+            return (false, default);
+        }
+    }
+
+    /// <summary>
+    /// Convenience over <see cref="TryExecutePragmaCoreAsync{T}"/> for pragmas whose result value is
+    /// not needed. It routes through the one guard rather than restating it.
+    /// </summary>
+    private static async Task<bool> TryExecutePragmaAsync(
+        SqliteConnection connection,
+        string commandText,
+        CancellationToken cancellationToken)
+    {
+        var (executed, _) = await TryExecutePragmaCoreAsync(
+            connection,
+            commandText,
+            static (cmd, ct) => cmd.ExecuteNonQueryAsync(ct),
+            cancellationToken).ConfigureAwait(false);
+        return executed;
     }
 }
