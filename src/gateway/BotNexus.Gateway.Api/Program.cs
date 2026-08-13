@@ -278,7 +278,7 @@ builder.Services.AddCors(options =>
 
         var allowedOrigins = configuredOrigins is { Length: > 0 }
             ? configuredOrigins
-            : ["http://localhost:5005"];
+            : [GatewayDefaults.LoopbackListenUrl];
 
         // Production CORS is intentionally scoped to explicit verbs for least-privilege API exposure.
         policy.WithOrigins(allowedOrigins)
@@ -728,10 +728,10 @@ static void LogGatewayStartup(
         .OrderBy(endpoint => endpoint.route, StringComparer.OrdinalIgnoreCase)
         .ToArray();
 
-    var gatewayUrl = app.Urls.FirstOrDefault()
-        ?? configuredListenUrl
-        ?? app.Configuration["ASPNETCORE_URLS"]?.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault()
-        ?? "http://localhost:5000";
+    var gatewayUrl = BotNexus.Gateway.Api.GatewayStartupUrlResolver.Resolve(
+        app.Urls,
+        configuredListenUrl,
+        app.Configuration["ASPNETCORE_URLS"]);
     var worldEmoji = string.IsNullOrWhiteSpace(worldIdentity.Emoji) ? "🌍" : worldIdentity.Emoji;
 
     app.Logger.LogWarning("{WorldEmoji} World: {WorldName} ({WorldId})", worldEmoji, worldIdentity.Name, worldIdentity.Id);

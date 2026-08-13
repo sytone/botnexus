@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text.Json;
+using BotNexus.Gateway.Configuration;
 using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
@@ -22,7 +23,7 @@ internal sealed class ServeCommand
 
         var probePortOption = new Option<int>("--port", () => 5050, "Port for the Probe web UI.");
         var probeSourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
-        var gatewayUrlOption = new Option<string>("--gateway-url", () => "http://localhost:5005", "URL of a running BotNexus Gateway.");
+        var gatewayUrlOption = new Option<string>("--gateway-url", () => GatewayDefaults.LoopbackListenUrl, "URL of a running BotNexus Gateway.");
 
         var probeCommand = new Command("probe", "Start the BotNexus Probe diagnostic tool.")
         {
@@ -41,7 +42,7 @@ internal sealed class ServeCommand
         });
 
         // serve (default = gateway)
-        var servePortOption = new Option<int>("--port", () => 5005, "Port to listen on.");
+        var servePortOption = new Option<int>("--port", () => GatewayDefaults.ListenPort, "Port to listen on.");
         var serveSourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
 
         var command = new Command("serve", "Start a BotNexus service in the foreground (development mode). Defaults to the gateway. Note: for production/background use, prefer 'gateway start' which runs the gateway as a detached process.")

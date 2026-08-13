@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Services;
 
@@ -52,7 +53,7 @@ internal static class GatewayClientFactory
     public const string CredentialEnvironmentVariable = "BOTNEXUS_API_KEY";
 
     /// <summary>The default gateway target every gateway-facing command declares for <c>--url</c>.</summary>
-    public const string DefaultUrl = "http://localhost:5005";
+    public const string DefaultUrl = GatewayDefaults.LoopbackListenUrl;
 
     /// <summary>
     /// Resolves a gateway client for <paramref name="baseUrl"/>, applying the credential
@@ -82,7 +83,7 @@ internal static class GatewayClientFactory
             return new GatewayClientResolution(
                 null,
                 $"Cannot target '{baseUrl}': it is not a valid absolute http/https gateway URL. " +
-                "Supply a URL such as http://localhost:5005 or https://gateway.example.com.");
+                "Supply a URL such as " + DefaultUrl + " or https://gateway.example.com.");
         }
 
         var isLocalDefault = IsLocalDefaultTarget(baseUrl);

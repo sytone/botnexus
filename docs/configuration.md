@@ -1614,6 +1614,19 @@ botnexus config schema
 
 **Validating at the gateway:** Use the `POST /api/config/validate` endpoint (or `botnexus validate --remote`) to validate against the running gateway.
 
+### Error severity: survivability, not scope
+
+Startup validation classifies each error by whether the gateway can run with the configuration that was actually bound (issue #3037):
+
+| Error class | Severity | Why |
+|---|---|---|
+| Unknown / unmodelled property (`NoAdditionalPropertiesAllowed`) | **Warning, startup continues** | `IConfiguration` binding ignores unmapped keys, so the bound `PlatformConfig` is identical whether the key is present or absent. Refusing to start would change nothing about the configuration in effect. |
+| A bound value that is wrong — unparseable enum, out-of-range number, missing required field, failed cross-field rule | **Fatal** | These change or invalidate the object the gateway will actually use. |
+| Anything scoped to `agents.defaults` | **Fatal** | Those values seed every agent. |
+| Anything scoped to a single named agent (`agents.<id>.*`) | **Quarantined** | The bad descriptor is skipped with a warning; the remaining agents load. |
+
+An unmodelled key is never silently ignored: the gateway emits exactly one warning naming the offending property path, so an operator learns the key is doing nothing. This also gives forward compatibility — a `config.json` written by a newer BotNexus degrades to "these keys mean nothing to me" rather than preventing an older gateway from starting.
+
 ---
 
 ## Hot Reload
