@@ -319,6 +319,17 @@ public sealed class ProbeRound3GatewayTests
             NullLogger<DefaultConversationRouter>.Instance);
         var controller = CreateConvController(conversationStore, sessionStore);
 
+        // #2488: the first conversation the router mints for an agent becomes that agent's default,
+        // and defaults are deliberately non-archivable. This test's subject is the archive ->
+        // reopen-on-next-inbound cycle, not default protection, so give the agent its default up
+        // front on a different address; the conversation under test is then an ordinary one and
+        // the archive/reopen behaviour being asserted is unchanged.
+        await router.ResolveInboundAsync(
+            Agent(),
+            ChannelKey.From("telegram"),
+            ChannelAddress.From("chat-default"),
+            null);
+
         var resolved = await router.ResolveInboundAsync(
             Agent(),
             ChannelKey.From("telegram"),

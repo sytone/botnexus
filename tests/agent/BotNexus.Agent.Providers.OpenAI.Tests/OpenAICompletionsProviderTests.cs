@@ -161,6 +161,19 @@ public class OpenAICompletionsProviderTests
         var messages = new Message[]
         {
             new UserMessage(new UserMessageContent("hello \uD800 world"), timestamp),
+            // #3014: the originating tool call must be present, otherwise the tool result is an orphan
+            // and the shared MessageTransformer seam drops it before this converter sees it. The
+            // sanitization assertions below are unchanged; only the fixture became well-formed.
+            new AssistantMessage(
+                Content: [new ToolCallContent("call_1", "read_file", new Dictionary<string, object?>())],
+                Api: "openai-completions",
+                Provider: "openai",
+                ModelId: "gpt-4o",
+                Usage: Usage.Empty(),
+                StopReason: StopReason.ToolUse,
+                ErrorMessage: null,
+                ResponseId: null,
+                Timestamp: timestamp),
             new ToolResultMessage(
                 ToolCallId: "call_1",
                 ToolName: "read_file",
@@ -175,7 +188,8 @@ public class OpenAICompletionsProviderTests
         converted.ShouldNotBeNull();
         converted![0]!["content"]!.GetValue<string>().ShouldBe("sys  prompt");
         converted[1]!["content"]!.GetValue<string>().ShouldBe("hello  world");
-        converted[2]!["content"]!.GetValue<string>().ShouldBe("tool  output");
+        converted.Single(n => n!["role"]!.GetValue<string>() == "tool")!["content"]!
+            .GetValue<string>().ShouldBe("tool  output");
     }
 
     [Theory]

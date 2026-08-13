@@ -116,10 +116,7 @@ public sealed class PortalLoadService : IPortalLoadService
             await Task.WhenAll(conversationTasks);
 
             // #2532: one shared walk, terminating on the server's hasMore flag.
-            var sessions = await SessionRosterLoader.LoadAllAsync(
-                _restClient, agentId: null, conversationId: null, cancellationToken);
-            foreach (var session in sessions)
-                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
+            await ReloadSessionRosterAsync(cancellationToken);
 
             var selectedAgentId = agents.OrderBy(a => a.DisplayName).FirstOrDefault()?.AgentId;
             if (selectedAgentId is not null)
@@ -161,8 +158,8 @@ public sealed class PortalLoadService : IPortalLoadService
             _hub.OnDisconnected += OnHubClosed;
 
             var subscribeResult = await _hub.SubscribeAllAsync();
-            foreach (var session in subscribeResult.Sessions)
-                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
+            _ = subscribeResult; // joined for the conversation GROUPS only; session data comes from REST (#2541)
+            await SubscribeAgentsForNotificationsAsync();
 
             _ = _eventHandler; // force construction so hub event subscriptions are active
 
@@ -310,13 +307,18 @@ public sealed class PortalLoadService : IPortalLoadService
             });
             await Task.WhenAll(conversationTasks);
 
+            // REST load happens BEFORE the optional hub reconnect below, and deliberately so: the
+            // roster is the thing the user sees, and a failed re-dial must not also cost them the
+            // data refresh they asked for. Ordering this after the reconnect made a hub failure
+            // silently skip the whole session reload (#2541).
+            await ReloadSessionRosterAsync(cancellationToken);
+
             // Reconnect SignalR if needed
             if (!_hub.IsConnected)
             {
                 await _hub.ConnectAsync(_hubUrl, ClientKind, Tuning);
-                var subscribeResult = await _hub.SubscribeAllAsync();
-                foreach (var session in subscribeResult.Sessions)
-                    _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
+                await _hub.SubscribeAllAsync();
+                await SubscribeAgentsForNotificationsAsync();
             }
 
             _store.NotifyChanged();
@@ -367,11 +369,57 @@ public sealed class PortalLoadService : IPortalLoadService
         _hub.OnReconnected += OnHubReconnected;
         _hub.OnDisconnected += OnHubClosed;
 
-        var subscribeResult = await _hub.SubscribeAllAsync();
-        foreach (var session in subscribeResult.Sessions)
-            _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
+        await _hub.SubscribeAllAsync();
+        await SubscribeAgentsForNotificationsAsync();
+        await ReloadSessionRosterAsync();
 
         OnConnectionStateChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// The SINGLE load path for portal session state: the REST roster walk (#2541 AC1).
+    /// </summary>
+    /// <remarks>
+    /// <c>SubscribeAll</c> also returns a session list, and until #2541 every one of these call
+    /// sites wrote BOTH into the store. That made the hub a second writer into the same client
+    /// state with no ordering guarantee against the REST walk, so which snapshot won was a race.
+    /// Jon's 2026-07-29 decision settles the transport question -- portal LOAD stays on REST,
+    /// SignalR is the notification channel -- so the hub payload is now dropped on the floor and
+    /// this method is the only thing that seeds sessions.
+    /// <para>
+    /// Do NOT re-add <c>foreach (var session in subscribeResult.Sessions) _store.RegisterSession(...)</c>.
+    /// It looks like harmless belt-and-braces and is exactly the divergence source this removed.
+    /// </para>
+    /// </remarks>
+    private async Task ReloadSessionRosterAsync(CancellationToken cancellationToken = default)
+    {
+        var sessions = await SessionRosterLoader.LoadAllAsync(
+            _restClient, agentId: null, conversationId: null, cancellationToken);
+        foreach (var session in sessions)
+            _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType, session.ConversationId);
+    }
+
+    /// <summary>
+    /// Joins the per-agent notification groups for the agents this client actually renders, so the
+    /// scoped <c>ConversationChanged</c> event reaches it (#2541 AC3).
+    /// </summary>
+    /// <remarks>
+    /// Best-effort: a client that fails to join simply misses conversation-list refresh hints until
+    /// the next reconnect, which is strictly better than failing the whole load/rebuild for a
+    /// notification-only subscription.
+    /// </remarks>
+    private async Task SubscribeAgentsForNotificationsAsync()
+    {
+        try
+        {
+            var agentIds = _store.Agents.Keys.ToList();
+            if (agentIds.Count > 0)
+                await _hub.SubscribeAgentsAsync(agentIds);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[PortalLoadService] SubscribeAgents failed: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -421,8 +469,12 @@ public sealed class PortalLoadService : IPortalLoadService
         await _hub.StopAndDisposeAsync();
         await _hub.ConnectAsync(_hubUrl!, ClientKind, Tuning);
 
-        // Existing recovery path -- SubscribeAll, session re-registration, stale-streaming clear.
+        // Existing recovery path -- SubscribeAll group re-join, agent-group re-join, stale-streaming clear.
         await _eventHandler.HandleReconnectedAsync(cancellationToken);
+
+        // Session state is REST-owned (#2541 AC1), so the roster is re-walked here rather than
+        // taken from the SubscribeAll payload the handler now discards.
+        await ReloadSessionRosterAsync(cancellationToken);
 
         OnConnectionStateChanged?.Invoke();
     }

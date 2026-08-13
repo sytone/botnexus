@@ -51,6 +51,65 @@ public static class ConversationFactory
     private const string DefaultTitle = "New conversation";
 
     /// <summary>
+    /// Canonical title for an agent's default conversation - the general, always-there entry point
+    /// the agent answers in when no specific conversation is targeted.
+    /// </summary>
+    public const string DefaultConversationTitle = "General";
+
+    /// <summary>
+    /// Mints an agent's <b>default conversation</b> (issue #2488): the one general, always-there
+    /// conversation that is the agent's home, ordered first in the portal, auto-selected when no
+    /// conversation is targeted, and exempt from cron retention cleanup.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why its own factory.</b> <see cref="CreateForChannel"/> already accepts an <c>isDefault</c>
+    /// flag, but no caller in <c>src/**</c> ever passed <c>true</c> - which is precisely how the
+    /// capability died silently in #196 while the flag, the column, the DTOs, the ordering and the
+    /// UI all stayed in place reading a value nothing could set. A boolean parameter is easy to not
+    /// pass; an intent-revealing factory is not. This follows the same principle as the rest of the
+    /// seam (#2310): the intent is chosen by <em>which factory you call</em>.
+    /// </para>
+    /// <para>
+    /// Provenance is deliberately identical to <see cref="CreateForChannel"/> -
+    /// <see cref="ConversationSource.Channel"/> / <see cref="ConversationKind.HumanAgent"/> /
+    /// <see cref="ConversationVisibility.UserFacing"/> - because the default conversation IS the
+    /// human-facing channel home; only the <see cref="Conversation.IsDefault"/> stamp differs.
+    /// Visibility must stay user-facing or the portal auto-select
+    /// (<c>FirstOrDefault(c =&gt; c.IsDefault)</c>) could never see it.
+    /// </para>
+    /// <para>
+    /// <b>The uniqueness invariant is not enforced here.</b> This factory constructs a detached
+    /// object and has no view of the agent's existing conversations, so "at most one default per
+    /// agent" is enforced at the only layer that can see the set - the router, which checks the
+    /// store before minting. Pretending to enforce it here would be a guard that cannot fail.
+    /// </para>
+    /// </remarks>
+    /// <param name="conversationId">Identifier for the new conversation.</param>
+    /// <param name="agentId">Agent whose default conversation this is.</param>
+    /// <param name="title">Human-readable title; blank values normalise to <c>"General"</c>.</param>
+    /// <param name="initiator">Citizen that triggered the mint, when known.</param>
+    /// <param name="timestamp">Creation clock reading; defaults to <see cref="DateTimeOffset.UtcNow"/>.</param>
+    public static Conversation CreateDefaultForAgent(
+        ConversationId conversationId,
+        AgentId agentId,
+        string? title = null,
+        CitizenId? initiator = null,
+        DateTimeOffset? timestamp = null)
+        => Create(
+            ConversationSource.Channel,
+            ConversationKind.HumanAgent,
+            ConversationVisibility.UserFacing,
+            conversationId,
+            agentId,
+            string.IsNullOrWhiteSpace(title) ? DefaultConversationTitle : title,
+            initiator,
+            purpose: null,
+            instructions: null,
+            isDefault: true,
+            timestamp);
+
+    /// <summary>
     /// Mints a channel-originated conversation: a citizen sent the first inbound message on a channel
     /// binding, or a client explicitly created the conversation through the REST API. Always
     /// <see cref="ConversationKind.HumanAgent"/> - a human is, by definition, one end of this pairing.

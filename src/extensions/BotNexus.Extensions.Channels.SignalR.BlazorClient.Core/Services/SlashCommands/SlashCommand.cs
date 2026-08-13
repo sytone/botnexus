@@ -17,10 +17,24 @@ public enum SlashCommandKind
     ClearLocalMessages,
 
     /// <summary>
-    /// Send the command text to the agent as a message so the gateway command pipeline
-    /// handles it. Maps to <see cref="IAgentInteractionService.SendMessageAsync"/>.
+    /// Send the command text to the agent as an ordinary user message. Maps to
+    /// <see cref="IAgentInteractionService.SendMessageAsync"/>.
     /// </summary>
-    SendToAgent
+    /// <remarks>
+    /// This kind does NOT invoke the gateway command pipeline (#2873). It is retained for
+    /// client-only palette entries that have no gateway <c>CommandDescriptor</c> and are genuinely
+    /// meant to be answered by the model. Use <see cref="GatewayCommand"/> for anything the gateway
+    /// owns, otherwise the command silently degrades into a paid model turn.
+    /// </remarks>
+    SendToAgent,
+
+    /// <summary>
+    /// Execute the command through the gateway command pipeline via
+    /// <c>POST /api/commands/execute</c> and render the returned <c>CommandResult</c> (#2873).
+    /// Maps to <see cref="IAgentInteractionService.ExecuteGatewayCommandAsync"/>. No model turn is
+    /// consumed.
+    /// </summary>
+    GatewayCommand
 }
 
 /// <summary>

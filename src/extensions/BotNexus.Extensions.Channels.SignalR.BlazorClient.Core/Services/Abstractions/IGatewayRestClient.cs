@@ -71,6 +71,22 @@ public interface IGatewayRestClient
         int offset = 0,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// POST /api/commands/execute - runs a slash command through the gateway command pipeline
+    /// and returns its <see cref="CommandResultDto"/> (#2873).
+    /// </summary>
+    /// <remarks>
+    /// This is the seam whose absence caused #2873: the portal had no way to reach
+    /// <c>CommandsController</c>, so the slash-command dispatcher sent command text to the agent
+    /// as a user message and the command pipeline was never invoked from chat. Returns
+    /// <see langword="null"/> when the gateway rejects the request (4xx/5xx) or the response body
+    /// cannot be read, so callers can surface a visible error instead of falling through to the
+    /// agent.
+    /// </remarks>
+    Task<CommandResultDto?> ExecuteCommandAsync(
+        CommandExecuteRequestDto request,
+        CancellationToken cancellationToken = default);
+
     /// <summary>POST /api/conversations</summary>
     Task<ConversationResponseDto?> CreateConversationAsync(
         CreateConversationRequestDto request,

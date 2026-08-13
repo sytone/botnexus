@@ -435,11 +435,34 @@ public sealed class ConversationsController : ControllerBase
     [HttpDelete("{conversationId}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult> Archive(string conversationId, CancellationToken cancellationToken)
     {
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
             return NotFound();
+
+        // #2488: the agent's default conversation is its permanent home - the row the portal
+        // auto-selects and CronTrigger already exempts from retention cleanup. Archiving it would
+        // put auto-select straight back to resolving null, which is the very regression this guard
+        // exists to prevent. Refuse loudly with 409 rather than no-op: a DELETE that reports success
+        // while changing nothing is indistinguishable from one that worked.
+        //
+        // The refusal comes BEFORE the reset so a rejected archive has no side effects at all -
+        // sealing the session of a conversation we then decline to archive would destroy the live
+        // session while leaving the visible row behind.
+        if (conversation.IsDefault)
+        {
+            _logger.LogInformation(
+                "Refusing to archive conversation {ConversationId}: it is agent {AgentId}'s default conversation.",
+                conversation.ConversationId.Value, conversation.AgentId.Value);
+            return Conflict(new
+            {
+                error = "default_conversation_not_archivable",
+                message = "This is the agent's default conversation and cannot be archived.",
+                conversationId = conversation.ConversationId.Value
+            });
+        }
 
         // Canonical reset of the active session (stop supervisor + flush memory bridge +
         // cancel pending ask_user prompts + seal via SaveAsync + clear ActiveSessionId).

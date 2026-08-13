@@ -146,11 +146,20 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
     /// <summary>
     /// Pins <see href="https://github.com/sytone/botnexus/issues/332">#332</see>: when a
     /// message arrives via an external channel (Telegram, etc.) and a conversation is created
-    /// or updated, every connected SignalR client must see the <c>ConversationChanged</c>
-    /// broadcast so the portal can refresh without a manual reload.
+    /// or updated, connected SignalR clients must see the <c>ConversationChanged</c>
+    /// notification so the portal can refresh without a manual reload.
     /// </summary>
+    /// <remarks>
+    /// Updated by <see href="https://github.com/sytone/botnexus/issues/2541">#2541</see>, which
+    /// narrowed the fan-out from <c>Clients.All</c> to the affected agent's group. The ORIGINAL
+    /// intent of #332 is preserved exactly and is still what is asserted: two independent browsers
+    /// observing the agent both receive the cross-channel update, with the same field-level checks.
+    /// What changed is the precondition -- a connection now declares which agents it observes,
+    /// because broadcasting to every client made each one re-fetch its conversation list on
+    /// activity belonging to agents it does not even render. No assertion was weakened.
+    /// </remarks>
     [Fact]
-    public async Task ConversationChangeNotification_BroadcastsToAllConnectedSignalRClients()
+    public async Task ConversationChangeNotification_ReachesAllClientsObservingThatAgent()
     {
         await using var factory = CreateTestFactory(services =>
         {
@@ -161,6 +170,10 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
 
         await using var browserOne = await CreateStartedConnection(factory, cts.Token);
         await using var browserTwo = await CreateStartedConnection(factory, cts.Token);
+
+        // #2541: notifications follow the subscription, so each browser declares the agent it renders.
+        await browserOne.InvokeAsync("SubscribeAgents", new[] { TestAgentId }, cts.Token);
+        await browserTwo.InvokeAsync("SubscribeAgents", new[] { TestAgentId }, cts.Token);
 
         var oneTcs = new TaskCompletionSource<ConversationChangedPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
         var twoTcs = new TaskCompletionSource<ConversationChangedPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -181,7 +194,7 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         payloadOne.AgentId.ShouldBe(TestAgentId);
         payloadOne.ChangeType.ShouldBe("created");
         payloadTwo.ConversationId.ShouldBe("conv-from-telegram",
-            "every connected SignalR client must receive cross-channel conversation updates; #332");
+            "every client observing the agent must receive cross-channel conversation updates; #332, scoped by #2541");
     }
 
     // ── #314 — SendMessage after agent switch routes to the new agent ───────

@@ -144,6 +144,15 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
 
     internal static string GetConversationGroup(string conversationId) => $"conversation:{conversationId}";
 
+    /// <summary>
+    /// The per-agent group a connection joins for AGENT-scoped notifications (currently
+    /// <c>ConversationChanged</c>). Distinct from the conversation groups above: a conversation
+    /// group carries the stream for one conversation, whereas this group carries lifecycle events
+    /// for conversations the client does not necessarily have open yet -- a conversation being
+    /// CREATED has no group for the client to already be in (#2541).
+    /// </summary>
+    internal static string GetAgentGroup(string agentId) => $"agent:{agentId}";
+
     // Retained for the back-compat fallback path in SendAsync (until every caller stamps
     // ConversationId) and for tests that pin the legacy group naming.
     internal static string GetSessionGroup(string sessionId) => $"session:{sessionId}";

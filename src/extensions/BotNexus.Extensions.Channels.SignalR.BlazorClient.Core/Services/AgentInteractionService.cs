@@ -884,6 +884,67 @@ public sealed class AgentInteractionService : IAgentInteractionService
             cancelled);
     }
 
+    /// <summary>
+    /// #2873: dispatches a gateway-owned slash command to <c>POST /api/commands/execute</c> and
+    /// renders the resulting <c>CommandResult</c> locally. Deliberately has NO fall-through to
+    /// <see cref="SendMessageAsync(string, string)"/>: the whole defect was that command text
+    /// reached the model, so every failure path here appends a visible Error row instead.
+    /// </summary>
+    public async Task<bool> ExecuteGatewayCommandAsync(string agentId, string commandText)
+    {
+        if (string.IsNullOrWhiteSpace(commandText))
+        {
+            AppendError(agentId, "Cannot execute an empty command.");
+            return false;
+        }
+
+        var agent = _store.GetAgent(agentId);
+        var convId = agent?.ActiveConversationId;
+        if (convId is null || agent!.Conversations.GetValueOrDefault(convId) is not { } conv)
+        {
+            AppendError(agentId, $"Cannot run {commandText}: no active conversation.");
+            return false;
+        }
+
+        CommandResultDto? result;
+        try
+        {
+            result = await _restClient.ExecuteCommandAsync(
+                new CommandExecuteRequestDto(commandText, agentId, conv.ActiveSessionId));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Gateway command {Command} failed for agent {AgentId}.", Sanitise(commandText), Sanitise(agentId));
+            AppendError(agentId, $"Command {commandText} failed: {ex.Message}");
+            return false;
+        }
+
+        if (result is null)
+        {
+            AppendError(agentId, $"Command {commandText} was rejected by the gateway.");
+            return false;
+        }
+
+        if (result.IsError)
+        {
+            AppendError(agentId, $"{result.Title}: {result.Body}");
+            return false;
+        }
+
+        conv.AppendMessage(new ChatMessage("System", $"**{result.Title}**\n\n{result.Body}", DateTimeOffset.UtcNow)
+        {
+            Kind = GatewayCommandKind
+        });
+        _store.NotifyChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// Message kind stamped on a locally-rendered gateway command result (#2873) so the transcript
+    /// can distinguish it from an ordinary system notice.
+    /// </summary>
+    public const string GatewayCommandKind = "gateway-command";
+
     public void ClearLocalMessages(string agentId)
     {
         var agent = _store.GetAgent(agentId);

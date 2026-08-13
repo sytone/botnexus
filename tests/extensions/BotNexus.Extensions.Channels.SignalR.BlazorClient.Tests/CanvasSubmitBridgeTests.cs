@@ -137,6 +137,7 @@ public sealed class CanvasSubmitBridgeTests : IDisposable
         public Task InterruptAndSteerAsync(string agentId, string message) => throw new NotSupportedException();
         public Task InterruptAndSteerAsync(string agentId, string message, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
         public Task ResetSessionAsync(string agentId) => throw new NotSupportedException();
+        public Task<bool> ExecuteGatewayCommandAsync(string agentId, string commandText) => throw new NotSupportedException();
         public Task<CompactSessionResult?> CompactSessionAsync(string agentId) => throw new NotSupportedException();
         public Task<string?> CreateConversationAsync(string agentId, string? title = null, bool select = true) => throw new NotSupportedException();
         public Task SelectConversationAsync(string agentId, string conversationId) => throw new NotSupportedException();

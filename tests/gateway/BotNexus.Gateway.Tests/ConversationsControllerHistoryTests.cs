@@ -261,7 +261,11 @@ public sealed class ConversationsControllerHistoryTests
             ConversationId = conversationId,
             AgentId = AgentId.From(agentId),
             Title = "Default",
-            IsDefault = true,
+            // #2488 made the default conversation non-archivable. This helper's subject is session
+            // sealing on archive, not default protection, so the flag is incidental fixture data
+            // here and is set false to keep the fixture archivable. Default-archive behaviour is
+            // pinned by ConversationsControllerDefaultArchiveGuardTests.
+            IsDefault = false,
             Status = ConversationStatus.Active,
             ActiveSessionId = activeSessionId,
             CreatedAt = DateTimeOffset.UtcNow,

@@ -275,6 +275,45 @@
         return result;
     }
 
+    /// <summary>
+    /// #2973: THE single emission point for every top-level sidebar nav anchor.
+    ///
+    /// Why a helper rather than eight hand-written anchors: <c>data-testid</c> used to be typed
+    /// literally into four of the eight render fragments and forgotten in the other four, so being
+    /// addressable by a stable selector depended on author recall. The observable failure was not a
+    /// missing element but a SILENTLY WRONG one - testid-first automation that could not find
+    /// <c>nav-skills</c> retargeted onto the nearest anchor that did have a testid and asserted
+    /// against Cron Jobs while claiming to be on Skills. Deriving the attribute from the route means
+    /// a nav entry added tomorrow cannot ship without one.
+    /// </summary>
+    /// <param name="route">The anchor's href, relative to the base path. Empty string is Home's root route.</param>
+    /// <param name="label">The anchor's rendered content (glyph + text).</param>
+    /// <param name="testIdOverride">
+    /// Only for an anchor whose historical testid does not match its route. Cron Jobs is the sole
+    /// case: its id tracks the label (nav-cron-jobs) rather than the route (cron), and it has in-repo
+    /// and unknown external consumers, so it is preserved rather than renamed. Such an anchor
+    /// additionally carries <c>data-testid-alias</c> with the route-derived id, so both keys select it.
+    /// </param>
+    private RenderFragment NavAnchor(string route, RenderFragment label, string? testIdOverride = null) => __builder =>
+    {
+        <a href="@route"
+           class="sidebar-nav-item @NavClass(NavKeyForRoute(route))"
+           data-testid="@(testIdOverride ?? NavTestId(route))"
+           data-testid-alias="@(testIdOverride is null ? null : NavTestId(route))"
+           @onclick="OnNavClick">@label</a>
+    };
+
+    /// <summary>
+    /// Maps a nav route to its canonical test id. Home's route is the empty string, which would
+    /// otherwise produce the meaningless <c>nav-</c>, so it is mapped explicitly.
+    /// </summary>
+    private static string NavTestId(string route) =>
+        string.IsNullOrEmpty(route) ? "nav-" + NavOrderKeys.Home : "nav-" + route;
+
+    /// <summary>Maps a nav route to the key <see cref="NavClass"/> uses for active-state matching.</summary>
+    private static string NavKeyForRoute(string route) =>
+        string.IsNullOrEmpty(route) ? NavOrderKeys.Home : route;
+
     private RenderFragment RenderNavSection(string key) => key.ToLowerInvariant() switch
     {
         NavOrderKeys.Home => RenderHomeNav(),
@@ -293,12 +332,12 @@
     // glyph. The house glyph keeps it visually distinct from Agents.
     private RenderFragment RenderHomeNav() => __builder =>
     {
-        <a href="" class="sidebar-nav-item @NavClass("home")" data-testid="nav-home" @onclick="OnNavClick">&#x1F3E0; Home</a>
+        @NavAnchor("", @<text>&#x1F3E0; Home</text>)
     };
 
     private RenderFragment RenderActivityNav() => __builder =>
     {
-        <a href="activity" class="sidebar-nav-item @NavClass("activity")" data-testid="nav-activity" @onclick="OnNavClick">&#x1F4CA; Activity</a>
+        @NavAnchor(NavOrderKeys.Activity, @<text>&#x1F4CA; Activity</text>)
     };
 
     private RenderFragment RenderToolsNav() => __builder =>
@@ -309,7 +348,7 @@
            same way the Scheduled group is) and the "No tools configured" placeholder row is not
            rendered at all - an empty section should cost zero vertical space. *@
         <div class="sidebar-nav-row">
-            <a href="tools" class="sidebar-nav-item @NavClass("tools")" data-testid="nav-tools" @onclick="OnNavClick">&#x1F9F0; Tools</a>
+            @NavAnchor(NavOrderKeys.Tools, @<text>&#x1F9F0; Tools</text>)
             @if (_tools.Count > 0)
             {
                 <button class="sidebar-nav-toggle" data-testid="tools-collapse-toggle"
@@ -339,7 +378,7 @@
 
     private RenderFragment RenderChatNav() => __builder =>
     {
-        <a href="chat" class="sidebar-nav-item @NavClass("chat")" @onclick="OnNavClick">&#x1F4AC; Chat</a>
+        @NavAnchor(NavOrderKeys.Chat, @<text>&#x1F4AC; Chat</text>)
 
         @* Scrollable agent/conversation section *@
         <div class="sidebar-scroll-region">
@@ -578,14 +617,14 @@
 
     private RenderFragment RenderConfigurationNav() => __builder =>
     {
-        <a href="configuration" class="sidebar-nav-item @NavClass("configuration")" @onclick="OnNavClick">&#x2699;&#xFE0F; Configuration</a>
+        @NavAnchor(NavOrderKeys.Configuration, @<text>&#x2699;&#xFE0F; Configuration</text>)
     };
 
     private RenderFragment RenderSkillsNav() => __builder =>
     {
         @if (ExtensionFeatures.SkillsEnabled)
         {
-            <a href="skills" class="sidebar-nav-item @NavClass("skills")" @onclick="OnNavClick">&#x1F9E0; Skills</a>
+            @NavAnchor(NavOrderKeys.Skills, @<text>&#x1F9E0; Skills</text>)
 
             @* Skills sub-nav -- shown when on the skills page *@
             @if (IsOnPage("skills"))
@@ -599,7 +638,7 @@
 
     private RenderFragment RenderAgentsNav() => __builder =>
     {
-        <a href="agents" class="sidebar-nav-item @NavClass("agents")" @onclick="OnNavClick">&#x1F916; Agents</a>
+        @NavAnchor(NavOrderKeys.Agents, @<text>&#x1F916; Agents</text>)
 
         @* Agents sub-nav -- only shown when on the agents page *@
         @if (IsOnPage("agents"))
@@ -616,7 +655,10 @@
 
     private RenderFragment RenderCronNav() => __builder =>
     {
-        <a href="cron" class="sidebar-nav-item @NavClass("cron")" data-testid="nav-cron-jobs" @onclick="OnNavClick">&#x23F0; Cron Jobs</a>
+        @* #2973: the one documented override. "nav-cron-jobs" tracks the LABEL, not the route, and
+           predates the helper; renaming it would break live consumers for zero functional gain. The
+           route-derived "nav-cron" is emitted alongside it as data-testid-alias. *@
+        @NavAnchor(NavOrderKeys.Cron, @<text>&#x23F0; Cron Jobs</text>, "nav-cron-jobs")
     };
 
     protected override void OnInitialized()

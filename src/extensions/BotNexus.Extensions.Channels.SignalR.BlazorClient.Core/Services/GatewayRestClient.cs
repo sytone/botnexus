@@ -185,6 +185,28 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     }
 
     /// <inheritdoc />
+    public async Task<CommandResultDto?> ExecuteCommandAsync(
+        CommandExecuteRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        try
+        {
+            var response = await _http.PostAsJsonAsync($"{_apiBaseUrl}commands/execute", request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            return await response.Content.ReadFromJsonAsync<CommandResultDto>(cancellationToken: cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            // #2873: a transport failure must surface as a visible error at the call site, never as
+            // a silent fall-through that sends the command text to the agent instead.
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<ConversationResponseDto?> CreateConversationAsync(
         CreateConversationRequestDto request,
         CancellationToken cancellationToken = default)
