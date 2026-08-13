@@ -32,8 +32,18 @@ public class ExecToolOutputTruncationTests : IDisposable
         return result.Content[0].Value;
     }
 
+    // The tool reads every optional key directly, so all of them must be present even when null.
     private static IReadOnlyDictionary<string, object?> BuildArgs(string[] command) =>
-        new Dictionary<string, object?> { ["command"] = command };
+        new Dictionary<string, object?>
+        {
+            ["command"] = (IReadOnlyList<string>)command.ToList(),
+            ["timeoutMs"] = 120_000,
+            ["noOutputTimeoutMs"] = null,
+            ["input"] = null,
+            ["background"] = false,
+            ["env"] = null,
+            ["workingDir"] = null,
+        };
 
     /// <summary>
     /// AC4. Drives a real child process that emits a known volume well over the retention cap and
