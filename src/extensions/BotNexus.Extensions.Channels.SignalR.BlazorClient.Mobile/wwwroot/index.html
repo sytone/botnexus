@@ -28,7 +28,14 @@
     <script src="js/canvasBridge.js"></script>
     <script src="js/appResume.js"></script>
     <script src="js/swUpdate.js"></script>
-    <script src="_framework/blazor.webassembly.js"></script>
+    <script src="js/bootDiagnostics.js"></script>
+    <script src="_framework/blazor.webassembly.js" autostart="false"></script>
+    <script>
+        // #2880: the mobile client has the same static loading div and the same default-autostart
+        // script tag as the desktop portal, so it is NOT exempt -- a failed boot behind the auth
+        // proxy would otherwise leave "Loading..." on screen indefinitely with no explanation.
+        window.BotNexusBoot.startBlazor();
+    </script>
     <script>
         // #2591: registration alone let a cached worker pin a stale bundle forever. BotNexusSwUpdate
         // registers with updateViaCache:'none', re-checks on foreground return, and reloads when a

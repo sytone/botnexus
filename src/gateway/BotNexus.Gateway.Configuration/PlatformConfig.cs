@@ -248,6 +248,25 @@ public sealed class GatewaySettingsConfig
         Order = 0)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 0)]
     public string? ListenUrl { get; set; }
+
+    /// <summary>
+    /// External base URL the portal is reached on, used to build agent-facing deep links such as the
+    /// canvas link returned by the <c>canvas</c> tool (#2975).
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="ListenUrl"/> on purpose: the gateway commonly binds a wildcard or a
+    /// loopback address while users reach it through a tunnel or reverse proxy on a different host.
+    /// A link built from the bind address would be undialable, so this is the only value trusted as
+    /// an external origin. When it is unset, a CONCRETE listen URL is used and a wildcard bind
+    /// yields no link at all.
+    /// </remarks>
+    [Display(
+        Name = "Public base URL",
+        Description = "External base URL the portal is reached on (for example https://portal.example.com). Used to build canvas deep links. Leave unset on a purely local install.",
+        GroupName = "Gateway",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 1)]
+    public string? PublicBaseUrl { get; set; }
     /// <summary>Default agent to route to when none specified.</summary>
     [Display(
         Name = "Default agent",

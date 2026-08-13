@@ -70,7 +70,8 @@ public partial class Configuration : IDisposable
 
     private JsonObject? _config;
     private JsonObject? _schema;
-    private HashSet<string>? _rawSections;
+    private string? _revision;
+    private readonly ConfigDirtyPathTracker _dirtyPaths = new();
     private bool _loading = true;
     private bool _saving;
     private bool _dirty;
@@ -93,16 +94,19 @@ public partial class Configuration : IDisposable
     {
         _loading = true;
         _dirty = false;
+        _dirtyPaths.Reset();
         SetStatus("Loading...", "");
         StateHasChanged();
 
         _schema = await ConfigService.LoadSchemaAsync();
         _config = await ConfigService.LoadAsync();
 
-        // Load raw config to know which sections actually exist on disk, so we only persist sections
-        // the user materialised rather than default-injected ones.
-        var raw = await ConfigService.LoadRawAsync();
-        _rawSections = raw?.Select(kv => kv.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Load the raw snapshot for its REVISION, not to decide what may be saved (#2059). The
+        // previous code used the raw document's top-level keys as a save filter, which is why a
+        // section absent from disk could never be materialised by editing its defaults. Saving is
+        // now driven by what the operator edited; the revision is what makes that save safe.
+        var snapshot = await ConfigService.LoadSnapshotAsync();
+        _revision = snapshot?.Revision;
 
         _loading = false;
         if (_config is null || _schema is null)
@@ -121,6 +125,9 @@ public partial class Configuration : IDisposable
         StateHasChanged();
     }
 
+    // Records WHICH path changed (#2059) so the save can patch exactly that and nothing else.
+    private void OnPathChanged(string path) => _dirtyPaths.Mark(path);
+
     private async Task SaveAll()
     {
         if (_config is null || !_dirty) return;
@@ -128,35 +135,39 @@ public partial class Configuration : IDisposable
         SetStatus("Saving...", "");
         StateHasChanged();
 
-        // Persist every top-level section that exists on disk (raw) and is user-editable. The schema
-        // form mutates the whole tree, so without per-section dirty tracking we save the materialised
-        // sections; default-only sections are skipped to avoid writing injected defaults to disk.
-        var sectionsToSave = _config
-            .Select(kv => kv.Key)
-            .Where(key => !NonPersistedSections.Contains(key))
-            .Where(key => _rawSections is null || _rawSections.Contains(key))
-            .ToList();
-
-        var allOk = true;
-        foreach (var section in sectionsToSave)
-        {
-            var node = _config[section];
-            if (node is null) continue;
-            var (success, error) = await ConfigService.SaveSectionAsync(section, node.DeepClone());
-            if (!success)
-            {
-                SetStatus($"Failed to save {section}: {error}", "error");
-                allOk = false;
-                break;
-            }
-        }
+        // Patch only the edited paths, quoting the revision the form was rendered from. A section
+        // nobody touched is not in the batch and so cannot be reverted to a stale value; the whole
+        // batch commits or none of it does; and a save built on a superseded snapshot comes back as
+        // a conflict instead of silently winning.
+        var operations = _dirtyPaths.BuildOperations(_config);
+        var outcome = await ConfigService.PatchAsync(operations, _revision);
 
         _saving = false;
-        if (allOk)
+        if (outcome.Success)
         {
             _dirty = false;
+            _dirtyPaths.Reset();
+            _revision = outcome.Revision;
             SetStatus("Saved successfully", "success", autoHide: true);
+            // Re-read raw and effective config after commit so the form shows what is actually on
+            // disk (defaults materialised, secrets re-redacted) rather than the local edit buffer.
+            await LoadConfig();
+            return;
         }
+
+        if (outcome.IsConflict)
+        {
+            // Do NOT clear the dirty paths: the operator's edits are still unsaved and must not be
+            // presented as committed. Reloading here would discard them silently.
+            SetStatus(
+                "Configuration changed elsewhere since this page loaded. Reload to see the current values, then re-apply your changes.",
+                "error");
+        }
+        else
+        {
+            SetStatus($"Failed to save: {outcome.Error}", "error");
+        }
+
         StateHasChanged();
     }
 

@@ -99,7 +99,8 @@ internal sealed class CronToolProvider(
     ICronStore? cronStore,
     CronScheduler? cronScheduler,
     BotNexus.Agent.Providers.Core.Registry.ModelRegistry? modelRegistry = null,
-    BotNexus.Cron.Actions.ICommandCronAuthorizer? commandAuthorizer = null) : IToolProvider
+    BotNexus.Cron.Actions.ICommandCronAuthorizer? commandAuthorizer = null,
+    BotNexus.Cron.ICronAlertTargetResolver? alertTargetResolver = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context)
@@ -117,7 +118,10 @@ internal sealed class CronToolProvider(
             // #2462: the command-authoring gate is threaded in here so the model-facing cron tool
             // refuses to persist a shellCommand the exec-tool policy would deny. A null authorizer
             // fails closed inside CronTool.
-            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer)];
+            // #2838: the alert-target resolver is threaded in so the tool can validate a
+            // failureAlertConversationId through the SAME CronAlertTarget seam the REST API uses.
+            // A null resolver fails closed inside CronTool for any supplied target.
+            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer, alertTargetResolver)];
         return Task.FromResult(tools);
     }
 
@@ -523,7 +527,8 @@ internal sealed class AgentManagementToolProvider(
 /// </summary>
 internal sealed class CanvasToolProvider(
     IConversationStore? conversationStore,
-    IEnumerable<IAgentCanvasNotifier> canvasNotifiers) : IToolProvider
+    IEnumerable<IAgentCanvasNotifier> canvasNotifiers,
+    IOptions<PlatformConfig>? platformConfigOptions = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context) => context.ToolAllowed("canvas");
@@ -536,7 +541,18 @@ internal sealed class CanvasToolProvider(
         {
             canvasConversationId = await context.ResolveConversationId(conversationStore).ConfigureAwait(false);
         }
-        return [new CanvasTool(context.AgentId, canvasConversationId, conversationStore, canvasNotifiers.ToArray())];
+
+        // #2975: the deep link needs the portal's external origin, which lives in gateway config, not
+        // in the tool's own options block. Both candidates are carried onto CanvasToolOptions so the
+        // tool stays a pure function of its options and remains constructible in tests without DI.
+        var gateway = platformConfigOptions?.Value?.Gateway;
+        var options = new CanvasToolOptions
+        {
+            PublicBaseUrl = gateway?.PublicBaseUrl,
+            ListenUrl = gateway?.ListenUrl,
+        };
+
+        return [new CanvasTool(context.AgentId, canvasConversationId, conversationStore, canvasNotifiers.ToArray(), options)];
     }
 }
 

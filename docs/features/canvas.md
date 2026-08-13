@@ -198,6 +198,42 @@ try {
 
 Canvas is a built-in tool — no additional configuration is required. The canvas panel appears automatically in the web portal when an agent uses the `canvas` tool.
 
+### Canvas deep links (`gateway.publicBaseUrl`)
+
+A successful `render` returns a `canvasUrl` deep link so the agent can tell the user where to look:
+
+```
+https://portal.example.com/agent/{agentId}/conversation/{conversationId}?tab=canvas
+```
+
+The `?tab=canvas` query selects the Canvas pane. Both ids are URL-encoded. The tool guidance instructs
+the agent to include this link in its reply — and to still carry the substance of the answer in the
+reply, because on Signal or Telegram the canvas is not visible in-line and the link is the only way
+to reach it.
+
+**The external base URL comes from one place: `gateway.publicBaseUrl`.**
+
+```bash
+botnexus config set gateway.publicBaseUrl https://portal.example.com
+```
+
+It is deliberately separate from `gateway.listenUrl`: the gateway commonly binds a wildcard or
+loopback address while users reach the portal through a tunnel or reverse proxy on a different host.
+
+Resolution order, and what happens when nothing resolves:
+
+| `gateway.publicBaseUrl` | `gateway.listenUrl` | Result |
+| --- | --- | --- |
+| set | any | link built from `publicBaseUrl` |
+| unset | concrete host (`http://localhost:5005`) | link built from `listenUrl` |
+| unset | wildcard (`http://+:5005`, `http://0.0.0.0:5005`, `http://[::]:5005`) | **no link**, reason stated |
+| unset | unset | **no link**, reason stated |
+
+When no link can be built the render still succeeds and the result says why, naming
+`gateway.publicBaseUrl`. No partial or guessed URL is ever emitted — a link pointing at the wrong
+host is worse than no link. A link is returned only for `render`; `clear`, `set_state`, `get_state`
+and `clear_state` never carry one.
+
 ### State Persistence
 
 Canvas state is stored in the conversation store:

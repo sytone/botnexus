@@ -46,6 +46,17 @@ public sealed partial class AnthropicProvider(HttpClient httpClient, ISecretReda
 
     public string Api => "anthropic-messages";
 
+    /// <summary>
+    /// Anthropic Messages declares its system prompt as a dedicated top-level <c>system</c> field
+    /// (see <c>AnthropicRequestBuilder</c>, which writes <c>body["system"]</c>), and does NOT need
+    /// leaked-tool-call recovery: the #1709 leak was observed on the Copilot transports, never on
+    /// the Anthropic-direct API, which returns tool calls as real <c>tool_use</c> content blocks
+    /// with a <c>tool_use</c> stop reason (#2432).
+    /// </summary>
+    public ProviderCapabilities Capabilities { get; } = new(
+        RecoversLeakedToolCallMarkup: false,
+        SystemPromptPlacement: SystemPromptPlacement.DedicatedField);
+
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
     {
         var stream = new LlmStream();

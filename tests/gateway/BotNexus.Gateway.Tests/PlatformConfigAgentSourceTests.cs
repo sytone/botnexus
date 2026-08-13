@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Memory.Embeddings;
 using System.Reflection;
 using System.Text.Json;
@@ -749,15 +750,15 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
 
     private sealed class StaticAgentToolFactory : IAgentToolFactory
     {
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
-            => [new ReadTool(workingDirectory)];
+        public IReadOnlyList<IAgentTool> CreateTools(WorkingDir workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
+            => [new ReadTool(workingDirectory.Value)];
     }
 
     private sealed class CapturingAgentToolFactory : IAgentToolFactory
     {
         public IPathValidator? CapturedPathValidator { get; private set; }
 
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
+        public IReadOnlyList<IAgentTool> CreateTools(WorkingDir workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
         {
             CapturedPathValidator = pathValidator;
             return [];

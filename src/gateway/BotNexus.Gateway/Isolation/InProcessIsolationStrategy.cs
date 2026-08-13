@@ -24,6 +24,7 @@ using BotNexus.Gateway.Dispatching;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Agents;
+using BotNexus.Gateway.Audit;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
@@ -166,7 +167,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var workspacePath = _workspaceManager.GetWorkspacePath(descriptor.AgentId.Value);
         var pathValidator = new DefaultPathValidator(descriptor.FileAccess, workspacePath);
-        var workspaceTools = _toolFactory.CreateTools(workspacePath, pathValidator, descriptor.ShellCommand);
+        var workspaceTools = _toolFactory.CreateTools(WorkingDir.From(workspacePath), pathValidator, descriptor.ShellCommand);
         var workspaceToolNames = new HashSet<string>(workspaceTools.Select(tool => tool.Name), StringComparer.OrdinalIgnoreCase);
 
         // Normalise toolIds: ["*"] is a user-friendly alias for [] (all tools).
@@ -295,28 +296,31 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var hookDispatcher = _serviceProvider.GetService<IHookDispatcher>();
         BeforeToolCallDelegate? beforeToolCall = null;
         AfterToolCallDelegate? afterToolCall = null;
-        var subAgentWriteAhead = descriptor.Kind == AgentKind.SubAgent
-            ? new SubAgentToolWriteAhead(
-                sessionStore,
-                _serviceProvider.GetService<ISecretRedactor>() ?? new SecretRedactor(),
-                context.SessionId,
-                _logger)
-            : null;
+        // #2615: the fail-closed tool-audit write-ahead. Pre-#2615 this existed only for sub-agents
+        // (#2113), so a top-level agent's tool call was never written ahead and a crash mid-tool left
+        // no evidence the tool had been invoked at all. It now runs for EVERY agent, and it is the
+        // seam that both blocks a side-effecting tool whose invocation cannot be durably recorded and
+        // closes out an interrupted call with an explicit incomplete record.
+        var toolWriteAhead = new ToolAuditWriteAhead(
+            sessionStore,
+            _serviceProvider.GetService<IToolAuditSink>() ?? DefaultToolAuditSink.Instance,
+            _serviceProvider.GetService<ISecretRedactor>() ?? new SecretRedactor(),
+            context.SessionId,
+            _logger);
 
-        if (hookDispatcher is not null || subAgentWriteAhead is not null)
         {
             var agentId = descriptor.AgentId;
 
             beforeToolCall = async (ctx, ct) =>
             {
-                if (subAgentWriteAhead is not null)
-                {
-                    await subAgentWriteAhead.PersistAsync(
-                        ctx.ToolCallRequest.Id,
-                        ctx.ToolCallRequest.Name,
-                        ctx.ValidatedArgs,
-                        ct).ConfigureAwait(false);
-                }
+                // Write ahead FIRST, then consult policy. The record must be durable before any
+                // decision that can lead to execution, and a blocked call still throws out of here
+                // before the tool is reached (#2615 AC2).
+                await toolWriteAhead.PersistStartAsync(
+                    ctx.ToolCallRequest.Id,
+                    ctx.ToolCallRequest.Name,
+                    ctx.ValidatedArgs,
+                    ct).ConfigureAwait(false);
 
                 if (hookDispatcher is null)
                     return null;
@@ -342,8 +346,15 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 return null;
             };
 
-            afterToolCall = hookDispatcher is null ? null : async (ctx, ct) =>
+            afterToolCall = async (ctx, ct) =>
             {
+                // The call reported a result, so it is accounted for and must not later be written
+                // out as an interrupted invocation.
+                toolWriteAhead.RecordCompleted(ctx.ToolCallRequest.Id);
+
+                if (hookDispatcher is null)
+                    return null;
+
                 var resultText = AgentToolResultText.Extract(ctx.Result);
                 var hookEvent = new AfterToolCallEvent(
                     agentId,
@@ -416,10 +427,19 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         {
             var compactSessionId = context.SessionId;
             var compactAgentId = descriptor.AgentId;
+            // #2896: this path has already resolved the effective window through
+            // ModelOverrideResolver above (conversation override > agent descriptor), so reuse it
+            // rather than re-reading the stores, falling back to the registered model's own window.
+            // Null leaves CompactionOptions.ContextWindowTokens exactly as configured.
+            var scopedContextWindow = ScopedCompactionWindow.Resolve(
+                conversationOverride: null,
+                agentWindow: effectiveModel.ContextWindow,
+                modelWindow: model.ContextWindow);
             maybeCompactAsync = async cancellationToken =>
             {
                 var liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
-                if (liveSession is null || !compactor.ShouldCompact(liveSession.Session, compactionOptions.CurrentValue))
+                var scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
+                if (liveSession is null || !compactor.ShouldCompact(liveSession.Session, scopedOptions))
                 {
                     return;
                 }
@@ -537,6 +557,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             tools,
             extensionResourcesToDispose,
             _serviceProvider.GetService<IActivityTracker>(),
+            toolWriteAhead,
             // #3091: the diagnostics endpoint must report the window this run is ACTUALLY bound to.
             // Resolved from the same effectiveModel/model pair that configures the run below, so the
             // reported window cannot drift from the executed one (same single-derivation rule as #2796).
@@ -581,7 +602,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 _serviceProvider.GetService<ICronStore>(),
                 _serviceProvider.GetService<CronScheduler>(),
                 _serviceProvider.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
-                _serviceProvider.GetService<BotNexus.Cron.Actions.ICommandCronAuthorizer>()),
+                _serviceProvider.GetService<BotNexus.Cron.Actions.ICommandCronAuthorizer>(),
+                _serviceProvider.GetService<BotNexus.Cron.ICronAlertTargetResolver>()),
             new ToolProviders.SessionToolProvider(sessionStore),
             new ToolProviders.ConversationToolProvider(
                 conversationStore,
@@ -619,7 +641,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 _llmClient),
             new ToolProviders.CanvasToolProvider(
                 _serviceProvider.GetService<IConversationStore>(),
-                _serviceProvider.GetServices<IAgentCanvasNotifier>()),
+                _serviceProvider.GetServices<IAgentCanvasNotifier>(),
+                _serviceProvider.GetService<IOptions<PlatformConfig>>()),
             new ToolProviders.TodoToolProvider(
                 _serviceProvider.GetService<IConversationStore>(),
                 _serviceProvider.GetServices<IAgentTodoNotifier>()),
@@ -805,6 +828,14 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     // Never defaulted to a literal - see ContextWindowResolver.
     private readonly int? _contextWindowTokens;
 
+    /// <summary>
+    /// The fail-closed tool-audit write-ahead this handle's run writes through (#2615). The handle
+    /// is the single choke point every execution path crosses, so it is also the only place that
+    /// can observe a run unwinding and close out the calls that started and never reported a
+    /// result. Optional so unit tests can construct the handle without the gateway DI graph.
+    /// </summary>
+    private readonly ToolAuditWriteAhead? _toolWriteAhead;
+
     public InProcessAgentHandle(
         BotNexus.Agent.Core.Agent agent,
         AgentId agentId,
@@ -813,6 +844,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         IReadOnlyList<IAgentTool>? tools = null,
         IReadOnlyList<object>? resourcesToDispose = null,
         IActivityTracker? activityTracker = null,
+        ToolAuditWriteAhead? toolWriteAhead = null,
         int? contextWindowTokens = null)
     {
         _agent = agent;
@@ -821,6 +853,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         _logger = logger;
         _activityTracker = activityTracker;
         _contextWindowTokens = contextWindowTokens;
+        _toolWriteAhead = toolWriteAhead;
         _disposableResources = (tools ?? [])
             .Where(static tool => tool is IAsyncDisposable || tool is IDisposable)
             .Cast<object>()
@@ -949,11 +982,19 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         catch (OperationCanceledException oce)
         {
             activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            // #2615 AC3/AC4: a cancellation or timeout after tool-start must not make the
+            // invocation vanish. Close out every still-unaccounted call with the shared explicit
+            // incomplete record before the cancellation propagates.
+            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
             throw BuildInterruptedException(oce);
         }
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            // A crash mid-run is the other half of AC3: the run unwinds through here, and an
+            // in-flight tool has to leave the same auditable incomplete record it would on a
+            // cancellation.
+            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -979,14 +1020,24 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         catch (OperationCanceledException oce)
         {
             activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
             throw BuildInterruptedException(oce);
         }
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
+
+    /// <summary>
+    /// Writes the explicit incomplete record for every tool call that started and never reported a
+    /// result (#2615 AC3/AC4). Safe to call more than once and on a handle constructed without a
+    /// write-ahead; the write-ahead itself is idempotent and never throws.
+    /// </summary>
+    private Task RecordInterruptedToolsAsync(CancellationToken cancellationToken)
+        => _toolWriteAhead?.RecordInterruptedAsync(cancellationToken) ?? Task.CompletedTask;
 
     /// <summary>
     /// Projects the messages a completed blocking run produced into a gateway <see cref="AgentResponse"/>,
@@ -1419,6 +1470,11 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             {
                 // Expected when caller cancels stream.
             }
+
+            // #2615 AC3/AC4: the streamed run may have been abandoned mid-tool (client disconnect,
+            // turn cancellation, provider death). Any call that started and never reported a result
+            // is closed out with the explicit incomplete record rather than left silently open.
+            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 

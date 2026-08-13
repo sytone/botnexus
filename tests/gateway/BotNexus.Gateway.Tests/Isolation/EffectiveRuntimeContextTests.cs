@@ -85,8 +85,9 @@ public sealed class EffectiveRuntimeContextTests
 
         var prompt = await RenderPromptAsync(strategy, sessionId);
 
-        prompt.ShouldContain("Reasoning: high");
-        prompt.ShouldNotContain("Reasoning: off");
+        prompt.ShouldContain("Reasoning: thinking level high");
+        // #2874: "off" was a fabricated display mode; an unresolved level now omits the line.
+        prompt.ShouldNotContain("Reasoning: thinking level off");
     }
 
     [Fact]
@@ -120,7 +121,7 @@ public sealed class EffectiveRuntimeContextTests
         settings.ContextWindow.ShouldBe(250_000);
 
         var prompt = inProcessHandle.RenderedSystemPrompt.ShouldNotBeNull();
-        prompt.ShouldContain("Reasoning: medium");
+        prompt.ShouldContain("Reasoning: thinking level medium");
         prompt.ShouldContain($"context_window={settings.ContextWindow}");
         prompt.ShouldContain($"| model={ConversationOverrideModel}");
     }
@@ -139,7 +140,9 @@ public sealed class EffectiveRuntimeContextTests
 
         prompt.ShouldContain($"| model={AgentDefaultModel}");
         prompt.ShouldNotContain("default_model=");
-        prompt.ShouldContain("Reasoning: off");
+        // #2874: with no thinking level resolved the runtime block omits the reasoning subject
+        // entirely rather than reporting a nonexistent "off" display mode.
+        prompt.ShouldNotContain("Reasoning:");
     }
 
     // ─── Seam construction ────────────────────────────────────────────────
@@ -275,7 +278,7 @@ public sealed class EffectiveRuntimeContextTests
 
     private sealed class NoToolsFactory : IAgentToolFactory
     {
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
+        public IReadOnlyList<IAgentTool> CreateTools(WorkingDir workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
             => Array.Empty<IAgentTool>();
     }
 

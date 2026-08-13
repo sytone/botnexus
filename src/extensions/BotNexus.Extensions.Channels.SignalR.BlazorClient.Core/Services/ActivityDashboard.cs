@@ -219,6 +219,16 @@ public sealed record ActivityAgentRef(string AgentId, string? Role = null);
 /// When the pin was stamped, or <see langword="null"/> when the conversation is not pinned. Carried
 /// so a later surface can explain or order pins by age without a second round trip.
 /// </param>
+/// <param name="SourceId">
+/// The stable identity of the thing that <em>minted</em> the conversation (#2121): the cron job id
+/// when <paramref name="Source"/> is <see cref="ConversationSource.Cron"/>, the webhook
+/// registration id when it is <see cref="ConversationSource.Webhook"/>, and <see langword="null"/>
+/// otherwise. Carried straight through from the server-stamped
+/// <see cref="ConversationSummaryDto.SourceId"/> rather than parsed out of the title or the session
+/// id - the exact inference the field exists to retire. Meaningful <em>only</em> paired with
+/// <paramref name="Source"/>, which is why <see cref="ActivityDashboardProjection.SourceLabel"/>
+/// refuses to attribute a row whose source names no originator registry.
+/// </param>
 /// <param name="ActiveSessionId">
 /// The session running in this conversation right now, or <see langword="null"/> when nothing is
 /// running (#1888). Carried straight through from the server-stamped
@@ -239,7 +249,8 @@ public sealed record ActivityRow(
     bool IsPinned = false,
     ConversationVisibility Visibility = ConversationVisibility.UserFacing,
     DateTimeOffset? PinnedAt = null,
-    string? ActiveSessionId = null)
+    string? ActiveSessionId = null,
+    string? SourceId = null)
 {
     /// <summary>
     /// Whether a session is running in this conversation right now. Computed from
@@ -460,7 +471,8 @@ public static class ActivityDashboardProjection
                 x.Dto.IsPinned,
                 x.Visibility,
                 x.Dto.IsPinned ? x.Dto.PinnedAt : null,
-                x.Dto.ActiveSessionId))
+                x.Dto.ActiveSessionId,
+                x.Dto.SourceId))
             .ToList();
     }
 
@@ -506,6 +518,61 @@ public static class ActivityDashboardProjection
             scheduled,
             latest == DateTimeOffset.MinValue ? null : latest,
             live);
+    }
+
+    /// <summary>
+    /// Maximum rendered length of a source id before it is elided (#3105). Long enough to keep a
+    /// human-authored cron job slug whole, short enough that an opaque 32-character registration
+    /// guid cannot grow the row - the same bounded-display posture <c>ConversationLabel.DisplayTitle</c>
+    /// applies to titles.
+    /// </summary>
+    public const int SourceIdDisplayLength = 24;
+
+    /// <summary>
+    /// Renders the originator attribution for a row (#3105): <em>which</em> cron job or webhook
+    /// registration minted this conversation, as opposed to the origin badge's <em>what class of
+    /// thing</em>. Returns <see langword="null"/> when the row names no attributable originator, so
+    /// the ordinary human/channel row is untouched.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Attribution is refused unless the source names an originator registry. <c>SourceId</c> is
+    /// documented as meaningful <em>only</em> paired with <c>Source</c> (see
+    /// <c>Conversation.SourceId</c>), so a value arriving on a <see cref="ConversationSource.Channel"/>
+    /// or <see cref="ConversationSource.Agent"/> row cannot be attributed to anything a reader could
+    /// look up. Rendering it anyway would present an opaque identifier as if it meant something -
+    /// worse than showing nothing, because it invites a lookup that cannot succeed.
+    /// </para>
+    /// <para>
+    /// Blank and absent collapse to the same answer, matching <c>NormalizeRole</c>: "present but
+    /// empty" must not render differently from "absent", or an empty badge appears on rows the
+    /// server declined to attribute.
+    /// </para>
+    /// <para>
+    /// Shaped as a nullable label the component renders conditionally, exactly like
+    /// <see cref="OriginLabel"/> and <see cref="ReadOnlyLabel"/>, so the page keeps one badge idiom.
+    /// </para>
+    /// </remarks>
+    /// <param name="row">A projected dashboard row.</param>
+    /// <returns>The bounded attribution text, or <see langword="null"/> when nothing is attributable.</returns>
+    public static string? SourceLabel(ActivityRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+
+        if (row.Source is not (ConversationSource.Cron or ConversationSource.Webhook))
+            return null;
+
+        if (string.IsNullOrWhiteSpace(row.SourceId))
+            return null;
+
+        var id = row.SourceId.Trim();
+
+        // Elide rather than hard-truncate so a clipped id is visibly clipped: a bare prefix reads as
+        // a complete-but-unfamiliar id, which is how a reader ends up searching for something that
+        // does not exist. The full value stays reachable via the origin badge's hover detail.
+        return id.Length <= SourceIdDisplayLength
+            ? id
+            : string.Concat(id.AsSpan(0, SourceIdDisplayLength), "\u2026");
     }
 
     /// <summary>

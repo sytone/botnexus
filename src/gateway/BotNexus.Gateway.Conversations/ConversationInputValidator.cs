@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Conversations;
 
 /// <summary>
@@ -6,8 +8,16 @@ namespace BotNexus.Gateway.Conversations;
 /// </summary>
 public static class ConversationInputValidator
 {
-    /// <summary>Maximum allowed length for conversation title after trimming.</summary>
-    public const int MaxTitleLength = 200;
+    /// <summary>
+    /// Maximum allowed length for conversation title after trimming.
+    /// </summary>
+    /// <remarks>
+    /// Derived from <see cref="ConversationTitle.MaxLength"/> rather than restated (#502). The limit
+    /// used to live only here, so a title minted anywhere other than this validator could exceed it
+    /// unnoticed. Deriving it keeps the REST error message and the domain invariant provably equal
+    /// instead of coincidentally equal - if the value object's ceiling moves, this moves with it.
+    /// </remarks>
+    public const int MaxTitleLength = ConversationTitle.MaxLength;
 
     /// <summary>Maximum allowed length for conversation purpose after trimming.</summary>
     public const int MaxPurposeLength = 1_000;

@@ -167,7 +167,8 @@ public static class SystemPromptBuilder
                     inlineButtonsEnabled,
                     stableContextFiles,
                     dynamicContextFiles),
-                [ModelGuidanceSection.ModelIdExtensionKey] = @params.Runtime?.Model
+                [ModelGuidanceSection.ModelIdExtensionKey] = @params.Runtime?.Model,
+                [ModelGuidanceSection.ProviderIdExtensionKey] = @params.Runtime?.Provider
             }
         };
 
@@ -724,13 +725,25 @@ public static class SystemPromptBuilder
     private static IReadOnlyList<string> BuildRuntimeSection(PromptContext context)
     {
         var data = GetGatewayData(context);
-        return
+        List<string> lines =
         [
             RuntimeLineFormatter.RuntimeContextBeginDelimiter,
-            BuildRuntimeLine(data.Parameters.Runtime),
-            $"Reasoning: {(data.Parameters.ReasoningLevel ?? "off")} (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.",
-            RuntimeLineFormatter.RuntimeContextEndDelimiter
+            BuildRuntimeLine(data.Parameters.Runtime)
         ];
+
+        // #2874: the old wording described an off|on|stream reasoning DISPLAY mode that no code
+        // implements - the client's thinking visibility is a bool defaulting to true applied as a
+        // CSS filter, and /reasoning is a per-conversation thinking-LEVEL override, not a toggle.
+        // Report only the resolved level, and omit the subject entirely when it is unresolvable.
+        var reasoningLevel = data.Parameters.ReasoningLevel;
+        if (!string.IsNullOrWhiteSpace(reasoningLevel) &&
+            !string.Equals(reasoningLevel, "off", StringComparison.OrdinalIgnoreCase))
+        {
+            lines.Add($"Reasoning: thinking level {reasoningLevel.Trim()} (per-conversation override: /reasoning <minimal|low|medium|high|xhigh|max> or /reasoning clear).");
+        }
+
+        lines.Add(RuntimeLineFormatter.RuntimeContextEndDelimiter);
+        return lines;
     }
 
     private static bool HasConversationContext(PromptContext context)

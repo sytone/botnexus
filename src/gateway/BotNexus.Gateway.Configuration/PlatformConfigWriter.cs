@@ -316,6 +316,120 @@ public sealed class PlatformConfigWriter
     }
 
     /// <summary>
+    /// Reads the raw configuration document together with the revision token it was read at
+    /// (issue #2059).
+    /// </summary>
+    /// <remarks>
+    /// The settings UI needs the revision of the <em>document</em>, not of a typed projection: it
+    /// edits raw JSON paths (including sections and keys <see cref="PlatformConfig"/> does not
+    /// model) and must be able to prove that nothing else committed between the load it rendered
+    /// from and the save it submits. Pair with <see cref="ApplyPatchAsync"/>.
+    /// </remarks>
+    public async Task<(JsonObject Config, string Revision)> ReadWithRevisionAsync(CancellationToken ct = default)
+    {
+        var root = await ReadRootAsync(ct);
+        return (root, ComputeRevision(root));
+    }
+
+    /// <summary>
+    /// Applies a batch of addressed patch operations as one all-or-nothing write, optionally
+    /// guarded by the revision the caller's snapshot was read at (issue #2059).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the write shape the settings UI needs and previously did not have. Its predecessor
+    /// looped over every materialised top-level section issuing an independent
+    /// <c>PUT /api/config/{section}</c>. That loop had three defects, all of which this method
+    /// closes structurally rather than by convention:
+    /// </para>
+    /// <list type="number">
+    ///   <item><b>No dirty tracking.</b> Sections the operator never touched were rewritten from a
+    ///   stale snapshot, so a concurrent edit elsewhere was silently reverted. A patch carries only
+    ///   the paths that changed, so an untouched section is not part of the write at all.</item>
+    ///   <item><b>No concurrency check.</b> Every PUT was last-writer-wins. Supplying
+    ///   <paramref name="expectedRevision"/> turns the save into a compare-and-swap: a save built
+    ///   on a stale read is rejected with <see cref="PlatformConfigConcurrencyException"/> so the
+    ///   UI can reload and re-apply, instead of destroying the other writer's change.</item>
+    ///   <item><b>No atomicity.</b> The loop committed section-by-section and aborted mid-way on
+    ///   the first failure, leaving the document half-saved. Here the whole batch is applied to an
+    ///   in-memory candidate inside the writer lock; if any operation, the guard, or validation
+    ///   rejects it, nothing at all is written.</item>
+    /// </list>
+    /// <para>
+    /// Redacted secrets are restored from the document on disk before the candidate is validated,
+    /// so a field the UI rendered as <c>***</c> and submitted back verbatim cannot overwrite the
+    /// real value (#1955).
+    /// </para>
+    /// <para>
+    /// Scope note: this closes the <em>portal-side</em> hole. Coordination between independent
+    /// writers beyond this process is #2060, and the validate-before-commit contract is #2058 -
+    /// this method reuses the existing candidate validation rather than redefining it.
+    /// </para>
+    /// </remarks>
+    /// <param name="operations">The addressed mutations, applied in order.</param>
+    /// <param name="reason">Backup reason label recorded when the write proceeds.</param>
+    /// <param name="expectedRevision">
+    /// Optional compare-and-swap token from <see cref="ReadWithRevisionAsync"/>. When
+    /// <see langword="null"/> the write proceeds without a concurrency check.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The outcome, carrying the newly committed revision on success.</returns>
+    /// <exception cref="PlatformConfigConcurrencyException">
+    /// The document on disk no longer matches <paramref name="expectedRevision"/>. Nothing was
+    /// written.
+    /// </exception>
+    public async Task<ConfigPatchResult> ApplyPatchAsync(
+        IReadOnlyList<ConfigPatchOperation> operations,
+        string reason,
+        string? expectedRevision = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(operations);
+
+        if (operations.Count == 0)
+            return new ConfigPatchResult(true, null, []);
+
+        string? committedRevision = null;
+
+        var errors = await MutateCoreAsync(
+            root =>
+            {
+                // The comparison runs inside the writer lock against the root read inside the same
+                // lock, so no writer can interleave between the check and the write.
+                if (expectedRevision is not null)
+                {
+                    var actual = ComputeRevision(root);
+                    if (!string.Equals(actual, expectedRevision, StringComparison.Ordinal))
+                        throw new PlatformConfigConcurrencyException(_configPath, expectedRevision, actual);
+                }
+
+                // Apply to a candidate first: a failure part-way through must not leave the live
+                // root half-mutated, because MutateCoreAsync's guard compares against it.
+                var candidate = root.DeepClone().AsObject();
+                var applyError = ConfigPatchApplier.Apply(candidate, operations);
+                if (applyError is not null)
+                    return Task.FromResult<string?>(applyError);
+
+                ConfigSecretMerge.RestoreSecrets(root, candidate);
+
+                root.Clear();
+                foreach (var kvp in candidate)
+                    root[kvp.Key] = kvp.Value?.DeepClone();
+
+                committedRevision = ComputeRevision(root);
+                return Task.FromResult<string?>(null);
+            },
+            reason,
+            validateCandidate: true,
+            ConfigPatchApplier.DeclaredSections(operations),
+            ct);
+
+        return errors.Count > 0
+            ? new ConfigPatchResult(false, null, errors)
+            : new ConfigPatchResult(true, committedRevision, []);
+    }
+
+    /// <summary>
     /// Computes the revision token for a configuration document: a stable content digest of its
     /// canonical serialization, used as the compare-and-swap token for whole-document replaces.
     /// </summary>

@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Tools;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Security;
@@ -44,9 +45,11 @@ public sealed class DefaultAgentToolFactory : IAgentToolFactory
         _shellCommand = shellCommand;
     }
 
-    public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
+    public IReadOnlyList<IAgentTool> CreateTools(WorkingDir workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
     {
-        var resolved = Path.GetFullPath(workingDirectory);
+        // WorkingDir guarantees the value is a non-empty, syntactically valid path; GetFullPath is
+        // still required because the value object deliberately does not promise absoluteness (#502).
+        var resolved = Path.GetFullPath(workingDirectory.Value);
         var fileSystem = new FileSystem();
 
         IPathValidator effectivePathValidator;

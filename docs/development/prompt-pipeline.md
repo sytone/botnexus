@@ -512,11 +512,13 @@ public static LambdaPromptSection Create() =>
 
 ## Model Family Detection
 
-`ModelFamilyDetector.GetModelFamily(modelId)` identifies the model family from a model identifier string. Used by `ModelGuidanceSection` to select per-family prompt defaults.
+`ModelFamilyDetector.GetModelFamily(modelId, providerId)` identifies the model family from a model identifier string, falling back to the provider identity when the id alone does not resolve. Used by `ModelGuidanceSection` to select per-family prompt defaults.
 
 Recognized families: `claude`, `gpt`, `gemini`, `copilot`, `deepseek`, `qwen`, `llama`.
 
-Detection is case-insensitive and matches on common prefixes and substrings. Unrecognized models return `"unknown"` and receive no model-specific guidance.
+Detection is case-insensitive and matches on common prefixes and substrings. The model id is consulted first and always wins when it resolves. When it does not, a provider that serves exactly one family (`anthropic`, `openai`, `azure-openai-responses`, `google`, `deepseek`, `github-copilot` and its transport ids) resolves the family instead — otherwise a model served under a vanity id carrying no family substring would silently lose its guidance. Providers serving several vendors (for example `openrouter` or `huggingface`) prove nothing about the family and are deliberately absent. Unrecognized models return `"unknown"` and receive no model-specific guidance.
+
+`SystemPromptBuilder` passes the model id and provider id through `PromptContext.Extensions` under `ModelGuidanceSection.ModelIdExtensionKey` (`modelId`) and `ModelGuidanceSection.ProviderIdExtensionKey` (`providerId`).
 
 ## Extension Prompt Contributions
 

@@ -9,10 +9,13 @@ using Microsoft.Extensions.DependencyInjection;
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
 /// <summary>
-/// Tests for the schema-driven Configuration page save workflow (config-parity PBI 4/6 of #1579).
-/// The page now renders the generic SchemaForm fed by GET /api/config/schema instead of the eight
-/// hand-written panels. These assert the save workflow still only persists sections the user
-/// dirtied and that exist on disk (raw) -- default-injected-only sections must not be written back.
+/// Tests for the schema-driven Configuration page save workflow (config-parity PBI 4/6 of #1579,
+/// save semantics rewritten by #2059).
+/// The page renders the generic SchemaForm fed by GET /api/config/schema instead of the eight
+/// hand-written panels. These assert the save workflow persists exactly what the user edited: the
+/// batch addresses the dirtied paths and nothing else, so an untouched section is never rewritten
+/// from a stale snapshot, and a section absent from the file on disk can still be materialized by
+/// editing it.
 /// Field-coverage parity is covered by ConfigurationPageSchemaFormTests; widget behaviour by
 /// SchemaFormTests.
 /// </summary>
@@ -22,8 +25,19 @@ public sealed class ConfigurationPageTests : IDisposable
 
     public void Dispose() => _ctx.Dispose();
 
+    /// <summary>
+    /// Editing one section must not enlist any other section in the save.
+    /// </summary>
+    /// <remarks>
+    /// Re-points the former <c>SaveAll_does_not_persist_sections_only_present_in_effective_defaults</c>
+    /// onto the #2059 contract. Its intent - an untouched section must not be written back - is
+    /// preserved and STRENGTHENED: the old assertion allowed the section to escape only because it
+    /// was missing from the raw document, so an untouched section that DID exist on disk was still
+    /// clobbered. The new assertion is on the batch itself, so it holds regardless of what is on
+    /// disk.
+    /// </remarks>
     [Fact]
-    public void SaveAll_does_not_persist_sections_only_present_in_effective_defaults()
+    public void Save_addresses_only_the_edited_path_and_no_other_section()
     {
         var handler = new FakeConfigApiHandler(
             schema: BuildSchema(),
@@ -41,27 +55,47 @@ public sealed class ConfigurationPageTests : IDisposable
         var cut = _ctx.Render<Configuration>();
         cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
 
-        // Edit a gateway field (gateway is in raw, so it is eligible for save). Navigate to the
-        // Gateway section first -- the sidebar (#1892) renders one section at a time and sections
-        // sort alphabetically here (no x-ui-order), so "cron" is the default, not "gateway".
+        // Navigate to the Gateway section first -- the sidebar (#1892) renders one section at a
+        // time and sections sort alphabetically here (no x-ui-order), so "cron" is the default.
         cut.Find(".config-sidebar-item[data-section='gateway']").Click();
         cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
         cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:9999");
 
         cut.Find("button.primary").Click();
 
-        cut.WaitForAssertion(() =>
-        {
-            // Gateway section is saved (in raw and dirtied).
-            handler.SavedSections.ShouldContain("gateway");
-            // Cron section is NOT saved (only present in effective defaults, not raw).
-            handler.SavedSections.ShouldNotContain("cron");
-        });
+        cut.WaitForAssertion(() => handler.Patches.ShouldNotBeEmpty());
+
+        var paths = handler.Patches[0]["operations"]!.AsArray()
+            .Select(o => o!["path"]!.GetValue<string>()).ToList();
+
+        paths.ShouldBe(["gateway.listenUrl"]);
+        paths.ShouldNotContain(p => p.StartsWith("cron", StringComparison.Ordinal));
+
+        // And no whole-section PUT accompanied it: a section-wide write IS the defect.
+        handler.SavedSections.ShouldBeEmpty();
     }
 
-    [Fact]
-    public void SaveAll_persists_section_when_it_exists_in_raw_after_edit()
+    /// <summary>
+    /// An edited field persists whether or not its section already exists in the file on disk.
+    /// </summary>
+    /// <remarks>
+    /// Re-points the former <c>SaveAll_persists_section_when_it_exists_in_raw_after_edit</c>. The
+    /// original only asserted the in-raw case, because the old implementation could not persist an
+    /// absent section at all. This runs BOTH cases: the "absent from raw" half is precisely the
+    /// materialization clause of #2059, and would have failed before this change.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Save_persists_an_edited_field_whether_or_not_its_section_is_on_disk(bool sectionInRaw)
     {
+        var raw = new JsonObject
+        {
+            ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" }
+        };
+        if (sectionInRaw)
+            raw["cron"] = new JsonObject { ["enabled"] = true, ["tickIntervalSeconds"] = 60 };
+
         var handler = new FakeConfigApiHandler(
             schema: BuildSchema(),
             effective: new JsonObject
@@ -69,28 +103,23 @@ public sealed class ConfigurationPageTests : IDisposable
                 ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" },
                 ["cron"] = new JsonObject { ["enabled"] = true, ["tickIntervalSeconds"] = 60 }
             },
-            raw: new JsonObject
-            {
-                ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5000" },
-                ["cron"] = new JsonObject { ["enabled"] = true, ["tickIntervalSeconds"] = 60 }
-            });
+            raw: raw);
         ConfigureServices(handler);
 
         var cut = _ctx.Render<Configuration>();
         cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
 
-        // Toggle a cron field; cron exists in raw so it must be persisted. Navigate to the Cron
-        // section first (sidebar #1892 renders one section at a time).
         cut.Find(".config-sidebar-item[data-section='cron']").Click();
         cut.WaitForAssertion(() => cut.Find("[data-testid='field-cron.enabled'] input"));
         cut.Find("[data-testid='field-cron.enabled'] input").Change(false);
 
         cut.Find("button.primary").Click();
 
-        cut.WaitForAssertion(() =>
-        {
-            handler.SavedSections.ShouldContain("cron");
-        });
+        cut.WaitForAssertion(() => handler.Patches.ShouldNotBeEmpty());
+
+        handler.Patches[0]["operations"]!.AsArray()
+            .Select(o => o!["path"]!.GetValue<string>())
+            .ShouldBe(["cron.enabled"]);
     }
 
     [Fact]
@@ -179,6 +208,9 @@ public sealed class ConfigurationPageTests : IDisposable
         private readonly JsonObject _raw;
         public List<string> SavedSections { get; } = [];
 
+        /// <summary>Patch request bodies observed, in order (#2059).</summary>
+        public List<JsonObject> Patches { get; } = [];
+
         public FakeConfigApiHandler(JsonObject schema, JsonObject effective, JsonObject raw)
         {
             _schema = schema;
@@ -186,25 +218,39 @@ public sealed class ConfigurationPageTests : IDisposable
             _raw = raw;
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
             if (path == "/api/config/schema" && request.Method == HttpMethod.Get)
-                return Task.FromResult(JsonResponse(_schema));
+                return JsonResponse(_schema);
+            if (path == "/api/config/snapshot" && request.Method == HttpMethod.Get)
+                return JsonResponse(new JsonObject { ["revision"] = "REV-1", ["config"] = _raw.DeepClone() });
             if (path == "/api/config" && request.Method == HttpMethod.Get)
-                return Task.FromResult(JsonResponse(_effective));
+                return JsonResponse(_effective);
             if (path == "/api/config/raw" && request.Method == HttpMethod.Get)
-                return Task.FromResult(JsonResponse(_raw));
+                return JsonResponse(_raw);
+            if (path == "/api/config" && request.Method == HttpMethod.Patch)
+            {
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                Patches.Add(JsonNode.Parse(body)!.AsObject());
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"success\":true,\"revision\":\"REV-2\",\"errors\":[]}",
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+            }
             if (path.StartsWith("/api/config/", StringComparison.Ordinal) && request.Method == HttpMethod.Put)
             {
                 var section = Uri.UnescapeDataString(path["/api/config/".Length..]);
                 SavedSections.Add(section);
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("{\"message\":\"ok\"}", Encoding.UTF8, "application/json")
-                });
+                };
             }
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
 
         private static HttpResponseMessage JsonResponse(JsonObject obj) =>

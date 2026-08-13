@@ -122,6 +122,10 @@ public sealed class ShellTool : IAgentTool
         Name,
         _shellPreference == ShellPreference.Pwsh
             ? "Execute a PowerShell command in the current working directory and return stdout/stderr. " +
+              "This tool ALREADY RUNS PowerShell, so do not wrap your script in a nested 'pwsh -Command' - it is " +
+              "unnecessary, and with a DOUBLE-quoted argument the outer shell expands every $variable and mangles " +
+              "every @{} literal before the child pwsh sees them (such calls are rejected). If you genuinely must " +
+              "nest, single-quote the -Command argument or use 'pwsh -NoProfile -File tmp/script.ps1'. " +
               "PowerShell gotchas (avoid ParserError): inside double-quoted strings wrap a variable followed by ':' as ${var} " +
               "(or use single quotes); no backtick line-continuations; pass -Filter a single string, not an array; for " +
               "multi-line or complex scripts write a tmp/*.ps1 file and run it. Inline Python on Windows prints cp1252 by " +
@@ -230,6 +234,16 @@ public sealed class ShellTool : IAgentTool
             && NodePreflight.TryGetInlineScript(invocation.BaseArgs, invocation.Command, out var inlineJsScript))
         {
             NodePreflight.ThrowIfInvalid(inlineJsScript);
+        }
+
+        // File-based `pwsh -File <path>` invocations (issue #2758): a missing script is reported by
+        // pwsh as an ARGUMENT-parsing error plus its generic usage banner, which names neither the
+        // skill nor any candidate. Resolve the target here and, when it is absent, name the skill and
+        // the closest existing wrapper names enumerated from the skill's scripts/ directory. A near
+        // match is only reported - never substituted for what the caller actually asked to run.
+        if (SkillScriptPreflight.TryGetFileTargetFromCommandLine(command, out var scriptTarget))
+        {
+            SkillScriptPreflight.ThrowIfMissing(ResolveAgainstWorkingDirectory(scriptTarget));
         }
 
         // Combine the clamp warning (if any) with the shell-detection warning so both surface
@@ -620,6 +634,27 @@ public sealed class ShellTool : IAgentTool
             JsonElement element => element.ToString(),
             _ => value.ToString() ?? throw new ArgumentException($"Argument '{key}' is invalid.")
         };
+    }
+
+    /// <summary>
+    /// Rebases a relative <c>-File</c> target onto the tool's working directory so the existence
+    /// probe in <see cref="SkillScriptPreflight"/> tests the same path the spawned process will,
+    /// rather than the gateway process's current directory (issue #2416's divergence, #2758's probe).
+    /// A rooted path is returned unchanged, and an unrebaseable path is returned as-is so the
+    /// preflight simply finds it and stays silent.
+    /// </summary>
+    private string ResolveAgainstWorkingDirectory(string path)
+    {
+        try
+        {
+            return Path.IsPathRooted(path) || string.IsNullOrWhiteSpace(_workingDirectory)
+                ? path
+                : Path.GetFullPath(path, _workingDirectory);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
     }
 
     private static int ReadInt(object value, string key)

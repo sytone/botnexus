@@ -29,133 +29,118 @@ dotnet add package BotNexus.Agent.Core
 **2. Implement `IAgentTool`:**
 
 ```csharp
-using BotNexus.Agent.Core.Contracts;
-using BotNexus.Agent.Core.Contracts.Models;
-using System.ComponentModel;
-using System.Text.Json.Serialization;
+using System.Text.Json;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Extensions.MyTool;
 
-public class CalculatorTool : IAgentTool
+public sealed class CalculatorTool : IAgentTool
 {
     public string Name => "calculator";
 
-    public string Description => "Perform arithmetic calculations";
+    public string Label => "Calculator";
 
-    public async Task<ToolResult> ExecuteAsync(
-        ToolRequest request,
-        CancellationToken cancellationToken)
+    public Tool Definition => new(
+        Name,
+        "Perform arithmetic calculations",
+        JsonDocument.Parse("""
+            {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
+                  "enum": ["add", "subtract", "multiply", "divide"],
+                  "description": "Arithmetic operation to perform."
+                },
+                "a": { "type": "number", "description": "First operand." },
+                "b": { "type": "number", "description": "Second operand." }
+              },
+              "required": ["operation", "a", "b"]
+            }
+            """).RootElement);
+
+    public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default)
     {
-        var input = request.DeserializeInput<CalculatorInput>();
-        
-        if (input == null)
+        // Throw for validation failures - the loop converts them to error tool results.
+        if (arguments.GetValueOrDefault("operation") is not string op || op.Length == 0)
         {
-            return ToolResult.Failure("Invalid input");
+            throw new ArgumentException("operation is required.");
         }
 
-        var result = input.Operation switch
-        {
-            "add" => input.A + input.B,
-            "subtract" => input.A - input.B,
-            "multiply" => input.A * input.B,
-            "divide" => input.B != 0 ? input.A / input.B : 
-                throw new InvalidOperationException("Division by zero"),
-            _ => throw new InvalidOperationException($"Unknown operation: {input.Operation}")
-        };
-
-        return ToolResult.Success(new CalculatorOutput 
-        { 
-            Result = result 
-        });
+        return Task.FromResult(arguments);
     }
 
-    public ToolSchema GetSchema()
+    public Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
-        return new ToolSchema
+        var op = arguments["operation"]!.ToString()!;
+        var a = Convert.ToDouble(arguments["a"]);
+        var b = Convert.ToDouble(arguments["b"]);
+
+        var result = op switch
         {
-            Name = Name,
-            Description = Description,
-            InputSchema = new
-            {
-                type = "object",
-                properties = new
-                {
-                    operation = new
-                    {
-                        type = "string",
-                        description = "Arithmetic operation",
-                        @enum = new[] { "add", "subtract", "multiply", "divide" }
-                    },
-                    a = new
-                    {
-                        type = "number",
-                        description = "First operand"
-                    },
-                    b = new
-                    {
-                        type = "number",
-                        description = "Second operand"
-                    }
-                },
-                required = new[] { "operation", "a", "b" }
-            }
+            "add" => a + b,
+            "subtract" => a - b,
+            "multiply" => a * b,
+            "divide" => b != 0 ? a / b
+                : throw new InvalidOperationException("Division by zero"),
+            _ => throw new InvalidOperationException($"Unknown operation: {op}")
         };
+
+        return Task.FromResult(new AgentToolResult(
+            [new AgentToolContent(AgentToolContentType.Text, result.ToString())]));
     }
-}
-
-public class CalculatorInput
-{
-    [JsonPropertyName("operation")]
-    [Description("Arithmetic operation to perform")]
-    public string Operation { get; set; } = string.Empty;
-
-    [JsonPropertyName("a")]
-    [Description("First operand")]
-    public double A { get; set; }
-
-    [JsonPropertyName("b")]
-    [Description("Second operand")]
-    public double B { get; set; }
-}
-
-public class CalculatorOutput
-{
-    [JsonPropertyName("result")]
-    public double Result { get; set; }
 }
 ```
 
 ### Key Components
 
-**`Name`**: Unique tool identifier (used in agent `toolIds`)
+**`Name`**: Unique tool identifier exposed to the model and used in agent `toolIds`.
+Matched case-insensitively when routing a tool call.
 
-**`Description`**: What the tool does (shown to the LLM)
+**`Label`**: Human-readable label used in logs, error messages, and event payloads.
 
-**`ExecuteAsync`**: Tool execution logic
-- Receives `ToolRequest` with input parameters
-- Returns `ToolResult` with success/failure and output data
+**`Definition`**: The `Tool` schema exposed to the model - name, description, and a JSON
+Schema parameter document. The model uses this to decide when and how to call the tool.
+The `Name` in `Definition` must match the `Name` property.
 
-**`GetSchema`**: JSON Schema defining tool inputs
-- Follows OpenAPI/JSON Schema conventions
-- LLM uses this to understand how to call the tool
+**`PrepareArgumentsAsync`**: Called *before* `ExecuteAsync` to validate, coerce, or enrich
+arguments. Throw on validation failure - exceptions are caught and converted to error tool
+results. In parallel execution mode this runs sequentially for every tool call before any
+execution begins.
+
+**`ExecuteAsync`**: Tool execution logic.
+- Receives the `toolCallId`, the validated argument dictionary, and an optional
+  `AgentToolUpdateCallback` for streaming partial progress.
+- Returns an `AgentToolResult` carrying one or more `AgentToolContent` items.
+- Throw for execution failures; the loop converts them to error tool results.
+- Must be thread-safe when `ToolExecutionMode.Parallel` is in use.
 
 ### Tool Result
 
-Return results using `ToolResult`:
+A tool returns an `AgentToolResult`, which is a content list plus optional structured
+`Details` for consumers that want the unflattened payload:
 
 ```csharp
-// Success with data
-return ToolResult.Success(new { message = "Operation completed" });
+// Text result
+return new AgentToolResult(
+    [new AgentToolContent(AgentToolContentType.Text, "File saved successfully")]);
 
-// Success with string
-return ToolResult.Success("File saved successfully");
-
-// Failure with error
-return ToolResult.Failure("File not found");
-
-// Failure with exception
-return ToolResult.Failure(exception);
+// Text result with structured details alongside it
+return new AgentToolResult(
+    [new AgentToolContent(AgentToolContentType.Text, json)],
+    Details: new { path, bytesWritten });
 ```
+
+There is no success/failure flag: a failure is signalled by **throwing**, which the agent
+loop catches and renders as an error tool result the model can read and retry against.
 
 ### Extension Manifest
 
@@ -210,44 +195,52 @@ BotNexus automatically discovers and loads the tool on next startup or config re
 
 **File Operations:**
 ```csharp
-public class ReadFileTool : IAgentTool
+public sealed class ReadFileTool : IAgentTool
 {
     public string Name => "read_file";
-    
-    public async Task<ToolResult> ExecuteAsync(
-        ToolRequest request,
-        CancellationToken cancellationToken)
+    public string Label => "Read File";
+
+    public async Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
-        var input = request.DeserializeInput<ReadFileInput>();
-        var content = await File.ReadAllTextAsync(input.Path, cancellationToken);
-        return ToolResult.Success(new { content });
+        var path = arguments["path"]!.ToString()!;
+        var content = await File.ReadAllTextAsync(path, cancellationToken);
+        return new AgentToolResult(
+            [new AgentToolContent(AgentToolContentType.Text, content)]);
     }
 }
 ```
 
 **Web Search:**
 ```csharp
-public class WebSearchTool : IAgentTool
+public sealed class WebSearchTool : IAgentTool
 {
     private readonly ISearchProvider _searchProvider;
 
     public string Name => "web_search";
+    public string Label => "Web Search";
 
-    public async Task<ToolResult> ExecuteAsync(
-        ToolRequest request,
-        CancellationToken cancellationToken)
+    public async Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
-        var input = request.DeserializeInput<WebSearchInput>();
-        var results = await _searchProvider.SearchAsync(input.Query, cancellationToken);
-        return ToolResult.Success(results);
+        var query = arguments["query"]?.ToString();
+        var results = await _searchProvider.SearchAsync(query, cancellationToken);
+        return new AgentToolResult(
+            [new AgentToolContent(AgentToolContentType.Text, results)]);
     }
 }
 ```
 
-For more examples, see:
-- `extensions/web/BotNexus.Extensions.WebTools/`
-- `extensions/tools/process/BotNexus.Extensions.ProcessTool/`
-- `extensions/tools/exec/BotNexus.Extensions.ExecTool/`
+For complete working implementations, read the shipped tools in the repository:
+- `src/extensions/BotNexus.Extensions.WebTools/`
+- `src/extensions/BotNexus.Extensions.ProcessTool/`
+- `src/extensions/BotNexus.Extensions.ExecTool/`
 
 ---
 

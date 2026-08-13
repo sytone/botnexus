@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Memory.Embeddings;
 using System.IO.Abstractions;
 using System.Reflection;
@@ -175,7 +176,7 @@ public sealed class InProcessIsolationStrategyDiagnosticSinkTests
 
     private sealed class DiagnosticAgentToolFactory : IAgentToolFactory
     {
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
+        public IReadOnlyList<IAgentTool> CreateTools(WorkingDir workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
             => [];
     }
 

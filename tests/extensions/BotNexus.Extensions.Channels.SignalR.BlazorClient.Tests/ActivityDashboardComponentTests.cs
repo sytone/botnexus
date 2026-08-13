@@ -48,10 +48,12 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         string source = "Channel",
         string kind = "HumanAgent",
         // #2692: visibility is server-stamped and already on the wire; fixtures set it explicitly.
-        string visibility = "UserFacing") =>
+        string visibility = "UserFacing",
+        // #3105: the originating job / registration id, server-stamped alongside source (#2121).
+        string? sourceId = null) =>
         new(id, agentId, title, false, status, activeSessionId, bindingCount,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, Kind: kind, Source: source,
-            Visibility: visibility, Participants: participants);
+            Visibility: visibility, Participants: participants, SourceId: sourceId);
 
     private void SetupConversations(params ConversationSummaryDto[] conversations) =>
         _rest.GetAllConversationsAsync(Arg.Any<CancellationToken>())
@@ -424,6 +426,78 @@ public sealed class ActivityDashboardComponentTests : IDisposable
 
         var badge = cut.Find("[data-testid='activity-origin-badge']");
         Assert.Equal("Source: Agent \u00b7 Kind: AgentSubAgent", badge.GetAttribute("title"));
+    }
+
+    // ── Originator attribution (#3105) ──────────────────────────────────
+
+    /// <summary>
+    /// AC5: the attribution renders for cron and webhook rows and is ABSENT for a human/channel row.
+    /// Asserted as one render over a mixed set, so the negative case cannot pass merely because the
+    /// fixture had nothing to render.
+    /// </summary>
+    [Fact]
+    public void Renders_the_originator_for_scheduled_and_webhook_rows_and_not_for_a_human_row()
+    {
+        SetupConversations(
+            Conv("c1", title: "Jon DM"),
+            Conv("c2", title: "Nightly", source: "Cron", sourceId: "daily-log-analysis"),
+            Conv("c3", title: "Hook", source: "Webhook", sourceId: "wh_farnsworth_1"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll("[data-testid='activity-row']").Count));
+
+        var byRow = cut.FindAll("[data-testid='activity-row']")
+            .ToDictionary(
+                r => r.GetAttribute("data-conversation-id")!,
+                r => r.QuerySelector("[data-testid='activity-source-id']"));
+
+        Assert.Null(byRow["c1"]);
+        Assert.Equal("daily-log-analysis", byRow["c2"]!.TextContent);
+        Assert.Equal("wh_farnsworth_1", byRow["c3"]!.TextContent);
+    }
+
+    /// <summary>
+    /// AC6: the full untruncated originator is reachable as hover detail on the EXISTING origin
+    /// badge, rather than as a second hover target. Uses an over-long id so the assertion also
+    /// proves the tooltip carries the raw value and not the elided label.
+    /// </summary>
+    [Fact]
+    public void Origin_badge_tooltip_carries_the_untruncated_originator()
+    {
+        var id = new string('j', ActivityDashboardProjection.SourceIdDisplayLength + 10);
+        SetupConversations(Conv("c1", title: "Nightly", source: "Cron", sourceId: id));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='activity-origin-badge']"));
+
+        var badge = cut.Find("[data-testid='activity-origin-badge']");
+        Assert.Equal($"Source: Cron \u00b7 Kind: HumanAgent \u00b7 Originator: {id}", badge.GetAttribute("title"));
+
+        // The visible label is bounded even though the tooltip is not.
+        var visible = cut.Find("[data-testid='activity-source-id']").TextContent;
+        Assert.Equal(ActivityDashboardProjection.SourceIdDisplayLength + 1, visible.Length);
+    }
+
+    /// <summary>
+    /// AC7: a row with no originator renders exactly as it did before #3105 - no attribution element,
+    /// and an origin tooltip unchanged from the pre-existing <c>(source, kind)</c> pair. This is the
+    /// no-regression clause, and it is why the tooltip is gated on the label rather than on the raw id.
+    /// </summary>
+    [Fact]
+    public void An_unattributed_scheduled_row_is_unchanged_from_before()
+    {
+        SetupConversations(Conv("c1", title: "Nightly", source: "Cron"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='activity-origin-badge']"));
+
+        Assert.Empty(cut.FindAll("[data-testid='activity-source-id']"));
+        Assert.Equal(
+            "Source: Cron \u00b7 Kind: HumanAgent",
+            cut.Find("[data-testid='activity-origin-badge']").GetAttribute("title"));
     }
 
     // ── Title truncation and derived labels (#2528) ────────────────────────

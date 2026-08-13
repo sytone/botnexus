@@ -14,9 +14,10 @@
 4. [Configuration Hierarchy](#configuration-hierarchy)
 5. [ArgumentList Execution Model](#argumentlist-execution-model)
 6. [Output Handling](#output-handling)
-7. [Timeouts and Cancellation](#timeouts-and-cancellation)
-8. [Examples](#examples)
-9. [Troubleshooting](#troubleshooting)
+7. [Script Preflight](#script-preflight)
+8. [Timeouts and Cancellation](#timeouts-and-cancellation)
+9. [Examples](#examples)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -297,6 +298,54 @@ The **tail-biased** truncation strategy keeps the most recent output because:
 
 ---
 
+## Script Preflight
+
+Before a process is spawned, both the `shell` and `exec` tools preflight the invocation. Two families
+of check run:
+
+**Inline source checks** apply to `pwsh -Command`, `python -c` and `node -e` one-liners. They reject
+the syntax mistakes that would otherwise surface as a late runtime parser error - unterminated
+strings, empty pipe elements, unbalanced braces or brackets, malformed `${...}` references.
+
+**Script-path checks** apply to file-based invocations (`pwsh -File <path>`). PowerShell reports a
+non-existent script as an *argument-parsing* error followed by its generic usage banner:
+
+```
+The argument '...\skills\teams\scripts\ListMessages.ps1' is not recognized as the name of a
+script file. Check the spelling of the name, or if a path was included, verify that the path
+is correct and try again.
+Usage: pwsh[.exe] [-Login] [[-File] <filePath> [args]] [-Com...
+```
+
+That message names neither the skill nor any candidate, so a caller that guessed a wrapper name has
+no signal to correct with. The preflight replaces it. When the missing path sits under a skill's
+`scripts/` directory - `.../skills/<skill>/scripts/<file>.ps1` - the rejection names the skill, lists
+the closest existing wrapper names by edit distance, and lists the wrappers that are actually
+available:
+
+```
+Skill wrapper not found: 'ListMessages.ps1' does not exist in the 'teams' skill's scripts
+directory (.../skills/teams/scripts). Closest matches: ListChatMessages.ps1,
+ListChannelMessages.ps1. These were NOT executed - re-issue the call with the exact name you
+intend. Available wrappers: GetChatMessage.ps1, ListChannelMessages.ps1, ...
+```
+
+Three properties are deliberate:
+
+- **Candidates are enumerated at failure time**, by listing the skill's `scripts/` directory - never
+  from a hand-maintained alias table. A wrapper added later appears in the hint automatically, with
+  no code change.
+- **A near match is reported, never substituted.** Executing `ListChatMessages.ps1` because the
+  caller asked for `ListMessages.ps1` would make a guess indistinguishable from a correct call and
+  could invoke an operation nobody requested.
+- **Outside a skill directory the message stays plain.** A missing `tmp/fq.ps1` reports a simple
+  path-not-found with no candidate list, because there is no authoritative set to draw one from.
+
+A path the preflight cannot resolve - one containing a variable, a subexpression or a wildcard -
+is passed through untouched, since it may still expand to a real file at execution time.
+
+---
+
 ## Timeouts and Cancellation
 
 ### Default Timeout
@@ -498,4 +547,4 @@ Some commands write errors to stderr which BotNexus captures. Check if:
 - [Configuration Reference](/configuration) — Gateway-level shell settings
 - [User Guide: Configuration](/user-guide/configuration) — Per-agent shell configuration
 - [Agent Execution](/development/agent-execution) — How agents invoke tools
-- [Tool Security](/training/tool-security) — Security considerations for shell execution
+- [Tool Security](/internals/tool-security) — Security considerations for shell execution
