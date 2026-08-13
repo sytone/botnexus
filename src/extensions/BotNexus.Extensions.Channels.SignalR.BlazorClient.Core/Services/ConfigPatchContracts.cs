@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -11,10 +12,21 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// bundle. The shape is the wire contract of <c>PATCH /api/config</c>; the server-side record is
 /// its mirror and the round-trip is pinned by tests rather than by a shared type.
 /// </remarks>
+/// <remarks>
+/// The property names are pinned with <see cref="JsonPropertyNameAttribute"/> rather than left to a
+/// serializer naming policy. <c>PlatformConfigService</c>'s options set only
+/// <c>PropertyNameCaseInsensitive</c>, which affects READS but not WRITES, so without these the
+/// body would go out PascalCase - accepted by the case-insensitive server binder but wrong on the
+/// wire and invisible to any other consumer. Pinning the names makes the contract explicit instead
+/// of dependent on a serializer setting elsewhere.
+/// </remarks>
 /// <param name="Path">Dotted path with optional <c>[index]</c> segments, e.g. <c>gateway.port</c>.</param>
 /// <param name="Value">The value to write; ignored when <paramref name="Remove"/> is true.</param>
 /// <param name="Remove">Remove the addressed node instead of setting it.</param>
-public sealed record ConfigPatchOperationDto(string Path, JsonNode? Value = null, bool Remove = false);
+public sealed record ConfigPatchOperationDto(
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("value")] JsonNode? Value = null,
+    [property: JsonPropertyName("remove")] bool Remove = false);
 
 /// <summary>
 /// An atomic batch of config changes with an optimistic-concurrency token (issue #2059).
@@ -22,8 +34,8 @@ public sealed record ConfigPatchOperationDto(string Path, JsonNode? Value = null
 /// <param name="Operations">The changes to apply, in order. All or nothing.</param>
 /// <param name="ExpectedRevision">Revision the client's snapshot was read at, or null to skip the check.</param>
 public sealed record ConfigPatchRequestDto(
-    IReadOnlyList<ConfigPatchOperationDto> Operations,
-    string? ExpectedRevision = null);
+    [property: JsonPropertyName("operations")] IReadOnlyList<ConfigPatchOperationDto> Operations,
+    [property: JsonPropertyName("expectedRevision")] string? ExpectedRevision = null);
 
 /// <summary>
 /// Server response to a config patch (issue #2059).
@@ -32,6 +44,6 @@ public sealed record ConfigPatchRequestDto(
 /// <param name="Revision">The revision now on disk: the new one on success, the current one on conflict.</param>
 /// <param name="Errors">Rejection messages; empty on success.</param>
 public sealed record ConfigPatchResponseDto(
-    bool Success,
-    string? Revision,
-    IReadOnlyList<string> Errors);
+    [property: JsonPropertyName("success")] bool Success,
+    [property: JsonPropertyName("revision")] string? Revision,
+    [property: JsonPropertyName("errors")] IReadOnlyList<string> Errors);
