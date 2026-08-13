@@ -119,7 +119,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// Builds a new <see cref="HubConnection"/>, registers all event handlers,
     /// and starts the connection.
     /// </summary>
-    /// <param name="hubUrl">Absolute URL of the Gateway hub (e.g. <c>https://localhost:5000/hub/gateway</c>).</param>
+    /// <param name="hubUrl">Absolute URL of the Gateway hub (e.g. <c>http://localhost:5005/hub/gateway</c>).</param>
     /// <param name="clientKind">
     /// The connecting client kind ("desktop" or "mobile"). Appended as a <c>client</c> query
     /// parameter so the gateway can distinguish device classes per connection (#1209).

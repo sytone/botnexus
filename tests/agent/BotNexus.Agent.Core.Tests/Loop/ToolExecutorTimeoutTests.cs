@@ -176,6 +176,10 @@ public sealed class ToolExecutorTimeoutTests
         mock.SetupGet(t => t.Name).Returns(name);
         mock.SetupGet(t => t.Label).Returns(name);
         mock.SetupGet(t => t.DefaultTimeout).Returns((TimeSpan?)null);
+        // These fakes stand in for shell-style tools whose `timeout` argument is seconds, so they
+        // declare that unit explicitly - the executor no longer infers it from the name (#2955).
+        mock.SetupGet(t => t.TimeoutArgument)
+            .Returns(new ToolTimeoutArgument("timeout", ToolTimeoutUnit.Seconds));
         mock.SetupGet(t => t.Definition).Returns(new Tool(name, "mock", JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone()));
         mock.Setup(t => t.PrepareArgumentsAsync(It.IsAny<IReadOnlyDictionary<string, object?>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyDictionary<string, object?> args, CancellationToken _) => args);
@@ -305,6 +309,8 @@ public sealed class ToolExecutorTimeoutTests
         mock.Setup(t => t.Name).Returns(name);
         mock.Setup(t => t.Label).Returns(name);
         mock.Setup(t => t.DefaultTimeout).Returns(defaultTimeout);
+        mock.Setup(t => t.TimeoutArgument)
+            .Returns(new ToolTimeoutArgument("timeout", ToolTimeoutUnit.Seconds));
         mock.Setup(t => t.Definition).Returns(new Tool(name, name, JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone()));
         mock.Setup(t => t.PrepareArgumentsAsync(It.IsAny<IReadOnlyDictionary<string, object?>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyDictionary<string, object?> args, CancellationToken _) => args);

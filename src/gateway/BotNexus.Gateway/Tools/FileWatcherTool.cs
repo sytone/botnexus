@@ -15,6 +15,12 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
     private readonly IPathValidator? _pathValidator = pathValidator;
 
     public string Name => "watch_file";
+
+    /// <summary>
+    /// The per-call <c>timeout</c> argument is seconds. Declared explicitly because the executor no
+    /// longer infers a unit from the argument name (issue #2955).
+    /// </summary>
+    public ToolTimeoutArgument? TimeoutArgument => new("timeout", ToolTimeoutUnit.Seconds);
     public string Label => "Watch File";
 
     public Tool Definition => new(

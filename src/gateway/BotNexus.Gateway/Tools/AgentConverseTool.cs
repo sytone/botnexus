@@ -31,6 +31,12 @@ public sealed class AgentConverseTool(
     /// </summary>
     public TimeSpan? DefaultTimeout => TimeSpan.FromSeconds(DefaultTimeoutSeconds);
 
+    /// <summary>
+    /// The per-call <c>timeoutSeconds</c> argument is seconds. Declared explicitly because the
+    /// executor no longer infers a unit from the argument name (issue #2955).
+    /// </summary>
+    public ToolTimeoutArgument? TimeoutArgument => new("timeoutSeconds", ToolTimeoutUnit.Seconds);
+
     public Tool Definition => new(
         Name,
         "Start a conversation with another registered agent. Not every agent is reachable: converse is governed by policy. Call list_agents first and only target an agent whose 'canConverse' is true -- targeting an agent with canConverse=false is a deterministic policy denial that wastes the turn and will never succeed on retry.",

@@ -38,7 +38,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     /// Default browser origin permitted when no explicit <c>Gateway.Cors.AllowedOrigins</c>
     /// list is configured. Mirrors the CORS fallback in Program.cs.
     /// </summary>
-    private const string DefaultAllowedOrigin = "http://localhost:5005";
+    private const string DefaultAllowedOrigin = GatewayDefaults.LoopbackListenUrl;
 
     /// <summary>
     /// Feature flag gating the dev-mode browser-Origin enforcement (#1931). When the flag is
