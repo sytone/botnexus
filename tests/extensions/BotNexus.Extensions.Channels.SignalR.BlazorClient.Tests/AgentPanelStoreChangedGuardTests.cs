@@ -143,13 +143,13 @@ public sealed class AgentPanelStoreChangedGuardTests : IDisposable
         var guardBody = body[guard..assignment];
         Assert.Contains("return;", guardBody, StringComparison.Ordinal);
 
-        // AC3: no whitespace-only line survives INSIDE the guard body (up to its closing brace).
-        // The blank line separating the guard from the assignment below it is ordinary formatting
-        // and is deliberately outside this window.
+        // AC3: no whitespace-only line survives INSIDE the guard body. The window runs from the
+        // `if` to its closing brace; the final split segment is the indentation that PRECEDES that
+        // brace on its own line, not a line of its own, so it is dropped rather than counted.
         var close = guardBody.IndexOf('}');
         Assert.True(close > 0, "The guard body is not brace-delimited.");
         var guardLines = guardBody[..close].Split('\n');
-        Assert.DoesNotContain(guardLines, line => line.Trim('\r').Length > 0 && line.Trim().Length == 0);
+        Assert.DoesNotContain(guardLines[..^1], line => line.Trim('\r').Length > 0 && line.Trim().Length == 0);
     }
 
     private IRenderedComponent<AgentPanel> RenderAgentPanel() =>
