@@ -275,7 +275,7 @@ public sealed class EffectiveRuntimeContextTests
 
     private sealed class NoToolsFactory : IAgentToolFactory
     {
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
+        public IReadOnlyList<IAgentTool> CreateTools(WorkingDir workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
             => Array.Empty<IAgentTool>();
     }
 

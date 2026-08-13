@@ -166,7 +166,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var workspacePath = _workspaceManager.GetWorkspacePath(descriptor.AgentId.Value);
         var pathValidator = new DefaultPathValidator(descriptor.FileAccess, workspacePath);
-        var workspaceTools = _toolFactory.CreateTools(workspacePath, pathValidator, descriptor.ShellCommand);
+        var workspaceTools = _toolFactory.CreateTools(WorkingDir.From(workspacePath), pathValidator, descriptor.ShellCommand);
         var workspaceToolNames = new HashSet<string>(workspaceTools.Select(tool => tool.Name), StringComparer.OrdinalIgnoreCase);
 
         // Normalise toolIds: ["*"] is a user-friendly alias for [] (all tools).

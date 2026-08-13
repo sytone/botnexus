@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Agents;
 using BotNexus.Tools;
@@ -6,7 +7,8 @@ namespace BotNexus.Gateway.Tests.Agents;
 
 public sealed class DefaultAgentToolFactoryTests
 {
-    private static readonly string Workspace = Path.Combine(Path.GetTempPath(), "agent-workspace");
+    private static readonly WorkingDir Workspace =
+        WorkingDir.From(Path.Combine(Path.GetTempPath(), "agent-workspace"));
     private static readonly string ConfigPath = Path.Combine(Path.GetTempPath(), ".botnexus", "config.json");
 
     [Fact]
@@ -20,7 +22,7 @@ public sealed class DefaultAgentToolFactoryTests
         // We test the underlying validator by constructing one with the same policy.
         var validator = new BotNexus.Gateway.Security.DefaultPathValidator(
             new FileAccessPolicy { DeniedPaths = [ConfigPath] },
-            workspacePath: Workspace);
+            workspacePath: Workspace.Value);
 
         validator.ValidateAndResolve(ConfigPath, FileAccessMode.Write).ShouldBeNull();
     }
@@ -34,9 +36,9 @@ public sealed class DefaultAgentToolFactoryTests
         // The path validator built inside the factory should allow workspace writes.
         var validator = new BotNexus.Gateway.Security.DefaultPathValidator(
             new FileAccessPolicy { DeniedPaths = [ConfigPath] },
-            workspacePath: Workspace);
+            workspacePath: Workspace.Value);
 
-        var workspaceFile = Path.Combine(Workspace, "output.txt");
+        var workspaceFile = Path.Combine(Workspace.Value, "output.txt");
         validator.ValidateAndResolve(workspaceFile, FileAccessMode.Write).ShouldNotBeNull();
     }
 
@@ -56,7 +58,7 @@ public sealed class DefaultAgentToolFactoryTests
         // When a custom validator is passed, the factory should use it without layering
         // the config-deny policy on top (the caller is responsible for deny rules).
         var customValidator = new BotNexus.Gateway.Security.DefaultPathValidator(
-            policy: null, workspacePath: Workspace);
+            policy: null, workspacePath: Workspace.Value);
 
         var factory = new DefaultAgentToolFactory(platformConfigPath: ConfigPath);
         var tools = factory.CreateTools(Workspace, pathValidator: customValidator);

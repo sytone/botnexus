@@ -227,6 +227,31 @@ Common properties and package versions are centralized — **do not duplicate th
 
 ## Code Practices
 
+### Strongly Typed IDs and Value Objects
+
+**A domain concept that has rules gets a type, not a `string`.** BotNexus uses [Vogen](https://github.com/SteveDunn/Vogen) source-generated value objects in `BotNexus.Domain.Primitives` for identifiers and constrained values. The canonical set is `AgentId`, `ConversationId`, `SessionId`, `UserId`, `RunId`, `JobId`, `ToolId`, `ToolName`, `WorkingDir`, `ConversationTitle`, and their siblings in that namespace.
+
+**Why.** Two `string` parameters of the same shape are silently interchangeable. `Foo(string agentId, string conversationId)` compiles perfectly when the arguments are swapped, and the failure surfaces much later as missing data rather than as a build error. A value object makes that swap a compile error, and moves validation from "every call site remembers to check" to "impossible to construct an invalid instance".
+
+**Rules:**
+
+- **Declare with the Vogen attribute, never hand-roll.** `[ValueObject<string>(conversions: Conversions.SystemTextJson)]` on a `readonly partial struct`. Vogen generates `From`, equality, `ToString` and the JSON converter. A hand-written `readonly record struct` with its own `Equals` and a bespoke `JsonConverter` is the pattern being retired - it drifts, and the analyser cannot see it.
+- **Provide `Validate` and `NormalizeInput`.** `Validate` returns `Validation.Invalid("<Type> cannot be ...")` with a message naming the type; `NormalizeInput` trims (and canonicalises case where the domain is case-insensitive, as `ToolName` and `ChannelKey` do). Normalising is what makes equality meaningful, because Vogen derives equality from the stored primitive.
+- **Never expose implicit conversions to or from the primitive.** An implicit operator reintroduces exactly the silent-substitution hole the type exists to close. Callers use `.From(value)` and `.Value` explicitly. This is enforced by `DomainArchitectureTests`.
+- **Validate what is structurally true, not what is momentarily true.** `WorkingDir` guarantees path *shape* (non-empty, no invalid characters, within the length ceiling) and deliberately does not promise the directory exists or is absolute - a value object cannot hold an invariant the filesystem can change underneath it. Containment and traversal safety stay with `PathUtils.ResolvePath` and `IPathValidator`.
+- **Reject blanks; do not substitute a default.** If a caller omits a title, that is the caller's decision to make explicitly (see `ConversationFactory`). Defaulting inside the value object lets an empty value travel and reappear as a placeholder far from its origin.
+- **Own the limit.** A max length belongs on the value object as a `public const`, and validators derive from it (`ConversationInputValidator.MaxTitleLength = ConversationTitle.MaxLength`). Restating the number in a second place is how the REST error message and the domain invariant become merely coincidentally equal.
+- **Use them in non-boundary code; convert at the boundary.** Controllers, DTOs, SQLite column reads and channel wire formats legitimately carry primitives - that is what a boundary is. Convert once on the way in, and pass the typed value everywhere below. The wire representation is unchanged either way: a Vogen `string` value object serialises as a bare JSON string.
+- **New value objects are pinned by `DomainArchitectureTests`** (`tests/architecture/BotNexus.Architecture.Tests/`). Add the Vogen-attribute and no-implicit-conversion assertions there when introducing one.
+
+```csharp
+// GOOD - the swap below is a compile error
+public Task ArchiveAsync(AgentId agentId, ConversationId conversationId, CancellationToken ct);
+
+// BAD - compiles when the arguments are transposed, fails at runtime as "conversation not found"
+public Task ArchiveAsync(string agentId, string conversationId, CancellationToken ct);
+```
+
 ### Cross-Platform Path Handling
 
 **All file paths must be constructed using `Path.Combine()` and platform APIs.** BotNexus runs on Windows, Linux, and macOS — hardcoded paths break portability.

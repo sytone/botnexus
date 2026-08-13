@@ -215,7 +215,7 @@ public sealed class PrimitiveBoundaryTests
     public void ToolName_From_WhenEmpty_Throws(string? value)
     {
         Action act = () => ToolName.From(value!);
-        act.ShouldThrow<ArgumentException>();
+        act.ShouldThrow<Vogen.ValueObjectValidationException>();
     }
 
     [Fact]
@@ -241,9 +241,13 @@ public sealed class PrimitiveBoundaryTests
     {
         var a = ToolName.From("Read_File");
         var b = ToolName.From("read_file");
-        // Verify case handling - tools may be case-insensitive depending on implementation
-        // At minimum ensure both create valid ToolName instances
-        a.Value.ShouldBe("Read_File");
+
+        // Previously this test asserted only that both values were stored verbatim, with a comment
+        // conceding it proved nothing about case handling. #502 settled the question: tool dispatch
+        // is case-insensitive everywhere, so ToolName canonicalises to lower case and the two are
+        // genuinely equal. The test now asserts the property its own name claims.
+        a.ShouldBe(b);
+        a.Value.ShouldBe("read_file");
         b.Value.ShouldBe("read_file");
     }
 
@@ -297,7 +301,7 @@ public sealed class PrimitiveBoundaryTests
         ((Action)(() => AgentId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
         ((Action)(() => SessionId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
         ((Action)(() => ConversationId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
-        ((Action)(() => ToolName.From(whitespace))).ShouldThrow<ArgumentException>();
+        ((Action)(() => ToolName.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
         ((Action)(() => ChannelKey.From(whitespace))).ShouldThrow<ArgumentException>();
     }
 

@@ -256,6 +256,50 @@ public sealed class DomainArchitectureTests
             "Implicit operators found: " + string.Join(", ", implicitOperators));
     }
 
+    /// <summary>
+    /// The Phase 3 value objects (#502) must be Vogen-generated and must not expose implicit string
+    /// conversions, exactly like the Phase 1 identifiers above.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b><see cref="ToolName"/> is the reason this test is data-driven rather than three more
+    /// copy-pasted pairs.</b> It existed for months as a hand-rolled <c>readonly record struct</c>
+    /// with a bespoke <c>JsonConverter</c> AND an implicit <c>operator string</c> - the precise hole
+    /// the AgentId/SessionId/ConversationId rules exist to close - and nothing failed, because the
+    /// rules were written per-type and nobody added a fourth pair. Enumerating the types in one
+    /// place means a new primitive is one list entry away from being covered.
+    /// </para>
+    /// <para>
+    /// The list is deliberately explicit rather than "every type in the namespace": several members
+    /// of <c>Domain.Primitives</c> are smart enums or composite keys with legitimately different
+    /// shapes, and a blanket rule would either fail on them or have to be weakened until it proved
+    /// nothing.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(typeof(ToolName))]
+    [InlineData(typeof(WorkingDir))]
+    [InlineData(typeof(ConversationTitle))]
+    public void Phase3ValueObject_IsVogenAndHasNoImplicitStringConversion(Type type)
+    {
+        var attribute = type.GetCustomAttributes()
+            .FirstOrDefault(a => a.GetType().Name.StartsWith("ValueObjectAttribute", StringComparison.Ordinal));
+
+        attribute.ShouldNotBeNull(
+            $"{type.Name} must be annotated with [ValueObject<string>] so Vogen generates the " +
+            "converters, equality and analyser checks rather than each type hand-rolling them.");
+
+        var implicitOperators = type
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(m => m.Name == "op_Implicit")
+            .Select(m => $"{m.ReturnType.Name}<-{m.GetParameters()[0].ParameterType.Name}")
+            .ToArray();
+
+        implicitOperators.ShouldBeEmpty(
+            $"{type.Name} must not expose implicit conversions to/from string. Use .Value and " +
+            ".From() explicitly. Implicit operators found: " + string.Join(", ", implicitOperators));
+    }
+
     private static bool IsFrameworkAssembly(string assemblyName)
         => assemblyName.StartsWith("System.", StringComparison.Ordinal)
         || assemblyName.StartsWith("Microsoft.", StringComparison.Ordinal)

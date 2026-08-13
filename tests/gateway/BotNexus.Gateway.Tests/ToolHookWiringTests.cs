@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Memory.Embeddings;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -184,8 +185,8 @@ public sealed class ToolHookWiringTests
 
     private sealed class StaticToolFactory : IAgentToolFactory
     {
-        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
-            => [new ReadTool(workingDirectory)];
+        public IReadOnlyList<IAgentTool> CreateTools(WorkingDir workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
+            => [new ReadTool(workingDirectory.Value)];
     }
 
     private sealed class StubWorkspaceManager : IAgentWorkspaceManager
