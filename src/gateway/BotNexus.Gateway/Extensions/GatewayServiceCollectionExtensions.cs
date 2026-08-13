@@ -228,6 +228,9 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<InternalChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());
         services.AddSingleton<ISessionCompactor, LlmSessionCompactor>();
+        // #2896: scope the auto-compaction budget to the agent's / conversation's own context window
+        // instead of the process-global CompactionOptions.ContextWindowTokens.
+        services.TryAddSingleton<ISessionContextWindowResolver, SessionContextWindowResolver>();
         services.AddSingleton<IPreCompactionMemoryFlusher, PreCompactionMemoryFlusher>();
         services.AddSingleton<ISessionCompactionCoordinator, SessionCompactionCoordinator>();
         services.AddSingleton<ISessionEndMemoryFlusher, SessionEndMemoryFlusher>();

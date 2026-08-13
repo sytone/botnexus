@@ -776,14 +776,85 @@ public sealed class EditTool : IAgentTool
         var snippet = Truncate(closestLine, 200);
         var message = $"{prefix} The closest text in the file is at line {lineNumber}: \u00AB{snippet}\u00BB.";
 
-        // If the only difference is surrounding whitespace/invisible characters, say so explicitly.
-        if (string.Equals(closestLine.Trim(), anchorTrimmed, StringComparison.Ordinal))
-        {
-            message += " It differs only in leading/trailing whitespace or invisible characters \u2014 " +
-                       "re-read the file with `read` to get clean text (pasted shell output can carry hidden ANSI/whitespace).";
-        }
+        // Issue #2907: the anchor is only the FIRST line of oldText, but oldText may be a
+        // multi-line block. Comparing the anchor alone and then asserting a whitespace-only
+        // difference was an unverified claim - it fired whenever line 1 trimmed-equal, even when
+        // the real drift was on line 2 or later, and sent the caller to the wrong line. Align the
+        // whole block against the candidate window starting at the located line and report the
+        // first line that ACTUALLY differs; only claim a whitespace-only cause when that is true
+        // for every line in the block.
+        message += DescribeFirstDifferingLine(fileLines, bestIndex, normalizedOld);
 
         return message;
+    }
+
+    /// <summary>
+    /// Issue #2907 (clause 2). Aligns <paramref name="normalizedOld"/> line-for-line against the
+    /// candidate window of <paramref name="fileLines"/> beginning at <paramref name="windowStart"/>
+    /// and describes the outcome:
+    /// <list type="bullet">
+    /// <item>every line trim-equal (and none missing) - a defensive fallback that states only what
+    /// is certain; it is unreachable in practice because the fuzzy matcher is strictly more
+    /// permissive than this comparison and would already have matched the block;</item>
+    /// <item>otherwise - names the first line that actually differs, with both variants, and says
+    /// nothing about whitespace because that is not what differs.</item>
+    /// </list>
+    /// </summary>
+    private static string DescribeFirstDifferingLine(string[] fileLines, int anchorFileIndex, string normalizedOld)
+    {
+        var oldLines = normalizedOld.Split('\n');
+
+        // The anchor is the first NON-EMPTY line of oldText, and the located file line corresponds
+        // to it - not to oldText line 1. Shift the window back by the anchor's own offset so any
+        // leading blank lines in oldText do not skew the alignment by that many lines.
+        var anchorOffset = 0;
+        while (anchorOffset < oldLines.Length && string.IsNullOrWhiteSpace(oldLines[anchorOffset]))
+        {
+            anchorOffset++;
+        }
+
+        var windowStart = anchorFileIndex - anchorOffset;
+        if (windowStart < 0)
+        {
+            // oldText starts above the top of the file; there is no aligned window to compare, so
+            // make no claim about the cause at all.
+            return string.Empty;
+        }
+
+        for (var offset = 0; offset < oldLines.Length; offset++)
+        {
+            var fileIndex = windowStart + offset;
+            var expected = oldLines[offset].Trim();
+
+            if (fileIndex >= fileLines.Length)
+            {
+                // The block runs past the end of the file: the first "differing" line is the one
+                // with no counterpart at all. Saying so beats claiming a whitespace difference.
+                return $" oldText line {offset + 1} \u00AB{Truncate(oldLines[offset], 200)}\u00BB"
+                       + " has no counterpart - the block extends past the end of the file."
+                       + " Re-read the file with `read` to confirm the current text.";
+            }
+
+            var actual = fileLines[fileIndex].Trim();
+            if (string.Equals(actual, expected, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            return $" The first line that actually differs is oldText line {offset + 1}"
+                   + $" (file line {fileIndex + 1}): expected \u00AB{Truncate(oldLines[offset], 200)}\u00BB"
+                   + $" but the file has \u00AB{Truncate(fileLines[fileIndex], 200)}\u00BB."
+                   + " Re-read the file with `read` to confirm the current text.";
+        }
+
+        // Verified across every line of the block. In practice this is unreachable from
+        // BuildNoMatchDiagnostic: if every line were trim-equal the fuzzy matcher - which trims
+        // each line AND folds invisible characters, so it is strictly more permissive than this
+        // comparison - would have found the block and the edit would have applied. Reaching here
+        // would mean the two comparisons disagree, so say only what is certain rather than
+        // repeating the #2421 whitespace claim this issue exists to stop asserting unverified.
+        return " Every line matches once leading/trailing whitespace is ignored, yet the block did"
+               + " not match \u2014 re-read the file with `read` to get clean text.";
     }
 
     /// <summary>

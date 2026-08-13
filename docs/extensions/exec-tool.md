@@ -74,7 +74,16 @@ The tool respects the agent's workspace directory as the default working directo
 
 ## Behavior Notes
 
-- Output is capped at 100 KB to prevent memory issues with verbose commands.
+- Output is capped at 100 KB to prevent memory issues with verbose commands. When the cap is hit,
+  the result is prefixed with a banner disclosing the exact loss, for example:
+
+  ```text
+  [output truncated: retained 102204 bytes (head) of 150300 bytes produced, discarded 48096 bytes (tail) at the 100KB cap]
+  ```
+
+  The **head** of the stream is what survives; everything after the cap is dropped. Use the
+  discarded figure to decide whether to re-run with a narrower command or redirect output to a file.
+  Output below the cap is returned verbatim with no banner.
 - Background processes persist across tool calls within the same session and can be managed with the [Process Tool](./process-tool.md).
 - On Windows, the tool resolves `.cmd` and `.bat` files automatically when the command is not a full path.
 - The default timeout of 2 minutes applies unless overridden. Background processes have a separate 10-minute default.

@@ -60,14 +60,17 @@ public sealed class CronScheduler(
     }
 
     /// <summary>
-    /// Deletes a cron job and archives its associated conversation, if any.
+    /// Deletes a cron job, archives its associated conversation, and reclaims the
+    /// <c>cron:</c>-scoped run sessions the job owns.
     /// Per directive G-5, the conversation lives "until deleted" — deleting the job is
     /// the canonical signal to archive the conversation thread.
     /// </summary>
     /// <remarks>
     /// Idempotent: missing jobs and missing conversations are not errors. The conversation
     /// is archived first (best-effort) before the job row is removed, so a failure to
-    /// archive surfaces an error and leaves the job intact for retry.
+    /// archive surfaces an error and leaves the job intact for retry. Session cleanup (#2893)
+    /// runs next and is best-effort in the opposite direction - a session-store failure is logged
+    /// and never aborts the delete.
     /// </remarks>
     public async Task DeleteJobAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
@@ -103,7 +106,81 @@ public sealed class CronScheduler(
             }
         }
 
+        await DeleteOwnedRunSessionsAsync(existing, cancellationToken).ConfigureAwait(false);
+
         await _cronStore.DeleteAsync(jobId, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Job-lifecycle session cleanup (#2893). Deletes the <c>cron:</c>-scoped run sessions the job
+    /// owns, so deleting a job leaves no unreferenced session rows or transcripts behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The per-run counterpart (<see cref="MaybeDeleteEphemeralRunSessionAsync"/>, #1561) only fires
+    /// when the job opted into <see cref="CronJob.DeleteAfterRun"/>, which is off by default. Every
+    /// other job therefore stranded one session plus one transcript per historical run at the moment
+    /// its owning job row was removed. This closes the job-lifecycle half of that ownership.
+    /// </para>
+    /// <para>
+    /// Eligibility is deliberately narrow and matches the id convention <c>CronTrigger</c> writes,
+    /// <c>cron:{jobIdSlug}:{timestamp}:{guid}</c>:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>Scoped to the job's own agent, so an unrelated agent's sessions are never enumerated.</item>
+    ///   <item>Only ids beginning with <c>cron:{jobIdSlug}:</c> - the trailing colon is load-bearing,
+    ///   without it deleting <c>job-1</c> would also claim every session of <c>job-10</c>.</item>
+    ///   <item>The legacy jobId-less form <c>cron:{timestamp}:{guid}</c> is skipped: it cannot be
+    ///   attributed to a job, and a wrong guess destroys another job's transcript.</item>
+    /// </list>
+    /// <para>
+    /// Best-effort by construction: the whole sweep is wrapped so a session-store outage is logged
+    /// and swallowed rather than aborting the delete. Leaving the job row behind because reclamation
+    /// failed would make the delete permanently unachievable against a broken store, which is a worse
+    /// outcome than the leak this method exists to prevent. It runs after the conversation archive
+    /// (which does still abort the delete on failure) and before the job row is removed.
+    /// </para>
+    /// </remarks>
+    private async Task DeleteOwnedRunSessionsAsync(CronJob job, CancellationToken cancellationToken)
+    {
+        if (job.AgentId is not { } agentId)
+            return;
+
+        var prefix = $"cron:{Sanitize(job.Id.Value)}:";
+        var deleted = 0;
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var sessions = scope.ServiceProvider.GetRequiredService<ISessionStore>();
+            var owned = await sessions.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+
+            foreach (var session in owned)
+            {
+                if (!session.SessionId.Value.StartsWith(prefix, StringComparison.Ordinal))
+                    continue;
+
+                await sessions.DeleteAsync(session.SessionId, cancellationToken).ConfigureAwait(false);
+                deleted++;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to delete owned cron run sessions for job '{JobId}' (prefix '{Prefix}'). The job delete continues; any surviving sessions are orphaned.",
+                job.Id,
+                prefix);
+            return;
+        }
+
+        if (deleted > 0)
+        {
+            _logger.LogInformation(
+                "Deleted {Count} cron run session(s) (and their transcripts) owned by deleted cron job '{JobId}'.",
+                deleted,
+                job.Id);
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
