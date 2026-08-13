@@ -8,13 +8,23 @@ namespace BotNexus.Cli.Tests.Commands;
 /// <summary>
 /// Tests for the CLI port-availability probe (issue #1536).
 ///
+/// <para>
 /// The gateway binds a wildcard address by default (http://0.0.0.0:5005, see
 /// InitCommand.ListenUrl), so the availability probe must scope to the same
 /// interface it will actually bind. A loopback-only probe (127.0.0.1) mis-detects
 /// occupants that hold the port on the wildcard address or a non-loopback NIC,
 /// producing either a confusing late Kestrel EADDRINUSE or a false "in use".
-/// The probe therefore defaults to the wildcard address (IPAddress.Any) so it
-/// detects an occupant on any interface.
+/// The probe therefore defaults to the wildcard address so it detects an occupant
+/// on any interface.
+/// </para>
+/// <para>
+/// That default is now pinned directly and without any socket by
+/// <see cref="PortProbeDefaultAddressTests"/> (#2797). The tests that used to cover it
+/// here did so by opening a real wildcard socket, which asserts kernel conflict
+/// semantics this repository does not implement and writes a permanent inbound Windows
+/// firewall rule per worktree. What remains here is the loopback-scoped behaviour,
+/// unmodified: a probe explicitly scoped to one interface, exercised for real.
+/// </para>
 /// </summary>
 public sealed class PortAvailabilityProbeTests
 {
@@ -29,52 +39,6 @@ public sealed class PortAvailabilityProbeTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
-    }
-
-    [Fact]
-    public void IsPortAvailable_ReturnsTrue_WhenPortIsFree()
-    {
-        var port = ReserveFreePort();
-
-        ServeCommand.IsPortAvailable(port).ShouldBeTrue();
-    }
-
-    [Fact]
-    public void IsPortAvailable_ReturnsFalse_WhenPortHeldOnWildcardAddress()
-    {
-        var port = ReserveFreePort();
-        using var occupant = new TcpListener(IPAddress.Any, port);
-        occupant.Start();
-
-        try
-        {
-            ServeCommand.IsPortAvailable(port).ShouldBeFalse();
-        }
-        finally
-        {
-            occupant.Stop();
-        }
-    }
-
-    [Fact]
-    public void IsPortAvailable_ReturnsFalse_WhenPortHeldOnLoopbackAddress()
-    {
-        // Regression for #1536: an occupant on 127.0.0.1 must be detected by the
-        // default wildcard probe. A wildcard bind (IPAddress.Any) cannot succeed
-        // while any interface (including loopback) holds the port.
-        var port = ReserveFreePort();
-        using var occupant = new TcpListener(IPAddress.Loopback, port);
-        occupant.Server.ExclusiveAddressUse = true;
-        occupant.Start();
-
-        try
-        {
-            ServeCommand.IsPortAvailable(port).ShouldBeFalse();
-        }
-        finally
-        {
-            occupant.Stop();
-        }
     }
 
     [Fact]
@@ -102,35 +66,6 @@ public sealed class PortAvailabilityProbeTests
     {
         var port = ReserveFreePort();
 
-        ServeCommand.IsPortAvailable(port, IPAddress.Any).ShouldBeTrue();
         ServeCommand.IsPortAvailable(port, IPAddress.Loopback).ShouldBeTrue();
-    }
-
-    [Fact]
-    public void UpdateCommand_IsPortAvailable_DelegatesToAlignedWildcardProbe()
-    {
-        // UpdateCommand previously carried a duplicate loopback-only probe.
-        // It must now share the same wildcard-aligned probe so all three call
-        // sites (ServeCommand, GatewayCommand, UpdateCommand) agree.
-        var port = ReserveFreePort();
-        using var occupant = new TcpListener(IPAddress.Any, port);
-        occupant.Start();
-
-        try
-        {
-            UpdateCommand.IsPortAvailable(port).ShouldBeFalse();
-        }
-        finally
-        {
-            occupant.Stop();
-        }
-    }
-
-    [Fact]
-    public void UpdateCommand_IsPortAvailable_ReturnsTrue_WhenPortIsFree()
-    {
-        var port = ReserveFreePort();
-
-        UpdateCommand.IsPortAvailable(port).ShouldBeTrue();
     }
 }
