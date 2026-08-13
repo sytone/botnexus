@@ -1,8 +1,8 @@
-# BotNexus training guide
+# BotNexus internals guide
 
 Learn how the BotNexus agent system works — from LLM providers to the agent loop — so you can build your own coding-agent implementations.
 
-## What this training covers
+## What this guide covers
 
 BotNexus is a modular AI agent execution platform built in C#/.NET. This guide walks through every layer of the architecture:
 

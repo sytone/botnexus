@@ -259,7 +259,7 @@ workflow. A change touching docs *and* code is a code change - validate it fully
 
 ## Debugging and Deeper Topics
 
-The `docs/development/` and `docs/training/` trees carry the in-depth material:
+The `docs/development/` and `docs/internals/` trees carry the in-depth material:
 
 | Topic | Page |
 |---|---|
@@ -272,10 +272,10 @@ The `docs/development/` and `docs/training/` trees carry the in-depth material:
 | Session stores | [docs/development/session-stores.md](docs/development/session-stores.md) |
 | Workspace and memory | [docs/development/workspace-and-memory.md](docs/development/workspace-and-memory.md) |
 | DDD patterns | [docs/development/ddd-patterns.md](docs/development/ddd-patterns.md) |
-| Agent core (training) | [docs/training/02-agent-core.md](docs/training/02-agent-core.md) |
-| Coding agent (training) | [docs/training/03-coding-agent.md](docs/training/03-coding-agent.md) |
-| Tool development (training) | [docs/training/09-tool-development.md](docs/training/09-tool-development.md) |
-| Tool security (training) | [docs/training/tool-security.md](docs/training/tool-security.md) |
+| Agent core (internals) | [docs/internals/02-agent-core.md](docs/internals/02-agent-core.md) |
+| Coding agent (internals) | [docs/internals/03-coding-agent.md](docs/internals/03-coding-agent.md) |
+| Tool development (internals) | [docs/internals/09-tool-development.md](docs/internals/09-tool-development.md) |
+| Tool security (internals) | [docs/internals/tool-security.md](docs/internals/tool-security.md) |
 
 ---
 
