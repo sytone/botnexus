@@ -323,6 +323,15 @@ public static class PowerShellPreflight
     /// <exception cref="ArgumentException">The script contains a rejected syntax error.</exception>
     public static void ThrowIfInvalid(string? script)
     {
+        // Issue #2908: a nested `pwsh -Command "..."` is refused before the syntax rules run,
+        // because the resulting parser errors are downstream symptoms of outer interpolation and
+        // point the agent at the wrong problem.
+        var nested = DetectNestedPowerShellInterpolation(script);
+        if (nested is not null)
+        {
+            throw new ArgumentException(nested.Message);
+        }
+
         var error = Validate(script);
         if (error is null)
         {
@@ -342,6 +351,151 @@ public static class PowerShellPreflight
         return $"PowerShell preflight rejected the inline -Command script before execution: "
                + $"{error.Message} (at offset {error.Offset}{extent}) "
                + $"To fix this, {RemediationHint}";
+    }
+
+    /// <summary>
+    /// Detects the single most expensive mechanical mistake agents make with this tool (issue #2908):
+    /// spawning a <b>second</b> PowerShell from a shell that already runs PowerShell, with the script
+    /// passed to <c>-Command</c>/<c>-c</c> inside <b>double</b> quotes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Double quotes make that argument an interpolating string in the <b>outer</b> interpreter, so
+    /// every <c>$name</c> is substituted (usually with nothing) and every <c>@{}</c> hashtable literal
+    /// is mangled before the residue reaches the child process. The child then reports something like
+    /// <c>The term '=@' is not recognized</c> — a message that says nothing about quoting, which is why
+    /// agents historically escalated to <i>more</i> escaping and failed again. Measured cost before this
+    /// rule: 18 failures per week across 5 agents, none of which needed the nested <c>pwsh</c> at all.
+    /// </para>
+    /// <para>
+    /// The rule is deliberately narrow so it cannot become the kind of over-reaching heuristic that
+    /// was deleted in issue #2757. It fires only when <b>all</b> of the following hold:
+    /// a top-level token names <c>pwsh</c>/<c>powershell</c>; that invocation uses <c>-Command</c>/<c>-c</c>
+    /// rather than <c>-File</c>; the argument that follows is <b>double</b>-quoted; and it actually
+    /// contains an interpolation trigger (<c>$</c> or <c>@{</c>). Single-quoted arguments, <c>-File</c>
+    /// invocations, literal-only double-quoted arguments, and text that merely mentions the shape
+    /// inside a quoted string all pass through untouched.
+    /// </para>
+    /// </remarks>
+    /// <param name="script">The command text submitted to the shell tool.</param>
+    /// <returns>A <see cref="PreflightError"/> naming the cause and the fix, or <see langword="null"/>.</returns>
+    public static PreflightError? DetectNestedPowerShellInterpolation(string? script)
+    {
+        if (string.IsNullOrWhiteSpace(script))
+        {
+            return null;
+        }
+
+        var tokens = TokenizeTopLevel(script!);
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            // Only an UNQUOTED token can be an executable being invoked; a quoted one is data.
+            if (tokens[i].Quote != '\0' || !IsPowerShellExecutable(tokens[i].Text))
+            {
+                continue;
+            }
+
+            for (var j = i + 1; j < tokens.Count; j++)
+            {
+                var flag = tokens[j];
+                if (flag.Quote != '\0')
+                {
+                    continue;
+                }
+
+                // -File is the documented correct pattern: the payload is a path, never inline
+                // text, so no interpolation hazard exists (acceptance criterion 3).
+                if (IsFileFlag(flag.Text))
+                {
+                    break;
+                }
+
+                if (!IsCommandFlag(flag.Text) || j + 1 >= tokens.Count)
+                {
+                    continue;
+                }
+
+                var payload = tokens[j + 1];
+                // Single-quoted payloads are literal in the outer interpreter — nothing is
+                // consumed, so they are correct and must run (acceptance criterion 2).
+                if (payload.Quote != '"')
+                {
+                    break;
+                }
+
+                if (!payload.Text.Contains('$') && !payload.Text.Contains("@{", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                return new PreflightError(NestedInterpolationMessage, payload.Offset);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The rejection text for a nested double-quoted <c>-Command</c> invocation. It names the actual
+    /// cause (outer interpolation) rather than the downstream parser symptom, and gives both viable
+    /// fixes — single-quote the argument, or drop the redundant nesting entirely.
+    /// </summary>
+    public const string NestedInterpolationMessage =
+        "PowerShell preflight rejected a nested pwsh invocation before execution: the -Command argument is "
+        + "DOUBLE-quoted and contains '$' or '@{', so the outer shell will expand every $variable and mangle "
+        + "every @{} hashtable literal before the child pwsh ever sees the script. The child then fails with a "
+        + "misleading message such as \"The term '=@' is not recognized\". To fix this, single-quote the -Command "
+        + "argument, or simply drop the nested pwsh entirely - this shell already runs PowerShell, so the script "
+        + "can be submitted directly.";
+
+    // A top-level token: its text (quotes stripped), the quote character that delimited it ('\0'
+    // when unquoted), and the offset at which it began.
+    private readonly record struct ShellToken(string Text, char Quote, int Offset);
+
+    // Splits a command line into whitespace-separated top-level tokens, keeping quoted regions
+    // intact so that a mention of `pwsh -Command "..."` INSIDE a string is data, not an invocation.
+    private static List<ShellToken> TokenizeTopLevel(string s)
+    {
+        var tokens = new List<ShellToken>();
+        var n = s.Length;
+        var i = 0;
+        while (i < n)
+        {
+            while (i < n && char.IsWhiteSpace(s[i]))
+            {
+                i++;
+            }
+
+            if (i >= n)
+            {
+                break;
+            }
+
+            var start = i;
+            if (s[i] is '"' or '\'')
+            {
+                var quote = s[i];
+                i++;
+                var contentStart = i;
+                while (i < n && s[i] != quote)
+                {
+                    i++;
+                }
+
+                tokens.Add(new ShellToken(s[contentStart..Math.Min(i, n)], quote, start));
+                i++; // step past the closing quote (or off the end when unterminated)
+                continue;
+            }
+
+            while (i < n && !char.IsWhiteSpace(s[i]))
+            {
+                i++;
+            }
+
+            tokens.Add(new ShellToken(s[start..i], '\0', start));
+        }
+
+        return tokens;
     }
 
     private static string DescribeExtent(string script, int offset)

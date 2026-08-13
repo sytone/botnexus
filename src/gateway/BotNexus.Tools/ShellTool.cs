@@ -122,6 +122,10 @@ public sealed class ShellTool : IAgentTool
         Name,
         _shellPreference == ShellPreference.Pwsh
             ? "Execute a PowerShell command in the current working directory and return stdout/stderr. " +
+              "This tool ALREADY RUNS PowerShell, so do not wrap your script in a nested 'pwsh -Command' - it is " +
+              "unnecessary, and with a DOUBLE-quoted argument the outer shell expands every $variable and mangles " +
+              "every @{} literal before the child pwsh sees them (such calls are rejected). If you genuinely must " +
+              "nest, single-quote the -Command argument or use 'pwsh -NoProfile -File tmp/script.ps1'. " +
               "PowerShell gotchas (avoid ParserError): inside double-quoted strings wrap a variable followed by ':' as ${var} " +
               "(or use single quotes); no backtick line-continuations; pass -Filter a single string, not an array; for " +
               "multi-line or complex scripts write a tmp/*.ps1 file and run it. Inline Python on Windows prints cp1252 by " +
