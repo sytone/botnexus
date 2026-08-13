@@ -314,6 +314,46 @@
     private static string NavKeyForRoute(string route) =>
         string.IsNullOrEmpty(route) ? NavOrderKeys.Home : route;
 
+    /// <summary>
+    /// #3051: THE single emission point for every sidebar SUB-nav anchor, one level below
+    /// <see cref="NavAnchor"/>.
+    ///
+    /// Same defect, same seam: three of the four sub-nav render sites carried no
+    /// <c>data-testid</c> at all, and the fourth stamped the identical literal
+    /// <c>tools-subnav-item</c> onto every tool row - an id that names the row KIND, not the row.
+    /// A strict single-element locator against a repeated id either throws or silently takes the
+    /// first match, which is the same silent-wrong-target failure #2973 fixed at the top level.
+    /// Deriving the id from the route works because the route already carries the discriminator
+    /// (<c>tools/{id}</c>, <c>agents/{id}</c>, <c>skills/explorer</c>, <c>agents/new</c>), so
+    /// uniqueness is a property of the routing table rather than of author diligence.
+    /// </summary>
+    /// <param name="route">The anchor's href, relative to the base path.</param>
+    /// <param name="label">The anchor's rendered content.</param>
+    /// <param name="extraClass">Additional CSS classes appended after <c>sidebar-subnav-item</c>.</param>
+    /// <param name="legacyTestId">
+    /// Only for a sub-nav row whose historical id is a deliberate GROUP selector rather than a
+    /// per-row identity. The tools rows are the sole case: <c>tools-subnav-item</c> selects "all
+    /// tool rows" and has an in-repo consumer, so it is preserved on <c>data-testid</c> and the
+    /// unique route-derived id is emitted alongside it on <c>data-testid-alias</c> - the same
+    /// override convention #2973 established for <c>nav-cron-jobs</c>.
+    /// </param>
+    private RenderFragment SubNavAnchor(string route, RenderFragment label, string? extraClass = null, string? legacyTestId = null) => __builder =>
+    {
+        <a href="@route"
+           class="sidebar-subnav-item @extraClass"
+           data-testid="@(legacyTestId ?? SubNavTestId(route))"
+           data-testid-alias="@(legacyTestId is null ? null : SubNavTestId(route))"
+           @onclick="CloseSidebar">@label</a>
+    };
+
+    /// <summary>
+    /// Maps a sub-nav route to its canonical test id. Every character that is not alphanumeric or a
+    /// hyphen - the route separator included - collapses to a hyphen, so an id stays a valid, quotable
+    /// CSS attribute-selector value even when a tool or agent id contains punctuation.
+    /// </summary>
+    private static string SubNavTestId(string route) =>
+        "subnav-" + System.Text.RegularExpressions.Regex.Replace(route, "[^a-zA-Z0-9-]+", "-").Trim('-');
+
     private RenderFragment RenderNavSection(string key) => key.ToLowerInvariant() switch
     {
         NavOrderKeys.Home => RenderHomeNav(),
@@ -364,13 +404,20 @@
             <div class="sidebar-subnav" data-testid="tools-subnav">
                 @foreach (var tool in _tools)
                 {
-                    <a href="tools/@tool.Id" class="sidebar-subnav-item @(IsToolActive(tool.Id) ? "active" : "")" data-testid="tools-subnav-item" @onclick="CloseSidebar">
-                        @if (!string.IsNullOrWhiteSpace(tool.Icon))
-                        {
-                            <span class="tools-subnav-item-icon">@tool.Icon</span>
-                        }
-                        <span class="tools-subnav-item-label">@tool.Name</span>
-                    </a>
+                    @* #3051: "tools-subnav-item" is a GROUP selector (all tool rows), not a row
+                       identity, and has an in-repo consumer - so it is kept verbatim on data-testid
+                       and the unique route-derived subnav-tools-{id} rides alongside on the alias. *@
+                    @SubNavAnchor(
+                        $"tools/{tool.Id}",
+                        @<text>
+                            @if (!string.IsNullOrWhiteSpace(tool.Icon))
+                            {
+                                <span class="tools-subnav-item-icon">@tool.Icon</span>
+                            }
+                            <span class="tools-subnav-item-label">@tool.Name</span>
+                        </text>,
+                        IsToolActive(tool.Id) ? "active" : null,
+                        "tools-subnav-item")
                 }
             </div>
         }
@@ -630,7 +677,7 @@
             @if (IsOnPage("skills"))
             {
                 <div class="sidebar-subnav">
-                    <a href="skills/explorer" class="sidebar-subnav-item" @onclick="CloseSidebar">&#x1F5C2;&#xFE0F; Explorer</a>
+                    @SubNavAnchor("skills/explorer", @<text>&#x1F5C2;&#xFE0F; Explorer</text>)
                 </div>
             }
         }
@@ -646,9 +693,12 @@
             <div class="sidebar-subnav">
                 @foreach (var agent in _sidebarAgents)
                 {
-                    <a href="agents/@agent.AgentId" class="sidebar-subnav-item @(IsAgentActive(agent.AgentId) ? "active" : "")" @onclick="CloseSidebar">@agent.DisplayLabel</a>
+                    @SubNavAnchor(
+                        $"agents/{agent.AgentId}",
+                        @<text>@agent.DisplayLabel</text>,
+                        IsAgentActive(agent.AgentId) ? "active" : null)
                 }
-                <a href="agents/new" class="sidebar-subnav-item sidebar-subnav-add" @onclick="CloseSidebar">+ Add Agent</a>
+                @SubNavAnchor("agents/new", @<text>+ Add Agent</text>, "sidebar-subnav-add")
             </div>
         }
     };

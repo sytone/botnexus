@@ -93,6 +93,13 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                 CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id_started_at
                 ON cron_runs(job_id, started_at DESC);
 
+                -- #2838: the cross-job recent-run query filters on status and orders by
+                -- started_at across many job ids, so the (job_id, started_at) index alone cannot
+                -- serve the failed-only view without scanning each job's history. This covering
+                -- index is what makes "which of my jobs failed recently" one cheap query.
+                CREATE INDEX IF NOT EXISTS idx_cron_runs_status_started_at
+                ON cron_runs(status, started_at DESC);
+
                 -- #2477: a missed run's identity is (job_id, scheduled occurrence). Startup
                 -- detection rescans the same window after every restart because the missed
                 -- path never advances last_run_at, so the write must be idempotent. The index
@@ -722,6 +729,71 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             LIMIT $limit
             """;
         command.Parameters.AddWithValue("$jobId", jobId.Value);
+        command.Parameters.AddWithValue("$limit", cappedLimit);
+
+        List<CronRun> runs = [];
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            runs.Add(ReadRun(reader));
+
+        return runs;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<CronRun>> GetRecentRunsAsync(
+        IReadOnlyCollection<JobId> jobIds,
+        IReadOnlyCollection<string>? statuses = null,
+        int limit = 20,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(jobIds);
+
+        // #2838: an empty scope means "no jobs", never "no filter". Emitting a bare SELECT here
+        // would silently turn a scoped query into a global one - the exact inversion a SQL
+        // `IN ()` invites - so it is short-circuited before any SQL is built.
+        if (jobIds.Count == 0)
+            return [];
+
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        var cappedLimit = Math.Clamp(limit, 1, int.MaxValue);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+
+        // Both IN lists are built from generated parameter names, never from interpolated values,
+        // so the caller-supplied ids and statuses stay parameterised.
+        var jobParameters = new List<string>(jobIds.Count);
+        var index = 0;
+        foreach (var jobId in jobIds)
+        {
+            var parameterName = $"$job{index++}";
+            jobParameters.Add(parameterName);
+            command.Parameters.AddWithValue(parameterName, jobId.Value);
+        }
+
+        var statusClause = string.Empty;
+        if (statuses is { Count: > 0 })
+        {
+            var statusParameters = new List<string>(statuses.Count);
+            var statusIndex = 0;
+            foreach (var status in statuses)
+            {
+                var parameterName = $"$status{statusIndex++}";
+                statusParameters.Add(parameterName);
+                command.Parameters.AddWithValue(parameterName, status);
+            }
+
+            statusClause = $" AND status IN ({string.Join(", ", statusParameters)})";
+        }
+
+        command.CommandText = $"""
+            SELECT id, job_id, started_at, completed_at, status, error, session_id
+            FROM cron_runs
+            WHERE job_id IN ({string.Join(", ", jobParameters)}){statusClause}
+            ORDER BY started_at DESC
+            LIMIT $limit
+            """;
         command.Parameters.AddWithValue("$limit", cappedLimit);
 
         List<CronRun> runs = [];
