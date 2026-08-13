@@ -22,6 +22,13 @@ public sealed class ExecTool : IAgentTool
     private const int MaxOutputBytes = 100 * 1024;
 
     /// <summary>
+    /// Retention cap on captured child output, in bytes. Exposed internally so tests can drive a
+    /// child over the cap and compute the expected overage from the same constant the collector uses,
+    /// rather than hard-coding a number that would silently stop matching if the cap changed.
+    /// </summary>
+    internal static int MaxOutputBytesForTest => MaxOutputBytes;
+
+    /// <summary>
     /// Upper bound on the number of background-process entries retained in <see cref="BackgroundProcesses"/>.
     /// When a new background process is registered, dead entries are pruned first; if the map is still
     /// over this cap, the oldest entries (by start time) are evicted. This keeps the static registry
@@ -231,6 +238,19 @@ public sealed class ExecTool : IAgentTool
             NodePreflight.ThrowIfInvalid(inlineJsScript);
         }
 
+        // File-based `pwsh -File <path>` invocations (issue #2758): pwsh reports a missing script as
+        // an ARGUMENT-parsing error plus its generic usage banner, naming neither the skill nor any
+        // candidate. Diagnose it here instead - name the skill and the closest existing wrapper names
+        // enumerated from the skill's scripts/ directory. A near match is reported, never substituted.
+        if (SkillScriptPreflight.TryGetFileTarget(processArgs, out var scriptTarget))
+        {
+            var probeRoot = workingDir ?? _workingDirectory;
+            var resolvedTarget = Path.IsPathRooted(scriptTarget) || string.IsNullOrWhiteSpace(probeRoot)
+                ? scriptTarget
+                : Path.GetFullPath(scriptTarget, probeRoot);
+            SkillScriptPreflight.ThrowIfMissing(resolvedTarget);
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
@@ -306,6 +326,7 @@ public sealed class ExecTool : IAgentTool
 
         var outputBuffer = new StringBuilder();
         var totalBytes = 0;
+        var discardedBytes = 0;
         var outputLock = new object();
         var noOutputCts = noOutputTimeoutMs.HasValue
             ? new CancellationTokenSource(noOutputTimeoutMs.Value)
@@ -323,6 +344,12 @@ public sealed class ExecTool : IAgentTool
                 {
                     outputBuffer.AppendLine(clean);
                     totalBytes += lineBytes;
+                }
+                else
+                {
+                    // Count what the cap costs us. Without this the discarded volume is unknowable:
+                    // the dropped lines are never buffered, so nothing downstream can reconstruct it.
+                    discardedBytes += lineBytes;
                 }
             }
 
@@ -376,9 +403,9 @@ public sealed class ExecTool : IAgentTool
             lock (outputLock)
             {
                 output = outputBuffer.ToString().TrimEnd();
-                if (totalBytes >= MaxOutputBytes)
+                if (discardedBytes > 0)
                 {
-                    output = $"[output truncated at {MaxOutputBytes / 1024}KB]\n{output}";
+                    output = $"{FormatTruncationBanner(totalBytes, discardedBytes)}\n{output}";
                 }
             }
 
@@ -506,6 +533,34 @@ public sealed class ExecTool : IAgentTool
     private static string FormatOutput(string output)
     {
         return string.IsNullOrWhiteSpace(output) ? string.Empty : $"\n\n{output}";
+    }
+
+    /// <summary>
+    /// Leading token every truncation banner starts with. Tests and callers match on this rather
+    /// than on the full sentence so the wording can evolve without becoming unrecognisable.
+    /// </summary>
+    internal const string TruncationBannerPrefix = "[output truncated:";
+
+    /// <summary>
+    /// Renders the retention-cap banner for issue #2895.
+    /// </summary>
+    /// <remarks>
+    /// The old banner restated the compile-time cap (<c>[output truncated at 100KB]</c>) and so
+    /// answered a question nobody asked: the cap is fixed and knowable, whereas the LOSS is not.
+    /// A caller deciding whether to re-run with a narrower command needs to know how much went
+    /// missing and which end of the stream survived - one dropped line and fifty dropped megabytes
+    /// warrant very different responses, and the old wording was identical for both.
+    /// </remarks>
+    /// <param name="retainedBytes">Bytes actually kept in the returned output.</param>
+    /// <param name="discardedBytes">Bytes produced by the child but dropped once the cap was hit.</param>
+    internal static string FormatTruncationBanner(int retainedBytes, int discardedBytes)
+    {
+        var produced = (long)retainedBytes + discardedBytes;
+
+        // Collection is head-first: lines are appended until one no longer fits, after which every
+        // subsequent line is dropped. The surviving portion is therefore always the head.
+        return $"{TruncationBannerPrefix} retained {retainedBytes} bytes (head) of {produced} bytes produced, " +
+               $"discarded {discardedBytes} bytes (tail) at the {MaxOutputBytes / 1024}KB cap]";
     }
 
     /// <summary>

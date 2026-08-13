@@ -171,6 +171,7 @@ internal static class CliApp
             .AddSingleton<SatelliteCommand>()
             .AddSingleton<DebugCommand>()
             .AddSingleton<ConversationCommands>()
+            .AddSingleton<SessionCommands>()
             .AddSingleton<SubAgentCommand>()
             .BuildServiceProvider();
     }
@@ -201,6 +202,7 @@ internal static class CliApp
         root.AddCommand(serviceProvider.GetRequiredService<SatelliteCommand>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<DebugCommand>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<ConversationCommands>().Build(verboseOption, targetOption));
+        root.AddCommand(serviceProvider.GetRequiredService<SessionCommands>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<SubAgentCommand>().Build(targetOption));
 
         return root;

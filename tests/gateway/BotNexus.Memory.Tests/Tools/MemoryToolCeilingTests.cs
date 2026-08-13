@@ -93,7 +93,7 @@ public sealed class MemoryToolCeilingTests
         for (var i = 0; i < 6; i++)
         {
             await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry(
-                $"entry-{i}", "agent-a", "searchablememorytext",
+                $"entry-{i}", "agent-a", $"searchablememorytext distinct body {i}",
                 createdAt: DateTimeOffset.UtcNow.AddSeconds(i)));
         }
 
@@ -116,7 +116,7 @@ public sealed class MemoryToolCeilingTests
         for (var i = 0; i < 6; i++)
         {
             await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry(
-                $"entry-{i}", "agent-a", "searchablememorytext",
+                $"entry-{i}", "agent-a", $"searchablememorytext distinct body {i}",
                 createdAt: DateTimeOffset.UtcNow.AddSeconds(i)));
         }
 
@@ -139,7 +139,7 @@ public sealed class MemoryToolCeilingTests
         for (var i = 0; i < 8; i++)
         {
             await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry(
-                $"entry-{i}", "agent-a", "searchablememorytext",
+                $"entry-{i}", "agent-a", $"searchablememorytext distinct body {i}",
                 createdAt: DateTimeOffset.UtcNow.AddSeconds(i)));
         }
 

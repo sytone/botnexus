@@ -64,6 +64,16 @@ public sealed class CopilotResponsesProvider : IApiProvider
     /// <inheritdoc />
     public string Api => "github-copilot-responses";
 
+    /// <summary>
+    /// OpenAI-shaped responses over the Copilot transport: system prompt as the first message.
+    /// Leaked-tool-call recovery is DECLARED for the same reason as the Completions transport --
+    /// Copilot discovery may route the #1709 model here, and #2170 is what happens when a Copilot
+    /// fix covers only the transport that happened to be selected on the day (#2432).
+    /// </summary>
+    public ProviderCapabilities Capabilities { get; } = new(
+        RecoversLeakedToolCallMarkup: true,
+        SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
+
     /// <inheritdoc />
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
     {

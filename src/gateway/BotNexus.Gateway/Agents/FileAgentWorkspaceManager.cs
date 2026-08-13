@@ -63,7 +63,23 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
             ? content
             : $"{content}{Environment.NewLine}";
 
-        await _fileSystem.File.AppendAllTextAsync(targetPath, memoryEntry, cancellationToken);
+        // #2909: two writers colliding on the same daily note used to throw a sharing violation
+        // straight out of the tool call, losing the durable write. Retry a bounded number of times,
+        // and open with FileShare.ReadWrite so a concurrent reader never blocks the append at all.
+        await FileSharingViolationRetry.ExecuteAsync(
+            async (_, ct) =>
+            {
+                await using var stream = _fileSystem.FileStream.New(
+                    targetPath,
+                    FileMode.Append,
+                    FileAccess.Write,
+                    FileShare.ReadWrite);
+                var bytes = System.Text.Encoding.UTF8.GetBytes(memoryEntry);
+                await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
+                await stream.FlushAsync(ct).ConfigureAwait(false);
+            },
+            $"Appending memory note to '{targetPath}'",
+            cancellationToken).ConfigureAwait(false);
     }
 
     public string GetWorkspacePath(string agentName)

@@ -40,6 +40,17 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
 
     public string Api => ApiId;
 
+    /// <summary>
+    /// The Anthropic Messages wire protocol over the Copilot transport: system prompt in the
+    /// dedicated top-level <c>system</c> field (see <c>CopilotMessagesRequestBuilder</c>), and
+    /// leaked-tool-call recovery DECLARED -- this is the transport on which #1709 was observed
+    /// ("opus via github-copilot" leaking <c>invoke</c>/<c>tool_use</c> XML into the assistant text
+    /// channel with a non-ToolUse finish reason) (#2432).
+    /// </summary>
+    public ProviderCapabilities Capabilities { get; } = new(
+        RecoversLeakedToolCallMarkup: true,
+        SystemPromptPlacement: SystemPromptPlacement.DedicatedField);
+
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
     {
         var stream = new LlmStream();
