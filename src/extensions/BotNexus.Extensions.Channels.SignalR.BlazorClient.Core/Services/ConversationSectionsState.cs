@@ -13,6 +13,7 @@ public sealed class ConversationSectionsState
     private List<SectionDto> _sections = [];
     private Dictionary<string, string> _assignments = new(StringComparer.Ordinal);
     private string _loadedAgentId = string.Empty;
+    private int _loadGeneration;
 
     /// <summary>Initialises the state over the sections REST client.</summary>
     public ConversationSectionsState(SectionsApiClient api) => _api = api;
@@ -38,12 +39,26 @@ public sealed class ConversationSectionsState
         await ReloadAsync();
     }
 
-    /// <summary>Reloads sections and assignments for the currently loaded agent from the server.</summary>
+    /// <summary>
+    /// Reloads sections and assignments for the currently loaded agent from the server.
+    /// </summary>
+    /// <remarks>
+    /// Loads are versioned because several callers can have one in flight at once - the panel's
+    /// <c>EnsureLoadedAsync</c> on first render, an assign/unassign from the sidebar menu, and an
+    /// agent switch. HTTP responses are not guaranteed to complete in call order, so an unguarded
+    /// last-write-wins assignment lets a slower EARLIER response overwrite a newer one and strand
+    /// the UI on stale sections. Only the newest generation is allowed to publish.
+    /// </remarks>
     public async Task ReloadAsync()
     {
         if (string.IsNullOrEmpty(_loadedAgentId))
             return;
-        var dto = await _api.ListAsync(_loadedAgentId);
+        var generation = ++_loadGeneration;
+        var agentId = _loadedAgentId;
+        var dto = await _api.ListAsync(agentId);
+        // A newer load (or an agent switch) started while this one was awaiting - discard this result.
+        if (generation != _loadGeneration || !string.Equals(agentId, _loadedAgentId, StringComparison.Ordinal))
+            return;
         _sections = dto.Sections.OrderBy(s => s.Order).ToList();
         _assignments = new Dictionary<string, string>(dto.Assignments, StringComparer.Ordinal);
         Changed?.Invoke();

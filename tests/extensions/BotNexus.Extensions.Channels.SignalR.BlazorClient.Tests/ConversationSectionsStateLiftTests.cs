@@ -141,36 +141,74 @@ public sealed class ConversationSectionsStateLiftTests : IDisposable
         Assert.Equal(["c-1"], _state.ConversationsFor("sec_1"));
     }
 
+    [Fact]
+    public async Task Stale_In_Flight_Reload_Does_Not_Overwrite_A_Newer_Result()
+    {
+        // The first load is held open, so it RESOLVES AFTER the second one has already published.
+        // Without generation versioning in ReloadAsync this is last-write-wins and the older,
+        // single-section payload wins - stranding the UI on stale sections. This is the same
+        // interleaving a user hits by assigning a section while the initial load is still running.
+        SeedSections("""[{"sectionId":"sec_1","agentId":"a-1","name":"Work","order":0,"isCollapsed":false}]""");
+        var gate = _handler.HoldNext("GET", "/api/agents/a-1/sections");
+
+        var stale = _state.EnsureLoadedAsync("a-1");
+
+        SeedSections("""[{"sectionId":"sec_1","agentId":"a-1","name":"Work","order":0,"isCollapsed":false},{"sectionId":"sec_2","agentId":"a-1","name":"Home","order":1,"isCollapsed":false}]""");
+        await _state.ReloadAsync();
+        Assert.Equal(["sec_1", "sec_2"], _state.Sections.Select(s => s.SectionId));
+
+        gate.SetResult();
+        await stale;
+
+        Assert.Equal(["sec_1", "sec_2"], _state.Sections.Select(s => s.SectionId));
+    }
+
     private sealed record RecordedRequest(string Method, string Path);
 
     private sealed class SectionsStubHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, (HttpStatusCode Status, string? Body)> _responses = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, TaskCompletionSource> _gates = new(StringComparer.Ordinal);
 
         public List<RecordedRequest> Requests { get; } = [];
 
         public void SetJson(string method, string path, string body, HttpStatusCode status = HttpStatusCode.OK)
             => _responses[$"{method} {path}"] = (status, body);
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        /// <summary>
+        /// Gate that holds the NEXT matching response until the returned source is completed, so a
+        /// test can force responses to land out of call order.
+        /// </summary>
+        public TaskCompletionSource HoldNext(string method, string path)
+        {
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _gates[$"{method} {path}"] = gate;
+            return gate;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
             var method = request.Method.Method;
             lock (Requests)
                 Requests.Add(new RecordedRequest(method, path));
 
-            if (_responses.TryGetValue($"{method} {path}", out var configured))
+            var key = $"{method} {path}";
+            if (_gates.Remove(key, out var gate))
+                await gate.Task;
+
+            if (_responses.TryGetValue(key, out var configured))
             {
                 var msg = new HttpResponseMessage(configured.Status);
                 if (configured.Body is not null)
                     msg.Content = new StringContent(configured.Body, Encoding.UTF8, "application/json");
-                return Task.FromResult(msg);
+                return msg;
             }
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("[]", Encoding.UTF8, "application/json")
-            });
+            };
         }
     }
 }
