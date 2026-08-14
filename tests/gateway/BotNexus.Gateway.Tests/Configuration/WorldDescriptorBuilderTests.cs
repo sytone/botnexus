@@ -11,6 +11,26 @@ namespace BotNexus.Gateway.Tests.Configuration;
 
 public sealed class WorldDescriptorBuilderTests
 {
+    /// <summary>
+    /// A fixture-owned absolute root that every configured path in this test is rooted at.
+    /// </summary>
+    /// <remarks>
+    /// This test used to configure <c>~/repo</c> and assert against
+    /// <c>Path.Combine(GetExpectedUserProfile(), "repo")</c>, re-resolving the user profile a second
+    /// time at assertion time. That made the expected value a statement about the host's ambient
+    /// environment at the instant the assertion ran rather than about the builder: any test running
+    /// concurrently that mutated <c>HOME</c>/<c>USERPROFILE</c> - or any disagreement between the two
+    /// resolutions - reddened it with no production defect. It duly passed and failed on identical
+    /// commit content in two remote runs ten minutes apart (issue #3149).
+    /// Rooting the fixture at a controlled absolute path removes the ambient dependency by
+    /// construction: there is no environment state left for a concurrent test to perturb. The
+    /// <c>~</c>-expansion semantics this test incidentally exercised are owned by
+    /// <c>HomePathExpanderTests</c> and fenced by <c>HomePathExpansionArchitectureTests</c>, which is
+    /// where they belong; this test's contract is aggregation.
+    /// </remarks>
+    private static readonly string FixtureRoot =
+        Path.Combine(Path.GetTempPath(), "botnexus-world-descriptor-tests");
+
     [Fact]
     public void Build_AggregatesIdentityAgentsLocationsStrategiesAndPermissions()
     {
@@ -44,14 +64,14 @@ public sealed class WorldDescriptorBuilderTests
                     ["provider:copilot"] = new()
                     {
                         Type = "filesystem",
-                        Path = "~/declared-provider",
+                        Path = Path.Combine(FixtureRoot, "declared-provider"),
                         Description = "declared takes precedence",
                         Properties = new Dictionary<string, string> { ["source"] = "declared" }
                     },
                     ["repo-root"] = new()
                     {
                         Type = "filesystem",
-                        Path = "~/repo",
+                        Path = Path.Combine(FixtureRoot, "repo"),
                         Description = "repository root"
                     }
                 },
@@ -134,7 +154,7 @@ public sealed class WorldDescriptorBuilderTests
         world.Locations.ShouldContain(location =>
             location.Name == "repo-root"
             && location.Type == LocationType.FileSystem
-            && location.Path == Path.Combine(GetExpectedUserProfile(), "repo"));
+            && location.Path == Path.GetFullPath(Path.Combine(FixtureRoot, "repo")));
 
         var permission = world.CrossWorldPermissions.ShouldHaveSingleItem();
         permission.TargetWorldId.ShouldBe("prod");
@@ -153,16 +173,5 @@ public sealed class WorldDescriptorBuilderTests
             AgentExecutionContext context,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
-    }
-
-    private static string GetExpectedUserProfile()
-    {
-        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(userProfile))
-        {
-            // Fallback to HOME environment variable on Linux/Unix systems
-            userProfile = Environment.GetEnvironmentVariable("HOME") ?? string.Empty;
-        }
-        return userProfile;
     }
 }
