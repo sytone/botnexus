@@ -319,6 +319,21 @@ public sealed class CronTrigger(
                 "CronTrigger: pinned conversation '{ConversationId}' for job '{JobId}' was missing; creating a fresh one. The scheduler's CAS will reconcile.",
                 pinnedId,
                 request.CronJobId);
+
+            // #3161: this is the silent-loss path the issue names. The job's destination - the
+            // conversation the operator is actually reading - is gone, so this run's output lands
+            // in a brand-new throwaway conversation nobody has open. That is a DELIVERY FAILURE:
+            // pre-#3161 it produced one warning log line and a run recorded 'ok', so a job whose
+            // destination had been deleted looked healthy forever. Reporting it back lets the
+            // scheduler record a non-success status and alert on it. The run still proceeds - the
+            // work is worth doing and the CAS reconciliation is still correct - it just no longer
+            // claims to have succeeded.
+            if (request is not null)
+            {
+                request.DeliveryError =
+                    $"The job's destination conversation '{pinnedId.Value}' no longer exists; "
+                    + "this run's output was written to a newly created conversation instead.";
+            }
         }
 
         // No pin (first run) or pinned conversation was hard-deleted out from under us.

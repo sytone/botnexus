@@ -478,6 +478,9 @@ public sealed class CronTool(
         CronRunStatus.Error,
         CronRunStatus.TimedOut,
         CronRunStatus.NoToolCalls,
+        // #3161: a run whose output reached nobody is exactly what the operator asking 'what broke'
+        // needs to see - it is the failure shape that used to be invisible entirely.
+        CronRunStatus.DeliveryFailed,
         CronRunStatus.Missed
     ];
 
