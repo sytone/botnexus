@@ -2261,7 +2261,7 @@ botnexus subagent workspace <COMMAND> [OPTIONS]
 | Option | Applies to | Description |
 |--------|------------|-------------|
 | `--dry-run` | `prune` | Show which directories would be deleted without deleting them. |
-| `--target <DIR>` | all | BotNexus home directory used to locate `sessions.db`. Defaults to `~/.botnexus`. |
+| `--target <DIR>` | all | BotNexus home directory used to locate the session store. Defaults to `~/.botnexus`. When omitted, the configured data directory (`BOTNEXUS_DATA_DIR`) is searched first, since that is where the gateway writes `sessions.sqlite`. Both `sessions.sqlite` and legacy `sessions.db` are accepted. |
 
 ### Examples
 
