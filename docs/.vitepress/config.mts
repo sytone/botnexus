@@ -173,6 +173,7 @@ export default defineConfig({
           { text: 'Gateway Crash Diagnostics', link: '/development/gateway-crash-diagnostics' },
           { text: 'Running Impacted Tests', link: '/development/running-tests' },
           { text: 'Pre-Commit Gate', link: '/development/pre-commit-gate' },
+          { text: 'Stale-Base Merges', link: '/development/stale-base-merges' },
           { text: 'Documentation Grooming', link: '/development/documentation-grooming' },
           { text: 'Azure Build and Test Runner', link: '/development/azure-build-test-runner' },
           { text: 'Maintenance Orchestration', link: '/development/autonomous-maintenance-orchestration' },

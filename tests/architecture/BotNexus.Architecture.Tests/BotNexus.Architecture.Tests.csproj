@@ -23,6 +23,8 @@
     <None Include="ConfigFieldCoverageBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
     <!-- #3099: the primitive-ID parameter fence reads its shrink-only baseline from the output dir. -->
     <None Include="PrimitiveIdParameterBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The #2888 config-path resolution fence reads its baseline at runtime from the output dir. -->
+    <None Include="ConfigPathResolutionBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

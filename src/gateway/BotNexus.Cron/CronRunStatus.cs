@@ -49,6 +49,29 @@ public static class CronRunStatus
     /// </summary>
     public const string NoToolCalls = "no_tool_calls";
 
+    /// <summary>
+    /// #3161: the action's turn completed without throwing, but the run's <b>primary delivery</b> -
+    /// getting that output to the job's destination conversation - failed. The work happened; nobody
+    /// received it.
+    ///
+    /// <para>
+    /// This is a <b>terminal non-success</b> outcome with the same standing as <see cref="Error"/>
+    /// and <see cref="NoToolCalls"/>: it is written to run history, it is what <c>LastRunStatus</c>
+    /// shows, it participates in the failure-alert streak, and retention may purge it. It is a
+    /// separate value rather than a reuse of <see cref="Error"/> because the two demand different
+    /// operator responses - "the job is broken" versus "the job works but its destination is gone"
+    /// (an archived, deleted, or unresolvable conversation). Collapsing them would send an operator
+    /// debugging a healthy job.
+    /// </para>
+    /// <para>
+    /// Only ever written when an action routed its delivery through
+    /// <c>CronExecutionContext.DeliverAsync</c> and that delivery failed. An action that never uses
+    /// the seam at all (command / webhook - they have no conversation delivery concept) reports no
+    /// delivery outcome and can never reach this status. Silence is not failure.
+    /// </para>
+    /// </summary>
+    public const string DeliveryFailed = "delivery_failed";
+
     /// <summary>The run has been started and stamped but has not yet reached a terminal state.</summary>
     public const string Running = "running";
 

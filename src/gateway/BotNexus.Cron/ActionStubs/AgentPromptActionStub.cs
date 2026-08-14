@@ -88,6 +88,14 @@ public sealed class AgentPromptAction : ICronAction
         // the scheduler reads as "not applicable" rather than as zero.
         if (triggerRequest.ToolInvocationCount is { } toolInvocationCount)
             context.RecordToolInvocationCount(toolInvocationCount);
+
+        // #3161: forward a primary-delivery failure the trigger observed (e.g. the job's pinned
+        // destination conversation no longer resolves) so the scheduler records a non-success
+        // terminal status. Before #3161 there was no channel at all for this: the trigger silently
+        // re-routed the output and the run recorded 'ok', so a job whose destination was deleted
+        // produced an unbroken streak of green runs indefinitely.
+        if (triggerRequest.DeliveryError is { } deliveryError)
+            context.RecordDeliveryFailure(deliveryError);
     }
 
     private static bool IsInQuietHours(QuietHoursConfig config, string timezoneId)

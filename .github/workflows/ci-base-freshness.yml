@@ -1,0 +1,202 @@
+name: "CI: Base Freshness & Main Health"
+
+# Why this workflow exists (issue #3173)
+# --------------------------------------
+# `core-tests` in ci-build-test.yml answers "is this PR green against the base it was
+# branched from?". It does NOT answer "is the tree that will exist on main after this
+# merges green?". Those two questions diverge whenever a *tree-wide* rule and a
+# violation of it merge concurrently on mutually stale bases.
+#
+# That is exactly how main went red on 2026-08-14: #3148 added the #3099 primitive-ID
+# fence at 07:44:32 and #3164 added a file violating it at 07:48:20. Neither branch
+# contained the other's commit, so both were correctly green, and the first tree that
+# ever contained both was main itself.
+#
+# This workflow closes that hole from inside the repo:
+#   * base-freshness  -- re-evaluates the tree-wide rules against HEAD merged with the
+#                        CURRENT tip of main, not the PR's recorded base. A stale-base
+#                        PR that would land a tree-wide violation fails here.
+#   * main-health     -- polls the latest main run so a red main is surfaced within one
+#                        gate cycle instead of via an unrelated PR (AC3).
+#
+# Both jobs write a GitHub step summary that states, in words, whether a failure was
+# INHERITED from a red main or INTRODUCED by the PR (AC4).
+
+on:
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Every 15 minutes: a red main is detected within one gate cycle rather than
+    # being discovered hours later by whoever opens the next unrelated PR.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # AC1 (in-repo half): the merged tree, not the stale base, is what gets judged.
+  # ---------------------------------------------------------------------------
+  base-freshness:
+    name: base freshness (tree-wide rules on merged tree)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Determine base staleness
+        id: staleness
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          MAIN_SHA="$(git rev-parse origin/main)"
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          echo "main_sha=$MAIN_SHA" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$MAIN_SHA" "$HEAD_SHA"; then
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            BEHIND=0
+          else
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            BEHIND="$(git rev-list --count "$HEAD_SHA".."$MAIN_SHA")"
+          fi
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Base freshness"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| PR head | \`$HEAD_SHA\` |"
+            echo "| PR recorded base | \`$BASE_SHA\` |"
+            echo "| current \`main\` | \`$MAIN_SHA\` |"
+            echo "| commits behind \`main\` | $BEHIND |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Merge current main into head (test-only, never pushed)
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          if git merge --no-edit --no-ff origin/main; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "> **Merge conflict with current \`main\`.** Rebase or merge \`main\` into this branch; the tree-wide rules could not be evaluated." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore tests/architecture/BotNexus.Architecture.Tests/BotNexus.Architecture.Tests.csproj
+
+      # Only the architecture project runs here. It is the home of every rule whose
+      # verdict depends on the WHOLE tree rather than on the diff -- the primitive-ID
+      # fence (#3099), ConfigFieldCoverage, CoreTestScopeConsistency. Those are the
+      # rules a stale base can defeat; per-file unit tests cannot be defeated this way
+      # because the file and its test move together.
+      - name: Tree-wide architecture rules against merged tree
+        id: rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test tests/architecture/BotNexus.Architecture.Tests/BotNexus.Architecture.Tests.csproj \
+            --logger "trx;LogFileName=merged.trx" \
+            --results-directory "$GITHUB_WORKSPACE/artifacts/base-freshness"
+
+      # AC4: name the failure class explicitly so nobody has to read two sets of logs
+      # to work out whether they broke it or inherited it.
+      - name: Classify failure (inherited vs introduced)
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          CONCLUSION="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow 'CI: Build & Test' \
+            --branch main --limit 1 --json conclusion --jq '.[0].conclusion' || echo unknown)"
+          {
+            echo ""
+            echo "## Verdict"
+            echo ""
+            if [ "$CONCLUSION" = "failure" ]; then
+              echo "**INHERITED (probably).** The latest \`CI: Build & Test\` run on \`main\` concluded \`failure\`."
+              echo "This branch merged with a \`main\` that is already red, so a red result here does not"
+              echo "on its own mean this PR introduced anything. Compare the failing test names below with"
+              echo "the failing tests on the linked \`main\` run before changing any code."
+            else
+              echo "**INTRODUCED.** The latest \`CI: Build & Test\` run on \`main\` concluded \`$CONCLUSION\`,"
+              echo "so \`main\` is not known-red. A tree-wide architecture rule fails on the tree that would"
+              echo "exist after this PR merges, even though the PR may be green against its own base."
+              echo "Fix the violation -- do **not** widen a fence baseline; those baselines are shrink-only."
+            fi
+            echo ""
+            echo "Latest \`main\` conclusion: \`$CONCLUSION\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload merged-tree results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: base-freshness-results
+          path: artifacts/base-freshness/*.trx
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # AC3: a red main announces itself on a fixed cadence.
+  # ---------------------------------------------------------------------------
+  main-health:
+    name: main health probe
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe latest main run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          RUN_JSON="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow 'CI: Build & Test' \
+            --branch main --limit 1 --json conclusion,databaseId,headSha,url \
+            --jq '.[0] // empty')"
+          if [ -z "$RUN_JSON" ]; then
+            echo "No completed run found for main; nothing to report." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          CONCLUSION="$(echo "$RUN_JSON" | jq -r '.conclusion')"
+          RUN_ID="$(echo "$RUN_JSON" | jq -r '.databaseId')"
+          SHA="$(echo "$RUN_JSON" | jq -r '.headSha')"
+          URL="$(echo "$RUN_JSON" | jq -r '.url')"
+          {
+            echo "## main health"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| conclusion | \`$CONCLUSION\` |"
+            echo "| run id | [$RUN_ID]($URL) |"
+            echo "| commit | \`$SHA\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CONCLUSION" = "failure" ]; then
+            echo "::error::main is RED at $SHA (run $RUN_ID). Every PR branched from it inherits this failure."
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**\`main\` is RED.** Every open PR inherits it. Fix forward on \`main\`; do not disable tests." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "main is green at $SHA (run $RUN_ID)."
