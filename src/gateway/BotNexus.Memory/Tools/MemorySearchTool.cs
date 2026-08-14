@@ -193,7 +193,12 @@ public sealed class MemorySearchTool : IAgentTool
                         SourceType: $"shared:{name}",
                         SessionId: scored.Entry.SessionId,
                         CreatedAt: scored.Entry.CreatedAt,
-                        RelevanceScore: scored.Score));
+                        RelevanceScore: scored.Score)
+                    {
+                        Provenance = scored.Entry.NormalizedProvenance,
+                        OriginConversationId = scored.Entry.OriginConversationId,
+                        OriginSessionId = scored.Entry.OriginSessionId
+                    });
                 }
             }
         }
@@ -242,7 +247,12 @@ public sealed class MemorySearchTool : IAgentTool
                 SourceType: $"shared:{storeName}",
                 SessionId: scored.Entry.SessionId,
                 CreatedAt: scored.Entry.CreatedAt,
-                RelevanceScore: scored.Score)),
+                RelevanceScore: scored.Score)
+            {
+                Provenance = scored.Entry.NormalizedProvenance,
+                OriginConversationId = scored.Entry.OriginConversationId,
+                OriginSessionId = scored.Entry.OriginSessionId
+            }),
             minScore,
             topK);
 
@@ -297,6 +307,9 @@ public sealed class MemorySearchTool : IAgentTool
             if (!string.IsNullOrWhiteSpace(entry.SessionId))
                 lines.Add($"Session: {entry.SessionId}");
             lines.Add($"Source: {entry.SourceType}");
+            // #2480: origin, not just kind. Without this a summarised GitHub issue body reads back
+            // on a later session as first-party agent knowledge with its provenance erased.
+            lines.Add($"Provenance: {entry.Provenance}");
             lines.Add($"Preview: {preview}");
             lines.Add(string.Empty);
         }

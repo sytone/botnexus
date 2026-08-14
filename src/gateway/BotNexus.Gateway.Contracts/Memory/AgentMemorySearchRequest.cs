@@ -33,4 +33,23 @@ public sealed record AgentMemorySearchResult(
     string? SessionId,
     DateTimeOffset CreatedAt,
     double RelevanceScore = 0.0,
-    IReadOnlyList<string>? Tags = null);
+    IReadOnlyList<string>? Tags = null)
+{
+    /// <summary>
+    /// Where the entry's content came from - <c>agent</c>, <c>user</c>, <c>tool</c>,
+    /// <c>external-untrusted</c>, or <c>unknown</c> (issue #2480).
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="SourceType"/>, which says what kind of write produced the entry
+    /// rather than whose words it contains. Defaults to <c>unknown</c> so a provider that does not
+    /// record provenance can never have its results read as first-party. Providers must surface
+    /// the <i>normalized</i> value; this issue covers the metadata only, and gating on it is #2519.
+    /// </remarks>
+    public string Provenance { get; init; } = "unknown";
+
+    /// <summary>Conversation the content originated in, when recorded.</summary>
+    public string? OriginConversationId { get; init; }
+
+    /// <summary>Session the content originated in, when recorded.</summary>
+    public string? OriginSessionId { get; init; }
+}

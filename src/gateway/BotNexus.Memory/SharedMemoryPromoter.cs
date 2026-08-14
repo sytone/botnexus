@@ -80,6 +80,10 @@ public sealed class SharedMemoryPromoter
                 SessionId = item.SourceSessionId,
                 TurnIndex = item.SourceTurnIndex,
                 SourceType = "dreaming",
+                // Consolidated knowledge the agent derived itself; the originating session is
+                // preserved separately so the promoted row does not lose its trail (#2480).
+                Provenance = MemoryProvenance.Agent,
+                OriginSessionId = item.SourceSessionId,
                 Content = item.Content,
                 MetadataJson = BuildMetadataJson(item),
                 CreatedAt = DateTimeOffset.UtcNow,

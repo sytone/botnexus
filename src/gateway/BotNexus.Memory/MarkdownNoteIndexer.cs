@@ -71,6 +71,11 @@ internal static class MarkdownNoteIndexer
                 SessionId = null,
                 TurnIndex = null,
                 SourceType = NoteSourceType,
+                // A note under the agent's memory root was written by the agent itself, so it is
+                // first-party `agent` content (#2480). Note bodies may quote untrusted text, which
+                // is why the sanitiser below still runs - provenance records origin, it does not
+                // replace sanitisation.
+                Provenance = MemoryProvenance.Agent,
                 // Same sanitisation contract as the conversation writer (#1560): note bodies can
                 // contain text an agent copied verbatim from an untrusted inbound message.
                 Content = UntrustedContentSanitizer.Sanitize(section.Content),

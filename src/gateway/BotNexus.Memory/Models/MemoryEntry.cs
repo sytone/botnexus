@@ -14,4 +14,31 @@ public sealed record MemoryEntry
     public DateTimeOffset? UpdatedAt { get; init; }
     public DateTimeOffset? ExpiresAt { get; init; }
     public bool IsArchived { get; init; }
+
+    /// <summary>
+    /// Where this entry's content came from - one of <see cref="MemoryProvenance"/> (#2480).
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="SourceType"/>, which records what kind of write produced the row.
+    /// Nullable because the column is additive: rows written before provenance existed carry no
+    /// value and are read back as <see cref="MemoryProvenance.Unknown"/> via
+    /// <see cref="NormalizedProvenance"/> rather than being backfilled destructively or rejected.
+    /// </remarks>
+    public string? Provenance { get; init; }
+
+    /// <summary>Conversation the content originated in, when known. Nullable and additive.</summary>
+    public string? OriginConversationId { get; init; }
+
+    /// <summary>
+    /// Session the content originated in, when it differs from <see cref="SessionId"/> - e.g. a
+    /// consolidated or promoted row whose storage session is not the session that produced the text.
+    /// </summary>
+    public string? OriginSessionId { get; init; }
+
+    /// <summary>
+    /// The provenance coerced into the closed vocabulary, defaulting to
+    /// <see cref="MemoryProvenance.Unknown"/>. Read paths should use this rather than the raw
+    /// column so an absent, stale or malformed value can never present as first-party.
+    /// </summary>
+    public string NormalizedProvenance => MemoryProvenance.Normalize(Provenance);
 }

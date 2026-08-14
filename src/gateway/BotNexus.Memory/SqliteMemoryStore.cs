@@ -72,7 +72,10 @@ public sealed class SqliteMemoryStore(
                     created_at TEXT NOT NULL,
                     updated_at TEXT NULL,
                     expires_at TEXT NULL,
-                    is_archived INTEGER NOT NULL DEFAULT 0
+                    is_archived INTEGER NOT NULL DEFAULT 0,
+                    provenance TEXT NULL,
+                    origin_conversation_id TEXT NULL,
+                    origin_session_id TEXT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON memories(agent_id);
@@ -104,11 +107,60 @@ public sealed class SqliteMemoryStore(
                 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            // #2480: an agent DB created before provenance existed has a `memories` table without
+            // these columns, and CREATE TABLE IF NOT EXISTS above is a no-op against it. Adding
+            // them here - additively, nullably, after the fact - is what makes a pre-provenance DB
+            // open successfully instead of failing on the first SELECT naming a missing column.
+            // Deliberately no backfill UPDATE: NULL is the honest record that provenance was never
+            // captured for those rows, and it reads back as the fail-safe `unknown`.
+            await EnsureProvenanceColumnsAsync(connection, ct).ConfigureAwait(false);
+
             _initialized = true;
         }
         finally
         {
             _writeLock.Release();
+        }
+    }
+
+    private static readonly string[] ProvenanceColumns =
+        ["provenance", "origin_conversation_id", "origin_session_id"];
+
+    /// <summary>
+    /// Lazily adds the additive nullable provenance columns to an existing <c>memories</c> table.
+    /// </summary>
+    /// <remarks>
+    /// The upstream lesson this implements (#2480) is that a store must never reject an older DB at
+    /// open. Each column is added independently and a duplicate-column error is swallowed, so the
+    /// upgrade is idempotent and safe against a concurrent process that added the column first.
+    /// </remarks>
+    private static async Task EnsureProvenanceColumnsAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        HashSet<string> existing = new(StringComparer.OrdinalIgnoreCase);
+        await using (var probe = connection.CreateCommand())
+        {
+            probe.CommandText = "PRAGMA table_info(memories);";
+            await using var reader = await probe.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                existing.Add(reader.GetString(1));
+        }
+
+        foreach (var column in ProvenanceColumns)
+        {
+            if (existing.Contains(column))
+                continue;
+
+            try
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE memories ADD COLUMN {column} TEXT NULL;";
+                await alter.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+            catch (SqliteException)
+            {
+                // Another process won the race and added it. The end state is what matters.
+            }
         }
     }
 
@@ -139,10 +191,12 @@ public sealed class SqliteMemoryStore(
             command.CommandText = """
                 INSERT INTO memories (
                     id, agent_id, session_id, turn_index, source_type, content, metadata_json,
-                    embedding, created_at, updated_at, expires_at, is_archived)
+                    embedding, created_at, updated_at, expires_at, is_archived,
+                    provenance, origin_conversation_id, origin_session_id)
                 VALUES (
                     $id, $agentId, $sessionId, $turnIndex, $sourceType, $content, $metadataJson,
-                    $embedding, $createdAt, $updatedAt, $expiresAt, $isArchived)
+                    $embedding, $createdAt, $updatedAt, $expiresAt, $isArchived,
+                    $provenance, $originConversationId, $originSessionId)
                 """;
             BindParameters(command, toInsert);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -166,7 +220,8 @@ public sealed class SqliteMemoryStore(
             await using var command = connection.CreateCommand();
             command.CommandText = """
                 SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
-                       embedding, created_at, updated_at, expires_at, is_archived
+                       embedding, created_at, updated_at, expires_at, is_archived,
+                       provenance, origin_conversation_id, origin_session_id
                 FROM memories
                 WHERE id = $id
                 """;
@@ -192,7 +247,8 @@ public sealed class SqliteMemoryStore(
             await using var command = connection.CreateCommand();
             command.CommandText = """
                 SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
-                       embedding, created_at, updated_at, expires_at, is_archived
+                       embedding, created_at, updated_at, expires_at, is_archived,
+                       provenance, origin_conversation_id, origin_session_id
                 FROM memories
                 WHERE session_id = $sessionId
                 ORDER BY created_at DESC
@@ -418,6 +474,7 @@ public sealed class SqliteMemoryStore(
             """
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
+                   m.provenance, m.origin_conversation_id, m.origin_session_id,
                    -bm25(memories_fts) AS bm25_rank,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories_fts
@@ -446,8 +503,8 @@ public sealed class SqliteMemoryStore(
             var entry = ReadMemory(reader);
             // bm25() is negative-is-better, so the query already negates it; clamp because
             // the ranker normalises by magnitude and a negative lexical score is meaningless.
-            var bm25Rank = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
-            var ageDays = reader.IsDBNull(13) ? 0d : Math.Max(0d, reader.GetDouble(13));
+            var bm25Rank = reader.IsDBNull(15) ? 0d : Math.Max(0d, reader.GetDouble(15));
+            var ageDays = reader.IsDBNull(16) ? 0d : Math.Max(0d, reader.GetDouble(16));
             if (!candidates.ContainsKey(entry.Id))
                 candidates[entry.Id] = new MemoryRankingCandidate(entry, bm25Rank, Similarity: null, ageDays);
         }
@@ -649,6 +706,7 @@ public sealed class SqliteMemoryStore(
             """
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
+                   m.provenance, m.origin_conversation_id, m.origin_session_id,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
             WHERE m.is_archived = 0
@@ -691,7 +749,7 @@ public sealed class SqliteMemoryStore(
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 var entry = ReadMemory(reader);
-                var ageDays = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
+                var ageDays = reader.IsDBNull(15) ? 0d : Math.Max(0d, reader.GetDouble(15));
                 var textScore = terms.Count(term => entry.Content.Contains(term, StringComparison.OrdinalIgnoreCase));
                 candidates[entry.Id] = new MemoryRankingCandidate(entry, textScore, Similarity: null, ageDays);
             }
@@ -742,6 +800,7 @@ public sealed class SqliteMemoryStore(
             """
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
+                   m.provenance, m.origin_conversation_id, m.origin_session_id,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
             WHERE m.is_archived = 0
@@ -774,7 +833,7 @@ public sealed class SqliteMemoryStore(
             if (similarity is null)
                 continue;
 
-            var ageDays = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
+            var ageDays = reader.IsDBNull(15) ? 0d : Math.Max(0d, reader.GetDouble(15));
             candidates[entry.Id] = candidates.TryGetValue(entry.Id, out var existing)
                 ? existing with { Similarity = similarity }
                 : new MemoryRankingCandidate(entry, LexicalScore: 0d, similarity, ageDays);
@@ -842,6 +901,11 @@ public sealed class SqliteMemoryStore(
         command.Parameters.AddWithValue("$updatedAt", (object?)entry.UpdatedAt?.ToString("O") ?? DBNull.Value);
         command.Parameters.AddWithValue("$expiresAt", (object?)entry.ExpiresAt?.ToString("O") ?? DBNull.Value);
         command.Parameters.AddWithValue("$isArchived", entry.IsArchived ? 1 : 0);
+        // Provenance is normalised on write as well as on read, so a caller cannot persist a
+        // value outside the closed vocabulary and have it survive to a later trust decision.
+        command.Parameters.AddWithValue("$provenance", MemoryProvenance.Normalize(entry.Provenance));
+        command.Parameters.AddWithValue("$originConversationId", (object?)entry.OriginConversationId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$originSessionId", (object?)entry.OriginSessionId ?? DBNull.Value);
     }
 
     private static MemoryEntry ReadMemory(SqliteDataReader reader)
@@ -859,7 +923,13 @@ public sealed class SqliteMemoryStore(
             CreatedAt = DateTimeOffset.Parse(reader.GetString(8), CultureInfo.InvariantCulture),
             UpdatedAt = reader.IsDBNull(9) ? null : DateTimeOffset.Parse(reader.GetString(9), CultureInfo.InvariantCulture),
             ExpiresAt = reader.IsDBNull(10) ? null : DateTimeOffset.Parse(reader.GetString(10), CultureInfo.InvariantCulture),
-            IsArchived = !reader.IsDBNull(11) && reader.GetInt32(11) != 0
+            IsArchived = !reader.IsDBNull(11) && reader.GetInt32(11) != 0,
+            // Columns 12-14 are the additive provenance trio. A pre-provenance row (or a row from
+            // a DB upgraded in place) has NULL here, which Normalize resolves to `unknown` - the
+            // fail-safe, non-first-party default.
+            Provenance = reader.IsDBNull(12) ? null : reader.GetString(12),
+            OriginConversationId = reader.IsDBNull(13) ? null : reader.GetString(13),
+            OriginSessionId = reader.IsDBNull(14) ? null : reader.GetString(14)
         };
     }
 }

@@ -169,6 +169,11 @@ public sealed class MemoryIndexer(
                     SessionId = sessionId.Value,
                     TurnIndex = pendingTurnIndex,
                     SourceType = "conversation",
+                    // #2480: a conversation row is a verbatim user turn plus the agent's reply.
+                    // The user half is first-party owner input, so the pair is stamped `user`
+                    // rather than `agent` - the more conservative of the two halves wins.
+                    Provenance = MemoryProvenance.User,
+                    OriginSessionId = sessionId.Value,
                                         // Strip LLM control / role-injection markup before persisting raw transcript
                     // text to the searchable store - defends against memory-poisoning (#1560).
                     // Then delimit through the single shared encoder so no user text can forge an

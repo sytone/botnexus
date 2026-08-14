@@ -599,11 +599,27 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             if (!string.IsNullOrWhiteSpace(note.Content))
             {
                 var relativePath = $"{memoryDir}/{note.Date:yyyy-MM-dd}.md";
-                result.Add(new ContextFile(relativePath, note.Content.Trim()));
+                result.Add(new ContextFile(relativePath, RenderNoteWithProvenance(note)));
             }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Prefixes a daily note with a one-line provenance banner so the model can weigh where the
+    /// content came from instead of reading every memory line as first-party knowledge (#2480).
+    /// </summary>
+    /// <remarks>
+    /// The banner is emitted unconditionally, including for <c>unknown</c>. Emitting it only for
+    /// untrusted content would make the absence of a banner mean two different things - "verified
+    /// first-party" and "never recorded" - which is precisely the ambiguity provenance exists to
+    /// remove. This issue renders provenance; it does not gate on it (that is #2519).
+    /// </remarks>
+    internal static string RenderNoteWithProvenance(AgentMemoryDailyNote note)
+    {
+        var provenance = string.IsNullOrWhiteSpace(note.Provenance) ? "unknown" : note.Provenance.Trim();
+        return $"> [memory provenance: {provenance}]\n\n{note.Content.Trim()}";
     }
 
     private static async Task<IReadOnlyList<ContextFile>> LoadRecentDailyMemoryFilesAsync(

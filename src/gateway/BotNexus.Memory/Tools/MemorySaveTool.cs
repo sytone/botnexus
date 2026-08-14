@@ -160,6 +160,8 @@ public sealed class MemorySaveTool : IAgentTool
             SourceType = category ?? "tool",
             AgentId = _agentId,
             CreatedAt = DateTimeOffset.UtcNow,
+            // The agent invoked memory_save deliberately, so the content is its own (#2480).
+            Provenance = MemoryProvenance.Agent,
             MetadataJson = BuildMetadataJson(category, tags)
         };
 

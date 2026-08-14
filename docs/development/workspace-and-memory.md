@@ -409,6 +409,45 @@ Memory files are stored as plain Markdown under the agent workspace:
 - Plain Markdown content appended to daily files
 - Sections in MEMORY.md organized by topic
 
+### Memory provenance
+
+Every row in the SQLite memory store carries **provenance** - a record of *whose words* the
+content is - alongside `source_type`, which records *what kind of write* produced it. The two
+answer different questions and are deliberately separate fields.
+
+| Provenance | Meaning |
+| --- | --- |
+| `agent` | The agent's own reasoning, summaries or deliberate `memory_save` notes. |
+| `user` | First-party owner input, including indexed conversation turns. |
+| `tool` | Derived from a tool result the agent executed. |
+| `external-untrusted` | Ingested from a third party the agent does not control - an issue body, a comment, an inbound message from an unverified sender, fetched web content. |
+| `unknown` | Provenance was never recorded, or the stored value was not recognised. |
+
+Why it exists: untrusted third-party text is inert display-only input on the turn it arrives,
+but once summarised into a memory row it would otherwise read back on a later session as
+first-party agent knowledge with its origin erased - a prompt-injection laundering path through
+the memory store.
+
+**Fail-safe rules:**
+
+- `unknown` is the default for any absent, blank or unrecognised value, and it is **not**
+  first-party. Being trusted requires having been explicitly stamped at write time.
+- Provenance is normalised on write as well as on read, so a value outside the vocabulary above
+  cannot be persisted and later mistaken for a new trust level.
+- Recall surfaces it: `memory_search` and `memory_get` render a `Provenance:` line, and each
+  daily note injected into the system prompt is prefixed with a
+  `> [memory provenance: <value>]` banner. The banner is unconditional, so its absence can never
+  be read as "verified first-party".
+
+**Schema:** `provenance`, `origin_conversation_id` and `origin_session_id` are additive nullable
+`TEXT` columns. A store file created before they existed is upgraded lazily at open via
+`ALTER TABLE ... ADD COLUMN` and is never rejected; its pre-existing rows keep `NULL`, which
+reads back as `unknown`. There is deliberately no backfill to a trusted value - `NULL` is the
+honest record that provenance was never captured.
+
+> Recording provenance is separate from acting on it. Retrieval-time gating and quarantine of
+> untrusted entries are tracked separately; nothing described here filters or blocks anything.
+
 ### Backward Compatibility
 
 The `MemoryStore` supports reading from legacy memory formats:

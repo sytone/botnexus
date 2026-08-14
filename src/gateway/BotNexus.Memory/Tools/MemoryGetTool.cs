@@ -127,6 +127,9 @@ public sealed class MemoryGetTool : IAgentTool
             $"ID: {entry.Id}",
             $"Timestamp: {entry.CreatedAt:O}",
             $"Source: {entry.SourceType}",
+            // Normalized, never raw: a pre-provenance row must render as `unknown` rather than
+            // as a blank field the model could read as an absence of concern (#2480).
+            $"Provenance: {entry.NormalizedProvenance}",
             $"Session: {entry.SessionId ?? "(none)"}",
             $"Content: {preview}");
     }

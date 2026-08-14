@@ -180,6 +180,11 @@ public sealed class MarkdownAgentMemory : IAgentMemory
                     SessionId = sessionEvent.SessionId,
                     TurnIndex = pendingUser.Index,
                     SourceType = "conversation",
+                    // See MemoryIndexer: the pair carries a verbatim user turn, so it is stamped
+                    // with the more conservative of the two halves (#2480).
+                    Provenance = MemoryProvenance.User,
+                    OriginSessionId = sessionEvent.SessionId,
+                    OriginConversationId = sessionEvent.ConversationId,
                                         // Strip LLM control / role-injection markup before persisting raw transcript
                     // text to the searchable store - defends against memory-poisoning (#1560).
                     // Then delimit through the single shared encoder so no user text can forge an
@@ -267,7 +272,9 @@ public sealed class MarkdownAgentMemory : IAgentMemory
                 var trimmed = content.Trim();
                 if (DateOnly.TryParse(file.Name, out var date))
                 {
-                    dailyNotes.Add(new AgentMemoryDailyNote(date, trimmed));
+                    // Daily notes under the agent's own memory root are written by the agent
+                    // itself through memory_save, so they are first-party `agent` content (#2480).
+                    dailyNotes.Add(new AgentMemoryDailyNote(date, trimmed, MemoryProvenance.Agent));
                 }
             }
         }
@@ -327,7 +334,14 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             Content: entry.Content,
             SourceType: entry.SourceType,
             SessionId: entry.SessionId,
-            CreatedAt: entry.CreatedAt);
+            CreatedAt: entry.CreatedAt)
+        {
+            // Always the normalized value, never the raw column: recall must not be able to
+            // present a NULL or malformed provenance as anything other than `unknown` (#2480).
+            Provenance = entry.NormalizedProvenance,
+            OriginConversationId = entry.OriginConversationId,
+            OriginSessionId = entry.OriginSessionId
+        };
 
     /// <summary>
     /// Maps a ranked row, preserving the fused relevance score so the caller can render a magnitude

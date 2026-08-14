@@ -49,6 +49,12 @@ public sealed record AgentMemoryContext(
 /// </summary>
 /// <param name="Date">The date this note covers.</param>
 /// <param name="Content">The markdown content of the daily note.</param>
+/// <param name="Provenance">
+/// Where the note's content came from (issue #2480). Defaults to <c>unknown</c> - the fail-safe
+/// value - so a provider that does not record provenance cannot have its notes rendered as
+/// first-party agent knowledge.
+/// </param>
 public sealed record AgentMemoryDailyNote(
     DateOnly Date,
-    string Content);
+    string Content,
+    string Provenance = "unknown");
