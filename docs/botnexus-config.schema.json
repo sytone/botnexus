@@ -197,6 +197,16 @@
             }
           ]
         },
+        "toolOutputBudget": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/ToolOutputBudgetConfig"
+            }
+          ]
+        },
         "claimAudit": {
           "oneOf": [
             {
@@ -628,6 +638,19 @@
       }
     },
     "ToolResultPersistenceConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxBytes": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "ToolOutputBudgetConfig": {
       "type": "object",
       "additionalProperties": false,
       "properties": {

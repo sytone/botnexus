@@ -523,7 +523,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // strategy without the full service graph keep working (null simply records nothing;
             // the one-attempt fail-fast still applies).
             SuspensionRegistry: _serviceProvider.GetService<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(),
-            AuthProfile: authProfileId);
+            AuthProfile: authProfileId,
+            // #3162: the central tool-output backstop. Reads gateway:toolOutputBudget and defaults
+            // ON (256 KiB) when the section is absent; disabled (0) only when Enabled=false or
+            // MaxBytes<=0, matching the toolResultPersistence convention.
+            MaxToolOutputBytes: ResolveMaxToolOutputBytes(platformConfig?.Value.Gateway?.ToolOutputBudget));
 
         var agent = new BotNexus.Agent.Core.Agent(options);
 
@@ -655,6 +659,21 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             return null;
         return AgentDescriptorValidator.TryParseThinking(thinking, out var level) ? level : null;
     }
+    /// <summary>
+    /// Resolves the central tool-output backstop budget (#3162) from gateway configuration.
+    /// </summary>
+    /// <remarks>
+    /// An absent section means the platform default (backstop ON), because an unbounded tool result
+    /// reaching the context window is precisely the condition #3162 exists to prevent -- "not
+    /// configured" must not mean "unprotected". Zero is returned only when an operator explicitly
+    /// disabled it, which <c>ToolOutputBudget.Apply</c> treats as a no-op.
+    /// </remarks>
+    internal static int ResolveMaxToolOutputBytes(ToolOutputBudgetConfig? config)
+    {
+        var effective = config ?? new ToolOutputBudgetConfig();
+        return effective is { Enabled: true, MaxBytes: > 0 } ? effective.MaxBytes : 0;
+    }
+
     private TimeSpan? ResolveToolTimeout(AgentDescriptor descriptor)
     {
         if (!descriptor.Metadata.TryGetValue("toolTimeoutSeconds", out var raw) || raw is null)

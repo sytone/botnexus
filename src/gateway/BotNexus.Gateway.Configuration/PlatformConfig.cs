@@ -296,6 +296,8 @@ public sealed class GatewaySettingsConfig
     public CompactionOptions? Compaction { get; set; }
     /// <summary>Write-time cap on the size of individual tool results persisted to session history (#1598).</summary>
     public ToolResultPersistenceConfig? ToolResultPersistence { get; set; }
+    /// <summary>Central backstop budget on tool-result size returned to the model (#3162).</summary>
+    public ToolOutputBudgetConfig? ToolOutputBudget { get; set; }
     /// <summary>Post-turn claim auditor (anti-fabrication) settings (#1600).</summary>
     public ClaimAuditConfig? ClaimAudit { get; set; }
     /// <summary>CORS settings for browser-based clients.</summary>
@@ -418,6 +420,40 @@ public sealed class ToolResultPersistenceConfig
     /// A value of 0 or less disables truncation even when <see cref="Enabled"/> is true.
     /// </summary>
     public int MaxBytes { get; set; } = 16_384;
+}
+
+/// <summary>
+/// Central backstop budget on the size of a tool result returned to the model (#3162).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Distinct from <see cref="ToolResultPersistenceConfig"/>, which bounds what is WRITTEN to session
+/// history after the fact. By then the model has already received the full payload. This budget is
+/// applied in the agent loop's tool executor, so it bounds what reaches the context window in the
+/// first place, for every tool regardless of origin -- including MCP-bridged tools, which carry no
+/// size limit of their own.
+/// </para>
+/// <para>
+/// It is a backstop beneath the existing per-tool caps, not a replacement: the default is larger
+/// than every first-party per-tool cap, so a tool that already bounds its own output never trips it.
+/// An oversize result is returned as a bounded SUCCESS with a truncation marker, the omitted byte
+/// count and one consistent line of narrowing guidance -- never as an error and never silently
+/// dropped.
+/// </para>
+/// </remarks>
+public sealed class ToolOutputBudgetConfig
+{
+    /// <summary>
+    /// Whether the central tool-output backstop is enabled. Defaults to <see langword="true"/>.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Maximum UTF-8 byte size of a single tool result returned to the model. Defaults to 262144
+    /// (256 KiB). A value of 0 or less disables the backstop even when <see cref="Enabled"/> is
+    /// true, matching the <see cref="ToolResultPersistenceConfig.MaxBytes"/> convention.
+    /// </summary>
+    public int MaxBytes { get; set; } = 256 * 1024;
 }
 
 /// <summary>

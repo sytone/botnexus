@@ -1089,6 +1089,39 @@ Large tool results (for example a recursive directory listing or a session-histo
 The section is optional - when absent, the default 16 KiB cap is applied. This is independent of (and complementary to) session compaction: the cap prevents oversized results from ever being persisted, while compaction summarises accumulated context over time.
 
 
+#### Tool Output Budget
+
+`toolResultPersistence` above bounds what is **written to history**, which is after the fact - by then the model has already received the full payload. The `toolOutputBudget` section is the complementary control on the **inbound** side: a shared, central UTF-8 byte budget applied in the agent loop's tool executor to every tool result *regardless of origin*, before it reaches the model.
+
+It exists because size limits were previously opt-in per tool. `exec`, `read`, `grep`, `glob` and `web_fetch` each cap themselves with their own constant and their own banner text, but any tool that does not opt in - notably every MCP-provided tool - could return an unbounded result straight into the context window. This budget is a **backstop beneath** those per-tool caps, not a replacement for them: the default (256 KiB) is larger than every first-party per-tool cap, so a tool that already bounds its own output never trips it and no existing per-tool behaviour changes.
+
+An oversize result is returned as a **bounded successful projection**, never as an error and never silently dropped:
+
+- the retained prefix is cut on a rune boundary, so a CJK character or an emoji surrogate pair is never sliced into replacement characters;
+- a single marker records the omitted byte count, e.g. `[tool output truncated: 43776 bytes omitted of 300000 total]`;
+- one consistent line of narrowing guidance follows it, so the model can learn exactly one recovery behaviour across every tool: rerun with a narrower scope, paginate, or select fewer items.
+
+Image content blocks are passed through untouched - an encoded image cannot be truncated into a smaller valid image, only into a broken one.
+
+```json
+{
+  "gateway": {
+    "toolOutputBudget": {
+      "enabled": true,
+      "maxBytes": 262144
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `toolOutputBudget.enabled` | bool | `true` | Enables the central tool-output backstop. |
+| `toolOutputBudget.maxBytes` | int | 262144 (256 KiB) | Maximum UTF-8 byte size of a single tool result returned to the model. A value of 0 or less disables the backstop even when `enabled` is true, matching the `toolResultPersistence.maxBytes` convention. |
+
+The section is optional - when absent, the default 256 KiB backstop is applied. "Not configured" deliberately does not mean "unprotected".
+
+
 #### Session Compaction
 
 The `compaction` section tunes when and how a session's history is summarised to stay within the model's context window. Compaction is triggered when **either** of two signals trips (whichever fires first):

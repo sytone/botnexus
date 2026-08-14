@@ -90,6 +90,8 @@ internal static class ToolExecutor
                     .ConfigureAwait(false);
             }
 
+            result = ApplyOutputBudget(result, config);
+
             await emit(new ToolExecutionEndEvent(
                 toolCall.Id,
                 toolCall.Name,
@@ -141,7 +143,7 @@ internal static class ToolExecutor
 
             if (preparation.Prepared is null)
             {
-                var immediateResult = preparation.Result!;
+                var immediateResult = ApplyOutputBudget(preparation.Result!, config);
                 await emit(new ToolExecutionEndEvent(
                     toolCall.Id,
                     toolCall.Name,
@@ -196,6 +198,8 @@ internal static class ToolExecutor
                         cancellationToken)
                     .ConfigureAwait(false);
             }
+
+            result = ApplyOutputBudget(result, config);
 
             await emit(new ToolExecutionEndEvent(
                 outcome.ToolCall.Id,
@@ -495,6 +499,28 @@ internal static class ToolExecutor
 
         return (result, isError);
     }
+
+    /// <summary>
+    /// Applies the shared central tool-output budget (#3162) to a finalised tool result.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the ONE seam where every tool result is bounded regardless of origin. It runs after
+    /// the after-tool-call hook so a hook that substitutes a larger payload is bounded too, and
+    /// before the end event and the result message so the bounded projection is what the model, the
+    /// event stream and the transcript all see -- a divergence there would make a truncation
+    /// invisible in exactly the place an operator would look for it.
+    /// </para>
+    /// <para>
+    /// It applies to error results as well: an exception message or a rejected-arguments diagnostic
+    /// can itself be arbitrarily large (a provider stack trace, a validator echoing a huge argument),
+    /// and the budget's purpose is to bound what reaches the context window, not to reward the happy
+    /// path. Per-tool caps are untouched (AC6): they are cheaper and more precise, and a tool that
+    /// already bounded its own output never reaches this budget.
+    /// </para>
+    /// </remarks>
+    private static AgentToolResult ApplyOutputBudget(AgentToolResult result, AgentLoopConfig config)
+        => ToolOutputBudget.Apply(result, config.EffectiveMaxToolOutputBytes);
 
     private static AgentToolResult BuildErrorResult(string message)
     {

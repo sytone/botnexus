@@ -52,6 +52,11 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="AuthProfile">
 /// Optional auth-profile identifier scoping suspensions (#3015). Null means the empty profile.
 /// </param>
+/// <param name="MaxToolOutputBytes">
+/// Shared central UTF-8 byte budget applied to every tool result before it reaches the model
+/// (#3162). Flows to the loop config. Null means the platform default; a non-positive value
+/// disables the backstop.
+/// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState - changes to InitialState after construction have no effect.
@@ -79,4 +84,5 @@ public record AgentOptions(
     Func<CancellationToken, Task>? MaybeCompactAsync = null,
     TimeSpan? BeforeToolCallTimeout = null,
     Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
-    string? AuthProfile = null);
+    string? AuthProfile = null,
+    int? MaxToolOutputBytes = null);
