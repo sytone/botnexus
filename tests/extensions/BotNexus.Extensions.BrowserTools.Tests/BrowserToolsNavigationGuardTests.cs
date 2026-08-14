@@ -1,4 +1,3 @@
-using System.IO.Abstractions.TestingHelpers;
 using Shouldly;
 
 namespace BotNexus.Extensions.BrowserTools.Tests;
@@ -27,7 +26,7 @@ public sealed class BrowserToolsNavigationGuardTests
         FakeBrowserDriver driver,
         BrowserToolsConfig? config = null,
         BrowserGuardState? state = null)
-        => new(driver, WorkspaceRoot, config, state, new MockFileSystem(), () => DateTimeOffset.UnixEpoch);
+        => new(driver, WorkspaceRoot, config, state, new FakeBrowserFileSystem(), () => DateTimeOffset.UnixEpoch);
 
     // ---- AC1(a): SsrfValidator rejection -------------------------------------------------
 

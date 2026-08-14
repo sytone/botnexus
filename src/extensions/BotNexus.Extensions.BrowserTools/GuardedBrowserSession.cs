@@ -1,4 +1,3 @@
-using System.IO.Abstractions;
 using BotNexus.Domain.Text;
 
 namespace BotNexus.Extensions.BrowserTools;
@@ -25,7 +24,7 @@ public sealed class GuardedBrowserSession
     private readonly IBrowserDriver _driver;
     private readonly BrowserToolsConfig _config;
     private readonly BrowserGuardState _guardState;
-    private readonly IFileSystem _fileSystem;
+    private readonly IBrowserFileSystem _fileSystem;
     private readonly string _workspacePath;
     private readonly Func<DateTimeOffset> _clock;
 
@@ -37,21 +36,21 @@ public sealed class GuardedBrowserSession
     /// Guard initialisation outcome. <c>null</c> is treated as <see cref="BrowserGuardState.Ready"/>;
     /// a failed state denies every call.
     /// </param>
-    /// <param name="fileSystem">Filesystem abstraction for spill writes.</param>
+    /// <param name="fileSystem">Filesystem abstraction for spill writes (see <see cref="IBrowserFileSystem"/>).</param>
     /// <param name="clock">Time source for spill file names; injectable so tests are deterministic.</param>
     public GuardedBrowserSession(
         IBrowserDriver driver,
         string workspacePath,
         BrowserToolsConfig? config = null,
         BrowserGuardState? guardState = null,
-        IFileSystem? fileSystem = null,
+        IBrowserFileSystem? fileSystem = null,
         Func<DateTimeOffset>? clock = null)
     {
         _driver = driver ?? throw new ArgumentNullException(nameof(driver));
         _workspacePath = workspacePath ?? throw new ArgumentNullException(nameof(workspacePath));
         _config = config ?? new BrowserToolsConfig();
         _guardState = guardState ?? BrowserGuardState.Ready;
-        _fileSystem = fileSystem ?? new FileSystem();
+        _fileSystem = fileSystem ?? new BrowserFileSystem();
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
@@ -127,14 +126,14 @@ public sealed class GuardedBrowserSession
 
     private async Task<string> SpillAsync(string text, CancellationToken cancellationToken)
     {
-        var relativeDir = _fileSystem.Path.Combine("tmp", "browser");
-        var absoluteDir = _fileSystem.Path.Combine(_workspacePath, "tmp", "browser");
-        _fileSystem.Directory.CreateDirectory(absoluteDir);
+        var relativeDir = _fileSystem.CombinePath("tmp", "browser");
+        var absoluteDir = _fileSystem.CombinePath(_workspacePath, "tmp", "browser");
+        _fileSystem.CreateDirectory(absoluteDir);
 
         var name = $"snapshot-{_clock().UtcDateTime:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.txt";
 
-        await _fileSystem.File
-            .WriteAllTextAsync(_fileSystem.Path.Combine(absoluteDir, name), text, cancellationToken)
+        await _fileSystem
+            .WriteAllTextAsync(_fileSystem.CombinePath(absoluteDir, name), text, cancellationToken)
             .ConfigureAwait(false);
 
         // A workspace-RELATIVE path is returned deliberately: it is what the agent's read tool
