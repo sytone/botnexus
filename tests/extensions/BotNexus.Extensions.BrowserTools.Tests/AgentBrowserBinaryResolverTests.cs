@@ -24,44 +24,41 @@ public sealed class AgentBrowserBinaryResolverTests
     private static readonly string PathDir = Path.Combine(Path.GetTempPath(), "botnexus-fake-bin");
 
     /// <summary>
-    /// An <see cref="HttpMessageHandler"/> that fails the test if it is used at all.
+    /// A downloader that fails the test if it is used at all. This is how "no network call" is
+    /// asserted: an exploding seam proves absence, whereas a flag the code forgot to set proves
+    /// nothing. Modelled as a byte-returning delegate rather than an <c>HttpMessageHandler</c>
+    /// because an architecture fence forbids this suite from naming <c>HttpClient</c> at all.
     /// </summary>
-    private sealed class ExplodingHandler : HttpMessageHandler
+    private sealed class ExplodingDownloader
     {
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
+        public Task<byte[]> DownloadAsync(string url, CancellationToken cancellationToken)
             => throw new InvalidOperationException(
-                $"A network call was made to '{request.RequestUri}' when none was permitted.");
+                $"A network call was made to '{url}' when none was permitted.");
     }
 
     /// <summary>Returns a fixed payload and records how many times it was asked.</summary>
-    private sealed class StubHandler(byte[] payload, HttpStatusCode status = HttpStatusCode.OK)
-        : HttpMessageHandler
+    private sealed class StubDownloader(byte[] payload)
     {
         public int Calls { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
+        public Task<byte[]> DownloadAsync(string url, CancellationToken cancellationToken)
         {
             Calls++;
-            return Task.FromResult(new HttpResponseMessage(status)
-            {
-                Content = new ByteArrayContent(payload),
-            });
+            return Task.FromResult(payload);
         }
     }
 
     private static AgentBrowserBinaryResolver Create(
         BrowserToolsConfig config,
         IBrowserFileSystem fs,
-        HttpMessageHandler? handler = null,
+        Func<string, CancellationToken, Task<byte[]>>? downloadAsset = null,
         AgentBrowserReleaseCatalog? catalog = null,
         string? path = null)
         => new(
             config,
             fs,
             catalog,
-            handler is null ? null : () => new HttpClient(handler, disposeHandler: false),
+            downloadAsset,
             () => path,
             () => Home,
             Rid,
@@ -86,7 +83,7 @@ public sealed class AgentBrowserBinaryResolverTests
 
         var result = await Create(
             new BrowserToolsConfig { BinaryPath = configured, PinnedVersion = Version },
-            fs, new ExplodingHandler(), path: PathDir).ResolveAsync();
+            fs, new ExplodingDownloader().DownloadAsync, path: PathDir).ResolveAsync();
 
         result.IsResolved.ShouldBeTrue(result.Message);
         result.Source.ShouldBe(AgentBrowserSource.ConfiguredPath);
@@ -102,7 +99,7 @@ public sealed class AgentBrowserBinaryResolverTests
 
         var result = await Create(
             new BrowserToolsConfig { BinaryPath = "/nope/agent-browser", PinnedVersion = Version },
-            fs, new ExplodingHandler(), path: PathDir).ResolveAsync();
+            fs, new ExplodingDownloader().DownloadAsync, path: PathDir).ResolveAsync();
 
         result.IsResolved.ShouldBeFalse();
         result.Message!.ShouldContain("/nope/agent-browser");
@@ -119,7 +116,7 @@ public sealed class AgentBrowserBinaryResolverTests
 
         var result = await Create(
             new BrowserToolsConfig { PinnedVersion = Version },
-            fs, new ExplodingHandler(), path: PathDir).ResolveAsync();
+            fs, new ExplodingDownloader().DownloadAsync, path: PathDir).ResolveAsync();
 
         result.Source.ShouldBe(AgentBrowserSource.ManagedDirectory);
         result.BinaryPath.ShouldBe(ManagedPath());
@@ -134,7 +131,7 @@ public sealed class AgentBrowserBinaryResolverTests
 
         var result = await Create(
             new BrowserToolsConfig { PinnedVersion = "9.9.9" },
-            fs, new ExplodingHandler()).ResolveAsync();
+            fs, new ExplodingDownloader().DownloadAsync).ResolveAsync();
 
         result.IsResolved.ShouldBeFalse(
             "the 0.1.0 binary must not satisfy a 9.9.9 pin.");
@@ -150,7 +147,7 @@ public sealed class AgentBrowserBinaryResolverTests
 
         var result = await Create(
             new BrowserToolsConfig { PinnedVersion = Version },
-            fs, new ExplodingHandler(),
+            fs, new ExplodingDownloader().DownloadAsync,
             path: string.Join(Path.PathSeparator, "/empty/one", PathDir)).ResolveAsync();
 
         result.Source.ShouldBe(AgentBrowserSource.Path);
@@ -166,7 +163,7 @@ public sealed class AgentBrowserBinaryResolverTests
 
         var result = await Create(
             new BrowserToolsConfig { PinnedVersion = Version },
-            fs, new ExplodingHandler(), path: PathDir).ResolveAsync();
+            fs, new ExplodingDownloader().DownloadAsync, path: PathDir).ResolveAsync();
 
         result.IsResolved.ShouldBeFalse();
         result.Source.ShouldBe(AgentBrowserSource.NotFound);
@@ -186,7 +183,7 @@ public sealed class AgentBrowserBinaryResolverTests
     public async Task Ac7_AutoProvisionDisabledWithNoBinary_MakesNoNetworkCallAndWritesNothing()
     {
         var fs = new FakeBrowserFileSystem();
-        var handler = new ExplodingHandler();
+        var handler = new ExplodingDownloader();
         var catalog = new AgentBrowserReleaseCatalog(
             [new AgentBrowserReleaseAsset(Version, Rid, "https://example.invalid/ab.zip", "00")]);
 
@@ -194,7 +191,7 @@ public sealed class AgentBrowserBinaryResolverTests
         // download is the flag. That is precisely the condition worth testing.
         var result = await Create(
             new BrowserToolsConfig { PinnedVersion = Version, AutoProvision = false },
-            fs, handler, catalog, path: PathDir).ResolveAsync();
+            fs, handler.DownloadAsync, catalog, path: PathDir).ResolveAsync();
 
         result.IsResolved.ShouldBeFalse();
         result.Message!.ShouldContain("autoProvision");
@@ -213,14 +210,14 @@ public sealed class AgentBrowserBinaryResolverTests
     {
         var payload = Encoding.UTF8.GetBytes("a genuine agent-browser build");
         var digest = Convert.ToHexStringLower(SHA256.HashData(payload));
-        var handler = new StubHandler(payload);
+        var handler = new StubDownloader(payload);
         var fs = new FakeBrowserFileSystem();
         var catalog = new AgentBrowserReleaseCatalog(
             [new AgentBrowserReleaseAsset(Version, Rid, "https://example.invalid/ab", digest)]);
 
         var result = await Create(
             new BrowserToolsConfig { PinnedVersion = Version, AutoProvision = true },
-            fs, handler, catalog, path: PathDir).ResolveAsync();
+            fs, handler.DownloadAsync, catalog, path: PathDir).ResolveAsync();
 
         result.IsResolved.ShouldBeTrue(result.Message);
         result.Source.ShouldBe(AgentBrowserSource.Provisioned);
@@ -238,14 +235,14 @@ public sealed class AgentBrowserBinaryResolverTests
         // managed-directory step and execute it with no verification at all.
         var corrupted = Encoding.UTF8.GetBytes("tampered payload");
         var expected = Convert.ToHexStringLower(SHA256.HashData("the real thing"u8.ToArray()));
-        var handler = new StubHandler(corrupted);
+        var handler = new StubDownloader(corrupted);
         var fs = new FakeBrowserFileSystem();
         var catalog = new AgentBrowserReleaseCatalog(
             [new AgentBrowserReleaseAsset(Version, Rid, "https://example.invalid/ab", expected)]);
 
         var result = await Create(
             new BrowserToolsConfig { PinnedVersion = Version, AutoProvision = true },
-            fs, handler, catalog, path: PathDir).ResolveAsync();
+            fs, handler.DownloadAsync, catalog, path: PathDir).ResolveAsync();
 
         result.IsResolved.ShouldBeFalse();
         result.Message!.ShouldContain("sha256");
@@ -260,11 +257,11 @@ public sealed class AgentBrowserBinaryResolverTests
         // An unpinned version has no expected digest, so a download could not be verified at
         // all. Fetch-then-trust is the exact failure this criterion exists to prevent.
         var fs = new FakeBrowserFileSystem();
-        var handler = new ExplodingHandler();
+        var handler = new ExplodingDownloader();
 
         var result = await Create(
             new BrowserToolsConfig { PinnedVersion = "7.7.7", AutoProvision = true },
-            fs, handler, new AgentBrowserReleaseCatalog([]), path: PathDir).ResolveAsync();
+            fs, handler.DownloadAsync, new AgentBrowserReleaseCatalog([]), path: PathDir).ResolveAsync();
 
         result.IsResolved.ShouldBeFalse();
         result.Message!.ShouldContain("7.7.7");

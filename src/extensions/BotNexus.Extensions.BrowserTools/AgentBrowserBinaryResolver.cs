@@ -65,7 +65,7 @@ public sealed class AgentBrowserBinaryResolver
     private readonly BrowserToolsConfig _config;
     private readonly IBrowserFileSystem _fileSystem;
     private readonly AgentBrowserReleaseCatalog _catalog;
-    private readonly Func<HttpClient>? _httpClientFactory;
+    private readonly Func<string, CancellationToken, Task<byte[]>>? _downloadAsset;
     private readonly Func<string?> _pathVariable;
     private readonly Func<string> _homeDirectory;
     private readonly string _runtimeIdentifier;
@@ -75,10 +75,12 @@ public sealed class AgentBrowserBinaryResolver
     /// <param name="config">Browser tool configuration; <c>null</c> uses defaults.</param>
     /// <param name="fileSystem">Filesystem seam; <c>null</c> uses the real filesystem.</param>
     /// <param name="catalog">Pinned release assets; <c>null</c> uses the (empty) default catalogue.</param>
-    /// <param name="httpClientFactory">
-    /// Supplies the client used for provisioning. Injectable so tests can install a handler that
+    /// <param name="downloadAsset">
+    /// Fetches the release asset bytes for a URL. Injectable so tests can supply a delegate that
     /// FAILS if it is ever called — which is how AC7's "no network call" is asserted rather than
-    /// assumed.
+    /// assumed. Deliberately NOT an <c>HttpClient</c> seam: an architecture fence forbids the
+    /// browser test suite from naming <c>HttpClient</c> at all, and a byte-returning delegate
+    /// keeps the transport entirely on the production side of the boundary.
     /// </param>
     /// <param name="pathVariable">Reads <c>PATH</c>; injectable to keep probing off the real host.</param>
     /// <param name="homeDirectory">Resolves the user profile root for the managed directory.</param>
@@ -91,7 +93,7 @@ public sealed class AgentBrowserBinaryResolver
         BrowserToolsConfig? config = null,
         IBrowserFileSystem? fileSystem = null,
         AgentBrowserReleaseCatalog? catalog = null,
-        Func<HttpClient>? httpClientFactory = null,
+        Func<string, CancellationToken, Task<byte[]>>? downloadAsset = null,
         Func<string?>? pathVariable = null,
         Func<string>? homeDirectory = null,
         string? runtimeIdentifier = null,
@@ -100,7 +102,7 @@ public sealed class AgentBrowserBinaryResolver
         _config = config ?? new BrowserToolsConfig();
         _fileSystem = fileSystem ?? new BrowserFileSystem();
         _catalog = catalog ?? AgentBrowserReleaseCatalog.Default;
-        _httpClientFactory = httpClientFactory;
+        _downloadAsset = downloadAsset;
         _pathVariable = pathVariable ?? (() => Environment.GetEnvironmentVariable("PATH"));
         _homeDirectory = homeDirectory
             ?? (() => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
@@ -209,22 +211,12 @@ public sealed class AgentBrowserBinaryResolver
                 + $"on runtime '{_runtimeIdentifier}', so it cannot be downloaded and verified.");
         }
 
-        if (_httpClientFactory is null)
-        {
-            return NotFound("Auto-provisioning is enabled but no HTTP client was supplied.");
-        }
-
         byte[] payload;
         try
         {
-            using var client = _httpClientFactory();
-            using var response = await client
-                .GetAsync(asset.AssetUrl, cancellationToken)
-                .ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            payload = await response.Content
-                .ReadAsByteArrayAsync(cancellationToken)
-                .ConfigureAwait(false);
+            payload = _downloadAsset is not null
+                ? await _downloadAsset(asset.AssetUrl, cancellationToken).ConfigureAwait(false)
+                : await DownloadViaHttpAsync(asset.AssetUrl, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
         {
@@ -254,6 +246,25 @@ public sealed class AgentBrowserBinaryResolver
 
     private static AgentBrowserResolution NotFound(string reason) =>
         new(AgentBrowserSource.NotFound, null, reason + " " + InstallGuidance);
+
+    /// <summary>
+    /// Real transport used when no <c>downloadAsset</c> delegate is injected. Kept private and
+    /// constructed per provision: provisioning happens at most once per resolver, so a pooled
+    /// client would outlive its only use.
+    /// </summary>
+    private static async Task<byte[]> DownloadViaHttpAsync(
+        string assetUrl,
+        CancellationToken cancellationToken)
+    {
+        using var client = new HttpClient();
+        using var response = await client
+            .GetAsync(assetUrl, cancellationToken)
+            .ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        return await response.Content
+            .ReadAsByteArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
 
     /// <summary>
     /// The actionable install guidance appended to every failure (AC6).

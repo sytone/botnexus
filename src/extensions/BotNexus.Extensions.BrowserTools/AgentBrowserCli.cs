@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using BotNexus.Gateway.Abstractions.Text;
 
 namespace BotNexus.Extensions.BrowserTools;
 
@@ -63,9 +64,11 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
     private bool _disposed;
 
     /// <summary>Creates a CLI driver bound to one session id.</summary>
-    /// <param name="sessionId">
-    /// The <c>--session</c> value. Derived from <c>AgentToolContributionContext</c>'s agent and
-    /// session identity by the contributor; see <see cref="BrowserToolsContributor"/>.
+    /// <param name="browserSessionSlug">
+    /// The <c>--session</c> value: a sanitised CLI/filesystem slug produced by
+    /// <see cref="ToSessionId"/>, NOT a BotNexus <c>SessionId</c>. It is deliberately a plain
+    /// string because it is a wire value for another process's command line, derived from the
+    /// typed identity by the contributor; see <see cref="BrowserToolsContributor"/>.
     /// </param>
     /// <param name="resolution">Outcome of <see cref="AgentBrowserBinaryResolver"/>.</param>
     /// <param name="runner">Process seam; injected so tests never launch anything (AC9).</param>
@@ -74,16 +77,16 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
     /// Parent-environment reader forwarded to <see cref="AgentBrowserEnvironment.Build"/>.
     /// </param>
     public AgentBrowserCli(
-        string sessionId,
+        string browserSessionSlug,
         AgentBrowserResolution resolution,
         IAgentBrowserProcessRunner? runner = null,
         BrowserToolsConfig? config = null,
         Func<string, string?>? readParentVariable = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(browserSessionSlug);
         ArgumentNullException.ThrowIfNull(resolution);
 
-        SessionId = sessionId;
+        SessionId = browserSessionSlug;
         _resolution = resolution;
         _runner = runner ?? new AgentBrowserProcessRunner();
 
@@ -322,7 +325,9 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
         }
 
         var trimmed = stderr.Trim();
-        return trimmed.Length <= 500 ? trimmed : trimmed[..500] + "...";
+        return trimmed.Length <= 500
+            ? trimmed
+            : GraphemeSafeTruncation.Truncate(trimmed, 500, "...")!;
     }
 
     private static TimeSpan Max(TimeSpan left, TimeSpan right) => left > right ? left : right;
@@ -352,7 +357,9 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
             System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(sessionKey)))[..8];
 
         const int MaxPrefix = 48;
-        var prefix = sanitised.Length <= MaxPrefix ? sanitised : sanitised[..MaxPrefix];
+        var prefix = sanitised.Length <= MaxPrefix
+            ? sanitised
+            : GraphemeSafeTruncation.Truncate(sanitised, MaxPrefix)!;
         return $"{prefix}-{digest}";
     }
 
