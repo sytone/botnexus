@@ -19,6 +19,10 @@ var storageName = 'bnxbt${suffix}sa'
 var identityName = 'bnx-buildtest-runner'
 var environmentName = 'bnx-buildtest-env'
 var jobName = 'bnx-buildtest-runner'
+var vnetName = 'bnx-buildtest-vnet'
+var subnetName = 'bnx-buildtest-aca-subnet'
+var natGatewayName = 'bnx-buildtest-nat'
+var publicIpName = 'bnx-buildtest-nat-pip'
 var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 var blobContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 
@@ -105,17 +109,113 @@ resource artifacts 'Microsoft.Storage/storageAccounts/blobServices/containers@20
   }
 }
 
+// ---------------------------------------------------------------- networking
+// The ACA environment MUST sit in a delegated subnet behind a NAT gateway carrying OUR public IP.
+//
+// Azure Container Apps is a HOBO (Hosted-On-Behalf-Of) service: with no subnet, outbound traffic
+// leaves on IP addresses owned by the Container Apps platform rather than by us. Those platform
+// addresses are shared and are being reclassified, so an environment that relies on them will
+// eventually lose access to resources that authorise on source IP. Owning the egress address is
+// the durable fix.
+//
+// This attaches IN PLACE -- no rebuild. See infra/buildtest/README-migration.md. The constraints
+// that bind this template: the subnet MUST be delegated to Microsoft.App/environments,
+// a NAT gateway MUST be attached to it, `internal` MUST be false (the environment needs a public
+// IP), and the CIDR must avoid the AKS-reserved ranges plus the workload-profile reservations at
+// 100.100.0.0/17 and 100.100.128.0/19, .160.0/19, .192.0/19. 10.0.0.0/16 clears all of them.
+// Attaching the subnet also CHANGES the environment's frontend IP, and removing a subnet later is
+// not supported -- this is one-way.
+resource publicIp 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
+  name: publicIpName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIPAllocationMethod: 'Static'
+  }
+}
+
+resource natGateway 'Microsoft.Network/natGateways@2023-11-01' = {
+  name: natGatewayName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIpAddresses: [
+      {
+        id: publicIp.id
+      }
+    ]
+    idleTimeoutInMinutes: 4
+  }
+}
+
+resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
+  name: vnetName
+  location: location
+  tags: tags
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        '10.0.0.0/16'
+      ]
+    }
+    subnets: [
+      {
+        name: subnetName
+        properties: {
+          // Workload-profile environments need at least a /27; /23 leaves headroom for scale-out.
+          addressPrefix: '10.0.0.0/23'
+          natGateway: {
+            id: natGateway.id
+          }
+          serviceEndpoints: []
+          delegations: [
+            {
+              name: 'Microsoft.App.environments'
+              properties: {
+                serviceName: 'Microsoft.App/environments'
+              }
+              type: 'Microsoft.Network/virtualNetworks/subnets/delegations'
+            }
+          ]
+        }
+        type: 'Microsoft.Network/virtualNetworks/subnets'
+      }
+    ]
+    virtualNetworkPeerings: []
+    enableDdosProtection: false
+  }
+}
+
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
   tags: tags
   properties: {
+    vnetConfiguration: {
+      internal: false
+      infrastructureSubnetId: vnet.properties.subnets[0].id
+    }
+    // This environment is a WORKLOAD-PROFILES environment whose only profile happens to be named
+    // 'Consumption' -- NOT a legacy Consumption-only environment. The distinction decides whether
+    // a subnet can be attached in place, and reading the profile NAME instead of the array's
+    // presence produced a wrong "must recreate" call first time round. A legacy Consumption-only
+    // environment has `workloadProfiles` absent; ours has it populated, so the in-place path in
+    // the in-place attach path applies. Verified against the control plane: PATCHing a
+    // vnetConfiguration onto the live environment fails on the SUBNET being missing, not on the
+    // environment type.
     workloadProfiles: [
       {
         name: 'Consumption'
         workloadProfileType: 'Consumption'
       }
     ]
+    zoneRedundant: false
   }
 }
 

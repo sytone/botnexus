@@ -257,7 +257,7 @@ public sealed class SystemPromptBuilderSnapshotTests
         {
             WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
             ExtraSystemPrompt = "Custom context line 1\n\nCustom context line 2",
-            ToolNames = ["read", "exec", "process", "cron", "update_plan", "gateway", "message"],
+            ToolNames = ["read", "exec", "process", "cron", "update_plan", "gateway", "message", "conversation"],
             UserTimezone = "Pacific/Auckland",
             ContextFiles =
             [
@@ -401,6 +401,174 @@ public sealed class SystemPromptBuilderSnapshotTests
         safety.ShouldBeLessThan(workspace);
         workspace.ShouldBeLessThan(cacheBoundary);
         cacheBoundary.ShouldBeLessThan(runtime);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // #2938: the core prompt never told an agent it can run many conversations at once, start one
+    // itself, or query across them. These tests pin each of the five capability facts to specific
+    // text so the section cannot be silently gutted into a vacuous mention of the word.
+    // ---------------------------------------------------------------------------------------
+
+    private static string BuildPromptWithTools(params string[] toolNames) =>
+        SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ToolNames = toolNames,
+            PromptMode = PromptMode.Full,
+            Runtime = new RuntimeInfo { AgentId = "agent-a", Channel = "signalr" }
+        });
+
+    [Fact]
+    public void Build_WithConversationTool_EmitsConversationsSection()
+    {
+        var prompt = BuildPromptWithTools("read", "conversation");
+
+        prompt.ShouldContain("<conversations>");
+        prompt.ShouldContain("</conversations>");
+    }
+
+    [Fact]
+    public void Build_WithoutConversationTool_OmitsConversationsSection()
+    {
+        var prompt = BuildPromptWithTools("read", "exec");
+
+        prompt.ShouldNotContain("<conversations>");
+    }
+
+    [Fact]
+    public void Build_MinimalMode_OmitsConversationsSection()
+    {
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ToolNames = ["read", "conversation"],
+            PromptMode = PromptMode.Minimal,
+            Runtime = new RuntimeInfo { AgentId = "agent-a", Channel = "signalr" }
+        });
+
+        prompt.ShouldNotContain("<conversations>");
+    }
+
+    [Fact]
+    public void Build_PromptModeNone_OmitsConversationsSection()
+    {
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ToolNames = ["read", "conversation"],
+            PromptMode = PromptMode.None
+        });
+
+        prompt.ShouldNotContain("<conversations>");
+        prompt.ShouldNotContain("conversation");
+    }
+
+    [Fact]
+    public void ConversationsSection_StatesConcurrencyIsNotSerialised()
+    {
+        // Clause 1: turns in different conversations run concurrently. The observed failure was an
+        // agent asserting conversation-per-issue "would serialise" its work, so the prompt must deny
+        // serialisation explicitly rather than merely implying parallelism.
+        var section = ExtractConversationsSection(BuildPromptWithTools("read", "conversation"));
+
+        section.ShouldContain("not serialised");
+        section.ShouldContain("concurrent");
+    }
+
+    [Fact]
+    public void ConversationsSection_StatesAgentCanCreateAndStartTurnsWithSpeakAsUser()
+    {
+        // Clause 2: creating a conversation and kicking a turn needs no cron job and no sub-agent.
+        var section = ExtractConversationsSection(BuildPromptWithTools("read", "conversation"));
+
+        section.ShouldContain("conversation new");
+        section.ShouldContain("speak_as: user");
+        section.ShouldContain("cron");
+    }
+
+    [Fact]
+    public void ConversationsSection_StatesCrossConversationQueryAvoidsDuplicateWork()
+    {
+        // Clause 3: an agent can see what it is already doing instead of rebuilding external state.
+        var section = ExtractConversationsSection(BuildPromptWithTools("read", "conversation"));
+
+        section.ShouldContain("conversation list");
+        section.ShouldContain("duplicate");
+    }
+
+    [Fact]
+    public void ConversationsSection_StatesDurabilityAcrossSessionsAndCompaction()
+    {
+        // Clause 4: durable, unlike the session-scoped sub-agent registry.
+        var section = ExtractConversationsSection(BuildPromptWithTools("read", "conversation"));
+
+        section.ShouldContain("durable");
+        section.ShouldContain("compaction");
+        section.ShouldContain("session-scoped");
+    }
+
+    [Fact]
+    public void ConversationsSection_StatesEveryConversationIsTheSameAgentIdentity()
+    {
+        // Clause 5: opening a conversation is not spawning a second agent. An agent that believes
+        // otherwise narrates its own work as a third party's (observed 2026-08-11).
+        var section = ExtractConversationsSection(BuildPromptWithTools("read", "conversation"));
+
+        section.ShouldContain("same agent identity");
+        section.ShouldContain("not a second agent");
+        section.ShouldContain("spawn_subagent");
+    }
+
+    [Fact]
+    public void ConversationsSection_RendersImmediatelyBeforeMessagingGuidance()
+    {
+        // Clause ordering: concurrency guidance must sit with routing guidance, and the <messaging>
+        // section cross-references it, so <conversations> must render first.
+        var prompt = BuildPromptWithTools("read", "conversation");
+
+        var replyTagsOrEarlier = prompt.IndexOf("<workspace>", StringComparison.Ordinal);
+        var conversations = prompt.IndexOf("<conversations>", StringComparison.Ordinal);
+        var messaging = prompt.IndexOf("<messaging>", StringComparison.Ordinal);
+
+        replyTagsOrEarlier.ShouldBeGreaterThanOrEqualTo(0);
+        conversations.ShouldBeGreaterThan(replyTagsOrEarlier);
+        messaging.ShouldBeGreaterThan(conversations);
+    }
+
+    [Fact]
+    public void MessagingSection_CrossReferencesConversationsWhenConversationToolPresent()
+    {
+        // The <messaging> routing list previously pointed only at sessions_send and subagents, i.e.
+        // away from conversations. It must now route there too.
+        var prompt = BuildPromptWithTools("read", "conversation");
+        var messaging = ExtractSection(prompt, "messaging");
+
+        messaging.ShouldContain("conversation");
+
+        var withoutTool = ExtractSection(BuildPromptWithTools("read", "exec"), "messaging");
+        withoutTool.ShouldNotContain("conversation new");
+    }
+
+    [Fact]
+    public void ConversationsSection_IsConcise()
+    {
+        // AC6: the section is platform truth, not a tutorial. Guard against it growing into an essay
+        // that every agent pays for on every turn.
+        var section = ExtractConversationsSection(BuildPromptWithTools("read", "conversation"));
+
+        section.Length.ShouldBeLessThan(1400,
+            "the conversations section must stay concise; it is paid for on every turn");
+    }
+
+    private static string ExtractConversationsSection(string prompt) => ExtractSection(prompt, "conversations");
+
+    private static string ExtractSection(string prompt, string xmlTag)
+    {
+        var open = prompt.IndexOf($"<{xmlTag}>", StringComparison.Ordinal);
+        open.ShouldBeGreaterThanOrEqualTo(0, $"expected prompt to contain <{xmlTag}>");
+        var close = prompt.IndexOf($"</{xmlTag}>", open, StringComparison.Ordinal);
+        close.ShouldBeGreaterThan(open, $"expected prompt to close </{xmlTag}>");
+        return prompt.Substring(open, close - open);
     }
 
     private static void AssertMatchesSnapshot(string fileName, string actual)

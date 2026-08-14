@@ -166,7 +166,7 @@ and leaves no row in the store.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable/disable the cron service globally |
-| `tickIntervalSeconds` | int | `60` | How often the scheduler wakes to evaluate due jobs (seconds) |
+| `tickIntervalSeconds` | int | `60` | How often the scheduler wakes to evaluate due jobs (seconds). This is the single normative default; it is set in `src/gateway/BotNexus.Cron/CronOptions.cs` and mirrored by `CronConfig` in `src/gateway/BotNexus.Gateway.Configuration/PlatformConfig.cs`. Values `<= 0` are rejected by config validation, and the scheduler additionally floors the effective delay at 1 second. |
 | `defaultJobTimeoutSeconds` | int | `3600` | Timeout applied to a run when the job declares none. A job can override it - or opt out of it entirely - via `metadata.timeoutSeconds`, see [Per-job timeout](#_3-2-1-per-job-timeout-timeoutseconds). |
 | `orphanedRunThresholdSeconds` | int | `86400` | How far a run's `started_at` may deviate from now (in **either** direction) before the scheduler treats a still-`running` row as orphaned and stamps it as an error (#2410). The bound is symmetric, so a clock skew forward widens the reap window rather than nulling live runs. |
 | `maxConcurrentJobs` | int | `5` | Aggregate cap on how many due jobs the scheduler executes concurrently on a single tick (#2670). Jobs beyond the cap **queue and run as slots free** - none are dropped. A value of `0` or less degrades to the default of `5` rather than to unbounded fan-out. Independent of the per-job lock, which separately prevents two runs of the *same* job from overlapping. |
@@ -1433,7 +1433,7 @@ response modes and signing details, and the
 ┌────────────────────────────────────────────────────────────────┐
 │                        CronService (IHostedService)            │
 │  - Registers jobs at startup (CronJobFactory)                  │
-│  - Ticks every TickIntervalSeconds (default: 10s)              │
+│  - Ticks every TickIntervalSeconds (see §3.1 for the default)  │
 │  - Checks which jobs are due                                   │
 │  - Queues due jobs for concurrent execution                    │
 │  - Publishes activity events                                   │

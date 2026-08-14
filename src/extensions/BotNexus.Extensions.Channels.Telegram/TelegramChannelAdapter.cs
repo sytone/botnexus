@@ -469,7 +469,13 @@ public sealed class TelegramChannelAdapter(
                     {
                         _logger.LogError(
                             ex,
-                            "{DisplayName} bot '{BotName}' polling loop is DEGRADED and has stopped: a non-transient failure was detected and will not clear by retrying. Resolve the underlying fault (duplicate poller, revoked bot token, or invalid configuration) and restart the channel.",
+                            // #3116: the cause list must enumerate only what the classifier can
+                            // actually route here, and must not imply the list is exhaustive - an
+                            // unrecognised exception type fails closed to Terminal, so "or an
+                            // unrecognised fault" is a reachable case. Naming three credential/config
+                            // causes for a transport fault sent an operator to check the bot token
+                            // when the transport had merely timed out.
+                            "{DisplayName} bot '{BotName}' polling loop is DEGRADED and has stopped: a non-transient failure was detected and will not clear by retrying. Likely causes are a duplicate poller (HTTP 409), a revoked or invalid bot token (HTTP 401/403), invalid configuration, or an unrecognised fault that the classifier fails closed on - see the exception below for which. Resolve the underlying fault and restart the channel.",
                             DisplayName,
                             runtime.BotName);
                     }

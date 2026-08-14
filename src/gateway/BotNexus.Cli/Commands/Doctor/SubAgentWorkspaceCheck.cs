@@ -32,7 +32,13 @@ internal sealed class SubAgentWorkspaceCheck : IDoctorCheck
 
     public Task<DoctorCheckResult> RunAsync(DoctorCheckContext context, CancellationToken cancellationToken)
     {
-        var sessionsDbPath = Path.Combine(context.HomePath, "sessions.db");
+        // Resolve through the shared tolerant resolver (issue #3126). This check previously
+        // hard-coded Path.Combine(context.HomePath, "sessions.db") - a filename no writer creates,
+        // in a directory the store need not live in - so it could report healthy against a
+        // database it had never opened.
+        var sessionsDbPath = CliStorePaths.ResolvePath(
+            DebugSessionsCommand.SessionsStoreName,
+            context.HomePath);
         var workspaceRoot = SubAgentWorkspaceRootResolver.Resolve(
             LoadConfiguredWorkspaceRoot(context.HomePath),
             _fileSystem);

@@ -23,7 +23,12 @@ param(
     #   0.1.10 node+inotify; 0.1.11 +runner-env artifact; 0.1.12-0.1.15 incremental runner fixes;
     #   0.1.16 +runner-timing (#2889); 0.1.17 +build-release phase (#2914). 0.1.17 was the LAST
     #   hand-picked tag; everything after it is content-addressed as src-<sha256[0:12]>.
-    [string]$RunnerImageTag
+    [string]$RunnerImageTag,
+
+    # Bounded wall-clock ceiling for the deployment poll loop (#3118). A deployment that has not
+    # reached a terminal state by then throws rather than looping forever -- an unattended BCDR
+    # rebuild must fail loudly, not stall silently the way the synchronous CLI call did.
+    [int]$DeploymentTimeoutMinutes = 45
 )
 
 Set-StrictMode -Version Latest
@@ -132,11 +137,78 @@ else {
     if ($LASTEXITCODE -ne 0) { throw 'Runner image build failed.' }
 }
 
-az deployment group create `
-    --subscription $SubscriptionId `
-    --resource-group $ResourceGroup `
-    --name buildtest-platform `
-    --template-file $templatePath `
-    --parameters location=$Location operatorObjectId=$operatorObjectId suffix=$suffix runnerImageTag=$RunnerImageTag `
-    --only-show-errors
-if ($LASTEXITCODE -ne 0) { throw 'Build/test infrastructure deployment failed.' }
+# SUBMIT ASYNCHRONOUSLY, THEN POLL (#3118).
+#
+# A synchronous `az deployment group create` against this subscription HANGS INDEFINITELY and --
+# critically -- had submitted nothing when it did: no deployment recorded, no resource created.
+# That made an unattended BCDR rebuild impossible, because the only recovery was a human noticing
+# the stall and interrupting the CLI. The mechanism was never diagnosed; what IS established is
+# that `--no-wait` plus explicit polling returns immediately and completes normally.
+#
+# So: never remove `--no-wait` from a deployment submission here. The wait is ours to own, with a
+# bounded ceiling and ARM's own error detail surfaced on failure.
+function Invoke-BuildTestDeployment {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$DeploymentName,
+        [Parameter(Mandatory)][string]$TemplateFile,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Parameters,
+        [int]$TimeoutMinutes = 45,
+        [int]$PollSeconds = 15
+    )
+
+    az deployment group create `
+        --subscription $SubscriptionId `
+        --resource-group $ResourceGroup `
+        --name $DeploymentName `
+        --template-file $TemplateFile `
+        --parameters @Parameters `
+        --no-wait `
+        --only-show-errors
+    if ($LASTEXITCODE -ne 0) { throw "Submission of deployment '$DeploymentName' failed." }
+
+    Write-Host "Deployment '$DeploymentName' submitted; polling for terminal state (timeout ${TimeoutMinutes}m)..."
+
+    $terminal = @('Succeeded', 'Failed', 'Canceled')
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $state = $null
+
+    while ($true) {
+        $state = az deployment group show `
+            --subscription $SubscriptionId `
+            --resource-group $ResourceGroup `
+            --name $DeploymentName `
+            --query properties.provisioningState -o tsv 2>$null
+        if ($state) { $state = "$state".Trim() }
+
+        if ($state -and $terminal -contains $state) { break }
+
+        if ((Get-Date) -ge $deadline) {
+            $observed = if ($state) { $state } else { 'unknown' }
+            throw "Deployment '$DeploymentName' did not reach a terminal state within $TimeoutMinutes minutes (last observed state: '$observed'). Inspect it with: az deployment group show --subscription $SubscriptionId -g $ResourceGroup --name $DeploymentName"
+        }
+
+        Start-Sleep -Seconds $PollSeconds
+    }
+
+    if ($state -ne 'Succeeded') {
+        # Surface ARM's own error payload. A bare non-zero exit tells the operator that something
+        # failed but not what, which is exactly the information a BCDR rebuild needs at 3am.
+        $detail = az deployment group show `
+            --subscription $SubscriptionId `
+            --resource-group $ResourceGroup `
+            --name $DeploymentName `
+            --query properties.error -o json 2>$null
+        if ([string]::IsNullOrWhiteSpace($detail)) { $detail = '(no properties.error returned by ARM)' }
+        throw "Deployment '$DeploymentName' finished in state '$state'. ARM error detail: $detail"
+    }
+
+    Write-Host "Deployment '$DeploymentName' succeeded."
+}
+
+Invoke-BuildTestDeployment `
+    -DeploymentName 'buildtest-platform' `
+    -TemplateFile $templatePath `
+    -Parameters @("location=$Location", "operatorObjectId=$operatorObjectId", "suffix=$suffix", "runnerImageTag=$RunnerImageTag") `
+    -TimeoutMinutes $DeploymentTimeoutMinutes
+

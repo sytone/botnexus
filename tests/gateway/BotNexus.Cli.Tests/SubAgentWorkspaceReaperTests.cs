@@ -322,10 +322,11 @@ public sealed class SubAgentCommandTests : IDisposable
     }
 
     [Fact]
-    public void ResolveSessionsDb_WithTarget_ReturnsTargetPath()
+    public void ResolveSessionsDb_WithTarget_ResolvesUnderTarget()
     {
         var path = SubAgentCommand.ResolveSessionsDb(_tempDir);
-        path.ShouldBe(Path.Combine(_tempDir, "sessions.db"));
+        Path.GetDirectoryName(path).ShouldBe(_tempDir);
+        Path.GetFileNameWithoutExtension(path).ShouldBe("sessions");
     }
 
     [Fact]

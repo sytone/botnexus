@@ -67,10 +67,88 @@ public sealed class ChannelFailureClassifierTests
             .Classify(new OperationCanceledException())
             .ShouldBe(ChannelFailureKind.Terminal);
 
+    /// <summary>
+    /// #3116 AC1 - the HttpClient.Timeout shape. HttpClient surfaces its own 100-second request
+    /// timeout as a <see cref="TaskCanceledException"/>, identical in type to a cooperative
+    /// cancellation; since .NET 6 the timeout case is distinguished by a
+    /// <see cref="TimeoutException"/> inner. A long-poll that exceeded its client timeout is the
+    /// most transient failure a long-polling transport can produce, and classifying it Terminal
+    /// took Telegram bot 'keel' dark until the gateway was restarted.
+    /// </summary>
+    [Fact]
+    public void Classify_HttpClientTimeoutTaskCanceled_IsTransient()
+    {
+        var ex = new TaskCanceledException(
+            "The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.",
+            new TimeoutException("The operation was canceled."));
+
+        ChannelFailureClassifier.Classify(ex).ShouldBe(ChannelFailureKind.Transient);
+    }
+
+    /// <summary>
+    /// #3116 AC1 - the verbatim nested chain from the 2026-08-13 live trace:
+    /// TaskCanceledException -&gt; TimeoutException -&gt; TaskCanceledException -&gt; IOException
+    /// -&gt; SocketException(995, OperationAborted). Note the innermost socket error is NOT in the
+    /// transient socket allow-list, so this must be classified from the timeout shape rather than
+    /// by accidentally walking to the bottom of the chain.
+    /// </summary>
+    [Fact]
+    public void Classify_LiveHttpClientTimeoutChain_IsTransient()
+    {
+        var socket = new SocketException((int)SocketError.OperationAborted); // 995
+        var io = new IOException("Unable to read data from the transport connection.", socket);
+        var innerCanceled = new TaskCanceledException("The operation was canceled.", io);
+        var timeout = new TimeoutException("The operation was canceled.", innerCanceled);
+        var ex = new TaskCanceledException(
+            "The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.",
+            timeout);
+
+        ChannelFailureClassifier.Classify(ex).ShouldBe(ChannelFailureKind.Transient);
+    }
+
+    /// <summary>
+    /// #3116 AC2 - a cooperative cancellation carries no <see cref="TimeoutException"/> inner and
+    /// must stay Terminal, so gateway shutdown is never retried. Pinned separately from the AC1
+    /// tests: neither branch may be satisfied by weakening the other.
+    /// </summary>
+    [Fact]
+    public void Classify_CooperativeTaskCanceled_IsTerminal()
+    {
+        var ex = new TaskCanceledException("A task was canceled.");
+
+        ChannelFailureClassifier.Classify(ex).ShouldBe(ChannelFailureKind.Terminal);
+    }
+
+    /// <summary>
+    /// #3116 AC2 - a cooperative cancellation whose inner chain contains a transport fault is
+    /// still shutdown, not a timeout. Without a <see cref="TimeoutException"/> marker the walk
+    /// must not be allowed to reach the transient IOException arm below.
+    /// </summary>
+    [Fact]
+    public void Classify_CooperativeTaskCanceledWrappingTransportFault_IsTerminal()
+    {
+        var ex = new TaskCanceledException(
+            "A task was canceled.",
+            new IOException("connection closed", new SocketException((int)SocketError.ConnectionReset)));
+
+        ChannelFailureClassifier.Classify(ex).ShouldBe(ChannelFailureKind.Terminal);
+    }
+
+    /// <summary>
+    /// #3116 AC4 - the fail-closed default survives the fix: an unrecognised exception type with
+    /// no recognised inner is still Terminal. The retry budget is a concession to known-momentary
+    /// faults, not a default.
+    /// </summary>
     [Fact]
     public void Classify_UnknownException_FailsClosedAsTerminal()
         => ChannelFailureClassifier
             .Classify(new NotSupportedException())
+            .ShouldBe(ChannelFailureKind.Terminal);
+
+    [Fact]
+    public void Classify_UnknownExceptionWrappingUnknownInner_FailsClosedAsTerminal()
+        => ChannelFailureClassifier
+            .Classify(new NotSupportedException("outer", new FormatException("inner")))
             .ShouldBe(ChannelFailureKind.Terminal);
 
     /// <summary>

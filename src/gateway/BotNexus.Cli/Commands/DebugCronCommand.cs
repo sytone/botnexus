@@ -66,17 +66,29 @@ internal sealed class DebugCronCommand
         return command;
     }
 
+    /// <summary>Bare store name fed to the shared tolerant resolver.</summary>
+    internal const string CronStoreName = "cron";
+
+    /// <summary>
+    /// Resolves the cron store through the shared tolerant resolver. The filename was already
+    /// correct here, but the directory was not: this resolved under the config home only and so
+    /// missed a deployment where the data directory differs (issue #3126, AC5).
+    /// </summary>
     internal static string ResolveCronDb(string? target)
-    {
-        var home = CliPaths.ResolveTarget(target);
-        return Path.Combine(home, "cron.sqlite");
-    }
+        => CliStorePaths.ResolvePath(CronStoreName, target);
+
+    /// <summary>
+    /// Renders the shared not-found message naming every candidate filename and directory searched.
+    /// </summary>
+    private static void ReportMissingStore(string dbPath)
+        => AnsiConsole.MarkupLine("[red]" + CliText.SafeDisplay(
+            CliStorePaths.BuildNotFoundMessage(CronStoreName, dbPath)) + "[/]");
 
     internal static int ExecuteStatus(string dbPath, string format)
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]cron.sqlite not found at:[/] " + CliText.SafeDisplay(dbPath));
+            ReportMissingStore(dbPath);
             return 1;
         }
 
@@ -147,7 +159,7 @@ internal sealed class DebugCronCommand
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]cron.sqlite not found at:[/] " + CliText.SafeDisplay(dbPath));
+            ReportMissingStore(dbPath);
             return 1;
         }
 
@@ -239,7 +251,7 @@ internal sealed class DebugCronCommand
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]cron.sqlite not found at:[/] " + CliText.SafeDisplay(dbPath));
+            ReportMissingStore(dbPath);
             return 1;
         }
 

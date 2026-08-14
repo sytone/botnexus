@@ -497,9 +497,20 @@ The following section IDs cannot be overridden (safety-critical or runtime data)
 | `model-guidance` | 135 | Per-model-family behavioral defaults (conditional: only for recognized families) |
 
 The gateway's `SystemPromptBuilder` registers further sections by `PromptOrder` key rather than by
-section ID, including the `<canvas>` guidance at order 155 (conditional: only when the agent's tool
-list contains `canvas`). That section states when the canvas is the right output surface and when a
-file is — it does not restate the canvas tool's mechanics, which the tool description already carries.
+section ID, including the `<conversations>` capability guidance at order 145 (conditional: only when
+the agent's tool list contains `conversation`) and the `<canvas>` guidance at order 155 (conditional:
+only when the agent's tool list contains `canvas`). The canvas section states when the canvas is the
+right output surface and when a file is — it does not restate the canvas tool's mechanics, which the
+tool description already carries.
+
+The `<conversations>` section states five platform facts an agent otherwise has to rediscover by
+accident: conversations run concurrently and are **not** serialised against each other; the agent can
+create one itself with `conversation new` and start a turn with a `speak_as: user` opening message
+(no cron job or sub-agent required); `conversation list` answers "what am I already doing" across the
+agent's own conversations; conversations are durable across sessions and compaction, unlike the
+session-scoped sub-agent registry; and every conversation is the same agent identity, with
+`spawn_subagent` remaining the separate-worker primitive. It renders immediately before `<messaging>`
+(order 150), which cross-references it when the `conversation` tool is present.
 
 ### LambdaPromptSection
 

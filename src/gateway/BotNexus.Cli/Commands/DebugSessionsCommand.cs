@@ -31,7 +31,7 @@ internal sealed class DebugSessionsCommand
         var statusOption = new Option<string?>("--status", "Filter by status: active, sealed, expired, all.");
         var limitOption = new Option<int>("--limit", () => 20, "Maximum sessions to return.");
 
-        var listCommand = new Command("list", "List sessions from sessions.db.")
+        var listCommand = new Command("list", "List sessions from the session store.")
         {
             agentOption, statusOption, limitOption
         };
@@ -90,17 +90,33 @@ internal sealed class DebugSessionsCommand
         return command;
     }
 
+    /// <summary>
+    /// Resolves the session store through the shared tolerant resolver so this reader opens the
+    /// file the gateway actually writes. Historically this hard-coded
+    /// <c>Path.Combine(home, "sessions.db")</c>, which got both the filename and the directory
+    /// wrong on every deployment (issue #3126).
+    /// </summary>
     internal static string ResolveSessionsDb(string? target)
+        => CliStorePaths.ResolvePath(SessionsStoreName, target);
+
+    /// <summary>Bare store name fed to the shared tolerant resolver.</summary>
+    internal const string SessionsStoreName = "sessions";
+
+    /// <summary>
+    /// Renders the shared not-found message, naming every candidate filename and every directory
+    /// searched so a wrong-directory deployment is diagnosable from the message alone (AC4).
+    /// </summary>
+    private static void ReportMissingStore(string dbPath)
     {
-        var home = CliPaths.ResolveTarget(target);
-        return Path.Combine(home, "sessions.db");
+        var message = CliStorePaths.BuildNotFoundMessage(SessionsStoreName, dbPath);
+        AnsiConsole.MarkupLine("[red]" + Markup.Escape(message) + "[/]");
     }
 
     internal static int ExecuteList(string dbPath, string? agent, string? status, int limit, string format)
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]sessions.db not found at:[/] " + Markup.Escape(dbPath));
+            ReportMissingStore(dbPath);
             return 1;
         }
 
@@ -167,7 +183,7 @@ internal sealed class DebugSessionsCommand
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]sessions.db not found at:[/] " + Markup.Escape(dbPath));
+            ReportMissingStore(dbPath);
             return 1;
         }
 
@@ -258,7 +274,7 @@ internal sealed class DebugSessionsCommand
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]sessions.db not found at:[/] " + Markup.Escape(dbPath));
+            ReportMissingStore(dbPath);
             return 1;
         }
 
@@ -322,7 +338,7 @@ internal sealed class DebugSessionsCommand
     {
         if (!File.Exists(dbPath))
         {
-            AnsiConsole.MarkupLine("[red]sessions.db not found at:[/] " + Markup.Escape(dbPath));
+            ReportMissingStore(dbPath);
             return 1;
         }
 

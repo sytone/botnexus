@@ -66,3 +66,44 @@ read-only tool executed without an audit record — both are durability incident
 Arguments pass through the shared secret redactor before they are written, so credentials supplied
 as tool arguments never reach the transcript verbatim. Redaction happens before persistence, not
 before display, so a transcript reader and a transcript file see the same redacted value.
+
+## The call-site fence
+
+The guarantee above is only as strong as the set of code paths that honour it. Every execution
+call site was added independently — the REST chat controller, cross-world federation, the cron,
+heartbeat and soul triggers, sub-agents, agent exchange, the ralph loop and the gateway host — and
+nothing used to fail when a newly added one skipped the sink. That is precisely how the original
+gap arose.
+
+An architecture fitness test now enumerates them. The enumeration is **structural**: it reads IL
+from the shipped gateway assemblies and treats any call to `IAgentHandle.PromptAsync` or
+`IAgentHandle.StreamAsync` as an execution call site, then requires the audit sink to be reachable
+from the method containing that call. There is deliberately no list of file names to keep up to
+date — a new controller or trigger enters the candidate set the moment it compiles.
+
+Reachability is transitive but **not type-wide**: a type with one compliant execution path cannot
+launder a second, bypassing one. A fence that is too permissive is worse than none, because it
+manufactures confidence.
+
+### Declaring a deliberate exclusion
+
+The only sanctioned way to sit outside the fence is to say so at the call site:
+
+```csharp
+[ToolAuditExempt("scripted probe against a stubbed handle; no real tool can run here")]
+public async Task<string> RunProbeAsync(IAgentHandle handle) { ... }
+```
+
+The justification is required and must be non-empty. Every exemption in the repository is findable
+with a single symbol search — the property a file-name allow-list does not have. Applying the
+attribute is a security decision, not a way to turn a red test green: if the run can invoke real
+tools, route it through the sink instead.
+
+## Streaming and blocking render the same timeline
+
+The portal and the history API return the same tool timeline shape whichever transport served a
+turn. A streamed run additionally records a `ToolStart` row per call, because the streaming
+boundary observes a start whose result it cannot yet know; the settled result rows — one per call,
+same order, same identity, same arguments, same error flag — are identical across both. An
+operator reviewing what an agent did therefore sees the same evidence regardless of whether the
+turn happened to be streamed.

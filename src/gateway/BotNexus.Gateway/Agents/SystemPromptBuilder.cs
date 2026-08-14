@@ -104,6 +104,7 @@ public static class SystemPromptBuilder
         public const int ConversationTodo = 128;
         public const int WorkspaceFilesHeader = 130;
         public const int ReplyTags = 140;
+        public const int Conversations = 145;
         public const int Messaging = 150;
         public const int Canvas = 155;
         public const int Voice = 160;
@@ -192,6 +193,7 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(PromptOrder.WorkspaceFilesHeader, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
             .Add(ModelGuidanceSection.Create())
             .Add(new LambdaPromptSection(PromptOrder.ReplyTags, BuildReplyTagsGuidanceSection, static _ => IncludeReplyTagsSectionByDefault))
+            .Add(new LambdaPromptSection(PromptOrder.Conversations, BuildConversationsGuidanceSection, HasConversationTool, xmlTag: "conversations"))
             .Add(new LambdaPromptSection(PromptOrder.Messaging, BuildMessagingGuidanceSection, xmlTag: "messaging"))
             .Add(new LambdaPromptSection(PromptOrder.Canvas, BuildCanvasGuidanceSection, HasCanvasTool, xmlTag: "canvas"))
             .Add(new LambdaPromptSection(PromptOrder.Voice, BuildVoiceGuidanceSection))
@@ -337,6 +339,49 @@ public static class SystemPromptBuilder
         ];
     }
 
+    /// <summary>
+    /// Gate for the conversations capability section (#2938). Guidance about creating and querying
+    /// conversations is only actionable for an agent that actually holds the <c>conversation</c>
+    /// tool, and minimal prompts (sub-agents) deliberately carry no orchestration guidance.
+    /// </summary>
+    private static bool HasConversationTool(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return !data.IsMinimal && data.NormalizedTools.Contains("conversation");
+    }
+
+    private static IReadOnlyList<string> BuildConversationsGuidanceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return BuildConversationsSection(data.IsMinimal, data.NormalizedTools);
+    }
+
+    /// <summary>
+    /// Concurrent-conversation capability guidance (#2938). Agents were defaulting to a
+    /// single-threaded, one-conversation-at-a-time mental model that does not match the platform:
+    /// there is no per-agent or per-conversation turn lock anywhere in the gateway. That gap pushed
+    /// agents toward <c>spawn_subagent</c> and cron jobs for parallelism they already had, and
+    /// toward rebuilding overlap-detection state externally. This is platform truth, kept short on
+    /// purpose - every line is paid for on every turn.
+    /// </summary>
+    public static IReadOnlyList<string> BuildConversationsSection(bool isMinimal, IReadOnlySet<string> availableTools)
+    {
+        ArgumentNullException.ThrowIfNull(availableTools);
+
+        if (isMinimal || !availableTools.Contains("conversation"))
+            return [];
+
+        return
+        [
+            "- You can hold many conversations at once. Turns in different conversations are NOT serialised against each other - they run concurrently, so work split across conversations does not queue up.",
+            "- You can start one yourself: `conversation new`, and an opening message with `speak_as: user` begins a turn there. No cron job and no sub-agent is needed just to start work.",
+            "- `conversation list` (filter by `status`, read title and purpose) shows what you are already doing across your own conversations - use it to avoid duplicate work and to check coverage before starting something new.",
+            "- Conversations are durable: they survive session restarts and context compaction, unlike the session-scoped sub-agent registry, which is blind across sessions.",
+            "- Every one of your conversations is the SAME agent identity - you. Opening one and speaking into it is not a second agent, and never narrate that work as someone else's. `spawn_subagent` remains the separate-worker primitive.",
+            string.Empty
+        ];
+    }
+
     public static IReadOnlyList<string> BuildMessagingSection(
         bool isMinimal,
         IReadOnlySet<string> availableTools,
@@ -354,6 +399,14 @@ public static class SystemPromptBuilder
             $"- Runtime-generated completion events may ask for a user update. Rewrite those in your normal assistant voice and send the update (do not forward raw internal metadata or default to {SilentReplyToken}).",
             "- Never use exec/curl for provider messaging; BotNexus handles all routing internally."
         };
+
+        if (availableTools.Contains("conversation"))
+        {
+            // #2938: this list previously routed only to sessions_send and subagents, i.e. away from
+            // conversations, reinforcing the single-conversation model the <conversations> section
+            // corrects. Insert the cross-reference next to the other routing choices.
+            lines.Insert(2, "- Another of your own conversations → use the `conversation` tool (`new` to start one, `message` to speak into it, `list` to see them); see <conversations>.");
+        }
 
         if (availableTools.Contains("message"))
         {
