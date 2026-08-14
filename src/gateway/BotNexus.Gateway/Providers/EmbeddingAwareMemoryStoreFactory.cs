@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Abstractions;
+using BotNexus.Domain.Primitives;
 using BotNexus.Memory;
 using BotNexus.Memory.Embeddings;
 
@@ -50,22 +51,22 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
     }
 
     /// <inheritdoc />
-    public IMemoryStore Create(string agentId)
+    public IMemoryStore Create(AgentId agentId)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentId.Value);
 
-        return _stores.GetOrAdd(agentId, id =>
+        return _stores.GetOrAdd(agentId.Value, id =>
             new SqliteMemoryStore(_dbPathResolver(id), _fileSystem, null, _embeddingService));
     }
 
     /// <inheritdoc />
-    public bool StoreLocationExists(string agentId)
+    public bool StoreLocationExists(AgentId agentId)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentId.Value);
 
         // An already-created store is live regardless of what the filesystem looks like now; the
         // inner probe cannot know about stores this factory created, so answer that case here.
-        return _stores.ContainsKey(agentId) || _existenceProbe.StoreLocationExists(agentId);
+        return _stores.ContainsKey(agentId.Value) || _existenceProbe.StoreLocationExists(agentId);
     }
 
     /// <inheritdoc />

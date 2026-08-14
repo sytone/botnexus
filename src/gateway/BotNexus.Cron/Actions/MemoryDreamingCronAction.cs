@@ -159,7 +159,7 @@ public sealed class MemoryDreamingCronAction : ICronAction
             return;
         }
 
-        var agentStore = memoryFactory.Create(agentId.Value);
+        var agentStore = memoryFactory.Create(agentId);
         await agentStore.InitializeAsync(ct).ConfigureAwait(false);
 
         try

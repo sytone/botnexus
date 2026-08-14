@@ -75,7 +75,7 @@ public sealed class MemoryIndexer(
         // permanently unrecoverable — retrying it burns the budget and logs an unactionable
         // [ERR]. Skip before SQLite is reached. This is deliberately narrow: a store whose
         // location DOES exist but is corrupt or unreadable still fails loudly and still retries.
-        if (!_storeFactory.StoreLocationExists(agentId))
+        if (!_storeFactory.StoreLocationExists(AgentId.From(agentId)))
         {
             _logger.LogDebug(
                 "Skipping memory indexing for session '{SessionId}': agent '{AgentId}' has no memory store location (workspace already reclaimed).",
@@ -91,7 +91,7 @@ public sealed class MemoryIndexer(
         catch (NotSupportedException)
         {
             // Provider not registered — fall back to direct store indexing
-            var store = _storeFactory.Create(agentId);
+            var store = _storeFactory.Create(AgentId.From(agentId));
             await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
             await IndexSessionCoreAsync(session, AgentId.From(agentId), SessionId.From(sessionId), store, cancellationToken).ConfigureAwait(false);
         }
@@ -228,7 +228,7 @@ public sealed class MemoryIndexer(
 
                 // #2608: same skip as the live indexing path — a reaped agent directory is a
                 // normal outcome, not a backfill failure.
-                if (!storeFactory.StoreLocationExists(agentId.Value))
+                if (!storeFactory.StoreLocationExists(agentId))
                 {
                     logger.LogDebug(
                         "Skipping backfill for session '{SessionId}': agent '{AgentId}' has no memory store location (workspace already reclaimed).",
@@ -243,7 +243,7 @@ public sealed class MemoryIndexer(
                 }
                 catch (NotSupportedException)
                 {
-                    var store = storeFactory.Create(agentId.Value);
+                    var store = storeFactory.Create(agentId);
                     await store.InitializeAsync(ct).ConfigureAwait(false);
                     await IndexSessionCoreAsync(session, agentId, sessionId, store, ct).ConfigureAwait(false);
                 }
