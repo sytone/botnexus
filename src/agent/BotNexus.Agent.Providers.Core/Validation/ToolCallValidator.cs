@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using BotNexus.Gateway.Abstractions.Text;
 
 namespace BotNexus.Agent.Providers.Core.Validation;
 
@@ -674,7 +675,17 @@ public static class ToolCallValidator
                 var text = value.GetString() ?? string.Empty;
                 if (text.Length > PreviewLength)
                 {
-                    return $"string \"{text[..PreviewLength]}…\" "
+                    // #3171: a raw UTF-16 range slice at PreviewLength can cut between a high and
+                    // a low surrogate, so an emoji in a model-supplied argument used to be elided
+                    // into a lone surrogate. This is an error-reporting path handed straight back to the
+                    // model, so a mangled preview degrades exactly the diagnostic it exists to
+                    // provide. GraphemeSafeTruncation is the single shared boundary policy
+                    // (#2883/#2924); this project references BotNexus.Domain.Wire rather than
+                    // BotNexus.Domain by deliberate design (see the csproj note on #2881), so it
+                    // calls the policy directly instead of via TextTruncation.SafeTruncate, which
+                    // is a thin delegating wrapper over this exact call.
+                    var preview = GraphemeSafeTruncation.Truncate(text, PreviewLength) ?? string.Empty;
+                    return $"string \"{preview}…\" "
                            + $"(preview only; the full value is {text.Length} characters)";
                 }
 

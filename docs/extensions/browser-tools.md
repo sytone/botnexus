@@ -7,12 +7,15 @@ page assembled client-side. Browser Tools drives a headless Chrome through the s
 safety layer in front of every call.
 
 ::: warning Delivery status
-This extension is being delivered in stages. The **guard layer described under
-[Guards](#guards) is implemented and tested** today
-(`src/extensions/BotNexus.Extensions.BrowserTools/`). The **binary resolution, provisioning and
-tool surface described under [Installing the binary](#installing-the-agent-browser-binary) and
-[Tools](#tools) are the specified contract and are not yet shipped.** Treat those sections as the
-operator contract this extension is being built to, not as behaviour you can exercise now.
+The guard layer, binary resolution and the five tools below are **implemented and tested**
+(`src/extensions/BotNexus.Extensions.BrowserTools/`).
+
+One operator-facing gap remains: the pinned release catalogue **ships empty**, so
+`browser.autoProvision` cannot yet download a binary and fails closed with an actionable message.
+Until a reviewed `agent-browser` asset digest is pinned, install the binary yourself using any of
+the channels under [Installing the binary](#installing-the-agent-browser-binary). A placeholder
+digest is deliberately not shipped: it would be a verification control that passes its own test
+while checking nothing.
 :::
 
 ## Why a subprocess and not an MCP server
@@ -37,8 +40,8 @@ deliberately left as an operator action:
 agent-browser install
 ```
 
-When Chrome is missing, the extension is specified to fail fast with an actionable
-"Chrome not installed" message rather than hanging on every call.
+When Chrome is missing, the extension fails fast with an actionable "Chrome not installed"
+message rather than hanging on every call.
 
 ## Installing the `agent-browser` binary
 

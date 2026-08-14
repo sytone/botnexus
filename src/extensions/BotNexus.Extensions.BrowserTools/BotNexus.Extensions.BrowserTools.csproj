@@ -6,18 +6,36 @@
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Extensions.BrowserTools.Tests" />
   </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
-  </ItemGroup>
+  <!-- #3029 AC2: this project declares NO PackageReference. WebTools declares none either, and a
+       test parses both csproj files to hold that line. The filesystem seam this extension needs
+       for testability is IBrowserFileSystem, defined in-project, rather than a NuGet abstraction:
+       a four-method interface is cheaper than an extra assembly in the extension load context. -->
   <ItemGroup>
     <!-- #3030 AC2: the SSRF policy is CONSUMED from Gateway.Contracts, never respelled here.
          A second copy of the private-range/metadata rules is how one copy drifts and the
          other keeps passing its tests; BrowserToolsUrlGuard therefore has no address
          arithmetic of its own and an architecture fence pins that. -->
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+    <!-- #3031: the tool surface. IAgentTool/Tool live in Agent.Core + Agent.Providers.Core and
+         IAgentToolContributor in Gateway.Abstractions - the identical set WebTools already names,
+         so this adds no assembly to the extension load context that WebTools does not also load.
+         All three are ProjectReferences; #3029 AC2 (zero PackageReference) is untouched. -->
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <!-- Untrusted page text passes the same injection filter as any other inbound external
          text (#2813). Domain is a dependency-free leaf, so naming it adds no assembly. -->
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
   </ItemGroup>
+
+  <!-- Copy extension output + manifest to artifacts/extensions/ for dev-time discovery -->
+  <Target Name="CopyExtensionToArtifacts" AfterTargets="Build">
+    <PropertyGroup>
+      <ExtensionArtifactDir>$(MSBuildThisFileDirectory)..\..\..\artifacts\extensions\botnexus-browser\</ExtensionArtifactDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(ExtensionArtifactDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)botnexus-extension.json" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

@@ -87,6 +87,14 @@ public sealed class BeforeToolCallTimeoutTests
     /// A hook that ignores its cancellation token and answers late is still outside the budget it
     /// was given, so its verdict must not be honoured. Fail closed.
     /// </summary>
+    /// <remarks>
+    /// #3179: "late" used to be established by a 600 ms <c>Task.Delay</c> outrunning a 150 ms
+    /// budget — two real timers competing for threadpool scheduling, which starved under parallel
+    /// CI load and let the hook's <c>Block: false</c> be observed first. Lateness is now enforced
+    /// by construction: the hook cannot return until the budget cancellation has actually been
+    /// observed on its own token and the test has released it. No wall-clock margin remains, so
+    /// the ordering holds on an arbitrarily loaded runner.
+    /// </remarks>
     [Fact]
     public async Task HookIgnoringCancellation_AnswersLate_StillBlocksToolCall()
     {
@@ -97,17 +105,33 @@ public sealed class BeforeToolCallTimeoutTests
             return Task.FromResult(Ok("executed"));
         });
 
+        var budgetObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHook = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
         var config = TestHelpers.CreateTestConfig(
-            beforeToolCall: async (_, _) =>
+            beforeToolCall: async (_, ct) =>
             {
-                // Deliberately ignores the token, then allows the call.
-                await Task.Delay(TimeSpan.FromMilliseconds(600), CancellationToken.None).ConfigureAwait(false);
+                // Deliberately ignores the token for control flow, but reports when the budget
+                // cancellation fires so the test can guarantee the answer lands strictly after it.
+                await using var registration = ct.Register(() => budgetObserved.TrySetResult(true))
+                    .ConfigureAwait(false);
+                if (ct.IsCancellationRequested)
+                {
+                    budgetObserved.TrySetResult(true);
+                }
+
+                await releaseHook.Task.ConfigureAwait(false);
                 return new BeforeToolCallResult(Block: false);
             },
             beforeToolCallTimeout: ShortBudget);
 
-        var results = await ExecuteAsync(config, tool, "dangerous", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var executeTask = ExecuteAsync(config, tool, "dangerous", CancellationToken.None);
+
+        // Wait for the breach itself, not for a duration. Only then is the hook allowed to answer.
+        await budgetObserved.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        releaseHook.SetResult(true);
+
+        var results = await executeTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         toolInvoked.ShouldBeFalse();
         results[0].IsError.ShouldBeTrue();
@@ -217,17 +241,32 @@ public sealed class BeforeToolCallTimeoutTests
             return Task.FromResult(Ok("executed"));
         });
 
+        // #3179: the sibling audit. This previously leaned on a 300 ms delay to represent "slow",
+        // which is the same wall-clock shape. The hook is now held open by a signal the test
+        // releases, and it records whether its token was cancelled — proving the infinite budget
+        // never armed a timer at all, rather than merely outlasting one.
+        var hookEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHook = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hookTokenWasCancelled = true;
+
         var config = TestHelpers.CreateTestConfig(
-            beforeToolCall: async (_, _) =>
+            beforeToolCall: async (_, ct) =>
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(300), CancellationToken.None).ConfigureAwait(false);
+                hookEntered.TrySetResult(true);
+                await releaseHook.Task.ConfigureAwait(false);
+                hookTokenWasCancelled = ct.IsCancellationRequested;
                 return null;
             },
             beforeToolCallTimeout: Timeout.InfiniteTimeSpan);
 
-        var results = await ExecuteAsync(config, tool, "safe", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var executeTask = ExecuteAsync(config, tool, "safe", CancellationToken.None);
 
+        await hookEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        releaseHook.SetResult(true);
+
+        var results = await executeTask.WaitAsync(TimeSpan.FromSeconds(30));
+
+        hookTokenWasCancelled.ShouldBeFalse();
         toolInvoked.ShouldBeTrue();
         results[0].IsError.ShouldBeFalse();
     }

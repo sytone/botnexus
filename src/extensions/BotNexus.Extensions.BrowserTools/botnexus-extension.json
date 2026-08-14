@@ -1,0 +1,50 @@
+{
+  "id": "botnexus-browser",
+  "name": "Browser Tools",
+  "description": "Guarded agent-browser automation for BotNexus agents",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.BrowserTools.dll",
+  "extensionTypes": ["tool"],
+  "enabled": true,
+  "configSchema": [
+    {
+      "id": "browser.binaryPath",
+      "type": "string",
+      "required": false,
+      "sensitive": false,
+      "description": "Absolute path to an existing agent-browser executable. When set it wins over every other resolution step. Supports ${env:VAR} syntax."
+    },
+    {
+      "id": "browser.pinnedVersion",
+      "type": "string",
+      "required": false,
+      "default": "0.33.2",
+      "sensitive": false,
+      "description": "Exact agent-browser version used for the managed install directory and for release-asset lookup. Pinned, never a range: the JSON output contract must not move underneath the tools."
+    },
+    {
+      "id": "browser.autoProvision",
+      "type": "boolean",
+      "required": false,
+      "default": "false",
+      "sensitive": false,
+      "description": "When true, allows downloading the pinned agent-browser release asset and verifying its sha256. Disabled by default so no network fetch of an executable happens without an explicit operator decision."
+    },
+    {
+      "id": "browser.commandTimeoutSeconds",
+      "type": "integer",
+      "required": false,
+      "default": "60",
+      "sensitive": false,
+      "description": "Maximum seconds any single agent-browser command may run before it is abandoned."
+    },
+    {
+      "id": "browser.snapshotMaxChars",
+      "type": "integer",
+      "required": false,
+      "default": "20000",
+      "sensitive": false,
+      "description": "Maximum characters of page text returned inline to the model. Text beyond this is spilled to the agent workspace and referenced by path."
+    }
+  ]
+}
