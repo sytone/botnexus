@@ -490,10 +490,12 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 skipReason: CompactionSkipReason.EmptySummary);
         }
 
-        if (summary.Length > options.MaxSummaryChars)
-        {
-            summary = summary[..options.MaxSummaryChars];
-        }
+        // #3187: bound through the single shared boundary policy. A raw UTF-16 range slice can
+        // cut between the high and low surrogate of an astral-plane character (an emoji in an LLM
+        // summary is entirely ordinary), and this value is PERSISTED into session history - a lone
+        // surrogate that reaches storage is unrepairable because its partner is discarded here.
+        // SafeTruncate returns the original reference untouched when no truncation is needed.
+        summary = TextTruncation.SafeTruncate(summary, options.MaxSummaryChars)!;
 
         // Redact any secrets that leaked into the LLM summary before persisting.
         if (_redactor is not null)

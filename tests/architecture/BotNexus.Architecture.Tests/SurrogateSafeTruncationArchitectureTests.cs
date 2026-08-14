@@ -69,10 +69,6 @@ public sealed class SurrogateSafeTruncationArchitectureTests
             "Hash prefixes: entry.Sha256[..12] slices generated lowercase hex, never user text (#2924).",
         [Path.Combine("domain", "BotNexus.Domain.Wire", "TextualMimeType.cs")] =
             "DecodeBounded slices a ReadOnlySpan<byte> before UTF-8 decoding, not a UTF-16 string, so no surrogate exists to split (#3171).",
-        [Path.Combine("gateway", "BotNexus.Gateway", "Sessions", "LlmSessionCompactor.cs")] =
-            "Pre-existing raw slice of an LLM summary at MaxSummaryChars; a real instance of this class but out of scope for #3171 - tracked as #3187, whose AC5 removes this entry.",
-        [Path.Combine("gateway", "BotNexus.Gateway.Sessions", "ToolResultTrimmer.cs")] =
-            "Pre-existing raw slice of a tombstone preview at TombstonePreviewChars; a real instance of this class but out of scope for #3171 - tracked as #3187, whose AC5 removes this entry.",
     };
 
     /// <summary>
