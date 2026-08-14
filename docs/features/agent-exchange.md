@@ -6,8 +6,32 @@ BotNexus supports direct agent-to-agent communication through an exchange system
 
 Agents can converse with each other using the `agent_converse` tool or via scheduled cron jobs. Communication is governed by:
 
-1. **Access Policy** — who can talk to whom
-2. **Budget System** — daily caps, loop detection, and cooldown enforcement
+1. **Target Resolution** — how the supplied target string maps to an agent
+2. **Access Policy** — who can talk to whom
+3. **Budget System** — daily caps, loop detection, and cooldown enforcement
+
+## Target Resolution
+
+The `agentId` argument of `agent_converse` is resolved in strict precedence order:
+
+1. **Exact agent id** — always wins, so an id-addressed call can never change meaning.
+2. **Cross-world reference** — a `world:agent` target is routed to the peer world.
+3. **Display name** — a case-insensitive match against every registered agent's `displayName`.
+
+Display-name resolution exists because display names drift from ids as a matter of course: an agent
+created for one purpose and later renamed keeps its original id forever, since ids key workspaces,
+cron jobs and session history. Addressing the agent shown everywhere as *Sentinel* should not require
+knowing that its id is `ub-warning-cleanup`.
+
+Resolution rules:
+
+- **Exactly one display-name match** — resolves to that agent and the exchange proceeds.
+- **Two or more matches** — fails with an ambiguity error listing every candidate id. The target is
+  never guessed, because dispatching to the wrong same-named peer is worse than failing.
+- **No match** — fails as a target-resolution failure, explicitly distinguished from a policy denial.
+
+The access-policy check below runs against the **resolved** agent, so addressing an agent by display
+name is never a way around a `whitelist` restriction.
 
 ## Access Policies
 
@@ -65,23 +89,38 @@ The budget system prevents runaway agent loops and excessive resource consumptio
 
 ## Scheduled Agent Conversations
 
-Agents can be configured to converse on a cron schedule using the `agent-converse` action. Cron jobs
-are not a configuration-file section - they live in `cron.sqlite` and are created through the `cron`
-tool or `botnexus debug cron`. A single job's stored shape is:
+Agents can be configured to converse on a cron schedule using the `agent-converse` action type. Jobs
+live in `cron.sqlite` and are created either through the `cron` tool / `/api/cron`, or declaratively
+under the `cron.jobs` section of `config.json`, which the scheduler syncs into the store at startup.
+The declarative form — the same shape used throughout
+[Cron & Scheduling](/cron-and-scheduling) — is:
 
 ```json
 {
-  "id": "morning-sync",
-  "schedule": "0 9 * * 1-5",
-  "action": "agent-converse",
-  "metadata": {
-    "targetAgentId": "reporter",
-    "message": "Generate the morning status report.",
-    "objective": "Get daily status",
-    "maxTurns": 5
+  "cron": {
+    "jobs": {
+      "morning-sync": {
+        "name": "Morning sync",
+        "schedule": "0 9 * * 1-5",
+        "actionType": "agent-converse",
+        "agentId": "analyst",
+        "enabled": true,
+        "metadata": {
+          "targetAgentId": "reporter",
+          "message": "Generate the morning status report.",
+          "objective": "Get daily status",
+          "maxTurns": "5"
+        }
+      }
+    }
   }
 }
 ```
+
+The map key (`morning-sync`) is the job **ID** — the value every `botnexus cron` subcommand takes; the
+`name` field is a display label only. `agentId` is the **initiator** and is required; `targetAgentId`
+in `metadata` is the agent it converses with. `maxTurns` defaults to `5`
+(`AgentConverseCronAction.DefaultMaxTurns`).
 
 The `agent-converse` cron action respects budget enforcement — if a pair is in cooldown or at daily cap, the job is skipped and logged.
 

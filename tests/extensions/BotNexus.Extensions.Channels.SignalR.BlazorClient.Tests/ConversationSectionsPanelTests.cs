@@ -23,6 +23,7 @@ public sealed class ConversationSectionsPanelTests : IDisposable
         var http = new HttpClient(_handler) { BaseAddress = new Uri("http://localhost/") };
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(new SectionsApiClient(http));
+        _ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
         _ctx.JSInterop.Setup<bool>("confirm", _ => true).SetResult(true);

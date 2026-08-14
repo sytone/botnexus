@@ -53,6 +53,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
     throw "WorktreePath is not inside a git repository: $WorktreePath"
 }
 $repoRoot = $repoRoot.Trim()
+Import-Module (Join-Path $PSScriptRoot 'AzureBuildTestArtifacts.psm1') -Force
 $fingerprintScript = Join-Path $PSScriptRoot 'Get-WorktreeValidationFingerprint.ps1'
 $fingerprint = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
 $runId = "{0}-{1}" -f ([DateTime]::UtcNow.ToString('yyyyMMddHHmmss')), ([Guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -162,11 +163,19 @@ try {
         Write-Host ("Run took {0:N1} min of a {1} min budget ({2} min margin)." -f $elapsed, $budgetMinutes, $margin) -ForegroundColor DarkGray
     }
 
-    New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
-    & az storage blob download-batch --subscription $SubscriptionId --account-name $StorageAccount --source artifacts --destination $OutputPath --pattern "$runId/*" --auth-mode login --overwrite true --only-show-errors
+    # #3115: download-batch recreates the full blob NAME under --destination, and the blobs are
+    # already named "<runId>/...". Downloading straight into $OutputPath therefore applied the run
+    # id twice. Stage the download, then flatten the prefix so $OutputPath - the single variable
+    # the success and failure messages both report - is the directory that holds result.json.
+    $downloadStaging = Join-Path $tempRoot 'artifacts'
+    New-Item -ItemType Directory -Path $downloadStaging -Force | Out-Null
+    & az storage blob download-batch --subscription $SubscriptionId --account-name $StorageAccount --source artifacts --destination $downloadStaging --pattern "$runId/*" --auth-mode login --overwrite true --only-show-errors
     if ($LASTEXITCODE -ne 0) { throw 'Artifact download failed.' }
+    $OutputPath = Move-AzureBuildTestArtifacts -StagingRoot $downloadStaging -RunId $runId -Destination $OutputPath
 
-    $resultFile = Get-ChildItem -Path $OutputPath -Filter result.json -Recurse | Select-Object -First 1
+    # Deliberately NOT recursive: the contract must be at the advertised path or the run is not
+    # provably green (#3115). A nested copy is a regression, not an acceptable location.
+    $resultFile = Get-ChildItem -Path $OutputPath -Filter result.json -File | Select-Object -First 1
     $result = if ($resultFile) { Get-Content $resultFile.FullName -Raw | ConvertFrom-Json } else { $null }
     $playwrightArtifact = Get-ChildItem -Path $OutputPath -Filter playwright.log -Recurse | Select-Object -First 1
     $requiredArtifactsPresent = $Mode -ne 'strict' -or $null -ne $playwrightArtifact

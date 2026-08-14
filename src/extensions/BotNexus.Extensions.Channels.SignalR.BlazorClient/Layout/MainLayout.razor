@@ -12,6 +12,7 @@
 @inject IPortalPreferencesService Prefs
 @inject CronApiClient CronApi
 @inject SectionsApiClient SectionsApi
+@inject ConversationSectionsState SectionsState
 @inject ToolsApiClient ToolsApi
 @inject NavOrderApiClient NavOrderApi
 @implements IDisposable
@@ -156,8 +157,6 @@
 }
 
 @code {
-    private ConversationSectionsPanel? _sectionsPanel;
-
     // Conversation id whose "move to section" menu is currently open (#2324); null when closed.
     private string? _sectionMenuConversationId;
 
@@ -647,13 +646,12 @@
                     <span class="group-chevron @(!_sectionsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
                     <span class="conversation-group-label">&#x1F4C1; My sections</span>
                 </button>
-                @* Kept MOUNTED when collapsed on purpose: the per-conversation "move to section"
-                   menu reads this component's @ref for the section list, so unmounting it would
-                   silently empty that menu. Collapse hides the body via a class instead. *@
+                @* Collapse hides the body via a class rather than unmounting, so the panel keeps its
+                   transient UI state (in-progress create / rename). Section data itself now lives in
+                   the scoped ConversationSectionsState service (#2325), not in this component. *@
                 <div class="chat-nav-child-body @(_sectionsGroupCollapsed ? "collapsed" : "")"
                      data-testid="chat-sections-body">
-                    <ConversationSectionsPanel @ref="_sectionsPanel"
-                                               AgentId="@sectionsAgent.AgentId"
+                    <ConversationSectionsPanel AgentId="@sectionsAgent.AgentId"
                                                TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
                                                OnChanged="HandleSectionsChanged" />
                 </div>
@@ -724,6 +722,11 @@
         ExtensionFeatures.OnChanged += HandleStateChanged;
         Hub.OnAgentsChanged += HandleSidebarAgentsChanged;
         Prefs.OnChanged += HandleStateChanged;
+        // #2325: the assign menu now resolves sections from the lifted ConversationSectionsState
+        // rather than a panel @ref, so the layout must re-render on its changes itself. Without
+        // this the menu renders whatever was loaded at first paint and silently goes stale - the
+        // component ref it replaced got re-render coupling for free by being in the render tree.
+        SectionsState.Changed += HandleStateChanged;
     }
 
     // Tools and nav order load independently of the JS-driven first-render pipeline so the nav
@@ -1109,7 +1112,7 @@
         </button>
         @if (isOpen)
         {
-            var sections = _sectionsPanel?.Sections ?? [];
+            var sections = SectionsState.Sections;
             var currentSectionId = GetAssignedSectionId(conversation.ConversationId);
             <div class="conversation-section-menu" data-testid="conversation-section-menu" role="menu">
                 <button class="conversation-section-menu-item @(currentSectionId is null ? "active" : "")"
@@ -1140,23 +1143,21 @@
             : conversationId;
 
     private string? GetAssignedSectionId(string conversationId) =>
-        _sectionsPanel is not null && _sectionsPanel.Assignments.TryGetValue(conversationId, out var sectionId)
-            ? sectionId
-            : null;
+        SectionsState.GetAssignedSectionId(conversationId);
 
     private async Task AssignConversationSectionAsync(string agentId, string conversationId, string sectionId)
     {
         _sectionMenuConversationId = null;
-        if (await SectionsApi.AssignAsync(agentId, sectionId, conversationId) && _sectionsPanel is not null)
-            await _sectionsPanel.ReloadAsync();
+        if (await SectionsApi.AssignAsync(agentId, sectionId, conversationId))
+            await SectionsState.ReloadAsync();
         StateHasChanged();
     }
 
     private async Task UnassignConversationSectionAsync(string agentId, string conversationId)
     {
         _sectionMenuConversationId = null;
-        if (await SectionsApi.UnassignAsync(agentId, conversationId) && _sectionsPanel is not null)
-            await _sectionsPanel.ReloadAsync();
+        if (await SectionsApi.UnassignAsync(agentId, conversationId))
+            await SectionsState.ReloadAsync();
         StateHasChanged();
     }
 
@@ -1313,6 +1314,7 @@
         ExtensionFeatures.OnChanged -= HandleStateChanged;
         Hub.OnAgentsChanged -= HandleSidebarAgentsChanged;
         Prefs.OnChanged -= HandleStateChanged;
+        SectionsState.Changed -= HandleStateChanged;
     }
 
     private bool IsAgentActive(string agentId)

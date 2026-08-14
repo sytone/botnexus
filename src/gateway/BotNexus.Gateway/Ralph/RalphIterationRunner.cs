@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Audit;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Ralph;
@@ -52,8 +53,17 @@ public sealed class RalphIterationRunner(
     IAgentSupervisor supervisor,
     ISessionStore sessions,
     IConversationStore conversations,
-    ILogger<RalphIterationRunner> logger) : IRalphIterationRunner
+    ILogger<RalphIterationRunner> logger,
+    IToolAuditSink? toolAudit = null) : IRalphIterationRunner
 {
+    /// <summary>
+    /// The single execution-layer tool-audit sink (#2614). A ralph iteration is a blocking
+    /// <c>PromptAsync</c> boundary, and #2616's structural enumeration found it to be the one such
+    /// boundary that persisted final text only - so an autonomous, unattended, repeating loop was
+    /// the path with the LEAST durable evidence of what its tools actually did.
+    /// </summary>
+    private readonly IToolAuditSink _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
+
     /// <summary>The session-id prefix that marks a session as a ralph loop iteration.</summary>
     public const string SessionIdPrefix = "ralph";
 
@@ -90,6 +100,12 @@ public sealed class RalphIterationRunner(
             var response = await handle.PromptAsync(prompt, cancellationToken).ConfigureAwait(false);
 
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
+            // #2616: route the run's tool timeline through the same sink every other blocking
+            // boundary uses, ordered before the assistant row exactly as they order it. Without
+            // this, a ralph iteration that shelled out and rewrote files left nothing behind but
+            // the agent's own prose account of what it claims it did.
+            foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
+                session.AddEntry(toolEntry);
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
             await sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
             return true;

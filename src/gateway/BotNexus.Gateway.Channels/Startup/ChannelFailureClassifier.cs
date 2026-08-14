@@ -43,10 +43,18 @@ public static class ChannelFailureClassifier
         {
             switch (current)
             {
-                // A cancelled start is a shutdown signal, never something to retry. This must be
-                // checked before TaskCanceledException's transient-timeout treatment below.
+                // A cooperatively cancelled start or loop is a shutdown signal, never something to
+                // retry. This must be checked before TaskCanceledException's transient-timeout
+                // treatment below - but ONLY for genuine cancellation. HttpClient reports its own
+                // request timeout as a TaskCanceledException too (#3116), which is the most
+                // transient failure a long-polling transport can produce; classifying it Terminal
+                // parked the Telegram polling loop until the gateway was restarted. Since .NET 6
+                // the framework distinguishes the two by setting a TimeoutException inner on the
+                // timeout case, so honour that marker rather than the type alone.
                 case OperationCanceledException when exception is OperationCanceledException:
-                    return ChannelFailureKind.Terminal;
+                    return HasTimeoutCause(exception)
+                        ? ChannelFailureKind.Transient
+                        : ChannelFailureKind.Terminal;
 
                 // A status-bearing HttpRequestException is authoritative. Without a status the
                 // request failed below HTTP, so keep walking for the transport fault underneath
@@ -96,6 +104,28 @@ public static class ChannelFailureClassifier
         >= HttpStatusCode.InternalServerError => ChannelFailureKind.Transient, // 5xx
         _ => ChannelFailureKind.Terminal,
     };
+
+    /// <summary>
+    /// Determines whether a cancellation was caused by a client-side timeout rather than by a
+    /// cooperative <see cref="CancellationToken"/>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="HttpClient"/> surfaces both as <see cref="TaskCanceledException"/>. Since .NET 6
+    /// the timeout case is identifiable because the framework sets a <see cref="TimeoutException"/>
+    /// as the inner exception; a token-driven cancellation carries no such cause. The walk covers
+    /// the whole inner chain because the live trace nests the marker beneath further transport
+    /// exceptions (#3116).
+    /// </remarks>
+    private static bool HasTimeoutCause(Exception exception)
+    {
+        for (Exception? current = exception.InnerException; current is not null; current = current.InnerException)
+        {
+            if (current is TimeoutException)
+                return true;
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Reads a public instance <c>bool IsTransient</c> property when the exception exposes one.

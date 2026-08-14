@@ -486,10 +486,30 @@ public static class ResponsesStreamParser
         return new SseEvent(eventType ?? "message", data.ToString());
     }
 
-    private static string GetErrorMessage(JsonElement root)
+    /// <summary>
+    /// Reads a named property only when <paramref name="element"/> is actually a JSON object.
+    /// <c>JsonElement.TryGetProperty</c> is <em>partial</em>, not total: on any non-object kind it
+    /// throws <see cref="InvalidOperationException"/> rather than returning <c>false</c>. Routing
+    /// every provider-payload property access through this helper means a property access added
+    /// later inherits the kind check instead of re-introducing #3130, where a
+    /// <c>{"response": null}</c> failure event crashed the error-reporting path itself and replaced
+    /// the upstream API error with a parser stack trace.
+    /// </summary>
+    private static bool TryGetObjectProperty(JsonElement element, string propertyName, out JsonElement value)
     {
-        if (root.TryGetProperty("response", out var response) &&
-            response.TryGetProperty("error", out var error) &&
+        value = default;
+        return element.ValueKind == JsonValueKind.Object
+            && element.TryGetProperty(propertyName, out value);
+    }
+
+    /// <summary>
+    /// Best-effort description of a failure event. Provider payloads are untrusted input: a shape
+    /// the parser did not anticipate must degrade to a worse message, never to an exception (#3130).
+    /// </summary>
+    internal static string GetErrorMessage(JsonElement root)
+    {
+        if (TryGetObjectProperty(root, "response", out var response) &&
+            TryGetObjectProperty(response, "error", out var error) &&
             error.ValueKind == JsonValueKind.Object)
         {
             var code = GetString(error, "code");
@@ -497,15 +517,15 @@ public static class ResponsesStreamParser
             return $"{code ?? "unknown"}: {message ?? "no message"}";
         }
 
-        if (root.TryGetProperty("response", out response) &&
-            response.TryGetProperty("incomplete_details", out var details) &&
-            details.TryGetProperty("reason", out var reason))
+        if (TryGetObjectProperty(root, "response", out response) &&
+            TryGetObjectProperty(response, "incomplete_details", out var details) &&
+            GetString(details, "reason") is { } reason)
         {
-            return $"incomplete: {reason.GetString()}";
+            return $"incomplete: {reason}";
         }
 
-        if (root.TryGetProperty("message", out var messageEl))
-            return messageEl.GetString() ?? "Unknown error";
+        if (TryGetObjectProperty(root, "message", out var messageEl))
+            return (messageEl.ValueKind == JsonValueKind.String ? messageEl.GetString() : null) ?? "Unknown error";
 
         return "Unknown error";
     }
@@ -550,7 +570,7 @@ public static class ResponsesStreamParser
 
     private static string? GetString(JsonElement element, string propertyName)
     {
-        if (element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String)
+        if (TryGetObjectProperty(element, propertyName, out var value) && value.ValueKind == JsonValueKind.String)
             return value.GetString();
         return null;
     }

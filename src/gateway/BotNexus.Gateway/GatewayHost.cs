@@ -73,6 +73,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly Sessions.ISessionTurnTracker _turnTracker;
     private readonly ChannelStartupReport _startupReport;
 
+    /// <summary>
+    /// The single execution-layer tool-audit sink (#2614), used by the blocking branch of
+    /// <c>ProcessAsync</c> so a non-streamed turn records the same tool timeline a streamed one
+    /// does (#2616 AC3).
+    /// </summary>
+    private readonly Audit.IToolAuditSink _toolAudit;
+
     public GatewayHost(
         IAgentSupervisor supervisor,
         IMessageRouter router,
@@ -101,8 +108,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         IOutboundResponseDeliverer? outboundResponseDeliverer = null,
         Sessions.ISessionTurnTracker? turnTracker = null,
         ChannelStartupReport? startupReport = null,
-        ISessionContextWindowResolver? contextWindowResolver = null)
+        ISessionContextWindowResolver? contextWindowResolver = null,
+        Audit.IToolAuditSink? toolAudit = null)
     {
+        _toolAudit = toolAudit ?? Audit.DefaultToolAuditSink.Instance;
         _contextWindowResolver = contextWindowResolver;
         _supervisor = supervisor;
         _router = router;
@@ -814,6 +823,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                             }, cancellationToken);
                         }
                     }
+
+                    // #2616 AC3: the blocking branch must leave the SAME tool timeline the
+                    // streaming branch leaves, or the portal/history shape a turn renders with
+                    // depends on which transport happened to serve it. StreamingSessionHelper
+                    // persists sink-produced tool rows as events arrive; this is the blocking twin,
+                    // ordered before the assistant row exactly as every other blocking boundary
+                    // orders it. Written OUTSIDE the NO_REPLY guard on purpose: a turn that ran
+                    // side-effecting tools and then deliberately stayed silent is precisely the one
+                    // whose tool record must survive.
+                    foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
+                        session.AddEntry(toolEntry);
 
                     // NO_REPLY responses are intentional silences — do not persist them
                     // in the session store. Channel adapters already suppress delivery (#1237).

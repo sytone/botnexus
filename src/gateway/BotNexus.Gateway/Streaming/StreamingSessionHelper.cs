@@ -297,12 +297,21 @@ public static class StreamingSessionHelper
                 Kind = assistantKind
             });
         }
-        else if (hadMessageEnd && streamedHistory.Count == 0)
+        else if (hadMessageEnd && streamedHistory.Count == 0 && !emittedAssistantContent)
         {
             // #2921: the run reached a clean MessageEnd but produced no visible text, no tool calls
             // and no thinking for this final completion. Nothing is persisted (a contentless row is
             // not a valid transcript entry), but the run has ended without answering - make that
             // observable instead of failing silently.
+            //
+            // #3129: streamedContent/streamedHistory are per-TURN buffers - the TurnEnd case above
+            // persists the assistant message and then CLEARS both, so by the time this final write
+            // runs a perfectly normal ContentDelta -> MessageEnd -> TurnEnd run looks identical to a
+            // contentless one. emittedAssistantContent is the run-scoped latch that distinguishes
+            // them: it is set only where an assistant row is actually appended to the session (the
+            // TurnEnd flush and the final-content write above), so gating on it suppresses the
+            // false positive without muting the genuine "ended without answering" signal that #2921
+            // added and the #3125 spike depends on.
             options.Logger?.LogWarning(
                 "Run for session '{SessionId}' terminated on an empty assistant completion " +
                 "(no content, no tool calls, no thinking). No transcript row was written.",
