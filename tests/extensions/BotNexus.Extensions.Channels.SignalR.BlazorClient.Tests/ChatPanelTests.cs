@@ -1701,6 +1701,11 @@ public sealed class ChatPanelTests : IDisposable
     public async Task Executing_new_command_from_palette_resets_session_via_dispatcher()
     {
         CreateAndSeedAgent("agent-1", isConnected: true);
+        // #3063: the dispatcher requires a conversation, so the panel must be rendered against a real
+        // one. A ChatPanel with no conversation was never a state a citizen could open the palette
+        // from - it renders no transcript and no input affordances.
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
         var input = cut.Find(".chat-input");
