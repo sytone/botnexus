@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Diagnostics;
+using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -71,6 +72,13 @@ namespace BotNexus.Agent.Core.Configuration;
 /// other, so this is part of the suspension key rather than an afterthought. Null is normalised to
 /// the empty profile.
 /// </param>
+/// <param name="MaxToolOutputBytes">
+/// Shared central UTF-8 byte budget applied to every tool result before it reaches the model
+/// (#3162). Null means <see cref="ToolOutputBudget.DefaultMaxBytes"/>; a non-positive value
+/// disables the backstop entirely, matching the convention already used by the write-time
+/// tool-result cap. This is a backstop <em>beneath</em> the existing per-tool caps, not a
+/// replacement for them.
+/// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -96,7 +104,8 @@ public record AgentLoopConfig(
     Action<string>? OnDiagnostic = null,
     BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
     string? AuthProfile = null,
-    Func<double>? RetryRandomSource = null)
+    Func<double>? RetryRandomSource = null,
+    int? MaxToolOutputBytes = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).
@@ -119,4 +128,13 @@ public record AgentLoopConfig(
     /// behaviour by passing <c>null</c> are still bounded.
     /// </summary>
     public int EffectiveMaxRetryDelayMs => MaxRetryDelayMs is > 0 ? MaxRetryDelayMs.Value : DefaultMaxRetryDelayMs;
+
+    /// <summary>
+    /// The effective central tool-output byte budget (#3162). Null means "use the platform default";
+    /// an explicitly configured non-positive value is preserved verbatim, because zero-or-less is the
+    /// documented way to DISABLE the backstop and silently re-enabling it would defeat the operator's
+    /// choice. Contrast <see cref="EffectiveMaxRetryDelayMs"/>, where non-positive is normalised to
+    /// the default because "no retry ceiling" is never a safe outcome.
+    /// </summary>
+    public int EffectiveMaxToolOutputBytes => MaxToolOutputBytes ?? ToolOutputBudget.DefaultMaxBytes;
 }

@@ -640,7 +640,9 @@ public sealed class Agent
             _options.BeforeToolCallTimeout,
             _options.OnDiagnostic,
             _options.SuspensionRegistry,
-            _options.AuthProfile);
+            _options.AuthProfile,
+            RetryRandomSource: null,
+            MaxToolOutputBytes: _options.MaxToolOutputBytes);
     }
 
     private static SimpleStreamOptions CloneGenerationSettings(SimpleStreamOptions source)
