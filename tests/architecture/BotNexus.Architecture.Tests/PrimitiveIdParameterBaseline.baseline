@@ -59,6 +59,7 @@ src/gateway/BotNexus.Gateway/Extensions/GatewayServiceCollectionExtensions.cs|1
 src/gateway/BotNexus.Gateway/GatewayHost.cs|2
 src/gateway/BotNexus.Gateway/Hooks/ToolPolicyHookHandler.cs|1
 src/gateway/BotNexus.Gateway/Isolation/HotPathMetricsAgentListener.cs|1
+src/gateway/BotNexus.Gateway/Providers/EmbeddingAwareMemoryStoreFactory.cs|2
 src/gateway/BotNexus.Gateway/Security/DefaultToolPolicyProvider.cs|5
 src/gateway/BotNexus.Gateway/Security/ExecApprovalManager.cs|4
 src/gateway/BotNexus.Gateway/Sessions/ISessionTurnTracker.cs|2
