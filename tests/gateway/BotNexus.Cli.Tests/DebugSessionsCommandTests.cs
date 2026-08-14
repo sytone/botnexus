@@ -102,19 +102,21 @@ public sealed class DebugSessionsCommandTests : IDisposable
     }
 
     [Fact]
-    public void ResolveSessionsDb_DefaultTarget_ReturnsExpectedPath()
+    public void ResolveSessionsDb_DefaultTarget_ReturnsSqliteStoreName()
     {
         var path = DebugSessionsCommand.ResolveSessionsDb(null);
-        path.ShouldEndWith("sessions.db");
-        // Should resolve to either ~/.botnexus/sessions.db or BOTNEXUS_HOME/sessions.db
-        Path.GetFileName(path).ShouldBe("sessions.db");
+        // The writer contract is "sessions.sqlite"; a ".db" fallback is only ever returned when
+        // such a file genuinely exists on disk. Never a hard-coded "sessions.db" guess.
+        Path.GetFileNameWithoutExtension(path).ShouldBe("sessions");
+        Path.GetExtension(path).ShouldBeOneOf(".sqlite", ".db");
     }
 
     [Fact]
-    public void ResolveSessionsDb_WithTarget_ReturnsTargetPath()
+    public void ResolveSessionsDb_WithTarget_ResolvesUnderTarget()
     {
         var path = DebugSessionsCommand.ResolveSessionsDb(_tempDir);
-        path.ShouldBe(Path.Combine(_tempDir, "sessions.db"));
+        Path.GetDirectoryName(path).ShouldBe(_tempDir);
+        Path.GetFileNameWithoutExtension(path).ShouldBe("sessions");
     }
 
     [Fact]

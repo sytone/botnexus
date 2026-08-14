@@ -79,11 +79,12 @@ internal sealed class SubAgentCommand
     }
 
     /// <summary>
-    /// Resolves the sessions database path from the (optional) global <c>--target</c> home override,
-    /// mirroring <see cref="DebugSessionsCommand.ResolveSessionsDb"/>.
+    /// Resolves the sessions database path through the shared tolerant resolver
+    /// (<see cref="CliStorePaths"/>), so this reader and <see cref="DebugSessionsCommand.ResolveSessionsDb"/>
+    /// share exactly one definition of the writer/reader filename contract (issue #3126).
     /// </summary>
     internal static string ResolveSessionsDb(string? target)
-        => Path.Combine(CliPaths.ResolveTarget(target), "sessions.db");
+        => CliStorePaths.ResolvePath(DebugSessionsCommand.SessionsStoreName, target);
 
     /// <summary>
     /// Resolves the OS temp sub-agent workspace root, kept in lock-step with
