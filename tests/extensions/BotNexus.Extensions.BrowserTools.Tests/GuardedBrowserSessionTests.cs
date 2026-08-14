@@ -1,4 +1,3 @@
-using System.IO.Abstractions.TestingHelpers;
 using Shouldly;
 
 namespace BotNexus.Extensions.BrowserTools.Tests;
@@ -17,12 +16,12 @@ public sealed class GuardedBrowserSessionTests
     private static readonly string WorkspaceRoot =
         Path.Combine(Path.GetTempPath(), "botnexus-browserguard-ws");
 
-    private static (GuardedBrowserSession Session, MockFileSystem Fs) CreateSession(
+    private static (GuardedBrowserSession Session, FakeBrowserFileSystem Fs) CreateSession(
         FakeBrowserDriver driver,
         BrowserToolsConfig? config = null,
         BrowserGuardState? state = null)
     {
-        var fs = new MockFileSystem();
+        var fs = new FakeBrowserFileSystem();
         var session = new GuardedBrowserSession(
             driver, WorkspaceRoot, config, state, fs, () => DateTimeOffset.UnixEpoch);
         return (session, fs);
@@ -181,7 +180,7 @@ public sealed class GuardedBrowserSessionTests
         spilledPath.Replace('\\', '/')
             .Contains("tmp/browser/", StringComparison.Ordinal)
             .ShouldBeTrue("the spill must land under the agent workspace tmp/browser/ directory.");
-        fs.GetFile(spilledPath).TextContents.ShouldBe(full);
+        fs.GetFileText(spilledPath).ShouldBe(full);
 
         // (4) and the model is TOLD where it went, or it can never page through it
         snapshot.Content!.ShouldContain(snapshot.SpillPath);

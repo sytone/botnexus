@@ -2,6 +2,7 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Domain.Text;
 
 namespace BotNexus.Extensions.Qmd;
 
@@ -81,11 +82,15 @@ public sealed class KnowledgeGetTool(IQmdBackend backend, QmdConfig config) : IA
                 $"Error: Access denied. Store '{document.Store}' is not in your allowed stores.")]);
 
         var content = document.Content;
-        var truncated = false;
-        if (content.Length > MaxContentChars)
+        // #3171: knowledge documents are arbitrary user markdown and routinely contain emoji, so a
+        // raw UTF-16 range slice at MaxContentChars can cut between a high and a low surrogate and
+        // ship a lone surrogate into the tool result - and from there into the provider request
+        // body. The shared boundary policy cuts on a grapheme-cluster boundary instead, and returns
+        // the original reference untouched when no truncation is needed (#2883/#2924).
+        var truncated = content.Length > MaxContentChars;
+        if (truncated)
         {
-            content = content[..MaxContentChars];
-            truncated = true;
+            content = TextTruncation.SafeTruncate(content, MaxContentChars) ?? string.Empty;
         }
 
         var output = new
