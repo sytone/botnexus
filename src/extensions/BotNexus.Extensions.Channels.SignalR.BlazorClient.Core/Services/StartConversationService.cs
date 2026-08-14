@@ -113,7 +113,7 @@ public sealed class StartConversationService : IStartConversationService
         // 3. Send the citizen's first message into the conversation created above.
         try
         {
-            await _interaction.SendMessageAsync(request.AgentId, request.FirstMessage).ConfigureAwait(false);
+            await _interaction.SendMessageAsync(request.AgentId, conversationId, request.FirstMessage).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

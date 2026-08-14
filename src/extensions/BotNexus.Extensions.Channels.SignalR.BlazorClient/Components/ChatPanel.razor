@@ -1055,7 +1055,9 @@ private bool IsStreaming =>
         _showCommandPalette = false;
         _inputText = "";
 
-        await CommandDispatcher.ExecuteAsync(AgentId, cmd);
+        if (ActiveConversationId is not { } convId) return;
+
+        await CommandDispatcher.ExecuteAsync(AgentId, convId, cmd);
     }
 
     private async Task OpenConfig()
@@ -1330,9 +1332,16 @@ private bool IsStreaming =>
     }
 
     private Task SendMessage()
-        => DispatchDraftAsync((text, attachments) => attachments.Count == 0
-            ? Interaction.SendMessageAsync(AgentId, text)
-            : Interaction.SendMessageAsync(AgentId, text, attachments));
+        => DispatchDraftAsync((text, attachments) =>
+        {
+            // #3063: the send path requires the conversation explicitly. ActiveConversationId here is
+            // the route-supplied ConversationId parameter (falling back to the agent's selection),
+            // which is the same id the rest of this panel renders against.
+            if (ActiveConversationId is not { } convId) return Task.CompletedTask;
+            return attachments.Count == 0
+                ? Interaction.SendMessageAsync(AgentId, convId, text)
+                : Interaction.SendMessageAsync(AgentId, convId, text, attachments);
+        });
 
     private async Task HandleFilesSelected(InputFileChangeEventArgs e)
     {

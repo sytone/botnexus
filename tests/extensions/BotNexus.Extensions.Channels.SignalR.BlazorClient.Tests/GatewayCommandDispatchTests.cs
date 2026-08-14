@@ -18,6 +18,7 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 public sealed class GatewayCommandDispatchTests
 {
     private const string AgentId = "agent-1";
+    private const string ConversationId = "conv-1";
 
     private static (AgentInteractionService service, ClientStateStore store, IGatewayRestClient rest) CreateService(
         string? activeConversationId = "conv-1",
@@ -105,11 +106,11 @@ public sealed class GatewayCommandDispatchTests
         var sut = new SlashCommandDispatcher(interaction);
         var command = SlashCommandRegistry.All.Single(c => c.Name == "/status");
 
-        var executed = await sut.ExecuteAsync(AgentId, command);
+        var executed = await sut.ExecuteAsync(AgentId, ConversationId, command);
 
         Assert.True(executed);
         await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, "/status");
-        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
+        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!, default!);
     }
 
     [Theory]
@@ -124,11 +125,11 @@ public sealed class GatewayCommandDispatchTests
         var interaction = Substitute.For<IAgentInteractionService>();
         var sut = new SlashCommandDispatcher(interaction);
 
-        await sut.ExecuteAsync(AgentId, SlashCommandRegistry.All.Single(c => c.Name == name));
+        await sut.ExecuteAsync(AgentId, ConversationId, SlashCommandRegistry.All.Single(c => c.Name == name));
 
-        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
+        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!, default!);
         await interaction.DidNotReceiveWithAnyArgs()
-            .SendMessageAsync(default!, default!, default!);
+            .SendMessageAsync(default!, default!, default!, default!);
         await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, name);
     }
 
@@ -139,9 +140,9 @@ public sealed class GatewayCommandDispatchTests
         var interaction = Substitute.For<IAgentInteractionService>();
         var sut = new SlashCommandDispatcher(interaction);
 
-        await sut.ExecuteAsync(AgentId, SlashCommandRegistry.All.Single(c => c.Name == "/prompts"));
+        await sut.ExecuteAsync(AgentId, ConversationId, SlashCommandRegistry.All.Single(c => c.Name == "/prompts"));
 
-        await interaction.Received(1).SendMessageAsync(AgentId, "/prompts");
+        await interaction.Received(1).SendMessageAsync(AgentId, ConversationId, "/prompts");
         await interaction.DidNotReceiveWithAnyArgs().ExecuteGatewayCommandAsync(default!, default!);
     }
 
@@ -153,7 +154,7 @@ public sealed class GatewayCommandDispatchTests
         var command = new SlashCommand("/status", "d", SlashCommandKind.GatewayCommand, RequiresApproval: true);
         hook.IsApprovedAsync(AgentId, command).Returns(false);
 
-        var executed = await new SlashCommandDispatcher(interaction, hook).ExecuteAsync(AgentId, command);
+        var executed = await new SlashCommandDispatcher(interaction, hook).ExecuteAsync(AgentId, ConversationId, command);
 
         Assert.False(executed);
         await interaction.DidNotReceiveWithAnyArgs().ExecuteGatewayCommandAsync(default!, default!);

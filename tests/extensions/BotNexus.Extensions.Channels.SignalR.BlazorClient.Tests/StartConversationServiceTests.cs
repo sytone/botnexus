@@ -46,7 +46,7 @@ public sealed class StartConversationServiceTests
                     Conversation(conversationId, agentId, ci.Arg<SetConversationOverrideRequestDto>().Model));
             });
 
-        _interaction.SendMessageAsync(agentId, Arg.Any<string>())
+        _interaction.SendMessageAsync(agentId, conversationId, Arg.Any<string>())
             .Returns(_ => { _calls.Add("send"); return Task.CompletedTask; });
     }
 
@@ -102,7 +102,7 @@ public sealed class StartConversationServiceTests
         await sut.StartAsync(new StartConversationRequest("agent-1", "hello there", "claude-opus-4", "gpt-4o"));
 
         await _interaction.Received(1).CreateConversationAsync("agent-1", null, true);
-        await _interaction.Received(1).SendMessageAsync("agent-1", "hello there");
+        await _interaction.Received(1).SendMessageAsync("agent-1", "conv-1", "hello there");
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public sealed class StartConversationServiceTests
         result.Success.ShouldBeFalse();
         result.ConversationId.ShouldBeNull();
         result.Error.ShouldNotBeNullOrWhiteSpace();
-        await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
+        await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 
     [Fact]
@@ -161,7 +161,7 @@ public sealed class StartConversationServiceTests
 
         result.Success.ShouldBeFalse();
         result.ConversationId.ShouldBeNull();
-        await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
+        await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 
     [Fact]
@@ -176,7 +176,7 @@ public sealed class StartConversationServiceTests
 
         result.Success.ShouldBeFalse();
         result.ConversationId.ShouldBeNull();
-        await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
+        await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 
     [Fact]
@@ -191,14 +191,14 @@ public sealed class StartConversationServiceTests
 
         result.Success.ShouldBeFalse();
         result.ConversationId.ShouldBeNull();
-        await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
+        await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 
     [Fact]
     public async Task Failed_send_returns_no_navigable_conversation()
     {
         _interaction.CreateConversationAsync("agent-1", Arg.Any<string?>(), Arg.Any<bool>()).Returns("conv-1");
-        _interaction.SendMessageAsync("agent-1", Arg.Any<string>())
+        _interaction.SendMessageAsync("agent-1", "conv-1", Arg.Any<string>())
             .Returns<Task>(_ => throw new InvalidOperationException("hub down"));
         var sut = CreateSut();
 

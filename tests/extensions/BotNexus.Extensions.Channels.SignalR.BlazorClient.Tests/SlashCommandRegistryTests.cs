@@ -73,6 +73,7 @@ public class SlashCommandRegistryTests
 public class SlashCommandDispatcherTests
 {
     private const string AgentId = "agent-x";
+    private const string ConversationId = "conv-1";
 
     private static (SlashCommandDispatcher dispatcher, IAgentInteractionService interaction) CreateSut()
     {
@@ -86,7 +87,7 @@ public class SlashCommandDispatcherTests
         var (sut, interaction) = CreateSut();
         var cmd = SlashCommandRegistry.All.First(c => c.Name == "/new");
 
-        await sut.ExecuteAsync(AgentId, cmd);
+        await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         await interaction.Received(1).ResetSessionAsync(AgentId);
     }
@@ -97,7 +98,7 @@ public class SlashCommandDispatcherTests
         var (sut, interaction) = CreateSut();
         var cmd = SlashCommandRegistry.All.First(c => c.Name == "/compact");
 
-        await sut.ExecuteAsync(AgentId, cmd);
+        await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         await interaction.Received(1).CompactSessionAsync(AgentId);
     }
@@ -108,7 +109,7 @@ public class SlashCommandDispatcherTests
         var (sut, interaction) = CreateSut();
         var cmd = SlashCommandRegistry.All.First(c => c.Name == "/clear");
 
-        await sut.ExecuteAsync(AgentId, cmd);
+        await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         interaction.Received(1).ClearLocalMessages(AgentId);
     }
@@ -119,9 +120,9 @@ public class SlashCommandDispatcherTests
         var (sut, interaction) = CreateSut();
         var cmd = SlashCommandRegistry.All.First(c => c.Name == "/prompts");
 
-        await sut.ExecuteAsync(AgentId, cmd);
+        await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
-        await interaction.Received(1).SendMessageAsync(AgentId, "/prompts");
+        await interaction.Received(1).SendMessageAsync(AgentId, ConversationId, "/prompts");
     }
 
     [Theory]
@@ -140,10 +141,10 @@ public class SlashCommandDispatcherTests
         var (sut, interaction) = CreateSut();
         var cmd = SlashCommandRegistry.All.First(c => c.Name == name);
 
-        await sut.ExecuteAsync(AgentId, cmd);
+        await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, name);
-        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
+        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 
     [Fact]
@@ -153,7 +154,7 @@ public class SlashCommandDispatcherTests
         {
             var (sut, interaction) = CreateSut();
 
-            await sut.ExecuteAsync(AgentId, cmd);
+            await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
             var totalCalls = interaction.ReceivedCalls().Count();
             Assert.True(totalCalls == 1, $"Command {cmd.Name} made {totalCalls} interaction calls, expected exactly 1.");
