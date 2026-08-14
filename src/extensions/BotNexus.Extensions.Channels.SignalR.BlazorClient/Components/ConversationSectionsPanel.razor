@@ -103,6 +103,13 @@
     /// Without a handler here the rendered members are decoration - nothing can open them.
     /// </summary>
     [Parameter] public EventCallback<string> OnConversationSelected { get; set; }
+    /// <summary>
+    /// Optional per-member row actions, rendered beside the member title (#2325). Once an assigned
+    /// conversation is subtracted from the default list, the row affordances that lived there - the
+    /// "move to section" menu in particular - would otherwise be unreachable for it. The parent
+    /// supplies them here so a section member row keeps the same affordances as a default-list row.
+    /// </summary>
+    [Parameter] public RenderFragment<string>? ItemActions { get; set; }
 
     private bool _creating;
     private string? _editingId;
@@ -210,6 +217,10 @@
                href="agent/@Uri.EscapeDataString(AgentId)/conversation/@Uri.EscapeDataString(conversationId)"
                @onclick="() => OnConversationSelected.InvokeAsync(conversationId)"
                @onclick:preventDefault="true">@(TitleResolver?.Invoke(conversationId) ?? conversationId)</a>
+            @if (ItemActions is not null)
+            {
+                @ItemActions(conversationId)
+            }
             <button class="section-remove-conversation-btn" data-testid="section-remove-conversation"
                     title="Remove from section" @onclick="() => RemoveConversationAsync(conversationId)">&#x2715;</button>
         </div>

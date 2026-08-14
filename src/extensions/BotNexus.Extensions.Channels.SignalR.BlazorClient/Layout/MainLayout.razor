@@ -664,6 +664,7 @@
                     <ConversationSectionsPanel AgentId="@sectionsAgent.AgentId"
                                                TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
                                                OnConversationSelected="@(id => SelectConversationAsync(sectionsAgent.AgentId, id))"
+                                               ItemActions="@(id => RenderSectionMemberActions(sectionsAgent, id))"
                                                OnChanged="HandleSectionsChanged" />
                 </div>
             </div>
@@ -1050,6 +1051,17 @@
         _activityFilter = filter;
         await JS.InvokeVoidAsync("localStorage.setItem", ActivityFilterKey, filter.ToString());
     }
+
+    // #2325: the "move to section" menu is a row affordance. An assigned conversation no longer has
+    // a default-list row, so the menu is projected onto its section member row instead - the
+    // affordance moves with the conversation rather than disappearing when it is assigned.
+    private RenderFragment RenderSectionMemberActions(AgentState agent, string conversationId) => __builder =>
+    {
+        @if (!agent.IsReadOnly && agent.Conversations.TryGetValue(conversationId, out var conversation) && !conversation.IsDefault)
+        {
+            @RenderSectionAssign(agent, conversation)
+        }
+    };
 
     // #2325: true only when this conversation is assigned to a section that WILL actually render a
     // row for it. Subtracting from the default list is a visibility change, so it is gated on the
