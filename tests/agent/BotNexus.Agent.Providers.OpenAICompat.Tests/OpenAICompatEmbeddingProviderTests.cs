@@ -51,6 +51,13 @@ public sealed class OpenAICompatEmbeddingProviderTests
         }
     }
 
+    /// <summary>Redactor that masks one known secret, so the assertion is about the wiring not the algorithm.</summary>
+    private sealed class StubRedactor(string secret) : BotNexus.Gateway.Abstractions.Security.ISecretRedactor
+    {
+        public string Redact(string input) => input.Replace(secret, "[REDACTED]", StringComparison.Ordinal);
+        public string RedactForExternalDelivery(string input) => Redact(input);
+    }
+
     private static OpenAICompatEmbeddingProvider Provider(
         HttpMessageHandler handler,
         string baseUrl = "http://localhost:11434/v1",
@@ -133,6 +140,38 @@ public sealed class OpenAICompatEmbeddingProviderTests
         // The operator needs status and body to tell a 404 from a 401 from a model-name typo.
         Assert.Contains("404", ex.Message);
         Assert.Contains("model not found", ex.Message);
+    }
+
+    [Fact]
+    public async Task EmbedAsync_Throws_AuthenticationException_On401()
+    {
+        // Routing through ProviderHttpErrorHelper is what makes a 401 self-diagnosing rather than
+        // an undiagnosable generic transport error.
+        var handler = new CapturingHandler(HttpStatusCode.Unauthorized, """{"error":"bad key"}""");
+
+        await Assert.ThrowsAsync<Core.ProviderAuthenticationException>(
+            () => Provider(handler).EmbedAsync("nomic-embed-text", "hello"));
+    }
+
+    [Fact]
+    public async Task EmbedAsync_RedactsSecretsOutOfTheErrorBody()
+    {
+        // #2881: an endpoint that echoes the offending Authorization header back on a failure must
+        // not leak the credential into an exception message, which is persisted session-visibly.
+        var handler = new CapturingHandler(HttpStatusCode.BadRequest, """{"error":"rejected sk-super-secret-value"}""");
+        var provider = new OpenAICompatEmbeddingProvider(
+            new HttpClient(handler),
+            "ollama",
+            "http://localhost:11434/v1",
+            [new EmbeddingModelDescriptor("nomic-embed-text", 3)],
+            apiKey: "sk-super-secret-value",
+            secretRedactor: new StubRedactor("sk-super-secret-value"));
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(
+            () => provider.EmbedAsync("nomic-embed-text", "hello"));
+
+        Assert.DoesNotContain("sk-super-secret-value", ex.Message);
+        Assert.Contains("[REDACTED]", ex.Message);
     }
 
     [Fact]

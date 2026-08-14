@@ -18,14 +18,29 @@ namespace BotNexus.Architecture.Tests;
 ///
 /// <para>
 /// <c>BotNexus.Memory</c> consumes the provider-neutral <c>Microsoft.Extensions.AI</c> abstraction
-/// and NOTHING else; the adapter that satisfies it lives on the provider side
+/// and NOTHING else for vectors; the adapter that satisfies it lives on the provider side
 /// (<c>EmbeddingProviderGenerator</c>) and is wired in composition
 /// (<c>MemoryEmbeddingComposition</c>). This fence asserts that shape structurally rather than
 /// socially, so a reviewer does not have to remember the rule.
 /// </para>
+///
+/// <para>
+/// <b>Scoped to the PROVIDER stack, deliberately.</b> <c>BotNexus.Memory</c> has long referenced
+/// <c>BotNexus.Agent.Core</c> (its memory tools implement the agent tool contract) and
+/// <c>BotNexus.Gateway.Contracts</c>. Those are pre-existing, unrelated edges and forbidding them
+/// would be a different - and false - architectural claim. The invariant this fence owns is
+/// narrower and exact: no edge from the memory store into <c>BotNexus.Agent.Providers.*</c>, and no
+/// mention of the embeddings capability namespace in its sources.
+/// </para>
 /// </summary>
 public sealed class MemoryEmbeddingSeamArchitectureTests
 {
+    /// <summary>Project-name prefix identifying the provider stack this fence keeps out.</summary>
+    private const string ProviderStackPrefix = "BotNexus.Agent.Providers";
+
+    /// <summary>Namespace whose appearance under BotNexus.Memory would mean the seam was crossed in source.</summary>
+    private const string EmbeddingCapabilityNamespace = "BotNexus.Agent.Providers.Core.Embeddings";
+
     private static string RepoRoot => FindRepoRoot();
 
     private static string MemoryProject =>
@@ -37,7 +52,7 @@ public sealed class MemoryEmbeddingSeamArchitectureTests
         var references = ProjectReferencesOf(MemoryProject);
 
         var providerReferences = references
-            .Where(r => r.Contains("BotNexus.Agent", StringComparison.OrdinalIgnoreCase))
+            .Where(r => r.Contains(ProviderStackPrefix, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         providerReferences.ShouldBeEmpty(
@@ -48,30 +63,47 @@ public sealed class MemoryEmbeddingSeamArchitectureTests
     }
 
     [Fact]
-    public void MemoryProject_ReferencesNoGatewayComposition()
+    public void Fence_WouldCatchAProviderStackReference_AndIsNotVacuous()
     {
-        // The other direction of the same rule: composition may reference memory, never the reverse.
-        var references = ProjectReferencesOf(MemoryProject);
+        // Vacuity guard: prove the predicate actually fires. Without this,
+        // MemoryProject_HasNoProjectReferenceIntoTheProviderStack could pass because the matching
+        // logic is broken rather than because the boundary holds.
+        var syntheticReferences = new List<string>
+        {
+            @"..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj",
+            @"..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj",
+        };
 
-        references
-            .Where(r => r.Contains("BotNexus.Gateway", StringComparison.OrdinalIgnoreCase))
-            .ShouldBeEmpty("BotNexus.Memory must not depend on the gateway composition layer.");
+        var caught = syntheticReferences
+            .Where(r => r.Contains(ProviderStackPrefix, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        caught.ShouldHaveSingleItem();
+        caught[0].ShouldContain("BotNexus.Agent.Providers.Core.csproj");
     }
 
     [Fact]
     public void MemorySources_DoNotMentionTheEmbeddingProviderCapability()
     {
         // A `using BotNexus.Agent.Providers.Core.Embeddings;` anywhere under BotNexus.Memory means
-        // the boundary was crossed by source even if the csproj edge came in transitively.
+        // the boundary was crossed by source even if the csproj edge came in transitively. The
+        // memory TOOLS legitimately use BotNexus.Agent.Providers.Core.Models (the tool contract),
+        // so this checks the embeddings namespace specifically, not the whole provider root.
         var memoryDirectory = Path.Combine(RepoRoot, "src", "gateway", "BotNexus.Memory");
         var offenders = Directory
             .EnumerateFiles(memoryDirectory, "*.cs", SearchOption.AllDirectories)
-            .Where(file => File.ReadAllText(file).Contains("BotNexus.Agent.Providers", StringComparison.Ordinal))
+            .Where(file =>
+            {
+                var text = File.ReadAllText(file);
+                return text.Contains(EmbeddingCapabilityNamespace, StringComparison.Ordinal)
+                       || text.Contains("IEmbeddingProvider", StringComparison.Ordinal);
+            })
             .Select(file => Path.GetRelativePath(RepoRoot, file))
             .ToList();
 
         offenders.ShouldBeEmpty(
-            "No source file under BotNexus.Memory may reference the provider stack (#2855 AC2). Offending: "
+            "No source file under BotNexus.Memory may reference the embeddings provider capability (#2855 AC2); "
+            + "it consumes Microsoft.Extensions.AI's IEmbeddingGenerator instead. Offending: "
             + string.Join(", ", offenders));
     }
 

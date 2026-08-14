@@ -386,7 +386,8 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                 embeddingsConfig.Provider!,
                 embeddingsConfig.BaseUrl!,
                 [new EmbeddingModelDescriptor(embeddingsConfig.Model!, embeddingsConfig.Dimensions)],
-                embeddingsConfig.ApiKey));
+                embeddingsConfig.ApiKey,
+                providerSecretRedactor));
     }
 
     // #1639: resolve the per-provider API endpoint (enterprise vs individual GitHub Copilot

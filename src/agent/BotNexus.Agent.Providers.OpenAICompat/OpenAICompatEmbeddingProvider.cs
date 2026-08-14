@@ -2,8 +2,10 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Embeddings;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Agent.Providers.OpenAICompat;
 
@@ -35,18 +37,25 @@ public sealed class OpenAICompatEmbeddingProvider : IEmbeddingProvider
     private readonly HttpClient _httpClient;
     private readonly string _baseUrl;
     private readonly string? _apiKey;
+    private readonly ISecretRedactor? _secretRedactor;
 
     /// <param name="httpClient">Transport. Supplied by composition so tests can inject a handler.</param>
     /// <param name="providerKey">Provider key this capability is registered under, e.g. <c>ollama</c>.</param>
     /// <param name="baseUrl">Endpoint base URL, e.g. <c>http://localhost:11434/v1</c>.</param>
     /// <param name="models">Embedding models this endpoint serves, with their declared widths.</param>
     /// <param name="apiKey">Optional bearer token. Omitted for a local endpoint that wants none.</param>
+    /// <param name="secretRedactor">
+    /// Optional redactor applied to the endpoint's error body before it reaches an exception message
+    /// (#2881). An endpoint that echoes the offending <c>Authorization</c> header back on a 401 would
+    /// otherwise leak the credential into a session-visible error.
+    /// </param>
     public OpenAICompatEmbeddingProvider(
         HttpClient httpClient,
         string providerKey,
         string baseUrl,
         IReadOnlyList<EmbeddingModelDescriptor> models,
-        string? apiKey = null)
+        string? apiKey = null,
+        ISecretRedactor? secretRedactor = null)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentException.ThrowIfNullOrWhiteSpace(providerKey);
@@ -56,6 +65,7 @@ public sealed class OpenAICompatEmbeddingProvider : IEmbeddingProvider
         _httpClient = httpClient;
         _baseUrl = baseUrl.TrimEnd('/');
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
+        _secretRedactor = secretRedactor;
         ProviderKey = providerKey;
         Models = models;
     }
@@ -96,11 +106,13 @@ public sealed class OpenAICompatEmbeddingProvider : IEmbeddingProvider
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await ReadBoundedAsync(response, ErrorBodyLimitBytes, ct).ConfigureAwait(false);
-            // Thrown, not returned as null: the memory seam catches this and degrades to
-            // lexical-only, but the operator still needs the status and body in the log to tell a
-            // 401 from a 404 from a model name typo.
-            throw new HttpRequestException(
-                $"Embeddings request to '{_baseUrl}/embeddings' for model '{modelId}' failed with HTTP {(int)response.StatusCode}: {errorBody}");
+            // Routed through the shared choke point rather than interpolated here (#2881): the body
+            // is untrusted credential-bearing text, and this helper redacts it BEFORE any string
+            // interpolation as well as mapping 401/403/429 to their diagnosable exception types.
+            // It always throws; the return below is unreachable and only satisfies the compiler.
+            ProviderHttpErrorHelper.ThrowForFailedResponse(
+                response, errorBody, $"{ProviderKey} embeddings ({_baseUrl}/embeddings, model '{modelId}')", _secretRedactor);
+            return null;
         }
 
         var payload = await ReadBoundedAsync(response, MaxResponseBytes, ct).ConfigureAwait(false);
