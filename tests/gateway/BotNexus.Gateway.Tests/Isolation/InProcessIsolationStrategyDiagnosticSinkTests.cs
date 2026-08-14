@@ -201,7 +201,7 @@ public sealed class InProcessIsolationStrategyDiagnosticSinkTests
     {
         private readonly IMemoryStore _store = new DiagnosticMemoryStore();
 
-        public IMemoryStore Create(string agentId) => _store;
+        public IMemoryStore Create(AgentId agentId) => _store;
     }
 
     private sealed class DiagnosticMemoryStore : IMemoryStore

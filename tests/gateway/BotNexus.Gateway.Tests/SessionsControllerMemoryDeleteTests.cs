@@ -99,7 +99,7 @@ public sealed class SessionsControllerMemoryDeleteTests
 
     private sealed class SingleStoreFactory(IMemoryStore store) : IMemoryStoreFactory
     {
-        public IMemoryStore Create(string agentId) => store;
+        public IMemoryStore Create(AgentId agentId) => store;
     }
 
     private class RecordingMemoryStore : IMemoryStore

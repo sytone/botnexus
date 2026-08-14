@@ -141,7 +141,7 @@ public sealed class MemoryIndexerSweptSessionTests
             agentId => fileSystem.Path.Combine(root, agentId, "data", "memory.sqlite"),
             fileSystem);
 
-        factory.StoreLocationExists("swept-agent").ShouldBeFalse();
+        factory.StoreLocationExists(AgentId.From("swept-agent")).ShouldBeFalse();
     }
 
     [Fact]
@@ -156,7 +156,7 @@ public sealed class MemoryIndexerSweptSessionTests
             agentId => fileSystem.Path.Combine(root, agentId, "data", "memory.sqlite"),
             fileSystem);
 
-        factory.StoreLocationExists("live-agent").ShouldBeTrue();
+        factory.StoreLocationExists(AgentId.From("live-agent")).ShouldBeTrue();
     }
 
     [Fact]
@@ -267,13 +267,13 @@ public sealed class MemoryIndexerSweptSessionTests
 
         public int CreateCount => Volatile.Read(ref _createCount);
 
-        public IMemoryStore Create(string agentId)
+        public IMemoryStore Create(AgentId agentId)
         {
             Interlocked.Increment(ref _createCount);
             return store;
         }
 
-        public bool StoreLocationExists(string agentId) => storeLocationExists;
+        public bool StoreLocationExists(AgentId agentId) => storeLocationExists;
     }
 
     private sealed class CountingMemoryStore : IMemoryStore

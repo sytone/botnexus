@@ -808,7 +808,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     {
         private readonly IMemoryStore _store = new StubMemoryStore();
 
-        public IMemoryStore Create(string agentId) => _store;
+        public IMemoryStore Create(AgentId agentId) => _store;
     }
 
     private sealed class StubMemoryStore : IMemoryStore

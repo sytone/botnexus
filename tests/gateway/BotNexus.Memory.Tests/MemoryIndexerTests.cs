@@ -172,7 +172,7 @@ public sealed class MemoryIndexerTests
     private sealed class FakeMemoryStoreFactory(FakeMemoryStore store) : IMemoryStoreFactory
     {
         private readonly FakeMemoryStore _store = store;
-        public IMemoryStore Create(string agentId) => _store;
+        public IMemoryStore Create(AgentId agentId) => _store;
     }
 
     private sealed class FakeMemoryStore : IMemoryStore
