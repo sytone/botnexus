@@ -369,7 +369,7 @@ internal sealed class AgentCommands
 
         var saveCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            root => RawConfigPath.TryRemoveEntry(root, AgentsPath, matchedId, out var error) ? null : error,
+            document => document.TryRemoveEntry(AgentsPath, matchedId, out var error) ? null : error,
             "before-agent-remove",
             verbose,
             cancellationToken,
@@ -690,15 +690,15 @@ internal sealed class AgentCommands
 
         var saveCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            root =>
+            document =>
             {
                 // Import replaces the whole agent entry by design (it reconstructs a complete
                 // descriptor), so remove any differently-cased existing key first rather than
                 // leaving a duplicate sibling behind.
-                if (exists && !RawConfigPath.TryRemoveEntry(root, AgentsPath, existingKey, out var removeError))
+                if (exists && !document.TryRemoveEntry(AgentsPath, existingKey, out var removeError))
                     return removeError;
 
-                return RawConfigPath.TrySetEntry(root, AgentsPath, targetId, ToNode(agent), out var setError)
+                return document.TrySetEntryFrom(AgentsPath, targetId, agent, out var setError)
                     ? null
                     : setError;
             },
@@ -843,23 +843,8 @@ internal sealed class AgentCommands
         }
     }
 
-    /// <summary>Raw-document path of the agents section.</summary>
+    /// <summary>Canonical path of the agents section.</summary>
     private const string AgentsPath = "agents";
-
-    private static readonly System.Text.Json.JsonSerializerOptions AgentNodeOptions = new()
-    {
-        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-    };
-
-    /// <summary>
-    /// Serializes a freshly-constructed agent definition to a raw JSON node. Used only for
-    /// <em>new</em> entries the CLI fully authors; existing entries are patched in place so
-    /// unknown child fields are never round-tripped through the typed graph (#2057).
-    /// </summary>
-    private static System.Text.Json.Nodes.JsonNode ToNode(AgentDefinitionConfig agent)
-        => System.Text.Json.JsonSerializer.SerializeToNode(agent, AgentNodeOptions)
-           ?? new System.Text.Json.Nodes.JsonObject();
 
     private static async Task<int> SetAgentEntryAsync(
         string configPath,
@@ -869,7 +854,7 @@ internal sealed class AgentCommands
         CancellationToken cancellationToken)
         => await CliConfigMutation.ApplyAsync(
             configPath,
-            root => RawConfigPath.TrySetEntry(root, AgentsPath, agentId, ToNode(agent), out var error) ? null : error,
+            document => document.TrySetEntryFrom(AgentsPath, agentId, agent, out var error) ? null : error,
             "before-agent-update",
             verbose,
             cancellationToken,

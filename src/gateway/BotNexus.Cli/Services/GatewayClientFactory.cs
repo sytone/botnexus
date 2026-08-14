@@ -214,9 +214,8 @@ internal static class GatewayClientFactory
                 if (!File.Exists(configPath))
                     return null;
 
-                var root = JsonNode.Parse(File.ReadAllText(configPath)) as JsonObject;
-                if (root?["apiKey"] is JsonValue value &&
-                    value.TryGetValue<string>(out var apiKey) &&
+                var root = ConfigDocument.Parse(File.ReadAllText(configPath));
+                if (root.TryGetString("apiKey", out var apiKey) &&
                     !string.IsNullOrWhiteSpace(apiKey))
                 {
                     return apiKey.Trim();

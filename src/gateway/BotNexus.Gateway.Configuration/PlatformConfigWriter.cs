@@ -66,6 +66,44 @@ public sealed class PlatformConfigWriter
     }
 
     /// <summary>
+    /// Reads the config as a canonical-path <see cref="ConfigDocument"/> - the surface consumers
+    /// outside this project use (#2887). Note this read is outside the writer lock and is therefore
+    /// advisory only; the authoritative read happens inside the mutate methods.
+    /// </summary>
+    public async Task<ConfigDocument> ReadDocumentAsync(CancellationToken ct = default)
+        => new(await ReadRootAsync(ct));
+
+    /// <summary>
+    /// Applies a canonical-path mutation and persists it only when the resulting complete candidate
+    /// document validates. The <see cref="ConfigDocument"/> overload of
+    /// <see cref="MutateValidatedAsync(Func{JsonObject, string?}, string, CancellationToken, IReadOnlyCollection{string}?)"/>,
+    /// so a consumer never needs to name a JSON node type.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> MutateDocumentValidatedAsync(
+        Func<ConfigDocument, string?> mutation,
+        string reason,
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        return await MutateValidatedAsync(root => mutation(new ConfigDocument(root)), reason, ct, namedSections);
+    }
+
+    /// <summary>
+    /// Applies a canonical-path mutation and persists it. The <see cref="ConfigDocument"/> overload
+    /// of <see cref="MutateAsync(Action{JsonObject}, string, CancellationToken, IReadOnlyCollection{string}?)"/>.
+    /// </summary>
+    public async Task MutateDocumentAsync(
+        Action<ConfigDocument> mutation,
+        string reason,
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        await MutateAsync(root => mutation(new ConfigDocument(root)), reason, ct, namedSections);
+    }
+
+    /// <summary>
     /// Reads the full config as a JSON object.
     /// </summary>
     public async Task<JsonObject> ReadAsync(CancellationToken ct = default)

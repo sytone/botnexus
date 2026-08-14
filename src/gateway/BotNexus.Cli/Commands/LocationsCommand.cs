@@ -246,7 +246,7 @@ internal sealed class LocationsCommand
 
         var saveCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            root => RawConfigPath.TrySetEntry(root, LocationsPath, normalizedName, ToNode(locationConfig), out var error)
+            document => document.TrySetEntryFrom(LocationsPath, normalizedName, locationConfig, out var error)
                 ? null
                 : error,
             "before-locations-update",
@@ -315,17 +315,17 @@ internal sealed class LocationsCommand
         }
 
         // PATCH only the supplied fields so unknown child keys on the location entry survive.
-        var locationPatch = new JsonObject();
+        var locationPatch = new ConfigValueMap();
         if (path is not null)
-            locationPatch["path"] = NullIfWhiteSpace(path);
+            locationPatch.Set("path", NullIfWhiteSpace(path));
         if (endpoint is not null)
-            locationPatch["endpoint"] = NullIfWhiteSpace(endpoint);
+            locationPatch.Set("endpoint", NullIfWhiteSpace(endpoint));
         if (description is not null)
-            locationPatch["description"] = NullIfWhiteSpace(description);
+            locationPatch.Set("description", NullIfWhiteSpace(description));
 
         var saveCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            root => RawConfigPath.TryPatchEntry(root, LocationsPath, matchedName, locationPatch, out var error)
+            document => document.TryPatchEntry(LocationsPath, matchedName, locationPatch, out var error)
                 ? null
                 : error,
             "before-locations-update",
@@ -370,7 +370,7 @@ internal sealed class LocationsCommand
 
         var saveCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            root => RawConfigPath.TryRemoveEntry(root, LocationsPath, matchedName, out var error) ? null : error,
+            document => document.TryRemoveEntry(LocationsPath, matchedName, out var error) ? null : error,
             "before-locations-update",
             verbose,
             cancellationToken);
@@ -513,21 +513,8 @@ internal sealed class LocationsCommand
         }
     }
 
-    /// <summary>Raw-document path of the declared gateway locations section.</summary>
+    /// <summary>Canonical path of the declared gateway locations section.</summary>
     private const string LocationsPath = "gateway.locations";
-
-    private static readonly JsonSerializerOptions LocationNodeOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
-    /// <summary>
-    /// Serializes a freshly-authored location entry to a raw JSON node. Only used when adding a
-    /// new entry; updates patch the on-disk entry so unknown child keys survive (#2057).
-    /// </summary>
-    private static JsonNode ToNode(LocationConfig location)
-        => JsonSerializer.SerializeToNode(location, LocationNodeOptions) ?? new JsonObject();
 
     private static bool ContainsDictionaryKey<TKey, TValue>(Dictionary<TKey, TValue> dictionary, TKey key)
         where TKey : notnull

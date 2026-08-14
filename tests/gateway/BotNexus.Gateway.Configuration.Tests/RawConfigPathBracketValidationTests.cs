@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 using Shouldly;
 
-namespace BotNexus.Cli.Tests;
+namespace BotNexus.Gateway.Configuration.Tests;
 
 /// <summary>
 /// Pins the bracket-balance rejection added for #2605 on the RAW document write path - the one

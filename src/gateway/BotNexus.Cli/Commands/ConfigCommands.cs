@@ -109,13 +109,9 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
             return 1;
         }
 
-        var node = coerced is null
-            ? null
-            : JsonSerializer.SerializeToNode(coerced, coerced.GetType(), CreateWriteJsonOptions());
-
         var saveCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            root => RawConfigPath.TrySet(root, keyPath, node, out var setError) ? null : setError,
+            document => document.TrySetFrom(keyPath, coerced, out var setError) ? null : setError,
             "before-config-set",
             verbose,
             cancellationToken);

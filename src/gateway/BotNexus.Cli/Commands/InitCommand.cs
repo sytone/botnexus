@@ -154,7 +154,7 @@ internal sealed class InitCommand
     private static async Task WriteConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken)
     {
         PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
-        var json = SerializeWithAgentDefaults(config);
+        var generated = ConfigDocument.CreateForFreshInstall(config);
         var fileSystem = new System.IO.Abstractions.FileSystem();
         // #2636 AC6: backups belong under the writable data directory BOTNEXUS_DATA_DIR
         // designates, exactly as PlatformAgentReconciliationService resolves it - not blindly
@@ -163,72 +163,16 @@ internal sealed class InitCommand
         var backupsDir = PlatformAgentReconciliationService.ResolveBackupDirectory(
             new BotNexusHome(fileSystem, homeRoot));
         var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
-        await writer.MutateAsync(root =>
-        {
-            var replacement = System.Text.Json.Nodes.JsonNode.Parse(json)?.AsObject() ?? new System.Text.Json.Nodes.JsonObject();
-            root.Clear();
-            foreach (var kvp in replacement)
-                root[kvp.Key] = kvp.Value?.DeepClone();
+        await writer.MutateDocumentAsync(
+            document => document.ReplaceWith(generated),
+            "before-init-write",
+            cancellationToken,
             // #2816: this is the one write in the product whose declared purpose is to discard the
             // existing document. Reaching here at all required either no config.json or an explicit
             // --force after the operator was told the file already exists, so the destructive-section
             // guard is told plainly that a whole-document replace is the intent rather than being
             // tripped by it. No other caller may use ConfigSectionGuard.EntireDocument.
-        }, "before-init-write", cancellationToken, ConfigSectionGuard.EntireDocument);
-    }
-
-    /// <summary>
-    /// Serializes the config to JSON and injects the <c>agents.defaults</c> block
-    /// into the agents dictionary, since <see cref="PlatformConfig.AgentDefaults" /> is
-    /// a computed/non-serialized property.
-    /// </summary>
-    private static string SerializeWithAgentDefaults(PlatformConfig config)
-    {
-        var opts = CreateWriteJsonOptions();
-        var json = JsonSerializer.Serialize(config, opts);
-
-        using var document = System.Text.Json.JsonDocument.Parse(json);
-        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
-
-        // Inject agents.defaults block if agents object exists
-        var agentsNode = root["agents"] as System.Text.Json.Nodes.JsonObject;
-        if (agentsNode is not null)
-        {
-            var defaultsBlock = new System.Text.Json.Nodes.JsonObject
-            {
-                ["memory"] = new System.Text.Json.Nodes.JsonObject
-                {
-                    ["enabled"] = true,
-                    ["indexing"] = "auto"
-                },
-                ["heartbeat"] = new System.Text.Json.Nodes.JsonObject
-                {
-                    ["enabled"] = true,
-                    ["intervalMinutes"] = 30,
-                    ["quietHours"] = new System.Text.Json.Nodes.JsonObject
-                    {
-                        ["enabled"] = true,
-                        ["start"] = "23:00",
-                        ["end"] = "07:00"
-                    }
-                }
-            };
-            // Insert defaults as the first key
-            var newAgents = new System.Text.Json.Nodes.JsonObject { ["defaults"] = defaultsBlock };
-            foreach (var kv in agentsNode)
-                newAgents[kv.Key] = kv.Value?.DeepClone();
-
-            // #2636: emit the bundled platform agents (Nexus Trailguide) as complete, editable
-            // entries produced by the same builder the startup reconciler uses. A fresh install
-            // must look finished in config.json without waiting for a startup pass, and the
-            // reconciler must then find nothing to do.
-            foreach (var kv in FreshInstallAgentDefaults.CreateBundledAgents())
-                newAgents[kv.Key] = kv.Value?.DeepClone();
-
-            root["agents"] = newAgents;
-        }
-
-        return root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            ConfigSectionGuard.EntireDocument);
     }
 
     private static JsonSerializerOptions CreateWriteJsonOptions() => new()

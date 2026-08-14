@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Commands;
@@ -43,15 +42,18 @@ public static class GatewayBindAddress
         "the portal UI, the SignalR hub, the agent REST API and the gateway admin endpoints";
 
     /// <summary>
-    /// Reads <c>gateway.listenUrl</c> from a raw config document, or null when absent. Operates on
-    /// the persisted JSON nodes rather than a bound configuration object so a doctor check reports
-    /// what is actually on disk rather than a defaulted value.
+    /// Reads <c>gateway.listenUrl</c> from a config document, or null when absent. Reads the
+    /// persisted value by canonical path rather than a bound configuration object, so a doctor
+    /// finding reports what is actually on disk rather than a defaulted value.
     /// </summary>
-    public static string? ReadListenUrl(JsonObject root)
-        => (root["gateway"] as JsonObject)?["listenUrl"] is JsonValue value
-            && value.TryGetValue<string>(out var url)
-            ? url
-            : null;
+    public static string? ReadListenUrl(ConfigDocument config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return config.TryGetString(ListenUrlPath, out var url) ? url : null;
+    }
+
+    /// <summary>The canonical path of the gateway listen URL.</summary>
+    internal const string ListenUrlPath = "gateway.listenUrl";
 
     /// <summary>
     /// Returns true when the listen URL binds every network interface rather than one specific

@@ -1,6 +1,6 @@
 using BotNexus.Cli.Commands.Doctor;
+using BotNexus.Gateway.Configuration;
 using Shouldly;
-using System.Text.Json.Nodes;
 
 namespace BotNexus.Cli.Tests.Commands;
 
@@ -20,8 +20,8 @@ public sealed class CompactionModelCheckTests
 {
     private const string ModelPath = "gateway.compaction.summarizationModel";
 
-    private static JsonObject AtBoundPath(string model)
-        => JsonNode.Parse($"{{\"gateway\":{{\"compaction\":{{\"summarizationModel\":\"{model}\"}}}}}}")!.AsObject();
+    private static ConfigDocument AtBoundPath(string model)
+        => ConfigDocument.Parse($"{{\"gateway\":{{\"compaction\":{{\"summarizationModel\":\"{model}\"}}}}}}");
 
     [Theory]
     [InlineData("claude-opus-4.6", true)]
@@ -41,7 +41,7 @@ public sealed class CompactionModelCheckTests
     [Fact]
     public void CompactionModelCheck_NotApplicable_WhenNoModelSet()
     {
-        var root = JsonNode.Parse("""{"gateway":{"compaction":{}}}""")!.AsObject();
+        var root = ConfigDocument.Parse("""{"gateway":{"compaction":{}}}""");
         var check = new CompactionModelCheck();
         check.IsApplicable(root).ShouldBeFalse();
     }
@@ -49,7 +49,7 @@ public sealed class CompactionModelCheckTests
     [Fact]
     public void CompactionModelMissingCheck_Applicable_WhenNoCompactionBlock()
     {
-        var root = JsonNode.Parse("""{"gateway":{}}""")!.AsObject();
+        var root = ConfigDocument.Parse("""{"gateway":{}}""");
         var check = new CompactionModelMissingCheck();
         check.IsApplicable(root).ShouldBeTrue();
     }
@@ -68,7 +68,8 @@ public sealed class CompactionModelCheckTests
         var root = AtBoundPath("claude-opus-4.6");
         var check = new CompactionModelCheck();
         check.Apply(root);
-        root["gateway"]!["compaction"]!["summarizationModel"]!.GetValue<string>().ShouldBe("claude-haiku-4.5");
+        root.TryGetString(ModelPath, out var updated).ShouldBeTrue();
+        updated.ShouldBe("claude-haiku-4.5");
     }
 
     // The two pins below are the #2764 regression itself, stated as behaviour: a root-level
@@ -77,7 +78,7 @@ public sealed class CompactionModelCheckTests
     [Fact]
     public void CompactionModelCheck_IgnoresInertRootLevelBlock()
     {
-        var root = JsonNode.Parse("""{"compaction":{"summarizationModel":"claude-opus-4.6"}}""")!.AsObject();
+        var root = ConfigDocument.Parse("""{"compaction":{"summarizationModel":"claude-opus-4.6"}}""");
 
         new CompactionModelCheck().IsApplicable(root)
             .ShouldBeFalse($"a root-level compaction block binds to nothing; only {ModelPath} is real configuration");
@@ -86,7 +87,7 @@ public sealed class CompactionModelCheckTests
     [Fact]
     public void CompactionModelMissingCheck_TreatsInertRootLevelBlockAsUnset()
     {
-        var root = JsonNode.Parse("""{"compaction":{"summarizationModel":"claude-haiku-4.5"}}""")!.AsObject();
+        var root = ConfigDocument.Parse("""{"compaction":{"summarizationModel":"claude-haiku-4.5"}}""");
 
         new CompactionModelMissingCheck().IsApplicable(root)
             .ShouldBeTrue($"the model is not configured at {ModelPath}, so the check must still fire");

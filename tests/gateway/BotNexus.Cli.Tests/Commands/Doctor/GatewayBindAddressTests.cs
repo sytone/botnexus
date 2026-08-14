@@ -1,6 +1,6 @@
-using System.Text.Json.Nodes;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Commands.Doctor;
+using BotNexus.Gateway.Configuration;
 using Shouldly;
 
 namespace BotNexus.Cli.Tests.Commands.Doctor;
@@ -55,15 +55,15 @@ public sealed class GatewayBindAddressTests
     [Fact]
     public void ReadListenUrl_ReturnsPersistedValue()
     {
-        var root = JsonNode.Parse("{\"gateway\":{\"listenUrl\":\"http://0.0.0.0:5005\"}}")!.AsObject();
+        var root = ConfigDocument.Parse("{\"gateway\":{\"listenUrl\":\"http://0.0.0.0:5005\"}}");
         GatewayBindAddress.ReadListenUrl(root).ShouldBe("http://0.0.0.0:5005");
     }
 
     [Fact]
     public void ReadListenUrl_ReturnsNull_WhenGatewayOrValueAbsent()
     {
-        GatewayBindAddress.ReadListenUrl(new JsonObject()).ShouldBeNull();
-        GatewayBindAddress.ReadListenUrl(JsonNode.Parse("{\"gateway\":{}}")!.AsObject()).ShouldBeNull();
+        GatewayBindAddress.ReadListenUrl(ConfigDocument.Empty()).ShouldBeNull();
+        GatewayBindAddress.ReadListenUrl(ConfigDocument.Parse("{\"gateway\":{}}")).ShouldBeNull();
     }
 }
 
@@ -73,8 +73,8 @@ public sealed class GatewayBindAddressTests
 /// </summary>
 public sealed class WildcardListenUrlAdvisoryTests
 {
-    private static JsonObject Config(string listenUrl)
-        => JsonNode.Parse($"{{\"gateway\":{{\"listenUrl\":\"{listenUrl}\"}}}}")!.AsObject();
+    private static ConfigDocument Config(string listenUrl)
+        => ConfigDocument.Parse($"{{\"gateway\":{{\"listenUrl\":\"{listenUrl}\"}}}}");
 
     [Fact]
     public void Advisory_Applicable_WhenListenUrlIsWildcard()
@@ -88,7 +88,7 @@ public sealed class WildcardListenUrlAdvisoryTests
 
     [Fact]
     public void Advisory_NotApplicable_WhenListenUrlAbsent()
-        => new WildcardListenUrlAdvisory().IsApplicable(new JsonObject()).ShouldBeFalse();
+        => new WildcardListenUrlAdvisory().IsApplicable(ConfigDocument.Empty()).ShouldBeFalse();
 
     /// <summary>
     /// AC4 requires the finding to name the exposed surface. A message that only says "wildcard"
