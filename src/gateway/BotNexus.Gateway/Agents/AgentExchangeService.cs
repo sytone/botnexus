@@ -129,10 +129,30 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
         var initiatorDescriptor = _registry.Get(request.InitiatorId)
             ?? throw new KeyNotFoundException($"Initiator agent '{request.InitiatorId}' is not registered.");
+        // #2878 target resolution, in strict precedence order:
+        //   1. exact agent id  - always wins, so no existing id-addressed call can change meaning;
+        //   2. cross-world reference parsing - attempted BEFORE the display-name fallback, so a
+        //      "world:agent" target keeps its federation behaviour unchanged;
+        //   3. unambiguous case-insensitive display name - resolved to the owning agent id.
+        // Resolution happens BEFORE the access-policy check below and rewrites request.TargetId, so
+        // the policy (and the call chain, budget, conversation and supervisor handle) all evaluate
+        // against the RESOLVED agent. Display-name addressing therefore cannot bypass a whitelist.
         var isLocalTarget = _registry.Contains(request.TargetId);
         var hasCrossWorldTarget = CrossWorldAgentReference.TryParse(request.TargetId, out var parsedCrossWorldTarget);
         if (!isLocalTarget && !hasCrossWorldTarget)
-            throw new KeyNotFoundException(BuildTargetResolutionFailureMessage(request.TargetId));
+        {
+            var displayNameMatches = FindByDisplayName(request.TargetId);
+            if (displayNameMatches.Count != 1)
+                throw new KeyNotFoundException(BuildTargetResolutionFailureMessage(request.TargetId, displayNameMatches));
+
+            var resolved = displayNameMatches[0];
+            _logger.LogInformation(
+                "Agent exchange target '{RequestedTarget}' resolved by display name to agent '{ResolvedTarget}'.",
+                request.TargetId.Value, resolved.AgentId.Value);
+            request = request with { TargetId = resolved.AgentId };
+            isLocalTarget = true;
+        }
+
         var targetDescriptor = isLocalTarget ? _registry.Get(request.TargetId) : null;
 
         if (!_exchangeOptions.Value.IsOpen)
@@ -277,29 +297,16 @@ public sealed class AgentExchangeService : IAgentExchangeService
     /// every agent, so the information needed to redirect the caller is in hand right here.
     /// </para>
     /// <para>
-    /// This is a DIAGNOSTIC only - it deliberately does not resolve a display name to an id, which
-    /// is a separate enhancement. An exchange addressed by display name still fails; it now fails
-    /// with the id to retry with. Ambiguity is reported as ambiguity rather than collapsed into an
-    /// arbitrary single choice, because silently picking one of two same-named agents would route a
-    /// conversation to the wrong peer.
+    /// Since #2878 a SINGLE display-name match no longer reaches this method - it resolves and the
+    /// exchange proceeds. This builder therefore handles only the two remaining failures: ambiguity
+    /// (two or more agents share the display name) and no match at all. Ambiguity is reported as
+    /// ambiguity rather than collapsed into an arbitrary single choice, because silently picking one
+    /// of two same-named agents would route a conversation to the wrong peer.
     /// </para>
     /// </remarks>
-    private string BuildTargetResolutionFailureMessage(AgentId targetId)
+    private static string BuildTargetResolutionFailureMessage(AgentId targetId, IReadOnlyList<AgentDescriptor> displayNameMatches)
     {
         var prefix = $"Target agent '{targetId}' is not registered.";
-
-        // Defensive against a registry stub that returns no collection: a diagnostic must never be
-        // the thing that throws instead of the diagnostic.
-        var displayNameMatches = (_registry.GetAll() ?? [])
-            .Where(d => string.Equals(d.DisplayName, targetId.Value, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        if (displayNameMatches.Count == 1)
-        {
-            var match = displayNameMatches[0];
-            return $"{prefix} Did you mean '{match.AgentId.Value}' (display name: {match.DisplayName})? "
-                + "agent_converse resolves targets by agent id, not display name.";
-        }
 
         if (displayNameMatches.Count > 1)
         {
@@ -307,12 +314,24 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 .Select(d => $"'{d.AgentId.Value}'")
                 .Order(StringComparer.Ordinal));
             return $"{prefix} Multiple registered agents have that display name: {candidates}. "
-                + "agent_converse resolves targets by agent id, not display name - specify one of those ids.";
+                + "agent_converse resolves an unambiguous display name, but this one is ambiguous - specify one of those ids.";
         }
 
         return $"{prefix} No registered agent has that id, and none has it as a display name either - "
             + "this is a target-resolution failure, not a policy denial. Call list_agents for the valid agent ids.";
     }
+
+    /// <summary>
+    /// Returns every registered agent whose <c>DisplayName</c> equals <paramref name="targetId"/>
+    /// case-insensitively (#2878).
+    /// </summary>
+    /// <remarks>
+    /// Defensive against a registry stub that returns no collection: target resolution must never be
+    /// the thing that throws instead of reporting a resolution failure.
+    /// </remarks>
+    private List<AgentDescriptor> FindByDisplayName(AgentId targetId) =>
+        [.. (_registry.GetAll() ?? [])
+            .Where(d => string.Equals(d.DisplayName, targetId.Value, StringComparison.OrdinalIgnoreCase))];
 
     private static IReadOnlyList<AgentId> NormalizeChain(IReadOnlyList<AgentId> chain, AgentId initiatorId)
     {

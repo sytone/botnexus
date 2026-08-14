@@ -20,9 +20,10 @@ namespace BotNexus.Gateway.Tests.Agents;
 /// rational next step was to stop trying rather than to correct the identifier.
 /// </summary>
 /// <remarks>
-/// Scope is the DIAGNOSTIC only. Display-name addressing is deliberately still a failure here; the
-/// actual resolution of a display name to an id is a separate enhancement. These tests pin the
-/// message text so a future edit cannot silently drop the hint (AC5).
+/// Scope is the DIAGNOSTIC. Since #2878 an UNAMBIGUOUS display name resolves rather than failing,
+/// so the former "Did you mean" hint case is now a success case (asserted below, and in
+/// <see cref="AgentExchangeDisplayNameResolutionTests"/>). The remaining failure shapes - ambiguity
+/// and no match at all - still pin their message text so a future edit cannot silently drop it.
 /// </remarks>
 public sealed class AgentExchangeTargetResolutionDiagnosticTests
 {
@@ -68,22 +69,24 @@ public sealed class AgentExchangeTargetResolutionDiagnosticTests
         MaxTurns = 1
     };
 
-    /// <summary>AC1: exactly one display-name match names both the correct id and the display name.</summary>
+    /// <summary>
+    /// #2878 supersedes the former AC1 hint: exactly one display-name match no longer produces a
+    /// "Did you mean" diagnostic, it RESOLVES. Asserted here as the absence of the resolution
+    /// failure so the two issues' contracts cannot silently diverge.
+    /// </summary>
     [Fact]
-    public async Task ConverseAsync_UnknownIdMatchingOneDisplayName_NamesTheCorrectAgentId()
+    public async Task ConverseAsync_UnknownIdMatchingOneDisplayName_ResolvesInsteadOfThrowingDiagnostic()
     {
-        var (service, sessions, conversations, supervisor) = Build(
+        var (service, _, _, _) = Build(
             Agent("ub-warning-cleanup", "Sentinel"),
             Agent("keel", "Keel"));
 
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => service.ConverseAsync(RequestTo("sentinel")));
+        // The strict session/conversation mocks make the call fail LATER, which is the evidence that
+        // resolution succeeded rather than being rejected at the target-resolution throw site.
+        var thrown = await Record.ExceptionAsync(() => service.ConverseAsync(RequestTo("sentinel")));
 
-        Assert.Contains("Target agent 'sentinel' is not registered.", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("Did you mean 'ub-warning-cleanup' (display name: Sentinel)?", ex.Message, StringComparison.Ordinal);
-
-        sessions.VerifyNoOtherCalls();
-        conversations.VerifyNoOtherCalls();
-        supervisor.VerifyNoOtherCalls();
+        Assert.NotNull(thrown);
+        Assert.IsNotType<KeyNotFoundException>(thrown);
     }
 
     /// <summary>

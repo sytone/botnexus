@@ -44,7 +44,7 @@ public sealed class AgentConverseTool(
             {
               "type": "object",
               "properties": {
-                "agentId": { "type": "string", "description": "The target agent's ID. Must be an agent whose 'canConverse' is true in list_agents output; otherwise the call is denied by policy." },
+                "agentId": { "type": "string", "description": "The target agent's ID, or its display name when exactly one registered agent has that name (case-insensitive). An exact ID always wins over a display-name match, and a display name shared by two or more agents is rejected as ambiguous rather than guessed. Must be an agent whose 'canConverse' is true in list_agents output; otherwise the call is denied by policy." },
                 "message": { "type": "string", "description": "Opening message to send." },
                 "objective": { "type": "string", "description": "What you want to achieve." },
                 "timeoutSeconds": {

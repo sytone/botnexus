@@ -6,8 +6,32 @@ BotNexus supports direct agent-to-agent communication through an exchange system
 
 Agents can converse with each other using the `agent_converse` tool or via scheduled cron jobs. Communication is governed by:
 
-1. **Access Policy** — who can talk to whom
-2. **Budget System** — daily caps, loop detection, and cooldown enforcement
+1. **Target Resolution** — how the supplied target string maps to an agent
+2. **Access Policy** — who can talk to whom
+3. **Budget System** — daily caps, loop detection, and cooldown enforcement
+
+## Target Resolution
+
+The `agentId` argument of `agent_converse` is resolved in strict precedence order:
+
+1. **Exact agent id** — always wins, so an id-addressed call can never change meaning.
+2. **Cross-world reference** — a `world:agent` target is routed to the peer world.
+3. **Display name** — a case-insensitive match against every registered agent's `displayName`.
+
+Display-name resolution exists because display names drift from ids as a matter of course: an agent
+created for one purpose and later renamed keeps its original id forever, since ids key workspaces,
+cron jobs and session history. Addressing the agent shown everywhere as *Sentinel* should not require
+knowing that its id is `ub-warning-cleanup`.
+
+Resolution rules:
+
+- **Exactly one display-name match** — resolves to that agent and the exchange proceeds.
+- **Two or more matches** — fails with an ambiguity error listing every candidate id. The target is
+  never guessed, because dispatching to the wrong same-named peer is worse than failing.
+- **No match** — fails as a target-resolution failure, explicitly distinguished from a policy denial.
+
+The access-policy check below runs against the **resolved** agent, so addressing an agent by display
+name is never a way around a `whitelist` restriction.
 
 ## Access Policies
 
