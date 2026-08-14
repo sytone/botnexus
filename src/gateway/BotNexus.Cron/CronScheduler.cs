@@ -435,22 +435,32 @@ public sealed class CronScheduler(
                 _logger.LogInformation("Cron job executed: {JobName} ({JobId}) action={ActionType} trigger={TriggerType}",
                     jobForRun.Name, jobForRun.Id, jobForRun.ActionType, triggerType);
 
-                // #2985: the terminal outcome of a completed action is no longer unconditionally
-                // Ok. For an execution-class job whose action reported ZERO tool invocations, the
-                // run did nothing despite completing, so it terminates as no_tool_calls with a
-                // reason naming the condition. Every other case - not execution-class, or a count
-                // that is null (action reports none) or positive - maps to Ok exactly as before.
-                var zeroToolCallOutcome = DetectZeroToolCallOutcome(jobForRun, context);
-                var terminalStatus = zeroToolCallOutcome is null ? CronRunStatus.Ok : CronRunStatus.NoToolCalls;
+                // #2985 + #3161: the terminal outcome of a completed action is no longer
+                // unconditionally Ok. Two independent conditions can demote it - an execution-class
+                // job that made zero tool calls, and a run whose primary delivery failed - so the
+                // decision lives in ONE resolver rather than being open-coded here, where a third
+                // condition would inevitably be bolted on with a different precedence.
+                var outcome = ResolveTerminalOutcome(jobForRun, context);
 
-                if (zeroToolCallOutcome is not null)
+                if (outcome.Status is CronRunStatus.NoToolCalls)
                 {
                     _logger.LogWarning(
                         "Cron job '{JobId}' ({JobName}) completed with zero tool invocations and is marked execution-class; recording status '{Status}'.",
                         jobForRun.Id, jobForRun.Name, CronRunStatus.NoToolCalls);
                 }
+                else if (outcome.Status is CronRunStatus.DeliveryFailed)
+                {
+                    // #3161: the loudest case in the whole method. The turn worked; the output went
+                    // nowhere. Pre-#3161 this logged nothing at all and recorded 'ok'.
+                    _logger.LogError(
+                        "Cron job '{JobId}' ({JobName}) completed but its primary delivery failed; recording status '{Status}'. Delivery error: {DeliveryError}",
+                        jobForRun.Id, jobForRun.Name, CronRunStatus.DeliveryFailed, context.DeliveryError);
+                }
 
-                await _cronStore.RecordRunCompleteAsync(run.Id, terminalStatus, zeroToolCallOutcome, sessionId: context.SessionId, ct: ct).ConfigureAwait(false);
+                var terminalStatus = outcome.Status;
+                var terminalError = outcome.Error;
+
+                await _cronStore.RecordRunCompleteAsync(run.Id, terminalStatus, terminalError, sessionId: context.SessionId, ct: ct).ConfigureAwait(false);
 
                 // Pinback via CAS: if the trigger created a new conversation for this run and the job
                 // has no pinned ConversationId yet, atomically stamp ours onto the job. If another
@@ -458,19 +468,28 @@ public sealed class CronScheduler(
                 var winningConversationId = await TryPinConversationAsync(job.Id, jobForRun, context, scope.ServiceProvider, ct)
                     .ConfigureAwait(false);
 
-                await FinalizeRunAsync(job.Id, jobForRun, triggeredAt, terminalStatus, error: zeroToolCallOutcome,
+                await FinalizeRunAsync(job.Id, jobForRun, triggeredAt, terminalStatus, error: terminalError,
                     conversationId: winningConversationId, ct: ct).ConfigureAwait(false);
 
-                if (zeroToolCallOutcome is not null)
+                if (terminalError is not null)
                 {
                     // Reuse the EXISTING failure-alert path (#2557) rather than adding a parallel
                     // notification channel: the whole point of #2985 is that run status is the
                     // input to alerting, so making the outcome non-success is what makes alerting
-                    // possible at all. Delivery remains best-effort and never fails the run.
-                    await MaybeSendFailureAlertAsync(jobForRun, triggeredAt, zeroToolCallOutcome, ct).ConfigureAwait(false);
+                    // possible at all. #3161 extends the same reasoning to delivery failure.
+                    var alertFailure = await MaybeSendFailureAlertAsync(jobForRun, triggeredAt, terminalError, ct).ConfigureAwait(false);
+
+                    // #3161 AC3: fail CLOSED. An alert that could not be delivered used to leave a
+                    // single Error log line and nothing else - no row, no query, nothing an operator
+                    // would ever see. Fold it into the run's recorded error so the double failure is
+                    // discoverable from run history. The run's STATUS is deliberately left alone,
+                    // preserving the #2557 AC7 containment that alert delivery never alters the run's
+                    // own outcome.
+                    terminalError = await RecordAlertDeliveryFailureAsync(
+                        run.Id, job.Id, triggeredAt, terminalStatus, terminalError, terminalError, alertFailure, ct).ConfigureAwait(false);
                 }
 
-                return run with { Status = terminalStatus, CompletedAt = DateTimeOffset.UtcNow, Error = zeroToolCallOutcome, SessionId = context.SessionId };
+                return run with { Status = terminalStatus, CompletedAt = DateTimeOffset.UtcNow, Error = terminalError, SessionId = context.SessionId };
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -496,8 +515,13 @@ public sealed class CronScheduler(
             _logger.LogError(ex, "Cron job execution failed. JobId: {JobId}, ActionType: {ActionType}", job.Id, job.ActionType);
             await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, ex.Message, ct: ct).ConfigureAwait(false);
             await FinalizeRunAsync(job.Id, job, triggeredAt, CronRunStatus.Error, ex.ToString(), ct: ct).ConfigureAwait(false);
-            await MaybeSendFailureAlertAsync(job, triggeredAt, ex.Message, ct).ConfigureAwait(false);
-            return run with { Status = CronRunStatus.Error, CompletedAt = DateTimeOffset.UtcNow, Error = ex.Message };
+            var errorPathAlertFailure = await MaybeSendFailureAlertAsync(job, triggeredAt, ex.Message, ct).ConfigureAwait(false);
+            // #3161 AC3: same fail-closed recording on the error path. The containment seam is
+            // shared, so recording it for one terminal outcome only would leave the commonest
+            // failure shape - a broken job whose alert channel is ALSO broken - still invisible.
+            var recordedError = await RecordAlertDeliveryFailureAsync(
+                run.Id, job.Id, triggeredAt, CronRunStatus.Error, ex.Message, ex.ToString(), errorPathAlertFailure, ct).ConfigureAwait(false);
+            return run with { Status = CronRunStatus.Error, CompletedAt = DateTimeOffset.UtcNow, Error = recordedError };
         }
         finally
         {
@@ -603,7 +627,12 @@ public sealed class CronScheduler(
     /// existed for exactly this purpose.
     /// </para>
     /// </remarks>
-    private async Task MaybeSendFailureAlertAsync(
+    /// <returns>
+    /// <c>null</c> when the alert was delivered, skipped, or not applicable; otherwise the
+    /// alert-delivery failure text, so the caller can fail closed and record it (#3161 AC3). This
+    /// method still never throws.
+    /// </returns>
+    private async Task<string?> MaybeSendFailureAlertAsync(
         CronJob job,
         DateTimeOffset scheduledRunTime,
         string? error,
@@ -615,19 +644,19 @@ public sealed class CronScheduler(
             // a job deleted mid-run does not alert at all.
             var latest = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false);
             if (latest is null || !latest.FailureAlertsEnabled)
-                return;
+                return null;
 
             if (latest.FailureAlertConversationId is not { } conversationId)
             {
                 _logger.LogWarning(
                     "Cron failure alert skipped: job '{JobId}' has alerts enabled but no FailureAlertConversationId configured.",
                     job.Id);
-                return;
+                return null;
             }
 
             var consecutiveErrors = await CountConsecutiveErrorsAsync(job.Id, ct).ConfigureAwait(false);
             if (!ShouldAlertForStreakPosition(consecutiveErrors))
-                return;
+                return null;
 
             using var scope = _scopeFactory.CreateScope();
             var sink = scope.ServiceProvider.GetService<ICronFailureAlertSink>();
@@ -636,7 +665,7 @@ public sealed class CronScheduler(
                 _logger.LogWarning(
                     "Cron failure alert skipped: no ICronFailureAlertSink is registered (job '{JobId}').",
                     job.Id);
-                return;
+                return null;
             }
 
             var redactor = scope.ServiceProvider.GetService<ISecretRedactor>();
@@ -656,6 +685,7 @@ public sealed class CronScheduler(
             _logger.LogInformation(
                 "Cron failure alert delivered for job '{JobId}' (consecutiveErrors={ConsecutiveErrors}).",
                 latest.Id, consecutiveErrors);
+            return null;
         }
         catch (Exception alertEx)
         {
@@ -664,8 +694,82 @@ public sealed class CronScheduler(
                 alertEx,
                 "Cron failure alert delivery failed for job '{JobId}'. The cron run itself is unaffected.",
                 job.Id);
+            // #3161 AC3: the containment is preserved exactly - nothing is rethrown - but the
+            // failure is no longer *discarded*. It is returned so the caller can fail CLOSED and
+            // record it against the run, because a single Error log line is not an observable
+            // outcome: nothing queries it and no operator reads it.
+            return alertEx.Message;
         }
     }
+
+    /// <summary>
+    /// #3161 AC3: folds an alert-delivery failure into the run's recorded error so the double
+    /// failure (the run failed AND nobody could be told) is discoverable from run history rather
+    /// than existing only as a log line. Returns the error text now recorded on the run.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The run's <b>status</b> is deliberately left untouched and is re-written verbatim. That is
+    /// the #2557 AC7 containment this issue's AC5 requires preserving: a broken alert channel must
+    /// never convert one failure into a second, different one. Only the error text grows.
+    /// </para>
+    /// <para>
+    /// This helper is itself fully contained. If the store write fails we are already deep in a
+    /// double-failure path; throwing here would turn an observability improvement into a new way
+    /// for a cron run to blow up.
+    /// </para>
+    /// </remarks>
+    /// <param name="runId">The run whose history row is amended.</param>
+    /// <param name="jobId">The job whose <c>LastRunError</c> is amended.</param>
+    /// <param name="triggeredAt">The run's trigger instant, re-stamped unchanged.</param>
+    /// <param name="terminalStatus">The already-decided terminal status, re-written unchanged.</param>
+    /// <param name="runError">Error text already recorded on the run-history row.</param>
+    /// <param name="finalizationError">Error text already recorded as the job's <c>LastRunError</c>.</param>
+    /// <param name="alertFailure">The alert-delivery failure, or <c>null</c> when delivery was fine.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>The (possibly amended) error text now recorded on the run.</returns>
+    private async Task<string?> RecordAlertDeliveryFailureAsync(
+        RunId runId,
+        JobId jobId,
+        DateTimeOffset triggeredAt,
+        string terminalStatus,
+        string? runError,
+        string? finalizationError,
+        string? alertFailure,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(alertFailure))
+            return runError;
+
+        var suffix = $"{AlertDeliveryFailurePrefix}{alertFailure}";
+        var amendedRunError = Append(runError, suffix);
+        var amendedFinalizationError = Append(finalizationError, suffix);
+
+        try
+        {
+            await _cronStore.RecordRunCompleteAsync(runId, terminalStatus, amendedRunError, ct: ct).ConfigureAwait(false);
+            await _cronStore.RecordRunFinalizationAsync(jobId, triggeredAt, terminalStatus, amendedFinalizationError, ct).ConfigureAwait(false);
+        }
+        catch (Exception recordEx)
+        {
+            _logger.LogError(
+                recordEx,
+                "Failed to record the cron alert-delivery failure against run '{RunId}' of job '{JobId}'.",
+                runId, jobId);
+        }
+
+        return amendedRunError;
+
+        static string Append(string? existing, string addition)
+            => string.IsNullOrWhiteSpace(existing) ? addition : $"{existing} {addition}";
+    }
+
+    /// <summary>
+    /// Marker prefixed to the recorded error when a failure alert could not be delivered (#3161
+    /// AC3). Held as a constant so the fail-closed test and the producer cannot drift apart, and so
+    /// an operator scanning run history has one exact string to search for.
+    /// </summary>
+    internal const string AlertDeliveryFailurePrefix = "Failure alert could not be delivered: ";
 
     /// <summary>
     /// Length of the current unbroken error streak, derived from the newest run-history rows.
@@ -701,7 +805,12 @@ public sealed class CronScheduler(
     /// </summary>
     private static bool IsAlertableFailureStatus(string status)
         => string.Equals(status, CronRunStatus.Error, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(status, CronRunStatus.NoToolCalls, StringComparison.OrdinalIgnoreCase);
+            || string.Equals(status, CronRunStatus.NoToolCalls, StringComparison.OrdinalIgnoreCase)
+            // #3161: a delivery failure is a non-success outcome of exactly the same standing. Left
+            // out, the streak would restart at 1 on every undelivered run, so the power-of-two
+            // backoff would alert on EVERY run of a job whose destination is permanently gone -
+            // rebuilding the noise #2557's backoff exists to prevent.
+            || string.Equals(status, CronRunStatus.DeliveryFailed, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Backoff schedule (AC5): alert on the FIRST failure of a streak, then on positions that are
@@ -723,6 +832,45 @@ public sealed class CronScheduler(
     /// more conservative.
     /// </summary>
     private const int FailureAlertHistoryWindow = 64;
+
+    /// <summary>
+    /// THE single decision point for a completed action's terminal outcome (#2985 + #3161).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two independent conditions can demote a completed run, and their <b>precedence is
+    /// deliberate</b>: a delivery failure outranks the zero-tool-call outcome. If the output never
+    /// reached its destination, that is the operator's actionable problem and the thing they must
+    /// fix; "and it also made no tool calls" is a downstream detail. Recording the zero-tool status
+    /// instead would point the operator at the agent when the conversation is what is broken.
+    /// </para>
+    /// <para>
+    /// Kept as one resolver rather than two open-coded branches at the call site so a future third
+    /// condition has an obvious home and cannot be bolted on with an accidentally different
+    /// precedence.
+    /// </para>
+    /// </remarks>
+    /// <param name="job">The job as re-read inside the per-job lock.</param>
+    /// <param name="context">The completed execution context carrying the action's reports.</param>
+    /// <returns>The terminal status and its recorded reason (<c>null</c> reason for a clean success).</returns>
+    private static (string Status, string? Error) ResolveTerminalOutcome(CronJob job, CronExecutionContext context)
+    {
+        if (!string.IsNullOrWhiteSpace(context.DeliveryError))
+            return (CronRunStatus.DeliveryFailed, $"{DeliveryFailureReasonPrefix}{context.DeliveryError}");
+
+        var zeroToolCallOutcome = DetectZeroToolCallOutcome(job, context);
+        return zeroToolCallOutcome is null
+            ? (CronRunStatus.Ok, null)
+            : (CronRunStatus.NoToolCalls, zeroToolCallOutcome);
+    }
+
+    /// <summary>
+    /// Prefix on the reason recorded for a <see cref="CronRunStatus.DeliveryFailed"/> run (#3161
+    /// AC1: the recorded reason must name the condition). A constant so the test that pins the
+    /// clause and the producer cannot drift apart.
+    /// </summary>
+    internal const string DeliveryFailureReasonPrefix =
+        "Cron run completed but its primary delivery failed - the output reached nobody: ";
 
     /// <summary>
     /// #2985 clause 1: decides whether a completed action must terminate as

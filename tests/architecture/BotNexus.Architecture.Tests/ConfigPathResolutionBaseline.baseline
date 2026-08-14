@@ -1,0 +1,15 @@
+# Config-path resolution baseline (#2888) - captured 2026-08-13.
+#
+# One entry per "<repo-relative file>|<config path literal>" that is named by a type OUTSIDE
+# BotNexus.Gateway.Configuration and that IConfigPathResolver cannot resolve against PlatformConfig.
+#
+# THIS LIST MAY ONLY SHRINK. Route the consumer through the path the binder actually reads and
+# delete its line, then lower ExpectedBaselineCount in
+# ConfigPathResolutionFenceArchitectureTests to match. Never add an entry to silence a new
+# violation - that is precisely the drift this fence exists to stop, and Baseline_DoesNotGrow
+# will fail if you try. An entry that no longer corresponds to a live violation is also a
+# failure (Baseline_ContainsNoStaleEntries), so the file cannot rot into a permanent allow-list.
+#
+# The file is intentionally empty of entries: at capture time every config-path literal outside
+# the configuration project resolved. The mechanism ships anyway, because the alternative is
+# inventing it under time pressure the first time a genuine exception appears.

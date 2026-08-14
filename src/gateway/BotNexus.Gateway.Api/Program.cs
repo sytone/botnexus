@@ -111,7 +111,17 @@ else if (File.Exists(resolvedConfigPath))
 PlatformConfig startupPlatformConfig;
 try
 {
-    startupPlatformConfig = PlatformConfigLoader.Load(resolvedConfigPath, validateOnLoad: false);
+    // #3180: read through the cutover seam rather than straight off disk, so
+    // ConfigStoreAuthoritative actually changes what the gateway loads. The source is composed by
+    // hand because this runs BEFORE the service provider is built - the DI registration in
+    // GatewayServiceCollectionExtensions covers every later resolve of IConfigDocumentSource.
+    //
+    // With the flag off (the default) the source reads the file and never opens the store, so this
+    // stays byte-identical to the previous PlatformConfigLoader.Load call. With it on, any store
+    // failure falls back to the file rather than failing startup.
+    startupPlatformConfig = BotNexus.Gateway.Configuration.Store.ConfigStoreStartupLoader.Load(
+        resolvedConfigPath,
+        validateOnLoad: false);
 }
 catch (Exception ex) when (ex is Microsoft.Extensions.Options.OptionsValidationException or System.Text.Json.JsonException)
 {

@@ -794,7 +794,7 @@ Retrieves execution history for one job, or recent runs across every job the cal
 - `action` = `"history"`
 - `jobId`: Job identifier (**optional**). Omit it to query across jobs.
 - `limit`: Maximum entries to return (1–100, default: 20)
-- `failedOnly`: Return only runs that did not succeed - `error`, `timed_out`, `no_tool_calls`, and `missed` (optional; default `false`)
+- `failedOnly`: Return only runs that did not succeed - `error`, `timed_out`, `no_tool_calls`, `delivery_failed`, and `missed` (optional; default `false`)
 
 **Example - one job:**
 ```json
@@ -1177,6 +1177,63 @@ Two conditions must both hold, and each guards a distinct way of getting this wr
    the platform would be classified as a do-nothing run.
 
 A run that invokes one or more tools continues to record `ok` exactly as before.
+
+## 11b. Delivery failure (`delivery_failed`)
+
+A cron run has two halves: the action does the work, and that work is **delivered** to the job's
+destination conversation. Before #3161 only the first half decided the run status, so a run whose
+output reached nobody was recorded as `ok` with a `null` error -- byte-identical to a run that
+delivered perfectly. A destination that had been archived or deleted therefore produced an unbroken
+streak of successful-looking runs indefinitely, and the consecutive-error backoff could not help
+because no error was ever recorded.
+
+### The `delivery_failed` outcome
+
+`delivery_failed` is a **terminal, non-success** run status alongside `ok`, `error`, `timed_out`,
+and `no_tool_calls`:
+
+| Property | Behaviour |
+| --- | --- |
+| Run history | Written as a normal terminal row, with an `error` reason naming the delivery failure and quoting the underlying cause. Not `null`. |
+| `lastRunStatus` | Set on the job, so the portal's run-status badge shows the run did not succeed. |
+| Failure alerts | Participates in the existing `failureAlertConversationId` path with the same power-of-two backoff. There is deliberately **no** second notification channel. |
+| Streak counting | Counts toward the alert streak alongside `error` and `no_tool_calls`, so a job whose destination is permanently gone does not alert on every single run. |
+| Retention | Purged by `PurgeRunsOlderThanAsync` like any other terminal status. |
+| `failedOnly` history | Included in the `cron` tool's failed-only view. |
+
+It is a **separate status rather than a reuse of `error`** because the two demand different operator
+responses: `error` means the job is broken, `delivery_failed` means the job works and its
+*destination* is broken. Collapsing them would send an operator debugging a healthy job.
+
+### When `delivery_failed` is recorded
+
+Only when an action reported a delivery failure. Today that is the `agent-prompt` path, when the
+job's pinned destination conversation no longer resolves: the run still executes and its output
+still lands somewhere (a freshly created conversation, which the scheduler's CAS then reconciles),
+but because that is not where the operator is reading, the run is recorded as undelivered rather
+than as a success.
+
+An action that never performs a conversation delivery at all -- `command` and `webhook` have no
+delivery concept -- reports nothing, and that silence is *not applicable*, never "delivery failed".
+A silent action can never reach this status.
+
+When both conditions apply to one run, **`delivery_failed` outranks `no_tool_calls`**: if the output
+reached nobody, that is the actionable problem to fix first.
+
+### Fail-closed when the alert itself cannot be delivered
+
+Alert delivery still **never** fails or alters a cron run -- a broken alert channel must not convert
+one failure into a second, different one. But it is no longer silently discarded either. When the
+failure alert cannot be delivered and no alternate destination is configured, the reason is appended
+to the run's recorded error (and to the job's `lastRunError`) behind the marker:
+
+```text
+Failure alert could not be delivered: <reason>
+```
+
+The run's *status* is left exactly as it was decided. Only the error text grows. This makes the
+double failure -- the run failed **and** nobody could be told -- discoverable from run history
+instead of existing only as one log line that nothing queries and no operator reads.
 
 ## 12. Observability
 
