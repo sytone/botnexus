@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -21,14 +21,14 @@ public interface IConfigAdvisory
     /// <summary>Stable identifier used in output and machine-readable reporting.</summary>
     string Id { get; }
 
-    /// <summary>Returns true when this advisory applies to the given raw config document.</summary>
-    bool IsApplicable(JsonObject root);
+    /// <summary>Returns true when this advisory applies to the given config document.</summary>
+    bool IsApplicable(ConfigDocument config);
 
     /// <summary>
     /// The finding text shown to the operator. Must name the concrete exposure or risk, not merely
     /// state that a setting has a particular value.
     /// </summary>
-    string Describe(JsonObject root);
+    string Describe(ConfigDocument config);
 
     /// <summary>What the operator can do about it, if they want to.</summary>
     string Remediation { get; }
@@ -52,12 +52,12 @@ public sealed class WildcardListenUrlAdvisory : IConfigAdvisory
     public string Id => "gateway-wildcard-bind";
 
     /// <inheritdoc />
-    public bool IsApplicable(JsonObject root)
-        => GatewayBindAddress.IsWildcard(GatewayBindAddress.ReadListenUrl(root));
+    public bool IsApplicable(ConfigDocument config)
+        => GatewayBindAddress.IsWildcard(GatewayBindAddress.ReadListenUrl(config));
 
     /// <inheritdoc />
-    public string Describe(JsonObject root)
-        => $"gateway.listenUrl is '{GatewayBindAddress.ReadListenUrl(root)}' - a wildcard bind. "
+    public string Describe(ConfigDocument config)
+        => $"gateway.listenUrl is '{GatewayBindAddress.ReadListenUrl(config)}' - a wildcard bind. "
            + $"Every network this host can reach can talk to {GatewayBindAddress.ExposedSurfaceDescription}.";
 
     /// <inheritdoc />

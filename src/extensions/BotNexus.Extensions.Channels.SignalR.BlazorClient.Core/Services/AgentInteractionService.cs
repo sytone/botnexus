@@ -61,51 +61,43 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     // ── Messaging ─────────────────────────────────────────────────────────
 
-    public Task SendMessageAsync(string agentId, string content)
-        => SendMessageAsync(agentId, content, []);
+    public Task SendMessageAsync(string agentId, string conversationId, string content)
+        => SendMessageAsync(agentId, conversationId, content, []);
 
     /// <inheritdoc />
-    public async Task SendMessageAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments)
+    public async Task SendMessageAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments)
     {
+        // #3063: the conversation is supplied by the caller, never re-derived from ambient state and
+        // never created here. A caller that has no conversation yet must create one first, so a send
+        // can no longer materialise a conversation as an invisible side effect.
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+
         var agent = _store.GetAgent(agentId);
         if (agent is null) return;
 
-        // Ensure we have an active conversation
-        if (agent.ActiveConversationId is null)
-        {
-            var convId = await CreateConversationAsync(agentId, title: null, select: true);
-            if (convId is null)
-            {
-                AppendError(agentId, "Failed to create conversation before sending.");
-                return;
-            }
-            agent = _store.GetAgent(agentId)!;
-        }
-
-        var convIdNow = agent.ActiveConversationId!;
-        var conv = _store.GetConversation(convIdNow);
+        var conv = agent.Conversations.GetValueOrDefault(conversationId);
         if (conv is null) return;
 
         // Route the local user echo through the single append path so every call site
         // (send, steer, redirect) adds the user message and notifies identically.
-        AppendUserMessage(agentId, content);
+        AppendTo(conv, "User", content);
 
         try
         {
             // Always pass the conversation ID — the router handles direct lookup without binding scan.
             // Removed the IsDefault special-case that previously caused duplicate thread bindings and double fan-out.
             var result = attachments.Count == 0
-                ? await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, convIdNow)
+                ? await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, conversationId)
                 : await _hub.SendMessageWithMediaAsync(agentId, agent.ChannelType ?? "signalr", content,
-                    attachments.Select(ToContentPart).ToArray(), convIdNow);
-            _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: convIdNow);
+                    attachments.Select(ToContentPart).ToArray(), conversationId);
+            _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: conversationId);
 
             // Refresh conversation so ActiveSessionId is current
             await RefreshConversationsForAgentAsync(agentId);
         }
         catch (Exception ex)
         {
-            AppendError(agentId, $"Send failed: {ex.Message}");
+            AppendTo(conv, "Error", $"Send failed: {ex.Message}");
         }
     }
 
@@ -1247,6 +1239,18 @@ public sealed class AgentInteractionService : IAgentInteractionService
         if (convId is null || agent!.Conversations.GetValueOrDefault(convId) is not { } conv) return;
 
         conv.AppendMessage(new ChatMessage("User", content, DateTimeOffset.UtcNow));
+        _store.NotifyChanged();
+    }
+
+    /// <summary>
+    /// Appends a locally-rendered row to an EXPLICITLY named conversation (#3063). The ambient
+    /// <see cref="AppendUserMessage"/>/<see cref="AppendError"/> pair resolve their target through
+    /// <c>ActiveConversationId</c>; the send path knows its conversation and must not consult
+    /// ambient state to echo into it.
+    /// </summary>
+    private void AppendTo(ConversationState conversation, string role, string content)
+    {
+        conversation.AppendMessage(new ChatMessage(role, content, DateTimeOffset.UtcNow));
         _store.NotifyChanged();
     }
 

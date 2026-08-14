@@ -144,6 +144,82 @@ local ONNX, a hosted service, or a test double — can be supplied along with th
 When no generator is supplied the store uses `MemoryEmbeddingService.Disabled`, which is
 the supported degraded mode rather than an error condition.
 
+## Configuring a hosted embeddings endpoint
+
+A provider may **optionally** implement `IEmbeddingProvider`, the embeddings capability:
+
+```csharp
+public interface IEmbeddingProvider
+{
+    string ProviderKey { get; }
+    IReadOnlyList<EmbeddingModelDescriptor> Models { get; }
+    Task<float[]?> EmbedAsync(string modelId, string text, CancellationToken ct = default);
+}
+```
+
+It is deliberately **separate** from `IApiProvider`. Chat completion and embeddings are
+different endpoints with different model catalogues, and most providers serve only the
+former. A provider that does not implement `IEmbeddingProvider` resolves as *absent* — never
+as an error — and continues to work unchanged.
+
+`OpenAICompatEmbeddingProvider` covers every endpoint speaking the OpenAI
+`POST {baseUrl}/embeddings` shape: Ollama, OpenAI, Azure OpenAI and friends differ only in
+`baseUrl` and bearer token. `EmbeddingProviderGenerator` adapts the selected capability to the
+`IEmbeddingGenerator` seam above, and composition wires the result into the memory store. No
+project reference runs from `BotNexus.Memory` into the provider stack in either direction —
+both sides meet only at `Microsoft.Extensions.AI`.
+
+### Configuration
+
+```json
+{
+  "gateway": {
+    "memoryEmbeddings": {
+      "enabled": true,
+      "provider": "ollama",
+      "model": "nomic-embed-text",
+      "dimensions": 768,
+      "baseUrl": "http://localhost:11434/v1",
+      "apiKey": null
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `enabled` | Off by default. Enabling it sends memory content to the configured endpoint. |
+| `provider` | Provider key the embeddings capability is registered under. |
+| `model` | Model identifier as the endpoint expects it. |
+| `dimensions` | Declared vector width. A response of a different width is discarded. |
+| `baseUrl` | Endpoint base URL; `/embeddings` is appended. |
+| `apiKey` | Optional bearer token. Omit for a local endpoint that wants none. |
+
+The section being **absent, `enabled: false`, or incompletely filled in** all resolve to
+`MemoryEmbeddingService.Disabled` — the lexical-only behaviour described under
+[Degradation](#degradation). A half-configured section degrades rather than throwing, so an
+operator mid-way through setup gets a working gateway rather than one that refuses to boot.
+
+### Fingerprint derivation for hosted endpoints
+
+A local model artefact can be fingerprinted by hashing the file. A hosted endpoint offers no
+such artefact, so the fingerprint is derived from everything the platform *can* observe that
+would change the coordinate space:
+
+```
+SHA-256( providerKey ␟ normalisedBaseUrl ␟ modelId ␟ dimensions )   → first 16 hex chars
+```
+
+Provider key and base URL are lower-cased and trailing slashes trimmed, so a cosmetic config
+edit does not orphan already-stored vectors. Components are joined with a unit separator, so
+no two distinct component tuples can collide. Consequently two different hosted models — or
+the same model name served by two different deployments — produce different identities and
+`EmbeddingIdentity.Matches()` refuses to compare their vectors.
+
+What this deliberately does **not** do is detect a silent vendor-side weight swap behind an
+unchanged model name; nothing observable at this layer could. That remains the residual risk
+re-embedding addresses.
+
 > **Not yet shipped:** the bundled local ONNX runtime, the curated model registry with
-> SHA-256-pinned downloads, and backfill of existing rows. Until a generator is registered,
-> memory retrieval behaves exactly as it did before this change.
+> SHA-256-pinned downloads, and backfill of existing rows. Until an embeddings backend is
+> configured, memory retrieval behaves exactly as it did before this change.

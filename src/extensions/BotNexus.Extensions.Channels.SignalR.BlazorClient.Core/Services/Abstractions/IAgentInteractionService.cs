@@ -7,10 +7,18 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// </summary>
 public interface IAgentInteractionService
 {
-    Task SendMessageAsync(string agentId, string content);
+    /// <summary>
+    /// Sends a user turn into <paramref name="conversationId"/> (#3063). The conversation is a
+    /// REQUIRED parameter rather than something this layer re-derives from ambient state: every
+    /// caller already holds the id, from the route or from the create-conversation response, and an
+    /// ambient re-read is the defect family that produced duplicate thread bindings, double fan-out
+    /// and misrouted steers. Sending never creates a conversation as a side effect - a caller that
+    /// needs one calls <see cref="CreateConversationAsync"/> first and passes the id it gets back.
+    /// </summary>
+    Task SendMessageAsync(string agentId, string conversationId, string content);
 
     /// <summary>Sends optional text plus validated generic attachments through the existing content-parts seam.</summary>
-    Task SendMessageAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments);
+    Task SendMessageAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments);
     /// <summary>
     /// Injects a canvas-authored prompt into the conversation that owns the canvas as a genuine
     /// USER turn (#2449). This is the server-side half of the <c>canvasState.submitToAgent</c>
@@ -48,9 +56,7 @@ public interface IAgentInteractionService
     /// <remarks>
     /// No model turn is consumed: the command text is never delivered to the agent. When the
     /// pipeline rejects the command, is unreachable, or the client has no active conversation, an
-    /// <c>Error</c> row is appended so the failure is visible rather than silent. This method must
-    /// never fall back to <see cref="SendMessageAsync(string, string)"/> - that fallback is exactly
-    /// the #2873 defect.
+    /// <c>Error</c> row is appended so the failure is visible rather than silent.
     /// </remarks>
     /// <returns><see langword="true"/> when the pipeline returned a non-error result.</returns>
     Task<bool> ExecuteGatewayCommandAsync(string agentId, string commandText);

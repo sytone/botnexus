@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
@@ -125,6 +126,73 @@ public sealed class SessionCleanupService(
                             session.AgentId.Value,
                             SessionLifecycleEventType.Deleted,
                             session),
+                        cancellationToken);
+                }
+            }
+        }
+
+        await ApplyDiskBudgetAsync(options, cancellationToken);
+    }
+
+    /// <summary>
+    /// Applies the optional session-directory disk budget (issue #2848) at the end of the same
+    /// cleanup cycle, so no second timer is introduced. Sessions are grouped per agent because the
+    /// budget is a per-agent directory budget, matching how sessions are laid out on disk.
+    /// </summary>
+    /// <remarks>
+    /// Runs AFTER the age predicates deliberately: whatever TTL/retention already reclaimed is not
+    /// counted as pressure, so a correctly-configured age policy keeps the size path dormant.
+    /// </remarks>
+    private async Task ApplyDiskBudgetAsync(SessionCleanupOptions options, CancellationToken cancellationToken)
+    {
+        // AC2 + AC6: with no budget configured (the default) this returns immediately and the
+        // sweep is byte-for-byte the behaviour that shipped before. A zero or negative budget
+        // takes the same path - disabled, never "a zero-byte budget everything exceeds".
+        if (options.ResolveMaxDiskBytes() is null)
+            return;
+
+        var sessions = await _sessionStore.ListAsync(cancellationToken: cancellationToken);
+        foreach (var group in sessions.GroupBy(s => s.AgentId.Value, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var usages = group.Select(SessionDiskAccounting.ToUsage).ToList();
+            var plan = SessionDiskBudgetPlanner.BuildPlan(
+                usages,
+                options,
+                sessionId => _turnTracker is not null && _turnTracker.HasLiveTurn(sessionId));
+
+            if (!plan.OverBudget)
+                continue;
+
+            if (options.DiskBudgetMode != SessionDiskBudgetMode.Enforce)
+            {
+                _logger.LogWarning(
+                    "Agent {AgentId} session storage is {TotalBytes} bytes, over the {MaxDiskBytes}-byte budget. " +
+                    "Disk budget mode is Warn, so nothing was evicted.",
+                    group.Key, plan.TotalBytes, plan.MaxDiskBytes);
+                continue;
+            }
+
+            _logger.LogWarning(
+                "Agent {AgentId} session storage is {TotalBytes} bytes, over the {MaxDiskBytes}-byte budget. " +
+                "Evicting {EvictionCount} session(s) oldest-first down to {HighWaterBytes} bytes.",
+                group.Key, plan.TotalBytes, plan.MaxDiskBytes, plan.Evictions.Count, plan.HighWaterBytes);
+
+            foreach (var eviction in plan.Evictions)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var sessionId = SessionId.From(eviction.SessionId);
+                await _sessionStore.DeleteAsync(sessionId, cancellationToken);
+                if (_lifecycleEvents is not null)
+                {
+                    await _lifecycleEvents.PublishAsync(
+                        new SessionLifecycleEvent(
+                            eviction.SessionId,
+                            eviction.AgentId,
+                            SessionLifecycleEventType.Deleted,
+                            null),
                         cancellationToken);
                 }
             }

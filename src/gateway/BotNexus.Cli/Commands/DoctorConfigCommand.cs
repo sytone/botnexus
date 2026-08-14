@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.Text.Json.Nodes;
 using BotNexus.Cli.Commands.Doctor;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
@@ -43,12 +42,12 @@ internal sealed class DoctorConfigCommand
     /// printed would be boilerplate an operator learns to skip, so its presence alone must mean a
     /// finding exists (issue #2798 AC4).
     /// </summary>
-    private static void ReportAdvisories(JsonObject root)
+    private static void ReportAdvisories(ConfigDocument config)
     {
-        foreach (var advisory in Advisories.Where(a => a.IsApplicable(root)))
+        foreach (var advisory in Advisories.Where(a => a.IsApplicable(config)))
         {
             AnsiConsole.MarkupLine($"[yellow]![/] [bold]{Markup.Escape(advisory.Id)}[/]");
-            AnsiConsole.MarkupLine($"        {Markup.Escape(advisory.Describe(root))}");
+            AnsiConsole.MarkupLine($"        {Markup.Escape(advisory.Describe(config))}");
             AnsiConsole.MarkupLine($"        [dim]Advisory only - not changed automatically:[/] {Markup.Escape(advisory.Remediation)}\n");
         }
     }
@@ -104,17 +103,17 @@ internal sealed class DoctorConfigCommand
 
         AnsiConsole.MarkupLine($"  Checking config at [dim]{Markup.Escape(configPath)}[/]...\n");
 
-        // Load raw JSON so checks operate on the actual persisted nodes
-        var rawJson = await File.ReadAllTextAsync(configPath, cancellationToken);
-        var root = JsonNode.Parse(rawJson)?.AsObject() ?? new JsonObject();
+        // Read the persisted document so checks operate on what is actually on disk, addressed by
+        // canonical path (#2887) rather than hand-rolled traversal.
+        var document = ConfigDocument.Parse(await File.ReadAllTextAsync(configPath, cancellationToken));
 
-        var applicable = Checks.Where(c => c.IsApplicable(root)).ToList();
+        var applicable = Checks.Where(c => c.IsApplicable(document)).ToList();
 
         // Issue #2798 AC4: advisories are REPORTED and never applied, so they are evaluated and
         // rendered separately from the auto-applied checks above. A wildcard bind may be a
         // deliberate operator choice, and AC3 requires an existing config to survive untouched -
         // so the finding must be visible without --yes ever rewriting it.
-        ReportAdvisories(root);
+        ReportAdvisories(document);
 
         if (applicable.Count == 0)
         {
@@ -171,7 +170,7 @@ internal sealed class DoctorConfigCommand
 
             if (apply)
             {
-                check.Apply(root);
+                check.Apply(document);
                 appliedCount++;
                 AnsiConsole.MarkupLine("        [green]✓ applied[/]\n");
             }
@@ -185,17 +184,14 @@ internal sealed class DoctorConfigCommand
         // Write back if anything was applied (and not dry-run)
         if (!dryRun && appliedCount > 0)
         {
-            var fileSystem = new System.IO.Abstractions.FileSystem();
-            var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath, "backups");
-            var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
-            var updatedJson = root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            await writer.MutateAsync(rootNode =>
-            {
-                var replacement = JsonNode.Parse(updatedJson)?.AsObject() ?? new JsonObject();
-                rootNode.Clear();
-                foreach (var kvp in replacement)
-                    rootNode[kvp.Key] = kvp.Value?.DeepClone();
-            }, "doctor-config", cancellationToken);
+            // `doctor config` is the one command whose declared purpose is to rewrite whatever it
+            // just fixed across several sections at once, so it replays the applied document
+            // wholesale inside the writer lock rather than replaying each individual fix.
+            var writer = CliConfigMutation.CreateWriter(configPath);
+            await writer.MutateDocumentAsync(
+                persisted => persisted.ReplaceWith(document),
+                "doctor-config",
+                cancellationToken);
         }
 
         AnsiConsole.WriteLine();

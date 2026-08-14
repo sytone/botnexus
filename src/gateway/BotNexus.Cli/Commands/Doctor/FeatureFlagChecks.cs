@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Commands.Doctor;
@@ -37,23 +36,16 @@ public sealed class FeatureFlagSeedCheck : IConfigCheck
         + "(behaviour-preserving: each written value is the default already being applied).";
 
     /// <inheritdoc />
-    public bool IsApplicable(JsonObject root) => AbsentFlags(root).Count > 0;
+    public bool IsApplicable(ConfigDocument config) => AbsentFlags(config).Count > 0;
 
     /// <inheritdoc />
-    public void Apply(JsonObject root)
+    public void Apply(ConfigDocument config)
     {
-        var section = root[FeatureFlags.SectionName] as JsonObject;
-        if (section is null)
-        {
-            section = new JsonObject();
-            root[FeatureFlags.SectionName] = section;
-        }
-
         // Only absent flags are written. An operator's existing value - including a deliberate
         // false, and including the richer EnabledFor filter form - is never overwritten, or
         // "seeding defaults" would quietly revert their configuration.
-        foreach (var flag in AbsentFlags(root))
-            section[flag.Name] = flag.Default;
+        foreach (var flag in AbsentFlags(config))
+            config.Set($"{FeatureFlags.SectionName}.{flag.Name}", flag.Default);
     }
 
     /// <summary>
@@ -61,33 +53,18 @@ public sealed class FeatureFlagSeedCheck : IConfigCheck
     /// and <see cref="Apply"/> so the set that gets reported is exactly the set that gets written -
     /// AC5 requires a re-run after applying to report nothing, which only holds if these agree.
     /// </summary>
-    internal static IReadOnlyList<FeatureFlagDefinition> AbsentFlags(JsonObject root)
+    /// <remarks>
+    /// The comparison is case-insensitive. A flag written as <c>gatewaydevoriginenforcement</c> is
+    /// bound by Microsoft.FeatureManagement's configuration binder, so treating it as absent here
+    /// would make this check demand a duplicate key that shadowed the operator's real value.
+    /// </remarks>
+    internal static IReadOnlyList<FeatureFlagDefinition> AbsentFlags(ConfigDocument config)
     {
-        var section = root[FeatureFlags.SectionName] as JsonObject;
+        var present = config.GetEntryKeys(FeatureFlags.SectionName);
 
         return FeatureFlags.All
-            .Where(flag => section is null || !TryFindKey(section, flag.Name, out _))
+            .Where(flag => !present.Any(key => string.Equals(key, flag.Name, StringComparison.OrdinalIgnoreCase)))
             .ToList();
-    }
-
-    /// <summary>
-    /// Case-insensitive key lookup. A flag written as <c>gatewaydevoriginenforcement</c> is bound by
-    /// Microsoft.FeatureManagement's configuration binder, so treating it as absent here would make
-    /// this check demand a duplicate key that shadowed the operator's real value.
-    /// </summary>
-    internal static bool TryFindKey(JsonObject section, string name, out string matched)
-    {
-        foreach (var pair in section)
-        {
-            if (string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase))
-            {
-                matched = pair.Key;
-                return true;
-            }
-        }
-
-        matched = string.Empty;
-        return false;
     }
 }
 
@@ -109,12 +86,12 @@ public sealed class UnknownFeatureFlagAdvisory : IConfigAdvisory
     public string Id => "feature-flags-unknown-key";
 
     /// <inheritdoc />
-    public bool IsApplicable(JsonObject root) => UnknownKeys(root).Count > 0;
+    public bool IsApplicable(ConfigDocument config) => UnknownKeys(config).Count > 0;
 
     /// <inheritdoc />
-    public string Describe(JsonObject root)
+    public string Describe(ConfigDocument config)
     {
-        var unknown = UnknownKeys(root);
+        var unknown = UnknownKeys(config);
         return $"{FeatureFlags.SectionName} contains {(unknown.Count == 1 ? "a key" : "keys")} matching no "
                + $"declared feature flag: {string.Join(", ", unknown)}. A misspelled flag evaluates as absent, "
                + "so the feature stays at its default while the setting appears to be applied.";
@@ -128,15 +105,9 @@ public sealed class UnknownFeatureFlagAdvisory : IConfigAdvisory
         + "automatically - an unrecognised key may belong to an extension this tool does not know about.";
 
     /// <summary>Keys present under the section that are not in the inventory.</summary>
-    internal static IReadOnlyList<string> UnknownKeys(JsonObject root)
-    {
-        if (root[FeatureFlags.SectionName] is not JsonObject section)
-            return [];
-
-        return section
-            .Select(pair => pair.Key)
+    internal static IReadOnlyList<string> UnknownKeys(ConfigDocument config)
+        => config.GetEntryKeys(FeatureFlags.SectionName)
             .Where(key => !FeatureFlags.IsDeclared(key))
             .OrderBy(key => key, StringComparer.Ordinal)
             .ToList();
-    }
 }

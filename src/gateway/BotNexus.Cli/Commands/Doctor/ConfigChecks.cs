@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Commands.Doctor;
@@ -8,34 +7,24 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// </summary>
 public sealed class ExtensionsBlockCheck : IConfigCheck
 {
+    private const string ExtensionsPath = "gateway.extensions";
+    internal const string ExtensionsEnabledPath = "gateway.extensions.enabled";
+
     public string Id => "extensions-block";
     public string Description => "gateway.extensions block is absent or has extensions disabled.";
     public string FixDescription => "Add gateway.extensions = { enabled: true }";
 
-    public bool IsApplicable(JsonObject root)
+    public bool IsApplicable(ConfigDocument config)
     {
-        var gateway = root["gateway"] as JsonObject;
-        if (gateway is null) return true;
-        var extensions = gateway["extensions"] as JsonObject;
-        if (extensions is null) return true;
-        // present — only flag if explicitly disabled
-        if (extensions["enabled"] is JsonValue ev && ev.TryGetValue<bool>(out var enabled))
-            return !enabled;
-        return false;
+        if (!config.HasObject(ExtensionsPath))
+            return true;
+
+        // Present - only flag when explicitly disabled. A missing `enabled` key means the block
+        // exists and the platform default (on) applies, which is not a gap.
+        return config.GetBool(ExtensionsEnabledPath) is false;
     }
 
-    public void Apply(JsonObject root)
-    {
-        var gateway = root["gateway"] as JsonObject ?? new JsonObject();
-        root["gateway"] = gateway;
-
-        if (gateway["extensions"] is not JsonObject extensions)
-        {
-            extensions = new JsonObject();
-            gateway["extensions"] = extensions;
-        }
-        extensions["enabled"] = true;
-    }
+    public void Apply(ConfigDocument config) => config.Set(ExtensionsEnabledPath, true);
 }
 
 /// <summary>
@@ -43,42 +32,29 @@ public sealed class ExtensionsBlockCheck : IConfigCheck
 /// </summary>
 public sealed class SkillsWorldDefaultCheck : IConfigCheck
 {
+    private const string SkillsEntryPath = "gateway.extensions.defaults.botnexus-skills";
+    private const string SkillsEnabledPath = "gateway.extensions.defaults.botnexus-skills.enabled";
+
     public string Id => "skills-world-default";
     public string Description => "Skills extension has no world-level default in gateway.extensions.defaults.";
     public string FixDescription => "Add gateway.extensions.defaults[\"botnexus-skills\"].enabled = true";
 
-    public bool IsApplicable(JsonObject root)
+    public bool IsApplicable(ConfigDocument config)
     {
-        var defaults = GetDefaults(root);
-        if (defaults is null) return true;
-        var skills = defaults["botnexus-skills"] as JsonObject;
-        if (skills is null) return true;
-        if (skills["enabled"] is JsonValue ev && ev.TryGetValue<bool>(out var enabled))
-            return !enabled;
-        return false;
+        // Absent, or present as something other than a settings object, both mean "no usable
+        // world-level default". Only an object carrying an explicit false is a deliberate opt-out
+        // that this check must still report.
+        if (!config.HasObject(SkillsEntryPath))
+            return true;
+
+        return config.GetBool(SkillsEnabledPath) is false;
     }
 
-    public void Apply(JsonObject root)
+    public void Apply(ConfigDocument config)
     {
-        var gateway = root["gateway"] as JsonObject ?? new JsonObject();
-        root["gateway"] = gateway;
-
-        var extensions = gateway["extensions"] as JsonObject ?? new JsonObject();
-        gateway["extensions"] = extensions;
-        extensions["enabled"] = true;
-
-        var defaults = extensions["defaults"] as JsonObject ?? new JsonObject();
-        extensions["defaults"] = defaults;
-
-        var skills = defaults["botnexus-skills"] as JsonObject ?? new JsonObject();
-        defaults["botnexus-skills"] = skills;
-        skills["enabled"] = true;
+        config.Set(ExtensionsBlockCheck.ExtensionsEnabledPath, true);
+        config.Set(SkillsEnabledPath, true);
     }
-
-    private static JsonObject? GetDefaults(JsonObject root)
-        => (root["gateway"] as JsonObject)?["extensions"] as JsonObject is { } ext
-            ? ext["defaults"] as JsonObject
-            : null;
 }
 
 /// <summary>
@@ -100,61 +76,50 @@ public sealed class DevOriginEnforcementCheck : IConfigCheck
     /// <summary>Feature-flag name; the single declaration shared with ApiKeyGatewayAuthHandler (#2767).</summary>
     private const string FeatureName = FeatureFlags.GatewayDevOriginEnforcement;
     private const string DefaultOrigin = GatewayDefaults.LoopbackListenUrl;
+    private const string LegacyApiKeyPath = "apiKey";
+    private const string ApiKeysPath = "gateway.apiKeys";
+    private const string AllowedOriginsPath = "gateway.cors.allowedOrigins";
+    private static readonly string FeaturePath = $"{FeatureFlags.SectionName}.{FeatureName}";
 
     public string Id => "devmode-origin-enforcement";
     public string Description =>
         "Gateway runs keyless (dev mode) with the browser-Origin guard disabled - the gateway-dev admin identity is reachable from any web origin (DNS-rebind/CSRF risk).";
     public string FixDescription =>
-        "Enable FeatureManagement.GatewayDevOriginEnforcement and seed gateway.cors.allowedOrigins = [\"" + DefaultOrigin + "\"]. WARNING: if you reach the UI over a non-localhost origin (LAN hostname / reverse proxy / netbird), add that origin to gateway.cors.allowedOrigins FIRST or you will be locked out on restart.";
+        "Enable FeatureManagement.GatewayDevOriginEnforcement and seed gateway.cors.allowedOrigins = [\"" + DefaultOrigin + "\"]. WARNING: if you reach the UI over a non-localhost origin (LAN hostname / reverse proxy / netbird), add that origin to gateway.cors.allowedOrigins FIRST or you will be locked out.";
 
-    public bool IsApplicable(JsonObject root)
+    public bool IsApplicable(ConfigDocument config)
     {
         // Only relevant in keyless dev mode - a configured API key path is unaffected by this guard.
-        if (HasAnyApiKey(root))
+        if (HasAnyApiKey(config))
             return false;
 
         // Already enabled -> nothing to recommend.
-        return !IsFeatureEnabled(root);
+        return !IsFeatureEnabled(config);
     }
 
-    public void Apply(JsonObject root)
+    public void Apply(ConfigDocument config)
     {
         // Seed a localhost allow-list only if none exists, preserving any origins the operator set.
-        var gateway = root["gateway"] as JsonObject ?? new JsonObject();
-        root["gateway"] = gateway;
-        var cors = gateway["cors"] as JsonObject ?? new JsonObject();
-        gateway["cors"] = cors;
-        if (cors["allowedOrigins"] is not JsonArray existing || existing.Count == 0)
-        {
-            cors["allowedOrigins"] = new JsonArray { DefaultOrigin };
-        }
+        if (!config.HasNonEmptyList(AllowedOriginsPath))
+            config.Set(AllowedOriginsPath, new[] { DefaultOrigin });
 
         // Turn the flag on under the FeatureManagement section (Microsoft.FeatureManagement schema).
-        var featureManagement = root[FeatureFlags.SectionName] as JsonObject ?? new JsonObject();
-        root[FeatureFlags.SectionName] = featureManagement;
-        featureManagement[FeatureName] = true;
+        config.Set(FeaturePath, true);
     }
 
-    private static bool HasAnyApiKey(JsonObject root)
+    private static bool HasAnyApiKey(ConfigDocument config)
     {
-        if (root["apiKey"] is JsonValue av && av.TryGetValue<string>(out var legacy) && !string.IsNullOrWhiteSpace(legacy))
+        if (config.TryGetString(LegacyApiKeyPath, out var legacy) && !string.IsNullOrWhiteSpace(legacy))
             return true;
 
-        var apiKeys = (root["gateway"] as JsonObject)?["apiKeys"] as JsonObject;
-        return apiKeys is { Count: > 0 };
+        return config.CountEntries(ApiKeysPath) > 0;
     }
 
-    private static bool IsFeatureEnabled(JsonObject root)
-    {
-        var fm = root[FeatureFlags.SectionName] as JsonObject;
-        if (fm is null)
-            return false;
-
+    private static bool IsFeatureEnabled(ConfigDocument config)
         // Microsoft.FeatureManagement accepts either a bool literal or an object with an
         // EnabledFor filter list; we only treat a literal `true` as "already enabled" for the
         // purposes of this recommendation.
-        return fm[FeatureName] is JsonValue v && v.TryGetValue<bool>(out var enabled) && enabled;
-    }
+        => config.GetBool(FeaturePath) is true;
 }
 
 /// <summary>
@@ -162,27 +127,28 @@ public sealed class DevOriginEnforcementCheck : IConfigCheck
 /// </summary>
 public sealed class CronCheck : IConfigCheck
 {
+    private const string CronPath = "cron";
+
     public string Id => "cron-enabled";
     public string Description => "cron scheduler block is absent from config.";
     public string FixDescription => "Add cron = { enabled: true, tickIntervalSeconds: 60 }";
 
-    public bool IsApplicable(JsonObject root)
-        => root["cron"] is not JsonObject;
+    public bool IsApplicable(ConfigDocument config) => !config.HasObject(CronPath);
 
-    public void Apply(JsonObject root)
+    public void Apply(ConfigDocument config)
     {
-        if (root["cron"] is JsonObject) return;
-        root["cron"] = new JsonObject
-        {
-            ["enabled"] = true,
-            ["tickIntervalSeconds"] = 60
-        };
+        if (config.HasObject(CronPath))
+            return;
+
+        config.SetMap(CronPath, new ConfigValueMap()
+            .Set("enabled", true)
+            .Set("tickIntervalSeconds", 60));
     }
 }
 
 /// <summary>
-/// Checks that <c>compaction.summarizationModel</c> is not set to an expensive reasoning model.
-/// Reasoning models (claude-opus-4.6, o3, gpt-5) are overkill for summarization and may
+/// Checks that <c>gateway.compaction.summarizationModel</c> is not set to an expensive reasoning
+/// model. Reasoning models (claude-opus-4.6, o3, gpt-5) are overkill for summarization and may
 /// return empty responses when the thinking parameter is misconfigured.
 /// </summary>
 public sealed class CompactionModelCheck : IConfigCheck
@@ -197,27 +163,28 @@ public sealed class CompactionModelCheck : IConfigCheck
         "gpt-5", "gpt-5.2", "claude-opus-4"
     ];
 
-    public bool IsApplicable(JsonObject root)
+    public bool IsApplicable(ConfigDocument config)
     {
-        var model = GetSummarizationModel(root);
+        var model = GetSummarizationModel(config);
         if (string.IsNullOrWhiteSpace(model)) return false; // no model set — different concern
         return ExpensiveModels.Any(e => model.Contains(e, StringComparison.OrdinalIgnoreCase));
     }
 
-    public void Apply(JsonObject root)
-        => BoundConfigPath.WriteString(root, SummarizationModelPath, "claude-haiku-4.5");
+    public void Apply(ConfigDocument config)
+        => config.Set(SummarizationModelPath, "claude-haiku-4.5");
 
-    // #2764: read through the bound path, never root["compaction"]. The setting binds at
-    // gateway.compaction, so the old root lookup was always null and this guard could never fire —
-    // a rule structurally incapable of firing reads exactly like a clean pass.
-    private static string? GetSummarizationModel(JsonObject root)
-        => BoundConfigPath.TryReadString(root, SummarizationModelPath, out var model) ? model : null;
+    // #2764: read through the canonical path, never a hand-rolled root lookup. The setting binds at
+    // gateway.compaction, so the old root["compaction"] read was always null and this guard could
+    // never fire — a rule structurally incapable of firing reads exactly like a clean pass. #2887
+    // then removed the ability to express the wrong traversal at all.
+    private static string? GetSummarizationModel(ConfigDocument config)
+        => config.TryGetString(SummarizationModelPath, out var model) ? model : null;
 
     internal const string SummarizationModelPath = "gateway.compaction.summarizationModel";
 }
 
 /// <summary>
-/// Checks that <c>compaction.summarizationModel</c> is configured at all.
+/// Checks that <c>gateway.compaction.summarizationModel</c> is configured at all.
 /// Without an explicit model, the compactor falls back to a default waterfall
 /// which may pick an expensive or unavailable model.
 /// </summary>
@@ -228,14 +195,14 @@ public sealed class CompactionModelMissingCheck : IConfigCheck
     public string FixDescription => "Set gateway.compaction.summarizationModel to \"claude-haiku-4.5\"";
 
     // #2764: a root-level "compaction" block binds to nothing, so its presence is NOT evidence the
-    // model is configured. Only the bound path counts — otherwise this check reported a correctly
-    // configured platform as broken on every run.
-    public bool IsApplicable(JsonObject root)
-        => !BoundConfigPath.TryReadString(root, CompactionModelCheck.SummarizationModelPath, out var model)
+    // model is configured. Only the canonical path counts — otherwise this check reported a
+    // correctly configured platform as broken on every run.
+    public bool IsApplicable(ConfigDocument config)
+        => !config.TryGetString(CompactionModelCheck.SummarizationModelPath, out var model)
            || string.IsNullOrWhiteSpace(model);
 
-    public void Apply(JsonObject root)
-        => BoundConfigPath.WriteString(root, CompactionModelCheck.SummarizationModelPath, "claude-haiku-4.5");
+    public void Apply(ConfigDocument config)
+        => config.Set(CompactionModelCheck.SummarizationModelPath, "claude-haiku-4.5");
 }
 
 /// <summary>
@@ -243,31 +210,29 @@ public sealed class CompactionModelMissingCheck : IConfigCheck
 /// </summary>
 public sealed class MemoryAgentDefaultCheck : IConfigCheck
 {
+    private const string AgentsPath = "agents";
+    private const string MemoryPath = "agents.defaults.memory";
+
     public string Id => "memory-agent-default";
     public string Description => "agents.defaults.memory block is absent — memory indexing will not be enabled by default.";
     public string FixDescription => "Add agents.defaults.memory = { enabled: true, indexing: \"auto\" }";
 
-    public bool IsApplicable(JsonObject root)
+    public bool IsApplicable(ConfigDocument config)
     {
-        var agents = root["agents"] as JsonObject;
-        if (agents is null) return false; // no agents block at all — not our concern
-        var defaults = agents["defaults"] as JsonObject;
-        return defaults?["memory"] is not JsonObject;
+        // No agents block at all - not our concern; init generates one and the other checks cover it.
+        if (!config.HasObject(AgentsPath))
+            return false;
+
+        return !config.HasObject(MemoryPath);
     }
 
-    public void Apply(JsonObject root)
+    public void Apply(ConfigDocument config)
     {
-        var agents = root["agents"] as JsonObject;
-        if (agents is null) return;
+        if (!config.HasObject(AgentsPath) || config.HasObject(MemoryPath))
+            return;
 
-        var defaults = agents["defaults"] as JsonObject ?? new JsonObject();
-        agents["defaults"] = defaults;
-
-        if (defaults["memory"] is JsonObject) return;
-        defaults["memory"] = new JsonObject
-        {
-            ["enabled"] = true,
-            ["indexing"] = "auto"
-        };
+        config.SetMap(MemoryPath, new ConfigValueMap()
+            .Set("enabled", true)
+            .Set("indexing", "auto"));
     }
 }

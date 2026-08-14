@@ -170,27 +170,25 @@ internal sealed class ProviderCommand
             return 1;
         }
 
-        var existed = RawConfigPath.FindEntryKey(
-            await CliConfigMutation.ReadAsync(configPath, cancellationToken), ProvidersPath, name) is not null;
+        var existed = (await CliConfigMutation.ReadAsync(configPath, cancellationToken))
+            .FindEntryKey(ProvidersPath, name) is not null;
 
         // PATCH semantics: only the flags the caller actually supplied are written. Fields the CLI
         // does not model - reasoning, context capability, and anything a future schema adds - are
         // never mentioned and therefore survive verbatim (#2057).
-        var patch = new JsonObject { ["enabled"] = enabled };
-        if (apiKey is not null)
-            patch["apiKey"] = apiKey;
-        if (baseUrl is not null)
-            patch["baseUrl"] = baseUrl;
-        if (defaultModel is not null)
-            patch["defaultModel"] = defaultModel;
-        if (api is not null)
-            patch["api"] = api;
+        var patch = new ConfigValueMap()
+            .Set("enabled", enabled)
+            .SetIfNotNull("apiKey", apiKey)
+            .SetIfNotNull("baseUrl", baseUrl)
+            .SetIfNotNull("defaultModel", defaultModel)
+            .SetIfNotNull("api", api);
+
         if (models.Count > 0)
-            patch["models"] = new JsonArray([.. models.Select(model => (JsonNode)JsonValue.Create(model)!)]);
+            patch.Set("models", models.ToArray());
 
         var exitCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            root => RawConfigPath.TryPatchEntry(root, ProvidersPath, name, patch, out var error) ? null : error,
+            document => document.TryPatchEntry(ProvidersPath, name, patch, out var error) ? null : error,
             "before-provider-update",
             verbose,
             cancellationToken,
@@ -207,9 +205,9 @@ internal sealed class ProviderCommand
 
         if (verbose)
         {
-            var saved = RawConfigPath.GetEntry(
-                await CliConfigMutation.ReadAsync(configPath, cancellationToken), ProvidersPath, name);
-            AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(saved?.ToJsonString(WriteJsonOptions) ?? "{}")}[/]");
+            var saved = (await CliConfigMutation.ReadAsync(configPath, cancellationToken))
+                .DescribeEntry(ProvidersPath, name);
+            AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(saved ?? "{}")}[/]");
         }
 
         return 0;
@@ -226,8 +224,8 @@ internal sealed class ProviderCommand
             return 1;
         }
 
-        var root = await CliConfigMutation.ReadAsync(configPath, cancellationToken);
-        if (RawConfigPath.FindEntryKey(root, ProvidersPath, name) is null)
+        var document = await CliConfigMutation.ReadAsync(configPath, cancellationToken);
+        if (document.FindEntryKey(ProvidersPath, name) is null)
         {
             AnsiConsole.MarkupLine($"[yellow]No provider named '{Markup.Escape(name)}' to remove.[/]");
             return 0;
@@ -235,7 +233,7 @@ internal sealed class ProviderCommand
 
         var exitCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            candidate => RawConfigPath.TryRemoveEntry(candidate, ProvidersPath, name, out var error) ? null : error,
+            candidate => candidate.TryRemoveEntry(ProvidersPath, name, out var error) ? null : error,
             "before-provider-update",
             verbose,
             cancellationToken,
@@ -249,9 +247,9 @@ internal sealed class ProviderCommand
         AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
         if (verbose)
         {
-            var remaining = RawConfigPath.Get(
-                await CliConfigMutation.ReadAsync(configPath, cancellationToken), ProvidersPath) as JsonObject;
-            AnsiConsole.MarkupLine($"[dim]Remaining providers: {remaining?.Count ?? 0}[/]");
+            var remaining = (await CliConfigMutation.ReadAsync(configPath, cancellationToken))
+                .CountEntries(ProvidersPath);
+            AnsiConsole.MarkupLine($"[dim]Remaining providers: {remaining}[/]");
         }
 
         return 0;
@@ -409,21 +407,19 @@ internal sealed class ProviderCommand
                     _ => c.Get<string>("apiKey")
                 };
 
-                var wizardPatch = new JsonObject
-                {
-                    ["enabled"] = true,
-                    ["apiKey"] = apiKeyValue
-                };
+                var wizardPatch = new ConfigValueMap()
+                    .Set("enabled", true)
+                    .Set("apiKey", apiKeyValue);
                 if (c.TryGet<string>("baseUrl", out var baseUrl))
-                    wizardPatch["baseUrl"] = baseUrl;
+                    wizardPatch.Set("baseUrl", baseUrl);
                 if (c.TryGet<string>("api", out var api))
-                    wizardPatch["api"] = api;
+                    wizardPatch.Set("api", api);
                 if (c.TryGet<string>("defaultModel", out var model))
-                    wizardPatch["defaultModel"] = model;
+                    wizardPatch.Set("defaultModel", model);
 
                 var wizardExit = await CliConfigMutation.ApplyAsync(
                     configPath,
-                    root => RawConfigPath.TryPatchEntry(root, ProvidersPath, providerName, wizardPatch, out var error) ? null : error,
+                    document => document.TryPatchEntry(ProvidersPath, providerName, wizardPatch, out var error) ? null : error,
                     "before-provider-update",
                     c.Get<bool>("verbose"),
                     ct,
@@ -436,9 +432,9 @@ internal sealed class ProviderCommand
 
                 if (c.Get<bool>("verbose"))
                 {
-                    var saved = RawConfigPath.GetEntry(
-                        await CliConfigMutation.ReadAsync(configPath, ct), ProvidersPath, providerName);
-                    AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(saved?.ToJsonString(WriteJsonOptions) ?? "{}")}[/]");
+                    var saved = (await CliConfigMutation.ReadAsync(configPath, ct))
+                        .DescribeEntry(ProvidersPath, providerName);
+                    AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(saved ?? "{}")}[/]");
                 }
             })
             .Build();

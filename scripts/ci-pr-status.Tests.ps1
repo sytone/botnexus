@@ -207,6 +207,92 @@ Describe 'Get-PrCiStatus' {
         }
     }
 
+    Context 'AC1/AC3/AC7 (#2978) - awaiting maintainer ack is distinct from failing' {
+
+        # The exact check set observed live on PR #2972: the guard is the only
+        # failure, everything that tests the change is green.
+        It 'classifies the live PR #2972 check set as awaiting-ack, not failing' {
+            $checks = @(
+                New-CheckRun -Name 'Security: Sensitive File Guard' -Conclusion 'FAILURE'
+                New-CheckRun -Name 'CI: Docs lint' -Conclusion 'SUCCESS'
+                New-CheckRun -Name 'PR Conventions Guard' -Conclusion 'SUCCESS'
+                New-CheckRun -Name 'Security: Secrets & Dependencies' -Conclusion 'SUCCESS'
+                New-CheckRun -Name 'Security: CodeQL Analysis' -Conclusion 'SUCCESS'
+                New-CheckRun -Name 'CI: Build & Test' -Conclusion 'SUCCESS'
+            )
+            $status = Get-PrCiStatus -Checks $checks
+            $status | Should -Be 'awaiting-ack'
+            $status | Should -Not -Be 'failing'
+        }
+
+        It 'recognises the bare job name as well as the workflow-qualified form' {
+            $checks = @(
+                New-CheckRun -Name 'Sensitive File Guard' -Conclusion 'FAILURE'
+                New-CheckRun -Name 'CI: Build & Test' -Conclusion 'SUCCESS'
+            )
+            Get-PrCiStatus -Checks $checks | Should -Be 'awaiting-ack'
+        }
+
+        It 'treats SKIPPED and NEUTRAL siblings as non-blocking alongside the guard' {
+            $checks = @(
+                New-CheckRun -Name 'Security: Sensitive File Guard' -Conclusion 'FAILURE'
+                New-CheckRun -Name 'full-tests' -Conclusion 'SKIPPED'
+                New-CheckRun -Name 'advisory' -Conclusion 'NEUTRAL'
+            )
+            Get-PrCiStatus -Checks $checks | Should -Be 'awaiting-ack'
+        }
+
+        It 'AC3 - guard failing AND a genuine failure is still failing, never awaiting-ack' {
+            $checks = @(
+                New-CheckRun -Name 'Security: Sensitive File Guard' -Conclusion 'FAILURE'
+                New-CheckRun -Name 'CI: Build & Test' -Conclusion 'FAILURE'
+                New-CheckRun -Name 'PR Conventions Guard' -Conclusion 'SUCCESS'
+            )
+            Get-PrCiStatus -Checks $checks | Should -Be 'failing'
+            Test-AwaitingMaintainerAck -Checks $checks | Should -BeFalse
+        }
+
+        It 'AC3 - guard failing beside a StatusContext ERROR is still failing' {
+            $checks = @(
+                New-CheckRun -Name 'Sensitive File Guard' -Conclusion 'FAILURE'
+                New-StatusContext -Name 'legacy-ci' -State 'ERROR'
+            )
+            Get-PrCiStatus -Checks $checks | Should -Be 'failing'
+        }
+
+        It 'does not claim awaiting-ack while a sibling check is still pending' {
+            $checks = @(
+                New-CheckRun -Name 'Sensitive File Guard' -Conclusion 'FAILURE'
+                New-CheckRun -Name 'CI: Build & Test' -Conclusion $null -Status 'IN_PROGRESS'
+            )
+            Get-PrCiStatus -Checks $checks | Should -Be 'failing'
+        }
+
+        It 'does not claim awaiting-ack when a sibling check is stuck' {
+            $checks = @(
+                New-CheckRun -Name 'Sensitive File Guard' -Conclusion 'FAILURE'
+                New-CheckRun -Name 'impacted-tests' -Conclusion 'CANCELLED'
+            )
+            Get-PrCiStatus -Checks $checks | Should -Be 'failing'
+        }
+
+        It 'does not claim awaiting-ack when the guard itself passed' {
+            $checks = @(
+                New-CheckRun -Name 'Sensitive File Guard' -Conclusion 'SUCCESS'
+                New-CheckRun -Name 'CI: Build & Test' -Conclusion 'FAILURE'
+            )
+            Get-PrCiStatus -Checks $checks | Should -Be 'failing'
+        }
+
+        It 'does not mistake a differently-named check for the guard' {
+            $checks = @(
+                New-CheckRun -Name 'Sensitive File Guard Lint' -Conclusion 'FAILURE'
+                New-CheckRun -Name 'CI: Build & Test' -Conclusion 'SUCCESS'
+            )
+            Get-PrCiStatus -Checks $checks | Should -Be 'failing'
+        }
+    }
+
     Context 'mixed entry shapes in one array' {
         It 'classifies a StatusContext FAILURE beside a CheckRun SUCCESS as failing' {
             $checks = @(
@@ -231,5 +317,62 @@ Describe 'Get-PrCiStatus' {
             )
             Get-PrCiStatus -Checks $checks | Should -Be 'unknown'
         }
+    }
+}
+
+Describe 'Get-AwaitingAckDetail (#2978 AC2)' {
+
+    It 'carries the exact ack command bound to the head SHA' {
+        $d = Get-AwaitingAckDetail -Number 2972 -HeadSha 'e494a2948a8760c57511e9df8fdb1d5ceee2b89f'
+        $d.headSha | Should -Be 'e494a2948a8760c57511e9df8fdb1d5ceee2b89f'
+        $d.ackCommand | Should -Be '/allow-security-sensitive-change e494a2948a8760c57511e9df8fdb1d5ceee2b89f'
+        $d.reason | Should -Be 'sensitive-file-guard'
+    }
+
+    It 'AC5 - the notification key is stable per head SHA and changes when the SHA does' {
+        $a = Get-AwaitingAckDetail -Number 2972 -HeadSha 'aaaa1111'
+        $b = Get-AwaitingAckDetail -Number 2972 -HeadSha 'aaaa1111'
+        $c = Get-AwaitingAckDetail -Number 2972 -HeadSha 'bbbb2222'
+        $a.notificationKey | Should -Be $b.notificationKey
+        $a.notificationKey | Should -Not -Be $c.notificationKey
+        $a.notificationKey | Should -Be 'awaiting-ack:2972:aaaa1111'
+    }
+
+    It 'degrades to a marked-unknown SHA rather than emitting a bare unbound command' {
+        $d = Get-AwaitingAckDetail -Number 1 -HeadSha ''
+        $d.headSha | Should -Be 'unknown'
+        $d.ackCommand | Should -Be '/allow-security-sensitive-change unknown'
+    }
+
+    It 'records that the ack must come from a maintainer, not automation' {
+        (Get-AwaitingAckDetail -Number 1 -HeadSha 'abc').ackRequiredFrom |
+            Should -Match 'admin/maintain/write'
+    }
+}
+
+Describe 'AC6 (#2978) - the script cannot post the ack itself' {
+
+    BeforeAll {
+        $script:SourceText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ci-pr-status.ps1') -Raw
+    }
+
+    # DELIBERATE NON-CAPABILITY. The Sensitive File Guard requires an
+    # admin/maintain/write maintainer. agent-farnsworth[bot] posting its own
+    # approval would defeat the control entirely - the same trust-boundary
+    # violation as authoring content as the repository owner. This test fails
+    # closed if anyone ever adds a comment-write path to this script.
+    It 'contains no GitHub comment-write invocation' {
+        $script:SourceText | Should -Not -Match 'gh\s+pr\s+comment'
+        $script:SourceText | Should -Not -Match 'gh\s+issue\s+comment'
+        $script:SourceText | Should -Not -Match 'Publish-GitHubComment'
+        $script:SourceText | Should -Not -Match '/issues/\d*.*comments'
+    }
+
+    It 'never emits the ack command through a gh api write verb' {
+        $script:SourceText | Should -Not -Match 'gh\s+api[^\r\n]*(-X|--method)\s*(POST|PATCH|PUT)'
+    }
+
+    It 'documents the non-capability in the source so it is not silently reversed' {
+        $script:SourceText | Should -Match 'DELIBERATE NON-CAPABILITY'
     }
 }

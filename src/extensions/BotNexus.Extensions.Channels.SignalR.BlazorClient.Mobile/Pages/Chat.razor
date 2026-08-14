@@ -670,13 +670,16 @@ else
     private async Task SendMessage()
     {
         if (string.IsNullOrWhiteSpace(_inputText) || Store.ActiveAgentId is null) return;
+        // #3063: the send path takes the conversation explicitly; mobile uses the same conversation
+        // the page is currently rendering rather than letting the service re-derive one.
+        if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is not { } convId) return;
         var content = _inputText.Trim();
         _inputText = "";
         _showCommandPalette = false;
         _isSending = true;
         try
         {
-            await Interaction.SendMessageAsync(Store.ActiveAgentId, content);
+            await Interaction.SendMessageAsync(Store.ActiveAgentId, convId, content);
         }
         catch (Exception ex)
         {
@@ -759,7 +762,10 @@ else
         if (Store.ActiveAgentId is null || CommandDispatcher is null)
             return;
 
-        await CommandDispatcher.ExecuteAsync(Store.ActiveAgentId, cmd);
+        if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is not { } convId)
+            return;
+
+        await CommandDispatcher.ExecuteAsync(Store.ActiveAgentId, convId, cmd);
     }
 
     // #1691: whether the active conversation has older history to page in on scroll-up.
@@ -893,7 +899,13 @@ else
         // dispatcher so behaviour matches the desktop exactly; the menu's New-session button (no
         // pending command) keeps calling ResetSessionAsync directly.
         if (pending is not null && CommandDispatcher is not null)
-            await CommandDispatcher.ExecuteAsync(Store.ActiveAgentId, pending);
+        {
+            // #3063: the dispatcher requires the conversation explicitly. With no conversation there
+            // is nothing for /clear or /new to act on, so this is a no-op rather than a silent
+            // fall-through to the unconditional session reset below.
+            if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is { } convId)
+                await CommandDispatcher.ExecuteAsync(Store.ActiveAgentId, convId, pending);
+        }
         else
             await Interaction.ResetSessionAsync(Store.ActiveAgentId);
 

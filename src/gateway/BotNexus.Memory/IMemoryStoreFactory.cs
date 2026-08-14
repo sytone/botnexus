@@ -1,8 +1,10 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Memory;
 
 public interface IMemoryStoreFactory
 {
-    IMemoryStore Create(string agentId);
+    IMemoryStore Create(AgentId agentId);
 
     /// <summary>
     /// Indicates whether the location backing this agent's memory store still exists.
@@ -11,5 +13,5 @@ public interface IMemoryStoreFactory
     /// <c>SQLITE_CANTOPEN</c>, which is permanently unrecoverable rather than transient (#2608).
     /// Implementations that are not filesystem-backed report <see langword="true"/>.
     /// </summary>
-    bool StoreLocationExists(string agentId) => true;
+    bool StoreLocationExists(AgentId agentId) => true;
 }

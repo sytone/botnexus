@@ -13,6 +13,11 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="OpenTelemetry.Api" />
+    <!-- #2855: EmbeddingProviderGenerator adapts the optional IEmbeddingProvider capability to
+         Microsoft.Extensions.AI's IEmbeddingGenerator, the seam BotNexus.Memory already consumes.
+         Referencing the same abstractions package here - and NOT the memory project - is what lets
+         the adapter live on the provider side with no edge between the two assemblies. -->
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
   </ItemGroup>
   <ItemGroup>
     <!-- #2881: ProviderHttpErrorHelper must redact secret-shaped values out of provider error

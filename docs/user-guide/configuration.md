@@ -937,7 +937,10 @@ A background cleanup service expires and prunes old sessions.
       "checkInterval": "00:05:00",
       "sessionTtl": "1.00:00:00",
       "closedSessionRetention": "7.00:00:00",
-      "cronNoopRetention": "7.00:00:00"
+      "cronNoopRetention": "7.00:00:00",
+      "maxDiskBytes": null,
+      "highWaterBytes": null,
+      "diskBudgetMode": "Warn"
     }
   }
 }
@@ -947,7 +950,10 @@ A background cleanup service expires and prunes old sessions.
 - `checkInterval`: How often the cleanup service runs (default `00:05:00`).
 - `sessionTtl`: Time-to-live for active sessions before they are expired (default `1.00:00:00`, i.e. 24 hours).
 - `closedSessionRetention`: Optional; auto-delete closed (sealed) sessions after this period. Omit or set `null` to keep forever.
-- `cronNoopRetention`: Prune near-empty cron "noop wake" sessions (≤ 2 persisted messages) whose last update is older than this window. Defaults to `7.00:00:00` (7 days) and is user-configurable. Set to `null` or `0` to disable. This only prunes stale near-empty cron sessions after the fact — it does **not** change wake or persist behaviour.
+- `cronNoopRetention`: Prune near-empty cron "noop wake" sessions (≤ 2 persisted messages) whose last update is older than this window. Defaults to `7.00:00:00` (7 days) and is user-configurable. Set to `null` or `0` to disable. This only prunes stale near-empty cron sessions after the fact - it does **not** change wake or persist behaviour.
+- `maxDiskBytes`: Optional total disk budget, in bytes, for this agent's sessions. **`null`, `0`, or a negative value disables the budget and evicts nothing** — a zero budget is *disabled*, never "a zero-byte budget" that would wipe every session (the openclaw#119422 regression this contract exists to prevent). Defaults to `null`.
+- `highWaterBytes`: The footprint eviction reclaims down to before stopping. Defaults to 80% of `maxDiskBytes`, so enforcement is not re-triggered on every cycle at exactly the budget line.
+- `diskBudgetMode`: `Warn` (default) logs disk pressure and deletes nothing; `Enforce` evicts oldest-first — sealed sessions, then expired, then suspended. Active sessions and any session with an in-flight agent run are never evicted.
 
 ---
 

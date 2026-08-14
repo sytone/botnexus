@@ -24,8 +24,46 @@ namespace BotNexus.Gateway.Configuration;
 /// list index (<c>gateway.cors.origins[0]</c>).
 /// </para>
 /// </remarks>
-public static class RawConfigPath
+internal static class RawConfigPath
 {
+    /// <summary>
+    /// Returns true when a node - including an explicit JSON null - is present at
+    /// <paramref name="dottedPath"/>. Distinct from <see cref="Get"/>, which cannot tell an
+    /// explicit null apart from an absent key.
+    /// </summary>
+    public static bool Exists(JsonObject root, string dottedPath)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+
+        if (!TryParse(dottedPath, out var segments, out _))
+            return false;
+
+        JsonNode? current = root;
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var segment = segments[i];
+
+            if (current is not JsonObject container)
+                return false;
+
+            var key = ResolveKey(container, segment.Name);
+            if (!container.ContainsKey(key))
+                return false;
+
+            current = container[key];
+
+            if (segment.Index is null)
+                continue;
+
+            if (current is not JsonArray array || segment.Index.Value >= array.Count)
+                return false;
+
+            current = array[segment.Index.Value];
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Sets <paramref name="value"/> at <paramref name="dottedPath"/>, creating any missing
     /// intermediate objects/arrays. Returns <see langword="false"/> with a caller-presentable

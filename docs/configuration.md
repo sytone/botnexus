@@ -956,7 +956,10 @@ The gateway runs a periodic `SessionCleanupService` that prunes stale sessions. 
     "sessionCleanup": {
       "sessionTtl": "1.00:00:00",
       "closedSessionRetention": null,
-      "cronNoopRetention": "7.00:00:00"
+      "cronNoopRetention": "7.00:00:00",
+      "maxDiskBytes": null,
+      "highWaterBytes": null,
+      "diskBudgetMode": "Warn"
     }
   }
 }
@@ -967,8 +970,32 @@ The gateway runs a periodic `SessionCleanupService` that prunes stale sessions. 
 | `sessionCleanup.sessionTtl` | TimeSpan | `1.00:00:00` (24h) | Age after which an idle session is eligible for cleanup. |
 | `sessionCleanup.closedSessionRetention` | TimeSpan? | null | If set, sealed sessions older than this window are pruned. |
 | `sessionCleanup.cronNoopRetention` | TimeSpan? | `7.00:00:00` (7 days) | Retention window for near-empty cron noop sessions (`cron:` id, ≤ 2 messages). Sessions older than this are pruned. Set to `null` or a non-positive value to disable noop pruning. Configurable via `gateway:sessionCleanup:cronNoopRetention`. |
+| `sessionCleanup.maxDiskBytes` | long? | null (disabled) | Optional total disk budget, in bytes, for an agent's sessions directory. **`null`, `0`, or any negative value disables the budget entirely and evicts nothing.** |
+| `sessionCleanup.highWaterBytes` | long? | 80% of `maxDiskBytes` | Footprint that enforce-mode eviction reclaims down to before it stops. Values outside `(0, maxDiskBytes]` fall back to the 80% default. |
+| `sessionCleanup.diskBudgetMode` | `Warn` \| `Enforce` | `Warn` | `Warn` logs disk pressure and deletes nothing; `Enforce` evicts oldest-first down to `highWaterBytes`. |
 
-The section is optional — when absent, the 7-day cron noop retention default applies. Because the predicate requires ≤ 2 messages, any cron session that did real work (multiple turns or tool calls, which add history rows) is never pruned by this branch.
+##### Session disk budget
+
+Retention is otherwise purely temporal, so a high-volume agent whose sessions are all younger
+than every retention window can fill the volume with no pressure signal at all. The optional disk
+budget adds a size bound, evaluated on the existing `checkInterval` sweep (no second timer) and
+applied **per agent**, matching how sessions are laid out on disk.
+
+**`maxDiskBytes = 0` means DISABLED, not "a zero-byte budget".** This is the single most important
+contract on this feature. Upstream OpenClaw parsed `0` as a literal zero-byte budget, so enforce
+mode deleted *every* session artifact (openclaw#119422). BotNexus treats `null`, `0`, and negative
+alike: the size path returns before any total is even computed and nothing is ever evicted.
+
+Eviction order is tiered and oldest-first within each tier: sealed sessions, then expired, then
+suspended. **Active sessions are never evicted by the size path, and neither is any session with an
+in-flight agent run** - deleting one would pull the store out from under a running turn. Eviction
+stops as soon as the footprint is at or below `highWaterBytes`, so a budget does not re-trigger on
+every cycle at exactly the budget line.
+
+Defaults (`maxDiskBytes: null`, `diskBudgetMode: Warn`) preserve the pre-budget sweep behaviour
+exactly: no session is deleted that would not have been deleted before.
+
+The section is optional - when absent, the 7-day cron noop retention default applies. Because the predicate requires ≤ 2 messages, any cron session that did real work (multiple turns or tool calls, which add history rows) is never pruned by this branch.
 
 #### Session Consistency Monitor
 
@@ -1229,6 +1256,44 @@ When an unbacked claim is detected, the auditor emits a structured `claimAudit` 
 | `claimAudit.mode` | string | `"warn"` | Reaction on detecting an unbacked claim: `"warn"` (emit the `claimAudit` signal only) or `"block"` (also mark the turn for blocking). Unrecognised values fall back to `"warn"`. |
 
 The section is optional — when absent, the auditor runs in `warn` mode. Setting `claimAudit.enabled` to `false` turns it off entirely (no scan).
+
+
+#### Memory Embeddings (`memoryEmbeddings`)
+
+Selects the embedding backend that supplies vectors for hybrid memory retrieval (#2855). **Off by default** — enabling it sends memory content to the configured endpoint, so it is an explicit operator decision.
+
+```json
+{
+  "gateway": {
+    "memoryEmbeddings": {
+      "enabled": true,
+      "provider": "ollama",
+      "model": "nomic-embed-text",
+      "dimensions": 768,
+      "baseUrl": "http://localhost:11434/v1",
+      "apiKey": null
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `memoryEmbeddings.enabled` | bool | `false` | Enables embedding of memory entries for hybrid (lexical + vector) retrieval. |
+| `memoryEmbeddings.provider` | string | `null` | Provider key whose embeddings endpoint supplies vectors (for example `"ollama"` or `"openai"`). |
+| `memoryEmbeddings.model` | string | `null` | Embedding model identifier as the endpoint expects it. |
+| `memoryEmbeddings.dimensions` | int | `0` | Vector width the model emits. A response of a different width is discarded and the entry falls back to lexical-only. |
+| `memoryEmbeddings.baseUrl` | string | `null` | Base URL of the OpenAI-compatible embeddings endpoint; `/embeddings` is appended. |
+| `memoryEmbeddings.apiKey` | string | `null` | Optional bearer token. Omit for a local endpoint that requires none. Sensitive: stored and shown masked. |
+
+An **absent**, **disabled**, or **incompletely filled** section all resolve to the lexical-only
+behaviour the platform has shipped since hybrid retrieval landed: no generator is registered and
+memory search is BM25-only. A half-configured section degrades rather than throwing, so a gateway
+mid-way through embeddings setup still starts. An endpoint that is unreachable or erroring also
+degrades to lexical-only without failing a memory write or search.
+
+See [Hybrid memory retrieval](./features/hybrid-memory-retrieval.md) for the identity and
+fingerprint semantics.
 
 
 #### Shell Execution Settings

@@ -214,7 +214,7 @@ public sealed class MemoryIndexerAdditionalTests
     private sealed class TestFactory(RecordingMemoryStore store) : IMemoryStoreFactory
     {
         private readonly RecordingMemoryStore _store = store;
-        public IMemoryStore Create(string agentId) => _store;
+        public IMemoryStore Create(AgentId agentId) => _store;
     }
 
     private sealed class RecordingMemoryStore : IMemoryStore

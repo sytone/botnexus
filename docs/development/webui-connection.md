@@ -1,290 +1,250 @@
 # WebUI architecture and connection flow
 
-This document describes the BotNexus WebUI architecture, including the SignalR connection model, multi-session management, and Blazor component structure.
+This document describes the BotNexus WebUI architecture, including the SignalR connection model, multi-conversation state management, and Blazor component structure.
 
-> **Note:** The WebUI is a Blazor Server application at `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/`.
+> **Note:** The WebUI is a Blazor Server application at `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/`. Its state and transport services live in the shared `…BlazorClient.Core/Services/` project, which the mobile portal reuses.
 
 ## Overview
 
-The WebUI is a **channel-centric, multi-session interface** that connects to the Gateway via SignalR. Key characteristics:
+The WebUI is an **agent-centric, multi-conversation interface** that connects to the Gateway via SignalR. Key characteristics:
 
-- **Subscribe-All Model**: Connect once, subscribe to all sessions
-- **Per-Channel Containers**: Each agent+channel gets its own permanent DOM container — no DOM swapping
+- **Subscribe-All Model**: Connect once, subscribe to every existing session group
+- **Per-Agent Subscription**: A second verb joins per-agent groups so not-yet-created conversations can still notify
 - **Auto-Session on Send**: Sessions created automatically on first message
-- **Per-Session Stores**: Independent state management per session
+- **Single State Store**: One `ClientStateStore` holds agents, conversations, messages and stream state
 - **Streaming Updates**: Real-time agent responses via SignalR events
 
 ## Architecture Diagram
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                         Browser                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │               SignalR Client                          │  │
-│  │  connection.on("MessageStart", ...)                   │  │
-│  │  connection.on("ContentDelta", ...)                   │  │
-│  │  connection.on("MessageEnd", ...)                     │  │
-│  └───────────────────┬───────────────────────────────────┘  │
-│                      │                                       │
-│  ┌───────────────────▼───────────────────────────────────┐  │
-│  │         SessionStoreManager                           │  │
-│  │  - stores: Map<sessionId, SessionStore>              │  │
-│  │  - activeViewId: string | null                       │  │
-│  │  - switchView(sessionId): void                       │  │
-│  └───────────────────┬───────────────────────────────────┘  │
-│                      │                                       │
-│  ┌───────────────────▼───────────────────────────────────┐  │
-│  │         SessionStore (per session)                    │  │
-│  │  - sessionId: string                                  │  │
-│  │  - agentId: string                                    │  │
-│  │  - channelType: string                                │  │
-│  │  - streamState: { isStreaming, ... }                 │  │
-│  │  - containerId: string (permanent DOM container)      │  │
-│  └───────────────────┬───────────────────────────────────┘  │
-│                      │                                       │
-│  ┌───────────────────▼───────────────────────────────────┐  │
-│  │              DOM Renderer                             │  │
-│  │  - per-channel containers (permanent, show/hide)      │  │
-│  │  - elSidebar (session list)                           │  │
-│  │  - marked.js (Markdown rendering)                     │  │
-│  │  - DOMPurify (XSS sanitization)                       │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                        ▲
-                        │ SignalR over WebSocket
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     Gateway (Server)                        │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │              GatewayHub                              │   │
-│  │  - SubscribeAll()                                    │   │
-│  │  - SendMessage(agentId, channelType, content)       │   │
-│  │  - Steer(agentId, sessionId, content)               │   │
-│  │  - FollowUp(agentId, sessionId, content)            │   │
-│  └───────────────────┬──────────────────────────────────┘   │
-│                      │                                       │
-│  ┌───────────────────▼──────────────────────────────────┐   │
-│  │       SignalRChannelAdapter                          │   │
-│  │  - SendStreamEventAsync(conversationId, event)       │   │
-│  │  - Broadcasts to group: session:{sessionId}          │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+|                        Browser                              |
+|  +-------------------------------------------------------+  |
+|  |            Blazor components (ChatPanel, Home)        |  |
+|  |            render from store state                    |  |
+|  +---------------------------+---------------------------+  |
+|                              |                              |
+|  +---------------------------v---------------------------+  |
+|  |                   ClientStateStore                    |  |
+|  |  - Agents: IReadOnlyDictionary<string, AgentState>    |  |
+|  |  - ActiveAgentId / ActiveConversationId (read-only)   |  |
+|  |  - SelectView(agentId, conversationId, source)        |  |
+|  |  - GetStreamState(conversationId)                     |  |
+|  +---------------------------^---------------------------+  |
+|                              |                              |
+|  +---------------------------+---------------------------+  |
+|  |                 GatewayEventHandler                   |  |
+|  |  HandleMessageStart / HandleContentDelta / ...        |  |
+|  +---------------------------^---------------------------+  |
+|                              |                              |
+|  +---------------------------+---------------------------+  |
+|  |                GatewayHubConnection                   |  |
+|  |  SignalR client, reconnect, resume coordination       |  |
+|  +-------------------------------------------------------+  |
++-------------------------------------------------------------+
+                              ^
+                              | SignalR over WebSocket (/hub/gateway)
+                              v
++-------------------------------------------------------------+
+|                     Gateway (Server)                        |
+|  +-------------------------------------------------------+  |
+|  |                     GatewayHub                        |  |
+|  |  - SubscribeAll() -> SubscribeAllResult               |  |
+|  |  - SubscribeAgents(agentIds)                          |  |
+|  |  - SendMessage(agentId, channelType, content, convId) |  |
+|  |  - Steer / FollowUp / Abort / CompactSession          |  |
+|  +---------------------------+---------------------------+  |
+|                              |                              |
+|  +---------------------------v---------------------------+  |
+|  |              SignalRChannelAdapter                    |  |
+|  |  - broadcasts to group session:{sessionId}            |  |
+|  |  - broadcasts to per-agent groups                     |  |
+|  +-------------------------------------------------------+  |
++-------------------------------------------------------------+
 ```
 
 ## Connection Flow
 
 ### 1. Initial Connection
 
-```javascript
-// app.js
-const connection = new signalR.HubConnectionBuilder()
-    .withUrl("/gateway")
-    .withAutomaticReconnect()
-    .build();
+The client dials the hub endpoint mapped by `SignalREndpointContributor`:
 
-await connection.start();
-connectionId = connection.connectionId;
+```csharp
+app.MapHub<GatewayHub>("/hub/gateway");
 ```
+
+`GatewayHubConnection` builds the connection with automatic reconnect and appends the connect-time
+query parameters described in the [SignalR hub contract](../signalr-hub-contract.md).
 
 **Connection Lifecycle:**
 
-1. SignalR negotiation to `/hub/gateway` endpoint
-2. SignalR negotiation (protocol selection)
-3. Connection established → `connectionId` assigned
-4. Automatic reconnect on disconnect
+1. SignalR negotiation against `/hub/gateway` (protocol and transport selection)
+2. Connection established, `connectionId` assigned
+3. Automatic reconnect on disconnect, with resume coordination via `HubResumeCoordinator`
 
-### 2. SubscribeAll
-
-```javascript
-const result = await connection.invoke("SubscribeAll");
-// result.sessions = [ { sessionId, agentId, channelType, ... }, ... ]
-
-sessionStoreManager.subscribe(result.sessions);
-renderSidebar();
-```
-
-**Server Side:**
+### 2. SubscribeAll and SubscribeAgents
 
 ```csharp
-public async Task<object> SubscribeAll()
-{
-    var sessions = await _warmup.GetAvailableSessionsAsync(Context.ConnectionAborted);
-    
-    foreach (var session in sessions)
-    {
-        await Groups.AddToGroupAsync(
-            Context.ConnectionId,
-            GetSessionGroup(session.SessionId),
-            Context.ConnectionAborted);
-    }
-    
-    return new { sessions };
-}
+var result = await connection.InvokeAsync<SubscribeAllResult>("SubscribeAll");
+// result.Sessions = IReadOnlyList<SessionSummary>
 ```
 
-**Result:**
+`SubscribeAll` joins the connection to the group of every **existing** session and returns their
+summaries.
 
-- Client is added to all session groups: `session:{sessionId}`
-- Client receives list of all available sessions
-- `SessionStoreManager` creates a `SessionStore` for each session
-- Sidebar is rendered with session list
+Because those groups are derived from sessions that already exist, they can never cover a
+conversation that has not been created yet — and "created" is one of the change types
+`ConversationChanged` carries. So the client also calls:
+
+```csharp
+await connection.InvokeAsync("SubscribeAgents", agentIds);
+```
+
+`SubscribeAgents` joins the per-agent notification groups for the agents the client renders, so it
+receives `ConversationChanged` for those agents and no others. The agent is the smallest scope that
+can name a not-yet-existing conversation. The call is **idempotent** — SignalR's group join is a
+no-op for a connection already in the group, so every reconnect may call it without accumulating
+anything. Blank entries in the list are ignored.
 
 ### 3. Sending a Message
 
-```javascript
-async function sendMessage(content) {
-    const agentId = sessionStoreManager.activeAgentId;
-    const channelType = currentChannelType || "signalr";
-    
-    const result = await connection.invoke("SendMessage", agentId, channelType, content);
-    // result = { sessionId, agentId, channelType }
-    
-    // Switch to the session (auto-created if new)
-    sessionStoreManager.switchView(result.sessionId);
-}
-```
-
-**Server Side:**
-
-Resolves or creates a session for the agent+channel pair, subscribes the caller to the session group, and dispatches the message.
-
 ```csharp
-public async Task<object> SendMessage(AgentId agentId, ChannelKey channelType, string content)
+public Task<SendMessageResult> SendMessage(
+    AgentId agentId, ChannelKey channelType, string content, string? conversationId = null)
 ```
 
-See [GatewayHub.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs)
+`SendMessageResult` carries `sessionId`, `agentId` and `channelType`. The server resolves or creates
+a session for the agent and channel, subscribes the caller to the session group, and dispatches the
+message.
 
-**Auto-Session Logic:**
-
-Finds an existing active UserAgent session for the agent+channel pair, or creates a new one with auto-generated SessionId and UserAgent type.
-
-See [GatewayHub.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs)
+See [GatewayHub.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs).
 
 **Key Insight:**
 
-Sessions are created **on first message**, not explicit creation. The client doesn't need to know about session creation — it just sends a message to an agent, and the session is created automatically.
+Sessions are created **on first message**, not by an explicit create call. The client sends a message
+to an agent and the session appears.
 
 ## SignalR Event Handling
 
-### Event Types
+`GatewayEventHandler` in `…BlazorClient.Core/Services/` owns every inbound event. Each handler
+resolves the target conversation and mutates `ClientStateStore`, which raises `OnChanged` so the
+Blazor components re-render.
 
-Each handler resolves the `SessionStore` via `sessionStoreManager.getOrCreateStore(event.sessionId)` and updates state accordingly:
+| Event | Handler | Behaviour |
+|---|---|---|
+| `RunStarted` / `RunEnded` | `HandleRunStarted` / `HandleRunEnded` | Sets and clears `IsRunActive`, the authoritative bracket around the whole agent loop. |
+| `MessageStart` | `HandleMessageStart` | Marks the conversation streaming and opens a message buffer. |
+| `ContentDelta` | `HandleContentDelta` | Appends the delta to the conversation's stream buffer. |
+| `ThinkingDelta` | `HandleThinkingDelta` | Accumulates thinking content for the thinking display. |
+| `ToolStart` / `ToolEnd` | `HandleToolStart` / `HandleToolEnd` | Tracks and completes entries in `ActiveToolCalls`. |
+| `MessageEnd` | `HandleMessageEnd` | Commits the stream buffer to a `ChatMessage` and clears streaming state. |
+| `TurnEnd` / `TurnInterrupted` | `HandleTurnEnd` / `HandleTurnInterrupted` | Ends or unwinds the turn. |
+| `UserInputRequired` | `HandleUserInputRequired` | Stores the pending `ask_user` prompt for the conversation. |
+| `SessionReset` | `HandleSessionReset` | Clears messages for the reset session. |
+| `SubAgentSpawned` / `Completed` / `Failed` / `Killed` | `HandleSubAgent*` | Maintains the `SubAgentInfo` list. |
+| `SteeringFeedback` | `HandleSteeringFeedback` | Advances the steering queue entry status. |
+| `CanvasUpdated` / `CanvasStateChanged` | `HandleCanvas*` | Updates canvas HTML and canvas state keys. |
+| `TodoUpdated` | `HandleTodoUpdated` | Replaces the conversation's todo list. |
+| `ConversationChanged` | `HandleConversationChanged` | Creates, renames, archives or removes a conversation in the store. |
+| `Error` | `HandleError` | Appends an error message and clears streaming state. |
 
-| Event | Handler Behavior |
-|-------|-----------------|
-| `MessageStart` | Sets `isStreaming = true`, records `activeMessageId`, appends empty assistant message placeholder |
-| `ContentDelta` | Appends delta text to the last message (ignored if not streaming) |
-| `ThinkingDelta` | Accumulates delta in `thinkingBuffer`, updates thinking display (if enabled) |
-| `ToolStart` | Tracks tool call in `activeToolCalls` with name, arguments, and start time; renders tool UI |
-| `ToolEnd` | Records result and end time on the tracked tool call; updates status in DOM |
-| `MessageEnd` | Clears streaming state, finalizes message rendering, removes thinking display |
-| `Error` | Appends error message to DOM, clears streaming state |
-
-See [GatewayHubConnection.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Services/GatewayHubConnection.cs) and [ChatPanel.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor)
+Connection lifecycle is handled by `HandleReconnecting`, `HandleReconnectedAsync` and
+`HandleDisconnected`.
 
 ### Server-Side Broadcasting
 
-Maps `AgentStreamEventType` to SignalR method name, enriches the event with `SessionId`, and broadcasts to the session group via `IHubContext`.
+`SignalRChannelAdapter` maps each `AgentStreamEventType` to its hub method name, enriches the event,
+and broadcasts to the session group (`session:{sessionId}`) or the per-agent group via `IHubContext`.
 
-See [SignalRChannelAdapter.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/SignalRChannelAdapter.cs)
+See [SignalRChannelAdapter.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/SignalRChannelAdapter.cs).
 
-## Multi-Session Management
+## Multi-Conversation State
 
-### SessionStore Class
+### ClientStateStore
 
-Per-session client state: tracks `sessionId`, `agentId`, `channelType`, streaming state (`isStreaming`, `activeToolCalls`, `thinkingBuffer`), and unread count.
+`ClientStateStore` (interface `IClientStateStore`) is the single client-side state container. It is
+not a per-session store map — it holds every agent and every conversation:
 
-See [AgentSessionState.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Services/AgentSessionState.cs)
+| Member | Purpose |
+|---|---|
+| `Agents` | `IReadOnlyDictionary<string, AgentState>` of every known agent. |
+| `ActiveAgentId` / `ActiveConversationId` | The current selection. **Read-only properties** — there is no public setter. |
+| `SelectView(agentId, conversationId, source)` | The *sole* mutation path for the active view, so an inbound event can never steal the selection from the user. |
+| `SeedAgents` / `UpsertAgent` / `RemoveAgent` | Agent roster maintenance. |
+| `SeedConversations` / `GetConversation` / `SetActiveConversation` | Conversation roster maintenance. |
+| `GetMessages` / `AppendMessage` / `PrependMessages` / `ClearMessages` | Message list per conversation (`PrependMessages` backs history paging). |
+| `GetStreamState` / `SetStreaming` / `AppendStreamBuffer` / `CommitStreamBuffer` | Streaming buffers per conversation. |
+| `TryResolveAgentBySession` / `TryResolveAgentByConversation` / `TryResolveConversationBySession` | Routing lookups used by the event handlers. |
+| `GetPendingAskUser` / `SetPendingAskUser` / `ClearPendingAskUser` | Pending `ask_user` prompt. |
+| `GetSteeringQueue` / `AddSteeringEntry` / `UpdateSteeringEntry` | Steering queue per conversation. |
+| `OnChanged` / `NotifyChanged` / `NotifyChangedThrottled` | Render notification, throttled on the streaming hot path. |
 
-### SessionStoreManager
+### ConversationState and ConversationStreamState
 
-Key behaviors:
+`ConversationState` carries `ConversationId`, `Title`, `IsDefault`, `IsPinned`, `Status`,
+`ActiveSessionId`, `UnreadCount`, `CreatedAt`/`UpdatedAt`, and the write-once provenance axes
+described in [Conversation provenance](../features/conversation-provenance.md). `Source` is
+`init`-only by design so no inbound SignalR event can mutate it.
 
-- Manages session state per agent/session pair
-- Creates new session state on first access
-- Switches the active view between sessions
+`ConversationStreamState` carries `IsStreaming`, `IsRunActive`, `Buffer` and `ActiveToolCalls`.
+`IsRunActive` is the primary driver of turn-active UI: unlike `IsStreaming` and `ActiveToolCalls`,
+which drop to a quiescent state in the gaps between message-end and the next tool-start, it stays
+asserted across the entire run so steer, follow-up and stop controls do not flicker. The `Buffer` is
+backed by a `StringBuilder`, making delta accumulation amortised O(1) per token rather than an O(n)
+copy of the growing reply.
 
-See [AgentSessionManager.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Services/AgentSessionManager.cs)
+**View Switching:**
 
-**Session Switching:**
-
-1. **Each session** maintains its own state via `AgentSessionState`
-2. **Switch Away**: The previous session's content is preserved in memory
-3. **Switch To**: The target session's content renders via Blazor component diffing
-4. **No Server Round-Trip**: Switching is instant, client-side only
-5. **SignalR Events**: Route to the correct session state by `sessionId`
-
-**Benefits:**
-
-- Instant session switching (no network latency)
-- No content loss — session state persists in memory
-- Supports multi-session streaming (events always update the correct session state)
-- Blazor handles DOM updates automatically
+1. Each conversation keeps its own messages and stream state in the store
+2. Switching away preserves the previous conversation's content in memory
+3. Switching to a conversation renders via Blazor component diffing
+4. No server round-trip — switching is client-side only
+5. Inbound events route to the correct conversation by `conversationId`, regardless of which one is shown
 
 ## Rendering Pipeline
 
 ### Markdown Rendering
 
-Renders messages using Markdown with sanitization for XSS protection.
+Markdown is rendered in the browser by `wwwroot/js/markdown.js`, which uses the vendored
+`marked.min.js` and `purify.min.js`.
 
-See [ChatPanel.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor)
-
-**Sanitization:**
-
-- `DOMPurify.sanitize()` prevents XSS attacks
-- Strips `<script>`, `<iframe>`, `onclick`, etc.
-- Safe to render LLM-generated content
+**Sanitization fails closed.** If either `marked` or `DOMPurify` is unavailable, `renderMarkdown`
+returns the original text HTML-escaped by a deliberately hand-written escaper (readable, but inert)
+and logs a console warning naming the missing dependency. Unsanitized HTML is never returned — which
+is what makes it safe to render LLM-generated content.
 
 ### Tool Call Rendering
 
-Tool calls rendered as collapsible elements with name, status indicator, arguments, and result. Status updates from Running → Success/Failed on ToolEnd.
+Tool calls render as collapsible elements showing name, status, arguments and result. Status advances
+from running to success or failure when `ToolEnd` arrives.
 
-See [ChatPanel.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor)
+See [ChatPanel.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor).
 
 ### Thinking Display
 
-Thinking deltas accumulated and displayed during streaming. Removed on MessageEnd.
+Thinking deltas accumulate during streaming and are cleared on `MessageEnd`.
 
-See [ChatPanel.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor)
+## Sidebar and Conversation List
 
-## Sidebar and Session List
+The sidebar lists agents and their conversations, showing unread badges and streaming indicators.
+Clicking an entry calls `SelectView` with an explicit `SelectionSource`, which is the only way the
+active view changes.
 
-Renders session list sorted by last-viewed time. Each entry shows agent name, channel type, unread badge, and streaming indicator. Clicking switches the active view.
-
-See [Home.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Pages/Home.razor)
+See [Home.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Pages/Home.razor).
 
 ## Summary
 
 **Key Architectural Decisions:**
 
-1. **Subscribe-All Model**: Single connection subscribes to all sessions upfront
-2. **Auto-Session on Send**: Sessions created implicitly on first message
-3. **Blazor Component Model**: Session state managed in C# services, rendered via Blazor components
-4. **Per-Session Stores**: Independent state management per session
-5. **SignalR Group Broadcast**: Events routed to session groups (`session:{sessionId}`)
-6. **Persistent Containers**: No content loss when switching — containers persist even when hidden
-7. **Markdown Rendering**: `marked.js` + `DOMPurify` for safe rendering
-8. **Streaming Events**: Real-time deltas via SignalR for smooth UX
+1. **Subscribe-All plus Subscribe-Agents**: session groups for existing work, agent groups for conversations that do not exist yet
+2. **Auto-Session on Send**: sessions created implicitly on first message
+3. **Single Shared Store**: one `ClientStateStore` in `BlazorClient.Core`, reused by desktop and mobile portals
+4. **Selection is Write-Guarded**: `SelectView` is the sole mutation path for the active view
+5. **Run-Active Bracket**: `RunStarted`/`RunEnded` drive turn-active UI, not per-message streaming flags
+6. **Fail-Closed Markdown**: missing `marked`/`DOMPurify` degrades to escaped text, never raw HTML
+7. **Streaming Events**: real-time deltas via SignalR for smooth output
 
-**Performance Characteristics:**
+**Related:**
 
-- Connection setup: ~100-200ms (SignalR negotiation + transport upgrade)
-- SubscribeAll: ~50-100ms (depends on session count)
-- Session switch: <10ms (show/hide container, no network)
-- Message send: ~50-200ms (HTTP round-trip to hub)
-- Streaming latency: ~20-50ms per delta (SignalR overhead)
-
-**Scalability Considerations:**
-
-- SignalR groups scale to ~10K connections per hub
-- Client stores limited to 20 sessions (LRU eviction)
-- Per-channel containers avoid re-rendering overhead on switch
-- Markdown rendering is client-side (no server load)
-
-**Future Enhancements:**
-
-- Virtual scrolling for long conversation histories
-- Persistent client-side storage (IndexedDB)
-- Offline support (service worker + sync)
-- Multi-client collaboration (shared cursors, presence)
-- Voice input/output (Web Speech API)
+- [SignalR hub contract](../signalr-hub-contract.md) — the authoritative event, method and connection-parameter surface
+- [Conversation provenance](../features/conversation-provenance.md) — the axes carried on every conversation payload

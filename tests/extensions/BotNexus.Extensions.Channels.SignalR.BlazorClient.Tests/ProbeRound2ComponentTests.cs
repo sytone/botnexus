@@ -75,7 +75,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         var sendBtn = cut.Find(".send-btn");
         await cut.InvokeAsync(() => sendBtn.Click());
 
-        await _interaction.Received(1).SendMessageAsync("agent-1", "Hello from test!");
+        await _interaction.Received(1).SendMessageAsync("agent-1", "conv-1", "Hello from test!");
     }
 
     // ── ChatPanel: Follow Up button queues via IAgentInteractionService.FollowUpAsync ──
@@ -101,7 +101,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         // Follow Up must route to FollowUpAsync (queue after loop), NOT SteerAsync or SendMessageAsync.
         await _interaction.Received(1).FollowUpAsync("agent-1", "Next, write the tests.");
         await _interaction.DidNotReceive().SteerAsync("agent-1", Arg.Any<string>());
-        await _interaction.DidNotReceive().SendMessageAsync("agent-1", Arg.Any<string>());
+        await _interaction.DidNotReceive().SendMessageAsync("agent-1", Arg.Any<string>(), Arg.Any<string>());
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         await cut.InvokeAsync(() => textarea.Input("/prompts"));
         await cut.InvokeAsync(() => textarea.TriggerEvent("onkeydown", new KeyboardEventArgs { Key = "Enter" }));
 
-        await _interaction.Received(1).SendMessageAsync("agent-1", "/prompts");
+        await _interaction.Received(1).SendMessageAsync("agent-1", "conv-1", "/prompts");
     }
 
     // ── ChatPanel: New session button click triggers confirmation dialog ───────

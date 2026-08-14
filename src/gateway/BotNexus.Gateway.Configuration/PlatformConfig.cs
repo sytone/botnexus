@@ -301,6 +301,17 @@ public sealed class GatewaySettingsConfig
     public ToolOutputBudgetConfig? ToolOutputBudget { get; set; }
     /// <summary>Post-turn claim auditor (anti-fabrication) settings (#1600).</summary>
     public ClaimAuditConfig? ClaimAudit { get; set; }
+    /// <summary>
+    /// Memory embedding backend selection (#2855). Absent or disabled leaves memory retrieval
+    /// lexical-only, which is the default the platform has shipped since #2356.
+    /// </summary>
+    [Display(
+        Name = "Memory embeddings",
+        Description = "Embedding backend supplying vectors for hybrid memory retrieval. Absent or disabled keeps retrieval lexical-only.",
+        GroupName = "Memory embeddings",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "memory-embeddings", Order = 0)]
+    public MemoryEmbeddingsConfig? MemoryEmbeddings { get; set; }
     /// <summary>CORS settings for browser-based clients.</summary>
     public CorsConfig? Cors { get; set; }
     /// <summary>Per-client request rate limiting settings.</summary>

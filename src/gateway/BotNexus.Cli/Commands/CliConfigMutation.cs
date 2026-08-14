@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
 
@@ -30,8 +29,8 @@ internal static class CliConfigMutation
     /// Rejection messages are rendered to the console.
     /// </summary>
     /// <param name="mutation">
-    /// Edits the raw root in place; returns <see langword="null"/> on success or a
-    /// caller-presentable message to abort the write without touching the file.
+    /// Edits the document in place through the canonical-path surface; returns <see langword="null"/>
+    /// on success or a caller-presentable message to abort the write without touching the file.
     /// </param>
     /// <param name="namedSections">
     /// The top-level config section this mutation targets, declared to the destructive-section
@@ -44,7 +43,7 @@ internal static class CliConfigMutation
     /// <returns>Process exit code: 0 when persisted, 1 when rejected.</returns>
     public static async Task<int> ApplyAsync(
         string configPath,
-        Func<JsonObject, string?> mutation,
+        Func<ConfigDocument, string?> mutation,
         string reason,
         bool verbose,
         CancellationToken cancellationToken,
@@ -55,7 +54,7 @@ internal static class CliConfigMutation
         IReadOnlyList<string> errors;
         try
         {
-            errors = await writer.MutateValidatedAsync(mutation, reason, cancellationToken, namedSections);
+            errors = await writer.MutateDocumentValidatedAsync(mutation, reason, cancellationToken, namedSections);
         }
         catch (PlatformConfigLockTimeoutException ex)
         {
@@ -81,15 +80,21 @@ internal static class CliConfigMutation
     }
 
     /// <summary>
-    /// Reads the raw config document for a command that must inspect the on-disk JSON (existing
-    /// keys, unknown fields) before deciding what to mutate. Note this read is outside the writer
-    /// lock and is therefore advisory only - the authoritative read happens inside
+    /// Reads the config document for a command that must inspect what is on disk (existing keys,
+    /// unknown fields) before deciding what to mutate. Note this read is outside the writer lock and
+    /// is therefore advisory only - the authoritative read happens inside
     /// <see cref="ApplyAsync"/>, so the mutation callback must re-check anything it depends on.
     /// </summary>
-    public static async Task<JsonObject> ReadAsync(string configPath, CancellationToken cancellationToken)
-        => await CreateWriter(configPath).ReadAsync(cancellationToken);
+    public static async Task<ConfigDocument> ReadAsync(string configPath, CancellationToken cancellationToken)
+        => await CreateWriter(configPath).ReadDocumentAsync(cancellationToken);
 
-    private static PlatformConfigWriter CreateWriter(string configPath)
+    /// <summary>
+    /// Creates the writer for <paramref name="configPath"/> with the backup service wired up.
+    /// Exposed so the few commands that perform a whole-document write (<c>init</c>) or need the
+    /// non-validating mutate overload go through the same construction rather than re-deriving the
+    /// backup directory.
+    /// </summary>
+    public static PlatformConfigWriter CreateWriter(string configPath)
     {
         var directory = Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath();
         PlatformConfigLoader.EnsureConfigDirectory(directory);

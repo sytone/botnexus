@@ -592,10 +592,10 @@ public sealed class SessionsController : ControllerBase
         try
         {
             // #2608: a reaped sub-agent workspace has no store; opening it is unrecoverable.
-            if (!_memoryStoreFactory.StoreLocationExists(agentId))
+            if (!_memoryStoreFactory.StoreLocationExists(AgentId.From(agentId)))
                 return;
 
-            var store = _memoryStoreFactory.Create(agentId);
+            var store = _memoryStoreFactory.Create(AgentId.From(agentId));
             var pruned = await store.DeleteBySessionAsync(sessionId, cancellationToken);
             if (pruned > 0)
             {

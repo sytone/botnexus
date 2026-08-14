@@ -1686,6 +1686,116 @@ lifetime), `agentId`, `conversationId`, `sessionId` (each nullable when not know
 
 ---
 
+### Effective Configuration
+
+**Endpoint:** `GET /api/config`
+
+**Description:** Returns the *effective* platform configuration — the config file with platform
+defaults applied — with secrets redacted. This is the resolved view, not the file on disk; use
+`GET /api/config/raw` when you need exactly what is written to `config.json`.
+
+**Response:** 200 OK — a JSON object mirroring the `config.json` tree.
+
+---
+
+### Raw Configuration
+
+**Endpoint:** `GET /api/config/raw`
+
+**Description:** Returns the raw configuration document read from disk, with secrets redacted and
+**no defaults applied**. Absent sections stay absent. Use this to see what a user has actually
+configured versus what the platform supplies.
+
+**Response:** 200 OK — the raw `config.json` document.
+
+---
+
+### Configuration UI Schema
+
+**Endpoint:** `GET /api/config/schema`
+
+**Description:** Returns the read-only, versioned UI schema for the configuration tree. The gateway
+reflects over the annotated `PlatformConfig` model and emits labels, descriptions, widget hints,
+groups, ordering, defaults, validation bounds, secret flags and enum options, so a settings
+renderer can draw an editor without hand-written form code.
+
+**Response:** 200 OK — the schema document. Read-only; there is no write counterpart.
+
+---
+
+### Read a Config Section
+
+**Endpoint:** `GET /api/config/{section}`
+
+**Description:** Returns a single top-level section of the raw config (for example `gateway`,
+`providers`, `channels`).
+
+The section is routed through the **same** redaction logic the whole-config reads use, so a
+per-section read can never expose a secret that `GET /api/config` masks — this covers the
+`providers` API keys, the `gateway` connection strings and cross-world peer keys alike.
+
+**Response:** 200 OK — the section node, or 404 Not Found when the section is absent from the file.
+
+---
+
+### Write Config Sections and Entries
+
+| Method | Endpoint | Effect |
+|---|---|---|
+| `PUT` | `/api/config/{section}` | Replace an entire section. |
+| `PUT` | `/api/config/{section}/{key}` | Replace one entry inside a section (for example a single provider). |
+| `DELETE` | `/api/config/{section}/{key}` | Remove one entry from a section. |
+
+These are the per-section writers. `PUT /api/config/agents` is **rejected** with 400 Bad Request —
+agent management goes through `/api/agents`.
+
+::: tip
+For a multi-field save, prefer `PATCH /api/config` below. It writes only the paths you send as one
+all-or-nothing operation with optimistic concurrency, whereas a `PUT`-per-section loop rewrites
+whole sections and can clobber a concurrent edit.
+:::
+
+**Response:** 200 OK with a `{ "message": "..." }` confirmation.
+
+---
+
+### Effective Agent Configuration
+
+**Endpoint:** `GET /api/config/agents/{agentId}/effective`
+
+**Description:** Returns the merged configuration for one agent together with **provenance per
+field**, so a settings UI can show which values the agent sets itself and which it inherits.
+
+The reserved key `defaults` is not an agent and returns 404 Not Found.
+
+**Response:** 200 OK
+```json
+{
+  "agentId": "farnsworth",
+  "defaultsApplied": true,
+  "config": {
+    "toolIds": ["read", "write", "exec"],
+    "memory": { "enabled": true },
+    "heartbeat": { "enabled": false },
+    "fileAccess": { "mode": "workspace" }
+  },
+  "sources": {
+    "toolIds": "agent",
+    "memory.enabled": "world-default",
+    "heartbeat.enabled": "implicit-default"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `agentId` | The agent the response describes. |
+| `defaultsApplied` | Whether world-level defaults contributed to the resolved config. |
+| `config` | The resolved fields: `toolIds`, `memory`, `heartbeat`, `fileAccess`. |
+| `sources` | Per-field-path provenance. Each value is one of `agent`, `inherited`, `world-default`, `implicit-default`. |
+
+---
+
 ### Config Snapshot (with revision)
 
 **Endpoint:** `GET /api/config/snapshot`

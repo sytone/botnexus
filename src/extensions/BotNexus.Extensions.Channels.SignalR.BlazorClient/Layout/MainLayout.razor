@@ -1,4 +1,4 @@
-@inherits LayoutComponentBase
+﻿@inherits LayoutComponentBase
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IClientStateStore Store
@@ -492,8 +492,18 @@
                             var webhookConversations = allUserConversations
                                 .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && IsWebhookConversation(c))
                                 .ToList();
+                            @* #2325: a conversation assigned to a user-defined section is rendered by
+                               the sections panel, so subtract it here or it renders twice. Subtraction
+                               composes exactly like pinning/cron: it is applied AFTER pinned, cron and
+                               webhook are hoisted out, so a pinned or scheduled conversation keeps its
+                               existing home and only plain default-list rows can move into a section.
+                               Collapsing a section hides its body but never unmounts an assignment, and
+                               an assignment only exists while the owning section exists (deleting a
+                               section returns its conversations to the default list), so this cannot
+                               strand a conversation with no reachable row. *@
                             var normalConversations = allUserConversations
                                 .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && !IsWebhookConversation(c))
+                                .Where(c => !IsRenderedInSection(activeAgent, c))
                                 .Where(MatchesActivityFilter)
                                 .ToList();
 
@@ -653,6 +663,8 @@
                      data-testid="chat-sections-body">
                     <ConversationSectionsPanel AgentId="@sectionsAgent.AgentId"
                                                TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
+                                               OnConversationSelected="@(id => SelectConversationAsync(sectionsAgent.AgentId, id))"
+                                               ItemActions="@(id => RenderSectionMemberActions(sectionsAgent, id))"
                                                OnChanged="HandleSectionsChanged" />
                 </div>
             </div>
@@ -1038,6 +1050,37 @@
             return;
         _activityFilter = filter;
         await JS.InvokeVoidAsync("localStorage.setItem", ActivityFilterKey, filter.ToString());
+    }
+
+    // #2325: the "move to section" menu is a row affordance. An assigned conversation no longer has
+    // a default-list row, so the menu is projected onto its section member row instead - the
+    // affordance moves with the conversation rather than disappearing when it is assigned.
+    private RenderFragment RenderSectionMemberActions(AgentState agent, string conversationId) => __builder =>
+    {
+        @if (!agent.IsReadOnly && agent.Conversations.TryGetValue(conversationId, out var conversation) && !conversation.IsDefault)
+        {
+            @RenderSectionAssign(agent, conversation)
+        }
+    };
+
+    // #2325: true only when this conversation is assigned to a section that WILL actually render a
+    // row for it. Subtracting from the default list is a visibility change, so it is gated on the
+    // section being reachable rather than on the assignment alone:
+    //   * the sections panel is only mounted for a non-read-only agent, so a read-only agent keeps
+    //     every conversation in the default list;
+    //   * an assignment whose section id is not in SectionsState.Sections (deleted server-side, or a
+    //     load that has not landed yet) is ignored, so a stale map can never strand a conversation.
+    // Collapse is deliberately NOT considered: a collapsed section still renders its header and is
+    // one click from its members, exactly as the Pinned group behaves. Assignment composes with the
+    // existing groups rather than overriding them - it is applied only after pinned, cron and
+    // webhook have been hoisted out, so those conversations keep their existing home.
+    private bool IsRenderedInSection(AgentState agent, ConversationState conversation)
+    {
+        if (agent.IsReadOnly)
+            return false;
+        var sectionId = SectionsState.GetAssignedSectionId(conversation.ConversationId);
+        return sectionId is not null
+            && SectionsState.Sections.Any(s => string.Equals(s.SectionId, sectionId, StringComparison.Ordinal));
     }
 
     private RenderFragment RenderConversationItem(AgentState agent, ConversationState conversation) => __builder =>

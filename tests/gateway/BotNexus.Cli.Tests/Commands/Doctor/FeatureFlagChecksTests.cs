@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Commands.Doctor;
 using BotNexus.Gateway.Configuration;
@@ -10,10 +9,21 @@ namespace BotNexus.Cli.Tests.Commands.Doctor;
 /// <summary>
 /// Covers the feature-flag doctor surface added by #2767: absent flags reported and seeded (AC3),
 /// unrecognised keys surfaced (AC4), and the fix satisfying its own check on re-run (AC5).
+/// #2887 moved these off raw <c>JsonObject</c> indexing onto the canonical-path surface; the
+/// assertions are unchanged in meaning.
 /// </summary>
 public class FeatureFlagChecksTests
 {
-    private static JsonObject Root(string json) => JsonNode.Parse(json)!.AsObject();
+    private static ConfigDocument Root(string json) => ConfigDocument.Parse(json);
+
+    /// <summary>A document carrying every declared flag at its documented default.</summary>
+    private static ConfigDocument AllFlagsPresent()
+    {
+        var config = ConfigDocument.Empty();
+        foreach (var flag in FeatureFlags.All)
+            config.Set($"{FeatureFlags.SectionName}.{flag.Name}", flag.Default);
+        return config;
+    }
 
     // ── AC3: absent declared flags are reported ─────────────────────────────────────────
 
@@ -41,12 +51,7 @@ public class FeatureFlagChecksTests
     [Fact]
     public void SeedCheck_NotApplicableWhenEveryDeclaredFlagIsPresent()
     {
-        var section = new JsonObject();
-        foreach (var flag in FeatureFlags.All)
-            section[flag.Name] = flag.Default;
-
-        new FeatureFlagSeedCheck().IsApplicable(new JsonObject { ["FeatureManagement"] = section })
-            .ShouldBeFalse();
+        new FeatureFlagSeedCheck().IsApplicable(AllFlagsPresent()).ShouldBeFalse();
     }
 
     [Fact]
@@ -74,12 +79,8 @@ public class FeatureFlagChecksTests
         var root = Root("{}");
         new FeatureFlagSeedCheck().Apply(root);
 
-        var section = root["FeatureManagement"]!.AsObject();
         foreach (var flag in FeatureFlags.All)
-        {
-            section[flag.Name].ShouldNotBeNull();
-            section[flag.Name]!.GetValue<bool>().ShouldBe(flag.Default);
-        }
+            root.GetBool($"{FeatureFlags.SectionName}.{flag.Name}").ShouldBe(flag.Default);
     }
 
     [Fact]
@@ -104,8 +105,8 @@ public class FeatureFlagChecksTests
         var root = Root("{\"FeatureManagement\":{\"" + FeatureFlags.GatewayDevOriginEnforcement + "\":true}}");
         new FeatureFlagSeedCheck().Apply(root);
 
-        root["FeatureManagement"]![FeatureFlags.GatewayDevOriginEnforcement]!
-            .GetValue<bool>().ShouldBeTrue();
+        root.GetBool($"{FeatureFlags.SectionName}.{FeatureFlags.GatewayDevOriginEnforcement}")
+            .ShouldBe(true);
     }
 
     [Fact]
@@ -114,7 +115,8 @@ public class FeatureFlagChecksTests
         var root = Root("""{"FeatureManagement":{"SomeExtensionFlag":{"EnabledFor":[{"Name":"Percentage"}]}}}""");
         new FeatureFlagSeedCheck().Apply(root);
 
-        root["FeatureManagement"]!["SomeExtensionFlag"]!["EnabledFor"].ShouldNotBeNull();
+        root.HasObject($"{FeatureFlags.SectionName}.SomeExtensionFlag").ShouldBeTrue();
+        root.HasNonEmptyList($"{FeatureFlags.SectionName}.SomeExtensionFlag.EnabledFor").ShouldBeTrue();
     }
 
     // ── AC7: inventory and config cannot silently diverge ───────────────────────────────
@@ -125,14 +127,12 @@ public class FeatureFlagChecksTests
         // A config holding every CURRENTLY declared flag is clean; the same config would report a
         // gap the moment a new flag joined the inventory, because the absent set is derived from
         // FeatureFlags.All rather than restated here.
-        var section = new JsonObject();
-        foreach (var flag in FeatureFlags.All)
-            section[flag.Name] = flag.Default;
-        var root = new JsonObject { ["FeatureManagement"] = section };
-
+        var root = AllFlagsPresent();
         FeatureFlagSeedCheck.AbsentFlags(root).ShouldBeEmpty();
 
-        section.Remove(FeatureFlags.GatewayDevOriginEnforcement);
+        root.TryRemoveEntry(FeatureFlags.SectionName, FeatureFlags.GatewayDevOriginEnforcement, out _)
+            .ShouldBeTrue();
+
         FeatureFlagSeedCheck.AbsentFlags(root)
             .ShouldContain(flag => flag.Name == FeatureFlags.GatewayDevOriginEnforcement);
     }

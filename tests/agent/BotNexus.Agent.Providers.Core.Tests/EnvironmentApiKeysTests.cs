@@ -1,30 +1,15 @@
 namespace BotNexus.Agent.Providers.Core.Tests;
 
+[Collection(EnvironmentVariableCollection.Name)]
 public class EnvironmentApiKeysTests
 {
     /// <summary>
-    /// Sets the given environment variables for the duration of the action, then
-    /// restores their prior values. Ensures tests do not leak process-wide env state.
+    /// Sets the given environment variables for the duration of the action, then restores their
+    /// prior values. Delegates to the shared <see cref="EnvironmentVariableScope"/> so this
+    /// assembly has exactly one implementation of the set/restore dance (#3151).
     /// </summary>
-    private static void WithEnv(Dictionary<string, string?> vars, Action action)
-    {
-        var prior = new Dictionary<string, string?>();
-        foreach (var (key, value) in vars)
-        {
-            prior[key] = Environment.GetEnvironmentVariable(key);
-            Environment.SetEnvironmentVariable(key, value);
-        }
-
-        try
-        {
-            action();
-        }
-        finally
-        {
-            foreach (var (key, value) in prior)
-                Environment.SetEnvironmentVariable(key, value);
-        }
-    }
+    private static void WithEnv(Dictionary<string, string?> vars, Action action) =>
+        EnvironmentVariableScope.WithEnv(vars, action);
 
     [Fact]
     public void GetApiKey_UnknownProvider_ReturnsNull()

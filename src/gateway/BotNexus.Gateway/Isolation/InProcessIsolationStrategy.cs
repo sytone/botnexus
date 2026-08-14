@@ -195,7 +195,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         if (descriptor.Memory?.Enabled == true)
         {
-            var memoryStore = _memoryStoreFactory.Create(descriptor.AgentId.Value);
+            var memoryStore = _memoryStoreFactory.Create(descriptor.AgentId);
             // Initialize asynchronously ΓÇö don't block handle creation.
             // Memory tools work immediately; the store initializes in the background.
             _ = memoryStore.InitializeAsync(CancellationToken.None);

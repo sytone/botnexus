@@ -22,6 +22,7 @@ using BotNexus.Agent.Providers.Core.Registry;
 using Microsoft.Extensions.Options;
 using BotNexus.Agent.Providers.OpenAI;
 using BotNexus.Agent.Providers.OpenAICompat;
+using BotNexus.Agent.Providers.Core.Embeddings;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Copilot.Discovery;
 using BotNexus.Agent.Providers.GitHubModels;
@@ -370,6 +371,24 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     apiProviders.Register(new CopilotResponsesProvider(httpClient, loggerFactory.CreateLogger<CopilotResponsesProvider>(), providerSecretRedactor));
     apiProviders.Register(new OpenAICompatProvider(httpClient));
     apiProviders.Register(new IntegrationMockProvider());
+
+    // #2855: register the OPTIONAL embeddings capability for the configured backend. This is a
+    // separate registry from apiProviders on purpose - embeddings and chat are different
+    // endpoints, and every provider above serves only the latter. When the section is absent or
+    // disabled nothing is registered, every lookup misses, and memory retrieval stays
+    // lexical-only exactly as it is today.
+    var embeddingsConfig = serviceProvider.GetService<IOptions<MemoryEmbeddingsConfig>>()?.Value;
+    if (embeddingsConfig?.IsComplete() == true)
+    {
+        serviceProvider.GetRequiredService<EmbeddingProviderRegistry>().Register(
+            new OpenAICompatEmbeddingProvider(
+                httpClient,
+                embeddingsConfig.Provider!,
+                embeddingsConfig.BaseUrl!,
+                [new EmbeddingModelDescriptor(embeddingsConfig.Model!, embeddingsConfig.Dimensions)],
+                embeddingsConfig.ApiKey,
+                providerSecretRedactor));
+    }
 
     // #1639: resolve the per-provider API endpoint (enterprise vs individual GitHub Copilot
     // host from auth.json) up-front and hand it to RegisterAll so every Copilot model is born

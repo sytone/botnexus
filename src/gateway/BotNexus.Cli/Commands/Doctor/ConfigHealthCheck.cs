@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -23,18 +23,17 @@ internal sealed class ConfigHealthCheck : IDoctorCheck
                 $"Expected at {context.ConfigPath}. Run 'botnexus init' first.");
         }
 
-        JsonObject root;
+        ConfigDocument document;
         try
         {
-            var rawJson = await File.ReadAllTextAsync(context.ConfigPath, cancellationToken);
-            root = JsonNode.Parse(rawJson)?.AsObject() ?? new JsonObject();
+            document = ConfigDocument.Parse(await File.ReadAllTextAsync(context.ConfigPath, cancellationToken));
         }
         catch (Exception ex)
         {
             return DoctorCheckResult.Error("config.json could not be parsed", ex.Message);
         }
 
-        var applicable = DoctorConfigCommand.Checks.Where(c => c.IsApplicable(root)).ToList();
+        var applicable = DoctorConfigCommand.Checks.Where(c => c.IsApplicable(document)).ToList();
         if (applicable.Count == 0)
             return DoctorCheckResult.Healthy("config is up to date - no migrations pending");
 

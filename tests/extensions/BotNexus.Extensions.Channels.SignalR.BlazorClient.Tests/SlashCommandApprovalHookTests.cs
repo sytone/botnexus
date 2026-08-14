@@ -12,6 +12,7 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 public class SlashCommandApprovalHookTests
 {
     private const string AgentId = "agent-x";
+    private const string ConversationId = "conv-1";
 
     private static (SlashCommandDispatcher dispatcher, IAgentInteractionService interaction, ISlashCommandApprovalHook hook) CreateSut()
     {
@@ -40,11 +41,11 @@ public class SlashCommandApprovalHookTests
         var (sut, interaction, hook) = CreateSut();
         var cmd = new SlashCommand("/help", "desc", SlashCommandKind.SendToAgent);
 
-        var executed = await sut.ExecuteAsync(AgentId, cmd);
+        var executed = await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         Assert.True(executed);
         await hook.DidNotReceiveWithAnyArgs().IsApprovedAsync(default!, default!);
-        await interaction.Received(1).SendMessageAsync(AgentId, "/help");
+        await interaction.Received(1).SendMessageAsync(AgentId, ConversationId, "/help");
     }
 
     [Fact]
@@ -54,11 +55,11 @@ public class SlashCommandApprovalHookTests
         var cmd = new SlashCommand("/danger", "desc", SlashCommandKind.SendToAgent, RequiresApproval: true);
         hook.IsApprovedAsync(AgentId, cmd).Returns(true);
 
-        var executed = await sut.ExecuteAsync(AgentId, cmd);
+        var executed = await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         Assert.True(executed);
         await hook.Received(1).IsApprovedAsync(AgentId, cmd);
-        await interaction.Received(1).SendMessageAsync(AgentId, "/danger");
+        await interaction.Received(1).SendMessageAsync(AgentId, ConversationId, "/danger");
     }
 
     [Fact]
@@ -68,13 +69,13 @@ public class SlashCommandApprovalHookTests
         var cmd = new SlashCommand("/danger", "desc", SlashCommandKind.ResetSession, RequiresApproval: true);
         hook.IsApprovedAsync(AgentId, cmd).Returns(false);
 
-        var executed = await sut.ExecuteAsync(AgentId, cmd);
+        var executed = await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         Assert.False(executed);
         await hook.Received(1).IsApprovedAsync(AgentId, cmd);
         await interaction.DidNotReceiveWithAnyArgs().ResetSessionAsync(default!);
         interaction.DidNotReceiveWithAnyArgs().ClearLocalMessages(default!);
-        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
+        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 
     [Fact]
@@ -84,10 +85,10 @@ public class SlashCommandApprovalHookTests
         var sut = new SlashCommandDispatcher(interaction); // no hook
         var cmd = new SlashCommand("/danger", "desc", SlashCommandKind.SendToAgent, RequiresApproval: true);
 
-        var executed = await sut.ExecuteAsync(AgentId, cmd);
+        var executed = await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         Assert.False(executed);
-        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!);
+        await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 
     [Fact]
@@ -97,7 +98,7 @@ public class SlashCommandApprovalHookTests
         var sut = new SlashCommandDispatcher(interaction); // no hook
         var cmd = new SlashCommand("/compact", "desc", SlashCommandKind.CompactSession);
 
-        var executed = await sut.ExecuteAsync(AgentId, cmd);
+        var executed = await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         Assert.True(executed);
         await interaction.Received(1).CompactSessionAsync(AgentId);

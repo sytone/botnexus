@@ -284,7 +284,7 @@ public sealed class EffectiveRuntimeContextTests
 
     private sealed class NoOpMemoryStoreFactory : IMemoryStoreFactory
     {
-        public IMemoryStore Create(string agentId) => new NoOpMemoryStore();
+        public IMemoryStore Create(AgentId agentId) => new NoOpMemoryStore();
     }
 
     private sealed class NoOpMemoryStore : IMemoryStore

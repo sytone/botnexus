@@ -21,6 +21,8 @@
   <ItemGroup>
     <!-- The #2701 ConfigField coverage fence reads its baseline at runtime from the output dir. -->
     <None Include="ConfigFieldCoverageBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
+    <!-- #3099: the primitive-ID parameter fence reads its shrink-only baseline from the output dir. -->
+    <None Include="PrimitiveIdParameterBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

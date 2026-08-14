@@ -54,4 +54,81 @@ public sealed class SessionCleanupOptions
         Order = 3)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "session-cleanup", Order = 3)]
     public TimeSpan? CronNoopRetention { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// Optional total disk budget, in bytes, for an agent's sessions directory (issue #2848).
+    /// <para>
+    /// <b>A null, zero, or negative value disables the budget entirely</b> and nothing is ever
+    /// evicted by the size path. This contract is deliberate and load-bearing: upstream OpenClaw
+    /// parsed <c>0</c> as a literal zero-byte budget, so enforce mode deleted <em>every</em>
+    /// session artifact (openclaw#119422). Treating <c>&lt;= 0</c> as "disabled" is the fix, and
+    /// BotNexus adopts it from the outset rather than rediscovering it in production.
+    /// </para>
+    /// <para>Defaults to <c>null</c>, so the out-of-the-box sweep behaves exactly as before.</para>
+    /// </summary>
+    [Display(
+        Name = "Max disk bytes",
+        Description = "Optional total disk budget in bytes for an agent's sessions directory. Empty, zero, or negative disables the budget and evicts nothing.",
+        GroupName = "Session cleanup",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "session-cleanup", Order = 4)]
+    public long? MaxDiskBytes { get; set; }
+
+    /// <summary>
+    /// Target footprint, in bytes, that enforce-mode eviction reclaims down to before it stops.
+    /// Defaults to 80% of <see cref="MaxDiskBytes"/> when unset, so eviction reclaims headroom
+    /// instead of re-triggering on every cycle at exactly the budget line. Values outside
+    /// <c>(0, MaxDiskBytes]</c> fall back to the 80% default.
+    /// </summary>
+    [Display(
+        Name = "High water bytes",
+        Description = "Target size to reclaim down to when evicting. Empty defaults to 80% of the max disk bytes.",
+        GroupName = "Session cleanup",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "session-cleanup", Order = 5)]
+    public long? HighWaterBytes { get; set; }
+
+    /// <summary>
+    /// Whether exceeding the budget only logs pressure (<see cref="SessionDiskBudgetMode.Warn"/>,
+    /// the default) or actually evicts sessions (<see cref="SessionDiskBudgetMode.Enforce"/>).
+    /// Warn is the default so enabling a budget can never delete data as a surprise side effect of
+    /// setting one number.
+    /// </summary>
+    [Display(
+        Name = "Disk budget mode",
+        Description = "Warn logs disk pressure only; Enforce evicts oldest-first down to the high-water mark.",
+        GroupName = "Session cleanup",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "session-cleanup", Order = 6)]
+    public SessionDiskBudgetMode DiskBudgetMode { get; set; } = SessionDiskBudgetMode.Warn;
+
+    /// <summary>
+    /// Returns the effective budget, or <c>null</c> when the budget is disabled. Centralises the
+    /// <c>&lt;= 0 means disabled</c> contract so no call site can reintroduce openclaw#119422 by
+    /// comparing against a raw zero.
+    /// </summary>
+    public long? ResolveMaxDiskBytes() =>
+        MaxDiskBytes is > 0 ? MaxDiskBytes.Value : null;
+
+    /// <summary>
+    /// Returns the effective high-water mark for a resolved <paramref name="maxDiskBytes"/>.
+    /// </summary>
+    public long ResolveHighWaterBytes(long maxDiskBytes)
+    {
+        if (HighWaterBytes is > 0 && HighWaterBytes.Value <= maxDiskBytes)
+            return HighWaterBytes.Value;
+
+        var eightyPercent = (long)(maxDiskBytes * 0.8d);
+        return eightyPercent > 0 ? eightyPercent : maxDiskBytes;
+    }
+}
+
+/// <summary>How the session-directory disk budget reacts to exceeding <see cref="SessionCleanupOptions.MaxDiskBytes"/>.</summary>
+public enum SessionDiskBudgetMode
+{
+    /// <summary>Log a warning describing the pressure and delete nothing. The default.</summary>
+    Warn = 0,
+
+    /// <summary>Evict oldest-first until the footprint is at or below the high-water mark.</summary>
+    Enforce = 1,
 }

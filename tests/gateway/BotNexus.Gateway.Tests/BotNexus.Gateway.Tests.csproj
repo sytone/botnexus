@@ -27,6 +27,10 @@
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR.BlazorClient\BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Skills\BotNexus.Extensions.Skills.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
+    <!-- #2855: the memory-embedding composition tests drive the REAL OpenAI-compatible embeddings
+         provider through a fake HTTP handler, per acceptance criterion 3. A stubbed provider would
+         prove the test double works and nothing about the request the platform emits. -->
+    <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Providers.OpenAICompat\BotNexus.Agent.Providers.OpenAICompat.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.Tui\BotNexus.Extensions.Channels.Tui.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.Telegram\BotNexus.Extensions.Channels.Telegram.csproj" />
     <!--

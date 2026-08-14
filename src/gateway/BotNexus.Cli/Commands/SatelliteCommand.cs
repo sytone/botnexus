@@ -1,7 +1,6 @@
 using System.CommandLine;
 using System.IO.Abstractions;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
 
@@ -11,6 +10,9 @@ internal sealed class SatelliteCommand
 {
     private static readonly string[] ValidPlatforms = ["windows", "macos", "linux"];
     private static readonly string[] ValidCapabilities = ["notify", "canvas", "exec"];
+
+    /// <summary>Canonical path of the registered satellites section.</summary>
+    private const string SatellitesPath = "gateway.satellites";
 
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
@@ -159,31 +161,15 @@ internal sealed class SatelliteCommand
         var fileSystem = new FileSystem();
         var writer = new PlatformConfigWriter(configPath, fileSystem);
 
-        await writer.MutateAsync(root =>
+        await writer.MutateDocumentAsync(document =>
         {
-            if (root["gateway"] is not JsonObject gateway)
-            {
-                gateway = new JsonObject();
-                root["gateway"] = gateway;
-            }
-
-            if (gateway["satellites"] is not JsonObject satellites)
-            {
-                satellites = new JsonObject();
-                gateway["satellites"] = satellites;
-            }
-
-            if (satellites.ContainsKey(name))
+            if (document.FindEntryKey(SatellitesPath, name) is not null)
             {
                 throw new InvalidOperationException($"Satellite '{name}' already exists. Use 'satellite remove' first.");
             }
 
-            var serialized = JsonSerializer.SerializeToNode(satConfig, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-            });
-            satellites[name] = serialized;
+            if (!document.TrySetEntryFrom(SatellitesPath, name, satConfig, out var error))
+                throw new InvalidOperationException(error);
         }, "satellite-register", ct);
 
         // Display success
@@ -222,15 +208,15 @@ internal sealed class SatelliteCommand
         }
 
         var removed = false;
-        await new PlatformConfigWriter(configPath, fileSystem).MutateAsync(root =>
+        await new PlatformConfigWriter(configPath, fileSystem).MutateDocumentAsync(document =>
         {
-            if (root["gateway"] is JsonObject gateway &&
-                gateway["satellites"] is JsonObject satellites &&
-                satellites.ContainsKey(name))
-            {
-                satellites.Remove(name);
-                removed = true;
-            }
+            if (document.FindEntryKey(SatellitesPath, name) is not { } matched)
+                return;
+
+            if (!document.TryRemoveEntry(SatellitesPath, matched, out var error))
+                throw new InvalidOperationException(error);
+
+            removed = true;
         }, "satellite-remove", ct);
 
         if (removed)

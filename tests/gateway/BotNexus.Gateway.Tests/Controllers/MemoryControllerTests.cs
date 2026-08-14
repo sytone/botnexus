@@ -42,7 +42,7 @@ public sealed class MemoryControllerTests
             .ReturnsAsync(new MemoryStoreStats(42, 1024, DateTimeOffset.UtcNow));
 
         var factory = new Mock<IMemoryStoreFactory>();
-        factory.Setup(f => f.Create("test-agent")).Returns(store.Object);
+        factory.Setup(f => f.Create(AgentId.From("test-agent"))).Returns(store.Object);
 
         var controller = new MemoryController(registry.Object, factory.Object, NullLogger<MemoryController>.Instance);
         var result = await controller.ListMemoryStores(CancellationToken.None);
@@ -64,7 +64,7 @@ public sealed class MemoryControllerTests
             .ReturnsAsync(new MemoryStoreStats(10, 512, null));
 
         var factory = new Mock<IMemoryStoreFactory>();
-        factory.Setup(f => f.Create("test-agent")).Returns(store.Object);
+        factory.Setup(f => f.Create(AgentId.From("test-agent"))).Returns(store.Object);
 
         var controller = new MemoryController(registry.Object, factory.Object, NullLogger<MemoryController>.Instance);
         var result = await controller.GetMemoryStore("test-agent", CancellationToken.None);
@@ -135,7 +135,7 @@ public sealed class MemoryControllerTests
             .ReturnsAsync(entries);
 
         var factory = new Mock<IMemoryStoreFactory>();
-        factory.Setup(f => f.Create("test-agent")).Returns(store.Object);
+        factory.Setup(f => f.Create(AgentId.From("test-agent"))).Returns(store.Object);
 
         var controller = new MemoryController(registry.Object, factory.Object, NullLogger<MemoryController>.Instance);
         var result = await controller.SearchEntries("test-agent", query: "architecture");
@@ -168,7 +168,7 @@ public sealed class MemoryControllerTests
             .ReturnsAsync(new List<MemoryEntry>());
 
         var factory = new Mock<IMemoryStoreFactory>();
-        factory.Setup(f => f.Create("test-agent")).Returns(store.Object);
+        factory.Setup(f => f.Create(AgentId.From("test-agent"))).Returns(store.Object);
 
         var controller = new MemoryController(registry.Object, factory.Object, NullLogger<MemoryController>.Instance);
         var result = await controller.SearchEntries("test-agent", query: "test", limit: 500);
