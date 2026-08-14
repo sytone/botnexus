@@ -303,6 +303,12 @@ public static class GatewayServiceCollectionExtensions
         // here (not in AddBotNexusCron) because the delivery seam lives in the gateway assembly.
         services.TryAddSingleton<BotNexus.Cron.ICronFailureAlertSink, BotNexus.Gateway.Cron.ConversationCronFailureAlertSink>();
 
+        // #3168: the resolver CronAlertTarget validation needs to verify a failure-alert target.
+        // Without it, validation fails closed on every write, so `failureAlertConversationId`
+        // could never be set and alerting was unreachable. Registered alongside the sink because
+        // both seams are cron-owned interfaces implemented over gateway conversation state.
+        services.TryAddSingleton<BotNexus.Cron.ICronAlertTargetResolver, BotNexus.Gateway.Cron.ConversationCronAlertTargetResolver>();
+
         // Trusted security-event sink (#1532, #1645): captures approval/auth/tool boundary
         // decisions for the future trusted diagnostics surface. Deliberately a separate bounded
         // ring buffer so these never leak onto the public diagnostic stream.

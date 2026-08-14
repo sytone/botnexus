@@ -166,6 +166,59 @@ public sealed partial class CronControllerTests
         createMessage.ShouldBe(CronAlertTarget.UnresolvableMessage("conv-shared"));
     }
 
+    // #3168 AC3: the controller must accept a real target when wired to the PRODUCTION resolver,
+    // not merely to a test stub. The suite was green over a feature that could not run precisely
+    // because every alert-target test supplied the stub the product did not have.
+    [Fact]
+    public async Task Create_WithProductionResolver_AcceptsAnExistingConversation_AndRejectsAMissingOne()
+    {
+        var conversations = new BotNexus.Gateway.Conversations.InMemoryConversationStore();
+        var conversationId = ConversationId.From("c_live");
+        await conversations.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation
+        {
+            ConversationId = conversationId,
+            AgentId = AgentId.From("agent-a")
+        });
+        var resolver = new BotNexus.Gateway.Cron.ConversationCronAlertTargetResolver(
+            conversations,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<BotNexus.Gateway.Cron.ConversationCronAlertTargetResolver>.Instance);
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions(), resolver);
+
+        var accepted = await controller.Create(
+            new CronJobCreateRequest
+            {
+                Id = "job-live",
+                Name = "Live alert",
+                Schedule = "0 * * * *",
+                ActionType = "agent-prompt",
+                Message = "hi",
+                FailureAlertsEnabled = true,
+                FailureAlertConversationId = "c_live"
+            },
+            CancellationToken.None);
+
+        accepted.Result.ShouldBeOfType<CreatedAtActionResult>();
+        (await store.GetAsync(JobId.From("job-live")))!.FailureAlertConversationId!.Value.Value.ShouldBe("c_live");
+
+        var rejected = await controller.Create(
+            new CronJobCreateRequest
+            {
+                Id = "job-dead",
+                Name = "Dead alert",
+                Schedule = "0 * * * *",
+                ActionType = "agent-prompt",
+                Message = "hi",
+                FailureAlertsEnabled = true,
+                FailureAlertConversationId = "c_nope"
+            },
+            CancellationToken.None);
+
+        rejected.Result.ShouldBeOfType<BadRequestObjectResult>()
+            .Value!.ToString().ShouldBe(CronAlertTarget.UnresolvableMessage("c_nope"));
+        (await store.GetAsync(JobId.From("job-dead"))).ShouldBeNull();
+    }
+
     private sealed class StubAlertResolver(IReadOnlyCollection<string> known) : ICronAlertTargetResolver
     {
         public Task<bool> ExistsAsync(ConversationId conversationId, CancellationToken ct = default)
