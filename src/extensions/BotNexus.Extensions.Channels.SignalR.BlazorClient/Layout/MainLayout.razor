@@ -1,4 +1,4 @@
-@inherits LayoutComponentBase
+﻿@inherits LayoutComponentBase
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IClientStateStore Store
@@ -492,8 +492,18 @@
                             var webhookConversations = allUserConversations
                                 .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && IsWebhookConversation(c))
                                 .ToList();
+                            @* #2325: a conversation assigned to a user-defined section is rendered by
+                               the sections panel, so subtract it here or it renders twice. Subtraction
+                               composes exactly like pinning/cron: it is applied AFTER pinned, cron and
+                               webhook are hoisted out, so a pinned or scheduled conversation keeps its
+                               existing home and only plain default-list rows can move into a section.
+                               Collapsing a section hides its body but never unmounts an assignment, and
+                               an assignment only exists while the owning section exists (deleting a
+                               section returns its conversations to the default list), so this cannot
+                               strand a conversation with no reachable row. *@
                             var normalConversations = allUserConversations
                                 .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && !IsWebhookConversation(c))
+                                .Where(c => SectionsState.GetAssignedSectionId(c.ConversationId) is null)
                                 .Where(MatchesActivityFilter)
                                 .ToList();
 
@@ -653,6 +663,7 @@
                      data-testid="chat-sections-body">
                     <ConversationSectionsPanel AgentId="@sectionsAgent.AgentId"
                                                TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
+                                               OnConversationSelected="@(id => SelectConversationAsync(sectionsAgent.AgentId, id))"
                                                OnChanged="HandleSectionsChanged" />
                 </div>
             </div>

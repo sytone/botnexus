@@ -1,4 +1,4 @@
-@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+﻿@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
 @implements IDisposable
 @inject SectionsApiClient SectionsApi
 @inject ConversationSectionsState SectionsState
@@ -97,6 +97,12 @@
 
     /// <summary>Raised after any change so the parent can re-render (e.g. to hide reassigned conversations from system groups).</summary>
     [Parameter] public EventCallback OnChanged { get; set; }
+    /// <summary>
+    /// Invoked with the conversation id when a section member row is activated (#2325). The parent
+    /// owns selection and routing, so a section member behaves exactly like a default-list row.
+    /// Without a handler here the rendered members are decoration - nothing can open them.
+    /// </summary>
+    [Parameter] public EventCallback<string> OnConversationSelected { get; set; }
 
     private bool _creating;
     private string? _editingId;
@@ -197,7 +203,13 @@
     private RenderFragment SectionItem(SectionDto section, string conversationId) => __builder =>
     {
         <div class="conversation-section-item" data-testid="section-conversation-item" data-conversation-id="@conversationId">
-            <span class="conversation-section-item-title">@(TitleResolver?.Invoke(conversationId) ?? conversationId)</span>
+            @* #2325: a section member is a real navigable conversation row - an anchor carrying the
+               canonical agent/{agentId}/conversation/{conversationId} href plus a click handler that
+               routes through the parent's selection path, identical to a default-list row. *@
+            <a class="conversation-section-item-title" data-testid="section-conversation-link"
+               href="agent/@Uri.EscapeDataString(AgentId)/conversation/@Uri.EscapeDataString(conversationId)"
+               @onclick="() => OnConversationSelected.InvokeAsync(conversationId)"
+               @onclick:preventDefault="true">@(TitleResolver?.Invoke(conversationId) ?? conversationId)</a>
             <button class="section-remove-conversation-btn" data-testid="section-remove-conversation"
                     title="Remove from section" @onclick="() => RemoveConversationAsync(conversationId)">&#x2715;</button>
         </div>
