@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.World;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -219,5 +220,133 @@ public sealed class OutboundResponseDelivererTests
         healthySends.ShouldHaveSingleItem();
         healthySends[0].BindingId?.Value.ShouldBe("bind-ok");
         router.Verify(r => r.MuteBindingAsync(It.IsAny<ConversationId>(), It.IsAny<BindingId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── #3167: webhook is non-deliverable by design ───────────────────────────
+    // Webhooks reply through WebhookResponseMode (async / sync / callback), so no channel adapter
+    // will ever be registered for them. Before #3167 every webhook turn logged two WARNINGs
+    // (314/day, 18.5% of all warnings), which made a genuine adapter outage indistinguishable
+    // from routine webhook traffic.
+
+    [Fact]
+    public async Task FanOutAsync_WebhookChannel_EmitsNoWarningAndSkipsAdapterResolution()
+    {
+        var webhookBinding = Binding("bind-webhook", "webhook", "hook-addr");
+
+        var router = new Mock<IConversationRouter>();
+        router.Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([webhookBinding]);
+
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.SetupGet(m => m.Adapters).Returns([]);
+        channelManager.Setup(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>())).Returns((IChannelAdapter?)null);
+
+        var recorder = new RecordingLogger();
+        var deliverer = new OutboundResponseDeliverer(router.Object, channelManager.Object, recorder);
+
+        await deliverer.FanOutAsync(
+            SourceMessage(), SessionId.From(SessionIdStr), "reply",
+            ConversationId.From(ConversationIdStr), CancellationToken.None);
+
+        // AC2: no WARNING at all for a webhook binding.
+        recorder.Warnings.ShouldBeEmpty();
+        // AC2: the LogDebug non-deliverable path is the one taken.
+        recorder.Debugs.ShouldContain(m => m.Contains("non-deliverable") && m.Contains("webhook"));
+        // AC3: adapter resolution is never reached, so GatewayHost cannot emit
+        // "No channel adapter found for type 'webhook'" from the fan-out path.
+        channelManager.Verify(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("cron")]
+    [InlineData("exchange")]
+    public async Task FanOutAsync_ExistingNonDeliverableChannels_StillSilent(string channelType)
+    {
+        var binding = Binding($"bind-{channelType}", channelType, $"{channelType}-addr");
+
+        var router = new Mock<IConversationRouter>();
+        router.Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([binding]);
+
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.SetupGet(m => m.Adapters).Returns([]);
+        channelManager.Setup(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>())).Returns((IChannelAdapter?)null);
+
+        var recorder = new RecordingLogger();
+        var deliverer = new OutboundResponseDeliverer(router.Object, channelManager.Object, recorder);
+
+        await deliverer.FanOutAsync(
+            SourceMessage(), SessionId.From(SessionIdStr), "reply",
+            ConversationId.From(ConversationIdStr), CancellationToken.None);
+
+        recorder.Warnings.ShouldBeEmpty();
+        channelManager.Verify(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    /// <summary>
+    /// AC4 / non-vacuity guard: the suppression is scoped to the declared non-deliverable set.
+    /// A channel type that is genuinely deliverable but has no adapter registered - the real
+    /// misconfiguration case - must STILL warn. Do not weaken this assertion; without it the
+    /// webhook test above would pass even if warnings were suppressed globally.
+    /// </summary>
+    [Fact]
+    public async Task FanOutAsync_UnknownDeliverableChannel_StillWarns()
+    {
+        var binding = Binding("bind-unknown", "slack", "chan-unknown");
+
+        var router = new Mock<IConversationRouter>();
+        router.Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([binding]);
+
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.SetupGet(m => m.Adapters).Returns([]);
+        channelManager.Setup(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>())).Returns((IChannelAdapter?)null);
+
+        var recorder = new RecordingLogger();
+        var deliverer = new OutboundResponseDeliverer(router.Object, channelManager.Object, recorder);
+
+        await deliverer.FanOutAsync(
+            SourceMessage(), SessionId.From(SessionIdStr), "reply",
+            ConversationId.From(ConversationIdStr), CancellationToken.None);
+
+        recorder.Warnings.ShouldContain(m => m.Contains("no channel adapter for type") && m.Contains("slack"));
+        channelManager.Verify(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public void NonDeliverableChannels_ContainsWebhook()
+    {
+        OutboundResponseDeliverer.IsNonDeliverableChannel(ChannelKey.From("webhook")).ShouldBeTrue();
+        // Case-insensitivity mirrors the cron/exchange entries.
+        OutboundResponseDeliverer.IsNonDeliverableChannel(ChannelKey.From("Webhook")).ShouldBeTrue();
+        OutboundResponseDeliverer.IsNonDeliverableChannel(ChannelKey.From("slack")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Minimal <see cref="ILogger{T}"/> that records rendered messages per level, so a test can
+    /// assert on the ABSENCE of a warning - something <see cref="NullLogger{T}"/> cannot express.
+    /// </summary>
+    private sealed class RecordingLogger : ILogger<OutboundResponseDeliverer>
+    {
+        public List<string> Warnings { get; } = [];
+        public List<string> Debugs { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            if (logLevel == LogLevel.Warning)
+                Warnings.Add(message);
+            else if (logLevel == LogLevel.Debug)
+                Debugs.Add(message);
+        }
     }
 }

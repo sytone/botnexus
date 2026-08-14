@@ -27,10 +27,17 @@ internal sealed class OutboundResponseDeliverer(
     /// Channel types that are not deliverable (no adapter exists by design).
     /// Fan-out skips these silently at DEBUG level instead of logging a WARNING.
     /// </summary>
+    /// <remarks>
+    /// <c>webhook</c> belongs here because webhook responses are delivered by the webhook
+    /// subsystem itself via <c>WebhookResponseMode</c> (async / sync / callback), so no channel
+    /// adapter is ever registered for it (#3167). Without the entry, every webhook turn logged
+    /// two WARNINGs and drowned out genuine adapter-outage warnings, which use the same message.
+    /// </remarks>
     internal static readonly HashSet<string> NonDeliverableChannels = new(StringComparer.OrdinalIgnoreCase)
     {
         "cron",
-        "exchange"
+        "exchange",
+        "webhook"
     };
 
     internal static bool IsNonDeliverableChannel(ChannelKey channelType) =>
@@ -84,7 +91,7 @@ internal sealed class OutboundResponseDeliverer(
     {
         try
         {
-            // Cron sessions create conversation bindings with channel type "cron" which
+            // Cron / exchange / webhook sessions create conversation bindings whose channel type
             // has no registered adapter (by design). Skip silently to avoid log noise.
             if (IsNonDeliverableChannel(binding.ChannelType))
             {
