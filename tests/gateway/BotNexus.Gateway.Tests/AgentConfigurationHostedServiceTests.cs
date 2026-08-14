@@ -86,9 +86,9 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
             CreateDescriptor("agent-c")
         ]);
 
-        // Zero debounce still applies via a background Task.Delay(0).ContinueWith continuation;
-        // poll deterministically instead of a fixed sleep so a starved CI threadpool cannot flake.
-        await WaitUntilAsync(() => registry.RegisterOperations.Contains("agent-c"));
+        // Zero debounce still applies via a background Task.Delay(0).ContinueWith continuation.
+        // Await the registry's own registration signal rather than a wall-clock budget (#3155).
+        await registry.WaitForRegistrationAsync("agent-c");
 
         registry.Contains(AgentId.From("agent-a")).ShouldBeTrue();
         registry.Get(AgentId.From("agent-a"))!.DisplayName.ShouldBe("Agent A v2");
@@ -119,8 +119,8 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         callback.ShouldNotBeNull();
 
         callback!([CreateDescriptor("agent-new")]);
-        // Poll for the background apply continuation instead of a fixed sleep (CI-threadpool-safe).
-        await WaitUntilAsync(() => registry.RegisterOperations.Contains("agent-new"));
+        // Await the background apply continuation via the registry's registration signal (#3155).
+        await registry.WaitForRegistrationAsync("agent-new");
 
         registry.Contains(AgentId.From("agent-new")).ShouldBeTrue();
         registry.RegisterOperations.ShouldContain("agent-new");
@@ -359,7 +359,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
 
         callback!([mutated]);
 
-        await WaitUntilAsync(() => registry.RegisterOperations.Contains("agent-a"));
+        await registry.WaitForRegistrationAsync("agent-a");
 
         registry.UnregisterOperations.ShouldContain("agent-a");
         registry.RegisterOperations.ShouldContain("agent-a");
@@ -396,23 +396,6 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         await AssertReRegistersOnChangeAsync(d => d with { SystemPrompt = "you are new" });
     }
 
-    /// <summary>
-    /// Polls <paramref name="condition"/> until it returns true or the timeout elapses. Used to await
-    /// the service's background debounce/apply continuation deterministically. A fixed Task.Delay is
-    /// flaky on CI: the zero-delay apply runs on a threadpool continuation that can be starved, so a
-    /// hard-coded sleep occasionally expires before the apply lands (root cause of #1800).
-    /// </summary>
-    private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 5000, int pollMs = 10)
-    {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-                throw new TimeoutException($"Condition was not met within {timeoutMs}ms.");
-            await Task.Delay(pollMs);
-        }
-    }
-
     private static AgentDescriptor CreateDescriptor(string agentId, string? displayName = null)
         => new()
         {
@@ -424,7 +407,26 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
 
     private sealed class RecordingAgentRegistry : IAgentRegistry
     {
+        /// <summary>
+        /// Upper bound on how long <see cref="WaitForRegistrationAsync"/> will wait.
+        /// <para>
+        /// This is a <b>hang guard, not a latency assertion.</b> The registration signal is raised
+        /// synchronously from <see cref="Register"/>, so in a healthy run the wait completes as soon
+        /// as the hosted service's apply continuation is scheduled - however long the runner takes
+        /// to get to it. This ceiling exists solely so that a genuinely stuck service fails the test
+        /// instead of hanging the suite forever, and is deliberately far larger than any plausible
+        /// threadpool scheduling delay on a contended CI runner. A slow machine makes this test
+        /// slower, never red. Do not reduce it to "tighten" the test: a tight wall-clock budget
+        /// encodes machine speed into a correctness assertion, which is precisely the defect fixed
+        /// in #3155 (a 5000 ms budget inside an assembly that takes over two minutes).
+        /// </para>
+        /// </summary>
+        private static readonly TimeSpan RegistrationHangGuard = TimeSpan.FromMinutes(2);
+
         private readonly Dictionary<string, AgentDescriptor> _agents;
+        private readonly Lock _gate = new();
+        private readonly Dictionary<string, TaskCompletionSource> _registrationSignals =
+            new(StringComparer.OrdinalIgnoreCase);
 
         public RecordingAgentRegistry(IEnumerable<AgentDescriptor>? initialDescriptors = null)
         {
@@ -440,13 +442,64 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
 
         public List<string> UnregisterOperations { get; } = [];
 
+        /// <summary>
+        /// Completes once <paramref name="agentId"/> has been registered - either already, or by a
+        /// later <see cref="Register"/> call, which completes the waiter directly.
+        /// <para>
+        /// This is a deterministic signal owned by the test double: the test observes the exact
+        /// outcome it asserts on (the re-registration) instead of polling a clock and hoping the
+        /// machine is fast enough. The wait is non-vacuous - if the hosted service never
+        /// re-registers, no signal is ever raised and the wait fails against
+        /// <see cref="RegistrationHangGuard"/>.
+        /// </para>
+        /// </summary>
+        public async Task WaitForRegistrationAsync(string agentId)
+        {
+            Task signal;
+            lock (_gate)
+            {
+                if (RegisterOperations.Contains(agentId, StringComparer.OrdinalIgnoreCase))
+                    return;
+
+                if (!_registrationSignals.TryGetValue(agentId, out var tcs))
+                {
+                    tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _registrationSignals[agentId] = tcs;
+                }
+
+                signal = tcs.Task;
+            }
+
+            using var guard = new CancellationTokenSource(RegistrationHangGuard);
+            var completed = await Task.WhenAny(signal, Task.Delay(Timeout.Infinite, guard.Token))
+                .ConfigureAwait(false);
+            if (!ReferenceEquals(completed, signal))
+            {
+                throw new TimeoutException(
+                    $"Agent '{agentId}' was never registered within the {RegistrationHangGuard.TotalMinutes:0}-minute " +
+                    "hang guard. This ceiling is not a latency budget: exceeding it means the hosted service is " +
+                    "stuck or never applied the configuration change at all.");
+            }
+
+            await signal.ConfigureAwait(false);
+        }
+
         public void Register(AgentDescriptor descriptor)
         {
-            if (_agents.ContainsKey(descriptor.AgentId.Value))
-                throw new InvalidOperationException($"Agent '{descriptor.AgentId}' already exists.");
+            TaskCompletionSource? signal = null;
+            lock (_gate)
+            {
+                if (_agents.ContainsKey(descriptor.AgentId.Value))
+                    throw new InvalidOperationException($"Agent '{descriptor.AgentId}' already exists.");
 
-            _agents[descriptor.AgentId.Value] = descriptor;
-            RegisterOperations.Add(descriptor.AgentId.Value);
+                _agents[descriptor.AgentId.Value] = descriptor;
+                RegisterOperations.Add(descriptor.AgentId.Value);
+
+                if (_registrationSignals.Remove(descriptor.AgentId.Value, out var tcs))
+                    signal = tcs;
+            }
+
+            signal?.TrySetResult();
         }
 
         public void Unregister(AgentId agentId)
