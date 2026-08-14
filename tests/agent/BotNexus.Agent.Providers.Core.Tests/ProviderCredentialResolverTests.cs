@@ -7,33 +7,21 @@ namespace BotNexus.Agent.Providers.Core.Tests;
 /// declared provider credential, and the ambient path must be observable when it does fire.
 /// Each test maps to a numbered acceptance clause on the issue.
 /// </summary>
+[Collection(EnvironmentVariableCollection.Name)]
 public class ProviderCredentialResolverTests
 {
     /// <summary>
-    /// Sets the given environment variables for the duration of the action, then restores
-    /// their prior values so tests do not leak process-wide environment state.
+    /// Sets the given environment variables for the duration of the action, then restores their
+    /// prior values so tests do not leak process-wide environment state. Delegates to the shared
+    /// <see cref="EnvironmentVariableScope"/> (#3151), passing
+    /// <see cref="ProviderCredentialResolver.ResetAmbientWarningsForTesting"/> as the reset hook so
+    /// the warn-once ambient state is still cleared before and after each body.
     /// </summary>
-    private static void WithEnv(Dictionary<string, string?> vars, Action action)
-    {
-        var prior = new Dictionary<string, string?>();
-        foreach (var (key, value) in vars)
-        {
-            prior[key] = Environment.GetEnvironmentVariable(key);
-            Environment.SetEnvironmentVariable(key, value);
-        }
-
-        try
-        {
-            ProviderCredentialResolver.ResetAmbientWarningsForTesting();
-            action();
-        }
-        finally
-        {
-            foreach (var (key, value) in prior)
-                Environment.SetEnvironmentVariable(key, value);
-            ProviderCredentialResolver.ResetAmbientWarningsForTesting();
-        }
-    }
+    private static void WithEnv(Dictionary<string, string?> vars, Action action) =>
+        EnvironmentVariableScope.WithEnv(
+            vars,
+            action,
+            ProviderCredentialResolver.ResetAmbientWarningsForTesting);
 
     /// <summary>Captures warning-level log records so ambient-admission logging can be asserted.</summary>
     private sealed class CapturingLogger : ILogger
