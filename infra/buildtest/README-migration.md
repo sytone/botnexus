@@ -83,7 +83,7 @@ environment is NOT supported."* We are the first case.
 The TSG warns that a default-allocated public IP is itself unprivileged:
 
 > NAT gateway creation requires a public IP address. You may need to work with the network IPAM
-> team (aka.ms/ipam) to apply a service tag and get an IP assigned, as the default public IP will
+> team to apply a service tag and get an IP assigned, as the default public IP will
 > be an unprivileged IP.
 
 So this deployment fixes the *topology*; the IP may still need a service tag to count as

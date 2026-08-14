@@ -117,8 +117,10 @@ resource artifacts 'Microsoft.Storage/storageAccounts/blobServices/containers@20
 // When the network team sets the cutover date, an environment still on a platform IP loses access
 // to privileged resources outright. Flagged 2026-08-13, cluster thankfulisland-09134225 (westus2).
 //
-// TSG: eng.ms/.../azure-container-apps-tsg/firstparty/1pappaccessaad
-// Procedure: eng.ms/.../azure-container-apps-tsg/firstparty/addsubnettoexistingenv
+// Internal TSG reference: Azure Container Apps first-party guidance, articles `1pappaccessaad`
+// (why) and `addsubnettoexistingenv` (how). Search the internal engineering docs portal for those
+// article slugs -- deliberately not linked here, as internal URLs do not resolve for every reader
+// of this repo.
 //
 // This attaches IN PLACE -- no rebuild. See infra/buildtest/README-migration.md, and note the TSG
 // constraints that bind this template: the subnet MUST be delegated to Microsoft.App/environments,
