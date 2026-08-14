@@ -297,6 +297,7 @@ public sealed class GatewaySettingsConfig
     /// <summary>Write-time cap on the size of individual tool results persisted to session history (#1598).</summary>
     public ToolResultPersistenceConfig? ToolResultPersistence { get; set; }
     /// <summary>Central backstop budget on tool-result size returned to the model (#3162).</summary>
+    [ConfigField(Group = "tool-output-budget", Order = 0)]
     public ToolOutputBudgetConfig? ToolOutputBudget { get; set; }
     /// <summary>Post-turn claim auditor (anti-fabrication) settings (#1600).</summary>
     public ClaimAuditConfig? ClaimAudit { get; set; }
@@ -444,8 +445,21 @@ public sealed class ToolResultPersistenceConfig
 public sealed class ToolOutputBudgetConfig
 {
     /// <summary>
+    /// Default UTF-8 byte budget (256 KiB). Deliberately larger than every first-party per-tool
+    /// cap so this backstop never retunes one of them.
+    /// </summary>
+    public const int DefaultMaxBytes = 256 * 1024;
+
+    /// <summary>
     /// Whether the central tool-output backstop is enabled. Defaults to <see langword="true"/>.
     /// </summary>
+    [Display(
+        Name = "Enable tool output budget",
+        Description = "Bounds every tool result returned to the model, regardless of which tool produced it. Defaults to enabled.",
+        GroupName = "Tool output budget",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "tool-output-budget", Order = 0)]
+    [DefaultValue(true)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>
@@ -453,7 +467,14 @@ public sealed class ToolOutputBudgetConfig
     /// (256 KiB). A value of 0 or less disables the backstop even when <see cref="Enabled"/> is
     /// true, matching the <see cref="ToolResultPersistenceConfig.MaxBytes"/> convention.
     /// </summary>
-    public int MaxBytes { get; set; } = 256 * 1024;
+    [Display(
+        Name = "Max tool output bytes",
+        Description = "Maximum UTF-8 byte size of a single tool result returned to the model. Defaults to 262144 (256 KiB). Zero or less disables the backstop.",
+        GroupName = "Tool output budget",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "tool-output-budget", Order = 1)]
+    [DefaultValue(DefaultMaxBytes)]
+    public int MaxBytes { get; set; } = DefaultMaxBytes;
 }
 
 /// <summary>

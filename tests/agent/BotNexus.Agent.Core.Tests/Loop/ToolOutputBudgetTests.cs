@@ -96,10 +96,7 @@ public class ToolOutputBudgetTests
 
         var text = JoinText(bounded);
         text.ShouldNotContain("\uFFFD");
-        foreach (var ch in text)
-        {
-            char.IsLowSurrogate(ch).ShouldBe(false, "a lone low surrogate means a 4-byte rune was split");
-        }
+        IsWellFormedUtf16(text).ShouldBeTrue("a lone surrogate means a 4-byte rune was split");
         // 10 bytes fits exactly two 4-byte runes; the third does not fit.
         text.ShouldStartWith("\U0001F52C\U0001F52C");
         text.ShouldNotStartWith("\U0001F52C\U0001F52C\U0001F52C");
@@ -189,6 +186,38 @@ public class ToolOutputBudgetTests
 
     private static string JoinText(AgentToolResult result)
         => string.Concat(result.Content.Where(block => block.Type == AgentToolContentType.Text).Select(block => block.Value));
+
+    /// <summary>
+    /// True when every surrogate in <paramref name="value"/> is part of a complete pair.
+    /// </summary>
+    /// <remarks>
+    /// Asserting "contains no low surrogate" would be WRONG: a correctly retained emoji is a
+    /// surrogate PAIR, so its low surrogate is expected. The defect being guarded against is a
+    /// <em>lone</em> surrogate — a pair sliced in half — which is what a byte-oriented cut produces
+    /// and what round-trips to U+FFFD.
+    /// </remarks>
+    private static bool IsWellFormedUtf16(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            var ch = value[i];
+            if (char.IsHighSurrogate(ch))
+            {
+                if (i + 1 >= value.Length || !char.IsLowSurrogate(value[i + 1]))
+                {
+                    return false;
+                }
+
+                i++;
+            }
+            else if (char.IsLowSurrogate(ch))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static AssistantAgentMessage CreateAssistantMessage(string callId, string toolName)
         => new(

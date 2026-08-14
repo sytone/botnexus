@@ -59,19 +59,24 @@ public static class ToolOutputBudget
     /// <param name="result">The result produced by the tool (or by the after-tool-call hook).</param>
     /// <param name="maxBytes">The UTF-8 byte budget. Zero or negative disables the cap.</param>
     /// <returns>
-    /// The original instance when it is already within budget or the cap is disabled; otherwise a
-    /// new result carrying the rune-safe prefix plus one truncation marker block.
+    /// The original instance when it is already within budget, when the cap is disabled, or when
+    /// <paramref name="result"/> is null; otherwise a new result carrying the rune-safe prefix plus
+    /// one truncation marker block.
     /// </returns>
     /// <remarks>
     /// Only <see cref="AgentToolContentType.Text"/> blocks are measured and cut. An image block is
     /// an opaque encoded payload whose bytes cannot be truncated into something still decodable, so
     /// it is passed through untouched rather than being corrupted into a broken image.
+    /// <para>
+    /// A null result is passed through rather than throwing. A misbehaving tool can return null, and
+    /// the executor's documented current behaviour is to carry that null forward; a size backstop
+    /// must never be the thing that converts a tolerated null into a thrown exception.
+    /// </para>
     /// </remarks>
-    public static AgentToolResult Apply(AgentToolResult result, int maxBytes = DefaultMaxBytes)
+    [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(result))]
+    public static AgentToolResult? Apply(AgentToolResult? result, int maxBytes = DefaultMaxBytes)
     {
-        ArgumentNullException.ThrowIfNull(result);
-
-        if (maxBytes <= 0 || result.Content.Count == 0)
+        if (result is null || maxBytes <= 0 || result.Content.Count == 0)
         {
             return result;
         }

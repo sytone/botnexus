@@ -655,11 +655,17 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "title": "Enable tool output budget",
+          "type": "boolean",
+          "description": "Bounds every tool result returned to the model, regardless of which tool produced it. Defaults to enabled.",
+          "default": true
         },
         "maxBytes": {
+          "title": "Max tool output bytes",
           "type": "integer",
-          "format": "int32"
+          "description": "Maximum UTF-8 byte size of a single tool result returned to the model. Defaults to 262144 (256 KiB). Zero or less disables the backstop.",
+          "format": "int32",
+          "default": 262144
         }
       }
     },

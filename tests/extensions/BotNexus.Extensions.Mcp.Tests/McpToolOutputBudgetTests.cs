@@ -106,10 +106,35 @@ public class McpToolOutputBudgetTests
 
         var text = JoinText(bounded);
         text.ShouldNotContain("\uFFFD");
-        foreach (var ch in text)
+        IsWellFormedUtf16(text).ShouldBeTrue("a lone surrogate means a 4-byte rune was split");
+    }
+
+    /// <summary>
+    /// True when every surrogate in <paramref name="value"/> is part of a complete pair. Asserting
+    /// "contains no low surrogate" would be wrong — a correctly retained emoji IS a surrogate pair.
+    /// The defect guarded against is a <em>lone</em> surrogate: a pair sliced in half.
+    /// </summary>
+    private static bool IsWellFormedUtf16(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
         {
-            char.IsLowSurrogate(ch).ShouldBe(false, "a lone low surrogate means a 4-byte rune was split");
+            var ch = value[i];
+            if (char.IsHighSurrogate(ch))
+            {
+                if (i + 1 >= value.Length || !char.IsLowSurrogate(value[i + 1]))
+                {
+                    return false;
+                }
+
+                i++;
+            }
+            else if (char.IsLowSurrogate(ch))
+            {
+                return false;
+            }
         }
+
+        return true;
     }
 
     private static string JoinText(AgentToolResult result)
