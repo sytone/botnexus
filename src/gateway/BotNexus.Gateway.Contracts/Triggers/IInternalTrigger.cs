@@ -76,6 +76,20 @@ public sealed record InternalTriggerRequest
     public int? ToolInvocationCount { get; set; }
 
     /// <summary>
+    /// Written back by the trigger when the run's <b>primary delivery</b> could not be honoured
+    /// (#3161) - for example the job's pinned destination conversation no longer resolves, so the
+    /// output was routed somewhere the operator is not reading. <c>null</c> means the trigger
+    /// reported no delivery problem.
+    ///
+    /// <para>
+    /// Consumed by <c>AgentPromptAction</c>, which forwards it to
+    /// <c>CronExecutionContext.RecordDeliveryFailure</c> so the scheduler can fold it into the
+    /// terminal run status instead of recording <c>ok</c> for a run nobody received.
+    /// </para>
+    /// </summary>
+    public string? DeliveryError { get; set; }
+
+    /// <summary>
     /// Identifier (raw string from <see cref="BotNexus.Cron.CronJob.CreatedBy"/>) of the
     /// citizen who scheduled this trigger. Used by triggers that create a fresh conversation
     /// to record the proxy initiator — per directive G-5, a cron run is "a proxy message
