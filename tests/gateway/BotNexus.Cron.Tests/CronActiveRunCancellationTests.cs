@@ -398,8 +398,15 @@ public sealed class CronActiveRunCancellationTests
         action.Release();
         await runTask;
 
-        // Registering a callback on a token whose source has been disposed is the observable.
-        Should.Throw<ObjectDisposedException>(() => token.Register(static () => { }));
+        // Not just removed - DISPOSED. A registry that removed the entry but leaked every source
+        // would satisfy an "is it empty" assertion while accumulating one undisposed linked source
+        // (and its registration on the host token) per run, forever.
+        //
+        // `WaitHandle` is the observable used deliberately: it is documented to throw
+        // ObjectDisposedException once the owning source is disposed. `Register` is NOT - modern
+        // .NET quietly returns a no-op registration on a disposed source, so asserting on it would
+        // pin framework trivia rather than this fix.
+        Should.Throw<ObjectDisposedException>(() => _ = token.WaitHandle);
     }
 
     // ── AC6: session cleanup runs only AFTER the run observed cancellation ───────────────

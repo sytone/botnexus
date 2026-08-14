@@ -67,9 +67,9 @@ public sealed class CronScheduler(
     /// immediately archiving the conversation / sweeping the run's sessions would race a run that
     /// is still mid-write, which is the concrete corruption #3160 reports.
     /// </remarks>
-    private sealed class ActiveCronRun(string jobId, CancellationTokenSource cts)
+    private sealed class ActiveCronRun(JobId jobId, CancellationTokenSource cts)
     {
-        public string JobId { get; } = jobId;
+        public JobId Job { get; } = jobId;
         public CancellationTokenSource Cts { get; } = cts;
 
         /// <summary>Completes when the run has left <c>RunActionAsync</c>'s body, however it ended.</summary>
@@ -445,7 +445,7 @@ public sealed class CronScheduler(
         // this. Registration happens immediately after the run row is stamped, so the window in
         // which a run exists but is uncancellable is a single store write rather than a whole turn.
         using var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var activeRun = new ActiveCronRun(job.Id.Value, runCts);
+        var activeRun = new ActiveCronRun(job.Id, runCts);
         _activeRuns[run.Id.Value] = activeRun;
         var runCt = runCts.Token;
 
@@ -468,7 +468,7 @@ public sealed class CronScheduler(
                 await RecordAbortedRunAsync(run.Id, job, triggeredAt, CronRunStatus.Aborted, OperatorAbortReason)
                     .ConfigureAwait(false);
                 await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
-                ReleaseActiveRun(run.Id.Value, activeRun);
+                ReleaseActiveRun(run.Id, activeRun);
                 return run with { Status = CronRunStatus.Aborted, CompletedAt = _timeProvider.GetUtcNow(), Error = OperatorAbortReason };
             }
 
@@ -481,7 +481,7 @@ public sealed class CronScheduler(
             // it will never run again on its own -- so the job is removed here too. Leaving it out
             // would rebuild exactly the bug: an early-ending turn leaving the job scheduled forever.
             await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
-            ReleaseActiveRun(run.Id.Value, activeRun);
+            ReleaseActiveRun(run.Id, activeRun);
             throw;
         }
 
@@ -673,7 +673,7 @@ public sealed class CronScheduler(
             // and this run IS one of them. Releasing afterwards would have the run wait on itself
             // for the full grace period on every one-shot job. Ordering here is load-bearing, not
             // cosmetic.
-            ReleaseActiveRun(run.Id.Value, activeRun);
+            ReleaseActiveRun(run.Id, activeRun);
 
             await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
         }
@@ -695,9 +695,9 @@ public sealed class CronScheduler(
     /// the dispose</b> so a waiter released by <see cref="Completed"/> can never observe a
     /// half-disposed entry.
     /// </remarks>
-    private void ReleaseActiveRun(string runId, ActiveCronRun activeRun)
+    private void ReleaseActiveRun(RunId runId, ActiveCronRun activeRun)
     {
-        _activeRuns.TryRemove(new KeyValuePair<string, ActiveCronRun>(runId, activeRun));
+        _activeRuns.TryRemove(new KeyValuePair<string, ActiveCronRun>(runId.Value, activeRun));
         activeRun.Completed.TrySetResult();
         try
         {
@@ -729,7 +729,7 @@ public sealed class CronScheduler(
     public async Task<int> CancelActiveRunAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
         var matches = _activeRuns
-            .Where(entry => string.Equals(entry.Value.JobId, jobId.Value, StringComparison.Ordinal))
+            .Where(entry => entry.Value.Job == jobId)
             .Select(entry => entry.Value)
             .ToList();
 
