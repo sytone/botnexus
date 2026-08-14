@@ -1,15 +1,13 @@
 # Build/test ACA environment — subnet + NAT gateway migration
 
-**Status:** required. **Flagged:** 2026-08-13, cluster `thankfulisland-09134225` (westus2).
-**TSG:** `.../azure-container-apps-tsg/firstparty/1pappaccessaad`
-**Procedure:** `.../azure-container-apps-tsg/firstparty/addsubnettoexistingenv`
+**Status:** required. **Raised:** 2026-08-13.
 
 ## Why
 
 Azure Container Apps is a **HOBO** (Hosted-On-Behalf-Of) service. An environment with no subnet
-sends outbound traffic from IP addresses owned by the Container Apps team. Those platform IPs are
-being reclassified as **unprivileged**, and once the network team sets a cutover date, any
-environment still using them **loses access to privileged resources**.
+sends outbound traffic from IP addresses owned by the Container Apps platform rather than by us.
+Those shared platform addresses are being reclassified, so an environment that keeps relying on
+them will eventually lose access to resources that authorise on source IP.
 
 For `bnx-buildtest-env` that means the remote build/test gate — the authoritative validation path
 for this repo — stops working, with no local fallback permitted.
@@ -20,7 +18,7 @@ for this repo — stops working, with no local fallback permitted.
 claimed the environment had to be destroyed and recreated. That was wrong, and the correction
 matters: it is the difference between a config change and an outage.
 
-The `1pappaccessaad` TSG splits on environment type, and a **Consumption-only** environment does
+The environment type decides the procedure, and a **Consumption-only** environment does
 indeed require recreation. The trap is that our environment reports a `workloadProfiles` array
 containing a profile *named* `Consumption`:
 
@@ -45,23 +43,21 @@ Azure rejected the **subnet**, not the operation. A Consumption-only environment
 naming the environment type instead. The environment was verified unchanged
 (`provisioningState: Succeeded`, `vnetConfiguration: null`) after the probe.
 
-Per `addsubnettoexistingenv`: *"Azure Container Apps supports adding a subnet to an existing
-**non-vnet** workload profile environment. Adding a subnet to a consumption-only container app
-environment is NOT supported."* We are the first case.
+Adding a subnet is supported for an existing non-vnet **workload profile** environment, and is not
+supported for a consumption-only environment. We are the first case.
 
-## What was flagged
+## What prompted this
 
 | Field | Value |
 |---|---|
 | Subscription | `d0024f9b-079d-4464-a10a-c19e2fd4a781` (`jobullen-tst-dev-lrn`) |
 | Resource group | `botnexus-buildtest` |
 | Environment | `bnx-buildtest-env` |
-| Managed cluster | `thankfulisland-09134225` |
 | Current static IP | `4.246.50.69` (platform-owned — this is the thing being fixed) |
 | `subnetResourceId` | *(empty)* |
 | `natGatewayId` | *(empty)* |
 
-## Constraints from the TSG — read before deploying
+## Constraints — read before deploying
 
 1. **Adding the subnet must be the ONLY change in the request.** Do not change tags, log
    configuration, or anything else in the same deployment. This is why the migration deploys the
@@ -78,18 +74,16 @@ environment is NOT supported."* We are the first case.
 5. **Removing a subnet later is NOT supported.** This is one-way.
 6. **ARM/Bicep only** — CLI and Portal do not support adding a subnet.
 
-## Public IP — may need an IPAM tag
+## Public IP — may need a service tag
 
-The TSG warns that a default-allocated public IP is itself unprivileged:
+A default-allocated public IP is not automatically treated as one we own for authorisation
+purposes. Creating the NAT gateway requires a public IP, and getting that address recognised may
+require the networking team to apply a service tag and assign it.
 
-> NAT gateway creation requires a public IP address. You may need to work with the network IPAM
-> team to apply a service tag and get an IP assigned, as the default public IP will
-> be an unprivileged IP.
-
-So this deployment fixes the *topology*; the IP may still need a service tag to count as
-privileged. For a non-production build/test subscription reaching only ACR and Storage in the same
+So this deployment fixes the *topology*; the address may still need a service tag to be recognised
+as ours. For a non-production build/test subscription reaching only ACR and Storage in the same
 subscription a tag is likely unnecessary — **that is an assumption, not a verified fact**, and it
-should be settled before the alert is declared resolved.
+should be settled before this work is declared complete.
 
 ## Procedure
 
@@ -99,8 +93,8 @@ should be settled before the alert is declared resolved.
    az containerapp job execution list -g botnexus-buildtest -n bnx-buildtest-runner `
      --subscription $sub --query "[?properties.status=='Running']" -o json   # must be []
    ```
-2. **Deploy the network prerequisites FIRST**, using `network.bicep` — not `main.bicep`. The TSG
-   requires the subnet attach to be the only change in its request, and a full `main.bicep`
+2. **Deploy the network prerequisites FIRST**, using `network.bicep` — not `main.bicep`. The subnet
+   attach must be the only change in its request, and a full `main.bicep`
    deployment also re-evaluates the ACR, storage, role assignments and job.
 
    > **`az deployment group create` HANGS against this subscription when run synchronously.**
@@ -148,10 +142,9 @@ should be settled before the alert is declared resolved.
 
 ## Rollback
 
-**There is none for the subnet itself** — the TSG states removing a subnet from an existing
-environment is not supported. Roll-forward only. If the environment is left broken, the recovery
-path is to recreate it from the pre-change template, which restores the gate and reinstates the
-alert.
+**There is none for the subnet itself** — removing a subnet from an existing environment is not
+supported. Roll-forward only. If the environment is left broken, the recovery path is to recreate
+it from the pre-change template, which restores the gate and reinstates the original problem.
 
 This is the strongest argument for running step 1 properly: once started, the change is one-way.
 
@@ -181,7 +174,7 @@ environment that already exists. Do not use it for a rebuild.
 
 - **`bn-reloadprobe-job` is not in the template.** It was created by hand on 2026-08-05. A
   from-scratch deploy will not recreate it.
-- **The IPAM service-tag question is unresolved** (see above). A rebuild inherits it.
+- **The public-IP service-tag question is unresolved** (see above). A rebuild inherits it.
 - **`Deploy-BuildTestInfrastructure.ps1` submits with `--no-wait` and polls** (#3118). It no
   longer hangs on this subscription, so the script is a valid rebuild path. It fails with the
   ARM error detail on a failed deployment and throws on a bounded timeout rather than stalling.
@@ -196,4 +189,4 @@ environment that already exists. Do not use it for a rebuild.
    (`createdBy: jobullen@microsoft.com`, 2026-08-05) from `bn-inoprobe:1`. It SURVIVES this
    migration, but it remains undeclared infrastructure that a future template deployment will not
    reproduce. Either add it or remove it deliberately.
-3. **Whether the NAT public IP needs an IPAM service tag** (see above).
+3. **Whether the NAT public IP needs a service tag** (see above).
