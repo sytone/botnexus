@@ -112,6 +112,70 @@ public sealed class StreamingSessionHelperTests
     }
 
     [Fact]
+    public async Task ProcessAndSaveAsync_ContentThenMessageEndThenTurnEnd_DoesNotWarnEmptyCompletion()
+    {
+        // #3129 false-positive repro. streamedContent/streamedHistory are per-TURN buffers: the
+        // TurnEnd case persists the assistant message and then CLEARS both. The final write
+        // therefore sees empty buffers plus hadMessageEnd and used to log the #2921 "terminated on
+        // an empty assistant completion" warning milliseconds AFTER writing the very content it
+        // was denying. 153 of 160 observed warnings had this shape.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-3129-normal"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var logger = new CapturingLogger();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.RunStarted },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Here is the answer." },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd },
+                new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd },
+                new AgentStreamEvent { Type = AgentStreamEventType.RunEnded }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(Logger: logger));
+
+        // The content really was delivered...
+        session.History.ShouldHaveSingleItem();
+        session.History[0].Content.ShouldBe("Here is the answer.");
+        // ...so nothing may claim the run ended on an empty assistant completion.
+        logger.Entries.ShouldNotContain(e => e.Message.Contains("empty assistant completion"));
+        logger.Entries.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_RunWithNoAssistantContentAtAll_StillWarnsEmptyCompletion()
+    {
+        // #3129 true-positive pin. The #2921 signal must SURVIVE the precision fix - this is the
+        // genuine "run ended without answering" failure mode that the #3125 spike depends on.
+        // A change that silences the branch outright fixes the sibling test and breaks this one.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-3129-genuine"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var logger = new CapturingLogger();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.RunStarted },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd },
+                new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd },
+                new AgentStreamEvent { Type = AgentStreamEventType.RunEnded }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(Logger: logger));
+
+        session.History.ShouldBeEmpty();
+
+        var warning = logger.Entries.ShouldHaveSingleItem();
+        warning.Level.ShouldBe(Microsoft.Extensions.Logging.LogLevel.Warning);
+        warning.Message.ShouldContain("empty assistant completion");
+        warning.Message.ShouldContain("session-3129-genuine");
+    }
+    [Fact]
     public async Task ProcessAndSaveAsync_AccumulatesAssistantContentAndToolHistory()
     {
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
