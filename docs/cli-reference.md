@@ -2212,25 +2212,32 @@ botnexus cron <COMMAND> [OPTIONS]
 | `disable` | Disable a job. |
 | `delete` | Delete a cron job. |
 
-Each subcommand takes a `--url <URL>` option pointing at the running gateway (defaults to `http://localhost:5005`) and a `--token <CREDENTIAL>` option; `get`, `run`, `enable`, `disable`, and `delete` take the job id as an argument.
+Each subcommand takes a `--url <URL>` option pointing at the running gateway (defaults to `http://localhost:5005`) and a `--token <CREDENTIAL>` option; `get`, `run`, `enable`, `disable`, and `delete` take the **job ID** as their positional argument.
+
+> **Jobs are addressed by ID, never by name.** The argument is passed straight through to
+> `GET|PUT|DELETE /api/cron/{jobId}`; there is no name lookup, so a job's `name` is a display label
+> only and passing one returns *not found*. IDs created through the `cron` tool or the API are
+> generated 32-character hex GUIDs; jobs declared in `config.json` use their `cron.jobs` **map key**
+> as the ID, which is why a config-declared job can have a readable ID such as `morning-briefing`.
+> Run `botnexus cron list` and copy the value from its **ID** column.
 
 As with every gateway-facing command, the ambient credential is attached only for a loopback `--url`. An overridden, non-loopback `--url` requires an explicit `--token` (issue #2747).
 
 ### Examples
 
 ```powershell
-# List all cron jobs
+# List all cron jobs - the ID column holds the value every other subcommand takes
 botnexus cron list
 
-# Show details for a single job
-botnexus cron get morning-briefing
+# Show details for a single job (job ID, not name)
+botnexus cron get 8f2c1d4ea77b4f039c5e6b81a0d2f7c3
 
 # Trigger a job manually
-botnexus cron run morning-briefing
+botnexus cron run 8f2c1d4ea77b4f039c5e6b81a0d2f7c3
 
 # Disable then delete a job
-botnexus cron disable morning-briefing
-botnexus cron delete morning-briefing
+botnexus cron disable 8f2c1d4ea77b4f039c5e6b81a0d2f7c3
+botnexus cron delete 8f2c1d4ea77b4f039c5e6b81a0d2f7c3
 ```
 
 > For offline scheduler diagnostics (status, history, missed runs) that do not need a running gateway, use [`debug cron`](#debug-cron).
@@ -2548,8 +2555,8 @@ botnexus debug cron <COMMAND> [OPTIONS]
 # Show all job status
 botnexus debug cron status
 
-# View history for a specific job
-botnexus debug cron history --job morning-briefing --limit 10
+# View history for a specific job (filters on cron_runs.job_id - job ID, not name)
+botnexus debug cron history --job 8f2c1d4ea77b4f039c5e6b81a0d2f7c3 --limit 10
 
 # List missed runs
 botnexus debug cron missed

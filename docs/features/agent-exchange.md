@@ -65,23 +65,38 @@ The budget system prevents runaway agent loops and excessive resource consumptio
 
 ## Scheduled Agent Conversations
 
-Agents can be configured to converse on a cron schedule using the `agent-converse` action. Cron jobs
-are not a configuration-file section - they live in `cron.sqlite` and are created through the `cron`
-tool or `botnexus debug cron`. A single job's stored shape is:
+Agents can be configured to converse on a cron schedule using the `agent-converse` action type. Jobs
+live in `cron.sqlite` and are created either through the `cron` tool / `/api/cron`, or declaratively
+under the `cron.jobs` section of `config.json`, which the scheduler syncs into the store at startup.
+The declarative form — the same shape used throughout
+[Cron & Scheduling](/cron-and-scheduling) — is:
 
 ```json
 {
-  "id": "morning-sync",
-  "schedule": "0 9 * * 1-5",
-  "action": "agent-converse",
-  "metadata": {
-    "targetAgentId": "reporter",
-    "message": "Generate the morning status report.",
-    "objective": "Get daily status",
-    "maxTurns": 5
+  "cron": {
+    "jobs": {
+      "morning-sync": {
+        "name": "Morning sync",
+        "schedule": "0 9 * * 1-5",
+        "actionType": "agent-converse",
+        "agentId": "analyst",
+        "enabled": true,
+        "metadata": {
+          "targetAgentId": "reporter",
+          "message": "Generate the morning status report.",
+          "objective": "Get daily status",
+          "maxTurns": "5"
+        }
+      }
+    }
   }
 }
 ```
+
+The map key (`morning-sync`) is the job **ID** — the value every `botnexus cron` subcommand takes; the
+`name` field is a display label only. `agentId` is the **initiator** and is required; `targetAgentId`
+in `metadata` is the agent it converses with. `maxTurns` defaults to `5`
+(`AgentConverseCronAction.DefaultMaxTurns`).
 
 The `agent-converse` cron action respects budget enforcement — if a pair is in cooldown or at daily cap, the job is skipped and logged.
 
