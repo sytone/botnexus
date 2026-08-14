@@ -170,6 +170,7 @@ and leaves no row in the store.
 | `defaultJobTimeoutSeconds` | int | `3600` | Timeout applied to a run when the job declares none. A job can override it - or opt out of it entirely - via `metadata.timeoutSeconds`, see [Per-job timeout](#_3-2-1-per-job-timeout-timeoutseconds). |
 | `orphanedRunThresholdSeconds` | int | `86400` | How far a run's `started_at` may deviate from now (in **either** direction) before the scheduler treats a still-`running` row as orphaned and stamps it as an error (#2410). The bound is symmetric, so a clock skew forward widens the reap window rather than nulling live runs. |
 | `maxConcurrentJobs` | int | `5` | Aggregate cap on how many due jobs the scheduler executes concurrently on a single tick (#2670). Jobs beyond the cap **queue and run as slots free** - none are dropped. A value of `0` or less degrades to the default of `5` rather than to unbounded fan-out. Independent of the per-job lock, which separately prevents two runs of the *same* job from overlapping. |
+| `activeRunCancellationGraceSeconds` | int | `30` | How long a delete or disable waits for a cancelled in-flight run to actually observe its cancellation before archiving the conversation and sweeping the run's sessions (#3160). A grace period, not a guarantee: it **fails open**, so an action that swallows its cancellation token can never make its job permanently undeletable. `0` or less skips the wait entirely. |
 | `jobs` | dict | `{}` | Config-defined job registry (key → job descriptor, see §3.2) |
 
 > Only `enabled`, `tickIntervalSeconds` and `jobs` are copied out of `config.json`'s `cron`
@@ -1234,6 +1235,57 @@ Failure alert could not be delivered: <reason>
 The run's *status* is left exactly as it was decided. Only the error text grows. This makes the
 double failure -- the run failed **and** nobody could be told -- discoverable from run history
 instead of existing only as one log line that nothing queries and no operator reads.
+
+## 11c. Operator abort (`aborted`)
+
+Deleting or disabling a cron job used to do nothing at all to a run that was **already executing**
+(#3160). `DeleteJobAsync` removed the row and returned; the in-flight action kept burning a model
+turn and tool budget, kept writing into the conversation that had just been archived, raced the
+session sweep that was concurrently deleting the rows it was writing, and could still fire a failure
+alert for a job the operator had deliberately removed. The scheduler simply kept no handle to signal
+-- `_jobLocks` is a serialisation mutex, and the per-run timeout source was a method local.
+
+The scheduler now keeps a registry of in-flight runs keyed by run id, each holding the cancellation
+source the run executes under. Both operator paths -- delete, and the `enabled: true -> false`
+transition of an update -- cancel that source before anything is torn down.
+
+### The `aborted` outcome
+
+`aborted` is a **terminal** run status, and deliberately **not a failure**:
+
+| Property | Behaviour |
+| --- | --- |
+| Run history | Written as a normal terminal row, with a reason naming the operator delete/disable. |
+| `lastRunStatus` | Set on the job (when the job still exists -- a delete removes the row shortly after). |
+| Failure alerts | **None.** An operator who killed the job does not need to be alarmed about it. |
+| Streak counting | Excluded from the alert streak, so a deliberate stop cannot distort the backoff position of the next genuine failure. |
+| Retention | Purged by `PurgeRunsOlderThanAsync` like any other terminal status. |
+| `failedOnly` history | **Excluded** -- it is not a failure, and the operator already knows. |
+
+It is a separate status rather than a reuse of `error` or `timed_out` because those two mean
+"something went wrong" and this means "someone meant to stop it". An operator scanning history must
+be able to tell the three apart.
+
+### Host cancellation is *not* an operator abort
+
+A gateway shutdown or scheduler stop keeps its pre-#3160 shape verbatim: recorded as `error`, and
+the `OperationCanceledException` still propagates to the caller. Only a delete or disable produces
+`aborted`, and that call does **not** throw -- the caller asked for the run to stop, so reporting
+their successful request as a fault would be wrong.
+
+### Ordering and the grace period
+
+Cancellation is issued **before** the conversation archive and the run-session sweep, and the delete
+then waits for each cancelled run to actually *observe* the cancellation and leave its action body.
+That ordering is the substance of the fix: archiving or sweeping while the action is still writing
+is what resurrected archived conversations and destroyed session rows mid-write.
+
+The wait is bounded by `activeRunCancellationGraceSeconds` (default 30) and **fails open**. An
+action that swallows its cancellation token must never be able to make its job permanently
+undeletable, so when the grace elapses the scheduler logs a warning and the delete proceeds anyway.
+The operator's removal always wins.
+
+A job with no run in flight skips the wait entirely.
 
 ## 12. Observability
 

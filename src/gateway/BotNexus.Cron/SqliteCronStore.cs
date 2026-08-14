@@ -1038,7 +1038,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             DELETE FROM cron_runs
             WHERE completed_at IS NOT NULL
               AND completed_at < $cutoff
-              AND status IN ($statusOk, $statusError, $statusTimedOut, $statusNoToolCalls, $statusDeliveryFailed)
+              AND status IN ($statusOk, $statusError, $statusTimedOut, $statusNoToolCalls, $statusDeliveryFailed, $statusAborted)
             """;
         command.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
         command.Parameters.AddWithValue("$statusOk", CronRunStatus.Ok);
@@ -1050,6 +1050,10 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.Parameters.AddWithValue("$statusNoToolCalls", CronRunStatus.NoToolCalls);
         // #3161: delivery_failed is likewise TERMINAL and must be purgeable for the same reason.
         command.Parameters.AddWithValue("$statusDeliveryFailed", CronRunStatus.DeliveryFailed);
+        // #3160: aborted is likewise TERMINAL. Omitting it would make every operator-aborted run
+        // permanently immune to retention - the same unbounded-growth trap #2410 found for
+        // orphaned 'running' rows.
+        command.Parameters.AddWithValue("$statusAborted", CronRunStatus.Aborted);
         var deleted = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         if (deleted > 0)
             _logger.LogDebug("Purged {Count} cron run record(s) older than {Cutoff}.", deleted, cutoff);

@@ -207,6 +207,12 @@ public sealed class CronController(
         if (saved is null)
             return NotFound();
 
+        // #3160: disabling a job through the API must abort its in-flight run too. Gated on the
+        // enabled -> disabled TRANSITION so an unrelated PUT is not a silent kill switch, and
+        // routed through the same scheduler seam the tool and the delete path use.
+        if (existing.Enabled && !saved.Enabled)
+            await scheduler.CancelActiveRunAsync(typedJobId, cancellationToken);
+
         if (!string.Equals(updated.Schedule, existing.Schedule, StringComparison.Ordinal)
             || !string.Equals(updated.TimeZone ?? string.Empty, existing.TimeZone ?? string.Empty, StringComparison.Ordinal))
         {

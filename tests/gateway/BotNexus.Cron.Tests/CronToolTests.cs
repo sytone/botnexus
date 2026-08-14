@@ -128,7 +128,7 @@ public sealed class CronToolTests
     public async Task ExecuteAsync_Delete_OwnedJob_Succeeds()
     {
         var store = new Mock<ICronStore>();
-        var scheduler = CreateScheduler();
+        var scheduler = CreateScheduler(store.Object);
         store.Setup(value => value.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateJob("job-1", createdBy: "agent-a"));
         store.Setup(value => value.DeleteAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
@@ -407,7 +407,7 @@ public sealed class CronToolTests
     public async Task ExecuteAsync_Delete_JobTargetingCallingAgent_CreatedByOther_Succeeds()
     {
         var store = new Mock<ICronStore>();
-        var scheduler = CreateScheduler();
+        var scheduler = CreateScheduler(store.Object);
         store.Setup(s => s.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateJobWithTarget("job-1", createdBy: "nova", agentId: "farnsworth"));
         store.Setup(s => s.DeleteAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
@@ -933,15 +933,21 @@ public sealed class CronToolTests
             });
     }
 
-    private static CronScheduler CreateScheduler()
+    /// <param name="store">
+    /// The store the scheduler itself reads/writes. #3160 made <c>delete</c> route through
+    /// <see cref="CronScheduler.DeleteJobAsync"/> rather than straight at the store, so a test that
+    /// asserts on the delete must hand the scheduler the SAME mock the tool was given - otherwise
+    /// the scheduler resolves the job against a second, empty store, early-outs, and the assertion
+    /// passes or fails for reasons unrelated to the tool.
+    /// </param>
+    private static CronScheduler CreateScheduler(ICronStore? store = null)
     {
-        var store = new Mock<ICronStore>().Object;
         var scopeFactory = new ServiceCollection()
             .BuildServiceProvider()
             .GetRequiredService<IServiceScopeFactory>();
         var options = new StaticOptionsMonitor<CronOptions>(new CronOptions());
         return new CronScheduler(
-            store,
+            store ?? new Mock<ICronStore>().Object,
             Array.Empty<ICronAction>(),
             scopeFactory,
             options,

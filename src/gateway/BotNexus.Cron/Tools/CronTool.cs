@@ -382,6 +382,13 @@ public sealed class CronTool(
         var saved = await cronStore.UpdateDefinitionAsync(updated, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
 
+        // #3160: disabling a job must abort the run it has in flight, not merely stop future fires.
+        // Gated on the enabled -> disabled TRANSITION, so a rename or any other routine edit of an
+        // already-running job is not a silent kill switch. Ordered AFTER the persist so an operator
+        // who sees `enabled: false` knows the cancellation has already been issued.
+        if (existing.Enabled && !updated.Enabled)
+            await scheduler.CancelActiveRunAsync(jobId, cancellationToken).ConfigureAwait(false);
+
         // Reschedule via the separate narrow next_run_at write only when the schedule or timezone
         // actually changed, so the reschedule cannot clobber a concurrent definition edit either.
         var scheduleChanged = !string.Equals(newSchedule, existing.Schedule, StringComparison.Ordinal);
@@ -411,7 +418,10 @@ public sealed class CronTool(
             ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
 
         EnsureCanManage(existing);
-        await cronStore.DeleteAsync(jobId, cancellationToken).ConfigureAwait(false);
+        // #3160: route through the scheduler, not straight at the store. A bare store delete leaves
+        // the in-flight run executing (and skips the conversation archive and run-session
+        // reclamation the scheduler owns) - which is exactly the defect this fixes.
+        await scheduler.DeleteJobAsync(jobId, cancellationToken).ConfigureAwait(false);
         return TextResult($"Deleted cron job '{jobId.Value}'.");
     }
 

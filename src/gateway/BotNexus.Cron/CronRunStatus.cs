@@ -72,6 +72,26 @@ public static class CronRunStatus
     /// </summary>
     public const string DeliveryFailed = "delivery_failed";
 
+    /// <summary>
+    /// #3160: the run was deliberately terminated by an operator - the job was deleted or disabled
+    /// while the run was in flight, and the scheduler cancelled it.
+    ///
+    /// <para>
+    /// This is a <b>terminal</b> outcome and is written to run history like any other, but it is
+    /// emphatically <b>not a failure</b>. It is a separate value rather than a reuse of
+    /// <see cref="Error"/> or <see cref="TimedOut"/> because those two say "something went wrong"
+    /// and this says "someone meant to stop it". Collapsing them would send an operator to debug a
+    /// job they themselves removed thirty seconds earlier - and, worse, would enrol their own
+    /// deliberate action in the failure-alert streak, distorting the backoff position of the next
+    /// genuine failure.
+    /// </para>
+    /// <para>
+    /// Consequently this status is excluded from the alertable-failure set: an operator abort emits
+    /// no cron failure alert. A host cancellation (gateway shutdown / scheduler stop) is a different
+    /// thing entirely and keeps recording <see cref="Error"/>.
+    /// </para>
+    /// </summary>
+    public const string Aborted = "aborted";
     /// <summary>The run has been started and stamped but has not yet reached a terminal state.</summary>
     public const string Running = "running";
 

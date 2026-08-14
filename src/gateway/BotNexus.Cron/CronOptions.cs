@@ -29,6 +29,18 @@ public sealed class CronOptions
     /// per-job lock, which serialises repeat runs of a single job.
     /// </summary>
     public int MaxConcurrentJobs { get; set; } = DefaultMaxConcurrentJobs;
+
+    /// <summary>
+    /// #3160: how long a delete/disable waits for an in-flight run to actually observe its
+    /// cancellation before proceeding with conversation archival and run-session cleanup.
+    /// </summary>
+    /// <remarks>
+    /// The wait exists so the cleanup cannot race a run that is still writing to the very rows
+    /// being deleted. It is deliberately a <b>grace period and not a guarantee</b>: an action that
+    /// swallows its cancellation token must never make a job permanently undeletable, so the wait
+    /// fails open and the delete proceeds when the grace elapses. Default: 30s.
+    /// </remarks>
+    public int ActiveRunCancellationGraceSeconds { get; set; } = 30;
     public Dictionary<string, ConfiguredCronJob>? Jobs { get; set; }
     public Dictionary<string, ConfiguredPromptTemplate>? PromptTemplates { get; set; }
 }

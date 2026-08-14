@@ -39,6 +39,64 @@ public sealed class CronScheduler(
     // possible but are cleaned up by the next scheduler-startup migration sweep.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _jobLocks = new(StringComparer.Ordinal);
 
+    // #3160: THE registry of runs currently in flight in this process, keyed by RUN id.
+    //
+    // _jobLocks above looks like the right shape for this and is not: it is a serialisation mutex
+    // holding no cancellation handle whatsoever, which is precisely why a delete had nothing to
+    // signal. Keying by run id rather than job id is deliberate - a job can legitimately have more
+    // than one run registered at once (a second trigger parks on the per-job lock while the first
+    // executes), and a job-keyed map would silently drop one of them, leaving an uncancellable run.
+    // Cancelling a job therefore fans out over its runs by an EXACT ordinal job-id match; a prefix
+    // or loose comparison here is how deleting `job-1` would kill `job-10`.
+    private readonly ConcurrentDictionary<string, ActiveCronRun> _activeRuns = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Number of runs currently registered as in flight in this process (#3160). Exposed so the
+    /// registry's lifecycle is assertable as an observable on every terminal path rather than
+    /// inferred from a log line - a leaked entry is both a memory leak and a stale cancellation
+    /// handle pointed at a run that has already finished.
+    /// </summary>
+    internal int ActiveRunCount => _activeRuns.Count;
+
+    /// <summary>
+    /// A single in-flight cron run: the source that cancels it and the signal that says the run has
+    /// actually <b>observed</b> that cancellation and left its action body (#3160 AC6).
+    /// </summary>
+    /// <remarks>
+    /// The observation signal is what makes a delete safe to proceed from. Cancelling and
+    /// immediately archiving the conversation / sweeping the run's sessions would race a run that
+    /// is still mid-write, which is the concrete corruption #3160 reports.
+    /// </remarks>
+    private sealed class ActiveCronRun(string jobId, CancellationTokenSource cts)
+    {
+        public string JobId { get; } = jobId;
+        public CancellationTokenSource Cts { get; } = cts;
+
+        /// <summary>Completes when the run has left <c>RunActionAsync</c>'s body, however it ended.</summary>
+        public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>
+        /// Set when this run was cancelled by an operator delete/disable rather than by the host
+        /// token or its own timeout, so the terminal-status mapping can tell the three apart.
+        /// </summary>
+        public bool OperatorCancelled { get; private set; }
+
+        public void RequestOperatorCancel()
+        {
+            OperatorCancelled = true;
+            try
+            {
+                Cts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The run reached its terminal path and disposed the source between our lookup and
+                // this call. There is nothing left to cancel, and racing a natural completion is
+                // not an error.
+            }
+        }
+    }
+
     // One-shot legacy migration guard. The scheduler runs the legacy-conversation migration
     // exactly once per process lifetime, gated by this flag.
     private int _migrationRan;
@@ -66,8 +124,10 @@ public sealed class CronScheduler(
     /// the canonical signal to archive the conversation thread.
     /// </summary>
     /// <remarks>
-    /// Idempotent: missing jobs and missing conversations are not errors. The conversation
-    /// is archived first (best-effort) before the job row is removed, so a failure to
+    /// Idempotent: missing jobs and missing conversations are not errors. #3160: any run this job
+    /// has in flight is cancelled FIRST and awaited (bounded) before anything is torn down, so the
+    /// archive and the session sweep cannot race a run that is still writing. The conversation
+    /// is archived next (best-effort) before the job row is removed, so a failure to
     /// archive surfaces an error and leaves the job intact for retry. Session cleanup (#2893)
     /// runs next and is best-effort in the opposite direction - a session-store failure is logged
     /// and never aborts the delete.
@@ -82,6 +142,13 @@ public sealed class CronScheduler(
             _logger.LogDebug("DeleteJobAsync: job '{JobId}' was not found; nothing to delete.", jobId);
             return;
         }
+
+        // #3160: cancel BEFORE anything is torn down, and wait (bounded) for the run to observe it.
+        // Ordering is the whole fix. Archiving the conversation or sweeping the run's sessions while
+        // the action is still executing is not merely untidy - the run keeps writing into a
+        // conversation that has just been archived (resurrecting it) and the sweep deletes the very
+        // session rows the run is mid-write on. Both are states #3160 observed in production.
+        await CancelActiveRunAsync(jobId, cancellationToken).ConfigureAwait(false);
 
         if (existing.ConversationId.HasValue)
         {
@@ -370,15 +437,41 @@ public sealed class CronScheduler(
         var run = await _cronStore.RecordRunStartAsync(job.Id, ct).ConfigureAwait(false);
         var action = ResolveAction(NormalizeActionType(job.ActionType));
 
+        // #3160: from here on the run executes under its OWN linked token, not the caller's. That
+        // token is published in _activeRuns so DeleteJobAsync / CancelActiveRunAsync have something
+        // to signal - pre-#3160 the only cancellation source was a method local inside
+        // ExecuteActionWithTimeoutAsync, unreachable from every mutation path. The link preserves
+        // host cancellation exactly: a gateway shutdown still cancels `ct`, which still cancels
+        // this. Registration happens immediately after the run row is stamped, so the window in
+        // which a run exists but is uncancellable is a single store write rather than a whole turn.
+        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var activeRun = new ActiveCronRun(job.Id.Value, runCts);
+        _activeRuns[run.Id.Value] = activeRun;
+        var runCt = runCts.Token;
+
         // Serialize same-job runs in this process so the "create conversation -> CAS stamp"
         // window is single-threaded; concurrent triggers for OTHER jobs run unimpeded.
         var jobLock = _jobLocks.GetOrAdd(job.Id.Value, _ => new SemaphoreSlim(1, 1));
         try
         {
-            await jobLock.WaitAsync(ct).ConfigureAwait(false);
+            // #3160: waiting on runCt, not ct, so a job deleted while this trigger is still QUEUED
+            // behind a sibling run is released too. A queued run that only watched the host token
+            // would sit there and then execute the action of a job that no longer exists.
+            await jobLock.WaitAsync(runCt).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (runCt.IsCancellationRequested)
         {
+            if (activeRun.OperatorCancelled)
+            {
+                // Cancelled by an operator before it ever started: terminal, recorded as an
+                // explicit abort, and NOT rethrown - nobody asked the caller to fail.
+                await RecordAbortedRunAsync(run.Id, job, triggeredAt, CronRunStatus.Aborted, OperatorAbortReason)
+                    .ConfigureAwait(false);
+                await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
+                ReleaseActiveRun(run.Id.Value, activeRun);
+                return run with { Status = CronRunStatus.Aborted, CompletedAt = _timeProvider.GetUtcNow(), Error = OperatorAbortReason };
+            }
+
             // Aborted while waiting for the per-job lock (another same-job run held it during a
             // shutdown/cancel). The run was already stamped Running by RecordRunStartAsync above,
             // so record the abort here too - otherwise it stays stuck Running. CancellationToken.None
@@ -388,6 +481,7 @@ public sealed class CronScheduler(
             // it will never run again on its own -- so the job is removed here too. Leaving it out
             // would rebuild exactly the bug: an early-ending turn leaving the job scheduled forever.
             await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
+            ReleaseActiveRun(run.Id.Value, activeRun);
             throw;
         }
 
@@ -420,7 +514,9 @@ public sealed class CronScheduler(
                 // a host abort rethrows (handled by the catch below); a timeout returns its error
                 // string; success returns null. This keeps the timeout/cancel discrimination out of
                 // the body (no doubled try/try) so the terminal-status mapping is a flat decision.
-                var timeoutError = await ExecuteActionWithTimeoutAsync(action, context, timeoutSeconds, ct)
+                // #3160: the action runs under the run-scoped token so an operator delete/disable
+                // can reach it. `runCt` is linked to `ct`, so host cancellation is unchanged.
+                var timeoutError = await ExecuteActionWithTimeoutAsync(action, context, timeoutSeconds, runCt)
                     .ConfigureAwait(false);
 
                 if (timeoutError is not null)
@@ -491,8 +587,30 @@ public sealed class CronScheduler(
 
                 return run with { Status = terminalStatus, CompletedAt = DateTimeOffset.UtcNow, Error = terminalError, SessionId = context.SessionId };
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (runCt.IsCancellationRequested)
             {
+                // #3160: an operator deleted or disabled the job while this run was executing. That
+                // is a DELIBERATE terminal outcome, not a failure: it is recorded as `aborted` (a
+                // status distinct from both `error` and `timed_out`), it emits no failure alert, and
+                // it is NOT rethrown - the caller asked for the run to stop, so surfacing an
+                // OperationCanceledException to them would report their own successful request as a
+                // fault. Host cancellation keeps its pre-#3160 behaviour verbatim in the branch below.
+                if (activeRun.OperatorCancelled)
+                {
+                    _logger.LogInformation(
+                        "Cron run aborted by operator (job deleted or disabled while running). JobId: {JobId}, RunId: {RunId}",
+                        job.Id, run.Id);
+                    await RecordAbortedRunAsync(run.Id, job, triggeredAt, CronRunStatus.Aborted, OperatorAbortReason)
+                        .ConfigureAwait(false);
+                    return run with
+                    {
+                        Status = CronRunStatus.Aborted,
+                        CompletedAt = _timeProvider.GetUtcNow(),
+                        Error = OperatorAbortReason,
+                        SessionId = context.SessionId
+                    };
+                }
+
                 // The run was aborted via the host token (gateway shutdown, scheduler stop, or an
                 // explicit cancel of a manual run) rather than the per-job timeout. Without this
                 // branch the cancellation would leave the run permanently in the Running state it
@@ -510,7 +628,7 @@ public sealed class CronScheduler(
                 await MaybeDeleteEphemeralRunSessionAsync(jobForRun, context, scope.ServiceProvider).ConfigureAwait(false);
             }
         }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
+        catch (Exception ex) when (!runCt.IsCancellationRequested)
         {
             _logger.LogError(ex, "Cron job execution failed. JobId: {JobId}, ActionType: {ActionType}", job.Id, job.ActionType);
             await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, ex.Message, ct: ct).ConfigureAwait(false);
@@ -522,6 +640,20 @@ public sealed class CronScheduler(
             var recordedError = await RecordAlertDeliveryFailureAsync(
                 run.Id, job.Id, triggeredAt, CronRunStatus.Error, ex.Message, ex.ToString(), errorPathAlertFailure, ct).ConfigureAwait(false);
             return run with { Status = CronRunStatus.Error, CompletedAt = DateTimeOffset.UtcNow, Error = recordedError };
+        }
+        catch (Exception ex) when (activeRun.OperatorCancelled)
+        {
+            // #3160: an operator cancel that surfaced as something other than an OperationCanceledException
+            // (an action that wraps or translates its cancellation). The operator's intent is what
+            // decides the outcome, not the exception type the action happened to choose, so this is
+            // still an abort rather than an error - and still no alert.
+            _logger.LogInformation(
+                ex,
+                "Cron run aborted by operator; the action surfaced {ExceptionType} rather than a cancellation. JobId: {JobId}, RunId: {RunId}",
+                ex.GetType().Name, job.Id, run.Id);
+            await RecordAbortedRunAsync(run.Id, job, triggeredAt, CronRunStatus.Aborted, OperatorAbortReason)
+                .ConfigureAwait(false);
+            return run with { Status = CronRunStatus.Aborted, CompletedAt = _timeProvider.GetUtcNow(), Error = OperatorAbortReason };
         }
         finally
         {
@@ -535,8 +667,109 @@ public sealed class CronScheduler(
             // Ordering: the lock is released first so the delete cannot deadlock against a
             // same-job waiter, and the delete is best-effort (never throws out of the finally).
             jobLock.Release();
+
+            // #3160: deregister BEFORE MaybeDeleteOneShotJobAsync. That call routes through
+            // DeleteJobAsync, which now waits for this job's active runs to observe cancellation -
+            // and this run IS one of them. Releasing afterwards would have the run wait on itself
+            // for the full grace period on every one-shot job. Ordering here is load-bearing, not
+            // cosmetic.
+            ReleaseActiveRun(run.Id.Value, activeRun);
+
             await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Reason recorded on a run terminated because an operator deleted or disabled its job (#3160).
+    /// Held as a constant so the producer and the tests that pin the clause cannot drift apart.
+    /// </summary>
+    internal const string OperatorAbortReason = "Cron run aborted: the job was deleted or disabled by an operator while the run was executing.";
+
+    /// <summary>
+    /// Removes an in-flight run from the registry, disposes its cancellation source, and signals
+    /// waiters that the run has observed its cancellation and left the action body (#3160 AC5/AC6).
+    /// </summary>
+    /// <remarks>
+    /// Idempotent and non-throwing: it is reached from several terminal paths and from a
+    /// <c>finally</c>, so it must never be the thing that fails a run. The <b>signal comes before
+    /// the dispose</b> so a waiter released by <see cref="Completed"/> can never observe a
+    /// half-disposed entry.
+    /// </remarks>
+    private void ReleaseActiveRun(string runId, ActiveCronRun activeRun)
+    {
+        _activeRuns.TryRemove(new KeyValuePair<string, ActiveCronRun>(runId, activeRun));
+        activeRun.Completed.TrySetResult();
+        try
+        {
+            activeRun.Cts.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Disposing the cancellation source for cron run '{RunId}' failed; the entry was still deregistered.", runId);
+        }
+    }
+
+    /// <summary>
+    /// Cancels every run of <paramref name="jobId"/> currently in flight in this process and waits
+    /// (bounded) for each to observe that cancellation (#3160). Returns how many runs were signalled.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the shared seam behind both operator paths - <see cref="DeleteJobAsync"/> and the
+    /// disable half of a definition update. Matching is an EXACT ordinal job-id comparison: a loose
+    /// or prefix match here is how removing <c>job-1</c> would also kill <c>job-10</c>'s run.
+    /// </para>
+    /// <para>
+    /// The wait is a grace period, never a guarantee. An action that swallows its cancellation token
+    /// must not be able to make its job permanently undeletable, so when
+    /// <see cref="CronOptions.ActiveRunCancellationGraceSeconds"/> elapses the method logs and
+    /// returns - the operator's removal always wins.
+    /// </para>
+    /// </remarks>
+    public async Task<int> CancelActiveRunAsync(JobId jobId, CancellationToken cancellationToken = default)
+    {
+        var matches = _activeRuns
+            .Where(entry => string.Equals(entry.Value.JobId, jobId.Value, StringComparison.Ordinal))
+            .Select(entry => entry.Value)
+            .ToList();
+
+        if (matches.Count == 0)
+            return 0;
+
+        foreach (var active in matches)
+            active.RequestOperatorCancel();
+
+        _logger.LogInformation(
+            "Cancelled {Count} in-flight cron run(s) for job '{JobId}' after an operator delete/disable.",
+            matches.Count,
+            jobId);
+
+        var graceSeconds = _optionsMonitor.CurrentValue?.ActiveRunCancellationGraceSeconds ?? 30;
+        if (graceSeconds <= 0)
+            return matches.Count;
+
+        // Linked source so the grace timer is torn down the instant the runs are observed, rather
+        // than being left pending on the TimeProvider for the whole grace period on every delete.
+        using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var grace = Task.Delay(TimeSpan.FromSeconds(graceSeconds), _timeProvider, graceCts.Token);
+        var observed = Task.WhenAll(matches.Select(active => active.Completed.Task));
+
+        var winner = await Task.WhenAny(observed, grace).ConfigureAwait(false);
+        await graceCts.CancelAsync().ConfigureAwait(false);
+
+        if (winner != observed)
+        {
+            // Fail OPEN. Blocking the delete forever on an uncooperative action would convert a
+            // runaway job into an unremovable one - strictly worse than the race this wait avoids.
+            _logger.LogWarning(
+                "Cron job '{JobId}' had {Count} in-flight run(s) that did not observe cancellation within {Grace}s; "
+                + "proceeding with the delete/disable anyway.",
+                jobId,
+                matches.Count,
+                graceSeconds);
+        }
+
+        return matches.Count;
     }
 
     /// <summary>
@@ -811,6 +1044,13 @@ public sealed class CronScheduler(
             // backoff would alert on EVERY run of a job whose destination is permanently gone -
             // rebuilding the noise #2557's backoff exists to prevent.
             || string.Equals(status, CronRunStatus.DeliveryFailed, StringComparison.OrdinalIgnoreCase);
+
+    // #3160 (AC4): `aborted` is deliberately ABSENT from the set above. An operator who deleted or
+    // disabled a job does not want to be alarmed about the run they themselves killed, and counting
+    // their own action toward the error streak would additionally distort the backoff position of
+    // the next GENUINE failure. Note that CountConsecutiveErrorsAsync treats any non-alertable
+    // terminal status as a streak BREAK, which is the correct reading here: a deliberate stop says
+    // nothing about the job's health either way.
 
     /// <summary>
     /// Backoff schedule (AC5): alert on the FIRST failure of a streak, then on positions that are
@@ -1102,19 +1342,33 @@ public sealed class CronScheduler(
     }
 
     /// <summary>
-    /// Records a cron run that was aborted via the host cancellation token (gateway shutdown,
-    /// scheduler stop, or an explicit cancel) as a failed run. The run was already stamped
-    /// <see cref="CronRunStatus.Running"/> by <see cref="ICronStore.RecordRunStartAsync"/>, so this
-    /// surfaces the abort as <see cref="CronRunStatus.Error"/> instead of leaving it stuck
-    /// <see cref="CronRunStatus.Running"/> forever (a silent non-success). The bookkeeping writes use
-    /// <see cref="CancellationToken.None"/> because the caller's token is already cancelled - passing
-    /// it would cancel the very writes that record the failure.
+    /// Records a cron run that ended without completing its action as terminal, so it is never left
+    /// stuck <see cref="CronRunStatus.Running"/> (a silent non-success).
     /// </summary>
-    private async Task RecordAbortedRunAsync(RunId runId, CronJob job, DateTimeOffset triggeredAt)
+    /// <remarks>
+    /// <para>
+    /// The default is the host-abort shape (gateway shutdown, scheduler stop, an explicit cancel of
+    /// a manual run), recorded as <see cref="CronRunStatus.Error"/>. #3160 parameterises the status
+    /// and reason so an <b>operator</b> abort - the job was deleted or disabled mid-run - can be
+    /// recorded as <see cref="CronRunStatus.Aborted"/> through the same seam, rather than growing a
+    /// second near-identical recording path that would inevitably drift.
+    /// </para>
+    /// <para>
+    /// The bookkeeping writes use <see cref="CancellationToken.None"/> because the caller's token is
+    /// already cancelled - passing it would cancel the very writes that record the outcome.
+    /// </para>
+    /// </remarks>
+    private async Task RecordAbortedRunAsync(
+        RunId runId,
+        CronJob job,
+        DateTimeOffset triggeredAt,
+        string status = CronRunStatus.Error,
+        string? reason = null)
     {
-        const string abortReason = "Cron run aborted before completion.";
-        await _cronStore.RecordRunCompleteAsync(runId, CronRunStatus.Error, abortReason, ct: CancellationToken.None).ConfigureAwait(false);
-        await FinalizeRunAsync(job.Id, job, triggeredAt, CronRunStatus.Error, abortReason, ct: CancellationToken.None).ConfigureAwait(false);
+        const string hostAbortReason = "Cron run aborted before completion.";
+        var abortReason = reason ?? hostAbortReason;
+        await _cronStore.RecordRunCompleteAsync(runId, status, abortReason, ct: CancellationToken.None).ConfigureAwait(false);
+        await FinalizeRunAsync(job.Id, job, triggeredAt, status, abortReason, ct: CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>
