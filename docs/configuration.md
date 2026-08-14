@@ -1198,6 +1198,44 @@ When an unbacked claim is detected, the auditor emits a structured `claimAudit` 
 The section is optional — when absent, the auditor runs in `warn` mode. Setting `claimAudit.enabled` to `false` turns it off entirely (no scan).
 
 
+#### Memory Embeddings (`memoryEmbeddings`)
+
+Selects the embedding backend that supplies vectors for hybrid memory retrieval (#2855). **Off by default** — enabling it sends memory content to the configured endpoint, so it is an explicit operator decision.
+
+```json
+{
+  "gateway": {
+    "memoryEmbeddings": {
+      "enabled": true,
+      "provider": "ollama",
+      "model": "nomic-embed-text",
+      "dimensions": 768,
+      "baseUrl": "http://localhost:11434/v1",
+      "apiKey": null
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `memoryEmbeddings.enabled` | bool | `false` | Enables embedding of memory entries for hybrid (lexical + vector) retrieval. |
+| `memoryEmbeddings.provider` | string | `null` | Provider key whose embeddings endpoint supplies vectors (for example `"ollama"` or `"openai"`). |
+| `memoryEmbeddings.model` | string | `null` | Embedding model identifier as the endpoint expects it. |
+| `memoryEmbeddings.dimensions` | int | `0` | Vector width the model emits. A response of a different width is discarded and the entry falls back to lexical-only. |
+| `memoryEmbeddings.baseUrl` | string | `null` | Base URL of the OpenAI-compatible embeddings endpoint; `/embeddings` is appended. |
+| `memoryEmbeddings.apiKey` | string | `null` | Optional bearer token. Omit for a local endpoint that requires none. Sensitive: stored and shown masked. |
+
+An **absent**, **disabled**, or **incompletely filled** section all resolve to the lexical-only
+behaviour the platform has shipped since hybrid retrieval landed: no generator is registered and
+memory search is BM25-only. A half-configured section degrades rather than throwing, so a gateway
+mid-way through embeddings setup still starts. An endpoint that is unreachable or erroring also
+degrades to lexical-only without failing a memory write or search.
+
+See [Hybrid memory retrieval](./features/hybrid-memory-retrieval.md) for the identity and
+fingerprint semantics.
+
+
 #### Shell Execution Settings
 
 Gateway-level shell settings control the default shell behavior for all agents. Individual agents can override these with per-agent `shellCommand` (see [Agent Configuration](#agentconfig-per-agent-customization)).

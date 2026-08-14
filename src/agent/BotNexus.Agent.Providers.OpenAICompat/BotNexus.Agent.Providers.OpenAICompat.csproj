@@ -1,11 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <RootNamespace>BotNexus.Agent.Providers.OpenAICompat</RootNamespace>
   </PropertyGroup>
-
+  <ItemGroup>
+    <!-- #2855: OpenAICompatEmbeddingProvider.ParseVector is internal - it is response-parsing
+         detail, not API - but it needs direct tests because the malformed-payload matrix
+         (empty data, non-array embedding, non-numeric component) is what stops a broken endpoint
+         from writing a garbage vector into the memory store. -->
+    <InternalsVisibleTo Include="BotNexus.Agent.Providers.OpenAICompat.Tests" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
   </ItemGroup>
-
 </Project>

@@ -37,6 +37,8 @@ using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Contracts.Memory;
+using BotNexus.Gateway.Providers;
+using BotNexus.Agent.Providers.Core.Embeddings;
 using BotNexus.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -104,6 +106,7 @@ public static class GatewayServiceCollectionExtensions
                     config["gateway:walCheckpointIntervalMinutes"],
                     SqliteWalCheckpointOptions.DefaultIntervalMinutes));
             services.Configure<TranscriptExportOptions>(config.GetSection("gateway:" + TranscriptExportOptions.SectionName));
+            services.Configure<MemoryEmbeddingsConfig>(config.GetSection("gateway:memoryEmbeddings"));
 
             var compactionSection = config.GetSection("gateway:compaction");
             if (compactionSection.Exists())
@@ -129,15 +132,26 @@ public static class GatewayServiceCollectionExtensions
         // Core services
         services.TryAddSingleton<IFileSystem, FileSystem>();
         services.TryAddSingleton<BotNexusHome>();
+        // #2855: the OPTIONAL embeddings capability registry. Always registered and normally
+        // empty - composition populates it only for providers that opted in, and an empty
+        // registry resolves every key to absent, which is the lexical-only default.
+        services.TryAddSingleton<EmbeddingProviderRegistry>();
         services.TryAddSingleton<IMemoryStoreFactory>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
             var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
-            return new MemoryStoreFactory(agentId =>
+            // #2855: built here rather than inside BotNexus.Memory so that project keeps its
+            // zero dependency on the provider stack. An absent or disabled section yields
+            // MemoryEmbeddingService.Disabled and the store behaves exactly as it does today.
+            var embeddings = MemoryEmbeddingComposition.Build(
+                serviceProvider.GetService<IOptions<MemoryEmbeddingsConfig>>()?.Value,
+                serviceProvider.GetService<EmbeddingProviderRegistry>(),
+                serviceProvider.GetService<ILoggerFactory>());
+            return new EmbeddingAwareMemoryStoreFactory(agentId =>
             {
                 var agentDirectory = home.GetAgentDirectory(agentId);
                 return Path.Combine(agentDirectory, "data", "memory.sqlite");
-            }, fileSystem);
+            }, embeddings, fileSystem);
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
