@@ -140,6 +140,7 @@ export default defineConfig({
           { text: 'Domain Model', link: '/architecture/domain-model' },
           { text: 'Gateway Flow', link: '/architecture/gateway-flow' },
           { text: 'Channel Binding', link: '/architecture/channel-binding' },
+          { text: 'Conversation-Scoped Events', link: '/architecture/conversation-scoped-events' },
           { text: 'Portal PWA Caching', link: '/architecture/portal-pwa-caching' },
           { text: 'Extension Guide', link: '/architecture/extension-guide' },
           { text: 'Plugin Architecture', link: '/architecture/plugins' },

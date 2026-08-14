@@ -60,13 +60,24 @@ public sealed class SteeringSignalRBridge(
             : SteeringFeedbackKind.Queued;
 
         var payload = new SteeringFeedbackPayload(evt.AgentId, evt.SessionId, kind, evt.ConversationId);
-        // PR1.5 (#682): route by conversation so feedback continues to reach connections
-        // after compaction. Activity emitters that haven't been updated yet fall back to
-        // "conversation:{sessionId}" — the same back-compat synonym used elsewhere.
-        var conversationKey = !string.IsNullOrWhiteSpace(evt.ConversationId)
-            ? evt.ConversationId
-            : evt.SessionId;
-        var group = SignalRChannelAdapter.GetConversationGroup(conversationKey);
+
+        // #3065: steering feedback is conversation-scoped, so it must name its conversation.
+        // GatewayHost now stamps ConversationId from the resolved ConversationSessionResolution on
+        // BOTH steering activity events, so the historical "conversation:{sessionId}" synonym is
+        // dead weight: it addressed a group no client ever subscribes to (clients join by
+        // conversation id), which made the send look delivered while reaching nobody, and left the
+        // portal to attribute the feedback to whatever conversation happened to be active.
+        if (string.IsNullOrWhiteSpace(evt.ConversationId))
+        {
+            logger.LogError(
+                "Refusing to forward conversation-scoped {EventType} for session '{SessionId}': no conversation "
+                + "id on the activity event. A conversation-scoped event must name its conversation (#3065).",
+                evt.Type,
+                evt.SessionId);
+            return;
+        }
+
+        var group = SignalRChannelAdapter.GetConversationGroup(evt.ConversationId);
 
         logger.LogDebug("Forwarding {EventType} for session '{SessionId}' to group '{Group}'.",
             evt.Type, evt.SessionId, group);

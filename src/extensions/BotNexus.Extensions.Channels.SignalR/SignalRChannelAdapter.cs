@@ -103,10 +103,28 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     public Task SendStreamEventAsync(ChannelStreamTarget target, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
     {
         // Prefer the session and conversation ids stamped on the event (set by GatewayHost)
-        // over the target, so observer fan-out — which addresses each observer by their own
-        // binding — still surfaces the originating ids to the client.
+        // over the target, so observer fan-out - which addresses each observer by their own
+        // binding - still surfaces the originating ids to the client.
         var typedSessionId = streamEvent.SessionId ?? target.SessionId;
         var typedConversationId = streamEvent.ConversationId ?? target.ConversationId;
+
+        // #3065: every stream event is conversation-scoped, so it MUST name its conversation.
+        // The id is resolved server-side long before this point (ConversationSessionResolution ->
+        // session.ConversationId -> the OnEventAsync stamp), so an uninitialized value here means
+        // it was dropped in between, not that none existed. Dropping the event is the honest
+        // outcome: emitting it unattributed is precisely what forces the receiver back onto an
+        // ambient "whatever conversation is active" guess, which renders the event against a
+        // conversation it has nothing to do with - a routing fault that looks like a UI bug.
+        if (!typedConversationId.IsInitialized())
+        {
+            logger.LogError(
+                "Refusing to emit conversation-scoped {Method} for session {SessionId}: no conversation id "
+                + "was resolved. A conversation-scoped event must name its conversation (#3065).",
+                streamEvent.Type,
+                typedSessionId.Value);
+            return Task.CompletedTask;
+        }
+
         var sessionIdStr = typedSessionId.Value;
         var conversationIdStr = typedConversationId.Value;
 

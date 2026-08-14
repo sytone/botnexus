@@ -391,6 +391,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             // session correctly routes messages to the new conversation (#314).
             if (resolution is not null && session.ConversationId != resolution.ConversationId)
                 session.ConversationId = resolution.ConversationId;
+
+            // #3065: a conversation-scoped event must NEVER be emitted without a conversation id.
+            // Everything downstream of this point (stream events, ask-user prompts, steering
+            // feedback) is conversation-scoped, and every one of those emit sites sources its id
+            // from session.ConversationId. When neither the dispatcher nor the back-compat router
+            // resolved a conversation - a channel that genuinely has none yet - mint one here via
+            // the same server-side seam POST /conversations uses, rather than emitting an
+            // unattributed event and leaving the receiver to guess from ambient client state.
+            // The mint is a no-op on every path that already resolved a conversation.
+            await EnsureConversationForEmissionAsync(session, typedAgentId, message, cancellationToken)
+                .ConfigureAwait(false);
+
             session.CallerId ??= message.SenderId;
             session.SessionType = ResolveSessionType(session, message, isNewSession: createdSession);
             // P9-F (#657): participant add must run AFTER SaveAsync below so that the
@@ -422,7 +434,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             {
                 if (string.Equals(controlCommand, ControlSteer, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (await HandleSteeringAsync(message, typedAgentId, typedSessionId, cancellationToken))
+                    if (await HandleSteeringAsync(message, typedAgentId, typedSessionId, session.ConversationId, cancellationToken))
                         continue;
                     // Steering must not fall through to normal message processing.
                     // Steering is control-plane metadata; discard it rather than converting to a user prompt.
@@ -1254,10 +1266,24 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         }, cancellationToken);
     }
 
+    /// <summary>
+    /// Injects a steering message into a running turn and publishes the corresponding
+    /// conversation-scoped activity event.
+    /// </summary>
+    /// <param name="conversationId">
+    /// #3065: the conversation this steer belongs to, taken from the already-resolved
+    /// <c>ConversationSessionResolution</c> stamped onto the session by the caller. Both
+    /// <c>SteeringQueued</c> and <c>SteeringInjected</c> are conversation-scoped events -
+    /// <c>SteeringSignalRBridge</c> routes them to <c>conversation:{id}</c> - so emitting them
+    /// without an id forced the bridge onto its <c>session-id-as-conversation-key</c> synonym and
+    /// the portal onto an ambient fallback. Passing the resolved id through recovers information
+    /// that already existed rather than re-deriving it.
+    /// </param>
     private async Task<bool> HandleSteeringAsync(
         InboundMessage message,
         AgentId typedAgentId,
         SessionId typedSessionId,
+        ConversationId conversationId,
         CancellationToken cancellationToken)
     {
         var instance = _supervisor.GetInstance(typedAgentId, typedSessionId);
@@ -1284,7 +1310,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             {
                 Type = GatewayActivityType.SteeringQueued,
                 AgentId = typedAgentId.Value,
-                SessionId = typedSessionId.Value
+                SessionId = typedSessionId.Value,
+                ConversationId = conversationId.Value
             }, cancellationToken);
 
             return false;
@@ -1321,7 +1348,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         {
             Type = GatewayActivityType.SteeringInjected,
             AgentId = typedAgentId.Value,
-            SessionId = typedSessionId.Value
+            SessionId = typedSessionId.Value,
+            ConversationId = conversationId.Value
         }, cancellationToken);
 
         // #1903: the steering/portal follow-up path adds a User entry above but historically
@@ -1522,6 +1550,80 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     {
         await _orchestrator.DisposeAsync();
         base.Dispose();
+    }
+
+    /// <summary>
+    /// #3065: guarantees the session carries a real <see cref="ConversationId"/> before any
+    /// conversation-scoped event is emitted for this turn.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every conversation-scoped emit site in the gateway - the streaming <c>OnEventAsync</c>
+    /// stamp, <see cref="HandleUserInputRequiredAsync"/>, and the steering activity events -
+    /// reads its id from <c>session.ConversationId</c>, which is set from the resolved
+    /// <c>ConversationSessionResolution</c>. The resolution is authoritative when it exists; this
+    /// method only covers the one case it cannot: a channel with no conversation yet, where
+    /// neither the dispatcher nor the back-compat router ran (or ran without a store).
+    /// </para>
+    /// <para>
+    /// The mint uses <see cref="ConversationFactory.CreateForChannel"/> with a server-generated
+    /// id - byte-for-byte the same seam the REST <c>POST /conversations</c> endpoint uses - so the
+    /// id is still minted server-side and the client never supplies one. When no conversation
+    /// store is wired (legacy unit-test compositions) the session is still stamped with a real id
+    /// so the emitted events are attributable; only the persisted row is skipped.
+    /// </para>
+    /// <para>
+    /// Deliberately NOT a fallback to any "active" or "last used" conversation: guessing is the
+    /// exact misattribution class this issue removes. A fresh conversation is an honest answer;
+    /// somebody else's conversation is not.
+    /// </para>
+    /// </remarks>
+    private async Task EnsureConversationForEmissionAsync(
+        GatewaySession session,
+        AgentId typedAgentId,
+        InboundMessage message,
+        CancellationToken cancellationToken)
+    {
+        if (session.ConversationId.IsInitialized())
+            return;
+
+        var conversation = ConversationFactory.CreateForChannel(
+            ConversationId.Create(),
+            typedAgentId,
+            title: null,
+            initiator: message.Sender.IsValid ? message.Sender : null);
+
+        if (_conversationStore is not null)
+        {
+            try
+            {
+                var created = await _conversationStore
+                    .CreateAsync(conversation, cancellationToken)
+                    .ConfigureAwait(false);
+                session.ConversationId = created.ConversationId;
+                _logger.LogInformation(
+                    "Minted conversation {ConversationId} for session '{SessionId}' on channel {ChannelType}: "
+                    + "the channel had no conversation, and a conversation-scoped event must name one (#3065).",
+                    created.ConversationId.Value,
+                    session.SessionId.Value,
+                    message.ChannelType.Value);
+                return;
+            }
+            catch (Exception ex)
+            {
+                // Persisting the row is best-effort; stamping the session is not. An unattributed
+                // event is the defect being fixed, so fall through and stamp the minted id anyway
+                // rather than letting a store failure reopen the ambient-fallback hole.
+                _logger.LogWarning(
+                    ex,
+                    "Failed to persist minted conversation {ConversationId} for session '{SessionId}'; "
+                    + "stamping the session with it regardless so emitted events stay attributable (#3065).",
+                    conversation.ConversationId.Value,
+                    session.SessionId.Value);
+            }
+        }
+
+        session.ConversationId = conversation.ConversationId;
     }
 
     private async Task EnsureCallerParticipantAsync(GatewaySession session, CitizenId callerCitizenId, CancellationToken cancellationToken)
