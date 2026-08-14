@@ -7,7 +7,7 @@
 # code. At the point the rule landed the existing population was 114 declarations across 62 files;
 # converting them cascades into every caller and is not reviewable as one change. Every entry below
 # is therefore listed for one stated reason: it PRE-DATES the rule and is scheduled for the residual
-# sweep tracked by the follow-up issue linked from AGENTS.md. No entry here is a judgement that the
+# sweep tracked by follow-up issue #3147. No entry here is a judgement that the
 # site is legitimately primitive - a site that is legitimately primitive belongs on a boundary and
 # is excluded by the boundary definition, not by this list.
 #
