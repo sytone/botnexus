@@ -1,0 +1,81 @@
+# #3099 - frozen baseline for primitive identifier parameters in NON-BOUNDARY code.
+#
+# Format: <repo-relative path>|<permitted count>
+#
+# WHY THIS FILE EXISTS. The rule in PrimitiveIdParameterFenceArchitectureTests fences NEW
+# `string agentId` / `string conversationId` / `string sessionId` parameters out of non-boundary
+# code. At the point the rule landed the existing population was 114 declarations across 62 files;
+# converting them cascades into every caller and is not reviewable as one change. Every entry below
+# is therefore listed for one stated reason: it PRE-DATES the rule and is scheduled for the residual
+# sweep tracked by the follow-up issue linked from AGENTS.md. No entry here is a judgement that the
+# site is legitimately primitive - a site that is legitimately primitive belongs on a boundary and
+# is excluded by the boundary definition, not by this list.
+#
+# THIS BASELINE IS SHRINK-ONLY AND IS CHECKED IN BOTH DIRECTIONS. Raising a count fails
+# (a new violation landed). Leaving a count high after fixing a site ALSO fails (the entry has gone
+# stale and would otherwise become a permanent licence). When you convert a site, lower or delete
+# its line in the same change.
+#
+# Entries must stay sorted by path.
+src/domain/BotNexus.Domain.Wire/AskUserPromptNormalizer.cs|1
+src/domain/BotNexus.Domain/Gateway/Models/InboundMessageRoutingHints.cs|2
+src/extensions/BotNexus.Extensions.DebugTool/DebugTool.cs|3
+src/extensions/BotNexus.Extensions.Mcp/McpServerWarmupCache.cs|2
+src/extensions/BotNexus.Extensions.Qmd/MemoryQmdBackend.cs|1
+src/extensions/BotNexus.Extensions.Qmd/QmdToolContributor.cs|1
+src/extensions/BotNexus.Extensions.Skills/SkillsCommandContributor.cs|1
+src/gateway/BotNexus.Cron/Actions/MemoryDreamingCronAction.cs|1
+src/gateway/BotNexus.Cron/CronAlertTarget.cs|2
+src/gateway/BotNexus.Gateway.Configuration/NoOpAgentConfigurationWriter.cs|1
+src/gateway/BotNexus.Gateway.Configuration/PlatformAgentReconciliationService.cs|1
+src/gateway/BotNexus.Gateway.Configuration/PlatformConfigAgentWriter.cs|2
+src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentCanvasNotifier.cs|3
+src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentChangeNotifier.cs|1
+src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentConfigurationWriter.cs|1
+src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentTodoNotifier.cs|2
+src/gateway/BotNexus.Gateway.Contracts/Conversations/ConversationConcurrencyException.cs|1
+src/gateway/BotNexus.Gateway.Contracts/Conversations/IConversationChangeNotifier.cs|2
+src/gateway/BotNexus.Gateway.Contracts/Events/IWorldEventBus.cs|2
+src/gateway/BotNexus.Gateway.Contracts/Memory/IAgentMemoryFactory.cs|1
+src/gateway/BotNexus.Gateway.Contracts/Security/IExecApprovalManager.cs|2
+src/gateway/BotNexus.Gateway.Contracts/Security/ToolPolicy.cs|2
+src/gateway/BotNexus.Gateway.Contracts/Sessions/ISessionCompactionCoordinator.cs|1
+src/gateway/BotNexus.Gateway.Contracts/Sessions/ISessionWarmupService.cs|1
+src/gateway/BotNexus.Gateway.Conversations/ConversationCanvasNotifier.cs|3
+src/gateway/BotNexus.Gateway.Conversations/IConversationAuditLog.cs|1
+src/gateway/BotNexus.Gateway.Conversations/InMemoryConversationSectionStore.cs|1
+src/gateway/BotNexus.Gateway.Conversations/InMemoryConversationStore.cs|1
+src/gateway/BotNexus.Gateway.Sessions/SessionFileNames.cs|3
+src/gateway/BotNexus.Gateway.Sessions/SessionTranscriptRenderer.cs|1
+src/gateway/BotNexus.Gateway.Sessions/UnrecoverableSessionException.cs|1
+src/gateway/BotNexus.Gateway/Channels/InternalChannelAdapter.cs|1
+src/gateway/BotNexus.Gateway/Conversations/NullConversationChangeNotifier.cs|2
+src/gateway/BotNexus.Gateway/Diagnostics/ActiveLoopTracker.cs|3
+src/gateway/BotNexus.Gateway/Diagnostics/IActiveLoopTracker.cs|3
+src/gateway/BotNexus.Gateway/Events/IEventDeliveryHandler.cs|1
+src/gateway/BotNexus.Gateway/Events/InMemoryWorldEventBus.cs|2
+src/gateway/BotNexus.Gateway/Events/LoggingEventDeliveryHandler.cs|1
+src/gateway/BotNexus.Gateway/Extensions/GatewayServiceCollectionExtensions.cs|1
+src/gateway/BotNexus.Gateway/GatewayHost.cs|2
+src/gateway/BotNexus.Gateway/Hooks/ToolPolicyHookHandler.cs|1
+src/gateway/BotNexus.Gateway/Isolation/HotPathMetricsAgentListener.cs|1
+src/gateway/BotNexus.Gateway/Security/DefaultToolPolicyProvider.cs|5
+src/gateway/BotNexus.Gateway/Security/ExecApprovalManager.cs|4
+src/gateway/BotNexus.Gateway/Sessions/ISessionTurnTracker.cs|2
+src/gateway/BotNexus.Gateway/Sessions/SessionCompactionCoordinator.cs|1
+src/gateway/BotNexus.Gateway/Sessions/SessionConsistencyChecker.cs|2
+src/gateway/BotNexus.Gateway/Sessions/SessionTurnTracker.cs|4
+src/gateway/BotNexus.Gateway/Sessions/SessionWarmupService.cs|2
+src/gateway/BotNexus.Gateway/Tools/CanvasDeepLink.cs|2
+src/gateway/BotNexus.Memory/DefaultAgentMemoryFactory.cs|1
+src/gateway/BotNexus.Memory/IMemoryStore.cs|2
+src/gateway/BotNexus.Memory/IMemoryStoreFactory.cs|2
+src/gateway/BotNexus.Memory/ISharedMemoryStoreRegistry.cs|4
+src/gateway/BotNexus.Memory/MarkdownAgentMemory.cs|2
+src/gateway/BotNexus.Memory/MarkdownNoteIndexer.cs|2
+src/gateway/BotNexus.Memory/MemoryIndexer.cs|3
+src/gateway/BotNexus.Memory/MemoryStoreFactory.cs|2
+src/gateway/BotNexus.Memory/SharedMemoryPromoter.cs|1
+src/gateway/BotNexus.Memory/SharedMemoryStoreRegistry.cs|5
+src/gateway/BotNexus.Memory/Tools/MemorySaveTool.cs|1
+src/gateway/BotNexus.Memory/Tools/MemorySearchTool.cs|1
