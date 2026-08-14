@@ -499,7 +499,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
                     signal = tcs;
             }
 
-            signal?.TrySetResult();
+            // MUTANT: signal suppressed
         }
 
         public void Unregister(AgentId agentId)
