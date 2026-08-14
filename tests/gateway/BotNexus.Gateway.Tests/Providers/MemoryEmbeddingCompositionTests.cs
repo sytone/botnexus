@@ -84,9 +84,11 @@ public sealed class MemoryEmbeddingCompositionTests : IAsyncLifetime
         string? provider = "ollama",
         string? model = "nomic-embed-text",
         string? baseUrl = "http://localhost:11434/v1",
-        int dimensions = 3)
+        int dimensions = 3,
+        string? backend = null)
         => new()
         {
+            Backend = backend,
             Enabled = enabled,
             Provider = provider,
             Model = model,
@@ -113,6 +115,107 @@ public sealed class MemoryEmbeddingCompositionTests : IAsyncLifetime
         Content = content,
         CreatedAt = DateTimeOffset.UtcNow,
     };
+
+    // ---- #2790: the backend selection ladder ----
+
+    [Fact]
+    public void Build_ReturnsTheDisabledSingleton_WhenBackendIsExplicitlyNone()
+    {
+        // #2790 AC2: no backend is constructed for 'none', even with a complete endpoint section
+        // and the legacy toggle on. If this reddens, explicit selection is not being honoured.
+        MemoryEmbeddingComposition
+            .Build(Config(enabled: true, backend: "none"), RegistryWith(new VectorHandler([1f, 2f, 3f])))
+            .ShouldBeSameAs(MemoryEmbeddingService.Disabled);
+    }
+
+    [Fact]
+    public async Task Build_DegradesToLexicalOnly_WhenTheLocalBackendHasNoRuntime()
+    {
+        // #2790 AC4 + AC7: 'local' is selectable and documented, but this build vendors no ONNX
+        // runtime. An unsatisfiable backend must degrade exactly like a broken one - it must not
+        // throw, and memory writes and searches must keep working.
+        var service = MemoryEmbeddingComposition
+            .Build(Config(enabled: true, backend: "local"), RegistryWith(new VectorHandler([1f, 2f, 3f])));
+
+        service.ShouldBeSameAs(MemoryEmbeddingService.Disabled);
+        service.ActiveIdentity.ShouldBeNull();
+
+        await using var store = new SqliteMemoryStore(_dbPath, new FileSystem(), null, service);
+        await store.InitializeAsync();
+        var inserted = await store.InsertAsync(Entry("m1", "the quick brown fox jumps"));
+        inserted.Embedding.ShouldBeNull();
+        (await store.SearchAsync("quick brown fox")).Select(r => r.Id).ShouldContain("m1");
+    }
+
+    [Fact]
+    public async Task Build_DegradesToLexicalOnly_WhenTheBackendTokenIsUnrecognised()
+    {
+        // #2790 AC4: a typo is a failure to resolve a backend, and every failure to resolve
+        // degrades rather than failing startup.
+        var service = MemoryEmbeddingComposition
+            .Build(Config(enabled: true, backend: "aws-bedrock"), RegistryWith(new VectorHandler([1f, 2f, 3f])));
+
+        service.ShouldBeSameAs(MemoryEmbeddingService.Disabled);
+
+        await using var store = new SqliteMemoryStore(_dbPath, new FileSystem(), null, service);
+        await store.InitializeAsync();
+        (await store.InsertAsync(Entry("m1", "hello world"))).Embedding.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Build_ConstructsTheProviderBackend_WhenSelectedExplicitlyWithoutTheLegacyToggle()
+    {
+        // #2790 AC2/AC3: the discriminator alone reaches the backend, and the credentials come
+        // from the already-registered provider - no second credential block is consulted.
+        var handler = new VectorHandler([0.25f, -0.5f, 0.75f]);
+        var service = MemoryEmbeddingComposition
+            .Build(Config(enabled: false, backend: "provider"), RegistryWith(handler));
+
+        service.ActiveIdentity.ShouldNotBeNull();
+        var generated = await service.TryGenerateAsync("hello");
+        generated.ShouldNotBeNull();
+        generated!.Value.Vector.ShouldBe([0.25f, -0.5f, 0.75f]);
+        handler.CallCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Build_PreservesThePreDiscriminatorBehaviour_WhenBackendIsUnspecified()
+    {
+        // Backward compatibility: a configuration written before #2790 must resolve to the same
+        // backend it did then.
+        MemoryEmbeddingComposition
+            .Build(Config(enabled: true, backend: null), RegistryWith(new VectorHandler([1f, 2f, 3f])))
+            .ActiveIdentity.ShouldNotBeNull();
+
+        MemoryEmbeddingComposition
+            .Build(Config(enabled: false, backend: null), RegistryWith(new VectorHandler([1f, 2f, 3f])))
+            .ShouldBeSameAs(MemoryEmbeddingService.Disabled);
+    }
+
+    [Fact]
+    public void ProviderBackendIdentity_EncodesTheBackend_NotJustTheModelName()
+    {
+        // #2790 AC5: the backend participates in the fingerprint, so a vector from a hypothetical
+        // local build of a model can never be compared with a hosted one of the same name, width
+        // and endpoint. Proved by showing the composed fingerprint is NOT the model-name-and-
+        // provider-key-only derivation that #2855 used.
+        var identity = MemoryEmbeddingComposition
+            .Build(Config(enabled: true, backend: "provider"), RegistryWith(new VectorHandler([1f, 2f, 3f])))
+            .ActiveIdentity;
+
+        identity.ShouldNotBeNull();
+
+        var backendAgnostic = HostedEmbeddingFingerprint.Derive(
+            "ollama", "http://localhost:11434/v1", "nomic-embed-text", 3);
+        identity!.ModelFingerprint.ShouldNotBe(
+            backendAgnostic,
+            "the backend must be part of the fingerprint material, otherwise two backends serving the same model name would share an identity");
+
+        var otherBackend = HostedEmbeddingFingerprint.Derive(
+            "Local:ollama", "http://localhost:11434/v1", "nomic-embed-text", 3);
+        identity.ModelFingerprint.ShouldNotBe(otherBackend);
+        identity.Matches(new EmbeddingIdentity("nomic-embed-text", otherBackend, 3)).ShouldBeFalse();
+    }
 
     // ---- AC6: absent or disabled preserves today's Disabled behaviour EXACTLY ----
 

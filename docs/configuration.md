@@ -1260,13 +1260,15 @@ The section is optional — when absent, the auditor runs in `warn` mode. Settin
 
 #### Memory Embeddings (`memoryEmbeddings`)
 
-Selects the embedding backend that supplies vectors for hybrid memory retrieval (#2855). **Off by default** — enabling it sends memory content to the configured endpoint, so it is an explicit operator decision.
+Selects the embedding backend that supplies vectors for hybrid memory retrieval (#2855, #2790). The
+backend is an **explicit operator choice**; `none` is the default, so no vectors are produced and no
+memory content leaves the machine until you say otherwise.
 
 ```json
 {
   "gateway": {
     "memoryEmbeddings": {
-      "enabled": true,
+      "backend": "provider",
       "provider": "ollama",
       "model": "nomic-embed-text",
       "dimensions": 768,
@@ -1279,18 +1281,37 @@ Selects the embedding backend that supplies vectors for hybrid memory retrieval 
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `memoryEmbeddings.enabled` | bool | `false` | Enables embedding of memory entries for hybrid (lexical + vector) retrieval. |
-| `memoryEmbeddings.provider` | string | `null` | Provider key whose embeddings endpoint supplies vectors (for example `"ollama"` or `"openai"`). |
+| `memoryEmbeddings.backend` | string | `"none"` | Which embedding backend to use: `"none"`, `"local"`, or `"provider"`. This single key overrides the default. |
+| `memoryEmbeddings.enabled` | bool | `false` | **Legacy compatibility only.** Consulted solely when `backend` is absent, where `true` means `"provider"`. Prefer `backend`. |
+| `memoryEmbeddings.provider` | string | `null` | Provider key whose embeddings endpoint supplies vectors (for example `"ollama"` or `"openai"`). Used by `backend: "provider"`. Credentials come from that provider's existing configuration - there is no second credential block. |
 | `memoryEmbeddings.model` | string | `null` | Embedding model identifier as the endpoint expects it. |
 | `memoryEmbeddings.dimensions` | int | `0` | Vector width the model emits. A response of a different width is discarded and the entry falls back to lexical-only. |
 | `memoryEmbeddings.baseUrl` | string | `null` | Base URL of the OpenAI-compatible embeddings endpoint; `/embeddings` is appended. |
 | `memoryEmbeddings.apiKey` | string | `null` | Optional bearer token. Omit for a local endpoint that requires none. Sensitive: stored and shown masked. |
 
-An **absent**, **disabled**, or **incompletely filled** section all resolve to the lexical-only
+##### Backend values
+
+| `backend` | Behaviour |
+|-----------|-----------|
+| `"none"` (default) | No generator is constructed. Retrieval is lexical-only (BM25 + temporal decay). A fully supported mode, not a failure state. |
+| `"local"` | On-box inference over a local model artefact. **Selectable but not yet satisfiable:** this build deliberately does not vendor the ONNX Runtime native binary, so selecting `local` logs a warning and degrades to lexical-only. |
+| `"provider"` | Reuses an already-configured platform provider's embeddings endpoint, named by `provider`. |
+
+`"onnx"` is accepted as an alias for `"local"`, and `"hosted"` for `"provider"`. Values are matched
+case-insensitively and surrounding whitespace is ignored. An **unrecognised** value is named in a
+warning and resolves to `none` rather than silently falling back, so a typo degrades retrieval
+instead of quietly selecting a backend you did not ask for.
+
+Because `backend` is part of each vector's identity fingerprint, **changing the backend or the model
+is a model change**: vectors written under the old identity are never compared against the new one,
+and those rows remain reachable through lexical search until they are re-embedded.
+
+An **absent**, **`none`**, or **incompletely filled** section all resolve to the lexical-only
 behaviour the platform has shipped since hybrid retrieval landed: no generator is registered and
 memory search is BM25-only. A half-configured section degrades rather than throwing, so a gateway
-mid-way through embeddings setup still starts. An endpoint that is unreachable or erroring also
-degrades to lexical-only without failing a memory write or search.
+mid-way through embeddings setup still starts. An endpoint that is unreachable or erroring, and a
+backend that cannot be satisfied by this build, also degrade to lexical-only without failing a
+memory write or search.
 
 See [Hybrid memory retrieval](./features/hybrid-memory-retrieval.md) for the identity and
 fingerprint semantics.

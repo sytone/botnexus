@@ -16,13 +16,33 @@ namespace BotNexus.Gateway.Configuration;
 /// endpoint.
 /// </para>
 /// <para>
-/// There is no local-model option here yet. Local ONNX inference is a later implementation of the
-/// same <c>IEmbeddingProvider</c> interface (#2790) and will add a discriminator; declaring one
-/// now with a single valid value would be a guess wearing a type.
+/// #2790 added the explicit <see cref="Backend"/> discriminator. The original <see cref="Enabled"/>
+/// toggle remains the compatibility path: an operator who configured embeddings before the
+/// discriminator existed keeps the behaviour they had, because an unspecified backend resolves
+/// from <see cref="Enabled"/>. Setting <c>backend</c> explicitly always wins, which is what makes
+/// the shipped default overridable by a single key.
+/// </para>
+/// <para>
+/// <see cref="MemoryEmbeddingBackend.Local"/> is selectable and documented but not satisfied by any
+/// runtime in this build: the ONNX Runtime native dependency is deliberately not vendored, so an
+/// operator selecting <c>none</c> or <c>provider</c> never ships a native binary. Selecting
+/// <c>local</c> today degrades to lexical-only with a warning.
 /// </para>
 /// </remarks>
 public sealed class MemoryEmbeddingsConfig
 {
+    /// <summary>
+    /// Backend selection: <c>none</c>, <c>local</c>, or <c>provider</c>. Absent means "unspecified"
+    /// and falls back to <see cref="Enabled"/> for compatibility with pre-#2790 configurations.
+    /// </summary>
+    [Display(
+        Name = "Backend",
+        Description = "Embedding backend: 'none' for lexical-only retrieval, 'local' for on-box inference, or 'provider' to reuse a configured provider's embeddings endpoint. Defaults to 'none'.",
+        GroupName = "Memory embeddings",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "memory-embeddings", Order = 0)]
+    public string? Backend { get; set; }
+
     /// <summary>Whether memory embeddings are enabled. Off by default.</summary>
     [Display(
         Name = "Enabled",
@@ -83,7 +103,33 @@ public sealed class MemoryEmbeddingsConfig
     public string? ApiKey { get; set; }
 
     /// <summary>
-    /// Whether this configuration is complete enough to build an embedding backend from.
+    /// Resolves the selected backend (#2790). An explicit <see cref="Backend"/> value always wins;
+    /// an unrecognised token is reported through <paramref name="unrecognized"/> and resolves to
+    /// <see cref="MemoryEmbeddingBackend.None"/> so a typo degrades retrieval rather than
+    /// preventing startup. When unspecified, the legacy <see cref="Enabled"/> toggle decides.
+    /// </summary>
+    public MemoryEmbeddingBackend ResolveBackend(out string? unrecognized)
+    {
+        unrecognized = null;
+
+        if (!string.IsNullOrWhiteSpace(Backend))
+        {
+            if (MemoryEmbeddingBackendParser.TryParse(Backend, out var parsed))
+                return parsed;
+
+            unrecognized = Backend.Trim();
+            return MemoryEmbeddingBackend.None;
+        }
+
+        // Pre-#2790 shape: 'enabled: true' meant the one backend that existed, the hosted provider.
+        return Enabled ? MemoryEmbeddingBackend.Provider : MemoryEmbeddingBackend.None;
+    }
+
+    /// <summary>Resolves the selected backend, discarding the unrecognised-token diagnostic.</summary>
+    public MemoryEmbeddingBackend ResolveBackend() => ResolveBackend(out _);
+
+    /// <summary>
+    /// Whether this configuration is complete enough to build the PROVIDER backend from.
     /// </summary>
     /// <remarks>
     /// A half-filled section is treated exactly like an absent one - lexical-only - rather than
@@ -91,7 +137,7 @@ public sealed class MemoryEmbeddingsConfig
     /// working gateway with degraded retrieval, not a gateway that refuses to boot.
     /// </remarks>
     public bool IsComplete()
-        => Enabled
+        => ResolveBackend() == MemoryEmbeddingBackend.Provider
            && !string.IsNullOrWhiteSpace(Provider)
            && !string.IsNullOrWhiteSpace(Model)
            && !string.IsNullOrWhiteSpace(BaseUrl)
