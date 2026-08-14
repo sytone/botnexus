@@ -98,12 +98,12 @@ public sealed class MemorySessionReconciler(
     {
         // #2608: a sub-agent workspace reaped by the sweeper has no memory store location, and
         // opening it yields a permanently unrecoverable SQLITE_CANTOPEN. Skip before SQLite.
-        if (!_storeFactory.StoreLocationExists(agentId.Value))
+        if (!_storeFactory.StoreLocationExists(agentId))
             return 0;
 
         try
         {
-            var store = _storeFactory.Create(agentId.Value);
+            var store = _storeFactory.Create(agentId);
             var indexedSessionIds = await store.ListSessionIdsAsync(cancellationToken).ConfigureAwait(false);
 
             var pruned = 0;

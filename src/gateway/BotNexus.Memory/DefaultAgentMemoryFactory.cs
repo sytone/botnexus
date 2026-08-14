@@ -1,4 +1,5 @@
 using System.IO.Abstractions;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Contracts.Memory;
 
@@ -35,7 +36,7 @@ public sealed class DefaultAgentMemoryFactory : IAgentMemoryFactory
         if (!string.Equals(provider, "markdown", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException($"Memory provider '{provider}' is not registered. Available: {string.Join(", ", RegisteredProviders)}");
 
-        var memoryStore = _memoryStoreFactory.Create(agentId);
+        var memoryStore = _memoryStoreFactory.Create(AgentId.From(agentId));
         _ = memoryStore.InitializeAsync(CancellationToken.None);
 
         return new MarkdownAgentMemory(

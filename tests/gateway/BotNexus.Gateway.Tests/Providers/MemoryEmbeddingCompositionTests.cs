@@ -12,6 +12,8 @@ using BotNexus.Memory.Models;
 using Microsoft.Data.Sqlite;
 using Shouldly;
 
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Tests.Providers;
 
 /// <summary>
@@ -300,8 +302,8 @@ public sealed class MemoryEmbeddingCompositionTests : IAsyncLifetime
         await using var factory = new EmbeddingAwareMemoryStoreFactory(
             _ => _dbPath, service, new FileSystem());
 
-        var store = factory.Create("agent");
-        factory.Create("agent").ShouldBeSameAs(store, "the factory must cache one store per agent");
+        var store = factory.Create(AgentId.From("agent"));
+        factory.Create(AgentId.From("agent")).ShouldBeSameAs(store, "the factory must cache one store per agent");
 
         await store.InitializeAsync();
         var inserted = await store.InsertAsync(Entry("m1", "hello world"));
@@ -317,7 +319,7 @@ public sealed class MemoryEmbeddingCompositionTests : IAsyncLifetime
         await using var factory = new EmbeddingAwareMemoryStoreFactory(
             _ => _dbPath, MemoryEmbeddingService.Disabled, new FileSystem());
 
-        var store = factory.Create("agent");
+        var store = factory.Create(AgentId.From("agent"));
         await store.InitializeAsync();
 
         (await store.InsertAsync(Entry("m1", "hello world"))).Embedding.ShouldBeNull();
@@ -331,11 +333,11 @@ public sealed class MemoryEmbeddingCompositionTests : IAsyncLifetime
             _ => _dbPath, MemoryEmbeddingService.Disabled, new FileSystem());
         await using var original = new MemoryStoreFactory(_ => _dbPath, new FileSystem());
 
-        composed.StoreLocationExists("agent").ShouldBe(original.StoreLocationExists("agent"));
+        composed.StoreLocationExists(AgentId.From("agent")).ShouldBe(original.StoreLocationExists(AgentId.From("agent")));
 
         Directory.CreateDirectory(Path.GetDirectoryName(_dbPath)!);
 
-        composed.StoreLocationExists("agent").ShouldBe(original.StoreLocationExists("agent"));
-        composed.StoreLocationExists("agent").ShouldBeTrue();
+        composed.StoreLocationExists(AgentId.From("agent")).ShouldBe(original.StoreLocationExists(AgentId.From("agent")));
+        composed.StoreLocationExists(AgentId.From("agent")).ShouldBeTrue();
     }
 }

@@ -90,7 +90,7 @@ public sealed class MemorySessionReconcilerTests
 
     private sealed class SingleStoreFactory(IMemoryStore store) : IMemoryStoreFactory
     {
-        public IMemoryStore Create(string agentId) => store;
+        public IMemoryStore Create(AgentId agentId) => store;
     }
 
     private sealed class StubAgentRegistry(params string[] agentIds) : IAgentRegistry

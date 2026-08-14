@@ -80,7 +80,7 @@ public sealed class MemoryController(
 
         try
         {
-            var store = memoryStoreFactory.Create(agentId);
+            var store = memoryStoreFactory.Create(AgentId.From(agentId));
             await store.InitializeAsync(ct).ConfigureAwait(false);
 
             var entries = await store.SearchAsync(query, limit, ct: ct).ConfigureAwait(false);
@@ -106,7 +106,7 @@ public sealed class MemoryController(
     {
         try
         {
-            var store = memoryStoreFactory.Create(agentId);
+            var store = memoryStoreFactory.Create(AgentId.From(agentId));
             await store.InitializeAsync(ct).ConfigureAwait(false);
             var stats = await store.GetStatsAsync(ct).ConfigureAwait(false);
             return new MemoryStoreDto(

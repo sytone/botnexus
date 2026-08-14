@@ -69,12 +69,10 @@ src/gateway/BotNexus.Gateway/Sessions/SessionWarmupService.cs|2
 src/gateway/BotNexus.Gateway/Tools/CanvasDeepLink.cs|2
 src/gateway/BotNexus.Memory/DefaultAgentMemoryFactory.cs|1
 src/gateway/BotNexus.Memory/IMemoryStore.cs|2
-src/gateway/BotNexus.Memory/IMemoryStoreFactory.cs|2
 src/gateway/BotNexus.Memory/ISharedMemoryStoreRegistry.cs|4
 src/gateway/BotNexus.Memory/MarkdownAgentMemory.cs|2
 src/gateway/BotNexus.Memory/MarkdownNoteIndexer.cs|2
 src/gateway/BotNexus.Memory/MemoryIndexer.cs|3
-src/gateway/BotNexus.Memory/MemoryStoreFactory.cs|2
 src/gateway/BotNexus.Memory/SharedMemoryPromoter.cs|1
 src/gateway/BotNexus.Memory/SharedMemoryStoreRegistry.cs|5
 src/gateway/BotNexus.Memory/Tools/MemorySaveTool.cs|1
