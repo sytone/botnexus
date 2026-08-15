@@ -75,6 +75,7 @@ export default defineConfig({
           { text: 'Getting Started', link: '/user-guide/getting-started' },
           { text: 'Agents', link: '/user-guide/agents' },
           { text: 'Conversations', link: '/user-guide/conversations' },
+          { text: 'Automation', link: '/user-guide/automation' },
           { text: 'Configuration', link: '/user-guide/configuration' },
           { text: 'Extensions', link: '/user-guide/extensions' },
           {

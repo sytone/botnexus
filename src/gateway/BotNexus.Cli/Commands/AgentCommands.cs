@@ -158,6 +158,10 @@ internal sealed class AgentCommands
         command.AddCommand(showCommand);
         command.AddCommand(exportCommand);
         command.AddCommand(importCommand);
+        // #2396: the one subcommand in this group that makes the agent RUN, rather than editing its
+        // configuration. It lives in its own file because its concerns (gateway transport, exit
+        // codes, stdout/stderr discipline) share nothing with the config-editing subcommands.
+        command.AddCommand(AgentExecCommand.Build(verboseOption));
         return command;
     }
 

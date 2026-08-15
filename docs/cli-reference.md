@@ -63,39 +63,40 @@ You should see the root command help listing all available subcommands.
 11. [agent wizard](#agent-wizard) — Create an agent interactively
 12. [agent export](#agent-export) — Export an agent as a redacted template
 13. [agent import](#agent-import) — Import an agent from a redacted template
-14. [conversation](#conversation) — Manage conversations via the gateway REST API
-15. [session](#session) — List, archive, and delete sessions via the session store
-16. [config get](#config-get) — Read a config value
-17. [config set](#config-set) — Set a config value
-18. [config schema](#config-schema) — Generate JSON schema
-19. [gateway](#gateway) — Manage the gateway lifecycle
-20. [provider](#provider) — Show or set up providers
-21. [provider setup](#provider-setup) — Interactive provider setup wizard
-22. [provider list](#provider-list) — List configured providers
-23. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-24. [provider remove](#provider-remove) — Remove a provider non-interactively
-25. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
-26. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-27. [prompt](#prompt) — Manage prompt templates
-28. [prompt list](#prompt-list) — List available prompt templates
-29. [prompt render](#prompt-render) — Render a prompt template
-30. [prompt run](#prompt-run) — Render and execute a prompt template
-31. [satellite](#satellite) — Manage satellite nodes
-32. [doctor](#doctor) — Run the complete CLI diagnostic suite
-33. [doctor config](#doctor-config) — Guided config migration
-34. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
-35. [locations](#locations) — Manage configured locations
-36. [update](#update) — Pull, build, and restart the gateway
-37. [memory](#memory) — Backfill agent memory stores
-38. [cron](#cron-command) — Manage cron jobs from the CLI
-39. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
-40. [debug sessions](#debug-sessions) — Inspect session SQLite database
-41. [debug logs](#debug-logs) — Inspect log files
-42. [debug memory](#debug-memory) — Inspect agent memory directories
-43. [debug db](#debug-db) — Inspect raw databases
-44. [debug gateway](#debug-gateway) — Live gateway diagnostics
-45. [debug cron](#debug-cron) — Cron scheduler diagnostics
-46. [Examples](#examples)
+14. [agent exec](#agent-exec) — Run an agent once, headlessly
+15. [conversation](#conversation) — Manage conversations via the gateway REST API
+16. [session](#session) — List, archive, and delete sessions via the session store
+17. [config get](#config-get) — Read a config value
+18. [config set](#config-set) — Set a config value
+19. [config schema](#config-schema) — Generate JSON schema
+20. [gateway](#gateway) — Manage the gateway lifecycle
+21. [provider](#provider) — Show or set up providers
+22. [provider setup](#provider-setup) — Interactive provider setup wizard
+23. [provider list](#provider-list) — List configured providers
+24. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+25. [provider remove](#provider-remove) — Remove a provider non-interactively
+26. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
+27. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+28. [prompt](#prompt) — Manage prompt templates
+29. [prompt list](#prompt-list) — List available prompt templates
+30. [prompt render](#prompt-render) — Render a prompt template
+31. [prompt run](#prompt-run) — Render and execute a prompt template
+32. [satellite](#satellite) — Manage satellite nodes
+33. [doctor](#doctor) — Run the complete CLI diagnostic suite
+34. [doctor config](#doctor-config) — Guided config migration
+35. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
+36. [locations](#locations) — Manage configured locations
+37. [update](#update) — Pull, build, and restart the gateway
+38. [memory](#memory) — Backfill agent memory stores
+39. [cron](#cron-command) — Manage cron jobs from the CLI
+40. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
+41. [debug sessions](#debug-sessions) — Inspect session SQLite database
+42. [debug logs](#debug-logs) — Inspect log files
+43. [debug memory](#debug-memory) — Inspect agent memory directories
+44. [debug db](#debug-db) — Inspect raw databases
+45. [debug gateway](#debug-gateway) — Live gateway diagnostics
+46. [debug cron](#debug-cron) — Cron scheduler diagnostics
+47. [Examples](#examples)
 
 ---
 
@@ -741,6 +742,53 @@ botnexus agent import ./templates/assistant.agent.json --id assistant --overwrit
 ### Required secrets
 
 Because the template is redacted, imported agents cannot run until you re-provide the credentials named in the template's `requiredSecrets` manifest (for example `providers.<provider>.apiKey`). Import prints the required-secret list on completion.
+
+---
+
+## agent exec
+
+Run an agent once, headlessly, and print its answer. This is the only `agent` subcommand that makes an agent *run* rather than editing its configuration — see the [Automation guide](/user-guide/automation) for scripting recipes.
+
+### Syntax
+
+```powershell
+botnexus agent exec <agentId> <prompt> [OPTIONS]
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--json` | off | Emit a structured JSON result (text, tool calls, token usage, session id) on stdout. |
+| `--timeout <seconds>` | `300` | Wall-clock budget before the run is abandoned. |
+| `--model <id>` | agent default | Per-run model override (`model-id` or `provider/model-id`). |
+| `--thinking <level>` | agent default | `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. |
+| `--conversation <id>` | fresh session | Run inside an existing session instead of a new one. |
+| `--url <url>` | local gateway | Gateway base URL. |
+| `--token <value>` | — | Gateway credential. Required when `--url` is not the local gateway. |
+
+The agent's answer is written to **stdout**; diagnostics and errors go to **stderr**, so the command is pipeable.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Run completed, all tool calls succeeded. |
+| `1` | Usage error, unreachable gateway, refused credential, or unclassified gateway error. |
+| `2` | The named agent is not registered. |
+| `3` | The run exceeded `--timeout`. |
+| `4` | Run completed, but at least one tool call reported an error. |
+
+### Examples
+
+```powershell
+botnexus agent exec farnsworth "summarise the last 10 commits on main"
+botnexus agent exec farnsworth "list the blockers" --json --timeout 900
+```
+
+### Approval posture
+
+The run is submitted to the gateway over the same REST endpoint every other non-streaming caller uses, so it inherits the gateway's tool policy and approval behaviour unchanged. There is deliberately no `--yes`, `--auto-approve`, or `--force` flag: the CLI has no authority to waive a policy decision made inside the gateway. A run blocked on an approval nobody grants will hit `--timeout` and exit `3` rather than proceeding unapproved.
 
 ---
 

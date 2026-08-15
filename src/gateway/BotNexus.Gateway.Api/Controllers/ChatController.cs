@@ -71,6 +71,21 @@ public sealed class ChatController : ControllerBase
             var typedAgentId = AgentId.From(request.AgentId);
             var typedSessionId = SessionId.From(sessionId);
 
+            // #2396: per-run model / thinking selection for a headless one-shot run. Stamped as
+            // session metadata - the SAME seam the cron, soul and heartbeat triggers already use -
+            // so the override travels through DefaultAgentSupervisor and the isolation strategy's
+            // three-layer resolver rather than becoming a second, CLI-only resolution path.
+            //
+            // Deliberately skipped when neither override is supplied: the session must not be
+            // created before the supervisor call on the ordinary path, because an unknown agent has
+            // to 404 WITHOUT leaving a session row behind.
+            if (!string.IsNullOrWhiteSpace(request.Model) || !string.IsNullOrWhiteSpace(request.Thinking))
+            {
+                var overrideSession = await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, CancellationToken.None);
+                ApplyRunOverrides(overrideSession, request.Model, request.Thinking);
+                await _sessions.SaveAsync(overrideSession, CancellationToken.None);
+            }
+
             // Reject messages to sessions that are no longer accepting input.
             if (!string.IsNullOrWhiteSpace(request.SessionId))
             {
@@ -111,7 +126,11 @@ public sealed class ChatController : ControllerBase
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
             await _sessions.SaveAsync(session, CancellationToken.None);
 
-            return Ok(new ChatResponse(sessionId, response.Content, response.Usage));
+            return Ok(new ChatResponse(
+                sessionId,
+                response.Content,
+                response.Usage,
+                [.. response.ToolCalls.Select(c => new ChatToolCall(c.ToolCallId, c.ToolName, c.IsError))]));
         }
         catch (KeyNotFoundException ex)
         {
@@ -121,6 +140,33 @@ public sealed class ChatController : ControllerBase
         {
             return StatusCode(StatusCodes.Status429TooManyRequests, new { error = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Records the per-run model / thinking selection on the session's metadata bag (#2396).
+    ///
+    /// <para>WHY METADATA AND NOT A NEW RESOLUTION PATH: the supervisor already reads
+    /// <c>modelOverride</c> from session metadata, and the isolation strategy already resolves the
+    /// thinking level through the three-layer <c>ModelOverrideResolver</c>. Introducing a CLI- or
+    /// REST-specific override channel would create a second definition of "which model runs this
+    /// turn", which is exactly the drift that makes an allow-list guard
+    /// (<c>AgentDescriptor.AllowedModelIds</c>) bypassable by choosing a different entry point.
+    /// Writing the same keys the triggers write means the existing guard applies unchanged.</para>
+    ///
+    /// <para>A blank value CLEARS the key rather than storing an empty string, so a follow-up run on
+    /// the same session cannot inherit a stale override.</para>
+    /// </summary>
+    private static void ApplyRunOverrides(GatewaySession session, string? model, string? thinking)
+    {
+        if (string.IsNullOrWhiteSpace(model))
+            session.Metadata.Remove("modelOverride");
+        else
+            session.Metadata["modelOverride"] = model.Trim();
+
+        if (string.IsNullOrWhiteSpace(thinking))
+            session.Metadata.Remove("thinkingOverride");
+        else
+            session.Metadata["thinkingOverride"] = thinking.Trim();
     }
 
     /// <summary>
@@ -180,11 +226,54 @@ public sealed class ChatController : ControllerBase
     }
 }
 
-/// <summary>Chat request payload.</summary>
-public sealed record ChatRequest(string AgentId, string Message, string? SessionId = null);
+/// <summary>
+/// Chat request payload.
+/// </summary>
+/// <param name="AgentId">The registered agent to run.</param>
+/// <param name="Message">The prompt text.</param>
+/// <param name="SessionId">Optional existing session to continue; a fresh one is minted when omitted.</param>
+/// <param name="Model">
+/// Optional per-run model override (<c>model-id</c> or <c>provider/model-id</c>), recorded as session
+/// metadata and resolved by the existing override stack. <see langword="null"/> keeps the agent default.
+/// </param>
+/// <param name="Thinking">
+/// Optional per-run thinking-level wire token (<c>minimal</c>…<c>max</c>), recorded as session metadata
+/// and resolved by the existing override stack. <see langword="null"/> keeps the agent default.
+/// </param>
+public sealed record ChatRequest(
+    string AgentId,
+    string Message,
+    string? SessionId = null,
+    string? Model = null,
+    string? Thinking = null);
 
 /// <summary>Agent control request payload.</summary>
 public sealed record AgentControlRequest(string AgentId, string SessionId, string Message);
 
-/// <summary>Chat response payload.</summary>
-public sealed record ChatResponse(string SessionId, string Content, AgentResponseUsage? Usage = null);
+/// <summary>
+/// Chat response payload.
+/// </summary>
+/// <param name="SessionId">The session the turn ran on.</param>
+/// <param name="Content">The agent's final text.</param>
+/// <param name="Usage">Token usage for the turn, when the provider reported any.</param>
+/// <param name="ToolCalls">
+/// The tools the turn actually invoked (#2396). Present so a headless caller can tell an
+/// answered-from-context turn apart from one that did work, without reading the transcript store.
+/// Empty - never null - when the turn called no tools.
+/// </param>
+public sealed record ChatResponse(
+    string SessionId,
+    string Content,
+    AgentResponseUsage? Usage = null,
+    IReadOnlyList<ChatToolCall>? ToolCalls = null);
+
+/// <summary>
+/// One tool invocation summary on a <see cref="ChatResponse"/>. Intentionally narrower than
+/// <see cref="AgentToolCallInfo"/>: arguments and result bodies are omitted because this contract is
+/// consumed by shell pipelines, and echoing tool payloads back over the wire would widen the
+/// disclosure surface of every REST chat call for no caller benefit.
+/// </summary>
+/// <param name="ToolCallId">The model's tool-use correlation id.</param>
+/// <param name="ToolName">The tool that ran.</param>
+/// <param name="IsError">True when the tool reported a failure.</param>
+public sealed record ChatToolCall(string ToolCallId, string ToolName, bool IsError);

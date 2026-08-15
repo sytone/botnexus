@@ -137,6 +137,20 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var conversationOverrideLayer = await ResolveConversationOverrideLayerAsync(
             conversationStore => GetConversationIdAsync(conversationStore, _serviceProvider.GetService<ISessionStore>()),
             cancellationToken).ConfigureAwait(false);
+
+        // #2396: a per-run thinking selection (headless `agent exec --thinking`, carried as session
+        // metadata by ChatController and surfaced here through AgentExecutionContext.Parameters) is
+        // MORE specific than the conversation's standing override, so it overlays the conversation
+        // layer rather than becoming a fourth resolver argument. Folding it in here keeps
+        // ModelOverrideResolver the single precedence authority; an unrecognised token is treated as
+        // unset, matching how a persisted conversation token is handled directly below.
+        if (context.Parameters.TryGetValue("thinkingOverride", out var runThinkingRaw)
+            && runThinkingRaw is string runThinkingToken
+            && TryParseThinkingToken(runThinkingToken, out var runThinking))
+        {
+            conversationOverrideLayer = conversationOverrideLayer with { Thinking = runThinking };
+        }
+
         var effectiveModel = ModelOverrideResolver.Resolve(
             modelDefaults: default,
             agent: new ModelOverrideLayer(

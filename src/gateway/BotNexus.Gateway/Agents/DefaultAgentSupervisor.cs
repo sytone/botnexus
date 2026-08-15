@@ -348,6 +348,16 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
             parameters["channel"] = channelType.Value;
         }
 
+        // #2396: a per-run thinking selection recorded on the session (headless `agent exec
+        // --thinking`) travels to the isolation strategy through the same parameter bag, so the
+        // strategy can overlay it on the conversation layer of the existing override resolver.
+        // Carried as the raw wire token; the strategy owns parsing and rejects an unknown token by
+        // ignoring it, so a typo degrades to the agent default rather than failing the run.
+        if (session is not null && TryGetMetadataString(session, "thinkingOverride", out var thinkingOverride))
+        {
+            parameters["thinkingOverride"] = thinkingOverride;
+        }
+
         return parameters;
     }
 
