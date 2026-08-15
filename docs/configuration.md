@@ -1149,6 +1149,64 @@ Image content blocks are passed through untouched - an encoded image cannot be t
 The section is optional - when absent, the default 256 KiB backstop is applied. "Not configured" deliberately does not mean "unprotected".
 
 
+#### Read Tool Size Guardrails
+
+`read` is the fleet's largest single token consumer. The measurement behind #2689 found that 41.9%
+of all `read` tokens came from just 636 calls that each returned more than 20 KB, and that a further
+1,429 calls re-read a file the same session had already read - one file was re-read 54 times in a
+single session. Neither pattern is a defect in the tool: `read` has always accepted `offset` and
+`limit`. The problem is that nothing made the cheap path the obvious one.
+
+The `readTool` section adds two **advisory, read-path-only** guardrails. Unlike `toolOutputBudget`
+above, neither ever truncates content and neither changes what `read` can express - no new
+arguments, no path or permission changes.
+
+1. **Size indicator** - a result larger than `largeReadThresholdBytes` gets an appended note stating
+   its byte size and line count and naming `offset` and `limit` as the narrowing controls, so the
+   *next* call is cheap. The content itself is returned in full.
+2. **Unchanged re-read elision** - when the same `(path, offset, limit)` slice is read again within
+   one session and the file is byte-for-byte identical, a short "unchanged" marker is returned
+   instead of repeating the body.
+
+```json
+{
+  "gateway": {
+    "readTool": {
+      "largeReadThresholdBytes": 20480,
+      "elideUnchangedRereads": true
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `readTool.largeReadThresholdBytes` | int | 20480 (20 KiB) | UTF-8 byte size above which a `read` result carries a size indicator naming `offset` and `limit`. A value of 0 or less disables the indicator, matching the `toolResultPersistence.maxBytes` convention. |
+| `readTool.elideUnchangedRereads` | bool | `true` | Whether an identical re-read of an **unchanged** slice in the same session returns a short marker instead of the full body. |
+
+The section is optional - when absent, both guardrails run with the defaults above.
+
+##### Why the cheap path cannot serve stale content
+
+The obvious way to implement re-read elision - cache the content and skip the disk read when `mtime`
+is unchanged - is **not** what this does, because it is unsafe. `mtime` has coarse filesystem
+granularity, is trivially preserved by tools that rewrite a file in place, and is not monotonic
+across network shares or containers; an agent that edits a file and immediately re-reads it (which
+BotNexus explicitly instructs agents to do before an `edit`) would be the exact case that breaks.
+
+Instead the file is **always read from disk on every call**, decoded, and hashed. Elision applies
+only when that freshly-computed content token matches the token of what the session was already
+shown. A changed file therefore cannot reach the cheap path by construction rather than by
+heuristic, and the correctness constraint - a changed file always returns fresh content - holds
+without depending on any filesystem timestamp. Disk reads are cheap relative to context tokens, so
+this buys the safety for effectively nothing.
+
+The record is per `ReadTool` instance, and the tool is constructed once per agent handle, so the
+cache lifetime is exactly one session. There is deliberately no cross-session or on-disk cache: a
+file can change between sessions with nothing observing it, and a persisted cache would have no
+safe way to know.
+
+
 #### Session Compaction
 
 The `compaction` section tunes when and how a session's history is summarised to stay within the model's context window. Compaction is triggered when **either** of two signals trips (whichever fires first):

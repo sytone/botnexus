@@ -22,6 +22,15 @@ namespace BotNexus.Tools;
 /// </param>
 public sealed record ReadResultDetails(string? ConcurrencyToken);
 
+/// <summary>
+/// A previously returned read of one file slice, retained for the lifetime of a single
+/// <see cref="ReadTool"/> instance (issue #2689). The tool is constructed once per agent handle, so
+/// the instance lifetime IS the session lifetime - there is deliberately no cross-session store.
+/// </summary>
+/// <param name="ContentToken">Content token of the WHOLE decoded file at the time of that read.</param>
+/// <param name="RenderedLength">Character length of the slice that was returned to the model.</param>
+internal sealed record PreviousRead(string ContentToken, int RenderedLength);
+
 
 /// <summary>
 /// Represents read tool.
@@ -33,19 +42,29 @@ public sealed class ReadTool : IAgentTool
     private readonly string _workingDirectory;
     private readonly IPathValidator? _validator;
     private readonly IFileSystem _fileSystem;
+    private readonly ReadToolOptions _options;
+
+    /// <summary>
+    /// Per-session record of what each (path, offset, limit) slice last returned. Instance-scoped
+    /// because the tool instance is created once per agent handle (#2689). Concurrent tool calls
+    /// within one session are possible, so the map is concurrent.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PreviousRead> _previousReads =
+        new(StringComparer.Ordinal);
 
     public ReadTool(string workingDirectory, IFileSystem? fileSystem = null)
         : this(workingDirectory, validator: null, fileSystem)
     {
     }
 
-    public ReadTool(string workingDirectory, IPathValidator? validator, IFileSystem? fileSystem = null)
+    public ReadTool(string workingDirectory, IPathValidator? validator, IFileSystem? fileSystem = null, ReadToolOptions? options = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory))
             : Path.GetFullPath(workingDirectory);
         _validator = validator;
         _fileSystem = fileSystem ?? new FileSystem();
+        _options = options ?? new ReadToolOptions();
     }
 
     public string Name => "read";
@@ -60,7 +79,7 @@ public sealed class ReadTool : IAgentTool
     /// <returns>The new result.</returns>
     public Tool Definition => new(
         Name,
-        "Read file content with optional offset/limit, or list directory entries.",
+        "Read file content with optional offset/limit, or list directory entries. Prefer offset/limit over whole-file reads on large files, and do not re-read a file you have already read in this session unless it changed.",
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -170,6 +189,26 @@ public sealed class ReadTool : IAgentTool
             // file changed since this read. Computed over the whole decoded file, not the returned
             // slice, so the token is stable regardless of offset/limit paging.
             var token = ContentToken.Compute(textContent);
+
+            // #2689 guardrail 2: an identical re-read of an unchanged slice returns a short marker.
+            // The comparison is against the token of the content JUST READ FROM DISK, so a changed
+            // file can never reach this branch - freshness is preserved by construction, not by a
+            // staleness heuristic.
+            var sliceKey = BuildSliceKey(resolvedPath, offset, limit);
+            if (_options.ElideUnchangedRereads &&
+                _previousReads.TryGetValue(sliceKey, out var previous) &&
+                string.Equals(previous.ContentToken, token, StringComparison.Ordinal))
+            {
+                return new AgentToolResult(
+                    [new AgentToolContent(AgentToolContentType.Text, BuildUnchangedNotice(relativePath, previous.RenderedLength, offset, limit))],
+                    new ReadResultDetails(token));
+            }
+
+            _previousReads[sliceKey] = new PreviousRead(token, content.Length);
+
+            // #2689 guardrail 1: name offset/limit on an oversized result so the NEXT call is cheap.
+            content = AppendLargeReadNotice(content, relativePath, _options.LargeReadThresholdBytes);
+
             return new AgentToolResult(
                 [new AgentToolContent(AgentToolContentType.Text, content)],
                 new ReadResultDetails(token));
@@ -182,6 +221,44 @@ public sealed class ReadTool : IAgentTool
         }
 
         throw new FileNotFoundException($"Path '{relativePath}' does not exist.", resolvedPath);
+    }
+
+    private static string BuildSliceKey(string resolvedPath, int offset, int? limit)
+        => $"{resolvedPath.ToUpperInvariant()}|{offset}|{limit?.ToString() ?? "*"}";
+
+    private static string BuildUnchangedNotice(string relativePath, int renderedLength, int offset, int? limit)
+    {
+        var slice = limit.HasValue
+            ? $"lines {offset}-{offset + limit.Value - 1}"
+            : offset > 1 ? $"from line {offset}" : "the whole file";
+        return $"[Unchanged since your earlier read of '{relativePath}' ({slice}, {renderedLength} chars) in this session. "
+             + "The file on disk is byte-for-byte identical to what you were already shown, so the content is not repeated. "
+             + "Use the content you already have; pass a different offset/limit to see a different part of the file.]";
+    }
+
+    /// <summary>
+    /// Appends an explicit size indicator when a returned read exceeds
+    /// <paramref name="thresholdBytes"/>, naming <c>offset</c> and <c>limit</c> so the follow-up
+    /// call can narrow instead of re-paying the whole file (#2689 AC1).
+    /// </summary>
+    private static string AppendLargeReadNotice(string content, string relativePath, int thresholdBytes)
+    {
+        if (thresholdBytes <= 0)
+        {
+            return content;
+        }
+
+        var sizeBytes = Encoding.UTF8.GetByteCount(content);
+        if (sizeBytes <= thresholdBytes)
+        {
+            return content;
+        }
+
+        var lineCount = content.Length == 0 ? 0 : content.NormalizeLineEndings().Split('\n').Length;
+        var notice = $"[Large read: '{relativePath}' returned {sizeBytes} bytes / {lineCount} lines, over the {thresholdBytes}-byte threshold. "
+                   + "Narrow the next read with offset and limit (for example offset=1, limit=200) instead of re-reading the whole file, "
+                   + "or use grep to locate the lines you need first.]";
+        return content + Environment.NewLine + Environment.NewLine + notice;
     }
 
     private static string ReadText(string textContent, string path, int offset, int? limit)

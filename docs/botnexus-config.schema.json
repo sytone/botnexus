@@ -207,6 +207,16 @@
             }
           ]
         },
+        "readTool": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/ReadToolConfig"
+            }
+          ]
+        },
         "claimAudit": {
           "oneOf": [
             {
@@ -214,6 +224,18 @@
             },
             {
               "$ref": "#/definitions/ClaimAuditConfig"
+            }
+          ]
+        },
+        "memoryEmbeddings": {
+          "title": "Memory embeddings",
+          "description": "Embedding backend supplying vectors for hybrid memory retrieval. Absent or disabled keeps retrieval lexical-only.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/MemoryEmbeddingsConfig"
             }
           ]
         },
@@ -669,6 +691,25 @@
         }
       }
     },
+    "ReadToolConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "largeReadThresholdBytes": {
+          "title": "Large read threshold bytes",
+          "type": "integer",
+          "description": "UTF-8 byte size above which a read result carries a size indicator naming offset and limit. Defaults to 20480 (20 KiB). Zero or less disables it.",
+          "format": "int32",
+          "default": 20480
+        },
+        "elideUnchangedRereads": {
+          "title": "Elide unchanged re-reads",
+          "type": "boolean",
+          "description": "Return a short marker instead of the full body when the same slice of an unchanged file is re-read in one session. A changed file always returns fresh content.",
+          "default": true
+        }
+      }
+    },
     "ClaimAuditConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -678,6 +719,58 @@
         },
         "mode": {
           "type": "string"
+        }
+      }
+    },
+    "MemoryEmbeddingsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean",
+          "description": "Whether memory entries are embedded for hybrid (lexical + vector) retrieval. Off by default; enabling it sends memory content to the configured embeddings endpoint.",
+          "default": false
+        },
+        "provider": {
+          "title": "Provider",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "Provider key whose embeddings endpoint supplies vectors (for example 'ollama' or 'openai')."
+        },
+        "model": {
+          "title": "Model",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "Embedding model identifier as the endpoint expects it (for example 'nomic-embed-text' or 'text-embedding-3-small')."
+        },
+        "dimensions": {
+          "title": "Dimensions",
+          "type": "integer",
+          "description": "Number of components in each vector the model emits. A response of a different width is discarded and the entry falls back to lexical-only.",
+          "format": "int32",
+          "maximum": 65536.0,
+          "minimum": 1.0
+        },
+        "baseUrl": {
+          "title": "Base URL",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "Base URL of the OpenAI-compatible embeddings endpoint (the '/embeddings' path is appended)."
+        },
+        "apiKey": {
+          "title": "API key",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "Bearer token for the embeddings endpoint. Optional for a local endpoint. Sensitive: stored and shown masked."
         }
       }
     },

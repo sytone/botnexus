@@ -299,6 +299,9 @@ public sealed class GatewaySettingsConfig
     /// <summary>Central backstop budget on tool-result size returned to the model (#3162).</summary>
     [ConfigField(Group = "tool-output-budget", Order = 0)]
     public ToolOutputBudgetConfig? ToolOutputBudget { get; set; }
+    /// <summary>Size guardrails for the <c>read</c> tool (#2689).</summary>
+    [ConfigField(Group = "read-tool", Order = 0)]
+    public ReadToolConfig? ReadTool { get; set; }
     /// <summary>Post-turn claim auditor (anti-fabrication) settings (#1600).</summary>
     public ClaimAuditConfig? ClaimAudit { get; set; }
     /// <summary>
@@ -486,6 +489,52 @@ public sealed class ToolOutputBudgetConfig
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "tool-output-budget", Order = 1)]
     [DefaultValue(DefaultMaxBytes)]
     public int MaxBytes { get; set; } = DefaultMaxBytes;
+}
+
+/// <summary>
+/// Size guardrails for the <c>read</c> tool (#2689).
+/// </summary>
+/// <remarks>
+/// Distinct from <see cref="ToolOutputBudgetConfig"/>, which is a hard 256 KiB backstop applied to
+/// every tool after the fact. These settings are advisory and read-path-only: they attach guidance
+/// to a large result and elide an identical unchanged re-read, so an agent pays the whole-file cost
+/// once rather than repeatedly. They never truncate content and never change what <c>read</c> can
+/// express.
+/// </remarks>
+public sealed class ReadToolConfig
+{
+    /// <summary>Default size-notice threshold in UTF-8 bytes (20 KiB).</summary>
+    public const int DefaultLargeReadThresholdBytes = 20 * 1024;
+
+    /// <summary>
+    /// UTF-8 byte size above which a <c>read</c> result carries an explicit size indicator naming
+    /// <c>offset</c> and <c>limit</c> as the narrowing controls. Defaults to 20480 (20 KiB). Zero or
+    /// less disables the indicator, matching the <see cref="ToolOutputBudgetConfig.MaxBytes"/>
+    /// convention.
+    /// </summary>
+    [Display(
+        Name = "Large read threshold bytes",
+        Description = "UTF-8 byte size above which a read result carries a size indicator naming offset and limit. Defaults to 20480 (20 KiB). Zero or less disables it.",
+        GroupName = "Read tool",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "read-tool", Order = 0)]
+    [DefaultValue(DefaultLargeReadThresholdBytes)]
+    public int LargeReadThresholdBytes { get; set; } = DefaultLargeReadThresholdBytes;
+
+    /// <summary>
+    /// Whether an identical re-read of an UNCHANGED file slice in the same session returns a short
+    /// marker instead of the full body. Defaults to <see langword="true"/>. A changed file always
+    /// returns fresh content: the file is re-read from disk on every call and elision only applies
+    /// when the fresh content hashes identically to what was already shown.
+    /// </summary>
+    [Display(
+        Name = "Elide unchanged re-reads",
+        Description = "Return a short marker instead of the full body when the same slice of an unchanged file is re-read in one session. A changed file always returns fresh content.",
+        GroupName = "Read tool",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "read-tool", Order = 1)]
+    [DefaultValue(true)]
+    public bool ElideUnchangedRereads { get; set; } = true;
 }
 
 /// <summary>

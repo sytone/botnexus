@@ -26,13 +26,30 @@ public static class ToolServiceCollectionExtensions
             var shellCommand = config?.Gateway?.ShellCommand;
             // Resolve the platform config path so file tools can deny direct writes to it (issue #633).
             var configPath = PlatformConfigLoader.GetDefaultConfigPath(new System.IO.Abstractions.FileSystem());
-            return new DefaultAgentToolFactory(preference, configPath, shellCommand);
+            return new DefaultAgentToolFactory(preference, configPath, shellCommand, BuildReadToolOptions(config));
         });
 
         // Tool registry collects extension IAgentTool registrations.
         services.AddSingleton<IToolRegistry>(sp => new DefaultToolRegistry(sp.GetServices<IAgentTool>()));
 
         return services;
+    }
+
+    /// <summary>
+    /// Projects the operator-facing <see cref="ReadToolConfig"/> onto the tool-layer
+    /// <see cref="ReadToolOptions"/> (#2689). Absent config yields the defaults, so an existing
+    /// deployment gets the guardrails without editing config.json.
+    /// </summary>
+    internal static ReadToolOptions BuildReadToolOptions(PlatformConfig? config)
+    {
+        var readTool = config?.Gateway?.ReadTool;
+        return readTool is null
+            ? new ReadToolOptions()
+            : new ReadToolOptions
+            {
+                LargeReadThresholdBytes = readTool.LargeReadThresholdBytes,
+                ElideUnchangedRereads = readTool.ElideUnchangedRereads,
+            };
     }
 
     private static ShellPreference ParseShellPreference(string? value)

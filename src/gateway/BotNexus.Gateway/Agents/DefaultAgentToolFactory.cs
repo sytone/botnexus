@@ -34,15 +34,18 @@ public sealed class DefaultAgentToolFactory : IAgentToolFactory
     private readonly ShellPreference _shellPreference;
     private readonly string? _platformConfigPath;
     private readonly string[]? _shellCommand;
+    private readonly ReadToolOptions? _readToolOptions;
 
     public DefaultAgentToolFactory(
         ShellPreference shellPreference = ShellPreference.Auto,
         string? platformConfigPath = null,
-        string[]? shellCommand = null)
+        string[]? shellCommand = null,
+        ReadToolOptions? readToolOptions = null)
     {
         _shellPreference = shellPreference;
         _platformConfigPath = platformConfigPath;
         _shellCommand = shellCommand;
+        _readToolOptions = readToolOptions;
     }
 
     public IReadOnlyList<IAgentTool> CreateTools(WorkingDir workingDirectory, IPathValidator? pathValidator = null, string[]? shellCommand = null)
@@ -79,7 +82,7 @@ public sealed class DefaultAgentToolFactory : IAgentToolFactory
 
         return
         [
-            new ReadTool(resolved, effectivePathValidator, fileSystem),
+            new ReadTool(resolved, effectivePathValidator, fileSystem, _readToolOptions),
             new WriteTool(resolved, effectivePathValidator, fileSystem),
             new EditTool(resolved, effectivePathValidator, fileSystem),
             new ShellTool(workingDirectory: resolved, shellPreference: _shellPreference, shellCommand: effectiveShellCommand),
