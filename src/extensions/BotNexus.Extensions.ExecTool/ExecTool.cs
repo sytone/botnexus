@@ -280,9 +280,20 @@ public sealed class ExecTool : IAgentTool
         cancellationToken.ThrowIfCancellationRequested();
 
         using var process = new Process { StartInfo = startInfo };
-        if (!process.Start())
+
+        // #2726: a start failure is the one case where we KNOW nothing ran. Report it as a
+        // not-dispatched result carrying explicit retry-safe guidance rather than letting the raw
+        // Win32Exception surface, which said nothing about whether a side effect had occurred.
+        try
         {
-            throw new InvalidOperationException("Failed to start process.");
+            if (!process.Start())
+            {
+                return NotDispatchedResult($"Failed to start process '{fileName}'.");
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or PlatformNotSupportedException)
+        {
+            return NotDispatchedResult($"Failed to start process '{fileName}': {ex.Message}");
         }
 
         StartedTestHook?.Invoke(process);
@@ -411,11 +422,15 @@ public sealed class ExecTool : IAgentTool
 
             var exitCode = ResolveExitCode(TryGetProcessExitCode(process));
 
+            var disposition = ExecOutcomeGuidance.Classify(termination);
+            var guidance = ExecOutcomeGuidance.For(disposition);
+            var guidanceSuffix = guidance.Length == 0 ? string.Empty : $"\n\n{guidance}";
+
             var message = termination switch
             {
-                "timeout" => $"Process timed out after {timeoutMs}ms.{FormatOutput(output)}",
-                "no-output-timeout" => $"Process killed: no output for {noOutputTimeoutMs}ms.{FormatOutput(output)}",
-                "cancelled" => $"Process cancelled.{FormatOutput(output)}",
+                "timeout" => $"Process timed out after {timeoutMs}ms.{guidanceSuffix}{FormatOutput(output)}",
+                "no-output-timeout" => $"Process killed: no output for {noOutputTimeoutMs}ms.{guidanceSuffix}{FormatOutput(output)}",
+                "cancelled" => $"Process cancelled.{guidanceSuffix}{FormatOutput(output)}",
                 _ when exitCode != 0 && !string.IsNullOrWhiteSpace(output) =>
                     $"{output}\n\n[exit code: {exitCode}]",
                 _ when exitCode != 0 => $"[exit code: {exitCode}]",
@@ -424,9 +439,24 @@ public sealed class ExecTool : IAgentTool
 
             return new AgentToolResult(
                 [new AgentToolContent(AgentToolContentType.Text, message)],
-                new ExecToolDetails(exitCode, termination));
+                new ExecToolDetails(exitCode, termination, Disposition: disposition));
         }
     }
+
+    /// <summary>
+    /// Builds the tool result for a command that provably never started (#2726). The retry-safe
+    /// guidance is placed in the TEXT content the agent reads, not only on the details record,
+    /// because details metadata is not sent to the LLM.
+    /// </summary>
+    private static AgentToolResult NotDispatchedResult(string reason)
+        => new(
+            [new AgentToolContent(
+                AgentToolContentType.Text,
+                $"{reason}\n\n{ExecOutcomeGuidance.NotDispatched}")],
+            new ExecToolDetails(
+                UnknownExitCode,
+                Termination: "not-dispatched",
+                Disposition: ExecOutcomeDisposition.NotDispatched));
 
     /// <summary>
     /// Test-only seam invoked immediately after the OS process is started and before the post-start
@@ -1177,7 +1207,16 @@ public sealed class ExecTool : IAgentTool
     /// <c>no-output-timeout</c>, or <c>cancelled</c>. Independent of <paramref name="ExitCode"/>.
     /// </param>
     /// <param name="Pid">The child's process id for background launches, otherwise <see langword="null"/>.</param>
-    public sealed record ExecToolDetails(int ExitCode, string Termination, int? Pid = null);
+    /// <param name="Disposition">
+    /// What the platform actually knows about whether the command's side effect happened (#2726).
+    /// Independent of both other fields: a killed child has a status and a termination reason but
+    /// an <see cref="ExecOutcomeDisposition.OutcomeUnknown"/> disposition.
+    /// </param>
+    public sealed record ExecToolDetails(
+        int ExitCode,
+        string Termination,
+        int? Pid = null,
+        ExecOutcomeDisposition Disposition = ExecOutcomeDisposition.Completed);
 
     /// <summary>Tracks background processes launched by the exec tool.</summary>
     internal sealed record ProcessInfo(int Pid, string Command, DateTime StartedUtc);

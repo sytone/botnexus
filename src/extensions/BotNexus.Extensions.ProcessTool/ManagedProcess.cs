@@ -12,6 +12,15 @@ public class ManagedProcess : IDisposable
 {
     internal const int MaxOutputBytes = 100 * 1024; // 100 KB
 
+    /// <summary>
+    /// Message used when the OS declined to create the child (#2726). It states the retry-safe
+    /// disposition explicitly, because "Failed to start process." left a caller unable to tell
+    /// "nothing ran" from "something may have run" - and the latter must never be auto-retried.
+    /// </summary>
+    public const string NotDispatchedMessage =
+        "Failed to start process - the command did not run and no side effect occurred. " +
+        "It is safe to retry once the cause is resolved.";
+
     private readonly Process _process;
     private readonly StringBuilder _outputBuffer = new();
     private readonly object _lock = new();
@@ -75,8 +84,11 @@ public class ManagedProcess : IDisposable
         var process = new Process { StartInfo = startInfo };
         try
         {
+            // #2726: name the disposition. A start failure provably ran nothing, so the caller can
+            // retry safely once the cause is resolved - the opposite of the unconfirmed-kill path
+            // below, where the child was dispatched and its side effect may already have landed.
             if (!process.Start())
-                throw new InvalidOperationException("Failed to start process.");
+                throw new InvalidOperationException(NotDispatchedMessage);
         }
         catch
         {
