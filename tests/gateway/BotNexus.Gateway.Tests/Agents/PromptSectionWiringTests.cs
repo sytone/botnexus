@@ -112,20 +112,33 @@ public sealed class PromptSectionWiringTests
         prompt.ShouldContain("absolute paths");
     }
 
+    /// <summary>
+    /// #2433 INVERTS this expectation deliberately. It previously asserted the section was OMITTED
+    /// for an unrecognised model -- i.e. it PINNED the fail-open, where a model the family switch had
+    /// never heard of silently received zero behavioural guidance. The registry's default rung is
+    /// mandatory precisely so that state is unreachable, so the correct assertion is the opposite.
+    /// </summary>
     [Fact]
-    public void ModelGuidanceSection_OmittedForUnknownModel()
+    public void ModelGuidanceSection_EmitsTheDefaultRungForUnknownModel()
     {
         var prompt = BuildFullPrompt(model: "some-unknown-model-v1");
 
-        prompt.ShouldNotContain("<model_guidance>");
+        prompt.ShouldContain("<model_guidance>");
+        prompt.ShouldContain("Never answer from memory");
+
+        // Non-vacuity: the DEFAULT rung, not somebody else's family rung.
+        prompt.ShouldNotContain("edit tool over write");
+        prompt.ShouldNotContain("absolute paths");
     }
 
     [Fact]
-    public void ModelGuidanceSection_OmittedWhenModelIsNull()
+    public void ModelGuidanceSection_EmitsTheDefaultRungWhenModelIsNull()
     {
         var prompt = BuildFullPrompt(model: null);
 
-        prompt.ShouldNotContain("<model_guidance>");
+        prompt.ShouldContain("<model_guidance>");
+        prompt.ShouldContain("Never answer from memory");
+        prompt.ShouldNotContain("edit tool over write");
     }
 
     [Fact]
