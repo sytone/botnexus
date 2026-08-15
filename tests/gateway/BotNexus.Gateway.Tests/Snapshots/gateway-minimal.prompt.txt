@@ -70,6 +70,7 @@ These user-editable files are loaded by BotNexus and included below in Project C
 Never answer from memory when a tool can verify the answer — always check the source.
 When asked about file contents, always read the file rather than guessing from context.
 Be explicit about uncertainty — say when you are unsure rather than confabulating.
+Verify tool output carefully before proceeding — do not assume success without checking.
 </model_guidance>
 ## Reasoning Format
 ALL internal reasoning MUST be inside <think>...</think>. Do not output any analysis outside <think>. Format every reply as <think>...</think> then <final>...</final>, with no other text. Only the final user-visible reply may appear inside <final>. Only text inside <final> is shown to the user; everything else is discarded and never seen by the user. Example: <think>Short internal reasoning.</think> <final>Hey there! What would you like to do next?</final>

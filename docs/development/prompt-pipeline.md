@@ -494,7 +494,50 @@ The following section IDs cannot be overridden (safety-critical or runtime data)
 | `tool-enforcement` | 32 | Tool calling rules and constraints |
 | `shell-efficiency` | 35 | Shell scripting best practices |
 | `skills-guidance` | 55 | Skills loading and creation guidance (conditional: only when skills tools available) |
-| `model-guidance` | 135 | Per-model-family behavioral defaults (conditional: only for recognized families) |
+| `model-guidance` | 135 | Per-model-family behavioral defaults, resolved through the [prompt-variant ladder](#attribute-declared-instruction-variants) |
+
+### Attribute-Declared Instruction Variants
+
+Per-model instruction sets are **declared**, not switched on (#2433). A section annotates static
+members with `[PromptVariant]`, and `PromptVariantRegistry` discovers them by reflection **once**,
+freezing the result into an immutable lookup. Nothing on the prompt-build path reflects - prompt
+assembly runs on every turn of every agent, so a type scan there would be a permanent per-turn cost.
+
+```csharp
+[PromptVariant(ModelGuidanceSection.Id)]                                  // default / agnostic
+[PromptVariant(ModelGuidanceSection.Id, Family = "gpt")]                   // family
+[PromptVariant(ModelGuidanceSection.Id, Family = "gpt", Version = "5")]    // family + version
+[PromptVariant(ModelGuidanceSection.Id, Family = "gpt", Replace = true)]   // escape hatch
+```
+
+The annotated member must be a static parameterless method or a static readable property returning
+`IReadOnlyList<PromptRule>`. A `PromptRule` is an instruction line plus a **stable id**.
+
+**Resolution ladder** - least specific first, each rung overlaying the one below it:
+
+```text
+default  ->  family  ->  family + version
+```
+
+**Overlay is the default.** A variant may reword a rule (same id), add one (new id), or drop one
+(`PromptRule.Remove(id)`), so there is one source of truth for shared intent and a family does not
+re-state - and drift from - rules it agrees with. An overlaid rule keeps its inherited position, so
+overlaying never silently reorders the instructions around it.
+
+**`Replace = true`** discards everything beneath the rung instead, for a family that genuinely needs
+a different rule set. It lives at the declaration site so the choice is visible to whoever reads the
+instruction text.
+
+**The `default` rung is mandatory.** A section that declares any family variant but no default fails
+at freeze time. This is what removes the previous fail-open: `ModelGuidanceSection` used to `switch`
+on the detected family with `_ => []`, so any model the switch had never heard of silently received
+**zero** behavioural guidance. An unrecognised model now gets the conservative default.
+
+`Family` and `Version` use the same lowercase token grammar as the override file suffixes
+(alphanumerics, `-` between tokens), and `Version` is parsed by `ModelFamilyVersion` - the one
+sanctioned family/version parser in the tree (#2374). Malformed declarations - a duplicate
+`(section, family, version)` key, a version with no family, a duplicate or blank rule id, a removal
+on the default rung - are rejected while freezing, not silently ignored at resolve time.
 
 The gateway's `SystemPromptBuilder` registers further sections by `PromptOrder` key rather than by
 section ID, including the `<conversations>` capability guidance at order 145 (conditional: only when

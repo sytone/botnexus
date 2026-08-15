@@ -51,7 +51,12 @@ public sealed class ModelGuidanceSectionProviderTests
         section.ShouldInclude(context).ShouldBeTrue();
         section.Build(context)
             .Any(static line => line.Contains("Never answer from memory", StringComparison.Ordinal))
-            .ShouldBeTrue("the emitted guidance must be the GPT family guidance");
+            .ShouldBeTrue("the emitted guidance must include the verification rule GPT relies on");
+
+        // The GPT rung must actually be REACHED, not merely coincide with the default: a Gemini-only
+        // rule leaking in here would mean the ladder matched the wrong family.
+        section.Build(context)
+            .ShouldNotContain(static line => line.Contains("absolute paths", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -66,23 +71,31 @@ public sealed class ModelGuidanceSectionProviderTests
             .ShouldBeTrue("the emitted guidance must be the Gemini family guidance");
     }
 
-    // AC5 non-vacuity at the section level: the provider path must not make every model eligible.
+    // AC5 non-vacuity at the section level: the provider path must not make every model eligible
+    // for a FAMILY rung. Since #2433 the section itself is always emitted (an unrecognised model
+    // gets the conservative default rung rather than nothing), so the honest form of this clause is
+    // "no family-specific rule leaks in", not "the section disappears".
     [Fact]
-    public void UnknownModelId_FromUnknownProvider_StillDropsTheSection()
+    public void UnknownModelId_FromUnknownProvider_EmitsOnlyTheDefaultRung()
     {
         var section = ModelGuidanceSection.Create();
         var context = Context("phi-4", "huggingface");
 
-        section.ShouldInclude(context).ShouldBeFalse();
+        var lines = section.Build(context);
+
+        lines.ShouldBe(ModelGuidanceSection.Default().Select(static rule => rule.Text!).ToList());
+        lines.ShouldNotContain(static line => line.Contains("edit tool", StringComparison.Ordinal));
+        lines.ShouldNotContain(static line => line.Contains("absolute paths", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void UnknownModelId_WithNoProvider_StillDropsTheSection()
+    public void UnknownModelId_WithNoProvider_EmitsOnlyTheDefaultRung()
     {
         var section = ModelGuidanceSection.Create();
         var context = Context("phi-4", providerId: null);
 
-        section.ShouldInclude(context).ShouldBeFalse();
+        section.Build(context)
+            .ShouldBe(ModelGuidanceSection.Default().Select(static rule => rule.Text!).ToList());
     }
 
     // AC3 at the section level: the model id keeps winning, so a claude-* model served through

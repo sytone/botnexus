@@ -94,20 +94,27 @@ public sealed class ModelGuidanceSectionTests
         section.ShouldInclude(ContextWithGemini).ShouldBeTrue();
     }
 
+    /// <summary>
+    /// #2433 INVERTS the pre-existing expectation here, deliberately. This test previously asserted
+    /// <c>ShouldBeFalse</c> -- i.e. it PINNED the fail-open: an unrecognised model was dropped from
+    /// the section entirely and silently received zero behavioural guidance. The registry's default
+    /// rung is mandatory precisely so that state is unreachable, so the correct assertion is now the
+    /// opposite one.
+    /// </summary>
     [Fact]
-    public void ShouldInclude_WhenUnknownModel_ReturnsFalse()
+    public void ShouldInclude_WhenUnknownModel_ReturnsTrue_BecauseTheDefaultRungAlwaysApplies()
     {
         var section = ModelGuidanceSection.Create();
 
-        section.ShouldInclude(ContextWithUnknownModel).ShouldBeFalse();
+        section.ShouldInclude(ContextWithUnknownModel).ShouldBeTrue();
     }
 
     [Fact]
-    public void ShouldInclude_WhenNoModelId_ReturnsFalse()
+    public void ShouldInclude_WhenNoModelId_ReturnsTrue_BecauseTheDefaultRungAlwaysApplies()
     {
         var section = ModelGuidanceSection.Create();
 
-        section.ShouldInclude(ContextWithNoModel).ShouldBeFalse();
+        section.ShouldInclude(ContextWithNoModel).ShouldBeTrue();
     }
 
     [Fact]
@@ -118,7 +125,7 @@ public sealed class ModelGuidanceSectionTests
         var lines = section.Build(ContextWithClaude);
 
         lines.ShouldNotBeEmpty();
-        lines[0].ShouldContain("edit tool", Case.Insensitive);
+        lines.ShouldContain(l => l.Contains("edit tool", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -129,7 +136,6 @@ public sealed class ModelGuidanceSectionTests
         var lines = section.Build(ContextWithGpt);
 
         lines.ShouldNotBeEmpty();
-        lines[0].ShouldContain("memory", Case.Insensitive);
         lines.ShouldContain(l => l.Contains("memory", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -141,18 +147,74 @@ public sealed class ModelGuidanceSectionTests
         var lines = section.Build(ContextWithGemini);
 
         lines.ShouldNotBeEmpty();
-        lines[0].ShouldContain("absolute paths", Case.Insensitive);
         lines.ShouldContain(l => l.Contains("absolute path", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// The headline acceptance criterion of #2433: an unknown model resolves to the DEFAULT rung,
+    /// never to an empty list. The previous assertion here was <c>ShouldBeEmpty</c>.
+    /// </summary>
     [Fact]
-    public void Build_ForUnknownModel_ReturnsEmptyList()
+    public void Build_ForUnknownModel_ReturnsTheConservativeDefaultRung()
     {
         var section = ModelGuidanceSection.Create();
 
         var lines = section.Build(ContextWithUnknownModel);
 
-        lines.ShouldBeEmpty();
+        lines.ShouldNotBeEmpty();
+        lines.ShouldBe(ModelGuidanceSection.Default().Select(rule => rule.Text!).ToList());
+    }
+
+    [Fact]
+    public void Build_ForUnknownModel_ContainsNoFamilySpecificRule()
+    {
+        var section = ModelGuidanceSection.Create();
+
+        var lines = section.Build(ContextWithUnknownModel);
+
+        lines.ShouldNotContain(l => l.Contains("edit tool", StringComparison.OrdinalIgnoreCase));
+        lines.ShouldNotContain(l => l.Contains("absolute path", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Build_ForClaude_OverlaysTheDefaultRatherThanReplacingIt()
+    {
+        // Overlay-by-default (#2433): a family rung ADDS to the shared intent, it does not restate
+        // it. Every default rule must survive into the Claude resolution.
+        var section = ModelGuidanceSection.Create();
+
+        var lines = section.Build(ContextWithClaude);
+
+        foreach (var rule in ModelGuidanceSection.Default())
+        {
+            lines.ShouldContain(rule.Text!);
+        }
+    }
+
+    [Fact]
+    public void Build_ForFamilyServedUnderAVanityId_StillResolvesViaTheProviderFallback()
+    {
+        // #3104's provider fallback must keep working through the registry.
+        var section = ModelGuidanceSection.Create();
+
+        var lines = section.Build(new PromptContext
+        {
+            WorkspaceDir = "C:/workspace",
+            Extensions = new Dictionary<string, object?>
+            {
+                [ModelGuidanceSection.ModelIdExtensionKey] = "vanity-model-x",
+                [ModelGuidanceSection.ProviderIdExtensionKey] = "anthropic"
+            }
+        });
+
+        lines.ShouldContain(l => l.Contains("edit tool", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Section_DeclaresADefaultRung_SoTheRegistryCanFreezeIt()
+    {
+        PromptVariantRegistry.Shared.HasSection(ModelGuidanceSection.Id).ShouldBeTrue();
+        ModelGuidanceSection.Default().ShouldNotBeEmpty();
     }
 
     [Fact]

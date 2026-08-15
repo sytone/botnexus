@@ -3,9 +3,21 @@
     <RootNamespace>BotNexus.Gateway.Prompts</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <!-- #2433: the model-guidance rungs are internal (they are prompt CONTENT, not API), but the
+         mirror test project asserts the default rung is exactly what an unrecognised model receives.
+         Comparing against the declaration is what stops that assertion degrading into a restated
+         copy of the text that would pass even if the rung changed. -->
+    <InternalsVisibleTo Include="BotNexus.Gateway.Prompts.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <!-- #2433: the prompt-variant ladder matches a declared Version against the model id. #2374
+         made ModelFamilyVersion the ONE sanctioned family/version parser in the tree, so the
+         variant registry consumes it rather than growing a second parser here. The edge is
+         downward and already present transitively: BotNexus.Gateway references both projects. -->
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
   </ItemGroup>
 </Project>
