@@ -125,6 +125,7 @@ export default defineConfig({
           { text: 'MCP Invoke', link: '/extensions/mcp-invoke' },
           { text: 'QMD (Knowledge Base)', link: '/extensions/qmd' },
           { text: 'Debug Tool', link: '/extensions/debug-tool' },
+          { text: 'GitHub', link: '/extensions/github' },
           { text: 'Media Handlers', link: '/extensions/media-handlers' },
           { text: 'Agent 365 Channel', link: '/extensions/agent365' },
           { text: 'Extension Telemetry', link: '/extensions/telemetry' },

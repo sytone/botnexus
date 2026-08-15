@@ -11,6 +11,7 @@
     <Project Path="src/extensions/BotNexus.Extensions.DataStore/BotNexus.Extensions.DataStore.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.DebugTool/BotNexus.Extensions.DebugTool.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.ExecTool/BotNexus.Extensions.ExecTool.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.GitHub/BotNexus.Extensions.GitHub.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR/BotNexus.Extensions.Channels.SignalR.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core.csproj" />
@@ -90,6 +91,7 @@
     <Project Path="tests/extensions/BotNexus.Extensions.DataStore.Tests/BotNexus.Extensions.DataStore.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.DebugTool.Tests/BotNexus.Extensions.DebugTool.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.ExecTool.Tests/BotNexus.Extensions.ExecTool.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.GitHub.Tests/BotNexus.Extensions.GitHub.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Mcp.Tests/BotNexus.Extensions.Mcp.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.McpInvoke.Tests/BotNexus.Extensions.McpInvoke.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.ProcessTool.Tests/BotNexus.Extensions.ProcessTool.Tests.csproj" />
