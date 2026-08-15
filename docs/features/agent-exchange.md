@@ -124,6 +124,59 @@ in `metadata` is the agent it converses with. `maxTurns` defaults to `5`
 
 The `agent-converse` cron action respects budget enforcement — if a pair is in cooldown or at daily cap, the job is skipped and logged.
 
+## Handoff Observability
+
+An `agent_converse` call is blocking: the delegating agent waits for the target to finish. Without
+further plumbing that means a silent gap - the exchange runs in its own conversation and session,
+invisible from the thread that started it. Three mechanisms close that gap (#3176).
+
+### 1. The tool result names the child exchange
+
+The `agent_converse` result includes `conversationId` and `sessionId` for the exchange that was
+created. A delegating agent asked "where is that work happening?" can answer from its own tool
+result, without querying the target agent or the portal.
+
+```json
+{
+  "sessionId": "...",
+  "conversationId": "c_...",
+  "status": "sealed",
+  "turns": 2,
+  "completionReason": "exchangeFinished"
+}
+```
+
+### 2. Progress events land in the initiating conversation
+
+While the exchange runs, status lines are published back into the conversation that initiated it,
+over the same outbound fan-out path assistant replies use. They are **status lines, not a transcript
+replay** - the child agent's output is never mirrored into the parent thread.
+
+| Phase | When | Reason field |
+|---|---|---|
+| `started` | after the child session is pinned, before the first turn | - |
+| `completed` | the target signalled completion, or a single-shot call returned | `exchangeFinished` / `singleShot` |
+| `halted` | a guard stopped it rather than the target | `maxTurnsReached`, or the budget refusal message |
+| `failed` | the exchange threw | the exception message |
+
+`halted` is deliberately distinct from `completed`: "we ran out of turns" and "the target finished"
+are different outcomes and a reader must be able to tell them apart. A budget or cooldown refusal
+emits `halted` with no child ids, because no exchange was ever admitted.
+
+The messages carry `MessageKind.AgentExchangeProgress`, so a channel or the portal can render or
+filter them distinctly from a genuine assistant reply without parsing message text.
+
+Emission is strictly advisory. A caller that ignores progress observes byte-identical behaviour and
+result shape, and a failure in the delivery path degrades the handoff to silent - it can never fail
+the exchange itself.
+
+### 3. The child exchange is discoverable from its parent
+
+The exchange handshake already registers both agents as participants on the child conversation, so
+`IConversationStore.ListForCitizenAsync` returns it for either side. When the handoff came from a
+known conversation, the child is additionally stamped with `metadata.parentConversationId`, which
+narrows that list to the exchanges belonging to one specific parent thread.
+
 ## Diagnostics
 
 ### REST Endpoint

@@ -52,6 +52,13 @@ public sealed class AgentExchangeService : IAgentExchangeService
     private readonly ICrossWorldExchangeRouter _crossWorldRouter;
 
     /// <summary>
+    /// Publishes handoff milestones back into the initiating conversation (#3176). Optional-with-
+    /// fallback so the many direct-construction test call sites keep compiling; the no-op instance
+    /// makes "emit progress" unconditional at every call site instead of null-guarded.
+    /// </summary>
+    private readonly IAgentExchangeProgressNotifier _progress;
+
+    /// <summary>
     /// The single execution-layer tool-audit sink (#2614 AC4). The local agent-exchange turn is a
     /// blocking <c>PromptAsync</c> boundary, so before this slice a target agent could run any
     /// number of side-effecting tools during an exchange and leave nothing but its final text
@@ -73,7 +80,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
         AgentExchangeBudgetTracker? budgetTracker = null,
         AgentExchangeTurnEngine? turnEngine = null,
         ICrossWorldExchangeRouter? crossWorldRouter = null,
-        IToolAuditSink? toolAudit = null)
+        IToolAuditSink? toolAudit = null,
+        IAgentExchangeProgressNotifier? progressNotifier = null)
     {
         _registry = registry;
         _supervisor = supervisor;
@@ -84,6 +92,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         _exchangeOptions = exchangeOptions ?? Options.Create(new AgentExchangeOptions());
         _budgetTracker = budgetTracker;
         _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
+        _progress = progressNotifier ?? NullAgentExchangeProgressNotifier.Instance;
 
         // The turn engine single-sources the shared loop/seal/archive; the router owns cross-world
         // federation. Both are injected in production DI. When omitted (the local-only construction
@@ -171,7 +180,18 @@ public sealed class AgentExchangeService : IAgentExchangeService
         EnsureCallChainAllowed(normalizedChain, request.TargetId);
 
         // Budget enforcement: daily cap, loop detection, cooldown
-        _budgetTracker?.EnsureWithinBudget(request.InitiatorId, request.TargetId);
+        // #3176: a refusal here is a HALT the initiating conversation must be able to see - it is
+        // the one terminal outcome that produces no child conversation at all, so without an event
+        // the delegating thread would show a bare exception with no handoff context.
+        try
+        {
+            _budgetTracker?.EnsureWithinBudget(request.InitiatorId, request.TargetId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await PublishProgressAsync(request, AgentExchangeProgressPhase.Halted, null, null, ex.Message, null, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
 
         if (!isLocalTarget && parsedCrossWorldTarget is not null)
             return await _crossWorldRouter.ConverseCrossWorldAsync(request, parsedCrossWorldTarget, normalizedChain, cancellationToken).ConfigureAwait(false);
@@ -185,7 +205,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
             request.TargetId,
             channelType: null,
             request.Objective,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            request.InitiatorConversationId).ConfigureAwait(false);
 
         var sessionId = SessionId.Create();
         var session = await _sessionStore.GetOrCreateAsync(sessionId, request.InitiatorId, cancellationToken).ConfigureAwait(false);
@@ -231,13 +252,29 @@ public sealed class AgentExchangeService : IAgentExchangeService
         conversation.ActiveSessionId = sessionId;
         await _conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
 
+        // #3176 AC7: the STARTED event is emitted strictly AFTER the eager pin + save above, so the
+        // event can never advertise a child conversation whose session is not yet pinned to it.
+        // Deliberately placed here rather than inside the turn engine: the engine is shared with the
+        // cross-world router, and federated handoff visibility is out of scope for this issue.
+        await PublishProgressAsync(
+            request,
+            AgentExchangeProgressPhase.Started,
+            conversation.ConversationId,
+            sessionId,
+            reason: null,
+            turns: null,
+            cancellationToken).ConfigureAwait(false);
+
         // F-11 local turn: the completion gate is pinned per-turn (a fresh active-exchange id is
         // saved BEFORE the prompt and the prior finish payload cleared), then consumed from the
         // reloaded session after the prompt so a stale finishedAgentExchangeId can never replay.
         // The target handle is created lazily on the first turn so a creation failure is caught by
         // the shared loop's error arm and seals the session (the original behaviour).
         IAgentHandle? targetHandle = null;
-        return await _turnEngine.RunExchangeLoopAsync(
+        AgentExchangeResult result;
+        try
+        {
+            result = await _turnEngine.RunExchangeLoopAsync(
             request,
             conversation,
             sessionId,
@@ -284,6 +321,84 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 : null,
             onSealSuccess: static _ => { },
             cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // #553 parity: caller cancellation is not an exchange failure and does not seal the
+            // session, so it does not get a terminal event either. Rethrow untouched.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await PublishProgressAsync(
+                request,
+                AgentExchangeProgressPhase.Failed,
+                conversation.ConversationId,
+                sessionId,
+                ex.Message,
+                turns: null,
+                CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+
+        // AC4: a turn-cap exit is a HALT, not a completion. The turn engine already distinguishes
+        // the two via CompletionReason; this maps that existing distinction onto the progress phase
+        // so a reader of the initiating conversation can tell "the target finished" from "we ran
+        // out of turns" without parsing the status text.
+        var halted = string.Equals(result.CompletionReason, "maxTurnsReached", StringComparison.Ordinal);
+        await PublishProgressAsync(
+            request,
+            halted ? AgentExchangeProgressPhase.Halted : AgentExchangeProgressPhase.Completed,
+            result.ConversationId,
+            result.SessionId,
+            result.CompletionReason,
+            result.Turns,
+            cancellationToken).ConfigureAwait(false);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Emits one handoff milestone to the initiating conversation (#3176).
+    /// </summary>
+    /// <remarks>
+    /// A single funnel so every emission site produces an identically-shaped event, and so the
+    /// "observability must never break the exchange" rule is enforced in one place: the notifier
+    /// contract forbids throwing, and this method double-guards it because a progress failure
+    /// turning a successful handoff into a thrown call would be a strictly worse bug than silence.
+    /// </remarks>
+    private async Task PublishProgressAsync(
+        AgentExchangeRequest request,
+        AgentExchangeProgressPhase phase,
+        ConversationId? childConversationId,
+        SessionId? childSessionId,
+        string? reason,
+        int? turns,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _progress.PublishAsync(
+                new AgentExchangeProgressEvent
+                {
+                    Phase = phase,
+                    InitiatorId = request.InitiatorId,
+                    TargetId = request.TargetId,
+                    InitiatorSessionId = request.InitiatorSessionId,
+                    InitiatorConversationId = request.InitiatorConversationId,
+                    ChildConversationId = childConversationId,
+                    ChildSessionId = childSessionId,
+                    Reason = reason,
+                    Turns = turns
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Agent exchange progress '{Phase}' could not be published for {Initiator} -> {Target}. Exchange continues.",
+                phase, request.InitiatorId.Value, request.TargetId.Value);
+        }
     }
 
     /// <summary>

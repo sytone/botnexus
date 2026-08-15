@@ -354,6 +354,10 @@ public static class GatewayServiceCollectionExtensions
         // Outbound fan-out delivery (#1811): focused collaborator extracted from GatewayHost.
         services.TryAddSingleton<IOutboundResponseDeliverer, OutboundResponseDeliverer>();
 
+        // Agent-to-agent handoff progress (#3176): reports exchange milestones back into the
+        // INITIATING conversation over the same outbound fan-out path assistant replies use.
+        services.TryAddSingleton<Abstractions.Agents.IAgentExchangeProgressNotifier, Agents.AgentExchangeProgressNotifier>();
+
         // Live-turn tracker for write-time self-heal of orphaned crash sentinels (#2030).
         // Singleton so GatewayHost shares one view of which sessions have a turn in flight.
         services.TryAddSingleton<Sessions.ISessionTurnTracker, Sessions.SessionTurnTracker>();

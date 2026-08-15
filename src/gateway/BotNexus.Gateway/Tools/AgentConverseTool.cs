@@ -108,7 +108,12 @@ public sealed class AgentConverseTool(
                 Message = message,
                 Objective = ReadString(arguments, "objective"),
                 MaxTurns = Math.Clamp(ReadInt(arguments, "maxTurns", 1), 1, _exchangeOptions.EffectiveMaxTurnsCeiling),
-                CallChain = await ResolveCallChainAsync(timeoutCts.Token).ConfigureAwait(false)
+                CallChain = await ResolveCallChainAsync(timeoutCts.Token).ConfigureAwait(false),
+                // #3176: hand the exchange the delegating thread's address so handoff milestones
+                // can be reported back into it. Resolution failures are non-fatal - progress is
+                // observability, and losing it must never cost the caller the exchange itself.
+                InitiatorSessionId = sessionId,
+                InitiatorConversationId = await ResolveInitiatorConversationIdAsync(timeoutCts.Token).ConfigureAwait(false)
             },
             timeoutCts.Token).ConfigureAwait(false);
 
@@ -116,6 +121,32 @@ public sealed class AgentConverseTool(
             [
                 new AgentToolContent(AgentToolContentType.Text, JsonSerializer.Serialize(result, JsonOptions))
             ]);
+    }
+
+    /// <summary>
+    /// Reads the conversation the calling session is pinned to, for progress delivery (#3176).
+    /// </summary>
+    /// <remarks>
+    /// Returns <c>null</c> rather than throwing when the session is missing or unpinned: the only
+    /// consequence is that a stale-binding self-heal cannot name the conversation, and that is not
+    /// worth failing a handoff over.
+    /// </remarks>
+    private async Task<ConversationId?> ResolveInitiatorConversationIdAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var currentSession = await sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            // Read through the GatewaySession proxy, not the inner record (F-9 / Phase 7 fence).
+            return currentSession is { } s && s.ConversationId.IsInitialized() ? s.ConversationId : null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<IReadOnlyList<AgentId>> ResolveCallChainAsync(CancellationToken cancellationToken)

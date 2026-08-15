@@ -54,6 +54,14 @@ public sealed class MessageKind : IEquatable<MessageKind>
     /// <c>tool_call_id</c> to see the inputs.
     /// </summary>
     public static readonly MessageKind ToolResult = Register("tool-result");
+    /// <summary>
+    /// A handoff status line published into the INITIATING conversation while an
+    /// <c>agent_converse</c> exchange runs (#3176). It is not the child agent's output and is not
+    /// part of the exchange transcript - it is an observability record that lets a reader of the
+    /// delegating thread see the handoff start, finish, fail, or be halted. Typed so a channel or
+    /// portal can render or filter it distinctly from a real assistant reply without parsing text.
+    /// </summary>
+    public static readonly MessageKind AgentExchangeProgress = Register("agent-exchange-progress");
 
     /// <summary>Gets the stable wire value of this kind.</summary>
     public string Value { get; }

@@ -36,4 +36,20 @@ public sealed record AgentExchangeRequest
     /// Current call chain used for depth and cycle detection.
     /// </summary>
     public IReadOnlyList<AgentId> CallChain { get; init; } = [];
+
+    /// <summary>
+    /// The session in the INITIATING conversation that issued this handoff, when known (#3176).
+    /// </summary>
+    /// <remarks>
+    /// Purely observational: it is the delivery address for handoff progress events. Leaving it
+    /// null (every pre-#3176 caller, and the cron action) silently disables progress emission and
+    /// changes nothing else about the exchange.
+    /// </remarks>
+    public SessionId? InitiatorSessionId { get; init; }
+
+    /// <summary>
+    /// The conversation the handoff was initiated from, when known (#3176). Used alongside
+    /// <see cref="InitiatorSessionId"/> to fan progress out to the originating thread.
+    /// </summary>
+    public ConversationId? InitiatorConversationId { get; init; }
 }

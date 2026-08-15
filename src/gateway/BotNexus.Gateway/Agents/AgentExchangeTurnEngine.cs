@@ -209,7 +209,8 @@ public sealed class AgentExchangeTurnEngine
         AgentId targetId,
         ChannelKey? channelType,
         string? objective,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ConversationId? parentConversationId = null)
     {
         // Agent-initiated peer exchange: (Source=Agent, Kind=AgentAgent) is the coherent pair.
         // Minted through the single creation seam (#2310).
@@ -230,6 +231,18 @@ public sealed class AgentExchangeTurnEngine
         if (!string.IsNullOrWhiteSpace(objective))
         {
             conversation.Metadata["objective"] = objective;
+        }
+
+        // #3176 AC5: stamp the originating conversation so the child exchange is resolvable FROM
+        // the parent, not merely listable alongside it. Participant-based lookup
+        // (IConversationStore.ListForCitizenAsync) already returns every exchange an agent took
+        // part in; without this back-pointer a caller holding one parent conversation still could
+        // not tell WHICH of those exchanges belonged to it. Metadata rather than a typed column
+        // because the link is derived navigation, not conversation identity - and adding a column
+        // would force a schema migration on all three conversation stores for a read-only hint.
+        if (parentConversationId is { } parentId && parentId.IsInitialized())
+        {
+            conversation.Metadata["parentConversationId"] = parentId.Value;
         }
 
         return await _conversationStore.CreateAsync(conversation, cancellationToken).ConfigureAwait(false);
