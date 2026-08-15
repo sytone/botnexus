@@ -1,7 +1,7 @@
 @page "/activity"
+@page "/activity/{Section}"
 @inject IPortalLoadService PortalLoad
 @inject NavigationManager Nav
-@implements IDisposable
 
 <PageTitle>Activity - BotNexus</PageTitle>
 
@@ -20,37 +20,26 @@
 }
 else
 {
-    <ActivityDashboard />
-}
-
-@code {
-    protected override void OnInitialized()
-    {
-        PortalLoad.OnReadyChanged += HandleReadyChanged;
-    }
-
-    protected override async Task OnInitializedAsync()
-    {
-        if (!PortalLoad.IsReady && !PortalLoad.IsLoading)
+    @* Sub-navigation shell (#2897). Hrefs are derived from each section's KEY, never from its
+       display index, so reordering the registry never rewrites a bookmarked URL. Subsection
+       CONTENT is deliberately out of scope here: the parameterless /activity route still renders
+       exactly the dashboard it rendered before this change. *@
+    <nav class="activity-subnav" data-testid="activity-subnav" aria-label="Activity sections">
+        @foreach (var section in KnownSections)
         {
-            try
-            {
-                var baseUri = new Uri(Nav.BaseUri);
-                var hubUrl = new Uri(baseUri, "/hub/gateway").ToString();
-                PortalLoad.ClientKind = "desktop";
-                await PortalLoad.InitializeAsync(hubUrl);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Portal initialization failed: {ex.Message}");
-            }
+            <a class="activity-subnav-item @(string.Equals(section.Key, ActiveSection, StringComparison.OrdinalIgnoreCase) ? "active" : "")"
+               data-testid="activity-subnav-item"
+               data-section="@section.Key"
+               href="@SectionHref(section.Key)">@section.Label</a>
         }
-    }
+    </nav>
 
-    private void HandleReadyChanged() => _ = InvokeAsync(StateHasChanged);
-
-    public void Dispose()
+    @if (UnknownSectionMessage is not null)
     {
-        PortalLoad.OnReadyChanged -= HandleReadyChanged;
+        @* Non-fatal: an unknown or removed section name falls back to the default view rather than
+           an error page or a blank panel (#2897 AC2). *@
+        <div class="activity-subnav-notice" data-testid="activity-subnav-unknown" role="status">@UnknownSectionMessage</div>
     }
+
+    <ActivityDashboard />
 }
