@@ -142,7 +142,9 @@ public sealed class ActivitySubNavigationTests : IDisposable
         var forwardHrefs = HrefsByKey(forward);
         var reversedHrefs = HrefsByKey(reversed);
 
-        forwardHrefs.ShouldBe(reversedHrefs);
+        forwardHrefs.Count.ShouldBe(reversedHrefs.Count);
+        foreach (var (key, href) in forwardHrefs)
+            reversedHrefs[key].ShouldBe(href);
         forwardHrefs["overview"].ShouldBe("/activity/overview");
         forwardHrefs["costs"].ShouldBe("/activity/costs");
 

@@ -25,12 +25,12 @@ else
        CONTENT is deliberately out of scope here: the parameterless /activity route still renders
        exactly the dashboard it rendered before this change. *@
     <nav class="activity-subnav" data-testid="activity-subnav" aria-label="Activity sections">
-        @foreach (var section in KnownSections)
+        @foreach (var entry in KnownSections)
         {
-            <a class="activity-subnav-item @(string.Equals(section.Key, ActiveSection, StringComparison.OrdinalIgnoreCase) ? "active" : "")"
+            <a class="activity-subnav-item @(string.Equals(entry.Key, ActiveSection, StringComparison.OrdinalIgnoreCase) ? "active" : "")"
                data-testid="activity-subnav-item"
-               data-section="@section.Key"
-               href="@SectionHref(section.Key)">@section.Label</a>
+               data-section="@entry.Key"
+               href="@SectionHref(entry.Key)">@entry.Label</a>
         }
     </nav>
 
