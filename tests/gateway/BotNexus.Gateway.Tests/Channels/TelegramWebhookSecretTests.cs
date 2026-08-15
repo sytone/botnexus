@@ -1,3 +1,4 @@
+using BotNexus.Domain.Security;
 using BotNexus.Extensions.Channels.Telegram;
 
 namespace BotNexus.Gateway.Tests.Channels;
@@ -6,6 +7,10 @@ namespace BotNexus.Gateway.Tests.Channels;
 /// Unit tests for <see cref="TelegramWebhookSecret"/> — the generation and constant-time
 /// validation of the Telegram webhook secret token that authenticates inbound webhook traffic.
 /// </summary>
+/// <remarks>
+/// Behaviour parity for #2927: every case below asserts exactly the same accept/reject outcome as
+/// before the <see cref="WebhookSecret"/> conversion. Only the argument types changed.
+/// </remarks>
 public sealed class TelegramWebhookSecretTests
 {
     [Fact]
@@ -13,7 +18,7 @@ public sealed class TelegramWebhookSecretTests
     {
         for (var i = 0; i < 50; i++)
         {
-            var token = TelegramWebhookSecret.Generate();
+            var token = TelegramWebhookSecret.Generate().Reveal();
 
             token.Length.ShouldBeInRange(1, 256);
             token.ShouldAllBe(c =>
@@ -28,7 +33,7 @@ public sealed class TelegramWebhookSecretTests
     [Fact]
     public void Generate_ProducesDistinctTokens()
     {
-        var tokens = Enumerable.Range(0, 100).Select(_ => TelegramWebhookSecret.Generate()).ToHashSet();
+        var tokens = Enumerable.Range(0, 100).Select(_ => TelegramWebhookSecret.Generate().Reveal()).ToHashSet();
 
         // 32 bytes of entropy per token — collisions across 100 draws are astronomically unlikely.
         tokens.Count.ShouldBe(100);
@@ -64,7 +69,7 @@ public sealed class TelegramWebhookSecretTests
     public void Matches_ReturnsTrue_ForIdenticalSecrets()
     {
         var secret = TelegramWebhookSecret.Generate();
-        TelegramWebhookSecret.Matches(secret, secret).ShouldBeTrue();
+        TelegramWebhookSecret.Matches(secret, secret.Reveal()).ShouldBeTrue();
     }
 
     [Theory]
@@ -73,13 +78,23 @@ public sealed class TelegramWebhookSecretTests
     [InlineData("expected-secret", "expected-secretX")] // one char long
     [InlineData("expected-secret", "EXPECTED-SECRET")]  // case differs
     public void Matches_ReturnsFalse_ForMismatchedSecrets(string expected, string provided)
-        => TelegramWebhookSecret.Matches(expected, provided).ShouldBeFalse();
+        => TelegramWebhookSecret.Matches(WebhookSecret.Create(expected), provided).ShouldBeFalse();
 
     [Theory]
-    [InlineData(null, "anything")]
-    [InlineData("", "anything")]
-    [InlineData("expected", null)]
-    [InlineData("expected", "")]
-    public void Matches_ReturnsFalse_WhenEitherSideMissing(string? expected, string? provided)
-        => TelegramWebhookSecret.Matches(expected, provided).ShouldBeFalse();
+    [InlineData("anything")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void Matches_ReturnsFalse_WhenExpectedSecretWasNeverCreated(string? provided)
+    {
+        // A polling-mode bot holds a default(WebhookSecret) — the old code modelled this as an
+        // empty string. It must never authenticate anything.
+        TelegramWebhookSecret.Matches(default, provided).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("has spaces")]
+    public void Matches_ReturnsFalse_WhenProvidedHeaderIsMissingOrMalformed(string? provided)
+        => TelegramWebhookSecret.Matches(WebhookSecret.Create("expected"), provided).ShouldBeFalse();
 }

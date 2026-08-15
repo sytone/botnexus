@@ -258,11 +258,13 @@ public sealed class SkillTool(
         if (!IsAllowedLinkedPath(relPath, out var reason))
             return TextResult($"Error: {reason}");
 
-        var targetPath = Path.Combine(skill.SourcePath, relPath);
+        var candidatePath = Path.Combine(skill.SourcePath, relPath);
 
         // Reuse the shared symlink/boundary validator: resolved path must stay inside the skill dir.
-        if (!SkillPathValidator.TryValidate(targetPath, skill.SourcePath, _fileSystem, out targetPath, out var symlinkError))
+        if (!SkillPathValidator.TryValidate(candidatePath, SkillPath.CreateRoot(skill.SourcePath, _fileSystem), _fileSystem, out var validated, out var symlinkError))
             return TextResult($"Error: {symlinkError}");
+
+        var targetPath = validated.Value;
 
         if (!_fileSystem.File.Exists(targetPath))
             return TextResult($"Linked file '{relPath}' not found in skill '{skill.Name}'.");

@@ -100,7 +100,7 @@ public static class SkillDiscovery
                 // Trust verification: check script integrity against catalog
                 if (trustMode != SkillTrustMode.Disabled)
                 {
-                    var trustResult = SkillTrustVerifier.Verify(skillDir, fileSystem);
+                    var trustResult = SkillTrustVerifier.Verify(SkillPath.CreateRoot(skillDir, fileSystem), fileSystem);
                     if (!trustResult.Trusted)
                     {
                         var violations = string.Join("; ", trustResult.Violations);

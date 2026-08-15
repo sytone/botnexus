@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Text;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Security;
 using BotNexus.Domain.World;
 using BotNexus.Domain.Gateway.Models;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -161,7 +162,10 @@ public sealed class TelegramChannelAdapter(
             {
                 if (!string.IsNullOrWhiteSpace(runtime.Config.WebhookUrl))
                 {
-                    await runtime.ApiClient.SetWebhookAsync(runtime.Config.WebhookUrl, runtime.WebhookSecret, cancellationToken);
+                    await runtime.ApiClient.SetWebhookAsync(
+                        runtime.Config.WebhookUrl,
+                        runtime.WebhookSecret.HasValue ? runtime.WebhookSecret.Reveal() : null,
+                        cancellationToken);
                     committed = true;
                     _logger.LogInformation(
                         "{DisplayName} bot '{BotName}' configured webhook mode at {WebhookUrl} (secret-token authentication enabled)",
@@ -875,15 +879,13 @@ public sealed class TelegramChannelAdapter(
             // Resolve the webhook secret once, only for bots in webhook mode. A configured secret is
             // used when syntactically valid; otherwise a cryptographically strong one is generated so
             // webhook mode is never registered without authentication. Polling bots get no secret.
-            var webhookSecret = string.Empty;
+            var webhookSecret = default(WebhookSecret);
             if (!string.IsNullOrWhiteSpace(config.WebhookUrl))
             {
-                webhookSecret = TelegramWebhookSecret.IsValid(config.WebhookSecretToken)
-                    ? config.WebhookSecretToken!
-                    : TelegramWebhookSecret.Generate();
+                var configured = TelegramWebhookSecret.TryFromConfiguration(config.WebhookSecretToken, out var fromConfig);
+                webhookSecret = configured ? fromConfig : TelegramWebhookSecret.Generate();
 
-                if (!TelegramWebhookSecret.IsValid(config.WebhookSecretToken)
-                    && !string.IsNullOrEmpty(config.WebhookSecretToken))
+                if (!configured && !string.IsNullOrEmpty(config.WebhookSecretToken))
                 {
                     _logger.LogWarning(
                         "{DisplayName} bot '{BotName}' configured webhookSecretToken is invalid (allowed: A-Z a-z 0-9 _ -, length 1-256); generated a replacement",
@@ -1561,7 +1563,7 @@ public sealed class TelegramChannelAdapter(
         }
     }
 
-    private sealed class BotRuntime(string botName, TelegramBotConfig config, TelegramBotApiClient apiClient, string webhookSecret)
+    private sealed class BotRuntime(string botName, TelegramBotConfig config, TelegramBotApiClient apiClient, WebhookSecret webhookSecret)
     {
         public string BotName { get; } = botName;
         public TelegramBotConfig Config { get; } = config;
@@ -1569,9 +1571,10 @@ public sealed class TelegramChannelAdapter(
 
         /// <summary>
         /// Secret token registered with Telegram for this bot's webhook, validated against the
-        /// <c>X-Telegram-Bot-Api-Secret-Token</c> header on each inbound update. Empty for polling bots.
+        /// <c>X-Telegram-Bot-Api-Secret-Token</c> header on each inbound update. A <c>default</c>
+        /// instance (<c>HasValue == false</c>) for polling bots, which never accept webhook traffic.
         /// </summary>
-        public string WebhookSecret { get; } = webhookSecret;
+        public WebhookSecret WebhookSecret { get; } = webhookSecret;
 
         public ConcurrentDictionary<string, StreamingState> StreamingStates { get; } = new(StringComparer.Ordinal);
         public ConcurrentDictionary<long, DateTimeOffset> LastErrorReplyUtcByChat { get; } = new();

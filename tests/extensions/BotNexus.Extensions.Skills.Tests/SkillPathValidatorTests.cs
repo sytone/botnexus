@@ -11,6 +11,8 @@ public sealed class SkillPathValidatorTests
 {
     private const string SkillRoot = "/workspace/skills/my-skill";
 
+    private static SkillPath Root(MockFileSystem fs) => SkillPath.CreateRoot(SkillRoot, fs);
+
     [Fact]
     public void TryValidate_NormalPath_Succeeds()
     {
@@ -20,11 +22,11 @@ public sealed class SkillPathValidatorTests
 
         var target = $"{SkillRoot}/scripts/run.ps1";
 
-        var result = SkillPathValidator.TryValidate(target, SkillRoot, fs, out var resolved, out var error);
+        var result = SkillPathValidator.TryValidate(target, Root(fs), fs, out var resolved, out var error);
 
         Assert.True(result);
         Assert.Null(error);
-        Assert.Contains("my-skill", resolved);
+        Assert.Contains("my-skill", resolved.Value);
     }
 
     [Fact]
@@ -35,7 +37,7 @@ public sealed class SkillPathValidatorTests
 
         var target = "/workspace/skills/other-skill/scripts/evil.ps1";
 
-        var result = SkillPathValidator.TryValidate(target, SkillRoot, fs, out _, out var error);
+        var result = SkillPathValidator.TryValidate(target, Root(fs), fs, out _, out var error);
 
         Assert.False(result);
         Assert.NotNull(error);
@@ -53,7 +55,7 @@ public sealed class SkillPathValidatorTests
 
         var target = $"{SkillRoot}/scripts/passwords.txt";
 
-        var result = SkillPathValidator.TryValidate(target, SkillRoot, fs, out _, out var error);
+        var result = SkillPathValidator.TryValidate(target, Root(fs), fs, out _, out var error);
 
         Assert.False(result);
         Assert.NotNull(error);
@@ -71,7 +73,7 @@ public sealed class SkillPathValidatorTests
 
         var target = $"{SkillRoot}/scripts/shadow";
 
-        var result = SkillPathValidator.TryValidate(target, SkillRoot, fs, out _, out var error);
+        var result = SkillPathValidator.TryValidate(target, Root(fs), fs, out _, out var error);
 
         Assert.False(result);
         Assert.NotNull(error);
@@ -89,7 +91,7 @@ public sealed class SkillPathValidatorTests
 
         var target = $"{SkillRoot}/scripts/shared/default.md";
 
-        var result = SkillPathValidator.TryValidate(target, SkillRoot, fs, out var resolved, out var error);
+        var result = SkillPathValidator.TryValidate(target, Root(fs), fs, out var resolved, out var error);
 
         Assert.True(result);
         Assert.Null(error);
@@ -101,7 +103,7 @@ public sealed class SkillPathValidatorTests
         var fs = new MockFileSystem();
         fs.AddDirectory(SkillRoot);
 
-        var result = SkillPathValidator.TryValidate(SkillRoot, SkillRoot, fs, out _, out var error);
+        var result = SkillPathValidator.TryValidate(SkillRoot, Root(fs), fs, out _, out var error);
 
         Assert.True(result);
         Assert.Null(error);
@@ -115,7 +117,7 @@ public sealed class SkillPathValidatorTests
         // File doesn't exist yet but directory does and contains no symlinks
         var target = $"{SkillRoot}/assets/new-image.png";
 
-        var result = SkillPathValidator.TryValidate(target, SkillRoot, fs, out _, out var error);
+        var result = SkillPathValidator.TryValidate(target, Root(fs), fs, out _, out var error);
 
         Assert.True(result);
         Assert.Null(error);

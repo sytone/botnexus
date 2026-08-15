@@ -126,8 +126,10 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
         if (!ValidateContainment(fileSystem, combinedPath, normalizedRoot))
             return Results.Forbid();
 
-        if (!SkillPathValidator.TryValidate(combinedPath, normalizedRoot, fileSystem, out var resolvedPath, out _))
+        if (!SkillPathValidator.TryValidate(combinedPath, SkillPath.CreateRoot(normalizedRoot, fileSystem), fileSystem, out var validated, out _))
             return Results.Forbid();
+
+        var resolvedPath = validated.Value;
 
         if (fileSystem.Directory.Exists(resolvedPath))
         {
@@ -195,8 +197,10 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
         if (!ValidateContainment(fileSystem, combinedPath, normalizedRoot))
             return Results.Forbid();
 
-        if (!SkillPathValidator.TryValidate(combinedPath, normalizedRoot, fileSystem, out var resolvedPath, out _))
+        if (!SkillPathValidator.TryValidate(combinedPath, SkillPath.CreateRoot(normalizedRoot, fileSystem), fileSystem, out var validated, out _))
             return Results.Forbid();
+
+        var resolvedPath = validated.Value;
 
         if (fileSystem.Directory.Exists(resolvedPath))
             return Results.BadRequest(new { error = "Path refers to a directory, not a file." });
@@ -235,8 +239,10 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
         if (!ValidateContainment(fileSystem, combinedPath, normalizedRoot))
             return Results.Forbid();
 
-        if (!SkillPathValidator.TryValidate(combinedPath, normalizedRoot, fileSystem, out var resolvedPath, out _))
+        if (!SkillPathValidator.TryValidate(combinedPath, SkillPath.CreateRoot(normalizedRoot, fileSystem), fileSystem, out var validated, out _))
             return Results.Forbid();
+
+        var resolvedPath = validated.Value;
 
         if (fileSystem.Directory.Exists(resolvedPath))
         {
@@ -318,7 +324,7 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
 
         foreach (var itemPath in items)
         {
-            if (!SkillPathValidator.TryValidate(itemPath, root, fileSystem, out var resolvedItem, out _))
+            if (!SkillPathValidator.TryValidate(itemPath, SkillPath.CreateRoot(root, fileSystem), fileSystem, out _, out _))
                 continue;
 
             var isDir = fileSystem.Directory.Exists(itemPath);

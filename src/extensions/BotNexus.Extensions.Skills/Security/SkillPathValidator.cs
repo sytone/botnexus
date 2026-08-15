@@ -7,7 +7,7 @@ namespace BotNexus.Extensions.Skills.Security;
 /// after symlink resolution. Prevents symlink-based path traversal attacks where a symlink
 /// inside the skill directory points to a location outside the trusted root.
 /// </summary>
-internal static class SkillPathValidator
+public static class SkillPathValidator
 {
     private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
         ? StringComparison.OrdinalIgnoreCase
@@ -17,24 +17,32 @@ internal static class SkillPathValidator
     /// Validates that the given target path resolves to a location within the allowed root
     /// after following any symlinks in the path. Returns the resolved path on success.
     /// </summary>
-    /// <param name="targetPath">The absolute path to validate.</param>
-    /// <param name="allowedRoot">The root directory that must contain the resolved path.</param>
+    /// <remarks>
+    /// This is the sole boundary crossing in the skill sandbox: <paramref name="targetPath"/> stays a
+    /// <see cref="string"/> because it is untrusted input, and the validated <see cref="SkillPath"/>
+    /// only comes into existence on the success path. A caller that skips this method now has no way
+    /// to obtain a <see cref="SkillPath"/> at all, so the omission is a compile error rather than a
+    /// silent sandbox escape.
+    /// </remarks>
+    /// <param name="targetPath">The absolute candidate path to validate. Untrusted.</param>
+    /// <param name="allowedRoot">The trusted root that must contain the resolved path.</param>
     /// <param name="fileSystem">File system abstraction for testability.</param>
-    /// <param name="resolvedPath">The fully resolved path (symlinks followed).</param>
+    /// <param name="resolvedPath">The fully resolved, contained path (symlinks followed); <c>default</c> on failure.</param>
     /// <param name="error">Error message if validation fails; null on success.</param>
     /// <returns>True if the path is safe; false if it escapes the allowed root.</returns>
     public static bool TryValidate(
         string targetPath,
-        string allowedRoot,
+        SkillPath allowedRoot,
         IFileSystem fileSystem,
-        out string resolvedPath,
+        out SkillPath resolvedPath,
         out string? error)
     {
-        resolvedPath = targetPath;
+        resolvedPath = default;
         error = null;
 
         // Normalize the allowed root (ensure trailing separator for prefix comparison)
-        var normalizedRoot = NormalizePath(allowedRoot, fileSystem);
+        var rootValue = allowedRoot.Value;
+        var normalizedRoot = NormalizePath(rootValue, fileSystem);
 
         // Resolve symlinks by walking each path component
         var resolved = ResolvePath(targetPath, fileSystem);
@@ -44,11 +52,13 @@ internal static class SkillPathValidator
         if (!IsUnderOrEqual(normalizedResolved, normalizedRoot, fileSystem))
         {
             error = $"Path escapes skill directory boundary after symlink resolution. " +
-                    $"Resolved '{resolved}' is not within '{allowedRoot}'.";
+                    $"Resolved '{resolved}' is not within '{rootValue}'.";
             return false;
         }
 
-        resolvedPath = resolved;
+        // The only construction of a contained SkillPath in the codebase. Everything above is the
+        // proof obligation that this line discharges.
+        resolvedPath = SkillPath.FromResolved(resolved);
         return true;
     }
 

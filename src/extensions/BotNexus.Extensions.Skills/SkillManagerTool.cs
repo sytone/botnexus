@@ -259,11 +259,13 @@ public sealed class SkillManagerTool(
         if (!IsAllowedFilePath(relPath, out var reason))
             return Error(reason);
 
-        var targetPath = Path.Combine(skillDir, relPath);
+        var candidatePath = Path.Combine(skillDir, relPath);
 
         // Validate symlink resolution stays within skill boundary
-        if (!SkillPathValidator.TryValidate(targetPath, skillDir, _fs, out targetPath, out var symlinkError))
+        if (!SkillPathValidator.TryValidate(candidatePath, SkillPath.CreateRoot(skillDir, _fs), _fs, out var validated, out var symlinkError))
             return Error(symlinkError!);
+
+        var targetPath = validated.Value;
 
         if (!_fs.File.Exists(targetPath))
             return Error($"File '{relPath}' not found in skill '{name}'.");
@@ -351,11 +353,13 @@ public sealed class SkillManagerTool(
         if (CheckSourceWritable(source) is { } gate)
             return gate;
 
-        var targetPath = Path.Combine(skillDir, relPath);
+        var candidatePath = Path.Combine(skillDir, relPath);
 
         // Validate symlink resolution stays within skill boundary
-        if (!SkillPathValidator.TryValidate(targetPath, skillDir, _fs, out targetPath, out var writeSymlinkError))
+        if (!SkillPathValidator.TryValidate(candidatePath, SkillPath.CreateRoot(skillDir, _fs), _fs, out var validatedWrite, out var writeSymlinkError))
             return Error(writeSymlinkError!);
+
+        var targetPath = validatedWrite.Value;
 
         // Ensure the supporting sub-directory exists
         var targetDir = Path.GetDirectoryName(targetPath);
@@ -402,11 +406,13 @@ public sealed class SkillManagerTool(
         if (CheckSourceWritable(source) is { } gate)
             return gate;
 
-        var targetPath = Path.Combine(skillDir, relPath);
+        var candidatePath = Path.Combine(skillDir, relPath);
 
         // Validate symlink resolution stays within skill boundary
-        if (!SkillPathValidator.TryValidate(targetPath, skillDir, _fs, out targetPath, out var removeSymlinkError))
+        if (!SkillPathValidator.TryValidate(candidatePath, SkillPath.CreateRoot(skillDir, _fs), _fs, out var validatedRemove, out var removeSymlinkError))
             return Error(removeSymlinkError!);
+
+        var targetPath = validatedRemove.Value;
 
         if (!_fs.File.Exists(targetPath))
             return Error($"File '{relPath}' not found in skill '{name}'.");

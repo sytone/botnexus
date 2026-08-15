@@ -14,7 +14,7 @@ public sealed class SkillTrustVerifierTests
         var fs = new MockFileSystem();
         fs.AddDirectory(SkillDir);
 
-        var result = SkillTrustVerifier.Verify(SkillDir, fs);
+        var result = SkillTrustVerifier.Verify(SkillPath.CreateRoot(SkillDir, fs), fs);
 
         Assert.False(result.Trusted);
         Assert.Contains("No trust catalog found", result.Violations);
@@ -38,7 +38,7 @@ public sealed class SkillTrustVerifierTests
         }
         """));
 
-        var result = SkillTrustVerifier.Verify(SkillDir, fs);
+        var result = SkillTrustVerifier.Verify(SkillPath.CreateRoot(SkillDir, fs), fs);
 
         Assert.True(result.Trusted);
         Assert.Empty(result.Violations);
@@ -59,7 +59,7 @@ public sealed class SkillTrustVerifierTests
         }
         """));
 
-        var result = SkillTrustVerifier.Verify(SkillDir, fs);
+        var result = SkillTrustVerifier.Verify(SkillPath.CreateRoot(SkillDir, fs), fs);
 
         Assert.False(result.Trusted);
         Assert.Single(result.Violations);
@@ -81,7 +81,7 @@ public sealed class SkillTrustVerifierTests
         }
         """));
 
-        var result = SkillTrustVerifier.Verify(SkillDir, fs);
+        var result = SkillTrustVerifier.Verify(SkillPath.CreateRoot(SkillDir, fs), fs);
 
         Assert.False(result.Trusted);
         Assert.Contains("Missing file", result.Violations[0]);
@@ -93,7 +93,7 @@ public sealed class SkillTrustVerifierTests
         var fs = new MockFileSystem();
         fs.AddFile($"{SkillDir}/trust.json", new MockFileData("not valid json {{{"));
 
-        var result = SkillTrustVerifier.Verify(SkillDir, fs);
+        var result = SkillTrustVerifier.Verify(SkillPath.CreateRoot(SkillDir, fs), fs);
 
         Assert.False(result.Trusted);
         Assert.Contains("Failed to parse", result.Violations[0]);
@@ -165,7 +165,7 @@ public sealed class SkillTrustVerifierTests
         }
         """));
 
-        var result = SkillTrustVerifier.Verify(SkillDir, fs);
+        var result = SkillTrustVerifier.Verify(SkillPath.CreateRoot(SkillDir, fs), fs);
 
         Assert.False(result.Trusted);
         Assert.Contains("empty or invalid", result.Violations[0]);

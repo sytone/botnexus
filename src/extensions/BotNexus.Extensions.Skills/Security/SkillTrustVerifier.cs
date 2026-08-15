@@ -77,13 +77,16 @@ public static class SkillTrustVerifier
     /// Verifies a skill directory against its trust catalog.
     /// Returns a result indicating whether the skill is trusted.
     /// </summary>
-    /// <param name="skillDir">Absolute path to the skill directory.</param>
+    /// <param name="skillDir">Validated skill directory. Taking a <see cref="SkillPath"/> rather than a
+    /// <see cref="string"/> means a caller cannot verify a directory that was never proven to sit
+    /// inside a trusted skills root.</param>
     /// <param name="fileSystem">File system abstraction.</param>
     /// <returns>Verification result with any violations found.</returns>
-    public static TrustVerificationResult Verify(string skillDir, IFileSystem? fileSystem = null)
+    public static TrustVerificationResult Verify(SkillPath skillDir, IFileSystem? fileSystem = null)
     {
         var fs = fileSystem ?? new FileSystem();
-        var catalogPath = fs.Path.Combine(skillDir, CatalogFileName);
+        var skillDirValue = skillDir.Value;
+        var catalogPath = fs.Path.Combine(skillDirValue, CatalogFileName);
 
         if (!fs.File.Exists(catalogPath))
         {
@@ -111,7 +114,7 @@ public static class SkillTrustVerifier
 
         foreach (var entry in catalog.Entries)
         {
-            var filePath = fs.Path.Combine(skillDir, entry.Path.Replace('/', fs.Path.DirectorySeparatorChar));
+            var filePath = fs.Path.Combine(skillDirValue, entry.Path.Replace('/', fs.Path.DirectorySeparatorChar));
 
             if (!fs.File.Exists(filePath))
             {
