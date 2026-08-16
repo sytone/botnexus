@@ -1,4 +1,5 @@
 using System.Text;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Extensions;
@@ -21,6 +22,13 @@ internal sealed class BuiltInCommandContributor(
     IServiceProvider serviceProvider,
     ISessionCompactionCoordinator? compactionCoordinator = null) : ICommandContributor
 {
+    /// <summary>
+    /// Ceiling for the model-rejection text a slash command returns. Mirrors
+    /// <c>CronModelPreflight.MaxReasonLength</c>: the remedy list is a full model catalogue, which
+    /// must not be pasted unbounded into a chat surface.
+    /// </summary>
+    private const int ModelRejectionReasonMaxLength = 512;
+
     private static readonly IReadOnlyList<CommandDescriptor> BuiltInCommands =
     [
         new CommandDescriptor
@@ -396,15 +404,23 @@ internal sealed class BuiltInCommandContributor(
 
         if (IsClearToken(arg))
         {
-            conversation.ModelOverride = null;
-            conversation.UpdatedAt = DateTimeOffset.UtcNow;
-            await store.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+            // Clearing must stay reachable even when the STORED override is unresolvable - that is
+            // the only in-product escape from a conversation whose override no longer resolves.
+            // It is therefore deliberately validated-exempt.
+            await PatchOverrideAsync(store, conversation, FieldUpdate<string?>.Set(null), FieldUpdate<string?>.Unset, cancellationToken)
+                .ConfigureAwait(false);
             return new CommandResult { Title = "Model Override", Body = "Cleared model override; reverting to the agent default.", IsError = false };
         }
 
-        conversation.ModelOverride = arg;
-        conversation.UpdatedAt = DateTimeOffset.UtcNow;
-        await store.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        // #3228: validate BEFORE persisting. Without this the command stored any string, and the
+        // resulting unresolvable override threw in InProcessIsolationStrategy during agent
+        // construction on every subsequent turn - before command dispatch - so the conversation
+        // could not be repaired from inside the product.
+        if (ClassifyModelRejection(conversation.AgentId, arg) is { } rejection)
+            return new CommandResult { Title = "Model Override", Body = rejection, IsError = true };
+
+        await PatchOverrideAsync(store, conversation, FieldUpdate<string?>.Set(arg), FieldUpdate<string?>.Unset, cancellationToken)
+            .ConfigureAwait(false);
         return new CommandResult { Title = "Model Override", Body = $"Set model override to '{arg}' for this conversation.", IsError = false };
     }
 
@@ -425,9 +441,8 @@ internal sealed class BuiltInCommandContributor(
 
         if (IsClearToken(arg))
         {
-            conversation.ThinkingOverride = null;
-            conversation.UpdatedAt = DateTimeOffset.UtcNow;
-            await store.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+            await PatchOverrideAsync(store, conversation, FieldUpdate<string?>.Unset, FieldUpdate<string?>.Set(null), cancellationToken)
+                .ConfigureAwait(false);
             return new CommandResult { Title = "Reasoning Override", Body = "Cleared thinking override; reverting to the agent default.", IsError = false };
         }
 
@@ -435,10 +450,68 @@ internal sealed class BuiltInCommandContributor(
         if (token is not ("minimal" or "low" or "medium" or "high" or "xhigh" or "max"))
             return new CommandResult { Title = "Reasoning Override", Body = $"Unknown thinking level '{arg}'. Use minimal, low, medium, high, xhigh, or max.", IsError = true };
 
-        conversation.ThinkingOverride = token;
-        conversation.UpdatedAt = DateTimeOffset.UtcNow;
-        await store.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        await PatchOverrideAsync(store, conversation, FieldUpdate<string?>.Unset, FieldUpdate<string?>.Set(token), cancellationToken)
+            .ConfigureAwait(false);
         return new CommandResult { Title = "Reasoning Override", Body = $"Set thinking override to '{token}' for this conversation.", IsError = false };
+    }
+
+    /// <summary>
+    /// Classifies a requested model override for the agent's provider, returning operator-facing
+    /// rejection text when the id positively does not resolve, or <see langword="null"/> when the
+    /// command may proceed.
+    /// <para>
+    /// Routes through the shared <see cref="ModelPreflight"/> seam - the same classifier the cron
+    /// preflight and the create_agent/update_agent tools use - so the slash command and
+    /// <c>PUT /api/conversations/{id}/override</c> cannot develop different notions of a valid
+    /// model (#3228). An absent or empty registry classifies as "cannot know" and is deliberately
+    /// NOT a rejection, so a minimal host does not start refusing valid overrides.
+    /// </para>
+    /// </summary>
+    private string? ClassifyModelRejection(AgentId agentId, string requestedModel)
+    {
+        var registry = serviceProvider.GetService<ModelRegistry>();
+        var provider = agentRegistry.Get(agentId)?.ApiProvider;
+
+        // An unqualified id with no known provider still gets probed across every registered
+        // provider rather than being waved through unchecked.
+        var result = string.IsNullOrWhiteSpace(provider)
+            ? ModelPreflight.ResolveBare(registry, requestedModel)
+            : ModelPreflight.Resolve(registry, provider, requestedModel);
+
+        if (!result.IsRejection)
+            return null;
+
+        return result.Kind == ModelPreflightKind.UnknownProvider
+            ? ModelPreflight.FormatList(
+                $"Model override '{requestedModel}' names a provider that is not registered. Known providers: ",
+                result.AvailableProviders,
+                ".",
+                ModelRejectionReasonMaxLength)
+            : ModelPreflight.FormatList(
+                $"Model '{requestedModel}' is not registered for this agent's provider. Available: ",
+                result.AvailableModels,
+                ".",
+                ModelRejectionReasonMaxLength);
+    }
+
+    /// <summary>
+    /// Writes conversation overrides through the narrow transactional patch rather than a
+    /// whole-record save. #2139 introduced <c>PatchOverrideAsync</c> precisely so a pin or metadata
+    /// mutation committed between the read and the write is preserved; the REST controller was
+    /// converted then, but these command handlers were left on <c>SaveAsync</c> and silently
+    /// retained the clobber (#3228).
+    /// </summary>
+    private static async Task PatchOverrideAsync(
+        IConversationStore store,
+        Conversation conversation,
+        FieldUpdate<string?> model,
+        FieldUpdate<string?> thinking,
+        CancellationToken cancellationToken)
+    {
+        await store.PatchOverrideAsync(
+            conversation.ConversationId,
+            new ConversationOverridePatch { Model = model, Thinking = thinking },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static bool IsClearToken(string arg)
