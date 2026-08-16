@@ -78,6 +78,17 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         VerifyDiagnostic(dispatcher, "completed", "Implemented the fix.");
     }
 
+    /// <summary>
+    /// The race under test is preserved verbatim: the handle still returns an EMPTY response, and
+    /// only after observing cancellation plus a yield, so the classification must still resolve to
+    /// TimedOut rather than the Failed-on-empty path. What changed (#3215) is the clock. The
+    /// deadline is scheduled on an injected <see cref="TimeProvider"/> with a <b>300-second</b>
+    /// budget, so no real timer can fire inside the harness's 5-second poll window; the run reaches
+    /// a terminal state only because <c>onPoll</c> advances the virtual clock. Previously this case
+    /// passed <c>timeProvider: null</c> with a 1-second budget, so reaching terminal depended on a
+    /// real timer plus continuation scheduling landing inside 5 wall-clock seconds on a shared
+    /// 4-CPU runner - the flake reported in #3215.
+    /// </summary>
     [Fact]
     public async Task RunSubAgentAsync_TimeoutRacesWithEmptyPromptReturn_NeverReportsCompleted()
     {
@@ -89,11 +100,15 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             await Task.Yield();
             return new AgentResponse { Content = string.Empty };
         });
-        var (manager, dispatcher) = CreateManager(handle);
+        var time = new ControllableTimeProvider();
+        var (manager, dispatcher) = CreateManager(handle, time, timeoutSecondsBudget: 300);
 
-        var result = await SpawnAndAwaitTerminalAsync(manager);
+        var result = await SpawnAndAwaitTerminalAsync(
+            manager,
+            onPoll: () => time.Advance(TimeSpan.FromSeconds(60)),
+            timeoutSeconds: 300);
 
-        await AssertTimedOutAsync(result, dispatcher);
+        await AssertTimedOutAsync(result, dispatcher, timeoutSeconds: 300);
         result.Status.ShouldNotBe(SubAgentStatus.Completed);
     }
 
@@ -161,15 +176,24 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         throw new TimeoutException("Sub-agent did not reach a terminal state.");
     }
 
+    /// <summary>
+    /// Asserts the timed-out terminal state and its dispatched diagnostic. The budget is a
+    /// parameter only so a case running on a virtual clock can use a budget large enough that no
+    /// real timer could fire (#3215); the assertions themselves are identical for every caller and
+    /// the expected diagnostic text is still derived from the budget, so it cannot be satisfied by
+    /// a timeout of the wrong length.
+    /// </summary>
     private static async Task AssertTimedOutAsync(
         SubAgentInfo result,
-        Mock<IChannelDispatcher> dispatcher)
+        Mock<IChannelDispatcher> dispatcher,
+        int timeoutSeconds = 1)
     {
+        var expected = $"timed out after {timeoutSeconds} {(timeoutSeconds == 1 ? "second" : "seconds")}";
         await WaitForDiagnosticAsync(dispatcher);
         result.Status.ShouldBe(SubAgentStatus.TimedOut);
         result.ResultSummary.ShouldNotBeNull();
-        result.ResultSummary.ShouldContain("timed out after 1 second");
-        VerifyDiagnostic(dispatcher, "timed out", "timed out after 1 second");
+        result.ResultSummary.ShouldContain(expected);
+        VerifyDiagnostic(dispatcher, "timed out", expected);
     }
 
     private static async Task WaitForDiagnosticAsync(Mock<IChannelDispatcher> dispatcher)
