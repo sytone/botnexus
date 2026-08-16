@@ -236,6 +236,23 @@ public sealed record ActivityAgentRef(string AgentId, string? Role = null);
 /// the chat surface cannot disagree about what is live. This is the row's only <em>present-tense</em>
 /// signal - <c>LastActivity</c>, <c>Status</c>, <c>Source</c> and the pin all describe the past.
 /// </param>
+/// <param name="Purpose">
+/// The author's own one-line description of why this conversation exists (#3204), or
+/// <see langword="null"/> when none was set. Carried straight through from the server-stamped
+/// <see cref="ConversationSummaryDto.Purpose"/>, which the client DTO previously did not declare at
+/// all - so the value was discarded at the wire boundary rather than merely unrendered.
+/// <para>
+/// This is the row's only <em>user-authored prose</em>. The pin is user-authored but boolean; every
+/// other signal (origin, originator, roles, visibility, liveness) is machine-derived classification.
+/// It is therefore the most explanatory string the platform holds about a row, and it matters most
+/// on exactly the rows the derived title helps least - the ones whose title is a routing token.
+/// </para>
+/// <para>
+/// Blank and absent collapse to <see langword="null"/> in <see cref="ActivityDashboardProjection.Project"/>,
+/// matching <c>NormalizeRole</c> and <c>SourceLabel</c>, so "present but empty" cannot render
+/// differently from "absent".
+/// </para>
+/// </param>
 public sealed record ActivityRow(
     string ConversationId,
     string OwningAgentId,
@@ -250,7 +267,8 @@ public sealed record ActivityRow(
     ConversationVisibility Visibility = ConversationVisibility.UserFacing,
     DateTimeOffset? PinnedAt = null,
     string? ActiveSessionId = null,
-    string? SourceId = null)
+    string? SourceId = null,
+    string? Purpose = null)
 {
     /// <summary>
     /// Whether a session is running in this conversation right now. Computed from
@@ -370,6 +388,11 @@ public static class ActivityDashboardProjection
     private static string? NormalizeRole(string? role) =>
         string.IsNullOrWhiteSpace(role) ? null : role.Trim();
 
+    // Same rule as NormalizeRole, applied to the purpose string: a whitespace-only purpose is an
+    // absent purpose, and letting it through would render an empty line under the title.
+    private static string? NormalizePurpose(string? purpose) =>
+        string.IsNullOrWhiteSpace(purpose) ? null : purpose.Trim();
+
     /// <summary>
     /// The role text to show on an agent chip, or <see langword="null"/> when the agent has no
     /// stamped role and the chip should render exactly as it did before #2857.
@@ -472,7 +495,10 @@ public static class ActivityDashboardProjection
                 x.Visibility,
                 x.Dto.IsPinned ? x.Dto.PinnedAt : null,
                 x.Dto.ActiveSessionId,
-                x.Dto.SourceId))
+                x.Dto.SourceId,
+                // Normalised at the projection boundary, not at render time, so every consumer of a
+                // row sees the same collapsed value and "present but empty" cannot reach the DOM.
+                NormalizePurpose(x.Dto.Purpose)))
             .ToList();
     }
 
@@ -573,6 +599,57 @@ public static class ActivityDashboardProjection
         return id.Length <= SourceIdDisplayLength
             ? id
             : string.Concat(id.AsSpan(0, SourceIdDisplayLength), "\u2026");
+    }
+
+    /// <summary>
+    /// Maximum rendered length of a purpose before it is elided (#3204). Longer than the source-id
+    /// bound because purpose is prose meant to be read, not an identifier meant to be matched, but
+    /// still bounded: <c>ValidatePurpose</c> admits far more text than a table row can carry, and an
+    /// unbounded string must never reach the DOM. Same structural-guarantee posture as
+    /// <see cref="ConversationLabel.MaxTitleLength"/> - CSS may also ellipsize, but this cap
+    /// survives a CSS regression.
+    /// </summary>
+    public const int PurposeDisplayLength = 96;
+
+    /// <summary>
+    /// Renders the author's stated purpose for a row (#3204): <em>why this conversation exists</em>
+    /// in the words of whoever created it, as opposed to the origin badge's machine classification.
+    /// Returns <see langword="null"/> when the row names no purpose, so a row without one is
+    /// rendered exactly as it was before this shipped.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately <em>not</em> shaped as a badge, unlike <see cref="OriginLabel"/>,
+    /// <see cref="ReadOnlyLabel"/> and <see cref="SourceLabel"/>. Those are one-glance classifiers
+    /// drawn from bounded value sets; purpose is free prose. Giving prose the badge idiom would
+    /// swamp the badge row and destroy the scannability the badges exist to provide.
+    /// </para>
+    /// <para>
+    /// Elides rather than hard-truncating, matching <see cref="SourceLabel"/>, so a clipped purpose
+    /// is visibly clipped and the reader knows to hover for the rest. The component keeps the
+    /// untruncated value on the element's <c>title</c>.
+    /// </para>
+    /// <para>
+    /// Normalisation already happened in <see cref="Project"/>, so this method sees a value that is
+    /// either <see langword="null"/> or non-blank. It re-checks anyway rather than trusting its
+    /// caller, because it is public and a hand-constructed row must not be able to emit an empty
+    /// element.
+    /// </para>
+    /// </remarks>
+    /// <param name="row">A projected dashboard row.</param>
+    /// <returns>The bounded purpose text, or <see langword="null"/> when the row states none.</returns>
+    public static string? PurposeLabel(ActivityRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+
+        if (string.IsNullOrWhiteSpace(row.Purpose))
+            return null;
+
+        var purpose = row.Purpose.Trim();
+
+        return purpose.Length <= PurposeDisplayLength
+            ? purpose
+            : string.Concat(purpose.AsSpan(0, PurposeDisplayLength), "\u2026");
     }
 
     /// <summary>

@@ -20,7 +20,8 @@ public sealed record ConversationSummaryDto(
     [property: JsonPropertyName("isPinned")] bool IsPinned = false,
     [property: JsonPropertyName("pinnedAt")] DateTimeOffset? PinnedAt = null,
     [property: JsonPropertyName("participants")] IReadOnlyList<ParticipantDto>? Participants = null,
-    [property: JsonPropertyName("sourceId")] string? SourceId = null);
+    [property: JsonPropertyName("sourceId")] string? SourceId = null,
+    [property: JsonPropertyName("purpose")] string? Purpose = null);
 
 public sealed record ParticipantDto(
     [property: JsonPropertyName("kind")] string Kind,

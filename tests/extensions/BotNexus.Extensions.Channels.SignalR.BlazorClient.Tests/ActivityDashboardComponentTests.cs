@@ -50,10 +50,13 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         // #2692: visibility is server-stamped and already on the wire; fixtures set it explicitly.
         string visibility = "UserFacing",
         // #3105: the originating job / registration id, server-stamped alongside source (#2121).
-        string? sourceId = null) =>
+        string? sourceId = null,
+        // #3204: the author's stated purpose, server-persisted and now declared on the client DTO.
+        string? purpose = null) =>
         new(id, agentId, title, false, status, activeSessionId, bindingCount,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, Kind: kind, Source: source,
-            Visibility: visibility, Participants: participants, SourceId: sourceId);
+            Visibility: visibility, Participants: participants, SourceId: sourceId,
+            Purpose: purpose);
 
     private void SetupConversations(params ConversationSummaryDto[] conversations) =>
         _rest.GetAllConversationsAsync(Arg.Any<CancellationToken>())
@@ -949,5 +952,81 @@ public sealed class ActivityDashboardComponentTests : IDisposable
 
         cut.Find("[data-testid='activity-filter-live']").Change(nameof(ActivityLiveFilter.Live));
         cut.WaitForState(() => RowIds(cut).SequenceEqual(new[] { "c1" }));
+    }
+
+    // ── #3204: author-stated purpose ───────────────────────────────────────
+
+    /// <summary>
+    /// AC5: a row whose author stated a purpose renders exactly one purpose element carrying the
+    /// bounded label, with the untruncated original preserved on <c>title</c> for hover.
+    /// </summary>
+    [Fact]
+    public void A_row_with_a_purpose_renders_it_with_the_full_value_on_hover()
+    {
+        SetupConversations(Conv("c1", purpose: "Track the Q3 migration rollout"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+
+        var purposes = cut.FindAll("[data-testid='activity-purpose']");
+        Assert.Single(purposes);
+        Assert.Equal("Track the Q3 migration rollout", purposes[0].TextContent.Trim());
+        Assert.Equal("Track the Q3 migration rollout", purposes[0].GetAttribute("title"));
+    }
+
+    /// <summary>
+    /// AC5 (complement): a row with no stated purpose renders ZERO purpose elements, so the
+    /// overwhelmingly common row is byte-identical to how it rendered before #3204. Without this
+    /// pin an implementation that always emitted an empty element would still satisfy the positive
+    /// case.
+    /// </summary>
+    [Fact]
+    public void A_row_without_a_purpose_renders_no_purpose_element()
+    {
+        SetupConversations(Conv("c1"), Conv("c2", purpose: "   "));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
+
+        Assert.Empty(cut.FindAll("[data-testid='activity-purpose']"));
+    }
+
+    /// <summary>
+    /// AC5: a purpose over the display bound reaches the DOM elided, while the full text stays on
+    /// <c>title</c>. This is the pin that makes the cap structural rather than cosmetic - a CSS-only
+    /// ellipsis would leave the whole string in the DOM and pass every other clause.
+    /// </summary>
+    [Fact]
+    public void A_long_purpose_reaches_the_dom_elided_with_the_full_text_on_hover()
+    {
+        var purpose = new string('p', ActivityDashboardProjection.PurposeDisplayLength + 40);
+        SetupConversations(Conv("c1", purpose: purpose));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-purpose']").Count == 1);
+
+        var element = cut.Find("[data-testid='activity-purpose']");
+        Assert.Equal(
+            ActivityDashboardProjection.PurposeDisplayLength + 1,
+            element.TextContent.Trim().Length);
+        Assert.Equal(purpose, element.GetAttribute("title"));
+    }
+
+    /// <summary>
+    /// AC6: purpose is prose, not a classifier, so it must NOT wear the badge idiom. Pinning the
+    /// absence of <c>activity-badge</c> is what stops a later contributor from "tidying" it into the
+    /// badge row, which is precisely what would destroy the badges' scannability.
+    /// </summary>
+    [Fact]
+    public void The_purpose_element_is_not_a_badge()
+    {
+        SetupConversations(Conv("c1", purpose: "Track the Q3 migration rollout"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-purpose']").Count == 1);
+
+        var element = cut.Find("[data-testid='activity-purpose']");
+        Assert.Contains("activity-purpose", element.GetAttribute("class"));
+        Assert.DoesNotContain("activity-badge", element.GetAttribute("class"));
     }
 }

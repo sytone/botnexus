@@ -27,7 +27,9 @@ public sealed class ActivityDashboardProjectionTests
         // #2692: visibility is server-stamped and already on the wire; fixtures set it explicitly.
         string visibility = "UserFacing",
         // #3105: the originating job / registration id, server-stamped alongside source (#2121).
-        string? sourceId = null) =>
+        string? sourceId = null,
+        // #3204: the author's stated purpose, server-persisted and now declared on the client DTO.
+        string? purpose = null) =>
         new(
             ConversationId: id,
             AgentId: agentId,
@@ -42,7 +44,8 @@ public sealed class ActivityDashboardProjectionTests
             Kind: kind,
             Visibility: visibility,
             Participants: participants,
-            SourceId: sourceId);
+            SourceId: sourceId,
+            Purpose: purpose);
 
     // ── Cron detection ─────────────────────────────────────────────────────
 
@@ -1381,5 +1384,160 @@ public sealed class ActivityDashboardProjectionTests
         Assert.NotNull(dto);
         Assert.Equal("daily-log-analysis", dto.SourceId);
         Assert.Equal("daily-log-analysis", ActivityDashboardProjection.SourceLabel(ProjectOne(dto)));
+    }
+
+    // ── #3204: author-stated purpose ───────────────────────────────────────
+
+    /// <summary>
+    /// AC1: the field binds off the wire under its documented JSON name. The client DTO did not
+    /// declare <c>purpose</c> at ALL before this change, so the value was discarded at the wire
+    /// boundary - a property bound to the wrong name would leave every other clause green while the
+    /// real gateway payload silently produced null, which is exactly the failure mode that hid this
+    /// gap for six runs.
+    /// </summary>
+    [Fact]
+    public void The_purpose_wire_field_binds_from_its_documented_json_name()
+    {
+        const string json = """
+        {
+          "conversationId": "c1",
+          "agentId": "alpha",
+          "title": "Chat",
+          "isDefault": false,
+          "status": "Active",
+          "activeSessionId": null,
+          "bindingCount": 0,
+          "createdAt": "2026-07-10T11:55:00+00:00",
+          "updatedAt": "2026-07-10T12:00:00+00:00",
+          "purpose": "Track the Q3 migration rollout"
+        }
+        """;
+
+        var dto = System.Text.Json.JsonSerializer.Deserialize<ConversationSummaryDto>(json);
+
+        Assert.NotNull(dto);
+        Assert.Equal("Track the Q3 migration rollout", dto.Purpose);
+    }
+
+    /// <summary>
+    /// AC1 (second half): a payload that omits <c>purpose</c> yields null rather than throwing, so
+    /// the new optional parameter is genuinely back-compatible with a pre-#3204 gateway.
+    /// </summary>
+    [Fact]
+    public void A_payload_without_purpose_deserializes_to_a_null_purpose()
+    {
+        const string json = """
+        {
+          "conversationId": "c1",
+          "agentId": "alpha",
+          "title": "Chat",
+          "isDefault": false,
+          "status": "Active",
+          "activeSessionId": null,
+          "bindingCount": 0,
+          "createdAt": "2026-07-10T11:55:00+00:00",
+          "updatedAt": "2026-07-10T12:00:00+00:00"
+        }
+        """;
+
+        var dto = System.Text.Json.JsonSerializer.Deserialize<ConversationSummaryDto>(json);
+
+        Assert.NotNull(dto);
+        Assert.Null(dto.Purpose);
+        Assert.Null(ActivityDashboardProjection.PurposeLabel(ProjectOne(dto)));
+    }
+
+    /// <summary>
+    /// AC2: the purpose survives <see cref="ActivityDashboardProjection.Project"/> end to end onto
+    /// the row. Without this the label has nothing to read and every remaining clause is vacuous.
+    /// </summary>
+    [Fact]
+    public void Project_carries_the_stated_purpose_onto_the_row()
+    {
+        var row = ProjectOne(Conv("c1", purpose: "Track the Q3 migration rollout"));
+
+        Assert.Equal("Track the Q3 migration rollout", row.Purpose);
+    }
+
+    /// <summary>
+    /// AC3: blank, whitespace-only and absent purposes all collapse to null on the row, so "present
+    /// but empty" cannot render differently from "absent" - the same normalisation rule
+    /// <c>NormalizeRole</c> and <c>SourceLabel</c> apply.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t\n ")]
+    public void Blank_and_absent_purposes_collapse_to_null(string? purpose)
+    {
+        var row = ProjectOne(Conv("c1", purpose: purpose));
+
+        Assert.Null(row.Purpose);
+        Assert.Null(ActivityDashboardProjection.PurposeLabel(row));
+    }
+
+    /// <summary>
+    /// AC3 (surrounding whitespace): a purpose padded with whitespace is trimmed rather than
+    /// rendered with its padding, so the display value cannot depend on incidental input spacing.
+    /// </summary>
+    [Fact]
+    public void A_padded_purpose_is_trimmed_on_the_row()
+    {
+        var row = ProjectOne(Conv("c1", purpose: "  Track the rollout  "));
+
+        Assert.Equal("Track the rollout", row.Purpose);
+        Assert.Equal("Track the rollout", ActivityDashboardProjection.PurposeLabel(row));
+    }
+
+    /// <summary>
+    /// AC4: a purpose at exactly the display bound renders verbatim - the boundary case that
+    /// separates a correct <c>&lt;=</c> from an off-by-one <c>&lt;</c>.
+    /// </summary>
+    [Fact]
+    public void A_purpose_at_the_display_bound_renders_verbatim()
+    {
+        var purpose = new string('p', ActivityDashboardProjection.PurposeDisplayLength);
+
+        var label = ActivityDashboardProjection.PurposeLabel(ProjectOne(Conv("c1", purpose: purpose)));
+
+        Assert.Equal(purpose, label);
+        Assert.DoesNotContain('\u2026', label!);
+    }
+
+    /// <summary>
+    /// AC4: a purpose over the bound is elided to exactly bound+1 characters, ending in a single
+    /// ellipsis. Asserting the exact LENGTH (not merely "contains an ellipsis") is what pins the
+    /// bound itself: an implementation that emitted the whole string plus an ellipsis would satisfy
+    /// a contains-check and still put an unbounded value into the DOM, which is the defect the cap
+    /// exists to prevent.
+    /// </summary>
+    [Fact]
+    public void A_purpose_over_the_display_bound_is_elided()
+    {
+        var purpose = new string('p', ActivityDashboardProjection.PurposeDisplayLength + 40);
+
+        var label = ActivityDashboardProjection.PurposeLabel(ProjectOne(Conv("c1", purpose: purpose)));
+
+        Assert.NotNull(label);
+        Assert.Equal(ActivityDashboardProjection.PurposeDisplayLength + 1, label.Length);
+        Assert.EndsWith("\u2026", label, StringComparison.Ordinal);
+        Assert.Equal(new string('p', ActivityDashboardProjection.PurposeDisplayLength), label[..^1]);
+    }
+
+    /// <summary>
+    /// AC8: the purpose is per-row prose and contributes to no count, so widening the row must leave
+    /// the summary strip byte-identical. Pins the deliberate non-change rather than assuming it.
+    /// </summary>
+    [Fact]
+    public void Purpose_does_not_affect_the_summary_strip()
+    {
+        var filter = new ActivityDashboardFilter(IncludeCron: true);
+        var without = ActivityDashboardProjection.Summarize(
+            ActivityDashboardProjection.Project([Conv("c1")], filter, Now));
+        var with = ActivityDashboardProjection.Summarize(
+            ActivityDashboardProjection.Project([Conv("c1", purpose: "Track the rollout")], filter, Now));
+
+        Assert.Equal(without, with);
     }
 }

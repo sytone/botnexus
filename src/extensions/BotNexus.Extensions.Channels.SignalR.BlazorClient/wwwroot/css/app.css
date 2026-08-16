@@ -5690,6 +5690,10 @@ h3.conversation-title.editable:hover {
     display: flex;
     align-items: center;
     gap: 0.25rem;
+    /* #3204: wrapping enabled so the purpose line can claim a full-width row of its own beneath the
+       title and badges. Existing children are unaffected - the title is the only flex-shrinkable
+       item and every badge is flex: 0 0 auto, so nothing wraps unless the purpose forces it. */
+    flex-wrap: wrap;
 }
 
 .activity-conversation-title {
@@ -5742,6 +5746,23 @@ h3.conversation-title.editable:hover {
     font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
     font-size: 0.68rem;
     opacity: 0.75;
+}
+
+/* #3204: the author's stated purpose for the conversation. Deliberately NOT a .activity-badge and
+   not monospace like .activity-source-id - this is prose written to be read, not a category to be
+   scanned nor a literal to be copied. It takes a full-width flex row of its own so it can never
+   compete horizontally with the title, and is bounded by BOTH the projection's character cap and a
+   CSS ellipsis, so a long purpose can grow neither the row nor the DOM. */
+.activity-purpose {
+    /* Full-width basis forces the wrap onto a second line within the cell. */
+    flex: 1 0 100%;
+    margin-top: 0.15rem;
+    font-size: 0.72rem;
+    line-height: 1.3;
+    opacity: 0.65;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .activity-badge {

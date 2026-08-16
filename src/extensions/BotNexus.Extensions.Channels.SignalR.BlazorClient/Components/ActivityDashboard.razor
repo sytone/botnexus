@@ -205,6 +205,16 @@
                                       data-source-id="@row.SourceId"
                                       title="@OriginTooltip(row)">@sourceLabel</span>
                             }
+                            @if (ActivityDashboardProjection.PurposeLabel(row) is { } purposeLabel)
+                            {
+                                @* #3204: the author's own words for why this conversation exists.
+                                   Its own block-level line BELOW the title and badges, deliberately
+                                   NOT a badge - badges are one-glance classifiers drawn from bounded
+                                   value sets, and prose in that idiom would swamp the badge row. *@
+                                <span class="activity-purpose"
+                                      data-testid="activity-purpose"
+                                      title="@row.Purpose">@purposeLabel</span>
+                            }
                         </td>
                         <td class="activity-cell-agents">
                             @foreach (var agent in row.InvolvedAgents)
