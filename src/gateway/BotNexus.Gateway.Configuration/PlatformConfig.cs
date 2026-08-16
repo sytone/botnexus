@@ -276,10 +276,28 @@ public sealed class GatewaySettingsConfig
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 1)]
     public string? DefaultAgentId { get; set; }
     /// <summary>Path to agents configuration directory.</summary>
+    [Display(
+        Name = "Agents directory",
+        Description = "Directory holding per-agent workspaces and configuration. Relative paths resolve against the BotNexus home directory.",
+        GroupName = "Storage",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "storage", Order = 0)]
     public string? AgentsDirectory { get; set; }
     /// <summary>Path to sessions storage directory.</summary>
+    [Display(
+        Name = "Sessions directory",
+        Description = "Directory holding session transcripts and the session store database.",
+        GroupName = "Storage",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "storage", Order = 1)]
     public string? SessionsDirectory { get; set; }
     /// <summary>Session store selection and configuration.</summary>
+    [Display(
+        Name = "Session store",
+        Description = "Backend used to persist sessions and conversation history.",
+        GroupName = "Storage",
+        Order = 2)]
+    [ConfigField(Group = "storage", Order = 2)]
     public SessionStoreConfig? SessionStore { get; set; }
 
     /// <summary>Interval in minutes between periodic PASSIVE SQLite WAL checkpoints (#1438). Default 30.</summary>
@@ -291,10 +309,28 @@ public sealed class GatewaySettingsConfig
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "gateway", Order = 3)]
     public int? WalCheckpointIntervalMinutes { get; set; }
     /// <summary>Trusted sub-agent spawning limits and per-parent budget overrides.</summary>
+    [Display(
+        Name = "Sub-agents",
+        Description = "Limits on sub-agent spawning, including per-parent turn and timeout budgets.",
+        GroupName = "Agents",
+        Order = 0)]
+    [ConfigField(Group = "sub-agents", Order = 0)]
     public SubAgentOptions? SubAgents { get; set; }
     /// <summary>Session compaction settings.</summary>
+    [Display(
+        Name = "Compaction",
+        Description = "Controls when a long session is summarised to stay within the model context window.",
+        GroupName = "Sessions",
+        Order = 0)]
+    [ConfigField(Group = "compaction", Order = 0)]
     public CompactionOptions? Compaction { get; set; }
     /// <summary>Write-time cap on the size of individual tool results persisted to session history (#1598).</summary>
+    [Display(
+        Name = "Tool result persistence",
+        Description = "Write-time cap on the size of individual tool results persisted to session history.",
+        GroupName = "Sessions",
+        Order = 1)]
+    [ConfigField(Group = "tool-result-persistence", Order = 0)]
     public ToolResultPersistenceConfig? ToolResultPersistence { get; set; }
     /// <summary>Central backstop budget on tool-result size returned to the model (#3162).</summary>
     [ConfigField(Group = "tool-output-budget", Order = 0)]
@@ -303,6 +339,12 @@ public sealed class GatewaySettingsConfig
     [ConfigField(Group = "read-tool", Order = 0)]
     public ReadToolConfig? ReadTool { get; set; }
     /// <summary>Post-turn claim auditor (anti-fabrication) settings (#1600).</summary>
+    [Display(
+        Name = "Claim audit",
+        Description = "Post-turn auditor that checks an agent's stated outcomes against the tool calls it actually made.",
+        GroupName = "Agents",
+        Order = 1)]
+    [ConfigField(Group = "claim-audit", Order = 0)]
     public ClaimAuditConfig? ClaimAudit { get; set; }
     /// <summary>
     /// Memory embedding backend selection (#2855). Absent or disabled leaves memory retrieval
@@ -316,10 +358,28 @@ public sealed class GatewaySettingsConfig
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "memory-embeddings", Order = 0)]
     public MemoryEmbeddingsConfig? MemoryEmbeddings { get; set; }
     /// <summary>CORS settings for browser-based clients.</summary>
+    [Display(
+        Name = "CORS",
+        Description = "Cross-origin request rules for browser-based clients reaching the gateway API.",
+        GroupName = "Network",
+        Order = 0)]
+    [ConfigField(Group = "network", Order = 0)]
     public CorsConfig? Cors { get; set; }
     /// <summary>Per-client request rate limiting settings.</summary>
+    [Display(
+        Name = "Rate limiting",
+        Description = "Per-client request rate limits applied to gateway API calls.",
+        GroupName = "Network",
+        Order = 1)]
+    [ConfigField(Group = "network", Order = 1)]
     public RateLimitConfig? RateLimit { get; set; }
     /// <summary>Explicit SignalR hub transport limits (frame size, parallel invocations, stream buffer).</summary>
+    [Display(
+        Name = "SignalR transport",
+        Description = "Hub transport limits: maximum frame size, parallel invocations, and stream buffer capacity.",
+        GroupName = "Network",
+        Order = 2)]
+    [ConfigField(Group = "network", Order = 2)]
     public SignalRConfig? SignalR { get; set; }
     /// <summary>Operator-supplied additional secret redaction patterns (#2727).</summary>
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 10)]
@@ -334,18 +394,60 @@ public sealed class GatewaySettingsConfig
     [ConfigField(Widget = ConfigFieldWidget.Select, Group = "gateway", Order = 2)]
     public string? LogLevel { get; set; }
     /// <summary>Multi-tenant API keys keyed by key ID.</summary>
+    [Display(
+        Name = "API keys",
+        Description = "Multi-tenant API keys keyed by key ID. Each entry authorises a caller and scopes what it may reach.",
+        GroupName = "Security",
+        Order = 0)]
+    [ConfigField(Group = "security", Order = 0, Secret = true)]
     public Dictionary<string, ApiKeyConfig>? ApiKeys { get; set; }
     /// <summary>Extensions loading settings.</summary>
+    [Display(
+        Name = "Extensions",
+        Description = "Dynamic extension loading: whether extensions load, from where, and their world-level defaults.",
+        GroupName = "Extensions",
+        Order = 0)]
+    [ConfigField(Group = "extensions", Order = 0)]
     public ExtensionsConfig? Extensions { get; set; }
     /// <summary>World identity shown by gateway clients.</summary>
+    [Display(
+        Name = "World identity",
+        Description = "Name and identity of this world as shown by gateway clients and used in cross-world federation.",
+        GroupName = "World",
+        Order = 0)]
+    [ConfigField(Group = "world", Order = 0)]
     public WorldIdentity? World { get; set; }
     /// <summary>Named locations registry for resource management.</summary>
+    [Display(
+        Name = "Locations",
+        Description = "Named locations registry used for resource management and path resolution.",
+        GroupName = "Storage",
+        Order = 3)]
+    [ConfigField(Group = "storage", Order = 3)]
     public Dictionary<string, LocationConfig>? Locations { get; set; }
     /// <summary>Optional explicit cross-world communication permissions.</summary>
+    [Display(
+        Name = "Cross-world permissions",
+        Description = "Explicit grants controlling which remote worlds may communicate with this one.",
+        GroupName = "World",
+        Order = 2)]
+    [ConfigField(Group = "world", Order = 2)]
     public List<CrossWorldPermissionConfig>? CrossWorldPermissions { get; set; }
     /// <summary>Cross-world federation settings for gateway-to-gateway communication.</summary>
+    [Display(
+        Name = "Cross-world federation",
+        Description = "Gateway-to-gateway federation settings enabling communication between worlds.",
+        GroupName = "World",
+        Order = 1)]
+    [ConfigField(Group = "world", Order = 1)]
     public CrossWorldFederationConfig? CrossWorld { get; set; }
     /// <summary>Default file access policy applied to all agents unless overridden per-agent.</summary>
+    [Display(
+        Name = "File access policy",
+        Description = "Default read, write and deny path rules applied to every agent unless the agent overrides them.",
+        GroupName = "Security",
+        Order = 1)]
+    [ConfigField(Group = "security", Order = 1)]
     public FileAccessPolicyConfig? FileAccess { get; set; }
     /// <summary>
     /// Preferred shell for command execution on Windows.
@@ -353,6 +455,12 @@ public sealed class GatewaySettingsConfig
     /// <c>"pwsh"</c> (always PowerShell), <c>"bash"</c> (always bash).
     /// Ignored on non-Windows platforms where bash is always used.
     /// </summary>
+    [Display(
+        Name = "Shell preference",
+        Description = "Preferred shell on Windows: auto (bash when available, PowerShell otherwise), pwsh, or bash. Ignored on non-Windows platforms.",
+        GroupName = "Execution",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "execution", Order = 0)]
     public string? ShellPreference { get; set; }
 
     /// <summary>
@@ -362,15 +470,33 @@ public sealed class GatewaySettingsConfig
     /// Example: <c>["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]</c>.
     /// When set, overrides <see cref="ShellPreference"/> entirely.
     /// </summary>
+    [Display(
+        Name = "Shell command",
+        Description = "Explicit shell argv array. Element 0 is the executable; the command string is appended last. Overrides Shell preference entirely when set.",
+        GroupName = "Execution",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "execution", Order = 1)]
     public string[]? ShellCommand { get; set; }
 
     /// <summary>Auto-update settings for self-updating the gateway via the BotNexus CLI.</summary>
+    [Display(
+        Name = "Auto-update",
+        Description = "Settings for the gateway updating itself via the BotNexus CLI.",
+        GroupName = "Maintenance",
+        Order = 0)]
+    [ConfigField(Group = "auto-update", Order = 0)]
     public AutoUpdateConfig? AutoUpdate { get; set; }
 
     /// <summary>
     /// Auxiliary (cheap/fast) model configuration for background gateway tasks.
     /// Currently used for: conversation title generation.
     /// </summary>
+    [Display(
+        Name = "Auxiliary model",
+        Description = "Cheap, fast model used for background gateway tasks such as conversation title generation.",
+        GroupName = "Gateway",
+        Order = 11)]
+    [ConfigField(Group = "auxiliary", Order = 0)]
     public AuxiliaryConfig? Auxiliary { get; set; }
 
     /// <summary>
@@ -405,6 +531,12 @@ public sealed class GatewaySettingsConfig
     /// to every user message sent to the LLM so agents always know the current time.
     /// Per-agent overrides take precedence over this world default.
     /// </summary>
+    [Display(
+        Name = "Datetime injection",
+        Description = "World default for prepending the current datetime to user messages. Per-agent settings take precedence.",
+        GroupName = "Agents",
+        Order = 2)]
+    [ConfigField(Group = "datetime-injection", Order = 0)]
     public DateTimeInjectionConfig? DateTimeInjection { get; set; }
 
     /// <summary>
@@ -412,6 +544,12 @@ public sealed class GatewaySettingsConfig
     /// Satellites are remote persistent processes that connect to the gateway for
     /// notifications, canvas rendering, and optionally remote command execution.
     /// </summary>
+    [Display(
+        Name = "Satellites",
+        Description = "Registered satellite nodes keyed by satellite ID. Satellites connect for notifications, canvas rendering and optional remote execution.",
+        GroupName = "Network",
+        Order = 3)]
+    [ConfigField(Group = "satellites", Order = 0)]
     public Dictionary<string, SatelliteConfig>? Satellites { get; set; }
 }
 
@@ -878,42 +1016,125 @@ public sealed class CronConfig
 public sealed class CronJobConfig
 {
     /// <summary>Display name for the cron job.</summary>
+    [Display(
+        Name = "Job name",
+        Description = "Human-readable name shown for this job in schedules and run reports.",
+        GroupName = "Cron job",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 0)]
     public string? Name { get; set; }
 
     /// <summary>Cron expression schedule.</summary>
+    [Display(
+        Name = "Schedule",
+        Description = "Five-field cron expression (minute hour day month weekday) controlling when the job fires.",
+        GroupName = "Cron job",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 1)]
     public string? Schedule { get; set; }
 
     /// <summary>Action type (for example: <c>agent-prompt</c>).</summary>
+    [Display(
+        Name = "Action type",
+        Description = "What the job does when it fires: agent-prompt sends a prompt to an agent; command runs a shell command.",
+        GroupName = "Cron job",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "cron-job", Order = 2)]
     public string? ActionType { get; set; }
 
     /// <summary>Target agent identifier for agent prompt jobs.</summary>
+    [Display(
+        Name = "Target agent",
+        Description = "Agent that receives the prompt. Required for agent-prompt jobs.",
+        GroupName = "Cron job",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "cron-job", Order = 3)]
     public string? AgentId { get; set; }
 
     /// <summary>Prompt message for agent prompt jobs.</summary>
+    [Display(
+        Name = "Prompt message",
+        Description = "Prompt text sent to the agent. Required for agent-prompt jobs unless a template is named.",
+        GroupName = "Cron job",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 4)]
     public string? Message { get; set; }
 
     /// <summary>Named prompt template for agent prompt jobs.</summary>
+    [Display(
+        Name = "Prompt template",
+        Description = "Named prompt template rendered instead of a literal message.",
+        GroupName = "Cron job",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "cron-job", Order = 5)]
     public string? TemplateName { get; set; }
 
     /// <summary>Template parameter values used when rendering <see cref="TemplateName" />.</summary>
+    [Display(
+        Name = "Template parameters",
+        Description = "Values substituted into the named prompt template's placeholders.",
+        GroupName = "Cron job",
+        Order = 6)]
+    [ConfigField(Group = "cron-job", Order = 6)]
     public Dictionary<string, string>? TemplateParameters { get; set; }
 
     /// <summary>Optional model override for agent prompt jobs.</summary>
+    [Display(
+        Name = "Model override",
+        Description = "Model this job runs on, overriding the agent's configured model.",
+        GroupName = "Cron job",
+        Order = 7)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "cron-job", Order = 7, OptionsSource = "models")]
     public string? Model { get; set; }
 
     /// <summary>Webhook destination URL for webhook jobs.</summary>
+    [Display(
+        Name = "Webhook URL",
+        Description = "Destination URL called when the job fires. Used by webhook jobs.",
+        GroupName = "Cron job",
+        Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 8)]
     public string? WebhookUrl { get; set; }
 
     /// <summary>Shell command payload for shell jobs.</summary>
+    /// <remarks>
+    /// This is an arbitrary-execution surface: whatever is stored here runs with the gateway's
+    /// privileges on every fire. Treat creating or editing it as a dangerous operation.
+    /// </remarks>
+    [Display(
+        Name = "Shell command",
+        Description = "Command or script executed when the job fires. Runs with the gateway's privileges - treat as a dangerous operation.",
+        GroupName = "Cron job",
+        Order = 9)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 9)]
     public string? ShellCommand { get; set; }
 
     /// <summary>Whether this job is enabled.</summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Whether this job fires on its schedule. A disabled job stays defined but never runs.",
+        GroupName = "Cron job",
+        Order = 10)]
+    [DefaultValue(true)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "cron-job", Order = 10)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>Optional creator label for auditing.</summary>
+    [Display(
+        Name = "Created by",
+        Description = "Label recording who or what created this job. Used for auditing only.",
+        GroupName = "Cron job",
+        Order = 11)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 11)]
     public string? CreatedBy { get; set; }
 
     /// <summary>Optional metadata entries persisted with the job.</summary>
+    [Display(
+        Name = "Metadata",
+        Description = "Free-form key/value entries persisted alongside the job, such as a timeout override.",
+        GroupName = "Cron job",
+        Order = 12)]
+    [ConfigField(Group = "cron-job", Order = 12)]
     public Dictionary<string, string>? Metadata { get; set; }
 }
 

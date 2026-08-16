@@ -38,11 +38,12 @@ namespace BotNexus.Architecture.Tests;
 /// </para>
 ///
 /// <para>
-/// <b>Baseline.</b> 210 pre-existing violations cannot be fixed in one change, so they are captured in
-/// <see cref="Baseline"/> - one entry per property, so partial progress is measurable and visible in a
-/// diff. The baseline may <b>shrink but never grow</b>: annotating a property and deleting its entry is
-/// always allowed; adding an entry to silence a new property is not. The count is asserted exactly so a
-/// bulk suppression cannot hide in a large diff.
+/// <b>Baseline.</b> 210 pre-existing violations could not be fixed in one change, so they are captured
+/// in <see cref="Baseline"/> - one entry per property, so partial progress is measurable and visible in
+/// a diff. The baseline may <b>shrink but never grow</b>: annotating a property and deleting its entry
+/// is always allowed; adding an entry to silence a new property is not. The count is asserted exactly so
+/// a bulk suppression cannot hide in a large diff. Drawdown to zero is tracked by #3231; the first batch
+/// (<c>GatewaySettingsConfig</c> and <c>CronJobConfig</c>, 36 properties) took it from 210 to 174.
 /// </para>
 /// </summary>
 public sealed class ConfigFieldCoverageFenceArchitectureTests
@@ -63,7 +64,7 @@ public sealed class ConfigFieldCoverageFenceArchitectureTests
     /// (for example pasting in a hundred new entries) is visible as a one-line numeric change in review
     /// rather than being buried in a large diff.
     /// </summary>
-    private const int ExpectedBaselineCount = 210;
+    private const int ExpectedBaselineCount = 174;
 
     [Fact]
     public void EveryConfigProperty_CarriesConfigFieldAttribute()
