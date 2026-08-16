@@ -448,44 +448,84 @@ merged, because there is no property to merge it into.
 | `heartbeat` | object | `null` | Default heartbeat configuration inherited by agents |
 | `fileAccess` | object | `null` | Default file access policy inherited by agents |
 
+#### Inheritance policies
+
+Every per-agent property declares how it behaves when the same property is set at more than one
+layer. The declaration lives on the property itself as `[ConfigInheritance(...)]` and is enforced by
+an architecture test, so a new property cannot be added without stating its layering behaviour.
+
+This matters because the failure it prevents is silent. Before the declaration existed, a property
+nobody remembered to handle in the merge code simply took the agent-local value and discarded the
+inherited one, and nothing distinguished that from a property that was deliberately agent-local. An
+operator would set a default, see it ignored, and have no error to read.
+
+| Policy | Behaviour | Choose it when |
+|--------|-----------|----------------|
+| `ScalarOverride` | Child value replaces the parent value | A single value stands alone - a number, string, bool, or enum |
+| `DeepMerge` | Nested object merged member-by-member | A child should be able to set one member of a block and inherit the rest |
+| `ReplaceAsUnit` | Whole value replaced atomically | The value is only coherent as a complete set, so a partial merge would be wrong or unsafe |
+| `KeyedMerge` | Dictionary merged by key | Each key is an independently-owned subtree |
+| `LocalOnly` | Never inherited | The property identifies this specific instance; a shared value would be wrong by construction |
+| `RuntimeOnly` | Not operator-authored | The runtime populates it, so layering never applies |
+| `Custom` | Named strategy | Nothing above describes it; requires a strategy name |
+
+`LocalOnly`, `RuntimeOnly` and `Custom` must record a justification or strategy name, because each
+asserts a deliberate exception that a future reader cannot verify from the policy name alone.
+
+**Security boundaries use `ReplaceAsUnit`, and the reason is not style.** `fileAccess`, `toolPolicy`,
+`sessionAccess` and `conversationAccess` each bound what an agent may reach. If they were deep-merged,
+an agent's deliberately narrow allowlist would be unioned with a broader inherited one and the agent
+would end up with access neither layer authorised. The drift is silently permissive, which is the
+worst direction for it to fail. The same reasoning applies to `shellCommand`: it is an ordered argv
+array, and merging two command lines element-wise yields an executable with arguments from neither.
+
+`isolationOptions` is `ReplaceAsUnit` for a related reason - the block is interpreted by whichever
+strategy `isolationStrategy` names, so merging options written for one strategy into another produces
+a combination no operator ever authored.
+
+::: tip Declaration, not implementation
+A policy states what *should* happen. The merge engine reads it to decide what *does* happen.
+Where the two disagree, that is a defect in the engine, not a reason to relabel the property.
+:::
+
 #### Per-agent properties
 
 Backed by `AgentDefinitionConfig`. Every key below is a real, bound property; a per-agent value
-overrides the corresponding `agents.defaults` value.
+overrides the corresponding `agents.defaults` value. The `Inherits` column states the declared policy.
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `provider` | string | `null` | Provider name (for example `copilot`) |
-| `displayName` | string | `null` | Human-readable display name shown for this agent in clients |
-| `emoji` | string | `null` | Optional emoji shown alongside the agent name |
-| `description` | string | `null` | Description of the agent's purpose |
-| `model` | string | `null` | Model identifier (for example `gpt-4.1`) |
-| `allowedModels` | array | `null` | Model ids this agent may use. Null means unrestricted within the provider allowlist |
-| `systemPromptFiles` | array | `null` | Ordered list of files to load as the system prompt. Empty means the default order |
-| `systemPromptFile` | string | `null` | Single system prompt file path (legacy - prefer `systemPromptFiles`) |
-| `toolIds` | array | `null` | Tool identifiers this agent has access to |
-| `toolTimeoutSeconds` | int? | inherits | Per-tool timeout in seconds for this agent |
-| `subAgents` | array | `null` | Agent ids this agent can call as sub-agents |
-| `subAgentRoles` | array | `null` | Role names this agent can converse with (role-based grants for `agent_converse`) |
-| `isolationStrategy` | string | `null` | Isolation strategy name (for example `in-process`) |
-| `isolationOptions` | object | `null` | Strategy-specific isolation options |
-| `cacheRetention` | string | `null` | Prompt-caching retention policy. Null means the provider default (short) |
-| `thinking` | string? | `null` | Agent-level default reasoning level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Agent layer of the three-layer model/thinking/context override stack; `null` inherits the model default. An unsupported value causes the agent to be skipped at config load with a warning |
-| `contextWindow` | int? | `null` | Agent-level default context-window size in tokens. Same override stack; validated against the model's advertised sizes |
-| `maxConcurrentSessions` | int? | `null` | Maximum concurrent sessions for this agent |
-| `metadata` | object | `null` | Agent-level metadata |
-| `enabled` | bool | `true` | Whether this agent is enabled and available for routing |
-| `kind` | string | `Named` | Only `Named` is accepted from config. `SubAgent` is rejected - sub-agents are runtime-only |
-| `memory` | object | `null` | Memory system configuration for this agent |
-| `soul` | object | `null` | Soul session lifecycle configuration |
-| `heartbeat` | object | `null` | Heartbeat polling configuration |
-| `dateTimeInjection` | object | `null` | Datetime injection override for this agent |
-| `sessionAccess` | object | `null` | Session access configuration for this agent's session tool |
-| `conversationAccess` | object | `null` | Conversation access configuration for this agent's conversation tool |
-| `fileAccess` | object | `null` | File access policy for this agent's file tools |
-| `shellCommand` | array | `null` | Custom shell command array overriding the gateway-level shell. Element `[0]` is the executable; the agent's command string is appended last |
-| `extensions` | object | `null` | Extension-specific configuration keyed by extension id (for example `botnexus-skills`) |
-| `toolPolicy` | object | `null` | Tool policy overrides for this agent |
+| Property | Type | Default | Inherits | Description |
+|----------|------|---------|----------|-------------|
+| `provider` | string | `null` | `ScalarOverride` | Provider name (for example `copilot`) |
+| `displayName` | string | `null` | `LocalOnly` | Human-readable display name shown for this agent in clients |
+| `emoji` | string | `null` | `LocalOnly` | Optional emoji shown alongside the agent name |
+| `description` | string | `null` | `LocalOnly` | Description of the agent's purpose |
+| `model` | string | `null` | `ScalarOverride` | Model identifier (for example `gpt-4.1`) |
+| `allowedModels` | array | `null` | `ReplaceAsUnit` | Model ids this agent may use. Null means unrestricted within the provider allowlist |
+| `systemPromptFiles` | array | `null` | `ReplaceAsUnit` | Ordered list of files to load as the system prompt. Empty means the default order |
+| `systemPromptFile` | string | `null` | `ScalarOverride` | Single system prompt file path (legacy - prefer `systemPromptFiles`) |
+| `toolIds` | array | `null` | `ReplaceAsUnit` | Tool identifiers this agent has access to |
+| `toolTimeoutSeconds` | int? | inherits | `ScalarOverride` | Per-tool timeout in seconds for this agent |
+| `subAgents` | array | `null` | `ReplaceAsUnit` | Agent ids this agent can call as sub-agents |
+| `subAgentRoles` | array | `null` | `ReplaceAsUnit` | Role names this agent can converse with (role-based grants for `agent_converse`) |
+| `isolationStrategy` | string | `null` | `ScalarOverride` | Isolation strategy name (for example `in-process`) |
+| `isolationOptions` | object | `null` | `ReplaceAsUnit` | Strategy-specific isolation options |
+| `cacheRetention` | string | `null` | `ScalarOverride` | Prompt-caching retention policy. Null means the provider default (short) |
+| `thinking` | string? | `null` | `ScalarOverride` | Agent-level default reasoning level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Agent layer of the three-layer model/thinking/context override stack; `null` inherits the model default. An unsupported value causes the agent to be skipped at config load with a warning |
+| `contextWindow` | int? | `null` | `ScalarOverride` | Agent-level default context-window size in tokens. Same override stack; validated against the model's advertised sizes |
+| `maxConcurrentSessions` | int? | `null` | `ScalarOverride` | Maximum concurrent sessions for this agent |
+| `metadata` | object | `null` | `KeyedMerge` | Agent-level metadata |
+| `enabled` | bool | `true` | `ScalarOverride` | Whether this agent is enabled and available for routing |
+| `kind` | string | `Named` | `LocalOnly` | Only `Named` is accepted from config. `SubAgent` is rejected - sub-agents are runtime-only |
+| `memory` | object | `null` | `DeepMerge` | Memory system configuration for this agent |
+| `soul` | object | `null` | `DeepMerge` | Soul session lifecycle configuration |
+| `heartbeat` | object | `null` | `DeepMerge` | Heartbeat polling configuration |
+| `dateTimeInjection` | object | `null` | `DeepMerge` | Datetime injection override for this agent |
+| `sessionAccess` | object | `null` | `ReplaceAsUnit` | Session access configuration for this agent's session tool |
+| `conversationAccess` | object | `null` | `ReplaceAsUnit` | Conversation access configuration for this agent's conversation tool |
+| `fileAccess` | object | `null` | `ReplaceAsUnit` | File access policy for this agent's file tools |
+| `shellCommand` | array | `null` | `ReplaceAsUnit` | Custom shell command array overriding the gateway-level shell. Element `[0]` is the executable; the agent's command string is appended last |
+| `extensions` | object | `null` | `KeyedMerge` | Extension-specific configuration keyed by extension id (for example `botnexus-skills`) |
+| `toolPolicy` | object | `null` | `ReplaceAsUnit` | Tool policy overrides for this agent |
 
 See [Agent Settings Reference](./user-guide/configuration.md#agent-settings-reference) in the user guide
 for the nested `memory.*`, `soul.*`, `sessionAccess.*`, `toolPolicy.*` and `fileAccess.*` keys.

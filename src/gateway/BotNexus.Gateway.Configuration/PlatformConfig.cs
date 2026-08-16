@@ -970,6 +970,7 @@ public sealed class ExtensionsConfig
 public sealed class AgentDefinitionConfig
 {
     /// <summary>Provider name (e.g. 'copilot').</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public string? Provider { get; set; }
     /// <summary>Human-readable display name.</summary>
     [Display(
@@ -978,10 +979,19 @@ public sealed class AgentDefinitionConfig
         GroupName = "Agent",
         Order = 1)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 1)]
+    [ConfigInheritance(
+        ConfigInheritancePolicy.LocalOnly,
+        Justification = "Names one specific agent. A display name inherited from a shared defaults layer would give every agent the same name in every client.")]
     public string? DisplayName { get; set; }
     /// <summary>Optional emoji shown alongside the agent name in clients.</summary>
+    [ConfigInheritance(
+        ConfigInheritancePolicy.LocalOnly,
+        Justification = "Visual identity of one specific agent; a shared emoji removes the distinction it exists to draw.")]
     public string? Emoji { get; set; }
     /// <summary>Description of the agent's purpose.</summary>
+    [ConfigInheritance(
+        ConfigInheritancePolicy.LocalOnly,
+        Justification = "Describes this agent's particular purpose; inheriting it would assert every agent has the same purpose.")]
     public string? Description { get; set; }
     /// <summary>Model identifier (e.g. 'gpt-4.1').</summary>
     [Display(
@@ -990,25 +1000,35 @@ public sealed class AgentDefinitionConfig
         GroupName = "Agent",
         Order = 2)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 2)]
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public string? Model { get; set; }
     /// <summary>Model IDs this agent is allowed to use. Null means unrestricted within provider allowlist.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ReplaceAsUnit)]
     public List<string>? AllowedModels { get; set; }
     /// <summary>Ordered list of files to load as the system prompt. Empty = default order.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ReplaceAsUnit)]
     public List<string>? SystemPromptFiles { get; set; }
     /// <summary>Path to a single system prompt file (legacy, prefer SystemPromptFiles).</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public string? SystemPromptFile { get; set; }
     /// <summary>Tool identifiers this agent has access to.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ReplaceAsUnit)]
     public List<string>? ToolIds { get; set; }
     /// <summary>Per-tool timeout in seconds for runtime tool execution safety caps.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public int? ToolTimeoutSeconds { get; set; }
     /// <summary>Agent IDs this agent can call as sub-agents.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ReplaceAsUnit)]
     public List<string>? SubAgents { get; set; }
     /// <summary>Role names this agent can converse with (role-based grants for agent_converse).</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ReplaceAsUnit)]
     public List<string>? SubAgentRoles { get; set; }
     /// <summary>Isolation strategy name (e.g. 'in-process').</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public string? IsolationStrategy { get; set; }
     /// <summary>Prompt caching retention policy for this agent. Null means provider default (short) is used.</summary>
     [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<BotNexus.Agent.Providers.Core.Models.CacheRetention>))]
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public BotNexus.Agent.Providers.Core.Models.CacheRetention? CacheRetention { get; set; }
     /// <summary>
     /// Agent-level default thinking (reasoning) level. Agent layer of the three-layer
@@ -1023,6 +1043,7 @@ public sealed class AgentDefinitionConfig
         GroupName = "Agent",
         Order = 4)]
     [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 4)]
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public string? Thinking { get; set; }
     /// <summary>
     /// Agent-level default context-window size in tokens. Agent layer of the three-layer
@@ -1036,12 +1057,18 @@ public sealed class AgentDefinitionConfig
         GroupName = "Agent",
         Order = 5)]
     [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 5)]
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public int? ContextWindow { get; set; }
     /// <summary>Maximum concurrent sessions for this agent.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public int? MaxConcurrentSessions { get; set; }
     /// <summary>Agent-level metadata.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.KeyedMerge)]
     public JsonElement? Metadata { get; set; }
     /// <summary>Strategy-specific isolation options.</summary>
+    [ConfigInheritance(
+        ConfigInheritancePolicy.ReplaceAsUnit,
+        Justification = "Options are interpreted by whichever strategy IsolationStrategy names, so merging a block written for one strategy into another produces a combination no operator authored.")]
     public JsonElement? IsolationOptions { get; set; }
     /// <summary>Whether this agent is enabled.</summary>
     [Display(
@@ -1051,20 +1078,34 @@ public sealed class AgentDefinitionConfig
         Order = 3)]
     [DefaultValue(true)]
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "agent", Order = 3)]
+    [ConfigInheritance(ConfigInheritancePolicy.ScalarOverride)]
     public bool Enabled { get; set; } = true;
     /// <summary>Memory system configuration for this agent.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.DeepMerge)]
     public MemoryAgentConfig? Memory { get; set; }
     /// <summary>Soul session lifecycle configuration for this agent.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.DeepMerge)]
     public SoulAgentConfig? Soul { get; set; }
     /// <summary>Heartbeat polling configuration.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.DeepMerge)]
     public HeartbeatAgentConfig? Heartbeat { get; set; }
     /// <summary>Datetime injection configuration override for this agent. Overrides world default when set.</summary>
+    [ConfigInheritance(ConfigInheritancePolicy.DeepMerge)]
     public DateTimeInjectionConfig? DateTimeInjection { get; set; }
     /// <summary>Session access configuration for this agent's session tool.</summary>
+    [ConfigInheritance(
+        ConfigInheritancePolicy.ReplaceAsUnit,
+        Justification = "Level and AllowedAgents form one access decision. Deep-merging an inherited 'all' under a child 'allowlist' would widen access beyond what either layer authorised.")]
     public SessionAccessConfig? SessionAccess { get; set; }
     /// <summary>Conversation access configuration for this agent's conversation tool.</summary>
+    [ConfigInheritance(
+        ConfigInheritancePolicy.ReplaceAsUnit,
+        Justification = "Same security-boundary reasoning as SessionAccess: the level and its allowlist are only meaningful together.")]
     public ConversationAccessConfig? ConversationAccess { get; set; }
     /// <summary>File access policy for this agent's file tools.</summary>
+    [ConfigInheritance(
+        ConfigInheritancePolicy.ReplaceAsUnit,
+        Justification = "Allow and deny path lists are one policy. Unioning an inherited allow list with a child's narrower one grants filesystem access the child was written to withhold.")]
     public FileAccessPolicyConfig? FileAccess { get; set; }
 
     /// <summary>
@@ -1072,15 +1113,22 @@ public sealed class AgentDefinitionConfig
     /// Element [0] is the executable, remaining elements are base arguments.
     /// The agent's command string is appended as the final argument.
     /// </summary>
+    [ConfigInheritance(
+        ConfigInheritancePolicy.ReplaceAsUnit,
+        Justification = "An ordered argv array. Element-wise merging of two command lines produces an executable with arguments from neither.")]
     public string[]? ShellCommand { get; set; }
 
     /// <summary>
     /// Extension-specific configuration keyed by extension ID.
     /// Each extension reads its own section (e.g., "botnexus-skills", "botnexus-exec").
     /// </summary>
+    [ConfigInheritance(ConfigInheritancePolicy.KeyedMerge)]
     public Dictionary<string, JsonElement>? Extensions { get; set; }
 
     /// <summary>Tool policy overrides for this agent.</summary>
+    [ConfigInheritance(
+        ConfigInheritancePolicy.ReplaceAsUnit,
+        Justification = "AlwaysApprove, NeverApprove, Denied and the AskFallback posture are one approval decision. Merging them across layers can produce a policy that both denies and trusts the same tool.")]
     public ToolPolicyConfig? ToolPolicy { get; set; }
 
     /// <summary>
@@ -1090,6 +1138,9 @@ public sealed class AgentDefinitionConfig
     /// <c>DefaultSubAgentManager.SpawnAsync</c>. Omit the field entirely on existing
     /// configs; the default is <c>Named</c>.
     /// </summary>
+    [ConfigInheritance(
+        ConfigInheritancePolicy.LocalOnly,
+        Justification = "Only Named is accepted from config; SubAgent is produced exclusively by the runtime spawner. Inheriting a kind from a defaults layer could only ever restate the one legal value.")]
     public AgentKind? Kind { get; set; }
 }
 
