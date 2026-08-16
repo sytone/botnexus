@@ -39,6 +39,8 @@ public sealed class HomePageTests : IDisposable
         _ctx.Services.AddSingleton(_store);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(_interaction);
+        // #3064: Home injects the per-agent conversation MRU at the route seam.
+        _ctx.Services.AddSingleton<IConversationMruService, ConversationMruService>();
         _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
@@ -453,6 +455,7 @@ public sealed class HomePageTests : IDisposable
         ctx.Services.AddSingleton<IClientStateStore>(realStore);
         ctx.Services.AddSingleton(_portalLoad);
         ctx.Services.AddSingleton(_interaction);
+        ctx.Services.AddSingleton<IConversationMruService, ConversationMruService>();
         ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));
         ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         ctx.Services.AddSingleton(new HttpClient());

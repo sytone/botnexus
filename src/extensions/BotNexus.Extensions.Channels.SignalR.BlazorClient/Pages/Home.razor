@@ -12,6 +12,7 @@
 @inject IClientStateStore Store
 @inject IPortalLoadService PortalLoad
 @inject IAgentInteractionService Interaction
+@inject IConversationMruService Mru
 @inject NavigationManager Nav
 @implements IDisposable
 
@@ -195,13 +196,42 @@ else
 
             if (routeConversationId is null)
             {
+                // #3064 AC2/AC3: an agent-only route names no conversation, so every component below
+                // would have to resolve identity ambiently from AgentState.ActiveConversationId.
+                // Resolve it ONCE here instead, from this circuit's per-agent MRU, and redirect to the
+                // canonical explicit shape so the URL is the single source of rendered identity.
+                // replace:true is load-bearing: a pushed entry would leave the redirecting route in
+                // history, and Back onto it would immediately redirect forward again - the user could
+                // never navigate back past it. Latch the guard FIRST so the re-render triggered by the
+                // navigation short-circuits at the routeKey check instead of redirecting again (AC6:
+                // does not loop).
                 _appliedRouteKey = routeKey;
+
+                if (Mru.GetMostRecent(routeAgentId) is { Length: > 0 } mruConversationId &&
+                    Store.GetAgent(routeAgentId) is { } mruAgent &&
+                    mruAgent.Conversations.ContainsKey(mruConversationId))
+                {
+                    // A stale MRU entry (archived/deleted conversation) deliberately falls through to
+                    // no redirect rather than sending the user to a dead route; the list converges
+                    // lazily and the agent-only route remains a valid, benign state.
+                    Nav.NavigateTo(
+                        $"agent/{Uri.EscapeDataString(routeAgentId)}/conversation/{Uri.EscapeDataString(mruConversationId)}",
+                        replace: true);
+                }
+
                 return;
             }
 
             var agent = Store.GetAgent(routeAgentId);
             if (agent is null || !agent.Conversations.ContainsKey(routeConversationId))
                 return;
+
+            // #3064 AC1/AC4: the route seam is the single MRU writer. Under #2247 every user-driven
+            // conversation selection navigates to this canonical shape, so recording here captures
+            // exactly the conversations this circuit navigated to - and it happens AFTER the route's
+            // own conversation has already been honoured, so a deep link is never overridden by a
+            // warm MRU entry (the MRU is not consulted at all on this branch).
+            Mru.Record(routeAgentId, routeConversationId);
 
             if (!string.Equals(agent.ActiveConversationId, routeConversationId, StringComparison.Ordinal))
                 await Interaction.SelectConversationAsync(routeAgentId, routeConversationId);

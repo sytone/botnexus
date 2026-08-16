@@ -31,6 +31,8 @@ public sealed class VerticalSliceDataFlowTests : IDisposable
         _prefs.Current.Returns(new PortalPreferences());
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
+        // #3064: Home injects the per-agent conversation MRU at the route seam.
+        _ctx.Services.AddSingleton<IConversationMruService, ConversationMruService>();
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(_interactionService);
         _ctx.Services.AddSingleton<ISlashCommandDispatcher>(sp => new SlashCommandDispatcher(sp.GetRequiredService<IAgentInteractionService>()));

@@ -15,6 +15,10 @@ builder.Services.AddScoped<IGatewayRestClient, GatewayRestClient>();
 builder.Services.AddScoped<IChannelErrorReporter>(sp => (GatewayRestClient)sp.GetRequiredService<IGatewayRestClient>());
 builder.Services.AddScoped<IGatewayEventHandler, GatewayEventHandler>();
 builder.Services.AddScoped<IAgentInteractionService, AgentInteractionService>();
+// #3064: per-agent conversation MRU. SCOPED, never singleton - in Blazor Server one scope is one
+// circuit, so a singleton would share one user's navigation history with every connected user and
+// redirect them into each other's conversations.
+builder.Services.AddScoped<IConversationMruService, ConversationMruService>();
 // #2036: start-conversation orchestration (create -> persist model override -> send first message).
 builder.Services.AddScoped<IStartConversationService, StartConversationService>();
 builder.Services.AddScoped<BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands.ISlashCommandDispatcher, BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands.SlashCommandDispatcher>();
