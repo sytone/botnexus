@@ -326,6 +326,9 @@ public sealed class PlatformConfigAgentSource(
             Enabled = heartbeatConfig.Enabled,
             IntervalMinutes = heartbeatConfig.IntervalMinutes,
             Prompt = heartbeatConfig.Prompt,
+            // #2423: activeHours and ackMaxChars were omitted here, so an effective value that
+            // survived the merge was still dropped on the way into the runtime descriptor.
+            AckMaxChars = heartbeatConfig.AckMaxChars,
             QuietHours = heartbeatConfig.QuietHours is null
                 ? null
                 : new QuietHoursConfig
@@ -334,6 +337,14 @@ public sealed class PlatformConfigAgentSource(
                     Start = heartbeatConfig.QuietHours.Start,
                     End = heartbeatConfig.QuietHours.End,
                     Timezone = heartbeatConfig.QuietHours.Timezone
+                },
+            ActiveHours = heartbeatConfig.ActiveHours is null
+                ? null
+                : new ActiveHoursConfig
+                {
+                    Start = heartbeatConfig.ActiveHours.Start,
+                    End = heartbeatConfig.ActiveHours.End,
+                    Timezone = heartbeatConfig.ActiveHours.Timezone
                 }
         };
     }

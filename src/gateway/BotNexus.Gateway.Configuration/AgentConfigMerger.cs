@@ -211,7 +211,9 @@ public static class AgentConfigMerger
             Enabled = PickBool("enabled", defaults.Enabled, agent.Enabled, agentHbObj),
             IntervalMinutes = PickInt("intervalMinutes", defaults.IntervalMinutes, agent.IntervalMinutes, agentHbObj),
             Prompt = PickNullableString("prompt", defaults.Prompt, agent.Prompt, agentHbObj),
+            AckMaxChars = PickInt("ackMaxChars", defaults.AckMaxChars, agent.AckMaxChars, agentHbObj),
             QuietHours = MergeQuietHours(defaults.QuietHours, agent.QuietHours, agentHbObj),
+            ActiveHours = MergeActiveHours(defaults.ActiveHours, agent.ActiveHours, agentHbObj),
         };
     }
 
@@ -238,6 +240,36 @@ public static class AgentConfigMerger
             Start = PickString("start", defaults.Start, agent.Start, agentQhObj),
             End = PickString("end", defaults.End, agent.End, agentQhObj),
             Timezone = PickNullableString("timezone", defaults.Timezone, agent.Timezone, agentQhObj),
+        };
+    }
+
+    /// <summary>
+    /// Merges the optional <c>activeHours</c> block field-by-field, mirroring <see cref="MergeQuietHours"/>.
+    /// Omitting this merge silently dropped an inherited active window from the effective descriptor (#2423),
+    /// which the heartbeat cron provisioner then bakes into the wrong (unrestricted) schedule.
+    /// </summary>
+    private static ActiveHoursConfig? MergeActiveHours(
+        ActiveHoursConfig? defaults,
+        ActiveHoursConfig? agent,
+        JsonElement? agentHbObj)
+    {
+        if (defaults is null)
+            return agent is null ? null : CloneActiveHours(agent);
+        if (agent is null)
+        {
+            if (agentHbObj is not null && agentHbObj.Value.TryGetProperty("activeHours", out var ahProp) && ahProp.ValueKind == JsonValueKind.Null)
+                return null;
+            return CloneActiveHours(defaults);
+        }
+
+        var agentAhObj = agentHbObj is not null && agentHbObj.Value.TryGetProperty("activeHours", out var aProp) && aProp.ValueKind == JsonValueKind.Object
+            ? aProp : (JsonElement?)null;
+
+        return new ActiveHoursConfig
+        {
+            Start = PickString("start", defaults.Start, agent.Start, agentAhObj),
+            End = PickString("end", defaults.End, agent.End, agentAhObj),
+            Timezone = PickNullableString("timezone", defaults.Timezone, agent.Timezone, agentAhObj),
         };
     }
 
@@ -345,7 +377,16 @@ public static class AgentConfigMerger
         Enabled = src.Enabled,
         IntervalMinutes = src.IntervalMinutes,
         Prompt = src.Prompt,
+        AckMaxChars = src.AckMaxChars,
         QuietHours = src.QuietHours is null ? null : CloneQuietHours(src.QuietHours),
+        ActiveHours = src.ActiveHours is null ? null : CloneActiveHours(src.ActiveHours),
+    };
+
+    private static ActiveHoursConfig CloneActiveHours(ActiveHoursConfig src) => new()
+    {
+        Start = src.Start,
+        End = src.End,
+        Timezone = src.Timezone,
     };
 
     private static QuietHoursConfig CloneQuietHours(QuietHoursConfig src) => new()

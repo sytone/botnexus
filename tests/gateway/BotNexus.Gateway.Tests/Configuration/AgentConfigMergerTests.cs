@@ -205,6 +205,188 @@ public sealed class AgentConfigMergerTests
     }
 
     // -------------------------------------------------------------------------
+    // Heartbeat merge — activeHours / ackMaxChars inheritance (#2423)
+    //
+    // Both properties are valid HeartbeatAgentConfig members that MergeHeartbeat and
+    // CloneHeartbeat previously omitted entirely, so a value set in agents.defaults or by
+    // an agent override was silently dropped from the effective descriptor.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Merge_ActiveHoursAndAckMaxCharsInDefaultsOnly_ReachEffectiveDescriptor()
+    {
+        // Arrange — defaults supply both properties; the agent's heartbeat block mentions neither.
+        var defaults = new AgentDefaultsConfig
+        {
+            Heartbeat = new HeartbeatAgentConfig
+            {
+                Enabled = true,
+                IntervalMinutes = 30,
+                AckMaxChars = 500,
+                ActiveHours = new ActiveHoursConfig { Start = "09:00", End = "17:00", Timezone = "Europe/London" }
+            }
+        };
+        var agent = new AgentDefinitionConfig
+        {
+            Provider = "copilot",
+            Model = "gpt-4.1",
+            Heartbeat = new HeartbeatAgentConfig { IntervalMinutes = 60 }
+        };
+        var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","heartbeat":{"intervalMinutes":60}}""").RootElement;
+
+        // Act
+        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+
+        // Assert
+        result.Heartbeat.ShouldNotBeNull();
+        result.Heartbeat!.AckMaxChars.ShouldBe(500);              // inherited from defaults
+        result.Heartbeat.ActiveHours.ShouldNotBeNull();
+        result.Heartbeat.ActiveHours!.Start.ShouldBe("09:00");
+        result.Heartbeat.ActiveHours.End.ShouldBe("17:00");
+        result.Heartbeat.ActiveHours.Timezone.ShouldBe("Europe/London");
+        result.Heartbeat.IntervalMinutes.ShouldBe(60);            // unrelated override still honoured
+    }
+
+    [Fact]
+    public void Merge_ActiveHoursAndAckMaxCharsOnAgentOnly_SurviveWithNoDefaultsBlock()
+    {
+        // Arrange — no heartbeat defaults at all; the agent supplies both properties itself.
+        var defaults = new AgentDefaultsConfig();
+        var agent = new AgentDefinitionConfig
+        {
+            Provider = "copilot",
+            Model = "gpt-4.1",
+            Heartbeat = new HeartbeatAgentConfig
+            {
+                AckMaxChars = 120,
+                ActiveHours = new ActiveHoursConfig { Start = "06:30", End = "22:15", Timezone = "America/Los_Angeles" }
+            }
+        };
+        var raw = JsonDocument.Parse(
+            """{"provider":"copilot","model":"gpt-4.1","heartbeat":{"ackMaxChars":120,"activeHours":{"start":"06:30","end":"22:15","timezone":"America/Los_Angeles"}}}""").RootElement;
+
+        // Act
+        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+
+        // Assert
+        result.Heartbeat.ShouldNotBeNull();
+        result.Heartbeat!.AckMaxChars.ShouldBe(120);
+        result.Heartbeat.ActiveHours.ShouldNotBeNull();
+        result.Heartbeat.ActiveHours!.Start.ShouldBe("06:30");
+        result.Heartbeat.ActiveHours.End.ShouldBe("22:15");
+        result.Heartbeat.ActiveHours.Timezone.ShouldBe("America/Los_Angeles");
+    }
+
+    [Fact]
+    public void Merge_ActiveHoursAndAckMaxCharsInBoth_AgentOverrideWins()
+    {
+        // Arrange — both sides supply both properties; the agent must win field by field.
+        var defaults = new AgentDefaultsConfig
+        {
+            Heartbeat = new HeartbeatAgentConfig
+            {
+                Enabled = true,
+                AckMaxChars = 500,
+                ActiveHours = new ActiveHoursConfig { Start = "09:00", End = "17:00", Timezone = "Europe/London" }
+            }
+        };
+        var agent = new AgentDefinitionConfig
+        {
+            Provider = "copilot",
+            Model = "gpt-4.1",
+            Heartbeat = new HeartbeatAgentConfig
+            {
+                AckMaxChars = 80,
+                ActiveHours = new ActiveHoursConfig { Start = "07:00", End = "17:00", Timezone = "Europe/London" }
+            }
+        };
+        // The agent's raw JSON overrides ackMaxChars and only activeHours.start.
+        var raw = JsonDocument.Parse(
+            """{"provider":"copilot","model":"gpt-4.1","heartbeat":{"ackMaxChars":80,"activeHours":{"start":"07:00"}}}""").RootElement;
+
+        // Act
+        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+
+        // Assert
+        result.Heartbeat.ShouldNotBeNull();
+        result.Heartbeat!.AckMaxChars.ShouldBe(80);               // agent override wins
+        result.Heartbeat.ActiveHours.ShouldNotBeNull();
+        result.Heartbeat.ActiveHours!.Start.ShouldBe("07:00");    // agent override wins
+        result.Heartbeat.ActiveHours.End.ShouldBe("17:00");       // inherited: absent from agent raw JSON
+        result.Heartbeat.ActiveHours.Timezone.ShouldBe("Europe/London");
+        result.Heartbeat.Enabled.ShouldBeTrue();                  // inherited
+    }
+
+    [Fact]
+    public void Merge_AgentExplicitlyNullsActiveHours_SuppressesInheritedWindow()
+    {
+        // Arrange — an explicit JSON null must mean "no active window", not "inherit".
+        var defaults = new AgentDefaultsConfig
+        {
+            Heartbeat = new HeartbeatAgentConfig
+            {
+                ActiveHours = new ActiveHoursConfig { Start = "09:00", End = "17:00" }
+            }
+        };
+        var agent = new AgentDefinitionConfig
+        {
+            Provider = "copilot",
+            Model = "gpt-4.1",
+            Heartbeat = new HeartbeatAgentConfig { IntervalMinutes = 15 }
+        };
+        var raw = JsonDocument.Parse(
+            """{"provider":"copilot","model":"gpt-4.1","heartbeat":{"intervalMinutes":15,"activeHours":null}}""").RootElement;
+
+        // Act
+        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+
+        // Assert
+        result.Heartbeat.ShouldNotBeNull();
+        result.Heartbeat!.ActiveHours.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Categorical guard against the #2423 defect class: <c>CloneHeartbeat</c> (reached via
+    /// <see cref="AgentConfigMerger.Merge"/> when only the defaults carry a heartbeat block) must
+    /// round-trip EVERY settable property of <see cref="HeartbeatAgentConfig"/>. A property added
+    /// later and forgotten in the clone fails here by name rather than silently losing data.
+    /// </summary>
+    [Fact]
+    public void Merge_InheritsDefaultsHeartbeat_CloneRoundTripsEveryProperty()
+    {
+        // Arrange — every property set to a non-default, distinguishable value.
+        var source = new HeartbeatAgentConfig
+        {
+            Enabled = false,
+            IntervalMinutes = 17,
+            Prompt = "Custom heartbeat prompt.",
+            AckMaxChars = 77,
+            QuietHours = new QuietHoursConfig { Enabled = true, Start = "21:30", End = "05:45", Timezone = "UTC" },
+            ActiveHours = new ActiveHoursConfig { Start = "08:15", End = "19:45", Timezone = "Asia/Tokyo" }
+        };
+        var defaults = new AgentDefaultsConfig { Heartbeat = source };
+        var agent = new AgentDefinitionConfig { Provider = "copilot", Model = "gpt-4.1" };
+
+        // Act — agent has no heartbeat block, so the whole default block is cloned.
+        var clone = AgentConfigMerger.Merge(defaults, agent, agentRawElement: null).Heartbeat;
+
+        // Assert — a real clone, not the same instance, carrying identical values everywhere.
+        clone.ShouldNotBeNull();
+        clone.ShouldNotBeSameAs(source);
+        clone!.ActiveHours.ShouldNotBeSameAs(source.ActiveHours);
+        clone.QuietHours.ShouldNotBeSameAs(source.QuietHours);
+
+        foreach (var property in typeof(HeartbeatAgentConfig).GetProperties().Where(p => p.CanRead && p.CanWrite))
+        {
+            var expected = JsonSerializer.Serialize(property.GetValue(source));
+            var actual = JsonSerializer.Serialize(property.GetValue(clone));
+            actual.ShouldBe(
+                expected,
+                $"HeartbeatAgentConfig.{property.Name} was dropped by CloneHeartbeat (regression of #2423).");
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // FileAccess merge — list replacement (scenario 7)
     // -------------------------------------------------------------------------
 

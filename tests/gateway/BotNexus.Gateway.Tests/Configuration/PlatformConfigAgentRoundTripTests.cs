@@ -351,7 +351,10 @@ public sealed class PlatformConfigAgentRoundTripTests : IDisposable
                 Enabled = true,
                 IntervalMinutes = 45,
                 Prompt = "Check tasks.",
-                QuietHours = new QuietHoursConfig { Enabled = true, Start = "22:00", End = "07:00", Timezone = "UTC" }
+                // #2423: both properties must survive save -> reload -> descriptor projection.
+                AckMaxChars = 175,
+                QuietHours = new QuietHoursConfig { Enabled = true, Start = "22:00", End = "07:00", Timezone = "UTC" },
+                ActiveHours = new ActiveHoursConfig { Start = "08:30", End = "18:45", Timezone = "Europe/London" }
             },
             DateTimeInjection = new DateTimeInjectionConfig { Enabled = true, Timezone = "UTC", Format = "iso8601" },
             SessionAccessLevel = "allowlist",
@@ -415,6 +418,11 @@ public sealed class PlatformConfigAgentRoundTripTests : IDisposable
         effective.Heartbeat.Prompt.ShouldBe(submitted.Heartbeat.Prompt);
         effective.Heartbeat.QuietHours!.Start.ShouldBe(submitted.Heartbeat.QuietHours!.Start);
         effective.Heartbeat.QuietHours.End.ShouldBe(submitted.Heartbeat.QuietHours.End);
+        effective.Heartbeat.AckMaxChars.ShouldBe(submitted.Heartbeat.AckMaxChars);
+        effective.Heartbeat.ActiveHours.ShouldNotBeNull();
+        effective.Heartbeat.ActiveHours!.Start.ShouldBe(submitted.Heartbeat.ActiveHours!.Start);
+        effective.Heartbeat.ActiveHours.End.ShouldBe(submitted.Heartbeat.ActiveHours.End);
+        effective.Heartbeat.ActiveHours.Timezone.ShouldBe(submitted.Heartbeat.ActiveHours.Timezone);
 
         effective.DateTimeInjection.ShouldNotBeNull();
         effective.DateTimeInjection!.Enabled.ShouldBe(submitted.DateTimeInjection!.Enabled);
