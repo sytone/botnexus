@@ -212,7 +212,7 @@ change. A refactor that reduces coverage is a regression.
 | Scenarios | `tests/scenarios/` | Channel-agnostic acceptance tests. Read `tests/scenarios/AGENTS.md` before adding one. Always runs. |
 | Unit / integration | `tests/gateway/`, `tests/agent/`, `tests/domain/`, `tests/extensions/`, `tests/persistence/`, `tests/integration/` | Focused behaviour coverage. |
 | Component (bUnit) | alongside the Blazor test projects | **Mandatory** for every `.razor` component — default/empty render, render with data, user interaction, and edge cases (loading, error, empty list). |
-| Container / e2e | `tests/container/`, `tests/e2e/` | Full-stack verification. |
+| Container / e2e | `tests/scenarios/container/`, `tests/e2e/` | Full-stack verification. |
 
 ### Test warnings are failures
 

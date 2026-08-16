@@ -341,6 +341,23 @@ public sealed class VirtualWorld : IAsyncDisposable
     }
 
     /// <summary>
+    /// Returns every agent currently registered with the platform. Bring-up journeys need
+    /// this to assert the <em>starting</em> state — that a fresh world genuinely has no
+    /// agents — which is what distinguishes a first-agent bring-up journey from an ordinary
+    /// message round-trip. Exposed as a typed verb rather than letting scenarios resolve
+    /// <c>IAgentRegistry</c>, per the <c>ScenarioTests_DoNotDependOnIServiceProvider</c> rule.
+    /// </summary>
+    public Task<IReadOnlyList<RegisteredAgent>> ListAgentsAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<RegisteredAgent> agents =
+        [
+            .. _agentRegistry.GetAll().Select(d => new RegisteredAgent(d.AgentId.Value, d.DisplayName))
+        ];
+        return Task.FromResult(agents);
+    }
+
+    /// <summary>
     /// Returns a read-only snapshot view of the conversation for assertion purposes.
     /// </summary>
     public async Task<ConversationView?> GetConversationAsync(string conversationId, CancellationToken cancellationToken = default)

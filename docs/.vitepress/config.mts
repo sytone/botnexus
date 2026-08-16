@@ -164,6 +164,7 @@ export default defineConfig({
           { text: 'Issue Conventions', link: '/development/issue-conventions' },
           { text: 'CLI Wizard Framework', link: '/development/cli-wizard' },
           { text: 'Container Integration Testing', link: '/development/container-integration-testing' },
+          { text: 'Scenario Test Framework Decision', link: '/development/scenario-test-framework-decision' },
           { text: 'E2E Tests', link: '/development/e2e-tests' },
           { text: 'Triggers and Federation', link: '/development/triggers-and-federation' },
           { text: 'WebUI Connection', link: '/development/webui-connection' },
