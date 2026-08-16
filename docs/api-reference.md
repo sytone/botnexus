@@ -7,16 +7,16 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 1. [Overview](#overview)
 2. [Sparse Fieldsets](#sparse-fieldsets-fields)
 3. [Authentication](#authentication)
-3. [Agent Management](#agent-management)
-4. [Skills Management](#skills-management)
-5. [Channels Management](#channels-management)
-6. [Extensions Management](#extensions-management)
-7. [Chat](#chat)
-8. [Commands](#commands)
-9. [Session Management](#session-management)
-10. [System & Status](#system--status)
-11. [Error Handling](#error-handling)
-12. [Webhooks](#webhooks)
+4. [Agent Management](#agent-management)
+5. [Skills Management](#skills-management)
+6. [Channels Management](#channels-management)
+7. [Extensions Management](#extensions-management)
+8. [Chat](#chat)
+9. [Commands](#commands)
+10. [Session Management](#session-management)
+11. [System & Status](#system--status)
+12. [Error Handling](#error-handling)
+13. [Webhooks](#webhooks)
 
 ---
 
@@ -2243,6 +2243,412 @@ DELETE /api/nav-order/{key}
 
 Removes the user override for `{key}`, restoring its built-in default. Returns the full updated
 ordered list.
+
+---
+
+### Locations
+
+Manages the gateway's named locations - filesystem roots, databases, APIs, remote nodes and MCP
+servers - that agents and extensions resolve by name. Locations come from two places: those
+**declared** in the `gateway.locations` section of `config.json` (user-defined, mutable through
+this API) and those contributed by the world descriptor (built-in, read-only). `isUserDefined`
+distinguishes them, and only user-defined locations can be created, updated or deleted.
+
+Database connection strings are never returned. A location holding one reports
+`"pathOrEndpoint": "(redacted)"` with `hasConfiguredSecret: true`.
+
+#### List Locations
+
+```http
+GET /api/locations
+```
+
+Returns every resolved location, sorted by name (case-insensitive).
+
+```json
+[
+  {
+    "name": "vault",
+    "type": "filesystem",
+    "pathOrEndpoint": "D:/notes",
+    "description": "Obsidian vault",
+    "status": "healthy",
+    "isUserDefined": true,
+    "hasConfiguredSecret": false
+  }
+]
+```
+
+`status` is only evaluated for `filesystem` locations on this route (`healthy` when the directory
+exists, `unhealthy` when it does not); every other type reports `unknown`. Use the per-location
+check route below for an active probe.
+
+#### Get a Location
+
+```http
+GET /api/locations/{name}
+```
+
+Name matching is case-insensitive. Returns `404` when no location resolves. `status` is always
+`unknown` on this route - it does no probing.
+
+#### Create a Location
+
+```http
+POST /api/locations
+Content-Type: application/json
+
+{
+  "name": "vault",
+  "type": "filesystem",
+  "value": "D:/notes",
+  "description": "Obsidian vault"
+}
+```
+
+`type` defaults to `filesystem`. `value` carries the path, endpoint or connection string according
+to the type. Returns `201 Created` with the new `LocationResponse`, `400` when the name is blank or
+the definition fails validation, and `409 Conflict` when a location of that name already exists.
+
+The existence check, the insert and the config write all happen inside the configuration writer
+lock, so two concurrent creates cannot each persist their own stale view.
+
+#### Update a Location
+
+```http
+PUT /api/locations/{name}
+Content-Type: application/json
+
+{ "type": "filesystem", "value": "E:/notes", "description": "Moved" }
+```
+
+A `name` in the body is optional, but when present it must match the route name or the request is
+rejected with `400`. Returns `404` when the location does not exist. Read-rebuild-write happens
+under the writer lock, so a concurrent mutation of a different location cannot be erased.
+
+#### Delete a Location
+
+```http
+DELETE /api/locations/{name}
+```
+
+Returns `204 No Content` on success and `404` when the location does not exist. Only entries
+declared in `config.json` can be removed.
+
+#### Check a Location
+
+```http
+POST /api/locations/{name}/check
+```
+
+Runs a type-appropriate health probe and returns the outcome:
+
+```json
+{ "name": "vault", "status": "healthy", "message": "Directory exists." }
+```
+
+| Type | Probe |
+| --- | --- |
+| `filesystem` | Directory existence |
+| `database` | Connection string presence only - no connection is opened |
+| `api`, `remotenode`, `mcpserver` | HTTP `HEAD` against the endpoint, falling back to `GET` on `405`, with a 5-second timeout |
+| anything else | `unknown` - not supported for health checks |
+
+`status` is `healthy` or `unhealthy`; `message` carries the reason (`HTTP 200`, `Directory not
+found.`, `Health check timed out.`, or the exception message).
+
+---
+
+### Gateway Self-Update
+
+Exposes the gateway's auto-update state and control actions. The status read is served from cached
+state so it never blocks on GitHub; refreshing and starting are explicit actions.
+
+#### Update Status
+
+```http
+GET /api/gateway/update/status
+```
+
+Returns the cached status **without** contacting GitHub:
+
+```json
+{
+  "enabled": true,
+  "isChecking": false,
+  "isUpdateAvailable": true,
+  "isUpdateInProgress": false,
+  "currentCommitSha": "2d33f592...",
+  "currentCommitShort": "2d33f59",
+  "latestCommitSha": "9f10ab22...",
+  "latestCommitShort": "9f10ab2",
+  "lastCheckedAt": "2026-08-16T09:00:00Z",
+  "nextCheckAt": "2026-08-16T10:00:00Z",
+  "repositoryOwner": "sytone",
+  "repositoryName": "botnexus",
+  "branch": "main",
+  "compareUrl": "https://github.com/sytone/botnexus/compare/2d33f59...9f10ab2",
+  "error": null
+}
+```
+
+#### Force a Check
+
+```http
+POST /api/gateway/update/check
+```
+
+Forces an immediate GitHub poll, refreshes the cache and returns the same shape. Transient
+failures do **not** throw - the result is returned with `error` populated instead, so a non-null
+`error` alongside a `200` is the expected failure signal.
+
+#### Start an Update
+
+```http
+POST /api/gateway/update/start
+```
+
+Validates prerequisites and spawns the CLI update process.
+
+```json
+{ "started": true, "processId": 24188, "message": "Update process started." }
+```
+
+| Status | Meaning |
+| --- | --- |
+| `202 Accepted` | The update process was launched; `processId` identifies it |
+| `409 Conflict` | An update is already in progress |
+| `412 Precondition Failed` | Configuration or runtime prerequisites are missing |
+
+---
+
+### Agent Workspace Files
+
+Read and write access to files under an agent's workspace directory. Every path is
+workspace-relative and is validated against the workspace root before use - an absolute path, a
+path containing a null byte, or any path that resolves outside the workspace (including through a
+symlink) is rejected with `400` or `403`. An unknown `agentId` returns `404`.
+
+#### List the Workspace Tree
+
+```http
+GET /api/agents/{agentId}/workspace?depth=2
+```
+
+Returns a depth-limited tree rooted at the workspace directory. `depth` defaults to `2` and must be
+between `0` and `5`; anything else returns `400`. A workspace directory that does not exist yet
+returns `200` with an empty `entries` array rather than `404`.
+
+```json
+{
+  "path": "",
+  "depthLimit": 2,
+  "entries": [
+    { "name": "playbook", "path": "playbook", "type": "directory", "children": [] },
+    { "name": "SOUL.md", "path": "SOUL.md", "type": "file", "size": 2048 }
+  ]
+}
+```
+
+Entries that vanish between enumeration and stat are skipped rather than failing the whole listing.
+
+#### Read a Workspace File
+
+```http
+GET /api/agents/{agentId}/workspace/{**path}
+```
+
+When `path` resolves to a **directory**, the response is a `WorkspaceDirectoryResponse` listing its
+immediate children. When it resolves to a **file**:
+
+```json
+{
+  "path": "SOUL.md",
+  "type": "text",
+  "size": 2048,
+  "encoding": "utf-8",
+  "content": "# SOUL.md ...",
+  "isTruncated": false
+}
+```
+
+At most **512 KB** is read. A larger file is returned truncated with `isTruncated: true`. Content
+that does not decode as text is reported as `"type": "binary"` with no `content` field.
+
+#### Write a Workspace File
+
+```http
+PUT /api/agents/{agentId}/workspace/{**path}
+Content-Type: application/json
+
+{ "content": "# notes\n" }
+```
+
+Writes UTF-8 text to the path, creating it if necessary. Returns `204 No Content` on success.
+
+#### Delete a Workspace Entry
+
+```http
+DELETE /api/agents/{agentId}/workspace/{**path}?force=true
+```
+
+Returns `204 No Content` on success. A non-empty directory returns `409 Conflict` unless
+`force=true`, which deletes recursively.
+
+**Protected files cannot be deleted through this API.** The check is a case-insensitive *filename*
+comparison, so it also protects copies in subdirectories (for example `playbook/SOUL.md`):
+
+`SOUL.md`, `IDENTITY.md`, `MEMORY.md`, `AGENTS.md`, `USER.md`, `WORLD.md`, `TOOLS.md`,
+`HEARTBEAT.md`
+
+A delete targeting one of these returns `403 Forbidden`.
+
+---
+
+### Agent Reports
+
+Read-only access to markdown reports in the `reports/` directory of an agent workspace. This is a
+narrower surface than the workspace API: names may not contain a path separator, may not be rooted,
+and must end in `.md`, so the endpoint can only ever serve files directly inside `reports/`.
+
+#### List Reports
+
+```http
+GET /api/agents/{agentId}/reports
+```
+
+```json
+{
+  "reports": [
+    { "name": "weekly.md", "size": 4096, "lastModifiedUtc": "2026-08-16T08:00:00Z" }
+  ]
+}
+```
+
+Sorted by name. A missing `reports/` directory returns an empty array, not `404`.
+
+#### Read a Report
+
+```http
+GET /api/agents/{agentId}/reports/{**name}
+```
+
+```json
+{
+  "name": "weekly.md",
+  "size": 3980,
+  "isTruncated": false,
+  "lastModifiedUtc": "2026-08-16T08:00:00Z",
+  "content": "# Weekly report ...",
+  "encoding": "utf-8"
+}
+```
+
+`size` is the **decoded character count of the content returned**, not the file size on disk - use
+`isTruncated` to detect that the file was larger. The read cap is
+`gateway.workspace.maxReportFileSizeBytes` (default 512 KB). Non-text content returns `400`; a name
+that is not a bare `.md` filename returns `400`; a path escaping the reports directory returns
+`403`.
+
+---
+
+### Recent Logs
+
+```http
+GET /api/log/recent?limit=100
+```
+
+Returns recent structured log entries from the in-memory ring buffer for diagnostics. `limit`
+defaults to `100`. The route is also served under the `/api/logs` prefix.
+
+```http
+POST /api/log
+Content-Type: application/json
+
+{ "level": "error", "message": "render failed", "data": "...", "version": "1.4.0" }
+```
+
+Accepts a log entry from the portal client and writes it into the gateway log at the mapped level
+(`error`/`err` -> Error, `warn`/`warning` -> Warning, `debug` -> Debug, anything else ->
+Information).
+
+---
+
+### Diagnostics: Channel Error Report
+
+```http
+POST /api/diagnostics/channel-error
+```
+
+Accepts an error report from any channel adapter and logs it at Error level with the agent,
+session, URL, user agent, message, component stack and stack trace. All string fields are sanitised
+before logging. A missing body returns `400`.
+
+---
+
+### Diagnostics: Log Patterns
+
+```http
+GET /api/diagnostics/log-patterns?hours=24&page=0&pageSize=50
+```
+
+Returns deduplicated Warning/Error/Critical log patterns observed within a time window, keyed on a
+stable fingerprint derived from the message-template hash - so a template fired 400 times with
+different parameters is one row, not 400. `hours` is clamped to `1-168`, `pageSize` to `1-200`, and
+`page` is zero-based. Returns `404` when log diagnostics are not enabled.
+
+---
+
+### Diagnostics: Memory Pressure
+
+```http
+GET /api/diagnostics/memory-pressure
+```
+
+Returns a point-in-time memory snapshot with both raw byte counts and human-readable forms, GC
+collection counts per generation, a pressure percentage, a `level`, and operator `guidance`.
+
+```json
+{
+  "capturedAt": "2026-08-16T09:00:00Z",
+  "workingSetBytes": 612368384,
+  "gcCommittedBytes": 402653184,
+  "totalAvailableBytes": 8589934592,
+  "gen0Collections": 812,
+  "gen1Collections": 190,
+  "gen2Collections": 12,
+  "pressurePercent": 7.1,
+  "workingSetReadable": "584 MB",
+  "gcCommittedReadable": "384 MB",
+  "totalAvailableReadable": "8 GB",
+  "level": "Normal",
+  "guidance": "No action required."
+}
+```
+
+```http
+GET /api/diagnostics/memory-pressure/history?count=10
+```
+
+Returns recent snapshots for trend analysis in the same per-snapshot shape. `count` is clamped to
+`1-100` and defaults to `10`. Both routes return `404` when memory pressure monitoring is not
+enabled.
+
+---
+
+### Diagnostics: Active Loops
+
+```http
+GET /api/diagnostics/loops
+```
+
+Returns agent loop concurrency metrics for capacity monitoring.
+
+```json
+{ "activeCount": 2, "peakCount": 9, "totalCompleted": 1483 }
+```
+
+Returns `404` when active loop tracking is not enabled.
 
 ---
 

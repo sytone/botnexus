@@ -1296,6 +1296,29 @@ See [Hybrid memory retrieval](./features/hybrid-memory-retrieval.md) for the ide
 fingerprint semantics.
 
 
+#### Workspace Portal Limits (`workspace`)
+
+Controls how much of a report file the gateway will read when serving it to the portal through
+[`GET /api/agents/{agentId}/reports/{name}`](./api-reference.md#agent-reports).
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `Workspace.MaxReportFileSizeBytes` | int | `524288` (512 KB) | Maximum number of bytes read from a report file for portal preview. Larger files are truncated server-side and flagged with `isTruncated` in the response. Set to `0` for no server-side limit. |
+
+```json
+{
+  "gateway": {
+    "workspace": {
+      "maxReportFileSizeBytes": 1048576
+    }
+  }
+}
+```
+
+This limit applies to the reports API only. The workspace file API
+([`GET /api/agents/{agentId}/workspace/{path}`](./api-reference.md#agent-workspace-files)) uses a
+fixed 512 KB read cap that is not configurable.
+
 #### Shell Execution Settings
 
 Gateway-level shell settings control the default shell behavior for all agents. Individual agents can override these with per-agent `shellCommand` (see [Agent Configuration](#agentconfig-per-agent-customization)).

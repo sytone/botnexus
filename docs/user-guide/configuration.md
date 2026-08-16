@@ -129,6 +129,9 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `rateLimit.enabled` | bool | `false` | Enable per-client rate limiting (opt-in) |
 | `secretRedaction.patterns` | array | `[]` | Extra operator-supplied .NET regexes whose matches are replaced with `[REDACTED]`. Applied **in addition to** the built-in credential patterns, never instead of them. Validated at startup |
 | `secretRedaction.matchTimeoutMilliseconds` | int | `100` | Per-pattern match timeout, so a catastrophic-backtracking regex cannot hang the logging path. Must be greater than zero |
+| `toolOutputBudget.enabled` | bool | `true` | Enables the central tool-output backstop that bounds every tool result before it reaches the model |
+| `toolOutputBudget.maxBytes` | int | `262144` (256 KiB) | Max UTF-8 byte size of a single tool result returned to the model. `0` or less disables the backstop even when `enabled` is true |
+| `workspace.maxReportFileSizeBytes` | int | `524288` (512 KB) | Max bytes read from a report file for portal preview; larger files are truncated and flagged. `0` means no limit |
 
 ### Remote and mesh access
 
