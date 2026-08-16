@@ -180,13 +180,13 @@ internal sealed class PromptCommands
 
         if (!File.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/].");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/].");
             return 1;
         }
 
         if (!TryParseParameters(rawParameters, out var parameters, out var parseError))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(parseError ?? "Invalid parameter format.")}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(parseError ?? "Invalid parameter format.")}");
             return 1;
         }
 
@@ -210,7 +210,7 @@ internal sealed class PromptCommands
             if (!resolver.TryRender(AgentId.From(resolvedAgentId!), templateName, parameters, out var rendered, out var error))
             {
                 if (!string.IsNullOrWhiteSpace(error))
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(error)}");
+                    AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(error)}");
                 return 1;
             }
 
@@ -233,7 +233,7 @@ internal sealed class PromptCommands
         _ = cancellationToken;
         if (!File.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/].");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/].");
             return 1;
         }
 
@@ -289,7 +289,7 @@ internal sealed class PromptCommands
 
         if (!TryParseParameters(rawParameters, out var parameters, out var parseError))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(parseError ?? "Invalid parameter format.")}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(parseError ?? "Invalid parameter format.")}");
             return 1;
         }
 
@@ -303,7 +303,7 @@ internal sealed class PromptCommands
             if (!resolver.TryRender(AgentId.From(resolvedAgentId!), templateName, parameters, out renderedPrompt, out var renderError))
             {
                 if (!string.IsNullOrWhiteSpace(renderError))
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(renderError)}");
+                    AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(renderError)}");
                 return 1;
             }
         }
@@ -333,7 +333,7 @@ internal sealed class PromptCommands
             GatewayClientFactory.DefaultCredentialSource());
         if (resolution.IsRefused)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(resolution.RefusalMessage!)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(resolution.RefusalMessage!)}");
             return 1;
         }
 
@@ -352,7 +352,7 @@ internal sealed class PromptCommands
         }
 
         if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Rendered template {Markup.Escape(templateName)} and invoked {Markup.Escape(endpoint)}[/]");
+            AnsiConsole.MarkupLine($"[dim]Rendered template {CliText.SafeDisplay(templateName)} and invoked {CliText.SafeDisplay(endpoint)}[/]");
 
         var chatResponse = JsonSerializer.Deserialize<ChatResponsePayload>(responseText, new JsonSerializerOptions
         {
@@ -386,12 +386,12 @@ internal sealed class PromptCommands
                 copied++;
             }
 
-            AnsiConsole.MarkupLine($"[green]✓[/] Copied {copied} sample template(s) to [dim]{Markup.Escape(promptsDir)}[/]");
+            AnsiConsole.MarkupLine($"[green]✓[/] Copied {copied} sample template(s) to [dim]{CliText.SafeDisplay(promptsDir)}[/]");
             return 0;
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Failed to copy samples: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Failed to copy samples: {CliText.SafeDisplay(ex.Message)}");
             return 1;
         }
     }
@@ -479,7 +479,7 @@ internal sealed class PromptCommands
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {CliText.SafeDisplay(ex.Message)}");
             return null;
         }
     }

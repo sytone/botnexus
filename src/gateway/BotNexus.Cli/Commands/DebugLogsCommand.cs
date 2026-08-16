@@ -127,7 +127,7 @@ internal sealed class DebugLogsCommand
     {
         if (!Directory.Exists(logsDir))
         {
-            AnsiConsole.MarkupLine("[red]Logs directory not found:[/] " + Markup.Escape(logsDir));
+            AnsiConsole.MarkupLine("[red]Logs directory not found:[/] " + CliText.SafeDisplay(logsDir));
             return 1;
         }
 
@@ -147,7 +147,7 @@ internal sealed class DebugLogsCommand
     {
         if (!Directory.Exists(logsDir))
         {
-            AnsiConsole.MarkupLine("[red]Logs directory not found:[/] " + Markup.Escape(logsDir));
+            AnsiConsole.MarkupLine("[red]Logs directory not found:[/] " + CliText.SafeDisplay(logsDir));
             return 1;
         }
 
@@ -156,7 +156,7 @@ internal sealed class DebugLogsCommand
         {
             if (!DateTime.TryParse(since, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
             {
-                AnsiConsole.MarkupLine($"[red]Invalid --since datetime:[/] {Markup.Escape(since)}");
+                AnsiConsole.MarkupLine($"[red]Invalid --since datetime:[/] {CliText.SafeDisplay(since)}");
                 return 1;
             }
             sinceDate = parsed.ToLocalTime();
@@ -166,7 +166,7 @@ internal sealed class DebugLogsCommand
 
         if (lines.Count == 0)
         {
-            AnsiConsole.MarkupLine($"[yellow]No log lines found containing:[/] {Markup.Escape(term)}");
+            AnsiConsole.MarkupLine($"[yellow]No log lines found containing:[/] {CliText.SafeDisplay(term)}");
             return 0;
         }
 
@@ -328,16 +328,16 @@ internal sealed class DebugLogsCommand
                 "WRN" => "[yellow]WRN[/]",
                 "INF" => "[green]INF[/]",
                 "DBG" => "[dim]DBG[/]",
-                _ => Markup.Escape(entry.Level ?? "???")
+                _ => CliText.SafeDisplay(entry.Level ?? "???")
             };
 
             if (entry.Timestamp is not null)
             {
-                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(entry.Timestamp)}[/] {levelMarkup} {Markup.Escape(entry.Message ?? "")}");
+                AnsiConsole.MarkupLine($"[dim]{CliText.SafeDisplay(entry.Timestamp)}[/] {levelMarkup} {CliText.SafeDisplay(entry.Message ?? "")}");
             }
             else
             {
-                AnsiConsole.MarkupLine($"  {Markup.Escape(entry.Message ?? "")}");
+                AnsiConsole.MarkupLine($"  {CliText.SafeDisplay(entry.Message ?? "")}");
             }
         }
 

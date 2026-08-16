@@ -129,17 +129,17 @@ internal sealed class DoctorCommand
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to inspect agent workspaces: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to inspect agent workspaces: {CliText.SafeDisplay(ex.Message)}");
             return 2;
         }
 
-        AnsiConsole.MarkupLine($"Agent workspace reconciliation plan for [dim]{Markup.Escape(agentsRoot)}[/]:");
+        AnsiConsole.MarkupLine($"Agent workspace reconciliation plan for [dim]{CliText.SafeDisplay(agentsRoot)}[/]:");
         foreach (var entry in plan)
         {
             var state = entry.IsOrphaned
                 ? (entry.IsUnsafeLink ? "[red]unsafe orphan[/]" : "[yellow]orphaned[/]")
                 : "[green]registered[/]";
-            AnsiConsole.MarkupLine($"  {state}  {Markup.Escape(entry.DirectoryName)}");
+            AnsiConsole.MarkupLine($"  {state}  {CliText.SafeDisplay(entry.DirectoryName)}");
         }
 
         var orphans = plan.Where(entry => entry.IsOrphaned).ToArray();
@@ -178,7 +178,7 @@ internal sealed class DoctorCommand
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Cleanup failed: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Cleanup failed: {CliText.SafeDisplay(ex.Message)}");
             return 2;
         }
     }
@@ -265,9 +265,9 @@ internal sealed class DoctorCommand
         };
 
         AnsiConsole.MarkupLine(
-            $"[{color}]{icon}[/] [bold]{Markup.Escape(check.Title)}[/] - {Markup.Escape(result.Summary)}");
+            $"[{color}]{icon}[/] [bold]{CliText.SafeDisplay(check.Title)}[/] - {CliText.SafeDisplay(result.Summary)}");
         foreach (var detail in result.Details)
-            AnsiConsole.MarkupLine($"[dim]{Markup.Escape(detail)}[/]");
+            AnsiConsole.MarkupLine($"[dim]{CliText.SafeDisplay(detail)}[/]");
     }
 
     public async Task<int> ExecuteLocationsAsync(bool verbose, CancellationToken cancellationToken)
@@ -320,7 +320,7 @@ internal sealed class DoctorCommand
             healthyCount += result.Status == LocationHealthStatus.Healthy ? 1 : 0;
             warningCount += result.Status == LocationHealthStatus.Warning ? 1 : 0;
             errorCount += result.Status == LocationHealthStatus.Error ? 1 : 0;
-            table.AddRow(icon, Markup.Escape(location.Name), Markup.Escape(result.Target), Markup.Escape(result.Message));
+            table.AddRow(icon, CliText.SafeDisplay(location.Name), CliText.SafeDisplay(result.Target), CliText.SafeDisplay(result.Message));
         }
 
         if (interactive)
@@ -332,7 +332,7 @@ internal sealed class DoctorCommand
                 {
                     foreach (var location in locations)
                     {
-                        ctx.Status($"Checking [dim]{Markup.Escape(location.Name)}[/]...");
+                        ctx.Status($"Checking [dim]{CliText.SafeDisplay(location.Name)}[/]...");
                         Accumulate(await LocationProbe.CheckLocationAsync(location, httpClient, cancellationToken), location);
                     }
                 });
@@ -353,7 +353,7 @@ internal sealed class DoctorCommand
         { Justification = Justify.Left });
 
         if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Loaded from: {Markup.Escape(configPath)}[/]");
+            AnsiConsole.MarkupLine($"[dim]Loaded from: {CliText.SafeDisplay(configPath)}[/]");
 
         return errorCount == 0 ? 0 : 1;
     }
@@ -362,7 +362,7 @@ internal sealed class DoctorCommand
     {
         if (!File.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/]. Run [green]botnexus init[/] first.");
             return null;
         }
 
@@ -372,7 +372,7 @@ internal sealed class DoctorCommand
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {CliText.SafeDisplay(ex.Message)}");
             return null;
         }
     }

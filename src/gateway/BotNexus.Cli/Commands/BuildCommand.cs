@@ -66,7 +66,7 @@ internal sealed class BuildCommand
         var solution = ResolveBuildTarget(repoRoot);
         if (solution is null)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Neither {Markup.Escape(DeployProjectFileName)} nor {Markup.Escape(SolutionFileName)} found in {Markup.Escape(repoRoot)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Neither {CliText.SafeDisplay(DeployProjectFileName)} nor {CliText.SafeDisplay(SolutionFileName)} found in {CliText.SafeDisplay(repoRoot)}");
             return 1;
         }
 

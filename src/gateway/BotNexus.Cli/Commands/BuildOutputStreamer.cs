@@ -193,7 +193,7 @@ internal static partial class BuildOutputStreamer
         {
             state.ProjectsBuilt++;
             var projectName = arrowMatch.Groups[1].Value;
-            AnsiConsole.MarkupLine($"[blue][[build]][/] [green]\u2713[/] {Markup.Escape(projectName)}");
+            AnsiConsole.MarkupLine($"[blue][[build]][/] [green]\u2713[/] {CliText.SafeDisplay(projectName)}");
             return;
         }
 
@@ -219,7 +219,7 @@ internal static partial class BuildOutputStreamer
             var code = errorMatch.Groups[2].Value;
             var message = errorMatch.Groups[3].Value;
             state.Diagnostics.Add(new DiagnosticEntry("error", code, message, file));
-            AnsiConsole.MarkupLine($"[blue][[build]][/] [red]\u2717[/] {Markup.Escape(file)}: [red]{Markup.Escape(code)}[/] - {Markup.Escape(message)}");
+            AnsiConsole.MarkupLine($"[blue][[build]][/] [red]\u2717[/] {CliText.SafeDisplay(file)}: [red]{CliText.SafeDisplay(code)}[/] - {CliText.SafeDisplay(message)}");
             return;
         }
 
@@ -236,7 +236,7 @@ internal static partial class BuildOutputStreamer
             // Show first few warnings inline; suppress the rest to avoid wall of text
             if (state.WarningCount <= 5)
             {
-                AnsiConsole.MarkupLine($"[blue][[build]][/] [yellow]\u26A0[/] {Markup.Escape(file)}: [yellow]{Markup.Escape(code)}[/] - {Markup.Escape(message)}");
+                AnsiConsole.MarkupLine($"[blue][[build]][/] [yellow]\u26A0[/] {CliText.SafeDisplay(file)}: [yellow]{CliText.SafeDisplay(code)}[/] - {CliText.SafeDisplay(message)}");
             }
             else if (state.WarningCount == 6)
             {
@@ -266,7 +266,7 @@ internal static partial class BuildOutputStreamer
         if (verbose)
         {
             var prefix = isError ? "[red]err[/] " : "[dim]   [/] ";
-            AnsiConsole.MarkupLine($"[blue][[build]][/] {prefix}{Markup.Escape(trimmed)}");
+            AnsiConsole.MarkupLine($"[blue][[build]][/] {prefix}{CliText.SafeDisplay(trimmed)}");
         }
     }
 
@@ -291,7 +291,7 @@ internal static partial class BuildOutputStreamer
                     "[green]\u2713 Build succeeded[/]",
                     $"[green]{state.ProjectsBuilt}[/]",
                     warnStr,
-                    state.Elapsed is not null ? $"[dim]{Markup.Escape(state.Elapsed)}[/]" : "[dim]-[/]");
+                    state.Elapsed is not null ? $"[dim]{CliText.SafeDisplay(state.Elapsed)}[/]" : "[dim]-[/]");
                 AnsiConsole.Write(table);
             }
             else
@@ -300,7 +300,7 @@ internal static partial class BuildOutputStreamer
                 if (state.WarningCount > 0)
                     parts.Add($"[yellow]{state.WarningCount}[/] warning(s)");
                 if (state.Elapsed is not null)
-                    parts.Add($"[dim]{Markup.Escape(state.Elapsed)}[/]");
+                    parts.Add($"[dim]{CliText.SafeDisplay(state.Elapsed)}[/]");
                 AnsiConsole.MarkupLine($"[blue][[build]][/] [green]Build succeeded[/] - {string.Join(", ", parts)}");
             }
         }
@@ -316,7 +316,7 @@ internal static partial class BuildOutputStreamer
             {
                 AnsiConsole.WriteLine();
                 foreach (var err in errors)
-                    AnsiConsole.MarkupLine($"  [red]\u2717[/] {Markup.Escape(err.File)}: [red]{Markup.Escape(err.Code)}[/] - {Markup.Escape(err.Message)}");
+                    AnsiConsole.MarkupLine($"  [red]\u2717[/] {CliText.SafeDisplay(err.File)}: [red]{CliText.SafeDisplay(err.Code)}[/] - {CliText.SafeDisplay(err.Message)}");
             }
         }
 
@@ -327,7 +327,7 @@ internal static partial class BuildOutputStreamer
             var grouped = warnings.GroupBy(w => w.Code).OrderByDescending(g => g.Count());
             AnsiConsole.MarkupLine($"[blue][[build]][/] [yellow]Warning summary ({state.WarningCount} total):[/]");
             foreach (var group in grouped)
-                AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(group.Key)}[/] x{group.Count()}: {Markup.Escape(group.First().Message)}");
+                AnsiConsole.MarkupLine($"  [yellow]{CliText.SafeDisplay(group.Key)}[/] x{group.Count()}: {CliText.SafeDisplay(group.First().Message)}");
         }
     }
 

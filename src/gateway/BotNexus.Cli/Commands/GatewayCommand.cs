@@ -138,7 +138,7 @@ internal sealed class GatewayCommand
 
         if (!File.Exists(gatewayDll))
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Release build not found at: [dim]{Markup.Escape(gatewayDll)}[/]");
+            AnsiConsole.MarkupLine($"[red]✗[/] Release build not found at: [dim]{CliText.SafeDisplay(gatewayDll)}[/]");
             return 1;
         }
 
@@ -194,8 +194,8 @@ internal sealed class GatewayCommand
             {
                 var content =
                     $"[green]✓[/] Running  [dim]PID:[/] [yellow]{result.Pid.Value}[/]\n\n" +
-                    $"[dim]URL:[/]   [green]{Markup.Escape(gatewayUrl)}[/]\n" +
-                    $"[dim]Logs:[/]  [dim]{Markup.Escape(logsPath)}[/]\n" +
+                    $"[dim]URL:[/]   [green]{CliText.SafeDisplay(gatewayUrl)}[/]\n" +
+                    $"[dim]Logs:[/]  [dim]{CliText.SafeDisplay(logsPath)}[/]\n" +
                     $"[dim]Stop:[/]  [dim]botnexus gateway stop[/]";
                 var panel = new Panel(content)
                 {
@@ -208,8 +208,8 @@ internal sealed class GatewayCommand
             else
             {
                 AnsiConsole.MarkupLine($"[green]✓[/] Gateway started (PID [yellow]{result.Pid.Value}[/])");
-                AnsiConsole.MarkupLine($"  URL:  [green]{Markup.Escape(gatewayUrl)}[/]");
-                AnsiConsole.MarkupLine($"  Logs: [dim]{Markup.Escape(logsPath)}[/]");
+                AnsiConsole.MarkupLine($"  URL:  [green]{CliText.SafeDisplay(gatewayUrl)}[/]");
+                AnsiConsole.MarkupLine($"  Logs: [dim]{CliText.SafeDisplay(logsPath)}[/]");
                 AnsiConsole.MarkupLine($"  Stop: [dim]botnexus gateway stop[/]");
             }
 
@@ -218,7 +218,7 @@ internal sealed class GatewayCommand
         }
         else
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to start gateway: {Markup.Escape(result.Message ?? "Unknown error")}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Failed to start gateway: {CliText.SafeDisplay(result.Message ?? "Unknown error")}");
             return 1;
         }
     }
@@ -236,7 +236,7 @@ internal sealed class GatewayCommand
 
         if (!File.Exists(gatewayDll))
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Release build not found at: [dim]{Markup.Escape(gatewayDll)}[/]");
+            AnsiConsole.MarkupLine($"[red]✗[/] Release build not found at: [dim]{CliText.SafeDisplay(gatewayDll)}[/]");
             return 1;
         }
 
@@ -267,7 +267,7 @@ internal sealed class GatewayCommand
         {
             AnsiConsole.WriteLine();
             AnsiConsole.Write(new Rule("[bold blue]BotNexus Gateway[/]") { Justification = Justify.Left });
-            AnsiConsole.MarkupLine($"  [dim]URL:[/]         [green]{Markup.Escape(gatewayUrl)}[/]");
+            AnsiConsole.MarkupLine($"  [dim]URL:[/]         [green]{CliText.SafeDisplay(gatewayUrl)}[/]");
             AnsiConsole.MarkupLine("  [dim]Environment:[/] Development");
             AnsiConsole.MarkupLine("  Press [yellow]Ctrl+C[/] to stop the gateway.");
             AnsiConsole.WriteLine();
@@ -326,12 +326,12 @@ internal sealed class GatewayCommand
 
         if (result.Success)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] {Markup.Escape(result.Message ?? "Gateway stopped")}");
+            AnsiConsole.MarkupLine($"[green]✓[/] {CliText.SafeDisplay(result.Message ?? "Gateway stopped")}");
             return 0;
         }
         else
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(result.Message ?? "Failed to stop gateway")}");
+            AnsiConsole.MarkupLine($"[red]✗[/] {CliText.SafeDisplay(result.Message ?? "Failed to stop gateway")}");
             return 1;
         }
     }
@@ -426,7 +426,7 @@ internal sealed class GatewayCommand
                 {
                     AnsiConsole.MarkupLine("[dim]● Gateway is not running[/]");
                     if (verbose && !string.IsNullOrWhiteSpace(status.Message))
-                        AnsiConsole.MarkupLine($"  [dim]{Markup.Escape(status.Message)}[/]");
+                        AnsiConsole.MarkupLine($"  [dim]{CliText.SafeDisplay(status.Message)}[/]");
                 }
                 return 0;
 
@@ -434,7 +434,7 @@ internal sealed class GatewayCommand
             default:
                 AnsiConsole.MarkupLine($"[yellow]●[/] Gateway state is unknown");
                 if (!string.IsNullOrWhiteSpace(status.Message))
-                    AnsiConsole.MarkupLine($"  [dim]{Markup.Escape(status.Message)}[/]");
+                    AnsiConsole.MarkupLine($"  [dim]{CliText.SafeDisplay(status.Message)}[/]");
                 return 1;
         }
     }
@@ -466,7 +466,7 @@ internal sealed class GatewayCommand
         if (stopResult.Success)
             AnsiConsole.MarkupLine("[green]✓[/] Gateway stopped");
         else
-            AnsiConsole.MarkupLine($"[yellow]⚠[/] Stop result: {Markup.Escape(stopResult.Message ?? "unknown")}");
+            AnsiConsole.MarkupLine($"[yellow]⚠[/] Stop result: {CliText.SafeDisplay(stopResult.Message ?? "unknown")}");
 
         await Task.Delay(1000, cancellationToken);
 
@@ -499,7 +499,7 @@ internal sealed class GatewayCommand
         var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
         if (!File.Exists(gatewayDll))
         {
-            AnsiConsole.MarkupLine($"[red]\u2717[/] Release build not found at: [dim]{Markup.Escape(gatewayDll)}[/]");
+            AnsiConsole.MarkupLine($"[red]\u2717[/] Release build not found at: [dim]{CliText.SafeDisplay(gatewayDll)}[/]");
             AnsiConsole.MarkupLine("[dim]Run 'dotnet build -c Release' first.[/]");
             return 1;
         }
@@ -508,18 +508,18 @@ internal sealed class GatewayCommand
 
         if (result.Success)
         {
-            AnsiConsole.MarkupLine($"[green]\u2713[/] {Markup.Escape(result.Message)}");
+            AnsiConsole.MarkupLine($"[green]\u2713[/] {CliText.SafeDisplay(result.Message)}");
             if (verbose)
             {
                 AnsiConsole.MarkupLine($"  [dim]Manager:[/] {manager.ServiceManagerName}");
-                AnsiConsole.MarkupLine($"  [dim]Binary:[/]  {Markup.Escape(gatewayDll)}");
-                AnsiConsole.MarkupLine($"  [dim]Home:[/]    {Markup.Escape(home)}");
+                AnsiConsole.MarkupLine($"  [dim]Binary:[/]  {CliText.SafeDisplay(gatewayDll)}");
+                AnsiConsole.MarkupLine($"  [dim]Home:[/]    {CliText.SafeDisplay(home)}");
                 AnsiConsole.MarkupLine($"  [dim]Port:[/]    {port}");
             }
             return 0;
         }
 
-        AnsiConsole.MarkupLine($"[red]\u2717[/] {Markup.Escape(result.Message)}");
+        AnsiConsole.MarkupLine($"[red]\u2717[/] {CliText.SafeDisplay(result.Message)}");
         return 1;
     }
 
@@ -538,11 +538,11 @@ internal sealed class GatewayCommand
 
         if (result.Success)
         {
-            AnsiConsole.MarkupLine($"[green]\u2713[/] {Markup.Escape(result.Message)}");
+            AnsiConsole.MarkupLine($"[green]\u2713[/] {CliText.SafeDisplay(result.Message)}");
             return 0;
         }
 
-        AnsiConsole.MarkupLine($"[red]\u2717[/] {Markup.Escape(result.Message)}");
+        AnsiConsole.MarkupLine($"[red]\u2717[/] {CliText.SafeDisplay(result.Message)}");
         return 1;
     }
 }

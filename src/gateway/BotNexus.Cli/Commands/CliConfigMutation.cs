@@ -61,7 +61,7 @@ internal static class CliConfigMutation
             // #2134: another BotNexus process (a second CLI invocation, or the running gateway) is
             // inside the config critical section. Report the conflict explicitly and exit non-zero
             // rather than writing without the lock - a silently lost config edit is the defect.
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(ex.Message)}");
             return 1;
         }
 
@@ -69,12 +69,12 @@ internal static class CliConfigMutation
         {
             AnsiConsole.MarkupLine("[red]Config validation failed; the existing config was not modified:[/]");
             foreach (var error in errors)
-                AnsiConsole.MarkupLine($"  [red]\u2022[/] {Markup.Escape(error)}");
+                AnsiConsole.MarkupLine($"  [red]\u2022[/] {CliText.SafeDisplay(error)}");
             return 1;
         }
 
         if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Saved config: {Markup.Escape(configPath)}[/]");
+            AnsiConsole.MarkupLine($"[dim]Saved config: {CliText.SafeDisplay(configPath)}[/]");
 
         return 0;
     }

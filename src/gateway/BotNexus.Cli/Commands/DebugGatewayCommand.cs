@@ -94,7 +94,7 @@ internal sealed class DebugGatewayCommand
         var resolution = CreateClient(baseUrl, token);
         if (resolution.Client is null)
         {
-            AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(resolution.RefusalMessage!));
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(resolution.RefusalMessage!));
             return 1;
         }
 
@@ -136,7 +136,7 @@ internal sealed class DebugGatewayCommand
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -151,7 +151,7 @@ internal sealed class DebugGatewayCommand
         var resolution = CreateClient(baseUrl, token);
         if (resolution.Client is null)
         {
-            AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(resolution.RefusalMessage!));
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(resolution.RefusalMessage!));
             return 1;
         }
 
@@ -186,7 +186,7 @@ internal sealed class DebugGatewayCommand
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -201,7 +201,7 @@ internal sealed class DebugGatewayCommand
         var resolution = CreateClient(baseUrl, token);
         if (resolution.Client is null)
         {
-            AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(resolution.RefusalMessage!));
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(resolution.RefusalMessage!));
             return 1;
         }
 
@@ -233,7 +233,7 @@ internal sealed class DebugGatewayCommand
                                 .Count(m => m.TryGetProperty("provider", out var mp) &&
                                             string.Equals(mp.GetString(), name, StringComparison.OrdinalIgnoreCase));
                         }
-                        table.AddRow(Markup.Escape(name), modelCount.ToString());
+                        table.AddRow(CliText.SafeDisplay(name), modelCount.ToString());
                     }
                 }
 
@@ -244,7 +244,7 @@ internal sealed class DebugGatewayCommand
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -259,7 +259,7 @@ internal sealed class DebugGatewayCommand
         var resolution = CreateClient(baseUrl, token);
         if (resolution.Client is null)
         {
-            AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(resolution.RefusalMessage!));
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(resolution.RefusalMessage!));
             return 1;
         }
 
@@ -272,7 +272,7 @@ internal sealed class DebugGatewayCommand
                 config = sectionValue;
             else if (section != null)
             {
-                AnsiConsole.MarkupLine("[yellow]Section '{0}' not found in configuration.[/]", Markup.Escape(section));
+                AnsiConsole.MarkupLine("[yellow]Section '{0}' not found in configuration.[/]", CliText.SafeDisplay(section));
                 return 1;
             }
 
@@ -290,7 +290,7 @@ internal sealed class DebugGatewayCommand
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)

@@ -131,25 +131,25 @@ internal static class CopilotProviderSubcommand
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Failed to fetch Copilot user info:[/] {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Failed to fetch Copilot user info:[/] {CliText.SafeDisplay(ex.Message)}");
             return 2;
         }
 
         var table = new Table().Border(TableBorder.Rounded).AddColumn("Field").AddColumn("Value");
-        table.AddRow("Login", Markup.Escape(info.Login ?? "—"));
-        table.AddRow("Plan", Markup.Escape(info.CopilotPlan ?? "—"));
-        table.AddRow("SKU", Markup.Escape(info.AccessTypeSku ?? "—"));
-        table.AddRow("Assigned", Markup.Escape(info.AssignedDate ?? "—"));
+        table.AddRow("Login", CliText.SafeDisplay(info.Login ?? "—"));
+        table.AddRow("Plan", CliText.SafeDisplay(info.CopilotPlan ?? "—"));
+        table.AddRow("SKU", CliText.SafeDisplay(info.AccessTypeSku ?? "—"));
+        table.AddRow("Assigned", CliText.SafeDisplay(info.AssignedDate ?? "—"));
         table.AddRow("Chat enabled", info.ChatEnabled ? "[green]yes[/]" : "[red]no[/]");
         table.AddRow("CLI enabled", info.CliEnabled ? "[green]yes[/]" : "[red]no[/]");
-        table.AddRow("Organizations", Markup.Escape(string.Join(", ", info.OrganizationLoginList ?? new List<string>())));
-        table.AddRow("API endpoint", Markup.Escape(info.Endpoints?.Api ?? "—"));
-        table.AddRow("Cached endpoint", Markup.Escape(auth.ApiEndpoint ?? "—"));
+        table.AddRow("Organizations", CliText.SafeDisplay(string.Join(", ", info.OrganizationLoginList ?? new List<string>())));
+        table.AddRow("API endpoint", CliText.SafeDisplay(info.Endpoints?.Api ?? "—"));
+        table.AddRow("Cached endpoint", CliText.SafeDisplay(auth.ApiEndpoint ?? "—"));
 
         var expiry = auth.ExpiresAtUnixMs > 0
             ? DateTimeOffset.FromUnixTimeMilliseconds(auth.ExpiresAtUnixMs).ToString("yyyy-MM-ddTHH:mm:ssK")
             : "—";
-        table.AddRow("Session token expiry", Markup.Escape(expiry));
+        table.AddRow("Session token expiry", CliText.SafeDisplay(expiry));
 
         AnsiConsole.Write(table);
         return 0;
@@ -179,7 +179,7 @@ internal static class CopilotProviderSubcommand
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Failed to list Copilot models:[/] {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Failed to list Copilot models:[/] {CliText.SafeDisplay(ex.Message)}");
             return 2;
         }
 
@@ -202,9 +202,9 @@ internal static class CopilotProviderSubcommand
         foreach (var m in entries.OrderBy(m => m.Vendor).ThenBy(m => m.Id))
         {
             table.AddRow(
-                Markup.Escape(m.Id ?? "—"),
-                Markup.Escape(m.Vendor ?? "—"),
-                Markup.Escape(m.Capabilities?.Family ?? "—"),
+                CliText.SafeDisplay(m.Id ?? "—"),
+                CliText.SafeDisplay(m.Vendor ?? "—"),
+                CliText.SafeDisplay(m.Capabilities?.Family ?? "—"),
                 Bool(m.Capabilities?.Supports?.Streaming),
                 Bool(m.Capabilities?.Supports?.ToolCalls),
                 Bool(m.Capabilities?.Supports?.Vision),
@@ -212,7 +212,7 @@ internal static class CopilotProviderSubcommand
         }
 
         AnsiConsole.Write(table);
-        AnsiConsole.MarkupLine($"[dim]{entries.Count} models from {Markup.Escape(auth.ApiEndpoint)}[/]");
+        AnsiConsole.MarkupLine($"[dim]{entries.Count} models from {CliText.SafeDisplay(auth.ApiEndpoint)}[/]");
         return 0;
     }
 
@@ -234,7 +234,7 @@ internal static class CopilotProviderSubcommand
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Failed to fetch Copilot quota:[/] {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Failed to fetch Copilot quota:[/] {CliText.SafeDisplay(ex.Message)}");
             return 2;
         }
 
@@ -263,7 +263,7 @@ internal static class CopilotProviderSubcommand
                 _ => "red"
             };
             table.AddRow(
-                Markup.Escape(key),
+                CliText.SafeDisplay(key),
                 $"[{colour}]{pct:0.0}%[/]",
                 snap.QuotaRemaining.ToString("0.##"),
                 snap.Entitlement.ToString("0.##"),
@@ -272,7 +272,7 @@ internal static class CopilotProviderSubcommand
         }
 
         AnsiConsole.Write(table);
-        AnsiConsole.MarkupLine($"[dim]Quota resets: {Markup.Escape(info.QuotaResetDate ?? "—")}[/]");
+        AnsiConsole.MarkupLine($"[dim]Quota resets: {CliText.SafeDisplay(info.QuotaResetDate ?? "—")}[/]");
         return 0;
     }
 
@@ -296,7 +296,7 @@ internal static class CopilotProviderSubcommand
         var model = registry.GetModel("github-copilot", modelId);
         if (model is null)
         {
-            AnsiConsole.MarkupLine($"[red]Unknown Copilot model:[/] {Markup.Escape(modelId)}");
+            AnsiConsole.MarkupLine($"[red]Unknown Copilot model:[/] {CliText.SafeDisplay(modelId)}");
             AnsiConsole.MarkupLine("Run [green]botnexus provider copilot models[/] to see what your account is entitled to.");
             return 1;
         }
@@ -328,11 +328,11 @@ internal static class CopilotProviderSubcommand
                 options = new CopilotCompletionsOptions { ApiKey = auth.CopilotSessionToken, CancellationToken = ct };
                 break;
             default:
-                AnsiConsole.MarkupLine($"[red]Model '{Markup.Escape(modelId)}' is not registered against a Copilot API ({Markup.Escape(model.Api)}).[/]");
+                AnsiConsole.MarkupLine($"[red]Model '{CliText.SafeDisplay(modelId)}' is not registered against a Copilot API ({CliText.SafeDisplay(model.Api)}).[/]");
                 return 1;
         }
 
-        AnsiConsole.MarkupLine($"[dim]→ {Markup.Escape(model.Api)} | {Markup.Escape(model.Id)} | {Markup.Escape(model.BaseUrl)}[/]");
+        AnsiConsole.MarkupLine($"[dim]→ {CliText.SafeDisplay(model.Api)} | {CliText.SafeDisplay(model.Id)} | {CliText.SafeDisplay(model.BaseUrl)}[/]");
 
         var sw = Stopwatch.StartNew();
         long? firstTokenMs = null;
@@ -349,7 +349,7 @@ internal static class CopilotProviderSubcommand
                         collected.Add(delta.Delta);
                         break;
                     case ErrorEvent err:
-                        AnsiConsole.MarkupLine($"[red]Stream error:[/] {Markup.Escape(err.Error.ErrorMessage ?? "unknown")}");
+                        AnsiConsole.MarkupLine($"[red]Stream error:[/] {CliText.SafeDisplay(err.Error.ErrorMessage ?? "unknown")}");
                         return 2;
                     case DoneEvent:
                         break;
@@ -358,7 +358,7 @@ internal static class CopilotProviderSubcommand
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Provider call failed:[/] {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Provider call failed:[/] {CliText.SafeDisplay(ex.Message)}");
             return 2;
         }
 
@@ -367,7 +367,7 @@ internal static class CopilotProviderSubcommand
         AnsiConsole.MarkupLine($"[green]✓[/] Round-trip succeeded in {sw.ElapsedMilliseconds} ms (first token: {(firstTokenMs?.ToString() ?? "—")} ms).");
         if (!string.IsNullOrWhiteSpace(text))
         {
-            AnsiConsole.MarkupLine($"[dim]Reply:[/] {Markup.Escape(text)}");
+            AnsiConsole.MarkupLine($"[dim]Reply:[/] {CliText.SafeDisplay(text)}");
         }
         return 0;
     }

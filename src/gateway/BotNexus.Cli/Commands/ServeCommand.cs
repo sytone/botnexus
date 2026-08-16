@@ -78,7 +78,7 @@ internal sealed class ServeCommand
 
         if (!File.Exists(gatewayDll))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Release build not found at: [dim]{Markup.Escape(gatewayDll)}[/]");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Release build not found at: [dim]{CliText.SafeDisplay(gatewayDll)}[/]");
             return 1;
         }
 
@@ -110,7 +110,7 @@ internal sealed class ServeCommand
         {
             AnsiConsole.WriteLine();
             AnsiConsole.Write(new Rule("[bold blue]BotNexus Gateway[/]") { Justification = Justify.Left });
-            AnsiConsole.MarkupLine($"  [dim]URL:[/]         [green]{Markup.Escape(gatewayUrl)}[/]");
+            AnsiConsole.MarkupLine($"  [dim]URL:[/]         [green]{CliText.SafeDisplay(gatewayUrl)}[/]");
             AnsiConsole.MarkupLine("  [dim]Environment:[/] Development");
             AnsiConsole.MarkupLine("  Press [yellow]Ctrl+C[/] to stop the gateway.");
             AnsiConsole.WriteLine();
@@ -155,7 +155,7 @@ internal sealed class ServeCommand
 
         if (!File.Exists(probeDll))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Release build not found at: [dim]{Markup.Escape(probeDll)}[/]");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Release build not found at: [dim]{CliText.SafeDisplay(probeDll)}[/]");
             return 1;
         }
 
@@ -169,8 +169,8 @@ internal sealed class ServeCommand
 
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule("[bold blue]BotNexus Probe[/]") { Justification = Justify.Left });
-        AnsiConsole.MarkupLine($"  [dim]URL:[/]     [green]{Markup.Escape(probeUrl)}[/]");
-        AnsiConsole.MarkupLine($"  [dim]Gateway:[/] [dim]{Markup.Escape(gatewayUrl)}[/]");
+        AnsiConsole.MarkupLine($"  [dim]URL:[/]     [green]{CliText.SafeDisplay(probeUrl)}[/]");
+        AnsiConsole.MarkupLine($"  [dim]Gateway:[/] [dim]{CliText.SafeDisplay(gatewayUrl)}[/]");
         AnsiConsole.WriteLine();
 
         var psi = new ProcessStartInfo
@@ -323,7 +323,7 @@ internal sealed class ServeCommand
             if (!File.Exists(manifestPath))
             {
                 if (verbose)
-                    AnsiConsole.MarkupLine($"[blue][[deploy]][/] [dim]Skipped {Markup.Escape(projectName)} (no manifest)[/]");
+                    AnsiConsole.MarkupLine($"[blue][[deploy]][/] [dim]Skipped {CliText.SafeDisplay(projectName)} (no manifest)[/]");
                 continue;
             }
 
@@ -335,7 +335,7 @@ internal sealed class ServeCommand
             }
             catch
             {
-                AnsiConsole.MarkupLine($"[yellow][[deploy]] WARNING:[/] Could not read manifest for {Markup.Escape(projectName)}");
+                AnsiConsole.MarkupLine($"[yellow][[deploy]] WARNING:[/] Could not read manifest for {CliText.SafeDisplay(projectName)}");
                 continue;
             }
 
@@ -348,7 +348,7 @@ internal sealed class ServeCommand
             if (tfmDir is null)
             {
                 if (verbose)
-                    AnsiConsole.MarkupLine($"[blue][[deploy]][/] [dim]No Debug/Release build output for {Markup.Escape(projectName)} \u2014 skipping.[/]");
+                    AnsiConsole.MarkupLine($"[blue][[deploy]][/] [dim]No Debug/Release build output for {CliText.SafeDisplay(projectName)} \u2014 skipping.[/]");
                 continue;
             }
 
@@ -371,7 +371,7 @@ internal sealed class ServeCommand
 
             // Prune stale files from earlier generations (see DeployExtensionsSilent for rationale).
             PruneStaleFiles(extDest, freshFiles);
-            AnsiConsole.MarkupLine($"[blue][[deploy]][/] Deployed [green]{Markup.Escape(extId)}[/]");
+            AnsiConsole.MarkupLine($"[blue][[deploy]][/] Deployed [green]{CliText.SafeDisplay(extId)}[/]");
             deployed++;
         }
 
@@ -386,17 +386,17 @@ internal sealed class ServeCommand
                     try
                     {
                         Directory.Delete(dir, recursive: true);
-                        AnsiConsole.MarkupLine($"[blue][[deploy]][/] Removed stale: [dim]{Markup.Escape(dirName)}[/]");
+                        AnsiConsole.MarkupLine($"[blue][[deploy]][/] Removed stale: [dim]{CliText.SafeDisplay(dirName)}[/]");
                     }
                     catch
                     {
-                        AnsiConsole.MarkupLine($"[yellow][[deploy]][/] Could not remove {Markup.Escape(dirName)} (files locked)");
+                        AnsiConsole.MarkupLine($"[yellow][[deploy]][/] Could not remove {CliText.SafeDisplay(dirName)} (files locked)");
                     }
                 }
             }
         }
 
-        AnsiConsole.MarkupLine($"[green]✓[/] {deployed} extension(s) deployed to [dim]{Markup.Escape(destRoot)}[/]");
+        AnsiConsole.MarkupLine($"[green]✓[/] {deployed} extension(s) deployed to [dim]{CliText.SafeDisplay(destRoot)}[/]");
     }
 
     /// <summary>

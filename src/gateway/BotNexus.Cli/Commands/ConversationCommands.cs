@@ -87,7 +87,7 @@ internal sealed class ConversationCommands
         var resolution = CreateClient(baseUrl, token);
         if (resolution.Client is null)
         {
-            AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(resolution.RefusalMessage!));
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(resolution.RefusalMessage!));
             return 1;
         }
 
@@ -118,10 +118,10 @@ internal sealed class ConversationCommands
                         var title = c.TryGetProperty("title", out var t) ? t.GetString() ?? "(untitled)" : "(untitled)";
                         var updated = c.TryGetProperty("lastUpdatedUtc", out var u) ? u.GetString() ?? "" : "";
                         table.AddRow(
-                            Markup.Escape(TruncateId(id)),
-                            Markup.Escape(agent),
-                            Markup.Escape(Truncate(title, 40)),
-                            Markup.Escape(updated));
+                            CliText.SafeDisplay(TruncateId(id)),
+                            CliText.SafeDisplay(agent),
+                            CliText.SafeDisplay(Truncate(title, 40)),
+                            CliText.SafeDisplay(updated));
                     }
                 }
 
@@ -131,7 +131,7 @@ internal sealed class ConversationCommands
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -146,7 +146,7 @@ internal sealed class ConversationCommands
         var resolution = CreateClient(baseUrl, token);
         if (resolution.Client is null)
         {
-            AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(resolution.RefusalMessage!));
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(resolution.RefusalMessage!));
             return 1;
         }
 
@@ -156,7 +156,7 @@ internal sealed class ConversationCommands
             var response = await client.GetAsync($"/api/conversations/{Uri.EscapeDataString(conversationId)}", ct);
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                AnsiConsole.MarkupLine("[yellow]Conversation '{0}' not found.[/]", Markup.Escape(conversationId));
+                AnsiConsole.MarkupLine("[yellow]Conversation '{0}' not found.[/]", CliText.SafeDisplay(conversationId));
                 return 1;
             }
             response.EnsureSuccessStatusCode();
@@ -171,17 +171,17 @@ internal sealed class ConversationCommands
                 AnsiConsole.Write(new Rule("[bold blue]Conversation[/]") { Justification = Justify.Left });
 
                 if (conversation.TryGetProperty("conversationId", out var cid))
-                    AnsiConsole.MarkupLine("[dim]ID:[/]      {0}", Markup.Escape(cid.GetString() ?? ""));
+                    AnsiConsole.MarkupLine("[dim]ID:[/]      {0}", CliText.SafeDisplay(cid.GetString() ?? ""));
                 if (conversation.TryGetProperty("agentId", out var aid))
-                    AnsiConsole.MarkupLine("[dim]Agent:[/]   {0}", Markup.Escape(aid.GetString() ?? ""));
+                    AnsiConsole.MarkupLine("[dim]Agent:[/]   {0}", CliText.SafeDisplay(aid.GetString() ?? ""));
                 if (conversation.TryGetProperty("title", out var title))
-                    AnsiConsole.MarkupLine("[dim]Title:[/]   {0}", Markup.Escape(title.GetString() ?? ""));
+                    AnsiConsole.MarkupLine("[dim]Title:[/]   {0}", CliText.SafeDisplay(title.GetString() ?? ""));
                 if (conversation.TryGetProperty("status", out var status))
-                    AnsiConsole.MarkupLine("[dim]Status:[/]  {0}", Markup.Escape(status.GetString() ?? ""));
+                    AnsiConsole.MarkupLine("[dim]Status:[/]  {0}", CliText.SafeDisplay(status.GetString() ?? ""));
                 if (conversation.TryGetProperty("createdUtc", out var created))
-                    AnsiConsole.MarkupLine("[dim]Created:[/] {0}", Markup.Escape(created.GetString() ?? ""));
+                    AnsiConsole.MarkupLine("[dim]Created:[/] {0}", CliText.SafeDisplay(created.GetString() ?? ""));
                 if (conversation.TryGetProperty("lastUpdatedUtc", out var updated))
-                    AnsiConsole.MarkupLine("[dim]Updated:[/] {0}", Markup.Escape(updated.GetString() ?? ""));
+                    AnsiConsole.MarkupLine("[dim]Updated:[/] {0}", CliText.SafeDisplay(updated.GetString() ?? ""));
 
                 if (conversation.TryGetProperty("participants", out var participants) && participants.ValueKind == JsonValueKind.Array)
                 {
@@ -190,7 +190,7 @@ internal sealed class ConversationCommands
                     foreach (var p in participants.EnumerateArray())
                     {
                         var citizenId = p.TryGetProperty("citizenId", out var pid) ? pid.GetString() ?? "" : "";
-                        AnsiConsole.MarkupLine("  - {0}", Markup.Escape(citizenId));
+                        AnsiConsole.MarkupLine("  - {0}", CliText.SafeDisplay(citizenId));
                     }
                 }
 
@@ -204,7 +204,7 @@ internal sealed class ConversationCommands
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -219,7 +219,7 @@ internal sealed class ConversationCommands
         var resolution = CreateClient(baseUrl, token);
         if (resolution.Client is null)
         {
-            AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(resolution.RefusalMessage!));
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(resolution.RefusalMessage!));
             return 1;
         }
 
@@ -232,17 +232,17 @@ internal sealed class ConversationCommands
 
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                AnsiConsole.MarkupLine("[yellow]Conversation '{0}' not found.[/]", Markup.Escape(conversationId));
+                AnsiConsole.MarkupLine("[yellow]Conversation '{0}' not found.[/]", CliText.SafeDisplay(conversationId));
                 return 1;
             }
 
             response.EnsureSuccessStatusCode();
-            AnsiConsole.MarkupLine("[green]Conversation '{0}' archived.[/]", Markup.Escape(conversationId));
+            AnsiConsole.MarkupLine("[green]Conversation '{0}' archived.[/]", CliText.SafeDisplay(conversationId));
             return 0;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), Markup.Escape(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
+            AnsiConsole.MarkupLine("[red]Cannot reach gateway at {0}:[/] {1}", CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)), CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
             return 1;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)

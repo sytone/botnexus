@@ -106,7 +106,7 @@ internal class UpdateCommand
         {
             AnsiConsole.MarkupLine("[red]✗[/] Could not fetch updates from origin/main.");
             if (!string.IsNullOrWhiteSpace(fetchResult.FailureDetail))
-                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(fetchResult.FailureDetail)}[/]");
+                AnsiConsole.MarkupLine($"[dim]{CliText.SafeDisplay(fetchResult.FailureDetail)}[/]");
             return 2;
         }
 
@@ -121,7 +121,7 @@ internal class UpdateCommand
         {
             AnsiConsole.MarkupLine("[red]✗[/] Could not determine update status.");
             if (!string.IsNullOrWhiteSpace(behindResult.FailureDetail))
-                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(behindResult.FailureDetail)}[/]");
+                AnsiConsole.MarkupLine($"[dim]{CliText.SafeDisplay(behindResult.FailureDetail)}[/]");
             return 2;
         }
 
@@ -203,10 +203,10 @@ internal class UpdateCommand
                 AnsiConsole.MarkupLine("[green]\u2713[/] Gateway stopped");
                 break;
             case GatewayStopOutcome.NotRunning:
-                AnsiConsole.MarkupLine($"[dim]\u2013[/] No running gateway found ({Markup.Escape(stopResult.Message ?? "not running")}); nothing to stop.");
+                AnsiConsole.MarkupLine($"[dim]\u2013[/] No running gateway found ({CliText.SafeDisplay(stopResult.Message ?? "not running")}); nothing to stop.");
                 break;
             default:
-                AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Could not stop gateway ({Markup.Escape(stopResult.Message ?? "unknown")}). Continuing anyway.");
+                AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Could not stop gateway ({CliText.SafeDisplay(stopResult.Message ?? "unknown")}). Continuing anyway.");
                 break;
         }
 
@@ -328,7 +328,7 @@ internal class UpdateCommand
             var kind = ClassifyPullFailure(pullResult.FailureDetail);
             AnsiConsole.MarkupLine($"[red]✗[/] {PullFailureHeadline(kind)}");
             if (!string.IsNullOrWhiteSpace(pullResult.FailureDetail))
-                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(pullResult.FailureDetail)}[/]");
+                AnsiConsole.MarkupLine($"[dim]{CliText.SafeDisplay(pullResult.FailureDetail)}[/]");
             AnsiConsole.MarkupLine($"[yellow]⚠[/] {PullFailureRemediation(kind, repoRoot)}");
 
             return pullResult.ExitCode;
@@ -340,12 +340,12 @@ internal class UpdateCommand
 
         if (beforeSha == afterSha)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] Already up to date ([dim]{Markup.Escape(Short(beforeSha))}[/])");
+            AnsiConsole.MarkupLine($"[green]✓[/] Already up to date ([dim]{CliText.SafeDisplay(Short(beforeSha))}[/])");
         }
         else
         {
             var countStr = commitCount > 0 ? $"{commitCount} new commit(s)" : "new commit(s)";
-            AnsiConsole.MarkupLine($"[green]✓[/] Pulled {countStr}: [dim]{Markup.Escape(Short(beforeSha))}[/] → [dim]{Markup.Escape(Short(afterSha))}[/]");
+            AnsiConsole.MarkupLine($"[green]✓[/] Pulled {countStr}: [dim]{CliText.SafeDisplay(Short(beforeSha))}[/] → [dim]{CliText.SafeDisplay(Short(afterSha))}[/]");
             if (commitSubjects.Count > 0)
                 PrintChangesApplied(commitSubjects);
         }
@@ -429,7 +429,7 @@ internal class UpdateCommand
         var gatewayDll = ResolveGatewayBinaryPath(repoRoot);
         if (!File.Exists(gatewayDll))
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Gateway binary not found: [dim]{Markup.Escape(gatewayDll)}[/]");
+            AnsiConsole.MarkupLine($"[red]✗[/] Gateway binary not found: [dim]{CliText.SafeDisplay(gatewayDll)}[/]");
             return 1;
         }
 
@@ -471,7 +471,7 @@ internal class UpdateCommand
             {
                 var panel = new Panel(
                     $"[green]Update complete![/]\n\n" +
-                    $"[dim]URL:[/]  [green]{Markup.Escape(gatewayUrl)}[/]\n" +
+                    $"[dim]URL:[/]  [green]{CliText.SafeDisplay(gatewayUrl)}[/]\n" +
                     $"[dim]PID:[/]  [yellow]{startResult.Pid.Value}[/]")
                 {
                     Border = BoxBorder.Rounded,
@@ -483,13 +483,13 @@ internal class UpdateCommand
             }
             else
             {
-                AnsiConsole.MarkupLine($"  URL:  [green]{Markup.Escape(gatewayUrl)}[/]");
+                AnsiConsole.MarkupLine($"  URL:  [green]{CliText.SafeDisplay(gatewayUrl)}[/]");
             }
             return 0;
         }
         else
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to start gateway: {Markup.Escape(startResult.Message ?? "Unknown error")}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Failed to start gateway: {CliText.SafeDisplay(startResult.Message ?? "Unknown error")}");
             return 1;
         }
     }
@@ -545,11 +545,11 @@ internal class UpdateCommand
     {
         AnsiConsole.MarkupLine($"[red]\u2717[/] Update aborted: {dirtyPaths.Count} uncommitted change(s) in the deployment repo.");
         foreach (var path in dirtyPaths)
-            AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(path)}[/]");
+            AnsiConsole.MarkupLine($"  [yellow]{CliText.SafeDisplay(path)}[/]");
         AnsiConsole.MarkupLine("[yellow]\u26a0[/] Your local changes were left untouched. Choose one:");
         AnsiConsole.MarkupLine("  [dim]botnexus update --stash[/]   keep them (saved to a named stash, recoverable)");
         AnsiConsole.MarkupLine("  [dim]botnexus update --force[/]   discard tracked-file changes and update");
-        AnsiConsole.MarkupLine($"  [dim]git -C \"{Markup.Escape(repoRoot)}\" commit -am \"local changes\"[/]   keep them as a commit");
+        AnsiConsole.MarkupLine($"  [dim]git -C \"{CliText.SafeDisplay(repoRoot)}\" commit -am \"local changes\"[/]   keep them as a commit");
     }
 
     private async Task<int> StashDirtyTreeAsync(string repoRoot, IReadOnlyList<string> dirtyPaths, CancellationToken cancellationToken)
@@ -566,12 +566,12 @@ internal class UpdateCommand
         {
             AnsiConsole.MarkupLine("[red]\u2717[/] Could not stash local changes; update aborted.");
             if (!string.IsNullOrWhiteSpace(result.FailureDetail))
-                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(result.FailureDetail)}[/]");
+                AnsiConsole.MarkupLine($"[dim]{CliText.SafeDisplay(result.FailureDetail)}[/]");
             return DirtyWorkingTreeExitCode;
         }
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Stashed {dirtyPaths.Count} local change(s) as [yellow]{Markup.Escape(label)}[/]");
-        AnsiConsole.MarkupLine($"  [dim]git -C \"{Markup.Escape(repoRoot)}\" stash apply stash^{{/{Markup.Escape(label)}}}[/]   to restore them");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Stashed {dirtyPaths.Count} local change(s) as [yellow]{CliText.SafeDisplay(label)}[/]");
+        AnsiConsole.MarkupLine($"  [dim]git -C \"{CliText.SafeDisplay(repoRoot)}\" stash apply stash^{{/{CliText.SafeDisplay(label)}}}[/]   to restore them");
         return 0;
     }
 
@@ -579,7 +579,7 @@ internal class UpdateCommand
     {
         AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Discarding {dirtyPaths.Count} local change(s) in the deployment repo (--force):");
         foreach (var path in dirtyPaths)
-            AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(path)}[/]");
+            AnsiConsole.MarkupLine($"  [yellow]{CliText.SafeDisplay(path)}[/]");
 
         var result = await DiscardChangesAsync(repoRoot, cancellationToken);
         if (result.WasCanceled)
@@ -592,7 +592,7 @@ internal class UpdateCommand
         {
             AnsiConsole.MarkupLine("[red]\u2717[/] Could not discard local changes; update aborted.");
             if (!string.IsNullOrWhiteSpace(result.FailureDetail))
-                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(result.FailureDetail)}[/]");
+                AnsiConsole.MarkupLine($"[dim]{CliText.SafeDisplay(result.FailureDetail)}[/]");
             return DirtyWorkingTreeExitCode;
         }
 
@@ -608,7 +608,7 @@ internal class UpdateCommand
     {
         AnsiConsole.MarkupLine($"[yellow]\u26a0[/] The deployment repo has {dirtyPaths.Count} uncommitted change(s):");
         foreach (var path in dirtyPaths)
-            AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(path)}[/]");
+            AnsiConsole.MarkupLine($"  [yellow]{CliText.SafeDisplay(path)}[/]");
 
         const string stash = "Stash them (recoverable) and continue";
         const string discard = "Discard local changes and continue";
@@ -880,7 +880,7 @@ internal class UpdateCommand
     {
         AnsiConsole.MarkupLine("[blue][[update]][/] Changes applied:");
         foreach (var subject in commitSubjects)
-            AnsiConsole.MarkupLine($"  - {Markup.Escape(subject)}");
+            AnsiConsole.MarkupLine($"  - {CliText.SafeDisplay(subject)}");
     }
 
     /// <summary>

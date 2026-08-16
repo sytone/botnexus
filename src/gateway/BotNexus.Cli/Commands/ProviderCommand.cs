@@ -207,7 +207,7 @@ internal sealed class ProviderCommand
         {
             var saved = (await CliConfigMutation.ReadAsync(configPath, cancellationToken))
                 .DescribeEntry(ProvidersPath, name);
-            AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(saved ?? "{}")}[/]");
+            AnsiConsole.MarkupLine($"\n[dim]{CliText.SafeDisplay(saved ?? "{}")}[/]");
         }
 
         return 0;
@@ -227,7 +227,7 @@ internal sealed class ProviderCommand
         var document = await CliConfigMutation.ReadAsync(configPath, cancellationToken);
         if (document.FindEntryKey(ProvidersPath, name) is null)
         {
-            AnsiConsole.MarkupLine($"[yellow]No provider named '{Markup.Escape(name)}' to remove.[/]");
+            AnsiConsole.MarkupLine($"[yellow]No provider named '{CliText.SafeDisplay(name)}' to remove.[/]");
             return 0;
         }
 
@@ -243,7 +243,7 @@ internal sealed class ProviderCommand
         if (exitCode != 0)
             return exitCode;
 
-        AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{Markup.Escape(name)}[/] removed.");
+        AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{CliText.SafeDisplay(name)}[/] removed.");
         AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
         if (verbose)
         {
@@ -322,7 +322,7 @@ internal sealed class ProviderCommand
         {
             if (!KnownProviders.Contains(preselectedProvider, StringComparer.OrdinalIgnoreCase))
             {
-                AnsiConsole.MarkupLine($"[red]Unknown provider '{Markup.Escape(preselectedProvider)}'. Known providers: {string.Join(", ", KnownProviders)}.[/]");
+                AnsiConsole.MarkupLine($"[red]Unknown provider '{CliText.SafeDisplay(preselectedProvider)}'. Known providers: {string.Join(", ", KnownProviders)}.[/]");
                 AnsiConsole.MarkupLine("[dim]For other providers (e.g. local OpenAI-compatible servers or 'integration-mock'), use [green]botnexus provider add[/].[/]");
                 return 1;
             }
@@ -389,7 +389,7 @@ internal sealed class ProviderCommand
                 c.Set("apiKey", "ollama");
                 c.Set("baseUrl", baseUrl.TrimEnd('/') + "/v1");
                 c.Set("api", "openai-completions");
-                AnsiConsole.MarkupLine($"[dim]Base URL: {Markup.Escape(GatewayDiagnosticsProjection.ProjectUrl(baseUrl))}, API: openai-completions[/]\n");
+                AnsiConsole.MarkupLine($"[dim]Base URL: {CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl))}, API: openai-completions[/]\n");
                 return Task.CompletedTask;
             })
             .Step(new OllamaProviderSubcommand.OllamaPickModelStep())
@@ -434,7 +434,7 @@ internal sealed class ProviderCommand
                 {
                     var saved = (await CliConfigMutation.ReadAsync(configPath, ct))
                         .DescribeEntry(ProvidersPath, providerName);
-                    AnsiConsole.MarkupLine($"\n[dim]{Markup.Escape(saved ?? "{}")}[/]");
+                    AnsiConsole.MarkupLine($"\n[dim]{CliText.SafeDisplay(saved ?? "{}")}[/]");
                 }
             })
             .Build();
@@ -628,7 +628,7 @@ internal sealed class ProviderCommand
         if (apiKey.StartsWith("auth:", StringComparison.OrdinalIgnoreCase))
             return "[cyan]OAuth[/]";
         if (apiKey.Length > 8)
-            return $"[green]{Markup.Escape(apiKey[..4])}...{Markup.Escape(apiKey[^4..])}[/]";
+            return $"[green]{CliText.SafeDisplay(apiKey[..4])}...{CliText.SafeDisplay(apiKey[^4..])}[/]";
         return "[green]configured[/]";
     }
 

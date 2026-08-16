@@ -46,7 +46,7 @@ internal sealed class ValidateCommand
     public async Task<int> ExecuteAsync(string configPath, bool verbose, CancellationToken cancellationToken)
     {
         AnsiConsole.MarkupLine("BotNexus config validation [dim](local)[/]");
-        AnsiConsole.MarkupLine($"Config path: [dim]{Markup.Escape(configPath)}[/]");
+        AnsiConsole.MarkupLine($"Config path: [dim]{CliText.SafeDisplay(configPath)}[/]");
 
         if (!File.Exists(configPath))
         {
@@ -78,7 +78,7 @@ internal sealed class ValidateCommand
         {
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("[dim]Validation trace:[/]");
-            AnsiConsole.MarkupLine($"[dim]- Loaded config file: {Markup.Escape(configPath)}[/]");
+            AnsiConsole.MarkupLine($"[dim]- Loaded config file: {CliText.SafeDisplay(configPath)}[/]");
             AnsiConsole.MarkupLine($"[dim]- Ran {nameof(PlatformConfigLoader)}.{nameof(PlatformConfigLoader.Validate)}[/]");
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("[dim]Config details:[/]");
@@ -100,8 +100,8 @@ internal sealed class ValidateCommand
 
         var endpoint = new Uri(gatewayBaseUri, "/api/config/validate");
         AnsiConsole.MarkupLine("BotNexus config validation [dim](remote)[/]");
-        AnsiConsole.MarkupLine($"Gateway URL: [dim]{Markup.Escape(gatewayBaseUri.ToString())}[/]");
-        AnsiConsole.MarkupLine($"Endpoint: [dim]{Markup.Escape(endpoint.ToString())}[/]");
+        AnsiConsole.MarkupLine($"Gateway URL: [dim]{CliText.SafeDisplay(gatewayBaseUri.ToString())}[/]");
+        AnsiConsole.MarkupLine($"Endpoint: [dim]{CliText.SafeDisplay(endpoint.ToString())}[/]");
 
         // #2747 clause 1: routed through the one factory so the credential policy is applied
         // here too - previously this was a bare client that contacted any --gateway-url host
@@ -157,9 +157,9 @@ internal sealed class ValidateCommand
         {
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("[dim]Validation trace:[/]");
-            AnsiConsole.MarkupLine($"[dim]- GET {Markup.Escape(endpoint.ToString())}[/]");
+            AnsiConsole.MarkupLine($"[dim]- GET {CliText.SafeDisplay(endpoint.ToString())}[/]");
             AnsiConsole.MarkupLine($"[dim]- HTTP {(int)response.StatusCode} {response.ReasonPhrase}[/]");
-            AnsiConsole.MarkupLine($"[dim]- Validated config path: {Markup.Escape(validation.ConfigPath)}[/]");
+            AnsiConsole.MarkupLine($"[dim]- Validated config path: {CliText.SafeDisplay(validation.ConfigPath)}[/]");
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("[dim]Response details:[/]");
             AnsiConsole.WriteLine(payload);
@@ -196,14 +196,14 @@ internal sealed class ValidateCommand
         {
             AnsiConsole.MarkupLine("\n[yellow]Warnings:[/]");
             foreach (var warning in warnings)
-                AnsiConsole.MarkupLine($"  [yellow]•[/] {Markup.Escape(warning)}");
+                AnsiConsole.MarkupLine($"  [yellow]•[/] {CliText.SafeDisplay(warning)}");
         }
 
         if (errors.Count > 0)
         {
             AnsiConsole.MarkupLine("\n[red]Errors:[/]");
             foreach (var error in errors)
-                AnsiConsole.MarkupLine($"  [red]•[/] {Markup.Escape(error)}");
+                AnsiConsole.MarkupLine($"  [red]•[/] {CliText.SafeDisplay(error)}");
         }
 
         if (warnings.Count == 0 && errors.Count == 0)

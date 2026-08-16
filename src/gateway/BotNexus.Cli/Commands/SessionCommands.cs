@@ -146,11 +146,11 @@ internal sealed class SessionCommands
         foreach (var session in page)
         {
             table.AddRow(
-                Markup.Escape(session.SessionId.ToString()),
-                Markup.Escape(session.AgentId.ToString()),
-                Markup.Escape(session.Status.ToString()),
+                CliText.SafeDisplay(session.SessionId.ToString()),
+                CliText.SafeDisplay(session.AgentId.ToString()),
+                CliText.SafeDisplay(session.Status.ToString()),
                 session.MessageCount.ToString(),
-                Markup.Escape(session.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss")));
+                CliText.SafeDisplay(session.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss")));
         }
 
         AnsiConsole.Write(table);
@@ -165,7 +165,7 @@ internal sealed class SessionCommands
         var refusal = ValidateExplicitId(id);
         if (refusal is not null)
         {
-            AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(refusal));
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(refusal));
             return 2;
         }
 
@@ -173,7 +173,7 @@ internal sealed class SessionCommands
         var existing = await store.GetAsync(sessionId, ct).ConfigureAwait(false);
         if (existing is null)
         {
-            AnsiConsole.MarkupLine("[yellow]Session '{0}' not found.[/]", Markup.Escape(id));
+            AnsiConsole.MarkupLine("[yellow]Session '{0}' not found.[/]", CliText.SafeDisplay(id));
             return 1;
         }
 
@@ -183,12 +183,12 @@ internal sealed class SessionCommands
         // UpdatedAt, so calling it a second time would change state the caller asked to leave alone.
         if (existing.Status == SessionStatus.Sealed)
         {
-            AnsiConsole.MarkupLine("[green]Session '{0}' is already archived.[/]", Markup.Escape(id));
+            AnsiConsole.MarkupLine("[green]Session '{0}' is already archived.[/]", CliText.SafeDisplay(id));
             return 0;
         }
 
         await store.ArchiveAsync(sessionId, ct).ConfigureAwait(false);
-        AnsiConsole.MarkupLine("[green]Session '{0}' archived.[/]", Markup.Escape(id));
+        AnsiConsole.MarkupLine("[green]Session '{0}' archived.[/]", CliText.SafeDisplay(id));
         return 0;
     }
 
@@ -199,7 +199,7 @@ internal sealed class SessionCommands
         var refusal = ValidateExplicitId(id);
         if (refusal is not null)
         {
-            AnsiConsole.MarkupLine("[red]{0}[/]", Markup.Escape(refusal));
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(refusal));
             return 2;
         }
 
@@ -207,12 +207,12 @@ internal sealed class SessionCommands
         var existing = await store.GetAsync(sessionId, ct).ConfigureAwait(false);
         if (existing is null)
         {
-            AnsiConsole.MarkupLine("[yellow]Session '{0}' not found.[/]", Markup.Escape(id));
+            AnsiConsole.MarkupLine("[yellow]Session '{0}' not found.[/]", CliText.SafeDisplay(id));
             return 1;
         }
 
         await store.DeleteAsync(sessionId, ct).ConfigureAwait(false);
-        AnsiConsole.MarkupLine("[green]Session '{0}' deleted.[/]", Markup.Escape(id));
+        AnsiConsole.MarkupLine("[green]Session '{0}' deleted.[/]", CliText.SafeDisplay(id));
         return 0;
     }
 
@@ -248,7 +248,7 @@ internal sealed class SessionCommands
         {
             AnsiConsole.MarkupLine(
                 "[red]Error:[/] Config file not found at [dim]{0}[/]. Run [green]botnexus init[/] first.",
-                Markup.Escape(configPath));
+                CliText.SafeDisplay(configPath));
             return 1;
         }
 
@@ -259,14 +259,14 @@ internal sealed class SessionCommands
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] Unable to load config: {0}", Markup.Escape(ex.Message));
+            AnsiConsole.MarkupLine("[red]Error:[/] Unable to load config: {0}", CliText.SafeDisplay(ex.Message));
             return 1;
         }
 
         var resolution = CliSessionStoreFactory.Resolve(config, new BotNexusHome(home), new FileSystem());
         if (resolution.Store is null)
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] {0}", Markup.Escape(resolution.RefusalMessage!));
+            AnsiConsole.MarkupLine("[red]Error:[/] {0}", CliText.SafeDisplay(resolution.RefusalMessage!));
             return 1;
         }
 

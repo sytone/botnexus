@@ -129,7 +129,7 @@ internal sealed class SubAgentCommand
 
         if (plan.Count == 0)
         {
-            AnsiConsole.MarkupLine($"[green]No sub-agent workspaces found under[/] [dim]{Markup.Escape(workspaceRoot)}[/].");
+            AnsiConsole.MarkupLine($"[green]No sub-agent workspaces found under[/] [dim]{CliText.SafeDisplay(workspaceRoot)}[/].");
             return 0;
         }
 
@@ -141,8 +141,8 @@ internal sealed class SubAgentCommand
         foreach (var entry in plan)
         {
             table.AddRow(
-                Markup.Escape(entry.AgentDirectoryName),
-                Markup.Escape(entry.Status ?? "(no record)"),
+                CliText.SafeDisplay(entry.AgentDirectoryName),
+                CliText.SafeDisplay(entry.Status ?? "(no record)"),
                 RenderDisposition(entry.Disposition));
         }
 
@@ -174,7 +174,7 @@ internal sealed class SubAgentCommand
         foreach (var entry in prunable)
         {
             var verb = dryRun ? "[dim]would delete[/]" : "[red]deleting[/]";
-            AnsiConsole.MarkupLine($"  {verb} [dim]{Markup.Escape(entry.AgentDirectoryName)}[/] ({RenderDisposition(entry.Disposition)})");
+            AnsiConsole.MarkupLine($"  {verb} [dim]{CliText.SafeDisplay(entry.AgentDirectoryName)}[/] ({RenderDisposition(entry.Disposition)})");
         }
 
         var count = reaper.Prune(plan, dryRun);

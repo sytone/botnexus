@@ -98,7 +98,7 @@ internal sealed class DebugDbCommand
         {
             if (!File.Exists(dbFile.Path))
             {
-                AnsiConsole.MarkupLine($"[yellow]Skipping {Markup.Escape(dbFile.Name)}: file not found.[/]");
+                AnsiConsole.MarkupLine($"[yellow]Skipping {CliText.SafeDisplay(dbFile.Name)}: file not found.[/]");
                 continue;
             }
 
@@ -118,7 +118,7 @@ internal sealed class DebugDbCommand
             }
             catch (SqliteException ex)
             {
-                AnsiConsole.MarkupLine($"[yellow]Skipping {Markup.Escape(dbFile.Name)}: {Markup.Escape(ex.Message)}[/]");
+                AnsiConsole.MarkupLine($"[yellow]Skipping {CliText.SafeDisplay(dbFile.Name)}: {CliText.SafeDisplay(ex.Message)}[/]");
             }
         }
 
@@ -134,7 +134,7 @@ internal sealed class DebugDbCommand
             table.AddColumn(new TableColumn("Rows").RightAligned());
 
             foreach (var entry in allTables)
-                table.AddRow(Markup.Escape(entry.Database), Markup.Escape(entry.Table), entry.RowCount.ToString("N0"));
+                table.AddRow(CliText.SafeDisplay(entry.Database), CliText.SafeDisplay(entry.Table), entry.RowCount.ToString("N0"));
 
             AnsiConsole.Write(table);
         }
@@ -157,7 +157,7 @@ internal sealed class DebugDbCommand
         {
             if (!File.Exists(dbFile.Path))
             {
-                AnsiConsole.MarkupLine($"[yellow]Skipping {Markup.Escape(dbFile.Name)}: file not found.[/]");
+                AnsiConsole.MarkupLine($"[yellow]Skipping {CliText.SafeDisplay(dbFile.Name)}: file not found.[/]");
                 continue;
             }
 
@@ -180,7 +180,7 @@ internal sealed class DebugDbCommand
             }
             catch (SqliteException ex)
             {
-                AnsiConsole.MarkupLine($"[yellow]Skipping {Markup.Escape(dbFile.Name)}: {Markup.Escape(ex.Message)}[/]");
+                AnsiConsole.MarkupLine($"[yellow]Skipping {CliText.SafeDisplay(dbFile.Name)}: {CliText.SafeDisplay(ex.Message)}[/]");
             }
         }
 
@@ -192,7 +192,7 @@ internal sealed class DebugDbCommand
         {
             foreach (var entry in schemas)
             {
-                AnsiConsole.MarkupLine($"[bold]{Markup.Escape(entry.Database)}[/] → [cyan]{Markup.Escape(entry.Table)}[/]");
+                AnsiConsole.MarkupLine($"[bold]{CliText.SafeDisplay(entry.Database)}[/] → [cyan]{CliText.SafeDisplay(entry.Table)}[/]");
                 AnsiConsole.WriteLine(entry.Ddl);
                 AnsiConsole.WriteLine();
             }
@@ -205,7 +205,7 @@ internal sealed class DebugDbCommand
     {
         if (!Directory.Exists(home))
         {
-            AnsiConsole.MarkupLine("[red]BotNexus home directory not found:[/] " + Markup.Escape(home));
+            AnsiConsole.MarkupLine("[red]BotNexus home directory not found:[/] " + CliText.SafeDisplay(home));
             return 1;
         }
 
@@ -213,7 +213,7 @@ internal sealed class DebugDbCommand
 
         if (dbFiles.Length == 0)
         {
-            AnsiConsole.MarkupLine("[yellow]No database files found in:[/] " + Markup.Escape(home));
+            AnsiConsole.MarkupLine("[yellow]No database files found in:[/] " + CliText.SafeDisplay(home));
             return 0;
         }
 
@@ -263,7 +263,7 @@ internal sealed class DebugDbCommand
             table.AddColumn(new TableColumn("Size").RightAligned());
 
             foreach (var entry in entries)
-                table.AddRow(Markup.Escape(entry.File), entry.SizeFormatted);
+                table.AddRow(CliText.SafeDisplay(entry.File), entry.SizeFormatted);
 
             var totalBytes = entries.Sum(e => e.SizeBytes);
             table.AddRow("[bold]Total[/]", $"[bold]{FormatSize(totalBytes)}[/]");

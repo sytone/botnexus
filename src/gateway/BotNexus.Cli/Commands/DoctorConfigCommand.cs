@@ -46,9 +46,9 @@ internal sealed class DoctorConfigCommand
     {
         foreach (var advisory in Advisories.Where(a => a.IsApplicable(config)))
         {
-            AnsiConsole.MarkupLine($"[yellow]![/] [bold]{Markup.Escape(advisory.Id)}[/]");
-            AnsiConsole.MarkupLine($"        {Markup.Escape(advisory.Describe(config))}");
-            AnsiConsole.MarkupLine($"        [dim]Advisory only - not changed automatically:[/] {Markup.Escape(advisory.Remediation)}\n");
+            AnsiConsole.MarkupLine($"[yellow]![/] [bold]{CliText.SafeDisplay(advisory.Id)}[/]");
+            AnsiConsole.MarkupLine($"        {CliText.SafeDisplay(advisory.Describe(config))}");
+            AnsiConsole.MarkupLine($"        [dim]Advisory only - not changed automatically:[/] {CliText.SafeDisplay(advisory.Remediation)}\n");
         }
     }
 
@@ -86,7 +86,7 @@ internal sealed class DoctorConfigCommand
     {
         if (!File.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config not found at [dim]{CliText.SafeDisplay(configPath)}[/]. Run [green]botnexus init[/] first.");
             return 1;
         }
 
@@ -97,11 +97,11 @@ internal sealed class DoctorConfigCommand
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {CliText.SafeDisplay(ex.Message)}");
             return 1;
         }
 
-        AnsiConsole.MarkupLine($"  Checking config at [dim]{Markup.Escape(configPath)}[/]...\n");
+        AnsiConsole.MarkupLine($"  Checking config at [dim]{CliText.SafeDisplay(configPath)}[/]...\n");
 
         // Read the persisted document so checks operate on what is actually on disk, addressed by
         // canonical path (#2887) rather than hand-rolled traversal.
@@ -137,9 +137,9 @@ internal sealed class DoctorConfigCommand
         for (var i = 0; i < applicable.Count; i++)
         {
             var check = applicable[i];
-            AnsiConsole.MarkupLine($"  [bold]{Markup.Escape($"[{i + 1}/{applicable.Count}]")}[/] [bold]{Markup.Escape(check.Id)}[/]");
-            AnsiConsole.MarkupLine($"        {Markup.Escape(check.Description)}");
-            AnsiConsole.MarkupLine($"        [dim]Suggested fix:[/] {Markup.Escape(check.FixDescription)}");
+            AnsiConsole.MarkupLine($"  [bold]{CliText.SafeDisplay($"[{i + 1}/{applicable.Count}]")}[/] [bold]{CliText.SafeDisplay(check.Id)}[/]");
+            AnsiConsole.MarkupLine($"        {CliText.SafeDisplay(check.Description)}");
+            AnsiConsole.MarkupLine($"        [dim]Suggested fix:[/] {CliText.SafeDisplay(check.FixDescription)}");
 
             if (dryRun)
             {
@@ -204,7 +204,7 @@ internal sealed class DoctorConfigCommand
         { Justification = Justify.Left });
 
         if (verbose)
-            AnsiConsole.MarkupLine($"\n[dim]Config path: {Markup.Escape(configPath)}[/]");
+            AnsiConsole.MarkupLine($"\n[dim]Config path: {CliText.SafeDisplay(configPath)}[/]");
 
         return 0;
     }

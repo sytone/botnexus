@@ -50,7 +50,7 @@ internal sealed class DebugMemoryCommand
     {
         if (!Directory.Exists(agentsDir))
         {
-            AnsiConsole.MarkupLine("[red]Agents directory not found:[/] {0}", Markup.Escape(agentsDir));
+            AnsiConsole.MarkupLine("[red]Agents directory not found:[/] {0}", CliText.SafeDisplay(agentsDir));
             return 1;
         }
 
@@ -170,8 +170,8 @@ internal sealed class DebugMemoryCommand
             return 0;
         }
 
-        AnsiConsole.MarkupLine("[bold]{0}[/]", Markup.Escape(agent.AgentId));
-        AnsiConsole.MarkupLine("  Workspace: {0}", Markup.Escape(agent.WorkspacePath));
+        AnsiConsole.MarkupLine("[bold]{0}[/]", CliText.SafeDisplay(agent.AgentId));
+        AnsiConsole.MarkupLine("  Workspace: {0}", CliText.SafeDisplay(agent.WorkspacePath));
         AnsiConsole.MarkupLine("  MEMORY.md: {0}",
             agent.HasMemoryMd ? FormatSize(agent.MemoryMdSizeBytes) : "[dim]not present[/]");
         AnsiConsole.MarkupLine("  Daily notes: {0}", agent.DailyNoteCount);

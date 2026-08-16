@@ -74,13 +74,13 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
 
         if (!configPathResolver.TryGetValue(config, keyPath, out var value, out var error))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(error)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(error)}");
             return 1;
         }
 
         PrintValue(value);
         if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Read key: {Markup.Escape(keyPath)}[/]");
+            AnsiConsole.MarkupLine($"[dim]Read key: {CliText.SafeDisplay(keyPath)}[/]");
 
         return 0;
     }
@@ -99,13 +99,13 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         // object would drop everything the graph does not model (#2057).
         if (!configPathResolver.TrySetValue(config, keyPath, rawValue, out var error))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(error)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(error)}");
             return 1;
         }
 
         if (!configPathResolver.TryGetValue(config, keyPath, out var coerced, out var readBackError))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(readBackError)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(readBackError)}");
             return 1;
         }
 
@@ -118,7 +118,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         if (saveCode != 0)
             return saveCode;
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Set [green]{Markup.Escape(keyPath)}[/].");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Set [green]{CliText.SafeDisplay(keyPath)}[/].");
         return 0;
     }
 
@@ -136,7 +136,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         if (cancellationToken.IsCancellationRequested)
             return Task.FromResult(1);
 
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Generated schema: [dim]{Markup.Escape(resolvedPath)}[/]");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Generated schema: [dim]{CliText.SafeDisplay(resolvedPath)}[/]");
         if (verbose)
         {
             var availablePaths = configPathResolver.GetAvailablePaths(new PlatformConfig());
@@ -153,7 +153,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
     {
         if (!File.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/]. Run [green]botnexus init[/] first.");
             return null;
         }
 
@@ -163,7 +163,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {CliText.SafeDisplay(ex.Message)}");
             return null;
         }
     }

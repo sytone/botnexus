@@ -109,7 +109,7 @@ internal sealed class DebugSessionsCommand
     private static void ReportMissingStore(string dbPath)
     {
         var message = CliStorePaths.BuildNotFoundMessage(SessionsStoreName, dbPath);
-        AnsiConsole.MarkupLine("[red]" + Markup.Escape(message) + "[/]");
+        AnsiConsole.MarkupLine("[red]" + CliText.SafeDisplay(message) + "[/]");
     }
 
     internal static int ExecuteList(string dbPath, string? agent, string? status, int limit, string format)
@@ -167,10 +167,10 @@ internal sealed class DebugSessionsCommand
         foreach (var s in sessions)
         {
             table.AddRow(
-                Markup.Escape(Truncate(s.Id, 24)),
-                Markup.Escape(Truncate(s.ConversationId ?? "(none)", 20)),
+                CliText.SafeDisplay(Truncate(s.Id, 24)),
+                CliText.SafeDisplay(Truncate(s.ConversationId ?? "(none)", 20)),
                 FormatStatus(s.Status),
-                Markup.Escape(FormatDate(s.CreatedAt)),
+                CliText.SafeDisplay(FormatDate(s.CreatedAt)),
                 s.MessageCount.ToString());
         }
 
@@ -196,7 +196,7 @@ internal sealed class DebugSessionsCommand
         using var reader = cmd.ExecuteReader();
         if (!reader.Read())
         {
-            AnsiConsole.MarkupLine($"[red]Session not found:[/] {Markup.Escape(sessionId)}");
+            AnsiConsole.MarkupLine($"[red]Session not found:[/] {CliText.SafeDisplay(sessionId)}");
             return 1;
         }
 
@@ -233,14 +233,14 @@ internal sealed class DebugSessionsCommand
 
         var panel = new Panel(
             new Rows(
-                new Markup($"[bold]ID:[/]              {Markup.Escape(detail.Id)}"),
-                new Markup($"[bold]Conversation:[/]    {Markup.Escape(detail.ConversationId ?? "(none)")}"),
-                new Markup($"[bold]Channel:[/]         {Markup.Escape(detail.ChannelType ?? "(none)")}"),
-                new Markup($"[bold]Caller:[/]          {Markup.Escape(detail.CallerId ?? "(none)")}"),
-                new Markup($"[bold]Type:[/]            {Markup.Escape(detail.SessionType ?? "(none)")}"),
+                new Markup($"[bold]ID:[/]              {CliText.SafeDisplay(detail.Id)}"),
+                new Markup($"[bold]Conversation:[/]    {CliText.SafeDisplay(detail.ConversationId ?? "(none)")}"),
+                new Markup($"[bold]Channel:[/]         {CliText.SafeDisplay(detail.ChannelType ?? "(none)")}"),
+                new Markup($"[bold]Caller:[/]          {CliText.SafeDisplay(detail.CallerId ?? "(none)")}"),
+                new Markup($"[bold]Type:[/]            {CliText.SafeDisplay(detail.SessionType ?? "(none)")}"),
                 new Markup($"[bold]Status:[/]          {FormatStatus(detail.Status ?? "unknown")}"),
-                new Markup($"[bold]Created:[/]         {Markup.Escape(FormatDate(detail.CreatedAt))}"),
-                new Markup($"[bold]Updated:[/]         {Markup.Escape(FormatDate(detail.UpdatedAt))}"),
+                new Markup($"[bold]Created:[/]         {CliText.SafeDisplay(FormatDate(detail.CreatedAt))}"),
+                new Markup($"[bold]Updated:[/]         {CliText.SafeDisplay(FormatDate(detail.UpdatedAt))}"),
                 new Markup($"[bold]Messages:[/]        {detail.MessageCount}"),
                 new Markup($"[bold]Has Compaction:[/]  {(detail.HasCompaction ? "[green]yes[/]" : "[dim]no[/]")}")))
         {
@@ -313,7 +313,7 @@ internal sealed class DebugSessionsCommand
             {
                 AnsiConsole.MarkupLine("[red][EMPTY — compaction produced no summary][/]");
                 if (timestamp is not null)
-                    AnsiConsole.MarkupLine($"[dim]Compaction timestamp: {Markup.Escape(timestamp)}[/]");
+                    AnsiConsole.MarkupLine($"[dim]Compaction timestamp: {CliText.SafeDisplay(timestamp)}[/]");
             }
             return 0;
         }
@@ -325,7 +325,7 @@ internal sealed class DebugSessionsCommand
         }
         else
         {
-            AnsiConsole.MarkupLine($"[bold]Compaction Summary[/] [dim]({Markup.Escape(timestamp ?? "unknown")})[/]");
+            AnsiConsole.MarkupLine($"[bold]Compaction Summary[/] [dim]({CliText.SafeDisplay(timestamp ?? "unknown")})[/]");
             AnsiConsole.WriteLine();
             AnsiConsole.Write(new Text(content));
             AnsiConsole.WriteLine();
@@ -460,7 +460,7 @@ internal sealed class DebugSessionsCommand
         "active" => "[green]active[/]",
         "sealed" => "[blue]sealed[/]",
         "expired" => "[dim]expired[/]",
-        _ => Markup.Escape(status)
+        _ => CliText.SafeDisplay(status)
     };
 
     // ── DTOs ──

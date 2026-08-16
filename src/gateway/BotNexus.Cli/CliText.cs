@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using BotNexus.Agent.Core.Tools;
 using Spectre.Console;
 
@@ -15,6 +16,15 @@ namespace BotNexus.Cli;
 /// clipboard or overwrite earlier output (issue #2722).
 /// </para>
 /// <para>
+/// Stripping escape <i>sequences</i> is necessary but not sufficient. <see cref="AnsiStripper"/>
+/// removes well-formed CSI/OSC/DCS sequences and the 8-bit C1 range, but a stored value can
+/// carry <b>lone</b> C0 controls that never formed a sequence - a bare <c>BEL</c> (0x07) that
+/// rings the operator's terminal, a <c>BS</c> (0x08) or <c>CR</c> (0x0d) that reposition the
+/// cursor to overwrite text already printed, or a <c>DEL</c> (0x7f). Those survive the
+/// sequence stripper by construction, so <see cref="SafeDisplay"/> scrubs them as a second
+/// step (issue #3208).
+/// </para>
+/// <para>
 /// Every render site must compose through <see cref="SafeDisplay"/> rather than spelling
 /// out its own combination of stripping and escaping. Two spellings of "safe" is the
 /// defect this helper exists to remove.
@@ -28,12 +38,25 @@ namespace BotNexus.Cli;
 /// here would recreate exactly the drift this fix removes.
 /// </para>
 /// </remarks>
-internal static class CliText
+internal static partial class CliText
 {
     /// <summary>
-    /// Renders an untrusted string for terminal display: terminal control sequences are
-    /// removed first, then Spectre markup is escaped. <see langword="null"/> becomes empty.
+    /// Lone C0 controls and DEL that survive <see cref="AnsiStripper"/> because they never
+    /// formed an escape sequence. <c>\t</c> (0x09) and <c>\n</c> (0x0a) are deliberately
+    /// preserved: they are ordinary layout characters, not terminal-state manipulation.
     /// </summary>
+    [GeneratedRegex(@"[\x00-\x08\x0b-\x1f\x7f]", RegexOptions.Compiled)]
+    private static partial Regex ResidualControls();
+
+    /// <summary>
+    /// Renders an untrusted string for terminal display: terminal control sequences are
+    /// removed first, then any lone control characters they left behind, then Spectre markup
+    /// is escaped. <see langword="null"/> becomes empty.
+    /// </summary>
+    /// <remarks>
+    /// Display-only. Machine-readable output (<c>--json</c> and friends) must NOT compose
+    /// through this helper - sanitisation would change the payload bytes (#3208 AC4).
+    /// </remarks>
     public static string SafeDisplay(string? value)
-        => Markup.Escape(AnsiStripper.Strip(value ?? string.Empty));
+        => Markup.Escape(ResidualControls().Replace(AnsiStripper.Strip(value ?? string.Empty), string.Empty));
 }

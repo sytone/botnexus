@@ -59,8 +59,8 @@ internal sealed class InitCommand
 
         if (File.Exists(configPath) && !force)
         {
-            AnsiConsole.MarkupLine($"[yellow]⚠[/] Config already exists at [dim]{Markup.Escape(configPath)}[/]. Use [green]--force[/] to overwrite.");
-            AnsiConsole.MarkupLine($"  Home: [dim]{Markup.Escape(homePath)}[/]");
+            AnsiConsole.MarkupLine($"[yellow]⚠[/] Config already exists at [dim]{CliText.SafeDisplay(configPath)}[/]. Use [green]--force[/] to overwrite.");
+            AnsiConsole.MarkupLine($"  Home: [dim]{CliText.SafeDisplay(homePath)}[/]");
             return 0;
         }
 
@@ -121,8 +121,8 @@ internal sealed class InitCommand
         {
             var panel = new Panel(
                 $"[green]\u2713[/] Initialized BotNexus home\n\n" +
-                $"[dim]Home:[/]   [dim]{Markup.Escape(homePath)}[/]\n" +
-                $"[dim]Config:[/] [dim]{Markup.Escape(configPath)}[/]\n\n" +
+                $"[dim]Home:[/]   [dim]{CliText.SafeDisplay(homePath)}[/]\n" +
+                $"[dim]Config:[/] [dim]{CliText.SafeDisplay(configPath)}[/]\n\n" +
                 "[bold]Next steps:[/]\n" +
                 "  [green]botnexus provider setup[/]\n" +
                 "  [green]botnexus validate[/]\n" +
@@ -137,8 +137,8 @@ internal sealed class InitCommand
         }
         else
         {
-            AnsiConsole.MarkupLine($"[green]\u2713[/] Initialized BotNexus home at: [dim]{Markup.Escape(homePath)}[/]");
-            AnsiConsole.MarkupLine($"[green]\u2713[/] Created config: [dim]{Markup.Escape(configPath)}[/]");
+            AnsiConsole.MarkupLine($"[green]\u2713[/] Initialized BotNexus home at: [dim]{CliText.SafeDisplay(homePath)}[/]");
+            AnsiConsole.MarkupLine($"[green]\u2713[/] Created config: [dim]{CliText.SafeDisplay(configPath)}[/]");
             AnsiConsole.MarkupLine("\nNext steps:");
             AnsiConsole.MarkupLine("  [green]botnexus provider setup[/]");
             AnsiConsole.MarkupLine("  [green]botnexus validate[/]");

@@ -108,11 +108,11 @@ internal sealed class SatelliteCommand
         foreach (var (id, sat) in satellites.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))
         {
             table.AddRow(
-                Markup.Escape(id),
-                Markup.Escape(sat.DisplayName ?? "(none)"),
-                Markup.Escape(sat.Platform),
-                Markup.Escape(sat.OwnerUserId ?? "(none)"),
-                Markup.Escape(string.Join(", ", sat.Capabilities ?? [])),
+                CliText.SafeDisplay(id),
+                CliText.SafeDisplay(sat.DisplayName ?? "(none)"),
+                CliText.SafeDisplay(sat.Platform),
+                CliText.SafeDisplay(sat.OwnerUserId ?? "(none)"),
+                CliText.SafeDisplay(string.Join(", ", sat.Capabilities ?? [])),
                 sat.Enabled ? "[green]yes[/]" : "[red]no[/]");
         }
 
@@ -128,7 +128,7 @@ internal sealed class SatelliteCommand
         // Validate platform
         if (!ValidPlatforms.Contains(platform.ToLowerInvariant()))
         {
-            AnsiConsole.MarkupLine($"[red]Invalid platform: {Markup.Escape(platform)}. Must be one of: {string.Join(", ", ValidPlatforms)}[/]");
+            AnsiConsole.MarkupLine($"[red]Invalid platform: {CliText.SafeDisplay(platform)}. Must be one of: {string.Join(", ", ValidPlatforms)}[/]");
             return 1;
         }
 
@@ -173,18 +173,18 @@ internal sealed class SatelliteCommand
         }, "satellite-register", ct);
 
         // Display success
-        AnsiConsole.MarkupLine($"[green]✓[/] Satellite [bold]{Markup.Escape(name)}[/] registered.");
+        AnsiConsole.MarkupLine($"[green]✓[/] Satellite [bold]{CliText.SafeDisplay(name)}[/] registered.");
         AnsiConsole.WriteLine();
 
         var panel = new Panel(
             new Rows(
-                new Markup($"[bold]Satellite ID:[/]  {Markup.Escape(name)}"),
-                new Markup($"[bold]Display Name:[/] {Markup.Escape(displayName ?? name)}"),
-                new Markup($"[bold]Platform:[/]     {Markup.Escape(platform)}"),
-                new Markup($"[bold]Owner:[/]        {Markup.Escape(owner)}"),
-                new Markup($"[bold]Capabilities:[/] {Markup.Escape(string.Join(", ", capList))}"),
+                new Markup($"[bold]Satellite ID:[/]  {CliText.SafeDisplay(name)}"),
+                new Markup($"[bold]Display Name:[/] {CliText.SafeDisplay(displayName ?? name)}"),
+                new Markup($"[bold]Platform:[/]     {CliText.SafeDisplay(platform)}"),
+                new Markup($"[bold]Owner:[/]        {CliText.SafeDisplay(owner)}"),
+                new Markup($"[bold]Capabilities:[/] {CliText.SafeDisplay(string.Join(", ", capList))}"),
                 new Markup(""),
-                new Markup($"[bold yellow]API Key:[/]      [bold]{Markup.Escape(apiKey)}[/]")))
+                new Markup($"[bold yellow]API Key:[/]      [bold]{CliText.SafeDisplay(apiKey)}[/]")))
         {
             Header = new PanelHeader(" Satellite Registered "),
             Border = BoxBorder.Rounded
@@ -221,11 +221,11 @@ internal sealed class SatelliteCommand
 
         if (removed)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] Satellite [bold]{Markup.Escape(name)}[/] removed.");
+            AnsiConsole.MarkupLine($"[green]✓[/] Satellite [bold]{CliText.SafeDisplay(name)}[/] removed.");
             return 0;
         }
 
-        AnsiConsole.MarkupLine($"[yellow]Satellite '{Markup.Escape(name)}' not found in config.[/]");
+        AnsiConsole.MarkupLine($"[yellow]Satellite '{CliText.SafeDisplay(name)}' not found in config.[/]");
         return 1;
     }
 }

@@ -88,18 +88,18 @@ internal sealed class InstallCommand
         var repoError = ValidateRepo(repo);
         if (repoError is not null)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(repoError)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(repoError)}");
             return 1;
         }
 
         if (Directory.Exists(Path.Combine(targetPath, ".git")))
         {
-            AnsiConsole.MarkupLine($"Repository already exists at: [dim]{Markup.Escape(targetPath)}[/]");
+            AnsiConsole.MarkupLine($"Repository already exists at: [dim]{CliText.SafeDisplay(targetPath)}[/]");
             AnsiConsole.MarkupLine("Use [green]git pull[/] to update, or remove the directory and re-run install.");
         }
         else
         {
-            AnsiConsole.MarkupLine($"Cloning [dim]{Markup.Escape(repo)}[/]  [dim]{Markup.Escape(targetPath)}[/]");
+            AnsiConsole.MarkupLine($"Cloning [dim]{CliText.SafeDisplay(repo)}[/]  [dim]{CliText.SafeDisplay(targetPath)}[/]");
             var cloneResult = await RunProcessAsync("git", BuildCloneArguments(repo, targetPath), null, verbose, cancellationToken);
             if (cloneResult != 0)
             {
@@ -107,7 +107,7 @@ internal sealed class InstallCommand
                 return cloneResult;
             }
 
-            AnsiConsole.MarkupLine($"[green]\u2713[/] Repository cloned to: [dim]{Markup.Escape(targetPath)}[/]");
+            AnsiConsole.MarkupLine($"[green]\u2713[/] Repository cloned to: [dim]{CliText.SafeDisplay(targetPath)}[/]");
         }
 
         if (build)

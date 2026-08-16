@@ -113,7 +113,7 @@ internal sealed class MemoryCommands
         }
         else
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Session store type [green]{Markup.Escape(resolvedType)}[/] does not support backfill. Use [green]Sqlite[/] or [green]File[/].");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Session store type [green]{CliText.SafeDisplay(resolvedType)}[/] does not support backfill. Use [green]Sqlite[/] or [green]File[/].");
             return 1;
         }
 
@@ -144,7 +144,7 @@ internal sealed class MemoryCommands
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] Backfill failed \u2014 {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLine($"[red]Error:[/] Backfill failed \u2014 {CliText.SafeDisplay(ex.Message)}");
                 if (verbose)
                     AnsiConsole.WriteException(ex);
                 return 1;
@@ -159,7 +159,7 @@ internal sealed class MemoryCommands
     {
         if (!File.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/]. Run [green]botnexus init[/] first.");
             return null;
         }
 
@@ -169,7 +169,7 @@ internal sealed class MemoryCommands
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {CliText.SafeDisplay(ex.Message)}");
             return null;
         }
     }
