@@ -52,6 +52,12 @@ public sealed class LocalCliInstallFixture : IAsyncLifetime
     /// <summary>Human-readable failure detail for the layout guard, or null when the layout is complete.</summary>
     public string? LayoutFailure { get; private set; }
 
+    /// <summary>
+    /// Required assemblies present in the layout but carrying an assembly version the packed CLI
+    /// does not bind against (issue #3237 — presence alone was not sufficient).
+    /// </summary>
+    public IReadOnlyList<string> VersionMismatches { get; private set; } = [];
+
     public async Task InitializeAsync()
     {
         try
@@ -106,6 +112,21 @@ public sealed class LocalCliInstallFixture : IAsyncLifetime
                     MissingAssemblies,
                     InstalledFiles,
                     CliInstallLayout.ReadPackagedToolAssemblies(PackOutputDir));
+                return;
+            }
+
+            // Presence is not enough: the observed #3237 failure had the file on disk and still
+            // could not bind, because a dependency carried an assembly version other than the
+            // pack-time stamp the CLI was compiled against.
+            VersionMismatches = CliInstallLayout.FindVersionMismatches(
+                ToolPath, CliInstallLayout.ToAssemblyVersion(PackVersion));
+            if (VersionMismatches.Count > 0)
+            {
+                LayoutFailure = CliInstallLayout.FormatVersionMismatchFailure(
+                    ToolPath,
+                    CliInstallLayout.ToAssemblyVersion(PackVersion),
+                    VersionMismatches,
+                    InstalledFiles);
                 return;
             }
 

@@ -187,4 +187,69 @@ public sealed class CliInstallLayoutTests : IDisposable
     {
         CliInstallLayout.ReadPackagedToolAssemblies(Path.Combine(_root, "nowhere")).ShouldBeEmpty();
     }
+
+    [Theory]
+    [InlineData("99.99.99-local-deadbeef", "99.99.99.0")]
+    [InlineData("99.99.99", "99.99.99.0")]
+    [InlineData("1.2.3.4", "1.2.3.4")]
+    public void ToAssemblyVersion_DropsPreReleaseSuffixAndPadsToFourParts(string packVersion, string expected)
+    {
+        CliInstallLayout.ToAssemblyVersion(packVersion).ShouldBe(Version.Parse(expected));
+    }
+
+    /// <summary>
+    /// The real #3237 failure had the provider assembly PRESENT and still could not bind, so the
+    /// version check must flag a real assembly whose version differs from the pack stamp. Uses this
+    /// test assembly's own compiled DLL as a genuine managed assembly to read identity from.
+    /// </summary>
+    [Fact]
+    public void FindVersionMismatches_PresentAssemblyWithWrongVersion_IsReportedByName()
+    {
+        var toolPath = Path.Combine(_root, "tool-versioned");
+        Directory.CreateDirectory(toolPath);
+        var realAssembly = typeof(CliInstallLayout).Assembly.Location;
+        var actual = System.Reflection.AssemblyName.GetAssemblyName(realAssembly).Version!;
+        File.Copy(realAssembly, Path.Combine(toolPath, "BotNexus.Agent.Providers.Core.dll"));
+
+        // Expect a version deliberately different from the planted assembly's real version.
+        var mismatches = CliInstallLayout.FindVersionMismatches(toolPath, new Version(99, 99, 99, 0));
+
+        mismatches.Count.ShouldBe(1);
+        mismatches[0].ShouldContain("BotNexus.Agent.Providers.Core.dll");
+        mismatches[0].ShouldContain("expected 99.99.99.0");
+        mismatches[0].ShouldContain($"found {actual}");
+
+        // And when the expected version matches reality, nothing is reported.
+        CliInstallLayout.FindVersionMismatches(toolPath, actual).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void FindVersionMismatches_UnreadableAssembly_IsReportedRatherThanThrowing()
+    {
+        var toolPath = Path.Combine(_root, "tool-garbage");
+        Directory.CreateDirectory(toolPath);
+        File.WriteAllText(Path.Combine(toolPath, "BotNexus.Cron.dll"), "not a PE file");
+
+        var mismatches = CliInstallLayout.FindVersionMismatches(toolPath, new Version(99, 99, 99, 0));
+
+        mismatches.Count.ShouldBe(1);
+        mismatches[0].ShouldContain("BotNexus.Cron.dll");
+        mismatches[0].ShouldContain("could not read assembly identity");
+    }
+
+    [Fact]
+    public void FormatVersionMismatchFailure_CarriesVersionsAndLayout()
+    {
+        var toolPath = CreateLayout(CliInstallLayout.RequiredAssemblies);
+        var files = CliInstallLayout.EnumerateFiles(toolPath);
+
+        var message = CliInstallLayout.FormatVersionMismatchFailure(
+            toolPath, new Version(99, 99, 99, 0),
+            ["BotNexus.Agent.Providers.Core.dll (expected 99.99.99.0, found 1.0.0.0)"], files);
+
+        message.ShouldContain("BotNexus.Agent.Providers.Core.dll");
+        message.ShouldContain("99.99.99.0");
+        message.ShouldContain("Install layout:");
+        message.ShouldContain(toolPath);
+    }
 }

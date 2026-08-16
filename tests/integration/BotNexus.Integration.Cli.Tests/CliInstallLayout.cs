@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Reflection;
 
 namespace BotNexus.Integration.Cli.Tests;
 
@@ -139,6 +140,86 @@ internal static class CliInstallLayout
             // failing to read it must not mask that message with an unrelated exception.
             return [];
         }
+    }
+
+    /// <summary>
+    /// Returns required assemblies that are present in <paramref name="installDir"/> but whose
+    /// <see cref="AssemblyName.Version"/> does not match <paramref name="expectedVersion"/>.
+    ///
+    /// Presence alone is NOT sufficient (issue #3237). The observed failure had
+    /// <c>BotNexus.Agent.Providers.Core.dll</c> sitting in the install layout while the CLI still
+    /// died with <c>Could not load file or assembly ... Version=99.99.99.0</c>: the packed CLI was
+    /// compiled against the pack-time version stamp, but a stale build of the dependency carrying a
+    /// different assembly version was packaged alongside it. That binds to nothing and fails at
+    /// startup. Checking the version here turns that into a pack/install-step failure that names
+    /// the assembly and both versions.
+    /// </summary>
+    public static IReadOnlyList<string> FindVersionMismatches(
+        string installDir,
+        Version expectedVersion,
+        IEnumerable<string>? required = null)
+    {
+        if (string.IsNullOrWhiteSpace(installDir) || !Directory.Exists(installDir))
+            return [];
+
+        var wanted = new HashSet<string>(required ?? RequiredAssemblies, StringComparer.OrdinalIgnoreCase);
+        var mismatches = new List<string>();
+
+        foreach (var path in Directory.EnumerateFiles(installDir, "*.dll", SearchOption.AllDirectories))
+        {
+            var name = Path.GetFileName(path);
+            if (!wanted.Contains(name))
+                continue;
+
+            Version? actual;
+            try
+            {
+                actual = AssemblyName.GetAssemblyName(path).Version;
+            }
+            catch (Exception ex)
+            {
+                mismatches.Add($"{name} (could not read assembly identity at {path}: {ex.GetType().Name})");
+                continue;
+            }
+
+            if (actual != expectedVersion)
+                mismatches.Add($"{name} (expected {expectedVersion}, found {actual?.ToString() ?? "<none>"}) at {path}");
+        }
+
+        mismatches.Sort(StringComparer.OrdinalIgnoreCase);
+        return mismatches;
+    }
+
+    /// <summary>
+    /// Converts a pack version stamp such as <c>99.99.99-local-deadbeef</c> into the four-part
+    /// assembly version the CLI will bind against (<c>99.99.99.0</c>). Pre-release suffixes do not
+    /// appear in an assembly version.
+    /// </summary>
+    public static Version ToAssemblyVersion(string packVersion)
+    {
+        var core = packVersion.Split('-', 2)[0];
+        var parts = core.Split('.');
+        int Part(int i) => parts.Length > i && int.TryParse(parts[i], out var v) ? v : 0;
+        return new Version(Part(0), Part(1), Part(2), Part(3));
+    }
+
+    /// <summary>
+    /// Builds the pack/install-step failure message for assemblies that are present but bind to the
+    /// wrong version, carrying the install directory and listing for the same reason as
+    /// <see cref="FormatMissingAssemblyFailure"/>.
+    /// </summary>
+    public static string FormatVersionMismatchFailure(
+        string installDir,
+        Version expectedVersion,
+        IReadOnlyList<string> mismatches,
+        IReadOnlyList<string>? installedFiles = null)
+    {
+        return string.Join(Environment.NewLine + Environment.NewLine,
+            $"Local CLI pack/install produced an install layout whose assemblies do not bind. " +
+            $"Expected assembly version {expectedVersion}; mismatched: {string.Join(", ", mismatches)}.",
+            "The packed binary would start and then fail at assembly-load time with " +
+            "'Could not load file or assembly', so this step fails here by name instead (see issue #3237).",
+            Describe(installDir, installedFiles));
     }
 
     /// <summary>
