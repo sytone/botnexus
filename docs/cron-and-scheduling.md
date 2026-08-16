@@ -1549,7 +1549,11 @@ response modes and signing details, and the
 1. **Check error logs**: Look for `"Cron job '{JobName}' failed"` with exception details
 2. **Check execution history**: `GET /api/cron/{jobId}/runs` shows recent failures
 3. **Check correlation ID**: Use correlation ID to trace through activity stream
-4. **For `agent-prompt` jobs**: Check if the agent is configured and available
+4. **For `agent-prompt` jobs**: Check if the agent is configured and available. If the run's error
+   reads `Cron job's agent '<id>' is not registered.`, the job's `agentId` points at an agent that
+   was deleted, renamed, or never registered. Cron classifies this **before** dispatch and fails the
+   run once with that reason rather than dispatching and failing opaquely on every fire. Recover by
+   re-registering the agent, or by deleting the job or reassigning it to a registered agent.
 5. **For `command` jobs**: Verify the command is permitted by the `exec` tool policy
 
 ---

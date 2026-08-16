@@ -45,8 +45,13 @@ public sealed class AgentPromptAction : ICronAction
             context.Services.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
             context.Job.Model);
 
+        // #3210: classify an unresolvable agent before dispatch. A null descriptor (agent deleted,
+        // renamed, or never registered) used to be indistinguishable from a live agent with soul
+        // disabled - both fell through to TriggerType.Cron and dispatched anyway, producing a
+        // recurring opaque failure once per fire. The registry being absent from DI is a distinct,
+        // deliberately non-rejecting condition: "cannot know", not "agent missing".
         var registry = context.Services.GetService<IAgentRegistry>();
-        var descriptor = registry?.Get(agentId);
+        var descriptor = CronAgentPreflight.EnsureResolvable(registry, agentId);
 
         var preferredTriggerType = descriptor?.Soul?.Enabled == true
             ? TriggerType.Soul

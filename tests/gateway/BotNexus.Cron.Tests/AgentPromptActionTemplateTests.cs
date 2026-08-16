@@ -2,6 +2,7 @@ using BotNexus.Cron.Actions;
 using BotNexus.Cron.Prompts;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Triggers;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -60,11 +61,27 @@ public sealed class AgentPromptActionTemplateTests
         capturedPrompt.ShouldBe("Keep inline {{prompt}} text");
     }
 
+    // #3210: the action now preflights the job's agent, so these fixtures must present a REGISTERED
+    // agent. A bare Mock.Of<IAgentRegistry>() returns null for Get(...) which is now (correctly) a
+    // classified "agent is not registered" failure rather than a silent fall-through.
+    private static IAgentRegistry BuildRegistryWithRegisteredAgent()
+    {
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(value => value.Get(It.IsAny<AgentId>())).Returns(new AgentDescriptor
+        {
+            AgentId = AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "gpt-4.1",
+            ApiProvider = "copilot"
+        });
+        return registry.Object;
+    }
+
     private static IServiceProvider BuildServices(IInternalTrigger trigger, IPromptTemplateResolver? resolver)
     {
         var services = new ServiceCollection()
             .AddSingleton<IInternalTrigger>(trigger)
-            .AddSingleton(Mock.Of<IAgentRegistry>());
+            .AddSingleton(BuildRegistryWithRegisteredAgent());
 
         if (resolver is not null)
             services.AddSingleton(resolver);
