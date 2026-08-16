@@ -42,6 +42,7 @@ This directory contains detailed documentation for developers working on or exte
 ### Security
 
 - **[security-sensitive-file-guard.md](security-sensitive-file-guard.md)** — Guard rails around edits to security-sensitive files
+- **[comment-moderation.md](comment-moderation.md)** — #3224 who may comment on an issue or PR, and the two-part control that enforces it
 - **[downloaded-payload-verification.md](downloaded-payload-verification.md)** — #2372 verify-before-execute rule for any downloaded install/update payload
 
 ---

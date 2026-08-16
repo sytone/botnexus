@@ -32,6 +32,14 @@ export const SENSITIVE_EXACT = Object.freeze([
   ".github/CODEOWNERS",
   ".github/scripts/security-sensitive-guard.mjs",
   ".github/workflows/security-sensitive-guard.yml",
+  // The comment-moderation control gates who may leave durable text on an issue
+  // or PR, and every author-keyed trust decision in this repo sits behind it.
+  // Weakening its allow-list must therefore cost a maintainer ack, exactly as
+  // weakening this guard does. (The workflow file is already covered by the
+  // `.github/workflows/` prefix; it is listed for explicitness, since a future
+  // narrowing of that prefix must not silently unprotect it.)
+  ".github/scripts/comment-moderation.mjs",
+  ".github/workflows/comment-moderation.yml",
 ]);
 
 /**

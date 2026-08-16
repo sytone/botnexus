@@ -1,0 +1,67 @@
+name: "Comment Moderation"
+
+# Minimizes any issue/PR comment or review whose author is not on a closed
+# allow-list (the maintainer and the platform bot).
+#
+# WHY: every trust decision in this repository is author-keyed (the
+# `/allow-security-sensitive-change` ack, the `/allow-pr-convention-exception`
+# waiver, and the agent-side trust filter). A third-party comment cannot forge an
+# author, but it persists in the thread and is read as context by every human and
+# agent that later loads it - a prompt-injection surface. Removing the payload at
+# write time beats relying on every downstream reader to filter it.
+#
+# WHAT THIS CANNOT DO: Actions cannot PREVENT a comment - the comment exists
+# before any workflow can fire. Prevention is a repository interaction limit,
+# which expires after at most 6 months. This workflow is the durable half of a
+# two-part control. See docs/development/comment-moderation.md.
+#
+# SAFETY: no `actions/checkout` of any head or fork ref exists in this workflow.
+# It checks out only the default branch to run its own trusted script and tests.
+# The comment BODY is never parsed, matched or echoed - only the author login and
+# the comment node id are read, both from the trusted event payload.
+
+on:
+  issue_comment:
+    types: [created, edited]
+  pull_request_review_comment:
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, edited]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: comment-moderation-${{ github.event.comment.id || github.event.review.id }}
+  cancel-in-progress: false
+
+jobs:
+  moderate:
+    name: Moderate Comment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Trusted checkout: the repository default branch, never a PR head or fork.
+      - name: Check out trusted moderation script
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/comment-moderation.mjs
+            .github/scripts/comment-moderation.test.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Run comment moderation
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { run } = await import(
+              `${process.env.GITHUB_WORKSPACE}/.github/scripts/comment-moderation.mjs`
+            );
+            await run({ github, context, core });
+
+      - name: Unit-test the moderation script
+        run: node --test .github/scripts/comment-moderation.test.mjs

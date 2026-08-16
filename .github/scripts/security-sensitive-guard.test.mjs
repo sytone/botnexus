@@ -39,6 +39,22 @@ test("matchSensitivePaths flags CODEOWNERS and the guard script/workflow", () =>
   );
 });
 
+// The comment-moderation control decides who may leave durable text on an issue
+// or PR. Every author-keyed trust decision in this repo reads from that surface,
+// so weakening its allow-list must cost a maintainer ack. The script lives
+// outside `.github/workflows/`, so unlike the workflow it is NOT covered by the
+// prefix rule and needs its own exact entry -- this pins that.
+test("matchSensitivePaths flags the comment-moderation script and workflow", () => {
+  assert.deepEqual(
+    matchSensitivePaths([".github/scripts/comment-moderation.mjs"]),
+    [".github/scripts/comment-moderation.mjs"]
+  );
+  assert.deepEqual(
+    matchSensitivePaths([".github/workflows/comment-moderation.yml"]),
+    [".github/workflows/comment-moderation.yml"]
+  );
+});
+
 test("matchSensitivePaths ignores ordinary source/doc files", () => {
   assert.deepEqual(
     matchSensitivePaths([

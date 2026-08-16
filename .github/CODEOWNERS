@@ -19,4 +19,7 @@
 # CI workflows and the security guards themselves.
 /.github/workflows/                                  @Sytone
 /.github/scripts/security-sensitive-guard.mjs        @Sytone
+# Comment moderation -- gates who may leave durable text on an issue or PR, which
+# is the input surface every author-keyed trust decision reads from.
+/.github/scripts/comment-moderation.mjs              @Sytone
 /.github/CODEOWNERS                                  @Sytone
