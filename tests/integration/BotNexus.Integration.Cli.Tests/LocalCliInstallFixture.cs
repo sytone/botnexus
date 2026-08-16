@@ -35,6 +35,23 @@ public sealed class LocalCliInstallFixture : IAsyncLifetime
     public string InstallOutput { get; private set; } = string.Empty;
     public string? Error { get; private set; }
 
+    /// <summary>
+    /// Files present under <see cref="ToolPath"/> after install, captured once so every dependent
+    /// test can render the layout in a failure message without re-walking a directory that the
+    /// fixture may already have torn down (issue #3237 AC2).
+    /// </summary>
+    public IReadOnlyList<string> InstalledFiles { get; private set; } = [];
+
+    /// <summary>
+    /// Startup-critical assemblies that were absent from the install layout. Non-empty means the
+    /// packed binary would have failed at assembly-load time; the fixture fails here instead,
+    /// naming them (issue #3237 AC1).
+    /// </summary>
+    public IReadOnlyList<string> MissingAssemblies { get; private set; } = [];
+
+    /// <summary>Human-readable failure detail for the layout guard, or null when the layout is complete.</summary>
+    public string? LayoutFailure { get; private set; }
+
     public async Task InitializeAsync()
     {
         try
@@ -72,7 +89,27 @@ public sealed class LocalCliInstallFixture : IAsyncLifetime
 
             InstallExitCode = installResult.ExitCode;
             InstallOutput = installResult.Combined;
-            Succeeded = installResult.ExitCode == 0 && File.Exists(CliExecutablePath);
+            if (InstallExitCode != 0 || !File.Exists(CliExecutablePath))
+                return;
+
+            // --- verify the install layout BEFORE any test invokes the binary ------
+            // #3237: a packed CLI that is missing BotNexus.Agent.Providers.Core starts fine and
+            // then dies at assembly-load time inside `init`, which surfaces as an opaque
+            // "ExitCode should be 0 but was 1" in an unrelated test. Check by name here so the
+            // failure names the assembly at the step that produced it.
+            InstalledFiles = CliInstallLayout.EnumerateFiles(ToolPath);
+            MissingAssemblies = CliInstallLayout.FindMissingAssemblies(InstalledFiles);
+            if (MissingAssemblies.Count > 0)
+            {
+                LayoutFailure = CliInstallLayout.FormatMissingAssemblyFailure(
+                    ToolPath,
+                    MissingAssemblies,
+                    InstalledFiles,
+                    CliInstallLayout.ReadPackagedToolAssemblies(PackOutputDir));
+                return;
+            }
+
+            Succeeded = true;
         }
         catch (Exception ex)
         {

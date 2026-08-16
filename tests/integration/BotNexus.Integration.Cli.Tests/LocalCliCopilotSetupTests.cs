@@ -68,8 +68,10 @@ public sealed class LocalCliCopilotSetupTests : IAsyncLifetime
             environment: new Dictionary<string, string?> { ["BOTNEXUS_HOME"] = null });
 
         watch.Matched.ShouldBeTrue(
-            $"Did not see GitHub device-code prompt within {SetupTimeout}.\n" +
-            $"Output:\n{watch.Output}");
+            $"Did not see GitHub device-code prompt within {SetupTimeout}." + Environment.NewLine +
+            CliInstallLayout.FormatCliFailure(
+                "provider setup --provider github-copilot", watch.ExitCode, watch.Output, string.Empty,
+                _fixture.ToolPath, _fixture.InstalledFiles));
 
         // Sanity: extract the code and verify the verification URI is well-formed.
         var match = UserCodePattern.Match(watch.Output);
@@ -96,7 +98,9 @@ public sealed class LocalCliCopilotSetupTests : IAsyncLifetime
         result.ExitCode.ShouldNotBe(0,
             $"Expected non-zero exit code for unknown provider.\nStdOut:\n{result.StdOut}\nStdErr:\n{result.StdErr}");
         result.Combined.ShouldContain("Unknown provider",
-            customMessage: $"Expected guidance message.\nStdOut:\n{result.StdOut}\nStdErr:\n{result.StdErr}");
+            customMessage: CliInstallLayout.FormatCliFailure(
+                "provider setup --provider does-not-exist (expected guidance message)",
+                result.ExitCode, result.StdOut, result.StdErr, _fixture.ToolPath, _fixture.InstalledFiles));
         result.Combined.ShouldContain("provider add",
             customMessage: "Error message should point the user at `provider add` for non-known providers.");
     }
@@ -121,6 +125,7 @@ public sealed class LocalCliCopilotSetupTests : IAsyncLifetime
         _fixture.Succeeded.ShouldBeTrue(
             $"Local pack/install fixture did not succeed.\n" +
             $"PackExitCode={_fixture.PackExitCode}\nInstallExitCode={_fixture.InstallExitCode}\n" +
+            (_fixture.LayoutFailure is { } layout ? layout + "\n\n" : string.Empty) +
             $"PackOutput:\n{_fixture.PackOutput}\n\nInstallOutput:\n{_fixture.InstallOutput}\n\nError:\n{_fixture.Error}");
     }
 }
