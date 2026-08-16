@@ -85,6 +85,19 @@ public sealed class BuiltInModels
         Register(modelRegistry, "github-copilot", "gpt-5.4", "GPT-5.4", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "gpt-5.4-mini", "GPT-5.4 mini", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
 
+        // #3229: the 5.5/5.6 generation. `gateway.auxiliary.titling.model` ships as `gpt-5.6-luna`,
+        // so that id MUST exist in the built-in table: Copilot dynamic discovery is best-effort and
+        // falls back to these built-ins, and a default that only resolves when a network call
+        // succeeds silently degrades auto-titling to the reasoning flagship (the #1994 failure).
+        // Context window (922000) and the full thinking ladder (minimal..max, i.e.
+        // supportsExtraHighThinking) are the values the live discovery overlay reports for this
+        // generation, so a discovered and a built-in registration of the same id agree.
+        Register(modelRegistry, "github-copilot", "gpt-5.5", "GPT-5.5", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.6", "GPT-5.6", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.6-luna", "GPT-5.6 Luna", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.6-sol", "GPT-5.6 Sol", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.6-terra", "GPT-5.6 Terra", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+
         Register(modelRegistry, "github-copilot", "grok-code-fast-1", "Grok Code Fast 1", "github-copilot-completions", copilotBaseUrl, true, ["text"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
     }
 
