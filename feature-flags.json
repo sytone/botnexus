@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "The single declaration of every BotNexus feature flag (#2769).",
+    "BotNexus.SourceGenerators turns this file into the FeatureFlags inventory at compile time.",
+    "A flag declared here exists as a compile-time symbol; a flag not declared here does not exist.",
+    "Required per entry: featureName, description, owner, dateAdded (yyyy-MM-dd), defaultState.",
+    "Optional: dateRetired (yyyy-MM-dd, emits [Obsolete]), ignoreFlagAge (opts out of the staleness warning).",
+    "A missing required property, a bad date, or a duplicate featureName is a build error (BNFF001)."
+  ],
+  "flags": [
+    {
+      "featureName": "GatewayDevOriginEnforcement",
+      "description": "Enforces the browser Origin header on keyless (dev-mode) gateway requests, protecting the auto-granted gateway-dev admin identity from DNS-rebind and CSRF. Off by default: enable it only after gateway.cors.allowedOrigins lists every origin you use, or you will be locked out of the UI on restart.",
+      "owner": "sytone",
+      "dateAdded": "2026-07-01",
+      "defaultState": false,
+      "dateRetired": null,
+      "ignoreFlagAge": true,
+      "$ignoreFlagAgeWhy": "Not a rollout flag on a clock. It stays until every operator has stated their origins, at which point the default flips on and the flag is retired - a staleness warning would just be noise against a decision already made deliberately (#1931)."
+    }
+  ]
+}

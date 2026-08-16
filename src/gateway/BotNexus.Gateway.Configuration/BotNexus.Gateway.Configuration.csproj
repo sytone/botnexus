@@ -9,6 +9,36 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <!--
+    The feature-flag inventory is GENERATED from feature-flags.json at the repository root (#2769),
+    not hand-written here. Three things have to line up for that to work, and all three are below:
+    the generator must be referenced as an Analyzer (not as an assembly), the JSON must be visible
+    to it as an AdditionalFile, and the MSBuild properties it reads must be marked
+    CompilerVisibleProperty - a property the compiler cannot see silently falls back to the
+    generator's defaults, which looks like the setting being ignored.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\tools\BotNexus.SourceGenerators\BotNexus.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)..\..\..\feature-flags.json" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <FeatureFlagSourceGenerator_Namespace>BotNexus.Gateway.Configuration</FeatureFlagSourceGenerator_Namespace>
+    <FeatureFlagSourceGenerator_ClassName>FeatureFlags</FeatureFlagSourceGenerator_ClassName>
+    <FeatureFlagSourceGenerator_AgeWarning>90</FeatureFlagSourceGenerator_AgeWarning>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <CompilerVisibleProperty Include="FeatureFlagSourceGenerator_Namespace" />
+    <CompilerVisibleProperty Include="FeatureFlagSourceGenerator_ClassName" />
+    <CompilerVisibleProperty Include="FeatureFlagSourceGenerator_AgeWarning" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" /><ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />

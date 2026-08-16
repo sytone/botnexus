@@ -1,0 +1,48 @@
+<!--
+  Unit tests for the feature-flag source generator. Targets net10.0 like every other test project
+  and references the netstandard2.0 generator as a plain assembly (NOT as an Analyzer), so the
+  parser and code emitter are exercised directly instead of only through a compilation. Roslyn
+  compilation-level behaviour - diagnostics, generated symbols, obsolete warnings at call sites -
+  is covered by driving GeneratorDriver over an in-memory compilation in the same suite.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      MSB3243: the generator project surfaces its analyzer-host System.Text.Json 8.0.5 through
+      GetDependencyTargetPaths, which collides with the 10.x the net10.0 test host already carries.
+      Choosing the newer one is correct here - these tests exercise the generator's own logic on
+      this runtime, not inside a Roslyn host - and the 8.0.5 pin only matters when the generator is
+      loaded AS an analyzer, which is how BotNexus.Gateway.Configuration consumes it.
+    -->
+    <NoWarn>$(NoWarn);MSB3243</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <!--
+    Pinned to the same Roslyn version the generator itself builds against. Central package
+    management deliberately does not own this: the version is dictated by the analyzer contract
+    under test, not by what the runtime projects consume.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="4.14.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\tools\BotNexus.SourceGenerators\BotNexus.SourceGenerators.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

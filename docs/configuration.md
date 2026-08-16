@@ -298,8 +298,31 @@ Prefer `botnexus config set` or the `FeatureManagement__<Flag>` environment-vari
 hand-editing: both produce the correct section name and casing, and the environment form is not
 subject to `config.json` schema validation at all.
 
-Every flag the platform declares is listed in one place in source (`FeatureFlags.All`), which is
-what lets the tooling tell an unrecognised flag from a real one. The current inventory:
+Every flag the platform declares is declared exactly once, as data, in `feature-flags.json` at the
+repository root. A Roslyn source generator (`tools/BotNexus.SourceGenerators`) turns that file into
+the `FeatureFlags` inventory at compile time (#2769), which is what lets the tooling tell an
+unrecognised flag from a real one. Because the inventory is generated rather than hand-maintained,
+a flag cannot be declared in two places, misspelled at a call site, or exist without an owner and a
+description: a duplicate or a missing required field fails the build with diagnostic `BNFF001`, and
+a misspelled flag at a call site is an undefined member rather than a silent `false`.
+
+To add a flag, add an entry to `feature-flags.json` and rebuild - there is no second place to edit:
+
+```json
+{
+  "featureName": "MyNewFlag",
+  "description": "What turning this on changes, in operator terms.",
+  "owner": "your-github-handle",
+  "dateAdded": "2026-08-14",
+  "defaultState": false,
+  "dateRetired": null
+}
+```
+
+Setting `dateRetired` marks the flag `[Obsolete]`, so every remaining call site becomes a build
+warning until the gated code is removed. A live flag older than 90 days raises `BNFF003` naming the
+flag and its owner, prompting a retire-or-renew decision; set `"ignoreFlagAge": true` for a flag
+that is genuinely meant to endure. The current inventory:
 
 | Flag | Default | Effect |
 |------|---------|--------|

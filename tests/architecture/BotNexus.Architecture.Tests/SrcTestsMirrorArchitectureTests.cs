@@ -54,6 +54,10 @@ public sealed class SrcTestsMirrorArchitectureTests
         "e2e",
         "scenarios",
         "examples",
+        // Tests for compile-time-only tooling under tools/ (e.g. the feature-flag source
+        // generator, #2769). It has no src/ mirror by design: it ships nothing and is
+        // referenced as an Analyzer, so the mirror rule above does not reach it.
+        "tools",
     };
 
     /// <summary>

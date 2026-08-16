@@ -1,0 +1,69 @@
+<!--
+  Roslyn incremental source generator that emits the feature-flag inventory from feature-flags.json
+  (#2769). It runs INSIDE the compiler, so it must target netstandard2.0 regardless of what the
+  rest of the repo targets - the Roslyn analyzer host loads netstandard2.0 assemblies only.
+
+  It lives under tools/ rather than src/ because it ships no runtime code: nothing it produces is
+  deployed, and it is referenced as an Analyzer, not as an assembly. src/dirs.proj is the
+  deployment closure, so putting a compile-time-only project there would add it to every
+  `botnexus build` for no deployed benefit.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      netstandard2.0 and NOT $(TargetFramework) from Directory.Build.props: an analyzer that
+      targets net10.0 loads in no compiler host and fails with a silent "generator did not run".
+    -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <!--
+      Central package management is repo-wide, but this project deliberately pins its own versions:
+      the Roslyn and System.Text.Json versions an analyzer may use are dictated by the compiler
+      host it loads into, not by what the runtime projects consume. Sharing the repo's versions
+      would couple an unrelated bump to whether the generator loads at all.
+    -->
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <!--
+      The generator is not part of the src <-> tests mirror convention's src tree, and its own
+      test project (tests/tools/BotNexus.SourceGenerators.Tests) covers it directly.
+    -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!--
+      Pinned to 8.0.5 for netstandard2.0 analyzer-host compatibility. Newer majors drag in
+      System.IO.Pipelines, which the Roslyn analyzer host does not provide, and the generator then
+      fails to load with a FileNotFoundException that surfaces only as missing generated code.
+    -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" GeneratePathProperty="true" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!--
+    An analyzer's own dependencies are not carried by ProjectReference automatically; without this
+    the generator loads and then throws FileNotFoundException on System.Text.Json at the first
+    parse, which the compiler reports as nothing at all.
+  -->
+  <PropertyGroup>
+    <GetTargetPathDependsOn>$(GetTargetPathDependsOn);GetDependencyTargetPaths</GetTargetPathDependsOn>
+  </PropertyGroup>
+
+  <Target Name="GetDependencyTargetPaths">
+    <ItemGroup>
+      <TargetPathWithTargetPlatformMoniker Include="$(PKGSystem_Text_Json)\lib\netstandard2.0\System.Text.Json.dll"
+                                           IncludeRuntimeDependency="false" />
+    </ItemGroup>
+  </Target>
+
+</Project>

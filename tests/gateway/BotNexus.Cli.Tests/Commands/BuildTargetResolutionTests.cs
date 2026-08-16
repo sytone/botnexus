@@ -167,7 +167,9 @@ public sealed class BuildTargetResolutionTests
     /// <summary>
     /// The traversal project narrows the set to <c>src/</c>. Prove that nothing the deployment
     /// needs lives outside it: every project the solution lists is either under <c>src/</c>,
-    /// under <c>tests/</c> (never deployed), or under <c>examples/</c> (never deployed).
+    /// under <c>tests/</c> (never deployed), under <c>examples/</c> (never deployed), or under
+    /// <c>tools/</c> (compile-time-only analyzers and source generators, referenced as Analyzer
+    /// rather than as an assembly, so nothing they produce is shipped either).
     /// </summary>
     [Fact]
     public void SolutionProjectsOutsideSrc_AreOnlyTestsAndExamples()
@@ -186,11 +188,62 @@ public sealed class BuildTargetResolutionTests
             .Where(p => !p.StartsWith("src/", StringComparison.Ordinal))
             .Where(p => !p.StartsWith("tests/", StringComparison.Ordinal))
             .Where(p => !p.StartsWith("examples/", StringComparison.Ordinal))
+            // tools/ is build-time tooling: the feature-flag source generator (#2769) targets
+            // netstandard2.0, loads into the Roslyn compiler host, and is consumed with
+            // ReferenceOutputAssembly="false". It emits source into its consumer rather than an
+            // artefact of its own, so its absence from src/dirs.proj is correct, not a gap.
+            // ToolsProjects: SolutionListedToolsProjects_AreCompileTimeOnly_AndShipNothing keeps
+            // this exclusion narrow.
+            .Where(p => !p.StartsWith("tools/", StringComparison.Ordinal))
             .ToList();
 
         outside.ShouldBeEmpty(
             "a deployed project outside src/ would never be built by src/dirs.proj: "
             + string.Join(", ", outside));
+    }
+
+    /// <summary>
+    /// The <c>tools/</c> exclusion above must stay narrow. A SOLUTION-LISTED project there that is
+    /// NOT a compile-time-only analyzer would be silently dropped from the deployment closure - the
+    /// exact failure the fence exists to catch - so each one has to prove it ships nothing.
+    /// <para>
+    /// Scoped to solution-listed projects deliberately. <c>tools/</c> also holds standalone
+    /// utilities such as <c>BotNexus.Probe</c> that the solution does not reference at all; those
+    /// are never handed to the deployment traversal in the first place, so the exclusion above does
+    /// not apply to them and neither does this rule.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void SolutionListedToolsProjects_AreCompileTimeOnly_AndShipNothing()
+    {
+        var repoRoot = FindRepoRoot();
+        var slnx = File.ReadAllText(Path.Combine(repoRoot, BuildCommand.SolutionFileName));
+
+        var toolsProjects = System.Text.RegularExpressions.Regex
+            .Matches(slnx, "Path=\"([^\"]+\\.csproj)\"")
+            .Select(m => m.Groups[1].Value.Replace('\\', '/'))
+            .Where(p => p.StartsWith("tools/", StringComparison.Ordinal))
+            .ToList();
+
+        var violations = new List<string>();
+
+        foreach (var relative in toolsProjects)
+        {
+            var absolute = Path.Combine(repoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+            File.Exists(absolute).ShouldBeTrue($"{relative} is listed in the solution but does not exist");
+
+            var text = File.ReadAllText(absolute);
+
+            if (!text.Contains("<TargetFramework>netstandard2.0</TargetFramework>", StringComparison.Ordinal))
+                violations.Add($"{relative}: must target netstandard2.0 to load in the Roslyn analyzer host.");
+
+            if (!text.Contains("<IncludeBuildOutput>false</IncludeBuildOutput>", StringComparison.Ordinal))
+                violations.Add($"{relative}: must set IncludeBuildOutput=false - a tools/ project ships nothing.");
+        }
+
+        violations.ShouldBeEmpty(
+            "solution-listed tools/ projects are excluded from the deployment closure, so each must "
+            + "be compile-time-only:\n" + string.Join("\n", violations));
     }
 
     private static string FindRepoRoot()
