@@ -78,7 +78,7 @@ public sealed class AgentInteractionServiceTests
         };
         agent.Conversations["conv-1"].AppendMessage(new ChatMessage("User", "hello", DateTimeOffset.UtcNow));
 
-        _service.ClearLocalMessages("agent-1");
+        _service.ClearLocalMessages("agent-1", "conv-1");
 
         var messages = agent.Conversations["conv-1"].Messages;
         Assert.Single(messages);
@@ -566,10 +566,11 @@ public sealed class AgentInteractionServiceTests
         // No SessionId, no ActiveConversationSessionId
         Assert.Null(agent.ActiveConversationSessionId);
 
-        await _service.SteerAsync("agent-1", "redirect me");
+        await _service.SteerAsync("agent-1", "conv-1", "redirect me");
 
         // No local message should be appended because SteerAsync bails early
         Assert.Null(agent.ActiveConversationId);
+        Assert.Empty(agent.Conversations);
     }
 
     [Fact]
@@ -587,7 +588,7 @@ public sealed class AgentInteractionServiceTests
 
         // SteerAsync will fail on the hub call (no connection) and append an error,
         // but the user steering message should be appended first.
-        await _service.SteerAsync("agent-1", "redirect me");
+        await _service.SteerAsync("agent-1", "conv-1", "redirect me");
 
         var conv = agent.Conversations["conv-1"];
         Assert.True(conv.Messages.Count >= 1);
@@ -608,7 +609,7 @@ public sealed class AgentInteractionServiceTests
             ActiveSessionId = "sess-1"
         };
 
-        await _service.SteerAsync("agent-1", "redirect me");
+        await _service.SteerAsync("agent-1", "conv-1", "redirect me");
 
         var conv = agent.Conversations["conv-1"];
         // First message is the user steering, second is the error
@@ -965,7 +966,7 @@ public sealed class AgentInteractionServiceTests
         };
         Assert.True(conv.StreamState.IsTurnActive);
 
-        await _service.AbortAsync("agent-1");
+        await _service.AbortAsync("agent-1", "conv-1");
 
         // The turn-active bracket is cleared locally regardless of the hub result, so the portal
         // swaps back to the normal Send control.
@@ -996,7 +997,7 @@ public sealed class AgentInteractionServiceTests
             new SteeringEntry("f1", "queued follow-up", SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending));
         Assert.Single(_store.GetSteeringQueue("conv-1"));
 
-        await _service.AbortAsync("agent-1");
+        await _service.AbortAsync("agent-1", "conv-1");
 
         Assert.Empty(_store.GetSteeringQueue("conv-1"));
     }

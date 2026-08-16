@@ -52,7 +52,7 @@ public sealed class MobileNewSessionTests : IDisposable
         _store.GetMessages("conv-1").Returns(new List<ChatMessage>().AsReadOnly());
         _store.GetStreamState("conv-1").Returns(new ConversationStreamState());
 
-        _interaction.ResetSessionAsync(Arg.Any<string>()).Returns(Task.CompletedTask);
+        _interaction.ResetSessionAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.CompletedTask);
 
         _ctx.Services.AddSingleton(_store);
         _ctx.Services.AddSingleton(_portalLoad);
@@ -94,7 +94,7 @@ public sealed class MobileNewSessionTests : IDisposable
         cut.Find("[data-testid='new-session-confirm-btn']").Click();
 
         // ResetSessionAsync should have been called with the active agent
-        await _interaction.Received(1).ResetSessionAsync("agent-1");
+        await _interaction.Received(1).ResetSessionAsync("agent-1", Arg.Any<string>());
     }
 
     [Fact]

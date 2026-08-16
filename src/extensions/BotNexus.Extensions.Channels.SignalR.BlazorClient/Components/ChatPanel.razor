@@ -1182,7 +1182,9 @@ private bool IsStreaming =>
             return;
 
         _showNewSessionConfirm = false;
-        await Interaction.ResetSessionAsync(AgentId);
+        // #3211: the reset targets the conversation this panel is rendering, never an ambient one.
+        if (ActiveConversationId is not { } convId) return;
+        await Interaction.ResetSessionAsync(AgentId, convId);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -1322,26 +1324,27 @@ private bool IsStreaming =>
     // #2484: the send family (Send / Steer / Follow Up / Redirect) shares ONE draft-consumption
     // envelope so a future fifth path cannot be added that silently ignores _attachments. Each
     // path supplies only its dispatch delegate; snapshot, guard, clear and error handling live here.
-    private async Task DispatchDraftAsync(Func<string, IReadOnlyList<DraftAttachment>, Task> dispatch)
+    // #3211: every action path takes the conversation explicitly. DispatchDraftAsync hands the
+    // route-owned ActiveConversationId to the dispatch lambda, so steer/follow-up/redirect can no
+    // longer land on a conversation other than the one this panel is rendering.
+    private async Task DispatchDraftAsync(Func<string, string, IReadOnlyList<DraftAttachment>, Task> dispatch)
     {
+        if (ActiveConversationId is not { } convId) return;
         var text = _inputText?.Trim() ?? string.Empty;
         if ((string.IsNullOrEmpty(text) && _attachments.Count == 0) || !IsConnected) return;
         var attachments = _attachments.ToArray();
         _inputText = ""; _attachments.Clear(); _attachmentError = null; _showCommandPalette = false; _forceScrollNext = true;
-        await dispatch(text, attachments);
+        await dispatch(convId, text, attachments);
     }
 
     private Task SendMessage()
-        => DispatchDraftAsync((text, attachments) =>
-        {
-            // #3063: the send path requires the conversation explicitly. ActiveConversationId here is
-            // the route-supplied ConversationId parameter (falling back to the agent's selection),
+        => DispatchDraftAsync((convId, text, attachments) =>
+            // #3063: the send path requires the conversation explicitly. convId here is the
+            // route-supplied ConversationId parameter (falling back to the agent's selection),
             // which is the same id the rest of this panel renders against.
-            if (ActiveConversationId is not { } convId) return Task.CompletedTask;
-            return attachments.Count == 0
+            attachments.Count == 0
                 ? Interaction.SendMessageAsync(AgentId, convId, text)
-                : Interaction.SendMessageAsync(AgentId, convId, text, attachments);
-        });
+                : Interaction.SendMessageAsync(AgentId, convId, text, attachments));
 
     private async Task HandleFilesSelected(InputFileChangeEventArgs e)
     {
@@ -1375,28 +1378,32 @@ private bool IsStreaming =>
     private static string FormatBytes(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / (1024d * 1024d):0.#} MB" : $"{Math.Max(1, bytes / 1024d):0.#} KB";
 
     private Task SteerAgent()
-        => DispatchDraftAsync((text, attachments) => attachments.Count == 0
-            ? Interaction.SteerAsync(AgentId, text)
-            : Interaction.SteerAsync(AgentId, text, attachments));
+        => DispatchDraftAsync((convId, text, attachments) => attachments.Count == 0
+            ? Interaction.SteerAsync(AgentId, convId, text)
+            : Interaction.SteerAsync(AgentId, convId, text, attachments));
 
     private Task FollowUpAgent()
-        => DispatchDraftAsync((text, attachments) =>
+        => DispatchDraftAsync((convId, text, attachments) =>
         {
             UpdateCommandPalette();
             return attachments.Count == 0
-                ? Interaction.FollowUpAsync(AgentId, text)
-                : Interaction.FollowUpAsync(AgentId, text, attachments);
+                ? Interaction.FollowUpAsync(AgentId, convId, text)
+                : Interaction.FollowUpAsync(AgentId, convId, text, attachments);
         });
 
-    private async Task AbortAgent() => await Interaction.AbortAsync(AgentId);
+    private async Task AbortAgent()
+    {
+        if (ActiveConversationId is not { } convId) return;
+        await Interaction.AbortAsync(AgentId, convId);
+    }
 
     private Task InterruptAndSteer()
-        => DispatchDraftAsync((text, attachments) =>
+        => DispatchDraftAsync((convId, text, attachments) =>
         {
             UpdateCommandPalette();
             return attachments.Count == 0
-                ? Interaction.InterruptAndSteerAsync(AgentId, text)
-                : Interaction.InterruptAndSteerAsync(AgentId, text, attachments);
+                ? Interaction.InterruptAndSteerAsync(AgentId, convId, text)
+                : Interaction.InterruptAndSteerAsync(AgentId, convId, text, attachments);
         });
 
     // #1691: invoked from JS (chatScroll.observeTopForLoadMore) when the user scrolls near the top.

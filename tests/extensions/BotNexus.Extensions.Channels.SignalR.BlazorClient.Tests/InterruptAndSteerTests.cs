@@ -26,21 +26,23 @@ public sealed class InterruptAndSteerTests
     public void IAgentInteractionService_HasInterruptAndSteerAsync_Method()
     {
         // Assert the method exists on the interface (contract guard). #2484 added an
-        // attachments-carrying overload, so the (string, string) shape must now be selected by
-        // parameter types - GetMethod(name) alone is ambiguous.
+        // attachments-carrying overload and #3211 inserted the required conversationId, so the
+        // shape must be selected by parameter types - GetMethod(name) alone is ambiguous.
         var method = typeof(IAgentInteractionService).GetMethod(
             "InterruptAndSteerAsync",
-            [typeof(string), typeof(string)]);
+            [typeof(string), typeof(string), typeof(string)]);
         Assert.NotNull(method);
         var parameters = method!.GetParameters();
-        Assert.Equal(2, parameters.Length);
+        Assert.Equal(3, parameters.Length);
         Assert.Equal("agentId", parameters[0].Name);
-        Assert.Equal("message", parameters[1].Name);
+        // #3211 AC1: conversation identity is an explicit argument, never ambient state.
+        Assert.Equal("conversationId", parameters[1].Name);
+        Assert.Equal("message", parameters[2].Name);
 
         // #2484: the attachments overload must exist too, so the contract guard covers both.
         var mediaOverload = typeof(IAgentInteractionService).GetMethod(
             "InterruptAndSteerAsync",
-            [typeof(string), typeof(string), typeof(IReadOnlyList<DraftAttachment>)]);
+            [typeof(string), typeof(string), typeof(string), typeof(IReadOnlyList<DraftAttachment>)]);
         Assert.NotNull(mediaOverload);
     }
 
@@ -59,7 +61,7 @@ public sealed class InterruptAndSteerTests
         var messagesBefore = agent.Conversations["conv-1"].Messages.Count;
 
         // Act
-        await _service.InterruptAndSteerAsync("agent-1", message!);
+        await _service.InterruptAndSteerAsync("agent-1", "conv-1", message!);
 
         // Assert - no messages appended, no hub call attempted
         Assert.Equal(messagesBefore, agent.Conversations["conv-1"].Messages.Count);
@@ -70,7 +72,7 @@ public sealed class InterruptAndSteerTests
     {
         // Agent has no active conversation session -- method should not throw
         var exception = await Record.ExceptionAsync(() =>
-            _service.InterruptAndSteerAsync("agent-1", "redirect me please"));
+            _service.InterruptAndSteerAsync("agent-1", "conv-1", "redirect me please"));
 
         Assert.Null(exception);
     }
@@ -87,7 +89,7 @@ public sealed class InterruptAndSteerTests
         // Act - the GatewayHubConnection has a null _connection so InvokeAsync will throw
         // This exercises the catch block -> AppendError path
         // We use a try here because the exception propagates from the hub invocation
-        await _service.InterruptAndSteerAsync("agent-1", "please redirect");
+        await _service.InterruptAndSteerAsync("agent-1", "conv-1", "please redirect");
 
         // Assert: the user message or error should be appended
         // AppendUserMessage is called BEFORE the hub invocation, so we should have the redirect msg

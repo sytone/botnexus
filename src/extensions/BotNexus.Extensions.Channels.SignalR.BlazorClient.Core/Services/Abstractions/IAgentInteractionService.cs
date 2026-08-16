@@ -33,35 +33,51 @@ public interface IAgentInteractionService
     /// <param name="prompt">Agent-authored prompt text supplied by the canvas.</param>
     /// <param name="instructions">Optional retrieval hint appended after the prompt.</param>
     Task<CanvasSubmitResult> SubmitCanvasPromptAsync(string agentId, string conversationId, string? prompt, string? instructions);
-    Task SteerAsync(string agentId, string content);
+    /// <summary>
+    /// Steers <paramref name="conversationId"/> (#3211). Like the send path (#3063) the conversation
+    /// is a REQUIRED parameter: this layer no longer re-derives the target from ambient
+    /// <c>AgentState.ActiveConversationId</c>, so a steer issued while a deep-linked, non-most-recent
+    /// conversation is displayed can never land on a different conversation.
+    /// </summary>
+    Task SteerAsync(string agentId, string conversationId, string content);
 
     /// <summary>Steers with optional draft attachments, matching the send media overload (#2484).</summary>
-    Task SteerAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments);
-    Task FollowUpAsync(string agentId, string content);
+    Task SteerAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments);
+
+    /// <summary>Queues a follow-up turn on <paramref name="conversationId"/> (#3211).</summary>
+    Task FollowUpAsync(string agentId, string conversationId, string content);
 
     /// <summary>Follows up with optional draft attachments, matching the send media overload (#2484).</summary>
-    Task FollowUpAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments);
-    Task AbortAsync(string agentId);
-    Task InterruptAndSteerAsync(string agentId, string message);
+    Task FollowUpAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments);
+
+    /// <summary>Aborts the run owned by <paramref name="conversationId"/> (#3211).</summary>
+    Task AbortAsync(string agentId, string conversationId);
+
+    /// <summary>Interrupts and redirects the run owned by <paramref name="conversationId"/> (#3211).</summary>
+    Task InterruptAndSteerAsync(string agentId, string conversationId, string message);
 
     /// <summary>Redirects with optional draft attachments, matching the send media overload (#2484).</summary>
-    Task InterruptAndSteerAsync(string agentId, string message, IReadOnlyList<DraftAttachment> attachments);
-    Task ResetSessionAsync(string agentId);
+    Task InterruptAndSteerAsync(string agentId, string conversationId, string message, IReadOnlyList<DraftAttachment> attachments);
+
+    /// <summary>Starts a fresh session for <paramref name="conversationId"/> (#3211).</summary>
+    Task ResetSessionAsync(string agentId, string conversationId);
 
     /// <summary>
     /// Executes <paramref name="commandText"/> through the gateway command pipeline
     /// (<c>POST /api/commands/execute</c>) and appends the returned <c>CommandResult</c> to the
-    /// active conversation as a locally-rendered row (#2873).
+    /// conversation named by <paramref name="conversationId"/> as a locally-rendered row (#2873).
     /// </summary>
     /// <remarks>
     /// No model turn is consumed: the command text is never delivered to the agent. When the
-    /// pipeline rejects the command, is unreachable, or the client has no active conversation, an
-    /// <c>Error</c> row is appended so the failure is visible rather than silent.
+    /// pipeline rejects the command, is unreachable, or the named conversation is unknown, an
+    /// <c>Error</c> row is appended so the failure is visible rather than silent. #3211 made the
+    /// conversation explicit so a command never renders into a conversation the user is not viewing.
     /// </remarks>
     /// <returns><see langword="true"/> when the pipeline returned a non-error result.</returns>
-    Task<bool> ExecuteGatewayCommandAsync(string agentId, string commandText);
+    Task<bool> ExecuteGatewayCommandAsync(string agentId, string conversationId, string commandText);
 
-    Task<CompactSessionResult?> CompactSessionAsync(string agentId);
+    /// <summary>Compacts the session bound to <paramref name="conversationId"/> (#3211).</summary>
+    Task<CompactSessionResult?> CompactSessionAsync(string agentId, string conversationId);
     Task<string?> CreateConversationAsync(string agentId, string? title = null, bool select = true);
     Task SelectConversationAsync(string agentId, string conversationId);
 
@@ -94,5 +110,6 @@ public interface IAgentInteractionService
     /// </summary>
     Task ViewSubAgentAsync(SubAgentInfo subAgent);
     Task RespondToAskUserAsync(string conversationId, string requestId, string? freeFormText, string[]? selectedValues, bool cancelled);
-    void ClearLocalMessages(string agentId);
+    /// <summary>Clears the locally-held transcript of <paramref name="conversationId"/> (#3211).</summary>
+    void ClearLocalMessages(string agentId, string conversationId);
 }
