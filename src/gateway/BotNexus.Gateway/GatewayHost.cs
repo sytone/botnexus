@@ -945,6 +945,23 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     new KeyValuePair<string, object?>("outcome", "cancelled"));
                 _logger.LogInformation("Processing cancelled for agent '{AgentId}' session '{SessionId}' (client disconnected)", agentId, sessionId);
             }
+            catch (Exception ex) when (
+                TurnCancellationClassifier.IsCancellation(ex) && cancellationToken.IsCancellationRequested)
+            {
+                // #3230: the same caller-initiated cancellation as the branch above, but arriving
+                // WRAPPED out of StreamingSessionHelper.ProcessAndSaveAsync. Archiving a
+                // conversation used to fall through to the general handler below and be recorded as
+                // outcome=error with an [ERR] line, inflating the gateway's own error rate for an
+                // ordinary user action. The general catch is unchanged - the guard is on the
+                // cancellation condition AND the token state, so a real fault still faults.
+                executionTimer.Stop();
+                executionActivity?.SetStatus(ActivityStatusCode.Error, "cancelled");
+                GatewayTelemetry.AgentExecutionDurationMs.Record(executionTimer.Elapsed.TotalMilliseconds,
+                    new KeyValuePair<string, object?>("botnexus.agent.id", agentId),
+                    new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType),
+                    new KeyValuePair<string, object?>("outcome", "cancelled"));
+                _logger.LogInformation("Processing cancelled for agent '{AgentId}' session '{SessionId}' (client disconnected)", agentId, sessionId);
+            }
             catch (Exception ex)
             {
                 executionTimer.Stop();
