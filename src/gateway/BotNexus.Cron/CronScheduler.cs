@@ -630,15 +630,21 @@ public sealed class CronScheduler(
         }
         catch (Exception ex) when (!runCt.IsCancellationRequested)
         {
+            // #3209: the FULL exception - type name, stack trace, build-machine source paths -
+            // stays here, in the structured log, which is the right home for it: a developer with
+            // log access loses nothing. Everything below records the sanitized PROJECTION instead,
+            // because run history is durable in cron.sqlite and the alert path re-exports it into a
+            // conversation an agent can read.
             _logger.LogError(ex, "Cron job execution failed. JobId: {JobId}, ActionType: {ActionType}", job.Id, job.ActionType);
+            var projectedError = CronErrorProjection.Project(ex);
             await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, ex.Message, ct: ct).ConfigureAwait(false);
-            await FinalizeRunAsync(job.Id, job, triggeredAt, CronRunStatus.Error, ex.ToString(), ct: ct).ConfigureAwait(false);
-            var errorPathAlertFailure = await MaybeSendFailureAlertAsync(job, triggeredAt, ex.Message, ct).ConfigureAwait(false);
+            await FinalizeRunAsync(job.Id, job, triggeredAt, CronRunStatus.Error, projectedError, ct: ct).ConfigureAwait(false);
+            var errorPathAlertFailure = await MaybeSendFailureAlertAsync(job, triggeredAt, projectedError, ct).ConfigureAwait(false);
             // #3161 AC3: same fail-closed recording on the error path. The containment seam is
             // shared, so recording it for one terminal outcome only would leave the commonest
             // failure shape - a broken job whose alert channel is ALSO broken - still invisible.
             var recordedError = await RecordAlertDeliveryFailureAsync(
-                run.Id, job.Id, triggeredAt, CronRunStatus.Error, ex.Message, ex.ToString(), errorPathAlertFailure, ct).ConfigureAwait(false);
+                run.Id, job.Id, triggeredAt, CronRunStatus.Error, ex.Message, projectedError, errorPathAlertFailure, ct).ConfigureAwait(false);
             return run with { Status = CronRunStatus.Error, CompletedAt = DateTimeOffset.UtcNow, Error = recordedError };
         }
         catch (Exception ex) when (activeRun.OperatorCancelled)
