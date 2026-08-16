@@ -13,6 +13,13 @@ namespace BotNexus.Gateway.Tests.Agents;
 
 public sealed class DefaultSubAgentManagerTimeoutTests
 {
+    /// <summary>
+    /// The run's deadline is scheduled on a virtual clock and fires ONLY because the test advances
+    /// it from <c>onPoll</c>. The 300-second budget cannot elapse in real time inside the harness's
+    /// 5-second hang guard, so the terminal transition is caused by a signal the test controls and
+    /// never by elapsed wall-clock time on a loaded runner (#3216). #3215 converted the sibling
+    /// race case for the same reason and left this one on the ambient clock.
+    /// </summary>
     [Fact]
     public async Task RunSubAgentAsync_PromptThrowsAfterTimeout_ReportsTimedOut()
     {
@@ -21,13 +28,23 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return new AgentResponse { Content = "unreachable" };
         });
-        var (manager, dispatcher) = CreateManager(handle);
+        var time = new ControllableTimeProvider();
+        var (manager, dispatcher) = CreateManager(handle, time, timeoutSecondsBudget: 300);
 
-        var result = await SpawnAndAwaitTerminalAsync(manager);
+        var result = await SpawnAndAwaitTerminalAsync(
+            manager,
+            onPoll: () => time.Advance(TimeSpan.FromSeconds(60)),
+            timeoutSeconds: 300);
 
-        await AssertTimedOutAsync(result, dispatcher);
+        await AssertTimedOutAsync(result, dispatcher, timeoutSeconds: 300);
     }
 
+    /// <summary>
+    /// Same construction as the throwing case: a 300-second deadline on a virtual clock, reached
+    /// only by the test's explicit advance (#3216). The classification under test is unchanged -
+    /// an empty response returned AFTER cancellation must still resolve to TimedOut rather than
+    /// the Failed-on-empty path.
+    /// </summary>
     [Fact]
     public async Task RunSubAgentAsync_PromptReturnsEmptyAfterTimeout_ReportsTimedOut()
     {
@@ -38,11 +55,15 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             await cancellationObserved.Task;
             return new AgentResponse { Content = string.Empty };
         });
-        var (manager, dispatcher) = CreateManager(handle);
+        var time = new ControllableTimeProvider();
+        var (manager, dispatcher) = CreateManager(handle, time, timeoutSecondsBudget: 300);
 
-        var result = await SpawnAndAwaitTerminalAsync(manager);
+        var result = await SpawnAndAwaitTerminalAsync(
+            manager,
+            onPoll: () => time.Advance(TimeSpan.FromSeconds(60)),
+            timeoutSeconds: 300);
 
-        await AssertTimedOutAsync(result, dispatcher);
+        await AssertTimedOutAsync(result, dispatcher, timeoutSeconds: 300);
     }
 
     [Fact]
@@ -163,6 +184,9 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             InheritedConversationId = ConversationId.From("inherited-conversation")
         });
 
+        // Hang guard, not a latency assertion: every test in this class now reaches its terminal
+        // state from a test-controlled virtual clock advance, so this bound exists only to fail a
+        // genuine hang rather than to bound how fast a runner must be (#3216).
         var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
         while (DateTimeOffset.UtcNow < deadline)
         {
