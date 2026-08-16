@@ -302,7 +302,7 @@ public sealed class PlatformConfigValidationTests
             """,
             async configPath =>
             {
-                // 'http://+:5000' is the canonical container listenUrl (tests/container/config.json)
+                // 'http://+:5000' is the canonical container listenUrl (tests/scenarios/container/config.json)
                 // and a valid Kestrel binding wildcard, even though Uri.TryCreate rejects it.
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 var errors = PlatformConfigLoader.Validate(config);
