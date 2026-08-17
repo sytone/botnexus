@@ -8,7 +8,7 @@ using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Tests.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using AgentUserMessage = BotNexus.Gateway.Abstractions.Models.AgentUserMessage;
 
 namespace BotNexus.Gateway.Tests.Isolation;
 
@@ -58,7 +58,7 @@ public sealed class AgentHandleImageDropGuardTests : IDisposable
     }
 
     private static AgentUserMessage MessageWithImage() =>
-        new("look at this", [new AgentImageContent("data:image/png;base64,AQID")]);
+        new("look at this", [new BotNexus.Gateway.Abstractions.Models.AgentImageContent("data:image/png;base64,AQID")]);
 
     private static DockerSandboxAgentHandle CreateSandboxHandle(ILogger? logger = null) =>
         new(

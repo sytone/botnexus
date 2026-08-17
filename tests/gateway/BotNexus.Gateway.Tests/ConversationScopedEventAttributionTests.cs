@@ -320,7 +320,7 @@ public sealed class ConversationScopedEventAttributionTests
         handle.SetupGet(h => h.SessionId).Returns(Session);
         handle.Setup(h => h.IsRunning).Returns(true);
         handle.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        handle.Setup(h => h.PromptAsync(It.IsAny<Agent.Core.Types.UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.PromptAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "ok" });
         return handle;
     }

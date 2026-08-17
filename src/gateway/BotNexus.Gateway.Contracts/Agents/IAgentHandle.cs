@@ -1,7 +1,5 @@
 using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
-using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 namespace BotNexus.Gateway.Abstractions.Agents;
 
@@ -147,7 +145,7 @@ public interface IAgentHandle : IAsyncDisposable
     /// <param name="message">The follow-up message to queue.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task that completes when the message is queued.</returns>
-    Task FollowUpAsync(AgentMessage message, CancellationToken cancellationToken = default);
+    Task FollowUpAsync(BotNexus.Agent.Core.Types.AgentMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Queues <paramref name="message"/> as a follow-up <em>only</em> if a run is currently in

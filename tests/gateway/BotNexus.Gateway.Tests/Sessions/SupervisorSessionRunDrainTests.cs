@@ -5,7 +5,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.DependencyInjection;
-using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using AgentUserMessage = BotNexus.Gateway.Abstractions.Models.AgentUserMessage;
 
 namespace BotNexus.Gateway.Tests;
 

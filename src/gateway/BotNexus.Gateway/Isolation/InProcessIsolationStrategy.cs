@@ -1033,7 +1033,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
-    public async Task<AgentResponse> PromptAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    public async Task<AgentResponse> PromptAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
         using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", AgentId);
@@ -1044,7 +1044,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         _activityTracker?.RecordActivity();
         try
         {
-            var messages = await _agent.PromptAsync(message, cancellationToken);
+            var messages = await _agent.PromptAsync(message.ToCore(), cancellationToken);
             var response = BuildResponse(messages);
 
             activity?.SetStatus(ActivityStatusCode.Ok);
@@ -1301,8 +1301,11 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
 
     /// <inheritdoc />
-    public IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
-        => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
+    public IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
+    {
+        var core = message.ToCore();
+        return StreamCoreAsync(ct => _agent.PromptAsync(core, ct), cancellationToken);
+    }
 
     /// <summary>
     /// Maps a raw <see cref="AgentEvent"/> to the gateway-facing <see cref="AgentStreamEvent"/>, or
@@ -1616,9 +1619,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// #2484: injects the COMPOSED message (text plus any vision payload) verbatim, so a steer
     /// dispatched with draft attachments delivers them. The string overload cannot carry images.
     /// </remarks>
-    public Task SteerAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    public Task SteerAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
-        _agent.Steer(message);
+        _agent.Steer(message.ToCore());
         return Task.CompletedTask;
     }
 
@@ -1656,13 +1659,13 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// #2484 typed counterpart: same abort/clear/enqueue sequence, but the composed message
     /// (including its vision payload) is enqueued intact instead of text only.
     /// </remarks>
-    public async Task InterruptAndSteerAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    public async Task InterruptAndSteerAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
 
         await _agent.AbortAsync();
         _agent.ClearSteeringQueue();
-        _agent.Steer(message);
+        _agent.Steer(message.ToCore());
     }
 
     /// <inheritdoc />
@@ -1722,19 +1725,22 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// is what round-trips through the pending-message queue, so a follow-up issued with draft
     /// attachments still carries them when the queue is drained after the current run settles.
     /// </remarks>
-    public Task<bool> TryFollowUpWhileRunningAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    public Task<bool> TryFollowUpWhileRunningAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
 
         if (!IsRunning)
             return Task.FromResult(false);
 
-        _agent.FollowUp(message);
+        // Map ONCE: the reclaim below is identity-sensitive, so the instance enqueued and the
+        // instance reclaimed must be the same object (#2438 ordering preserved under #3040).
+        var core = message.ToCore();
+        _agent.FollowUp(core);
 
         if (IsRunning)
             return Task.FromResult(true);
 
-        var reclaimedTyped = _agent.TryReclaimFollowUp(message);
+        var reclaimedTyped = _agent.TryReclaimFollowUp(core);
         return Task.FromResult(!reclaimedTyped);
     }
 

@@ -1,7 +1,5 @@
 using System.Text;
-using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Utilities;
-using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 namespace BotNexus.Gateway.Abstractions.Models;
 

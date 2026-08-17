@@ -450,10 +450,10 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
             IsRunning = false;
         }
 
-        public Task<AgentResponse> PromptAsync(UserMessage message, CancellationToken ct)
+        public Task<AgentResponse> PromptAsync(BotNexus.Gateway.Abstractions.Models.AgentUserMessage message, CancellationToken ct)
             => PromptAsync(message.Content, ct);
 
-        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(UserMessage message, CancellationToken ct)
+        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(BotNexus.Gateway.Abstractions.Models.AgentUserMessage message, CancellationToken ct)
             => StreamAsync(message.Content, ct);
 
         public Task AbortAsync(CancellationToken ct) { IsRunning = false; return Task.CompletedTask; }

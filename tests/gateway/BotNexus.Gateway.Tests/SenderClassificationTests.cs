@@ -1,7 +1,7 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
-using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using AgentUserMessage = BotNexus.Gateway.Abstractions.Models.AgentUserMessage;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;

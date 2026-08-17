@@ -4,7 +4,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Tests.Dispatching;
 using Moq;
-using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using AgentUserMessage = BotNexus.Gateway.Abstractions.Models.AgentUserMessage;
 
 namespace BotNexus.Gateway.Tests;
 
