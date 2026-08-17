@@ -131,6 +131,8 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `secretRedaction.matchTimeoutMilliseconds` | int | `100` | Per-pattern match timeout, so a catastrophic-backtracking regex cannot hang the logging path. Must be greater than zero |
 | `toolOutputBudget.enabled` | bool | `true` | Enables the central tool-output backstop that bounds every tool result before it reaches the model |
 | `toolOutputBudget.maxBytes` | int | `262144` (256 KiB) | Max UTF-8 byte size of a single tool result returned to the model. `0` or less disables the backstop even when `enabled` is true |
+| `readTool.largeReadThresholdBytes` | int | `20480` (20 KiB) | UTF-8 byte size above which a `read` result gets an appended size indicator naming `offset` and `limit`. Content is never truncated. `0` or less disables the indicator |
+| `readTool.elideUnchangedRereads` | bool | `true` | Whether re-reading an **unchanged** slice in the same session returns a short marker instead of the full body. The file is still read and hashed on every call, so a changed file can never take the cheap path |
 | `workspace.maxReportFileSizeBytes` | int | `524288` (512 KB) | Max bytes read from a report file for portal preview; larger files are truncated and flagged. `0` means no limit |
 
 ### Remote and mesh access
