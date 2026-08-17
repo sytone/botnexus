@@ -307,6 +307,20 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 extensionResourcesToDispose.AddRange(contribution.ResourcesToDispose);
         }
 
+        // #2523: apply the per-session narrowing overlay LAST, once every source (workspace,
+        // registry, memory, providers, contributors) has contributed. Applying it earlier would
+        // miss the tools appended after that point, which is precisely the hole that would let a
+        // "disable exec for this session" instruction leave exec reachable.
+        //
+        // Narrowing-only by construction: SessionToolOverrideResolver filters THIS list and never
+        // appends, so a conversation override cannot introduce a tool the agent was not already
+        // going to receive. Pinned by SessionToolOverrideResolverTests on the resolved list.
+        tools = await ApplySessionToolOverrideAsync(
+            tools,
+            conversationStore => GetConversationIdAsync(conversationStore, _serviceProvider.GetService<ISessionStore>()),
+            descriptor.AgentId,
+            cancellationToken).ConfigureAwait(false);
+
         var hookDispatcher = _serviceProvider.GetService<IHookDispatcher>();
         BeforeToolCallDelegate? beforeToolCall = null;
         AfterToolCallDelegate? afterToolCall = null;
@@ -796,6 +810,71 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             case "max": level = ThinkingLevel.Max; return true;
             default: level = default; return false;
         }
+    }
+
+    /// <summary>
+    /// Applies the bound conversation's per-session tool overlay to the fully-assembled tool list
+    /// (issue #2523), returning the narrowed list.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Returns <paramref name="tools"/> unchanged whenever there is no conversation store, no bound
+    /// conversation, no persisted overlay, or an unparseable one. That is deliberate: this overlay
+    /// is a convenience lever for reducing blast radius, NOT the security boundary. The agent's
+    /// configured tool set is the boundary, and it is what the overlay narrows from - so failing
+    /// open here can only ever restore the agent's normal, already-authorised tool set.
+    /// </para>
+    /// <para>
+    /// A refused widening is logged at warning: an operator who asked for a tool the agent does not
+    /// have needs to see that the request was dropped rather than silently ignored.
+    /// </para>
+    /// </remarks>
+    private async Task<List<IAgentTool>> ApplySessionToolOverrideAsync(
+        List<IAgentTool> tools,
+        Func<IConversationStore, Task<ConversationId?>> resolveConversationId,
+        AgentId agentId,
+        CancellationToken cancellationToken)
+    {
+        var conversationStore = _serviceProvider.GetService<IConversationStore>();
+        if (conversationStore is null)
+            return tools;
+
+        var conversationId = await resolveConversationId(conversationStore).ConfigureAwait(false);
+        if (conversationId is not { } id)
+            return tools;
+
+        var conversation = await conversationStore.GetAsync(id, cancellationToken).ConfigureAwait(false);
+        var overrides = SessionToolOverride.FromJson(conversation?.ToolOverrideJson);
+        if (overrides is null || !overrides.HasRestrictions)
+            return tools;
+
+        var policyProvider = _serviceProvider.GetService<DefaultToolPolicyProvider>();
+        var resolution = SessionToolOverrideResolver.Resolve(
+            [.. tools.Select(tool => tool.Name)],
+            overrides,
+            isPinned: policyProvider is null
+                ? DefaultToolPolicyProvider.RuntimePinnedTools.Contains
+                : policyProvider.IsPinned);
+
+        if (resolution.RefusedTools.Count > 0)
+        {
+            _logger.LogWarning(
+                "Session tool override for conversation '{ConversationId}' (agent '{AgentId}') requested {Count} tool(s) the agent does not have: {Refused}. " +
+                "Refused - this overlay can only narrow the agent's configured tool set, never widen it. Edit the agent's toolIds to grant a tool.",
+                id.Value, agentId.Value, resolution.RefusedTools.Count, string.Join(", ", resolution.RefusedTools));
+        }
+
+        if (!resolution.IsNarrowed && resolution.RefusedTools.Count == 0)
+            return tools;
+
+        var allowed = new HashSet<string>(resolution.Tools, StringComparer.OrdinalIgnoreCase);
+        var narrowed = tools.Where(tool => allowed.Contains(tool.Name)).ToList();
+
+        _logger.LogInformation(
+            "Session tool override narrowed agent '{AgentId}' from {Before} to {After} tool(s) for conversation '{ConversationId}'.",
+            agentId.Value, tools.Count, narrowed.Count, id.Value);
+
+        return narrowed;
     }
 
     private static async Task<ConversationId?> ResolveConversationIdAsync(

@@ -864,6 +864,13 @@ public sealed class SqliteConversationStore : IConversationStore
                 sets.Add("context_window_override = $context");
                 command.Parameters.AddWithValue("$context", patch.ContextWindow.Value.HasValue ? patch.ContextWindow.Value.Value : (object)DBNull.Value);
             }
+            // #2523: the tool overlay rides the SAME narrow patch as the model overrides so a
+            // restriction cannot be clobbered by a concurrent whole-record save.
+            if (patch.ToolOverrideJson.IsSet)
+            {
+                sets.Add("tool_override_json = $toolOverride");
+                command.Parameters.AddWithValue("$toolOverride", (object?)patch.ToolOverrideJson.Value ?? DBNull.Value);
+            }
 
             sets.Add("updated_at = $now");
             sets.Add("version = version + 1");
@@ -1112,6 +1119,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     model_override TEXT,
                     thinking_override TEXT,
                     context_window_override INTEGER,
+                    tool_override_json TEXT,
                     version INTEGER NOT NULL DEFAULT 1
                 );
 
@@ -1220,6 +1228,8 @@ public sealed class SqliteConversationStore : IConversationStore
         ("model_override", "ALTER TABLE conversations ADD COLUMN model_override TEXT;"),
         ("thinking_override", "ALTER TABLE conversations ADD COLUMN thinking_override TEXT;"),
         ("context_window_override", "ALTER TABLE conversations ADD COLUMN context_window_override INTEGER;"),
+        // #2523: per-session narrowing tool overlay, stored as opaque JSON.
+        ("tool_override_json", "ALTER TABLE conversations ADD COLUMN tool_override_json TEXT;"),
         ("initiator", "ALTER TABLE conversations ADD COLUMN initiator TEXT;"),
         // Phase 4 / F-3 discriminator: NULL maps to ConversationKind.HumanAgent on load.
         ("kind", "ALTER TABLE conversations ADD COLUMN kind TEXT;"),
@@ -1411,7 +1421,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, tool_override_json, parent_conversation_id, spawning_tool_call_id, version
             FROM conversations
             WHERE id = $id
             """;
@@ -1520,7 +1530,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             var inClause = BuildIdInClause(command, ids);
             command.CommandText = $"""
-                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version
+                SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, tool_override_json, parent_conversation_id, spawning_tool_call_id, version
                 FROM conversations
                 WHERE id IN ({inClause})
                 """;
@@ -1701,8 +1711,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $sourceId, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId, 1)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, tool_override_json, parent_conversation_id, spawning_tool_call_id, version)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $sourceId, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $toolOverrideJson, $parentConversationId, $spawningToolCallId, 1)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -1727,13 +1737,14 @@ public sealed class SqliteConversationStore : IConversationStore
                     model_override = excluded.model_override,
                     thinking_override = excluded.thinking_override,
                     context_window_override = excluded.context_window_override,
+                    tool_override_json = excluded.tool_override_json,
                     version = conversations.version + 1
                 WHERE $expectedVersion = 0 OR conversations.version = $expectedVersion
                 RETURNING version
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, parent_conversation_id, spawning_tool_call_id, version)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $sourceId, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $parentConversationId, $spawningToolCallId, 1)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind, source, source_id, visibility, world_id, is_pinned, pinned_at, todo_json, pending_ask_user_json, model_override, thinking_override, context_window_override, tool_override_json, parent_conversation_id, spawning_tool_call_id, version)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind, $source, $sourceId, $visibility, $worldId, $isPinned, $pinnedAt, $todoJson, $pendingAskUserJson, $modelOverride, $thinkingOverride, $contextWindowOverride, $toolOverrideJson, $parentConversationId, $spawningToolCallId, 1)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -1763,6 +1774,7 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$modelOverride", conversation.ModelOverride is null ? (object)DBNull.Value : conversation.ModelOverride);
         conversationCommand.Parameters.AddWithValue("$thinkingOverride", conversation.ThinkingOverride is null ? (object)DBNull.Value : conversation.ThinkingOverride);
         conversationCommand.Parameters.AddWithValue("$contextWindowOverride", conversation.ContextWindowOverride.HasValue ? conversation.ContextWindowOverride.Value : (object)DBNull.Value);
+        conversationCommand.Parameters.AddWithValue("$toolOverrideJson", conversation.ToolOverrideJson is null ? (object)DBNull.Value : conversation.ToolOverrideJson);
         // #2338: deliberately NOT in the upsert's DO UPDATE SET list - the parent edge and the
         // spawning tool call are write-once creation facts (init-only on the model), so a later
         // SaveAsync must never be able to re-parent a persisted conversation.
@@ -1850,6 +1862,9 @@ public sealed class SqliteConversationStore : IConversationStore
             ModelOverride = conversation.ModelOverride,
             ThinkingOverride = conversation.ThinkingOverride,
             ContextWindowOverride = conversation.ContextWindowOverride,
+            // #2523: same reasoning - an overlay omitted from the clone would be NULLed by every
+            // full save, silently lifting a blast-radius restriction the operator set.
+            ToolOverrideJson = conversation.ToolOverrideJson,
             CreatedAt = conversation.CreatedAt,
             UpdatedAt = conversation.UpdatedAt,
             // #2131: the revision travels with the snapshot so a caller that read a clone and

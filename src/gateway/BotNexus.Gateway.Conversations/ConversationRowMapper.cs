@@ -72,7 +72,10 @@ internal static class ConversationRowMapper
             PendingAskUserJson = GetNullableString(reader, "pending_ask_user_json"),
             ModelOverride = GetNullableString(reader, "model_override"),
             ThinkingOverride = GetNullableString(reader, "thinking_override"),
-            ContextWindowOverride = GetNullableInt(reader, "context_window_override")
+            ContextWindowOverride = GetNullableInt(reader, "context_window_override"),
+            // #2523: absent for every row persisted before the column existed, and absent from any
+            // pre-migration projection - GetOptionalString tolerates both, hydrating as "no overlay".
+            ToolOverrideJson = GetOptionalString(reader, "tool_override_json")
         };
 
         var activeSessionOrdinal = reader.GetOrdinal("active_session_id");
