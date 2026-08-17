@@ -38,9 +38,19 @@ on:
 
 # Redundant CI: on a PR that pushes several commits in quick succession, cancel the
 # superseded in-flight run so the latest commit wins instead of stacking builds.
-# Push runs on main are grouped per ref but not cancelled. See issue #1548.
+#
+# Push runs on main are NOT cancel-in-progress -- but that alone does not guarantee every
+# merge gets gated (#3309). A concurrency group holds at most ONE pending run: when merges land
+# faster than the suite completes, GitHub cancels the older PENDING run to make room for the
+# newer one, so an entire burst of merges can collapse into a single executed run. On 2026-08-17,
+# 15 merges landed in 13 minutes and 11 main push runs were cancelled that way -- which is how a
+# commit that reddened main reached the PR queue unnoticed.
+#
+# Keying the group by SHA instead of by ref gives every merged commit its own group, so no main
+# push run can ever supersede another. Bursty merges then queue rather than silently vanish, and
+# main's true red/green state is recorded per commit. See issues #1548 and #3309.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

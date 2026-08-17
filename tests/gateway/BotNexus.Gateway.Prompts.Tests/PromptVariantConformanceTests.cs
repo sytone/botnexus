@@ -28,6 +28,7 @@ namespace BotNexus.Gateway.Prompts.Tests;
 /// that cannot fail is indistinguishable from no check at all.
 /// </para>
 /// </remarks>
+[Collection(ReflectionScanCollection.Name)]
 public sealed class PromptVariantConformanceTests
 {
     private static PromptVariantRegistry Production => PromptVariantRegistry.Shared;
