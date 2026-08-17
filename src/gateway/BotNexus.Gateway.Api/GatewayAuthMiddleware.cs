@@ -93,8 +93,57 @@ public sealed class GatewayAuthMiddleware
             return;
         }
 
+        if (RequiresAdminScope(context.Request) && !identity.IsAdmin)
+        {
+            _logger.LogWarning(
+                "Admin-scope denied for caller '{CallerId}' on {Method} {Path}.",
+                identity.CallerId,
+                context.Request.Method,
+                context.Request.Path);
+            await WriteErrorAsync(
+                context,
+                StatusCodes.Status403Forbidden,
+                "forbidden",
+                "Caller does not have administrative scope for this endpoint.");
+            return;
+        }
+
         context.Items[CallerIdentityItemKey] = identity;
         await _next(context);
+    }
+
+    /// <summary>
+    /// Returns whether the request targets a platform-administration endpoint that requires the
+    /// caller to hold <see cref="GatewayCallerIdentity.IsAdmin"/> (issue #506).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// #506 proposed an ASP.NET <c>[Authorize(Policy = "AdminScope")]</c> attribute. The gateway
+    /// runs no ASP.NET authentication stack -- this middleware is the sole authentication and
+    /// authorization seam for <c>/api/*</c> -- so adding a policy stack would create a second,
+    /// competing gate that could silently disagree with this one. The scope is instead enforced
+    /// here against the identity flag the middleware already resolves, which is the same admin
+    /// gate <c>SecurityDiagnosticsController</c> uses.
+    /// </para>
+    /// <para>
+    /// The gate is keyed on the METHOD as well as the path. Reads of <c>/api/config</c> remain
+    /// open to any authenticated caller because the portal and the CLI both depend on them and
+    /// the whole-config read already masks secrets; only the mutating verbs are administration.
+    /// <see cref="PathString.StartsWithSegments(PathString, StringComparison)"/> is used rather
+    /// than a string prefix so a sibling route such as <c>/api/configuration-notes</c> cannot be
+    /// captured by the gate.
+    /// </para>
+    /// </remarks>
+    private static bool RequiresAdminScope(HttpRequest request)
+    {
+        if (HttpMethods.IsGet(request.Method) ||
+            HttpMethods.IsHead(request.Method) ||
+            HttpMethods.IsOptions(request.Method))
+        {
+            return false;
+        }
+
+        return request.Path.StartsWithSegments("/api/config", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool ShouldSkipAuth(HttpRequest request, IFileProvider? webRootFileProvider)
