@@ -144,6 +144,40 @@ An example of the canonical shape:
 | `models` | `string[]?` | Allowed model ids. `null` means all registered models; `[]` means none. |
 | `input` | `string[]?` | Explicit input modalities (e.g. `["text","image"]`) for models registered from `models`. `null`/`[]` infers modalities from the model family; an explicit declaration always wins. Previously these models were hardcoded text-only, so a vision-capable local model silently discarded every image (#2485). |
 | `api` | `string?` | Wire-contract identifier. One of `openai-completions` (default), `openai-responses`, `anthropic-messages`, `integration-mock`. Required when the provider speaks a non-OpenAI-completions contract. |
+| `chat` | `object?` | Chat-capability settings (#2854). See below. |
+| `embeddings` | `object?` | Embedding-capability settings (#2854). See below. |
+
+### Per-capability provider settings (#2854)
+
+Every model-shaped field above (`defaultModel`, `models`, `api`, `input`, `reasoning`, the thinking /
+context flags) means **chat**, so a provider serving both chat and embeddings had exactly one
+`defaultModel` slot for two unrelated model ids. Capability settings now live in their own object:
+
+```json
+"providers": {
+  "my-ollama": {
+    "enabled": true,
+    "baseUrl": "http://localhost:11434",
+    "chat":       { "api": "openai-completions", "defaultModel": "llama3.1", "models": ["llama3.1"] },
+    "embeddings": { "api": "openai-embeddings",  "model": "nomic-embed-text", "dimensions": 768 }
+  },
+  "github-copilot": { "enabled": true }
+}
+```
+
+`chat` accepts `api`, `defaultModel`, `models`, `input`, `reasoning`, `supportsExtraHighThinking`,
+`supportsExtendedContextWindow` and `contextWindow` — the same meanings as the flat fields.
+`embeddings` accepts `api`, `model` and `dimensions`; `model` is **required** when the object is
+present, because there is deliberately no fallback to the chat default model.
+
+**The flat fields still work.** They are retained and honoured; precedence is per field, so a nested
+value wins only where it is stated and a `chat` object that sets only `api` leaves an existing flat
+`defaultModel` intact. Setting a flat chat field emits a deprecation warning naming its nested
+replacement path (`providers.<key>.chat.<field>`); it is a warning, never a load failure.
+
+**Capability resolution** is the union of what the provider's code declares and what config declares —
+presence of a capability object *is* the config-side declaration, so no separate `capabilities` array
+exists. `enabled: false` removes every capability from both halves.
 
 ---
 

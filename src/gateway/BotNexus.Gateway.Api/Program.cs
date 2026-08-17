@@ -439,28 +439,28 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
             if (!providerConfig.Enabled)
                 continue;
 
-            var apiName = string.IsNullOrWhiteSpace(providerConfig.Api)
+            var apiName = string.IsNullOrWhiteSpace(providerConfig.EffectiveApi)
                 ? "openai-completions"
-                : providerConfig.Api!;
+                : providerConfig.EffectiveApi!;
             // For openai-completions a BaseUrl is required (the HTTP endpoint). For other
             // apis (e.g. integration-mock) BaseUrl is provider-specific (catalog file path,
             // possibly empty) — skip the BaseUrl gate.
             if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
                 continue;
 
-            if (providerConfig.Models is { Count: > 0 })
+            if (providerConfig.EffectiveModels is { Count: > 0 } configuredModels)
             {
-                foreach (var modelId in providerConfig.Models)
+                foreach (var modelId in configuredModels)
                 {
                     // PBI6 (#1707): a dynamic (config-declared) model carries a valid capability set
                     // so the agent + conversation pickers offer only valid thinking/context choices.
                     // Explicit declarations win; anything omitted is inferred from the model family.
                     var caps = DynamicModelCapabilities.Infer(
                         modelId,
-                        declaredReasoning: providerConfig.Reasoning,
-                        declaredExtraHighThinking: providerConfig.SupportsExtraHighThinking,
-                        declaredExtendedContext: providerConfig.SupportsExtendedContextWindow,
-                        declaredInput: providerConfig.Input);
+                        declaredReasoning: providerConfig.EffectiveReasoning,
+                        declaredExtraHighThinking: providerConfig.EffectiveSupportsExtraHighThinking,
+                        declaredExtendedContext: providerConfig.EffectiveSupportsExtendedContextWindow,
+                        declaredInput: providerConfig.EffectiveInput);
                     models.Register(providerName, new LlmModel(
                         Id: modelId,
                         Name: modelId,
@@ -470,7 +470,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                         Reasoning: caps.Reasoning,
                         Input: caps.Input,
                         Cost: new ModelCost(0, 0, 0, 0),
-                        ContextWindow: providerConfig.ContextWindow ?? 128000,
+                        ContextWindow: providerConfig.EffectiveContextWindow ?? 128000,
                         MaxTokens: 32000,
                         SupportsExtraHighThinking: caps.SupportsExtraHighThinking,
                         SupportsExtendedContextWindow: caps.SupportsExtendedContextWindow));
@@ -489,9 +489,9 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                 continue;
             if (!platformConfig.Providers.TryGetValue(agentConfig.Provider, out var agentProvider))
                 continue;
-            var apiName = string.IsNullOrWhiteSpace(agentProvider.Api)
+            var apiName = string.IsNullOrWhiteSpace(agentProvider.EffectiveApi)
                 ? "openai-completions"
-                : agentProvider.Api!;
+                : agentProvider.EffectiveApi!;
             if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(agentProvider.BaseUrl))
                 continue;
             if (models.GetModel(agentConfig.Provider, agentConfig.Model) is not null)
@@ -501,10 +501,10 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
             // provider that only appears via an agent's model reference still exposes valid pickers.
             var agentModelCaps = DynamicModelCapabilities.Infer(
                 agentConfig.Model,
-                declaredReasoning: agentProvider.Reasoning,
-                declaredExtraHighThinking: agentProvider.SupportsExtraHighThinking,
-                declaredExtendedContext: agentProvider.SupportsExtendedContextWindow,
-                declaredInput: agentProvider.Input);
+                declaredReasoning: agentProvider.EffectiveReasoning,
+                declaredExtraHighThinking: agentProvider.EffectiveSupportsExtraHighThinking,
+                declaredExtendedContext: agentProvider.EffectiveSupportsExtendedContextWindow,
+                declaredInput: agentProvider.EffectiveInput);
             models.Register(agentConfig.Provider, new LlmModel(
                 Id: agentConfig.Model,
                 Name: agentConfig.Model,
@@ -514,7 +514,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                 Reasoning: agentModelCaps.Reasoning,
                 Input: agentModelCaps.Input,
                 Cost: new ModelCost(0, 0, 0, 0),
-                ContextWindow: agentProvider.ContextWindow ?? 128000,
+                ContextWindow: agentProvider.EffectiveContextWindow ?? 128000,
                 MaxTokens: 32000,
                 SupportsExtraHighThinking: agentModelCaps.SupportsExtraHighThinking,
                 SupportsExtendedContextWindow: agentModelCaps.SupportsExtendedContextWindow));

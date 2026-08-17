@@ -302,7 +302,7 @@ internal sealed class ProviderCommand
                 name,
                 provider.Enabled ? "[green]Yes[/]" : "[red]No[/]",
                 authDisplay,
-                provider.DefaultModel ?? "[dim]—[/]",
+                provider.EffectiveDefaultModel ?? "[dim]—[/]",
                 provider.BaseUrl ?? "[dim]default[/]");
         }
 

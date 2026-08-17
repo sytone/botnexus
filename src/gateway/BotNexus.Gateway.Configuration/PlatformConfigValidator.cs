@@ -35,8 +35,62 @@ public static class PlatformConfigValidator
         }
 
         ValidateLocationWarnings(config.Gateway?.Locations, warnings);
+        ValidateProviderCapabilityWarnings(config.Providers, warnings);
 
         return warnings;
+    }
+
+    /// <summary>
+    /// Emits the #2854 deprecation diagnostic for the flat chat fields on a provider entry, naming the
+    /// nested replacement path for each one. The flat fields are RETAINED and still fully honoured
+    /// (see <c>ProviderConfig.Effective*</c>), so this is a warning and never an error — an existing
+    /// config must keep loading, and a diagnostic that refuses to load is a migration, not a warning.
+    /// </summary>
+    private static void ValidateProviderCapabilityWarnings(
+        Dictionary<string, ProviderConfig>? providers,
+        List<string> warnings)
+    {
+        if (providers is null)
+            return;
+
+        foreach (var (providerKey, providerConfig) in providers)
+        {
+            if (string.IsNullOrWhiteSpace(providerKey) || providerConfig is null)
+                continue;
+
+            foreach (var (legacyField, replacement) in EnumerateDeprecatedChatFields(providerConfig))
+            {
+                warnings.Add(
+                    $"providers.{providerKey}.{legacyField} is deprecated; use " +
+                    $"providers.{providerKey}.chat.{replacement} instead. The flat field is still honoured.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Yields (flat field, nested replacement) for each deprecated chat field the entry actually sets.
+    /// Only SET fields are reported — warning about a field the operator never wrote would make the
+    /// diagnostic unactionable noise on every provider entry in every config.
+    /// </summary>
+    private static IEnumerable<(string LegacyField, string Replacement)> EnumerateDeprecatedChatFields(
+        ProviderConfig providerConfig)
+    {
+        if (!string.IsNullOrWhiteSpace(providerConfig.DefaultModel))
+            yield return ("defaultModel", "defaultModel");
+        if (providerConfig.Models is not null)
+            yield return ("models", "models");
+        if (!string.IsNullOrWhiteSpace(providerConfig.Api))
+            yield return ("api", "api");
+        if (providerConfig.Input is not null)
+            yield return ("input", "input");
+        if (providerConfig.Reasoning is not null)
+            yield return ("reasoning", "reasoning");
+        if (providerConfig.SupportsExtraHighThinking is not null)
+            yield return ("supportsExtraHighThinking", "supportsExtraHighThinking");
+        if (providerConfig.SupportsExtendedContextWindow is not null)
+            yield return ("supportsExtendedContextWindow", "supportsExtendedContextWindow");
+        if (providerConfig.ContextWindow is not null)
+            yield return ("contextWindow", "contextWindow");
     }
 
     /// <summary>
@@ -469,6 +523,17 @@ public static class PlatformConfigValidator
                  (providerUri.Scheme != Uri.UriSchemeHttp && providerUri.Scheme != Uri.UriSchemeHttps)))
             {
                 errors.Add($"providers.{providerKey}.baseUrl must be a valid http or https absolute URL.");
+            }
+
+            // #2854: an embeddings capability object that names no model cannot resolve one — there is
+            // deliberately no fallback to the chat default model, since borrowing a chat model id for an
+            // embedding request is exactly the overloading this issue removes.
+            if (providerConfig.Embeddings is { } embeddings &&
+                string.IsNullOrWhiteSpace(embeddings.Model))
+            {
+                errors.Add(
+                    $"providers.{providerKey}.embeddings.model is required when an embeddings capability is declared " +
+                    "(example: 'nomic-embed-text').");
             }
         }
     }

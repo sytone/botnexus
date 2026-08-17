@@ -95,6 +95,6 @@ public sealed class ConfigModelFilter : IModelFilter
         if (providerConfigs is null || !providerConfigs.TryGetValue(provider, out var config))
             return null;
 
-        return config.Models;
+        return config.EffectiveModels;
     }
 }

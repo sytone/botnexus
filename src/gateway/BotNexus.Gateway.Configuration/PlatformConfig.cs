@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Domain;
 using BotNexus.Domain.World;
 
@@ -235,6 +236,125 @@ public sealed class ProviderConfig
     /// context-size picker offers for a config-declared model.
     /// </summary>
     public int? ContextWindow { get; set; }
+
+    /// <summary>
+    /// Chat-capability settings (#2854). Present fields override their flat provider-level
+    /// equivalents; absent fields fall back to them, so a pre-#2854 config behaves identically.
+    /// </summary>
+    [Display(
+        Name = "Chat",
+        Description = "Chat-capability settings for this provider. Overrides the deprecated provider-level chat fields.",
+        GroupName = "Provider",
+        Order = 10)]
+    [ConfigField(Group = "provider", Order = 10)]
+    public ProviderChatConfig? Chat { get; set; }
+
+    /// <summary>
+    /// Embedding-capability settings (#2854). Its <b>presence</b> is the config-side declaration that
+    /// this provider is embeddings-capable — see <see cref="ResolveCapabilities"/>.
+    /// </summary>
+    [Display(
+        Name = "Embeddings",
+        Description = "Embedding-capability settings for this provider. Declaring this object marks the provider embeddings-capable.",
+        GroupName = "Provider",
+        Order = 11)]
+    [ConfigField(Group = "provider", Order = 11)]
+    public ProviderEmbeddingsConfig? Embeddings { get; set; }
+
+    // ── Effective accessors (#2854 compatibility path) ────────────────────────
+    //
+    // Precedence is uniform and field-by-field: the nested capability object wins where it states a
+    // value, otherwise the flat legacy field is used. This is deliberately NOT object-level
+    // precedence — a config that adds `chat: { api: ... }` alongside an existing flat `defaultModel`
+    // must keep the flat default model, not silently lose it.
+
+    /// <summary>Effective chat default model: <c>chat.defaultModel</c> if set, else the flat <see cref="DefaultModel"/>.</summary>
+    [JsonIgnore]
+    public string? EffectiveDefaultModel =>
+        string.IsNullOrWhiteSpace(Chat?.DefaultModel) ? DefaultModel : Chat!.DefaultModel;
+
+    /// <summary>Effective chat model allowlist: <c>chat.models</c> if present, else the flat <see cref="Models"/>.</summary>
+    [JsonIgnore]
+    public List<string>? EffectiveModels => Chat?.Models ?? Models;
+
+    /// <summary>Effective chat API: <c>chat.api</c> if set, else the flat <see cref="Api"/>.</summary>
+    [JsonIgnore]
+    public string? EffectiveApi =>
+        string.IsNullOrWhiteSpace(Chat?.Api) ? Api : Chat!.Api;
+
+    /// <summary>Effective chat input modalities: <c>chat.input</c> if present, else the flat <see cref="Input"/>.</summary>
+    [JsonIgnore]
+    public List<string>? EffectiveInput => Chat?.Input ?? Input;
+
+    /// <summary>Effective reasoning declaration: <c>chat.reasoning</c> if set, else the flat <see cref="Reasoning"/>.</summary>
+    [JsonIgnore]
+    public bool? EffectiveReasoning => Chat?.Reasoning ?? Reasoning;
+
+    /// <summary>Effective extra-high thinking declaration, nested value winning over the flat one.</summary>
+    [JsonIgnore]
+    public bool? EffectiveSupportsExtraHighThinking =>
+        Chat?.SupportsExtraHighThinking ?? SupportsExtraHighThinking;
+
+    /// <summary>Effective extended-context declaration, nested value winning over the flat one.</summary>
+    [JsonIgnore]
+    public bool? EffectiveSupportsExtendedContextWindow =>
+        Chat?.SupportsExtendedContextWindow ?? SupportsExtendedContextWindow;
+
+    /// <summary>Effective context-window size, nested value winning over the flat one.</summary>
+    [JsonIgnore]
+    public int? EffectiveContextWindow => Chat?.ContextWindow ?? ContextWindow;
+
+    /// <summary>
+    /// The capabilities this provider entry declares config-side (#2854): presence of a capability
+    /// object is the declaration. Chat is declared by a <see cref="Chat"/> object OR by any of the
+    /// legacy flat chat fields, because those fields have always meant "this provider does chat".
+    /// </summary>
+    /// <returns>The config-declared capability set; empty when the entry declares nothing.</returns>
+    public IReadOnlySet<ProviderCapability> DeclaredCapabilities()
+    {
+        var declared = new HashSet<ProviderCapability>();
+
+        if (Chat is not null ||
+            !string.IsNullOrWhiteSpace(DefaultModel) ||
+            Models is { Count: > 0 } ||
+            !string.IsNullOrWhiteSpace(Api))
+        {
+            declared.Add(ProviderCapability.Chat);
+        }
+
+        if (Embeddings is not null)
+            declared.Add(ProviderCapability.Embeddings);
+
+        return declared;
+    }
+
+    /// <summary>
+    /// Resolves the effective capability set for this provider entry: the <b>union</b> of the
+    /// code-declared set (from the registry, #2853) and the config-declared set, narrowed afterwards
+    /// by <see cref="Enabled"/> — matching the <c>ConfigModelFilter</c> narrowing precedent.
+    ///
+    /// <para>Union, not override, because the two halves answer different questions: code declares
+    /// what an implementation <em>can</em> do, config declares what an operator has <em>set up</em>.
+    /// A local OpenAI-compatible endpoint has no code-side embeddings declaration of its own — its
+    /// embeddings capability exists only because the operator configured one.</para>
+    ///
+    /// <para><c>enabled: false</c> removes EVERY capability, from either half. A disabled provider
+    /// declaring embeddings in config is still disabled; "declared" never outranks "switched off".</para>
+    /// </summary>
+    /// <param name="codeDeclared">The registry's code-declared capability set, or null when no provider is registered for the api.</param>
+    /// <returns>The effective capability set, empty when the provider is disabled.</returns>
+    public IReadOnlySet<ProviderCapability> ResolveCapabilities(IReadOnlySet<ProviderCapability>? codeDeclared)
+    {
+        if (!Enabled)
+            return new HashSet<ProviderCapability>();
+
+        var effective = codeDeclared is null
+            ? new HashSet<ProviderCapability>()
+            : new HashSet<ProviderCapability>(codeDeclared);
+
+        effective.UnionWith(DeclaredCapabilities());
+        return effective;
+    }
 }
 
 /// <summary>Gateway runtime configuration.</summary>
