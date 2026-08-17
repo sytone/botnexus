@@ -67,9 +67,12 @@ public static class PortalConversationGrouping
     /// <summary>Heading for schedule-driven (cron/heartbeat) runs.</summary>
     public const string ScheduledLabel = "Scheduled";
 
+    /// <summary>Heading for inbound-webhook runs (#2709), matching the desktop sidebar's 4th section.</summary>
+    public const string WebhooksLabel = "Webhooks";
+
     /// <summary>
     /// Groups <paramref name="conversations"/> for a picker: Pinned, then Conversations, then
-    /// Scheduled. Each group's members are sorted with the shared
+    /// Scheduled, then Webhooks. Each group's members are sorted with the shared
     /// <see cref="PortalListOrdering.OrderForDisplay(IEnumerable{ConversationState})"/> comparator so
     /// ordering inside a group stays identical to the ungrouped list. Empty groups are omitted.
     /// </summary>
@@ -96,12 +99,21 @@ public static class PortalConversationGrouping
         var scheduled = all
             .Where(c => !c.IsPinned && IsScheduled(c, selectionSource, cronConversationIds))
             .ToList();
-        var normal = all.Where(c => !c.IsPinned && !scheduled.Contains(c)).ToList();
+        // #2709: the 4th desktop section. Subtraction order mirrors MainLayout.razor exactly -
+        // `!IsPinned && !IsCron && IsWebhook` - so precedence is Pinned > Scheduled > Webhooks >
+        // Conversations and a conversation lands in exactly one group.
+        var webhooks = all
+            .Where(c => !c.IsPinned && !scheduled.Contains(c) && IsWebhook(c, selectionSource))
+            .ToList();
+        var normal = all
+            .Where(c => !c.IsPinned && !scheduled.Contains(c) && !webhooks.Contains(c))
+            .ToList();
 
-        var groups = new List<PortalConversationGroup>(3);
+        var groups = new List<PortalConversationGroup>(4);
         AddIfAny(groups, PinnedLabel, pinned);
         AddIfAny(groups, ConversationsLabel, normal);
         AddIfAny(groups, ScheduledLabel, scheduled);
+        AddIfAny(groups, WebhooksLabel, webhooks);
         return groups;
     }
 
@@ -131,6 +143,24 @@ public static class PortalConversationGrouping
             || (cronConversationIds is { Count: > 0 }
                 && conversation.ConversationId is { Length: > 0 } id
                 && cronConversationIds.Contains(id));
+    }
+
+    /// <summary>
+    /// The ONE webhook-classification predicate in the client (#2709). Membership reads the same
+    /// typed provenance projection the desktop sidebar's <c>IsWebhookConversation</c> reads - the
+    /// immutable server-supplied <c>(Kind, Source)</c> pair - never a title or session-id prefix.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="IsScheduled"/> there is no second clause: nothing can "adopt" an existing
+    /// conversation into webhook origin the way a cron job can adopt one, so the projection is
+    /// complete on its own.
+    /// </remarks>
+    /// <param name="conversation">The conversation to classify.</param>
+    /// <param name="selectionSource">The current view-selection source, fed to the render projection.</param>
+    public static bool IsWebhook(ConversationState conversation, SelectionSource selectionSource)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+        return conversation.Project(selectionSource).Group == ConversationListGroup.Automated;
     }
 
     /// <summary>
