@@ -507,6 +507,33 @@ botnexus config set gateway.enableProviderRequestLogging true
 The handler also self-gates on `LogLevel.Debug`: even when the flag is on, nothing is emitted
 unless the `BotNexus.Agent.Providers.Core.Logging.ProviderLoggingHandler` category is at
 `Debug` (or lower). This keeps bodies out of `Info`-level production logs by construction.
+Raise the level the same way:
+
+```bash
+botnexus config set gateway.logLevel Debug
+```
+
+### Toggling on a running gateway
+
+Both settings take effect **at runtime — no restart required** (issue #3282). The handler is
+attached to the provider `HttpClient` unconditionally and re-reads
+`gateway.enableProviderRequestLogging` on every request, while `gateway.logLevel` drives a Serilog
+`LoggingLevelSwitch` that is updated from an `IOptionsMonitor<PlatformConfig>.OnChange`
+subscription. This makes capture-and-revert practical for live diagnosis, and lets an agent enable
+auditing to debug a provider problem without restarting the platform:
+
+```bash
+# capture
+botnexus config set gateway.enableProviderRequestLogging true
+botnexus config set gateway.logLevel Debug
+
+# ...reproduce the problem, then revert
+botnexus config set gateway.enableProviderRequestLogging false
+botnexus config set gateway.logLevel Information
+```
+
+Leave auditing off in normal operation: request bodies contain the full system prompt and tool
+schemas, so `Debug` capture is verbose and should be short-lived.
 
 ### What is logged
 

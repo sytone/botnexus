@@ -34,8 +34,17 @@ namespace BotNexus.Agent.Providers.Core.Logging;
 /// </summary>
 public sealed class ProviderLoggingHandler(
     ILogger<ProviderLoggingHandler> logger,
-    Func<string, string>? secretRedactor = null) : DelegatingHandler
+    Func<string, string>? secretRedactor = null,
+    Func<bool>? isEnabled = null) : DelegatingHandler
 {
+    /// <summary>
+    /// Re-evaluated on every request so the operator toggle takes effect on a running gateway
+    /// (issue #3282). The handler is attached unconditionally; this predicate - not the DI
+    /// pipeline - decides whether a given call is logged. A <see langword="null"/> predicate means
+    /// "no external gate", leaving the <see cref="LogLevel.Debug"/> check as the only condition.
+    /// </summary>
+    private bool LoggingRequested() => isEnabled is null || isEnabled();
+
     /// <summary>Header names that are always redacted by name in request logs.</summary>
     private static readonly HashSet<string> RedactedHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -140,7 +149,10 @@ public sealed class ProviderLoggingHandler(
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        if (!logger.IsEnabled(LogLevel.Debug))
+        // Both gates are checked per request, never cached: the config flag may be flipped by the
+        // CLI or an agent while the gateway runs, and the level switch may be raised to Debug at
+        // the same time. Caching either would reintroduce the restart requirement of #3282.
+        if (!LoggingRequested() || !logger.IsEnabled(LogLevel.Debug))
             return await base.SendAsync(request, cancellationToken);
 
         var requestBody = Scrub(await ReadRequestBodyAsync(request, cancellationToken));
