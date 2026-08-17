@@ -202,6 +202,7 @@ export default defineConfig({
           { text: 'Dev-Mode Origin Guard', link: '/features/dev-origin-guard' },
           { text: 'Portal Boot Diagnostics', link: '/features/portal-boot-diagnostics' },
           { text: 'AGENTS.md Conventions', link: '/features/agents-md-conventions' },
+          { text: 'Model-Specific Instruction Files', link: '/features/model-specific-instruction-files' },
           { text: 'Agent 365 Observability', link: '/features/agent365-observability' },
           { text: 'Session Consistency', link: '/features/session-consistency' },
           { text: 'Conversation Provenance', link: '/features/conversation-provenance' },

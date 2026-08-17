@@ -89,10 +89,39 @@ public static class ContextFileOrdering
 
     private static int GetOrder(string path)
     {
-        if (DefaultOrder.TryGetValue(GetBasename(path), out var order))
+        var basename = GetBasename(path);
+        if (DefaultOrder.TryGetValue(basename, out var order))
             return order;
 
+        // A model-specific variant sorts at its BASE file's position (#2435). Without this,
+        // agents.gpt.md misses the basename lookup, falls through to int.MaxValue and sorts after
+        // MEMORY.md -- so choosing a variant would silently REORDER the instruction stack, which
+        // is a behaviour change the author never asked for.
+        //
+        // The grammar is tested against the CASE-PRESERVED name, not the lowercased ordering key.
+        // GetBasename lowercases, which would make AGENTS.GPT.md look grammatical to the sorter
+        // while ContextFileVariants -- correctly -- refuses to resolve it. One seam calling a name
+        // a variant and the other refusing is exactly the divergence the shared grammar exists to
+        // prevent, so an uppercase name is an ordinary unrecognised file to BOTH.
+        var rawBasename = GetRawBasename(path);
+        var baseName = ContextFileVariants.GetBaseFileName(rawBasename);
+        if (!string.Equals(baseName, rawBasename, StringComparison.Ordinal)
+            && DefaultOrder.TryGetValue(baseName, out var variantOrder))
+            return variantOrder;
+
         return IsDailyMemoryNote(path) ? 75 : int.MaxValue;
+    }
+
+    /// <summary>
+    /// The final path segment with its original casing intact. <see cref="GetBasename"/> lowercases
+    /// because it is an ordering/identity key; the variant grammar is case-SENSITIVE and needs the
+    /// name as the author actually spelled it.
+    /// </summary>
+    private static string GetRawBasename(string pathValue)
+    {
+        var normalizedPath = NormalizePath(pathValue);
+        var segments = normalizedPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.LastOrDefault() ?? normalizedPath;
     }
 
     private static bool IsDailyMemoryNote(string path)

@@ -145,17 +145,31 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         var memoryPromptInjection = ResolveMemoryPromptInjection(descriptor.Memory?.PromptInjection);
         var promptFiles = ResolvePromptFiles(descriptor, includeMemoryFile: !IsMemoryPromptInjectionNone(memoryPromptInjection));
-        var contextFiles = (await LoadContextFilesAsync(_fileSystem, workspacePath, promptFiles, cancellationToken)).ToList();
+
+        // #2435: the model in force for THIS conversation selects the instruction-file variant.
+        // Read from the already-resolved effective settings for the same reason the runtime line
+        // does (#2796) -- a second derivation from the descriptor would disagree with the model
+        // actually serving the turn.
+        var effectiveModelId = effectiveSettings?.Model ?? descriptor.ModelId;
+        var effectiveProviderId = effectiveSettings?.Provider ?? descriptor.ApiProvider;
+
+        var contextFiles = (await LoadContextFilesAsync(
+            _fileSystem, workspacePath, promptFiles, effectiveModelId, effectiveProviderId, cancellationToken)).ToList();
 
         // Inject world-level instructions if WORLD.md exists at ~/.botnexus/WORLD.md
         if (!string.IsNullOrWhiteSpace(_homePath))
         {
-            var worldFilePath = Path.Combine(_homePath, "WORLD.md");
+            // #2435 applies to WORLD.md too: it is an instruction file like any other, and an
+            // operator who can vary AGENTS.md per model would rightly expect the same of the
+            // world-level rules.
+            var worldFileName = ResolveVariantFileName(
+                _fileSystem, _homePath, "WORLD.md", effectiveModelId, effectiveProviderId);
+            var worldFilePath = Path.Combine(_homePath, worldFileName);
             if (_fileSystem.File.Exists(worldFilePath))
             {
                 var worldContent = await _fileSystem.File.ReadAllTextAsync(worldFilePath, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(worldContent))
-                    contextFiles.Insert(0, new ContextFile("WORLD.md", worldContent.Trim()));
+                    contextFiles.Insert(0, new ContextFile(worldFileName, worldContent.Trim()));
             }
         }
 
@@ -367,6 +381,8 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         IFileSystem fileSystem,
         string workspacePath,
         IReadOnlyList<string> promptFiles,
+        string? modelId,
+        string? providerId,
         CancellationToken cancellationToken)
     {
         List<ContextFile> contextFiles = [];
@@ -375,19 +391,95 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             if (string.IsNullOrWhiteSpace(promptFile))
                 continue;
 
-            var filePath = Path.GetFullPath(Path.Combine(workspacePath, promptFile));
+            // #2435: swap in the most specific model variant that exists next to the requested
+            // file. Containment is re-checked below against the RESOLVED path, so a variant can
+            // never widen where a prompt file may be read from.
+            var resolvedPromptFile = ResolveVariantPromptFile(fileSystem, workspacePath, promptFile, modelId, providerId);
+
+            var filePath = Path.GetFullPath(Path.Combine(workspacePath, resolvedPromptFile));
             if (!IsPathUnderWorkspace(workspacePath, filePath) || !fileSystem.File.Exists(filePath))
                 continue;
 
             var content = await fileSystem.File.ReadAllTextAsync(filePath, cancellationToken);
             if (!string.IsNullOrWhiteSpace(content))
-                contextFiles.Add(new ContextFile(promptFile, content.Trim()));
+                contextFiles.Add(new ContextFile(resolvedPromptFile, content.Trim()));
 
-            if (Path.GetFileName(promptFile).Equals(BootstrapFileName, StringComparison.OrdinalIgnoreCase))
+            // Keyed on the BASE name so BOOTSTRAP.gpt.md is consumed-on-read like the file it
+            // varies. A bootstrap variant that survived first read would re-run its one-shot
+            // instructions on every turn.
+            if (ContextFileVariants.GetBaseFileName(Path.GetFileName(resolvedPromptFile))
+                .Equals(BootstrapFileName, StringComparison.OrdinalIgnoreCase))
                 DeleteBootstrapFile(fileSystem, filePath);
         }
 
         return [.. contextFiles];
+    }
+
+    /// <summary>
+    /// Rewrites a workspace-relative prompt-file path to its most specific model variant (#2435),
+    /// preserving any directory portion. Returns <paramref name="promptFile"/> unchanged when no
+    /// variant matches — the base file is always the final fallback.
+    /// </summary>
+    private static string ResolveVariantPromptFile(
+        IFileSystem fileSystem,
+        string workspacePath,
+        string promptFile,
+        string? modelId,
+        string? providerId)
+    {
+        var directoryPart = Path.GetDirectoryName(promptFile) ?? string.Empty;
+        var fileName = Path.GetFileName(promptFile);
+        if (string.IsNullOrEmpty(fileName))
+            return promptFile;
+
+        var searchDirectory = Path.GetFullPath(Path.Combine(workspacePath, directoryPart));
+        var resolvedName = ResolveVariantFileName(fileSystem, searchDirectory, fileName, modelId, providerId);
+
+        return string.IsNullOrEmpty(directoryPart)
+            ? resolvedName
+            : Path.Combine(directoryPart, resolvedName);
+    }
+
+    /// <summary>
+    /// Picks the winning variant file name for <paramref name="fileName"/> within
+    /// <paramref name="directory"/>, or the name itself when the directory is unreadable or holds
+    /// no matching variant.
+    /// </summary>
+    /// <remarks>
+    /// A directory that cannot be enumerated degrades to the base file rather than throwing:
+    /// prompt assembly failing outright because a workspace directory was momentarily locked would
+    /// be a far worse outcome than reading the instructions everyone already had.
+    /// </remarks>
+    private static string ResolveVariantFileName(
+        IFileSystem fileSystem,
+        string directory,
+        string fileName,
+        string? modelId,
+        string? providerId)
+    {
+        // Nothing can match a base name that is not itself a plain "stem.ext": the grammar needs an
+        // unambiguous slot to put the suffix in.
+        if (fileName.Split('.').Length != 2)
+            return fileName;
+
+        string[] candidates;
+        try
+        {
+            if (!fileSystem.Directory.Exists(directory))
+                return fileName;
+
+            var stem = Path.GetFileNameWithoutExtension(fileName);
+            var extension = Path.GetExtension(fileName);
+            candidates = [.. fileSystem.Directory
+                .GetFiles(directory, $"{stem}.*{extension}")
+                .Select(fileSystem.Path.GetFileName)
+                .Where(static name => !string.IsNullOrEmpty(name))
+                .Select(static name => name!)];
+        }
+        catch (IOException) { return fileName; }
+        catch (UnauthorizedAccessException) { return fileName; }
+
+        return ContextFileVariants.Resolve(candidates, fileName, modelId, providerId);
     }
 
     private string ResolveWorkspaceDirectory(string workspacePath)
@@ -497,7 +589,9 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         var normalized = ContextFileOrdering.NormalizePath(path);
         var fileName = Path.GetFileName(normalized);
 
-        if (OwnerPrivateFileNames.Contains(fileName, StringComparer.OrdinalIgnoreCase))
+        // #2435: compare on the BASE name, or MEMORY.claude.md would slip past the owner-private
+        // exclusion that MEMORY.md is caught by — a variant of private content is still private.
+        if (OwnerPrivateFileNames.Contains(ContextFileVariants.GetBaseFileName(fileName), StringComparer.OrdinalIgnoreCase))
             return true;
 
         var memoryRoot = string.IsNullOrWhiteSpace(memoryPathOverride)
@@ -529,9 +623,13 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         return promptFiles.Where(static file => !IsMemoryPromptFile(file)).ToList();
     }
 
+    // #2435: base-name comparison, so `memory.promptInjection: none` suppresses MEMORY.gpt.md just
+    // as it suppresses MEMORY.md. Matching the literal name only would let a variant reintroduce
+    // the very content the setting exists to withhold.
     private static bool IsMemoryPromptFile(string? promptFile) =>
         !string.IsNullOrWhiteSpace(promptFile) &&
-        Path.GetFileName(promptFile).Equals(MemoryFileName, StringComparison.OrdinalIgnoreCase);
+        ContextFileVariants.GetBaseFileName(Path.GetFileName(promptFile))
+            .Equals(MemoryFileName, StringComparison.OrdinalIgnoreCase);
 
     private static string ResolveMemoryPromptInjection(string? promptInjection)
     {
