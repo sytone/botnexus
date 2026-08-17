@@ -24,10 +24,11 @@ public class LlmStreamTests
     {
         var stream = new LlmStream();
         var partial = MakeMessage();
+        var final = MakeMessage();
 
         stream.Push(new TextDeltaEvent(0, "hello", partial));
-        stream.Push(new DoneEvent(StopReason.Stop, MakeMessage()));
-        stream.End();
+        stream.Push(new DoneEvent(StopReason.Stop, final));
+        stream.End(final);
 
         var events = new List<AssistantMessageEvent>();
         await foreach (var evt in stream)
@@ -110,7 +111,7 @@ public class LlmStreamTests
         stream.Push(new TextDeltaEvent(0, "lo", partial));
         stream.Push(new TextEndEvent(0, "hello", partial));
         stream.Push(new DoneEvent(StopReason.Stop, final));
-        stream.End();
+        stream.End(final);
 
         var types = new List<string>();
         await foreach (var evt in stream)
@@ -156,6 +157,103 @@ public class LlmStreamTests
             .ShouldBeOfType<DoneEvent>();
     }
 
+    /// <summary>
+    /// #3293 AC1/AC2: terminating a stream with no result must complete <c>GetResultAsync</c>.
+    /// Before the fix this path (<c>End(null)</c>) completed the event channel but left the result
+    /// task pending forever, so this await would never return. The bounded wait is the whole point
+    /// of the test: a regression re-strands the awaiter and this fails on the timeout rather than
+    /// hanging the suite.
+    /// </summary>
+    [Fact]
+    public async Task EndWithoutResult_FaultsGetResultAsync_WithinBoundedWait()
+    {
+        var stream = new LlmStream();
+
+        stream.EndWithoutResult("transport closed mid-parse");
+
+        var resultTask = stream.GetResultAsync();
+        var completed = await Task.WhenAny(resultTask, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.ShouldBeSameAs(resultTask, "GetResultAsync must complete, not hang, when the stream ends with no result");
+
+        var ex = await Should.ThrowAsync<LlmStreamIncompleteException>(() => resultTask);
+        ex.Reason.ShouldBe("transport closed mid-parse");
+        ex.Message.ShouldContain("ended without a result");
+        ex.Message.ShouldContain("transport closed mid-parse");
+    }
+
+    /// <summary>
+    /// #3293: the no-result path must also complete the event channel, so a consumer already
+    /// enumerating the stream is released rather than blocked on a reader that never finishes.
+    /// </summary>
+    [Fact]
+    public async Task EndWithoutResult_CompletesEventEnumeration()
+    {
+        var stream = new LlmStream();
+        var partial = MakeMessage();
+
+        stream.Push(new TextDeltaEvent(0, "partial", partial));
+        stream.EndWithoutResult("aborted");
+
+        var events = new List<AssistantMessageEvent>();
+        var drain = Task.Run(async () =>
+        {
+            await foreach (var evt in stream)
+                events.Add(evt);
+        });
+
+        var completed = await Task.WhenAny(drain, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.ShouldBeSameAs(drain, "enumeration must terminate when the stream ends without a result");
+        await drain;
+
+        events.ShouldHaveSingleItem().ShouldBeOfType<TextDeltaEvent>();
+    }
+
+    /// <summary>
+    /// #3293: a result already captured from a terminal event wins over a later abort. Without the
+    /// <c>TrySet</c> semantics a late <c>EndWithoutResult</c> would retroactively fail a turn that
+    /// had genuinely succeeded.
+    /// </summary>
+    [Fact]
+    public async Task EndWithoutResult_AfterDoneEvent_PreservesTerminalResult()
+    {
+        var stream = new LlmStream();
+        var final = MakeMessage(content: [new TextContent("complete")]);
+
+        stream.Push(new DoneEvent(StopReason.Stop, final));
+        stream.EndWithoutResult("late abort");
+
+        var result = await stream.GetResultAsync();
+
+        result.StopReason.ShouldBe(StopReason.Stop);
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("complete");
+    }
+
+    /// <summary>
+    /// #3293 AC1: the invalid state is unrepresentable at the type level - <c>End</c> no longer
+    /// accepts a null result, and rejects one passed through a nullable reference at runtime.
+    /// </summary>
+    [Fact]
+    public void End_WithNullResult_Throws()
+    {
+        var stream = new LlmStream();
+        AssistantMessage? nothing = null;
+
+        Should.Throw<ArgumentNullException>(() => stream.End(nothing!));
+    }
+
+    /// <summary>
+    /// #3293: a no-result termination must name its own cause, so an empty reason is refused.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void EndWithoutResult_WithBlankReason_Throws(string reason)
+    {
+        var stream = new LlmStream();
+
+        Should.Throw<ArgumentException>(() => stream.EndWithoutResult(reason));
+    }
+
     [Fact]
     public async Task Stream_WithToolCallEvents_AllConsumed()
     {
@@ -168,7 +266,7 @@ public class LlmStreamTests
         stream.Push(new ToolCallDeltaEvent(0, "{\"path\":\"/tmp\"}", partial));
         stream.Push(new ToolCallEndEvent(0, toolCall, partial));
         stream.Push(new DoneEvent(StopReason.ToolUse, final));
-        stream.End();
+        stream.End(final);
 
         var types = new List<string>();
         await foreach (var evt in stream)
@@ -188,7 +286,7 @@ public class LlmStreamTests
         stream.Push(new ThinkingDeltaEvent(0, "thought", partial));
         stream.Push(new ThinkingEndEvent(0, "thought", partial));
         stream.Push(new DoneEvent(StopReason.Stop, final));
-        stream.End();
+        stream.End(final);
 
         var types = new List<string>();
         await foreach (var evt in stream)

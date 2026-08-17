@@ -48,13 +48,45 @@ public sealed class LlmStream : IAsyncEnumerable<AssistantMessageEvent>
     }
 
     /// <summary>
-    /// Signal the stream is complete. If result is provided and not yet set, it becomes the final result.
+    /// Signal the stream is complete with a final result.
     /// </summary>
-    public void End(AssistantMessage? result = null)
+    /// <param name="result">The turn's final message. Required.</param>
+    /// <remarks>
+    /// The result is mandatory by design (#3293). It was previously optional and defaulted to
+    /// <c>null</c>, which made <c>End()</c> and <c>End(message)</c> look equally legitimate at a
+    /// call site even though only the latter left the stream usable: the <c>null</c> path completed
+    /// the event channel but never completed the result task, so <see cref="GetResultAsync"/> hung
+    /// forever with no error and no cancellation. Producers that genuinely have no message to report
+    /// must now say so explicitly via <see cref="EndWithoutResult(string)"/>, which fails the
+    /// awaiter loudly instead of stranding it.
+    /// </remarks>
+    public void End(AssistantMessage result)
     {
+        ArgumentNullException.ThrowIfNull(result);
+
         _done = true;
-        if (result is not null)
-            _resultTcs.TrySetResult(result);
+        _resultTcs.TrySetResult(result);
+
+        _channel.Writer.TryComplete();
+    }
+
+    /// <summary>
+    /// Signal the stream is complete with no final result, faulting any awaiter of
+    /// <see cref="GetResultAsync"/> with a <see cref="LlmStreamIncompleteException"/>.
+    /// </summary>
+    /// <param name="reason">Why no result was produced; surfaced in the exception message.</param>
+    /// <remarks>
+    /// This is the explicit, representable form of the state that <c>End(null)</c> used to express
+    /// silently (#3293). If a terminal event already supplied a result, that result stands - the
+    /// underlying <see cref="TaskCompletionSource{TResult}"/> is only transitioned when it is still
+    /// pending, so a late abort cannot retroactively fail a turn that already succeeded.
+    /// </remarks>
+    public void EndWithoutResult(string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        _done = true;
+        _resultTcs.TrySetException(new LlmStreamIncompleteException(reason));
 
         _channel.Writer.TryComplete();
     }
