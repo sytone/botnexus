@@ -210,6 +210,7 @@ export default defineConfig({
           { text: 'Conversation Provenance', link: '/features/conversation-provenance' },
           { text: 'Hybrid Memory Retrieval', link: '/features/hybrid-memory-retrieval' },
           { text: 'Memory Taint Quarantine', link: '/features/memory-taint-quarantine' },
+          { text: 'Provider Health Events', link: '/features/provider-health-events' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
         ],

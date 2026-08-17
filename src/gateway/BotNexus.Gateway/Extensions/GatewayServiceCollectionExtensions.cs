@@ -38,6 +38,9 @@ using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Gateway.Providers;
+using BotNexus.Gateway.Abstractions.Providers;
+using BotNexus.Gateway.Contracts.Events;
+using BotNexus.Gateway.Events;
 using BotNexus.Agent.Providers.Core.Embeddings;
 using BotNexus.Memory;
 using Microsoft.Extensions.Configuration;
@@ -463,6 +466,21 @@ public static class GatewayServiceCollectionExtensions
                     ApplyPlatformConfig(options, freshConfig);
                 });
         }
+
+        // #3281: the world event bus and the provider-health observer are registered together
+        // because neither is useful alone. The bus had no publisher and no registration at all -
+        // WorldEventTypes.HealthDegraded was a declared constant nothing ever emitted - so a
+        // credential outage reached no channel. Registering the observer without the bus, or the
+        // bus without a publisher, would leave that gap exactly where it was.
+        services.TryAddSingleton<IEventDeliveryHandler, LoggingEventDeliveryHandler>();
+        services.TryAddSingleton<IWorldEventBus, InMemoryWorldEventBus>();
+        // Constructed explicitly rather than by convention: the threshold and cooldown are optional
+        // constructor parameters, and DI would otherwise be choosing the debounce policy implicitly.
+        services.TryAddSingleton<IProviderHealthObserver>(serviceProvider =>
+            new WorldEventProviderHealthObserver(
+                serviceProvider.GetRequiredService<IWorldEventBus>(),
+                serviceProvider.GetRequiredService<ILogger<WorldEventProviderHealthObserver>>(),
+                serviceProvider.GetService<TimeProvider>() ?? TimeProvider.System));
 
         services.TryAddSingleton<GatewayAuthManager>();
 
