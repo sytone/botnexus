@@ -1,0 +1,35 @@
+{
+  "id": "botnexus-test-channel",
+  "name": "Test Channel",
+  "description": "Opt-in HTTP-driven channel adapter used by integration tests to act as a real named channel. Disabled by default so it is never loaded in a production configuration.",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.Channels.Test.dll",
+  "extensionTypes": ["channel", "endpoint-contributor"],
+  "enabled": false,
+  "configSchema": [
+    {
+      "id": "channelId",
+      "type": "string",
+      "required": false,
+      "default": "test",
+      "sensitive": false,
+      "description": "Channel key this adapter presents itself as. Set it to an existing key (for example 'telegram') to stand in for that channel in a multi-channel test."
+    },
+    {
+      "id": "displayName",
+      "type": "string",
+      "required": false,
+      "default": "Test Channel",
+      "sensitive": false,
+      "description": "Human-readable display name reported for this adapter."
+    },
+    {
+      "id": "maxCapturedLogEntries",
+      "type": "integer",
+      "required": false,
+      "default": "2000",
+      "sensitive": false,
+      "description": "Ring-buffer bound for captured log entries. The oldest entries are evicted once the bound is reached."
+    }
+  ]
+}

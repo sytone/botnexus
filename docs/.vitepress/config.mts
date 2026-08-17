@@ -129,6 +129,7 @@ export default defineConfig({
           { text: 'GitHub', link: '/extensions/github' },
           { text: 'Media Handlers', link: '/extensions/media-handlers' },
           { text: 'Agent 365 Channel', link: '/extensions/agent365' },
+          { text: 'Test Channel', link: '/extensions/test-channel' },
           { text: 'Extension Telemetry', link: '/extensions/telemetry' },
         ],
       },
