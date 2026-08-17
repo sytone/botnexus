@@ -90,6 +90,55 @@ describing the started run, or `404 Not Found` when the job does not exist.
 Returns `200 OK` with a JSON array of `CronRun` objects (most recent first), or
 `404 Not Found` when the job does not exist.
 
+Each `CronRun` carries a `cost` object with the per-run measurements recorded at run
+finalization (#2641):
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `turnCount` | int? | Model turns the run consumed. |
+| `toolCallCount` | int? | Tool invocations the run performed. |
+| `durationMs` | long? | Wall-clock duration, stamped by the scheduler. |
+| `promptTokens` | long? | Provider-reported prompt tokens summed across the run. |
+| `completionTokens` | long? | Provider-reported completion tokens summed across the run. |
+| `totalTokens` | long? | Derived sum; `null` when neither side was measured. |
+
+**Every field is nullable and `null` means "not measured", never zero.** A `command` or
+`webhook` job has no turn or token concept, and a run recorded before these columns existed
+measured nothing. Rendering or aggregating a `null` as `0` would present an unmeasured run as
+a free one and invert the cost ranking.
+
+---
+
+### `GET /api/cron/costs`
+
+Per-job cost rollup derived from run history, ordered by **total** spend descending.
+
+| Parameter | In | Type | Notes |
+|-----------|----|------|-------|
+| `windowDays` | query | int | Days of run history to roll up. Defaults to `7`. Clamped to the configured run retention. |
+
+Returns `200 OK` with a JSON array of rollups:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `jobId` | string | The job. |
+| `runCount` | int | Runs in the window, including unmeasured ones. |
+| `measuredRunCount` | int | Runs that reported at least one token measurement. |
+| `totalTokens` | long? | Total across measured runs; `null` when nothing was measured. |
+| `totalToolCalls` / `totalTurns` / `totalDurationMs` | long? | Same nullable semantics. |
+| `averageTokensPerRun` | double? | Divided by `measuredRunCount`, never by `runCount`. |
+| `windowDays` | int | The **effective** window after retention clamping. |
+| `windowTruncatedByRetention` | bool | `true` when the requested window exceeded retention. |
+
+**Ranking is by total, not by per-run average**, because the two disagree and total is the
+question worth asking: a job costing ~17k tokens per run that fires 193 times a week is a far
+larger consumer than one costing ~65k per run that fires 8 times. Sorting on the per-run
+figure alone reports the larger consumer as the cheaper job.
+
+`windowTruncatedByRetention` exists because `CronRunRetentionOptions.RetentionDays` (default
+30) has already purged older runs. Asking for a 90-day window silently yields a 30-day total
+unless the clamp is surfaced — a truncated number that looks exactly like a complete one.
+
 ---
 
 ## Example

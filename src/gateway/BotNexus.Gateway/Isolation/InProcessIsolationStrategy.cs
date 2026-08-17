@@ -1085,8 +1085,55 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         {
             Content = lastAssistant?.Content ?? string.Empty,
             Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            RunUsage = AggregateRunUsage(messages),
+            TurnCount = messages.OfType<AssistantAgentMessage>().Count(),
             ToolCalls = BuildToolCalls(messages, pendingToolCallIds: null)
         };
+    }
+
+    /// <summary>
+    /// #2641: sums provider-reported usage across every assistant message in a run so a blocking
+    /// caller (cron) can record what the whole run cost, not just its final turn.
+    /// </summary>
+    /// <remarks>
+    /// Returns <c>null</c> - not a zeroed usage - when no assistant message carried usage at all.
+    /// A zero here would reach <c>cron_runs.prompt_tokens</c> as a measured zero and present an
+    /// unmeasured run as a free one, which is the single most misleading value this feature can
+    /// produce. Only messages that actually reported usage contribute.
+    /// </remarks>
+    internal static AgentResponseUsage? AggregateRunUsage(IReadOnlyList<AgentMessage> messages)
+    {
+        long input = 0;
+        long output = 0;
+        var measured = false;
+
+        foreach (var assistant in messages.OfType<AssistantAgentMessage>())
+        {
+            if (assistant.Usage is not { } usage)
+                continue;
+
+            if (usage.InputTokens is null && usage.OutputTokens is null
+                && usage.CacheRead is null && usage.CacheWrite is null)
+            {
+                continue;
+            }
+
+            measured = true;
+
+            // Cache reads/writes are part of the prompt the model actually saw and are billed, so
+            // they are folded into the prompt side - the same total ProviderTokenUsageRecorder
+            // resolves. Omitting them would under-report cache-heavy providers by most of the
+            // prompt.
+            input += (usage.InputTokens ?? 0) + (usage.CacheRead ?? 0) + (usage.CacheWrite ?? 0);
+            output += usage.OutputTokens ?? 0;
+        }
+
+        if (!measured)
+            return null;
+
+        return new AgentResponseUsage(
+            InputTokens: input > int.MaxValue ? int.MaxValue : (int)input,
+            OutputTokens: output > int.MaxValue ? int.MaxValue : (int)output);
     }
 
     /// <summary>
@@ -1104,6 +1151,11 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         {
             Content = lastAssistant?.Content ?? string.Empty,
             Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            // #2641 AC1: an interrupted run still cost what it cost. Carrying the aggregate out on
+            // the partial response is what lets the timeout/abort paths record a real figure
+            // instead of leaving the most expensive runs on the platform unmeasured.
+            RunUsage = AggregateRunUsage(snapshot),
+            TurnCount = snapshot.OfType<AssistantAgentMessage>().Count(),
             ToolCalls = BuildToolCalls(snapshot, _agent.State.PendingToolCalls)
         };
         return new AgentPromptInterruptedException(partial, oce.CancellationToken);

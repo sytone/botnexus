@@ -36,7 +36,45 @@ public interface ICronStore
     Task RecordRunFinalizationAsync(JobId jobId, DateTimeOffset lastRunAt, string lastRunStatus, string? lastRunError, CancellationToken ct = default);
     Task DeleteAsync(JobId jobId, CancellationToken ct = default);
     Task<CronRun> RecordRunStartAsync(JobId jobId, CancellationToken ct = default);
-    Task RecordRunCompleteAsync(RunId runId, string status, string? error = null, SessionId? sessionId = null, CancellationToken ct = default);
+    /// <summary>
+    /// Records a run's terminal outcome and, when supplied, its per-run cost measurements (#2641).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The cost write rides THIS method deliberately: it is the single path every terminal outcome
+    /// already flows through - <c>ok</c>, <c>error</c>, <c>timed_out</c>, <c>no_tool_calls</c>,
+    /// <c>delivery_failed</c> and <c>aborted</c> alike - so a failed run still records the cost of
+    /// the work it did before it failed. Adding a separate cost hook would have re-created the
+    /// only-the-happy-path defect that #3161 and #2985 each had to fix at this same seam.
+    /// </para>
+    /// <para>
+    /// <paramref name="cost"/> being null, or carrying only nulls, must leave the stored columns
+    /// untouched rather than overwrite them with zeros: null means "not measured".
+    /// </para>
+    /// </remarks>
+    Task RecordRunCompleteAsync(RunId runId, string status, string? error = null, SessionId? sessionId = null, CronRunCost? cost = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Derives per-job cost rollups from run history over the last <paramref name="windowDays"/>
+    /// days (#2641), one entry per job in <paramref name="jobIds"/> that has at least one run in
+    /// the window, ordered by total token spend descending (unmeasured jobs last).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The window is clamped to <c>CronRunRetentionOptions.RetentionDays</c> by the implementation,
+    /// and the clamp is reported on each rollup via
+    /// <see cref="CronJobCostRollup.WindowTruncatedByRetention"/>. An unclamped longer window would
+    /// report a total missing every purged run while being indistinguishable from a complete one.
+    /// </para>
+    /// <para>
+    /// An EMPTY <paramref name="jobIds"/> means "no jobs" and returns nothing - never "no filter",
+    /// the same scoping rule <see cref="GetRecentRunsAsync"/> established in #2838.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyList<CronJobCostRollup>> GetJobCostRollupsAsync(
+        IReadOnlyCollection<JobId> jobIds,
+        int windowDays,
+        CancellationToken ct = default);
     Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default);
 
     /// <summary>

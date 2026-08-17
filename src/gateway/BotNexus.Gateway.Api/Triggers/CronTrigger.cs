@@ -123,8 +123,9 @@ public sealed class CronTrigger(
                 // runs - still reports its zero. The count is taken from the same
                 // response.ToolCalls collection the transcript projection uses, so the recorded
                 // outcome and the persisted tool rows can never disagree.
-                if (request is not null)
-                    request.ToolInvocationCount = response.ToolCalls.Count;
+                // #2641: the same write-back now also carries turn count and aggregated token
+                // usage, through one helper shared with SoulTrigger.
+                TriggerRunCostRecorder.Record(request, response);
 
                 // #2522 residual: the blocking path must stamp the provider's reported prompt-token
                 // count exactly as the streaming path does at MessageEnd. Without it, long-lived
@@ -148,6 +149,13 @@ public sealed class CronTrigger(
                 });
                 foreach (var toolEntry in ProjectToolEntries(interrupted.PartialResponse))
                     session.AddEntry(toolEntry);
+
+                // #2641 AC1: an interrupted run still cost what it cost before it was interrupted,
+                // and cron's timeout path routes through here. Without this write-back the runs
+                // most worth measuring - the ones expensive enough to hit their timeout - would be
+                // the only ones recorded as unmeasured. The partial response carries the same
+                // aggregate the completed path uses.
+                TriggerRunCostRecorder.Record(request, interrupted.PartialResponse);
 
                 // Re-surface as a normal cancellation so upstream cancellation/timeout handling is
                 // unchanged; the interrupted exception is chained as the inner exception for diagnostics.

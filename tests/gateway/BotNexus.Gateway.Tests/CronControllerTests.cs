@@ -625,7 +625,7 @@ public sealed partial class CronControllerTests
             return Task.FromResult(run);
         }
 
-        public Task RecordRunCompleteAsync(RunId runId, string status, string? error = null, SessionId? sessionId = null, CancellationToken ct = default)
+        public Task RecordRunCompleteAsync(RunId runId, string status, string? error = null, SessionId? sessionId = null, CronRunCost? cost = null, CancellationToken ct = default)
         {
             if (_runs.TryGetValue(runId.Value, out var run))
             {
@@ -634,10 +634,56 @@ public sealed partial class CronControllerTests
                     Status = status,
                     Error = error,
                     SessionId = sessionId,
-                    CompletedAt = DateTimeOffset.UtcNow
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    // #2641: a null cost preserves whatever was measured, mirroring the real
+                    // store's COALESCE - a fake that clobbered it would hide the regression the
+                    // COALESCE exists to prevent.
+                    Cost = cost ?? run.Cost
                 };
             }
             return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<CronJobCostRollup>> GetJobCostRollupsAsync(
+            IReadOnlyCollection<JobId> jobIds,
+            int windowDays,
+            CancellationToken ct = default)
+        {
+            if (jobIds.Count == 0)
+                return Task.FromResult<IReadOnlyList<CronJobCostRollup>>([]);
+
+            var scope = jobIds.ToHashSet();
+            var rollups = _runs.Values
+                .Where(run => scope.Contains(run.JobId))
+                .GroupBy(run => run.JobId)
+                .Select(group =>
+                {
+                    var measured = group.Where(run => run.Cost.TotalTokens is not null).ToList();
+                    return new CronJobCostRollup
+                    {
+                        JobId = group.Key,
+                        RunCount = group.Count(),
+                        MeasuredRunCount = measured.Count,
+                        TotalTokens = measured.Count == 0 ? null : measured.Sum(run => run.Cost.TotalTokens!.Value),
+                        TotalToolCalls = group.Any(run => run.Cost.ToolCallCount is not null)
+                            ? group.Sum(run => (long)(run.Cost.ToolCallCount ?? 0))
+                            : null,
+                        TotalTurns = group.Any(run => run.Cost.TurnCount is not null)
+                            ? group.Sum(run => (long)(run.Cost.TurnCount ?? 0))
+                            : null,
+                        TotalDurationMs = group.Any(run => run.Cost.DurationMs is not null)
+                            ? group.Sum(run => run.Cost.DurationMs ?? 0)
+                            : null,
+                        WindowStart = DateTimeOffset.UtcNow.AddDays(-windowDays),
+                        WindowDays = windowDays,
+                        WindowTruncatedByRetention = false
+                    };
+                })
+                .OrderByDescending(rollup => rollup.TotalTokens.HasValue)
+                .ThenByDescending(rollup => rollup.TotalTokens ?? 0)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<CronJobCostRollup>>(rollups);
         }
 
         public Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default)

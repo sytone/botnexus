@@ -606,7 +606,7 @@ Agents can create, update, delete, run, list, and inspect cron jobs at runtime u
 ### 9.1 Tool Definition
 
 **Name:** `cron`  
-**Description:** Schedule or manage cron jobs. Actions: list, create, update, delete, run, history.
+**Description:** Schedule or manage cron jobs. Actions: list, create, update, delete, run, history, costs.
 
 A job created through the tool is one of two action types:
 
@@ -666,7 +666,7 @@ and missing-provider paths deny unconditionally regardless of that setting.
 
 The action set is defined by the tool's input schema in
 `src/gateway/BotNexus.Cron/Tools/CronTool.cs` and is exactly:
-`list`, `create`, `update`, `delete`, `run`, `history`. There is no `schedule` action and no
+`list`, `create`, `update`, `delete`, `run`, `history`, `costs`. There is no `schedule` action and no
 `remove` action — use `create` and `delete`. Jobs are addressed by `jobId` (the server-generated
 identifier returned by `create` and listed by `list`), not by name.
 
@@ -819,7 +819,34 @@ Without a `jobId` the query is scoped to the jobs the caller may manage, using t
 authorisation rule as the per-job path; an agent with no manageable jobs gets an empty result
 rather than every job's history.
 
-Returns the matching run records serialized as JSON, newest first.
+Returns the matching run records serialized as JSON, newest first. Each record carries a `cost`
+object (see [12.6](#126-per-run-cost-metrics-2641)); a `null` field there means "not measured",
+not zero.
+
+#### `costs`
+
+Per-job cost rollup over a bounded window, ordered by **total** spend descending (#2641).
+
+**Arguments:**
+- `action` = `"costs"`
+- `windowDays`: Days of run history to roll up (optional; default `7`). Clamped to the configured
+  run retention.
+
+**Example - "which of my jobs cost the most?":**
+```json
+{
+  "action": "costs",
+  "windowDays": 7
+}
+```
+
+Scope is the jobs the caller may manage, using the same authorisation rule as the `history` path;
+an agent with no manageable jobs gets an empty result rather than every job's costs.
+
+Each entry reports `runCount`, `measuredRunCount`, `totalTokens`, `averageTokensPerRun`,
+`totalToolCalls`, `totalTurns`, `totalDurationMs`, the effective `windowDays`, and
+`windowTruncatedByRetention`. Jobs whose runs measured nothing report `null` totals and sort last
+— they are never treated as zero-cost.
 
 #### `list`
 
@@ -1366,6 +1393,63 @@ The `HeartbeatService` (now a thin adapter) delegates to the cron service:
 
 - `IsHealthy` returns `true` if the cron service is running
 - `LastBeat` returns the timestamp of the most recent job execution
+
+### 12.6 Per-run cost metrics (#2641)
+
+Every cron run records what it cost, written by the same run-finalization path that records the
+terminal status. Because it rides that path, the measurements are recorded for **every** terminal
+outcome — `ok`, `error`, `timed_out`, `no_tool_calls`, `delivery_failed` and `aborted` alike. A run
+that failed after twelve turns is not a free run, and recording it as one would make the most
+broken jobs on the platform look like the cheapest.
+
+`cron_runs` carries five nullable columns:
+
+| Column | Meaning |
+|--------|---------|
+| `turn_count` | Model turns (LLM invocations) the run consumed. |
+| `tool_call_count` | Tool invocations the run performed. |
+| `duration_ms` | Wall-clock duration, stamped by the scheduler around the whole action invocation. |
+| `prompt_tokens` | Provider-reported prompt tokens, summed across every turn (cache reads/writes folded in). |
+| `completion_tokens` | Provider-reported completion tokens, summed across every turn. |
+
+> **`NULL` means "not measured", never zero.** This is the #2554 `ScheduleActivatedAt` rule applied
+> to cost. A `command` or `webhook` job has no turn or token concept, and a run recorded before
+> these columns existed measured nothing. Coercing either to `0` presents "we did not look" as
+> "this job is free" — the single most misleading value this feature could produce, because it
+> inverts the exact ranking the feature exists to establish. No layer (store, API, tool, UI) may
+> render or aggregate a `NULL` as `0`.
+
+`turn_count`, `tool_call_count` and `duration_ms` are computed from data the platform already has
+and do not depend on provider token reporting. The token columns are populated when the provider
+reports usage and stay `NULL` when it does not.
+
+### 12.7 Per-job cost rollup
+
+The rollup is **derived from run history at read time**, not stored as a counter on `cron_jobs` —
+the same pattern #2557 established for failure streaks. A stored aggregate is state every write
+path must remember to keep current, and the one that forgets is invisible until the number is
+already wrong.
+
+Available as `GET /api/cron/costs?windowDays=7` and as the `costs` action of the `cron` tool.
+
+**Ranking is by total spend, not by per-run average.** The two disagree, and the disagreement is
+the point:
+
+| Job | Runs / 7d | ~tokens per run | Total |
+|-----|----------:|----------------:|------:|
+| Daily People Profile Enrichment | 8 | ~65,300 | ~522k |
+| Autonomous Issue & PR Maintenance | 193 | ~17,200 | ~3.3M |
+
+The first job is nearly 4x more expensive *per run*; the second is by a wide margin the platform's
+largest consumer. A per-run figure alone reports the larger consumer as the cheaper job.
+
+Each rollup entry also reports `measuredRunCount` alongside `runCount`, so averages divide by the
+measured population rather than being diluted by runs that never reported a figure.
+
+**Retention bounds the window.** `CronRunRetentionOptions.RetentionDays` (default 30) purges older
+runs, so a window longer than retention cannot be answered completely. The store clamps the window
+to retention and sets `windowTruncatedByRetention: true` on every entry, because a truncated total
+that looks exactly like a complete one is worse than an explicitly bounded one.
 
 ---
 

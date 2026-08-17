@@ -8,9 +8,20 @@ using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Cron;
 
-public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = null, ILogger<SqliteCronStore>? logger = null) : ICronStore
+public sealed class SqliteCronStore(
+    string dbPath,
+    IFileSystem? fileSystem = null,
+    ILogger<SqliteCronStore>? logger = null,
+    Func<int>? retentionDaysAccessor = null) : ICronStore
 {
     private readonly string _dbPath = dbPath;
+
+    // #2641 AC6: the cost rollup window can never exceed the retention horizon, because the
+    // retention service has already deleted everything older. Read through an accessor rather than
+    // captured at construction so a live options change is honoured by the very next rollup - a
+    // snapshotted value would drift into reporting a window the store no longer holds.
+    private readonly Func<int> _retentionDaysAccessor =
+        retentionDaysAccessor ?? (() => new CronRunRetentionOptions().RetentionDays);
     private readonly SqliteWalMaintenance _walMaintenance = new(fileSystem);
     private readonly string _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
     private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
@@ -22,6 +33,28 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
+
+    /// <summary>
+    /// #2641 per-run cost column definitions, used both by the additive migration and (by name)
+    /// by every run SELECT. Held in one place so a column can never be migrated in but forgotten
+    /// in the projection - the straggler shape that leaves a written value permanently unread.
+    /// </summary>
+    private static readonly string[] CostColumnDefinitions =
+    [
+        "turn_count INTEGER NULL",
+        "tool_call_count INTEGER NULL",
+        "duration_ms INTEGER NULL",
+        "prompt_tokens INTEGER NULL",
+        "completion_tokens INTEGER NULL"
+    ];
+
+    /// <summary>
+    /// The full ordered column list every <c>cron_runs</c> SELECT projects, so <see cref="ReadRun"/>
+    /// can rely on fixed ordinals and no caller can silently omit the cost columns.
+    /// </summary>
+    private const string RunColumns =
+        "id, job_id, started_at, completed_at, status, error, session_id, " +
+        "turn_count, tool_call_count, duration_ms, prompt_tokens, completion_tokens";
 
     public async Task InitializeAsync(CancellationToken ct = default)
     {
@@ -87,6 +120,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     status TEXT NOT NULL,
                     error TEXT NULL,
                     session_id TEXT NULL,
+                    turn_count INTEGER NULL,
+                    tool_call_count INTEGER NULL,
+                    duration_ms INTEGER NULL,
+                    prompt_tokens INTEGER NULL,
+                    completion_tokens INTEGER NULL,
                     FOREIGN KEY(job_id) REFERENCES cron_jobs(id) ON DELETE CASCADE
                 );
 
@@ -238,6 +276,21 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                 """;
             try { await migrateExecutionClass.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
             catch (SqliteException) { /* column already exists */ }
+
+            // #2641: add the per-run cost columns if missing. ALL of them are NULLable with NO
+            // default, which is the whole point: a run recorded before these columns existed
+            // measured nothing, and a NULL here must read as "not measured", never as a free run.
+            // `NOT NULL DEFAULT 0` - the shape every other migration above uses for a boolean flag -
+            // would be actively wrong here: it would backfill every historical run on the platform
+            // with a fabricated zero cost and invert the exact ranking this feature exists to
+            // establish. Same NULL-means-unknown rule as #2554's schedule_activated_at.
+            foreach (var costColumn in CostColumnDefinitions)
+            {
+                await using var migrateCost = connection.CreateCommand();
+                migrateCost.CommandText = $"ALTER TABLE cron_runs ADD COLUMN {costColumn};";
+                try { await migrateCost.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+                catch (SqliteException) { /* column already exists */ }
+            }
 
             _initialized = true;
         }
@@ -680,6 +733,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         string status,
         string? error = null,
         SessionId? sessionId = null,
+        CronRunCost? cost = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(status);
@@ -692,18 +746,34 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             await connection.OpenAsync(ct).ConfigureAwait(false);
 
             await using var command = connection.CreateCommand();
+
+            // #2641: COALESCE, not plain assignment. A second write against the same run (the
+            // #3161 alert-delivery amendment re-records the terminal row) passes no cost, and a
+            // bare `= $turnCount` would then wipe the measurement the first write stored. COALESCE
+            // makes the cost write additive: supplying a value sets it, supplying NULL leaves
+            // whatever is already there, so "not measured" can never overwrite "measured".
             command.CommandText = """
                 UPDATE cron_runs
                 SET completed_at = $completedAt,
                     status = $status,
                     error = $error,
-                    session_id = $sessionId
+                    session_id = $sessionId,
+                    turn_count = COALESCE($turnCount, turn_count),
+                    tool_call_count = COALESCE($toolCallCount, tool_call_count),
+                    duration_ms = COALESCE($durationMs, duration_ms),
+                    prompt_tokens = COALESCE($promptTokens, prompt_tokens),
+                    completion_tokens = COALESCE($completionTokens, completion_tokens)
                 WHERE id = $runId
                 """;
             command.Parameters.AddWithValue("$completedAt", DateTimeOffset.UtcNow.ToString("O"));
             command.Parameters.AddWithValue("$status", status);
             command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
             command.Parameters.AddWithValue("$sessionId", sessionId.HasValue ? (object)sessionId.Value.Value : DBNull.Value);
+            command.Parameters.AddWithValue("$turnCount", ToNullableLong(cost?.TurnCount));
+            command.Parameters.AddWithValue("$toolCallCount", ToNullableLong(cost?.ToolCallCount));
+            command.Parameters.AddWithValue("$durationMs", ToNullableLong(cost?.DurationMs));
+            command.Parameters.AddWithValue("$promptTokens", ToNullableLong(cost?.PromptTokens));
+            command.Parameters.AddWithValue("$completionTokens", ToNullableLong(cost?.CompletionTokens));
             command.Parameters.AddWithValue("$runId", runId.Value);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
@@ -711,6 +781,100 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         {
             _writeLock.Release();
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<CronJobCostRollup>> GetJobCostRollupsAsync(
+        IReadOnlyCollection<JobId> jobIds,
+        int windowDays,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(jobIds);
+
+        // #2838's scoping rule: an empty scope means "no jobs", never "no filter".
+        if (jobIds.Count == 0)
+            return [];
+
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        var requestedDays = Math.Max(1, windowDays);
+        var retentionDays = Math.Max(1, _retentionDaysAccessor());
+
+        // #2641 AC6: clamp to retention and REPORT the clamp. Runs older than the retention
+        // horizon have already been deleted, so an unclamped window would present a total that
+        // silently omits them while being indistinguishable from a complete one - a truncated
+        // number that looks exactly like a correct one is worse than refusing to answer.
+        var truncated = requestedDays > retentionDays;
+        var effectiveDays = truncated ? retentionDays : requestedDays;
+        var windowStart = DateTimeOffset.UtcNow.AddDays(-effectiveDays);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+
+        var jobParameters = new List<string>(jobIds.Count);
+        var index = 0;
+        foreach (var jobId in jobIds)
+        {
+            var parameterName = $"$job{index++}";
+            jobParameters.Add(parameterName);
+            command.Parameters.AddWithValue(parameterName, jobId.Value);
+        }
+
+        // SUM() over a column that is NULL in every row yields NULL, not 0 - which is exactly the
+        // semantics wanted: a job whose runs measured nothing reports "not measured", not "free".
+        // measured_runs counts rows carrying at least one token measurement so the average divides
+        // by the measured population rather than diluting a real figure with unmeasured runs.
+        command.CommandText = $"""
+            SELECT job_id,
+                   COUNT(*) AS run_count,
+                   SUM(CASE WHEN prompt_tokens IS NOT NULL OR completion_tokens IS NOT NULL THEN 1 ELSE 0 END) AS measured_runs,
+                   SUM(prompt_tokens) AS total_prompt_tokens,
+                   SUM(completion_tokens) AS total_completion_tokens,
+                   SUM(tool_call_count) AS total_tool_calls,
+                   SUM(turn_count) AS total_turns,
+                   SUM(duration_ms) AS total_duration_ms
+            FROM cron_runs
+            WHERE job_id IN ({string.Join(", ", jobParameters)})
+              AND started_at >= $windowStart
+            GROUP BY job_id
+            """;
+        command.Parameters.AddWithValue("$windowStart", windowStart.ToString("O"));
+
+        var rollups = new List<CronJobCostRollup>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var promptTokens = reader.IsDBNull(3) ? (long?)null : reader.GetInt64(3);
+            var completionTokens = reader.IsDBNull(4) ? (long?)null : reader.GetInt64(4);
+            var totalTokens = promptTokens is null && completionTokens is null
+                ? (long?)null
+                : (promptTokens ?? 0) + (completionTokens ?? 0);
+
+            rollups.Add(new CronJobCostRollup
+            {
+                JobId = JobId.From(reader.GetString(0)),
+                RunCount = reader.GetInt32(1),
+                MeasuredRunCount = reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
+                TotalTokens = totalTokens,
+                TotalToolCalls = reader.IsDBNull(5) ? null : reader.GetInt64(5),
+                TotalTurns = reader.IsDBNull(6) ? null : reader.GetInt64(6),
+                TotalDurationMs = reader.IsDBNull(7) ? null : reader.GetInt64(7),
+                WindowStart = windowStart,
+                WindowDays = effectiveDays,
+                WindowTruncatedByRetention = truncated
+            });
+        }
+
+        // Ordered by TOTAL spend, which is the ranking the feature exists to provide: a job that is
+        // cheap per run but fires 193 times outranks one that is expensive per run but fires 8
+        // times. Unmeasured jobs sort last rather than being treated as zero-cost, so an absent
+        // measurement never masquerades as the cheapest job on the platform.
+        return [.. rollups
+            .OrderByDescending(r => r.TotalTokens.HasValue)
+            .ThenByDescending(r => r.TotalTokens ?? 0)
+            .ThenByDescending(r => r.TotalToolCalls ?? 0)
+            .ThenBy(r => r.JobId.Value, StringComparer.Ordinal)];
     }
 
     public async Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default)
@@ -721,8 +885,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT id, job_id, started_at, completed_at, status, error, session_id
+        command.CommandText = $"""
+            SELECT {RunColumns}
             FROM cron_runs
             WHERE job_id = $jobId
             ORDER BY started_at DESC
@@ -788,7 +952,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         }
 
         command.CommandText = $"""
-            SELECT id, job_id, started_at, completed_at, status, error, session_id
+            SELECT {RunColumns}
             FROM cron_runs
             WHERE job_id IN ({string.Join(", ", jobParameters)}){statusClause}
             ORDER BY started_at DESC
@@ -939,12 +1103,28 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             CompletedAt = reader.IsDBNull(3) ? null : ParseDate(reader.GetString(3)),
             Status = reader.GetString(4),
             Error = reader.IsDBNull(5) ? null : reader.GetString(5),
-            SessionId = reader.IsDBNull(6) ? null : SessionId.From(reader.GetString(6))
+            SessionId = reader.IsDBNull(6) ? null : SessionId.From(reader.GetString(6)),
+
+            // #2641: every cost column reads NULL as "not measured". No `?? 0` anywhere on this
+            // path - a coerced zero here would be indistinguishable from a genuinely free run and
+            // would then propagate into the rollup as a real measurement, which is precisely the
+            // failure the nullable columns exist to prevent.
+            Cost = new CronRunCost(
+                TurnCount: reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                ToolCallCount: reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                DurationMs: reader.IsDBNull(9) ? null : reader.GetInt64(9),
+                PromptTokens: reader.IsDBNull(10) ? null : reader.GetInt64(10),
+                CompletionTokens: reader.IsDBNull(11) ? null : reader.GetInt64(11))
         };
     }
 
     private static object ToNullableString(DateTimeOffset? value)
         => value is null ? DBNull.Value : value.Value.ToString("O");
+
+    // #2641: null binds as SQL NULL so the COALESCE in the cost UPDATE preserves any prior
+    // measurement. Widened to long because token counts are summed across a run.
+    private static object ToNullableLong(long? value)
+        => value is null ? DBNull.Value : value.Value;
 
     private static DateTimeOffset ParseDate(string value)
         => DateTimeOffset.TryParse(value, out var parsed) ? parsed : DateTimeOffset.UtcNow;
@@ -1006,8 +1186,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT id, job_id, started_at, completed_at, status, error, session_id
+        command.CommandText = $"""
+            SELECT {RunColumns}
             FROM cron_runs
             WHERE status = $running
             ORDER BY started_at DESC

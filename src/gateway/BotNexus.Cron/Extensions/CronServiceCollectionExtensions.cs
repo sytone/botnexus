@@ -20,7 +20,12 @@ public static class CronServiceCollectionExtensions
             return new SqliteCronStore(
                 Path.Combine(rootPath, "cron.sqlite"),
                 new FileSystem(),
-                sp.GetService<Microsoft.Extensions.Logging.ILogger<SqliteCronStore>>());
+                sp.GetService<Microsoft.Extensions.Logging.ILogger<SqliteCronStore>>(),
+                // #2641 AC6: the store clamps its cost-rollup window to the SAME retention setting
+                // the purge service uses, read live through the options monitor so the two can
+                // never disagree about how far back run history actually reaches.
+                () => sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<CronRunRetentionOptions>>()
+                    ?.CurrentValue.RetentionDays ?? new CronRunRetentionOptions().RetentionDays);
         });
         services.TryAddSingleton<HeartbeatCronProvisioner>();
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HeartbeatCronProvisioner>());

@@ -55,7 +55,7 @@ public sealed class CronTool(
               "properties": {
                 "action": {
                   "type": "string",
-                  "enum": ["list", "create", "update", "delete", "run", "history"]
+                  "enum": ["list", "create", "update", "delete", "run", "history", "costs"]
                 },
                 "jobId": { "type": "string", "description": "Optional - for update/delete/run. Also optional on 'history': omit it to get recent runs across every job you may manage instead of one job's history." },
                 "includeSystem": { "type": "boolean", "description": "When true, include system-provisioned jobs (e.g., heartbeat) in list output. Default: false." },
@@ -85,7 +85,8 @@ public sealed class CronTool(
                 "executionClass": { "type": "boolean", "description": "Marks this as an EXECUTION-class job: its contract is to perform work, so a run that finishes having made ZERO tool calls is recorded with status 'no_tool_calls' instead of 'ok' and drives the existing failure-alert path. Leave false for a reporting or classification job that may legitimately answer from context without calling a tool. Default: false." },
                 "deleteAfterRun": { "type": "boolean", "description": "Ephemeral run-SESSION cleanup. When true, the run's cron-scoped session and transcript are deleted after each run. This does NOT delete the job - for that use 'deleteJobAfterRun', and see 'expiresAt' to stop a job from firing after a given instant. Default: false." },
                 "limit": { "type": "integer", "description": "Maximum number of history entries to return (for history action). Default: 20, max: 100." },
-                "failedOnly": { "type": "boolean", "description": "For the history action: return only runs that did not succeed (errors, timeouts, zero-tool execution-class runs, and missed occurrences). Default: false." }
+                "failedOnly": { "type": "boolean", "description": "For the history action: return only runs that did not succeed (errors, timeouts, zero-tool execution-class runs, and missed occurrences). Default: false." },
+                "windowDays": { "type": "integer", "description": "For the 'costs' action: how many days of run history to roll up. Default: 7. Clamped to the configured run retention; when clamped, each entry reports windowTruncatedByRetention: true so a bounded total is never mistaken for a complete one." }
               },
               "required": ["action"]
             }
@@ -153,6 +154,14 @@ public sealed class CronTool(
         if (arguments.TryGetValue("limit", out var limitVal) && limitVal is not null)
             prepared["limit"] = limitVal;
 
+        // #2641: windowDays must be copied through explicitly. This method is an ALLOW-LIST - an
+        // argument the schema declares but this method forgets is silently dropped and the handler
+        // then reads its default, so `costs` with windowDays=90 quietly answered for 7 days. The
+        // failure mode is invisible (a plausible number for the wrong window), which is exactly why
+        // it is asserted by name in CronToolCostRollupTests.Costs_ReportsRetentionTruncationFlag.
+        if (arguments.TryGetValue("windowDays", out var windowDaysVal) && windowDaysVal is not null)
+            prepared["windowDays"] = windowDaysVal;
+
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
@@ -171,6 +180,7 @@ public sealed class CronTool(
             "delete" => await DeleteAsync(arguments, cancellationToken).ConfigureAwait(false),
             "run" => await RunAsync(arguments, cancellationToken).ConfigureAwait(false),
             "history" => await HistoryAsync(arguments, cancellationToken).ConfigureAwait(false),
+            "costs" => await CostsAsync(arguments, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unsupported cron action '{action}'.")
         };
     }
@@ -477,6 +487,28 @@ public sealed class CronTool(
     }
 
     /// <summary>
+    /// #2641: per-job cost rollup over a bounded window, ordered by TOTAL spend descending.
+    /// </summary>
+    /// <remarks>
+    /// Scope is derived by applying the SAME <c>CanManage</c> rule the per-job history path applies,
+    /// so the tool never hands the store a second notion of ownership, and an agent with no
+    /// manageable jobs gets an empty scope rather than a global query.
+    /// </remarks>
+    private async Task<AgentToolResult> CostsAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
+    {
+        var windowDays = ReadInt(arguments, "windowDays", defaultValue: 7);
+        if (windowDays < 1) windowDays = 1;
+
+        var manageable = (await cronStore.ListAsync(ct: cancellationToken).ConfigureAwait(false))
+            .Where(CanManage)
+            .Select(job => job.Id)
+            .ToList();
+
+        var rollups = await cronStore.GetJobCostRollupsAsync(manageable, windowDays, cancellationToken).ConfigureAwait(false);
+        return TextResult(JsonSerializer.Serialize(rollups, JsonOptions));
+    }
+
+    /// <summary>
     /// The run statuses that mean 'this did not succeed' for the failed-only history view (#2838).
     /// Bound from the CronRunStatus constants so the filter cannot drift from the producers, and
     /// deliberately broader than Error alone: a timeout, an execution-class run that did nothing
@@ -592,7 +624,8 @@ public sealed class CronTool(
            || action.Equals("update", StringComparison.OrdinalIgnoreCase)
            || action.Equals("delete", StringComparison.OrdinalIgnoreCase)
            || action.Equals("run", StringComparison.OrdinalIgnoreCase)
-           || action.Equals("history", StringComparison.OrdinalIgnoreCase);
+           || action.Equals("history", StringComparison.OrdinalIgnoreCase)
+           || action.Equals("costs", StringComparison.OrdinalIgnoreCase);
 
     private static void CopyString(IReadOnlyDictionary<string, object?> source, Dictionary<string, object?> destination, string key)
     {

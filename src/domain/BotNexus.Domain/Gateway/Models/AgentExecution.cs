@@ -25,6 +25,26 @@ public sealed record AgentResponse
     public required string Content { get; init; }
     /// <summary>Token usage for this response, if available.</summary>
     public AgentResponseUsage? Usage { get; init; }
+
+    /// <summary>
+    /// #2641: token usage aggregated across <b>every</b> turn of the run, or <c>null</c> when the
+    /// provider reported no usage at all.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately separate from <see cref="Usage"/> rather than replacing it. <see cref="Usage"/>
+    /// is the LAST request's usage, and <c>ProviderTokenUsageRecorder</c> depends on exactly that
+    /// meaning: the compactor compares the most recent prompt against its estimate, so summing
+    /// prompt tokens over a 12-turn run would hand it a number several times larger than any prompt
+    /// the model actually saw. Cost accounting wants the sum; compaction wants the last. Two
+    /// questions, two properties.
+    /// </remarks>
+    public AgentResponseUsage? RunUsage { get; init; }
+
+    /// <summary>
+    /// #2641: number of model turns (assistant messages produced) in this run, or <c>null</c> when
+    /// the execution strategy does not report one. <c>null</c> means "not measured", never zero.
+    /// </summary>
+    public int? TurnCount { get; init; }
     /// <summary>Whether the agent wants to continue with tool results.</summary>
     public bool RequiresFollowUp { get; init; }
     /// <summary>Any tool calls the agent made during processing.</summary>
