@@ -48,6 +48,16 @@ public interface IGatewayRestClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// GET /api/conversations/costs - the read-time conversation cost rollup (#2898).
+    /// </summary>
+    /// <remarks>
+    /// Returns an empty list rather than throwing when the server predates the endpoint, so a
+    /// portal talking to an older gateway renders "no cost data" rather than an error.
+    /// </remarks>
+    Task<IReadOnlyList<ConversationCostDto>> GetConversationCostsAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// GET /api/sessions?agentId={agentId}&amp;limit={limit}&amp;offset={offset}&amp;conversationId={conversationId}
     /// </summary>
     /// <remarks>

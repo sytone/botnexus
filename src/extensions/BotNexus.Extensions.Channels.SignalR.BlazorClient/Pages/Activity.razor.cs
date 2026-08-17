@@ -26,12 +26,13 @@ public sealed record ActivitySection(string Key, string Label);
 public partial class Activity : IDisposable
 {
     /// <summary>
-    /// Sub-navigation entries known to the shell. Seeded with the default overview only; real
-    /// subsections are appended by the issues that introduce them.
+    /// Sub-navigation entries known to the shell. <c>costs</c> is the first real subsection
+    /// (#2898); further subsections are appended by the issues that introduce them.
     /// </summary>
     public static readonly IReadOnlyList<ActivitySection> DefaultSections =
     [
-        new("overview", "Overview")
+        new("overview", "Overview"),
+        new("costs", "Cost")
     ];
 
     /// <summary>

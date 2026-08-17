@@ -134,6 +134,86 @@ public sealed class ConversationsController : ControllerBase
         return Ok(summaries);
     }
 
+    /// <summary>
+    /// Conversation cost rollup (#2898): accumulated spend signals per conversation, derived at
+    /// read time from the session and transcript tables.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// No stored counter backs this - the counts are a <c>GROUP BY</c> over rows that already
+    /// exist, matching the #2557 derive-don't-store precedent, so they cannot drift from the
+    /// transcript.
+    /// </para>
+    /// <para>
+    /// When the configured session store implements <see cref="IConversationCostReader"/> the whole
+    /// rollup comes from one aggregate query. Otherwise the controller degrades to the
+    /// transcript-free session summaries and leaves <c>compactionSummaryCount</c>
+    /// <see langword="null"/> - "not measured", which is the honest answer for a store that cannot
+    /// count compactions without hydrating every transcript. It is deliberately NOT reported as
+    /// <c>0</c>, which would read as "this conversation never compacted" (#2554).
+    /// </para>
+    /// <para>
+    /// Every listed conversation gets a row, including one with no sessions at all: absent from the
+    /// store's rollup means zero <em>measured</em> sessions, and the zero is real here because the
+    /// session table is the evidence.
+    /// </para>
+    /// </remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>One cost row per listed conversation, ranked by total cost descending.</returns>
+    [HttpGet("costs")]
+    [ProducesResponseType(typeof(IReadOnlyList<ConversationCostSummary>), StatusCodes.Status200OK)]
+    public async Task<ActionResult> Costs(CancellationToken cancellationToken)
+    {
+        var summaries = await _conversations.GetSummariesAsync(cancellationToken);
+
+        // Optional capability, probed rather than required: only a store with a query engine can
+        // count compaction summaries without reading every transcript, so this is a widening of
+        // what a store MAY answer, not a new obligation on all fourteen implementations.
+        if (_sessions is IConversationCostReader costReader)
+        {
+            var measured = (await costReader.GetConversationCostsAsync(cancellationToken))
+                .ToDictionary(c => c.ConversationId, StringComparer.Ordinal);
+
+            return Ok(RankCosts(summaries.Select(s =>
+                measured.TryGetValue(s.ConversationId, out var cost)
+                    ? cost
+                    : new ConversationCostSummary(s.ConversationId, 0, 0, 0))));
+        }
+
+        // Degraded path. ListSummariesAsync is unbounded here BY DESIGN: a cost ranking that
+        // silently omitted the most expensive conversations because they fell outside a page
+        // would be worse than no ranking at all.
+        var sessions = await _sessions.ListSummariesAsync(
+            DateTimeOffset.MinValue, limit: null, offset: 0, cancellationToken);
+
+        var bySession = sessions
+            .Where(s => !string.IsNullOrEmpty(s.ConversationId))
+            .GroupBy(s => s.ConversationId!, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => (Sessions: g.Count(), Messages: g.Sum(s => s.MessageCount)), StringComparer.Ordinal);
+
+        return Ok(RankCosts(summaries.Select(s =>
+            bySession.TryGetValue(s.ConversationId, out var counts)
+                // CompactionSummaryCount stays null: this store did not measure it.
+                ? new ConversationCostSummary(s.ConversationId, counts.Sessions, counts.Messages, null)
+                : new ConversationCostSummary(s.ConversationId, 0, 0, null))));
+    }
+
+    /// <summary>
+    /// Applies the ranking contract for the cost rollup: most-accumulated first, with a
+    /// deterministic conversation-id tie-breaker so equal rows never reorder between reads.
+    /// </summary>
+    /// <remarks>
+    /// Ranked on the message count, which is the only always-measured accumulation signal. A null
+    /// token or compaction count contributes nothing to the ordering rather than sorting as zero -
+    /// an unmeasured conversation must not be ranked as a cheap one.
+    /// </remarks>
+    private static IReadOnlyList<ConversationCostSummary> RankCosts(IEnumerable<ConversationCostSummary> costs) =>
+        costs
+            .OrderByDescending(c => c.MessageCount)
+            .ThenByDescending(c => c.SessionCount)
+            .ThenBy(c => c.ConversationId, StringComparer.Ordinal)
+            .ToList();
+
     private static ConversationSummary ToSummary(Conversation c) =>
         new(
             c.ConversationId.Value,

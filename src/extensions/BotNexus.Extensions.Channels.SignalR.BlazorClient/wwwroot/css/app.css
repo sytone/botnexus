@@ -4723,6 +4723,40 @@ h3.conversation-title.editable:hover {
     color: var(--text-muted, #999);
 }
 
+/* #2898: an unmeasured cost value. Muted and italic so "not measured" is visibly a STATEMENT
+   ABOUT THE MEASUREMENT rather than a value - it must never be mistaken for a small number. */
+.activity-cost-unmeasured {
+    color: var(--text-muted, #999);
+    font-style: italic;
+}
+
+/* #2898: the cost table REUSES .activity-table for its type treatment but carries SIX columns
+   with different meanings, so it must declare its own allocation. The generic rules above are
+   positional (nth-child) and tuned for the overview's five columns: applied unchanged they hand
+   50% to Agent, collapse Conversation, and leave the sixth column with no declared width at all -
+   which under `table-layout: fixed` clips it off the visible table. Declared here, scoped to
+   .activity-cost, so the overview's geometry is untouched. */
+.activity-cost .activity-table th:nth-child(1),
+.activity-cost .activity-table td:nth-child(1) { width: 14%; }
+.activity-cost .activity-table th:nth-child(2),
+.activity-cost .activity-table td:nth-child(2) { width: 38%; }
+.activity-cost .activity-table th:nth-child(3),
+.activity-cost .activity-table td:nth-child(3) { width: 10%; }
+.activity-cost .activity-table th:nth-child(4),
+.activity-cost .activity-table td:nth-child(4) { width: 12%; }
+.activity-cost .activity-table th:nth-child(5),
+.activity-cost .activity-table td:nth-child(5) { width: 12%; }
+.activity-cost .activity-table th:nth-child(6),
+.activity-cost .activity-table td:nth-child(6) { width: 14%; }
+
+/* The numeric columns read as a ranking, so they are right-aligned and tabular: comparing
+   magnitudes down a column is the whole task this table exists for. */
+.activity-cost .activity-table th:nth-child(n+3),
+.activity-cost .activity-table td:nth-child(n+3) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
 /* ── Portal loading gate ─────────────────────────────────────────────── */
 .portal-loading {
     display: flex;

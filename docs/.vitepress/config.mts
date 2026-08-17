@@ -209,6 +209,7 @@ export default defineConfig({
           { text: 'Agent 365 Observability', link: '/features/agent365-observability' },
           { text: 'Session Consistency', link: '/features/session-consistency' },
           { text: 'Conversation Provenance', link: '/features/conversation-provenance' },
+          { text: 'Conversation Cost', link: '/features/conversation-cost' },
           { text: 'Hybrid Memory Retrieval', link: '/features/hybrid-memory-retrieval' },
           { text: 'Memory Taint Quarantine', link: '/features/memory-taint-quarantine' },
           { text: 'Skills', link: '/skills' },

@@ -28,6 +28,21 @@ public sealed record ParticipantDto(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("role")] string? Role = null);
 
+/// <summary>
+/// Wire shape of one row from <c>GET /api/conversations/costs</c> (#2898).
+/// </summary>
+/// <remarks>
+/// The nullable count fields are nullable on the wire too: <c>null</c> means the server did not
+/// measure the signal, and it must never be deserialised into or rendered as a measured <c>0</c>
+/// (#2554). A legacy server that omits the property entirely lands on the same <c>null</c>, which
+/// is the correct reading - it did not measure it either.
+/// </remarks>
+public sealed record ConversationCostDto(
+    [property: JsonPropertyName("conversationId")] string ConversationId,
+    [property: JsonPropertyName("sessionCount")] int SessionCount,
+    [property: JsonPropertyName("messageCount")] int MessageCount,
+    [property: JsonPropertyName("compactionSummaryCount")] int? CompactionSummaryCount = null,
+    [property: JsonPropertyName("totalTokens")] long? TotalTokens = null);
 public sealed record CreateConversationRequestDto(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("title")] string? Title);

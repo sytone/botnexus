@@ -27,9 +27,64 @@ namespace BotNexus.Gateway.Sessions;
 /// The global initialisation lock (<c>_initLock</c>) is only held during the one-time
 /// schema creation; all subsequent operations use per-session granularity.
 /// </summary>
-public sealed class SqliteSessionStore : SessionStoreBase
+public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostReader
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
+
+    /// <summary>
+    /// Conversation cost rollup (#2898), derived at read time by a single aggregate query over the
+    /// rows that already exist. No stored counter is introduced or maintained.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The compaction count is a filtered aggregate over the <em>same</em> join as the message
+    /// count, so the two numbers are read from one pass and cannot disagree about which sessions
+    /// belong to the conversation.
+    /// </para>
+    /// <para>
+    /// Sessions whose <c>conversation_id</c> is NULL are excluded rather than grouped under an
+    /// empty key: an unattributed session belongs to no conversation, and a phantom row keyed on
+    /// the empty string would rank against real ones.
+    /// </para>
+    /// <para>
+    /// <c>TotalTokens</c> is left <see langword="null"/>: no per-conversation provider-usage
+    /// measurement exists on this seam yet, and reporting <c>0</c> would present "not measured" as
+    /// "free" (#2554).
+    /// </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<ConversationCostSummary>> GetConversationCostsAsync(
+        CancellationToken cancellationToken = default)
+        => await RetryOnTransientAsync(async () =>
+        {
+            await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT s.conversation_id AS conversation_id,
+                       COUNT(DISTINCT s.id) AS session_count,
+                       COUNT(h.session_id) AS message_count,
+                       COALESCE(SUM(CASE WHEN h.is_compaction_summary = 1 THEN 1 ELSE 0 END), 0) AS compaction_count
+                FROM sessions s
+                LEFT JOIN session_history h ON h.session_id = s.id
+                WHERE s.conversation_id IS NOT NULL AND s.conversation_id <> ''
+                GROUP BY s.conversation_id
+                """;
+
+            var costs = new List<ConversationCostSummary>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                costs.Add(new ConversationCostSummary(
+                    reader.GetString(reader.GetOrdinal("conversation_id")),
+                    (int)reader.GetInt64(reader.GetOrdinal("session_count")),
+                    (int)reader.GetInt64(reader.GetOrdinal("message_count")),
+                    (int)reader.GetInt64(reader.GetOrdinal("compaction_count"))));
+            }
+
+            return (IReadOnlyList<ConversationCostSummary>)costs;
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
 
     /// <summary>Default bound for the in-memory session cache (entries).</summary>
     public const int DefaultSessionCacheCapacity = 500;
