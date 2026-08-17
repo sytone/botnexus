@@ -43,7 +43,13 @@ public sealed class PromptVariantRegistry
 
     private readonly FrozenDictionary<string, SectionVariants> _sections;
 
-    private PromptVariantRegistry(FrozenDictionary<string, SectionVariants> sections) => _sections = sections;
+    private PromptVariantRegistry(
+        FrozenDictionary<string, SectionVariants> sections,
+        IReadOnlyList<PromptVariantDeclaration> declarations)
+    {
+        _sections = sections;
+        Declarations = declarations;
+    }
 
     /// <summary>
     /// The number of members reflected over across the process lifetime. A test asserts this does
@@ -60,6 +66,19 @@ public sealed class PromptVariantRegistry
 
     /// <summary>The section ids that declare at least one variant.</summary>
     public IReadOnlyCollection<string> SectionIds => _sections.Keys;
+
+    /// <summary>
+    /// Every variant declaration this registry was frozen from, in discovery order (#2434).
+    /// </summary>
+    /// <remarks>
+    /// Freezing validates the declarations and then throws the raw shape away, which leaves the
+    /// STRUCTURAL properties of the corpus -- does every declared section id belong to a real
+    /// section, does an overlay removal target a rule that exists -- unobservable to anything but a
+    /// second, drifting copy of the reflection walk written inside the test project. Keeping the
+    /// declarations lets the conformance suite reflect over the frozen registry itself, so a rule
+    /// renamed in the default rung is caught by the same corpus the prompt path actually uses.
+    /// </remarks>
+    public IReadOnlyList<PromptVariantDeclaration> Declarations { get; }
 
     /// <summary>
     /// Scans <paramref name="assemblies"/> for <see cref="PromptVariantAttribute"/> declarations and
@@ -110,7 +129,12 @@ public sealed class PromptVariantRegistry
             }
         }
 
-        return new PromptVariantRegistry(BuildSections(declarations));
+        var sections = BuildSections(declarations);
+
+        return new PromptVariantRegistry(
+            sections,
+            [.. declarations.Select(static d => new PromptVariantDeclaration(
+                d.SectionId, d.Family, d.Version, d.Replace, d.Rules, d.Site))]);
     }
 
     /// <summary>True when <paramref name="sectionId"/> declares any variant.</summary>
