@@ -488,6 +488,48 @@ A policy states what *should* happen. The merge engine reads it to decide what *
 Where the two disagree, that is a defect in the engine, not a reason to relabel the property.
 :::
 
+#### How the layers resolve
+
+The shared inheritance engine executes the declared policies against a stack of layers, lowest
+precedence first. For agents that stack is `agents.defaults`, then the individual agent block.
+
+The engine reads the **raw configuration document**, not a bound object. That is not an
+implementation detail: binding to a typed object collapses "the key was absent" and "the key was set
+to `null`" into an identical null field, and those two mean opposite things.
+
+| In the child layer | Means | Result |
+|---|---|---|
+| Key absent | "inherit from the layer above" | The parent's value is used |
+| Key present, value `null` | "suppress the inherited value" | No value, and the parent's is *not* restored |
+| Key present with a value | "override" | The child's value is used |
+
+This distinction is preserved end to end, including through the SQLite configuration store, because a
+relational `NULL` column cannot express it either.
+
+**Explicit falsy values are decisions, not absences.** `false`, `0`, `""`, `[]` and `{}` set in a
+child layer all override an inherited value. A merge written as `child ?? parent`, or one that skips
+a value equal to its type default, silently discards every one of them - an operator who sets
+`enabled: false` gets the inherited `true` and no error.
+
+**Inherited values are never copied into the child.** The engine does not write to any input layer
+and never materialises a value no layer supplied. Two consequences matter: an inherited secret stays
+in the layer that owns it rather than being duplicated into each agent block, and a child that
+inherits a value keeps tracking that value when the default later changes, instead of being frozen
+against the value that happened to be current when it was last saved.
+
+#### Provenance and validation
+
+The engine records which layer supplied each effective property. That drives the inherited/override
+indicators in the configuration UI, and it changes what a validation error can tell you:
+
+```
+heartbeat.intervalMinutes (from layer 'agents.defaults'): must be greater than zero
+```
+
+Without the layer name, an operator reads that the property is invalid, inspects their own agent
+block, finds nothing wrong, and is stuck - because the offending value came from the shared defaults
+layer. Naming both coordinates turns the hunt into a single edit.
+
 #### Per-agent properties
 
 Backed by `AgentDefinitionConfig`. Every key below is a real, bound property; a per-agent value
