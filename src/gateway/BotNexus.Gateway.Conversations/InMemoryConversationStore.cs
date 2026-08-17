@@ -284,6 +284,7 @@ public sealed class InMemoryConversationStore : IConversationStore
                 ModelOverride = patch.Model.IsSet ? patch.Model.Value : existing.ModelOverride,
                 ThinkingOverride = patch.Thinking.IsSet ? patch.Thinking.Value : existing.ThinkingOverride,
                 ContextWindowOverride = patch.ContextWindow.IsSet ? patch.ContextWindow.Value : existing.ContextWindowOverride,
+                ToolOverrideJson = patch.ToolOverrideJson.IsSet ? patch.ToolOverrideJson.Value : existing.ToolOverrideJson,
                 UpdatedAt = DateTimeOffset.UtcNow
             };
             _conversations[conversationId.Value] = updated;

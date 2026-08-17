@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Extensions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,6 +46,21 @@ public sealed class GitHubServiceContributor : IServiceContributor
                 provider.GetService<TimeProvider>() ?? TimeProvider.System,
                 TimeSpan.FromSeconds(Math.Max(0, options.ExpirySkewSeconds)),
                 provider.GetService<ILoggerFactory>()?.CreateLogger<CachedGitHubCredentialProvider>());
+        });
+
+        // The agent-facing tool surface (#2627). Registered as an IAgentToolContributor so tools are
+        // materialised per agent from that agent's configuration - which is what keeps the acting
+        // identity a configuration decision rather than a tool argument.
+        services.AddSingleton<IAgentToolContributor>(provider =>
+        {
+            var credentials = provider.GetRequiredService<IGitHubCredentialProvider>();
+            var options = provider.GetRequiredService<GitHubCredentialOptions>();
+            var httpFactory = provider.GetService<IHttpClientFactory>();
+
+            return new GitHubToolsContributor(_ => new HttpGitHubApiClient(
+                httpFactory?.CreateClient("botnexus-github") ?? new HttpClient(),
+                credentials,
+                options));
         });
     }
 }

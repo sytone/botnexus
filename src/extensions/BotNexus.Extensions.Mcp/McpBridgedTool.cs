@@ -34,6 +34,9 @@ public sealed class McpBridgedTool : IAgentTool
     /// <inheritdoc />
     public string Label => _definition.Name;
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). A bridged MCP server is a third-party process outside the gateway trust domain; its result text is whatever that server chose to emit.</summary>
+    public string ContentSource => ToolContentSource.Untrusted;
+
     /// <inheritdoc />
     public Tool Definition => new(
         Name,

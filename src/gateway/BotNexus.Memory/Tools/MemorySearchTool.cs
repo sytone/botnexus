@@ -37,6 +37,9 @@ public sealed class MemorySearchTool : IAgentTool
 
     public string Label => "Memory Search";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Searches the agent's own memory store; see MemoryGetTool on per-entry markers.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Search the agent's persistent memory across all past sessions. Use natural language queries to find relevant past conversations, decisions, facts, and stored knowledge. Results are ranked by relevance with optional temporal decay (recent memories score higher).",

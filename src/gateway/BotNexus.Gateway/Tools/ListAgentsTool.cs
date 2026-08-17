@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -22,6 +22,9 @@ public sealed class ListAgentsTool(
 {
     public string Name => "list_agents";
     public string Label => "List Agents";
+
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Gateway-owned agent registry metadata.</summary>
+    public string ContentSource => ToolContentSource.Local;
 
     public Tool Definition => new(
         Name,

@@ -72,13 +72,27 @@ public sealed class AgentPromptAction : ICronAction
             ConversationId = context.Job.ConversationId,
             CreatedBy = context.Job.CreatedBy
         };
-        var sessionId = await trigger
-            .CreateSessionAsync(
-                agentId,
-                message,
-                cancellationToken,
-                triggerRequest)
-            .ConfigureAwait(false);
+        SessionId sessionId;
+        try
+        {
+            sessionId = await trigger
+                .CreateSessionAsync(
+                    agentId,
+                    message,
+                    cancellationToken,
+                    triggerRequest)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            // #2641 AC1: cost is recorded in a FINALLY, so a run that timed out or was cancelled
+            // mid-turn still records the work it did before failing. The trigger stamps the request
+            // before re-surfacing the cancellation; without this finally that measurement would
+            // unwind with the exception and precisely the most expensive runs on the platform -
+            // the ones that ran long enough to hit their timeout - would be the only ones recorded
+            // as costing nothing.
+            RecordCost(context, triggerRequest);
+        }
 
         context.RecordSessionId(sessionId);
 
@@ -87,13 +101,6 @@ public sealed class AgentPromptAction : ICronAction
         if (triggerRequest.ResolvedConversationId is { } resolvedConversationId)
             context.RecordConversationId(resolvedConversationId);
 
-        // #2985: forward the turn's tool-invocation count to the execution context so the
-        // scheduler can apply the execution-class zero-tool rule at the existing run-outcome
-        // seam. Only agent-prompt reports a count; command/webhook actions leave it null, which
-        // the scheduler reads as "not applicable" rather than as zero.
-        if (triggerRequest.ToolInvocationCount is { } toolInvocationCount)
-            context.RecordToolInvocationCount(toolInvocationCount);
-
         // #3161: forward a primary-delivery failure the trigger observed (e.g. the job's pinned
         // destination conversation no longer resolves) so the scheduler records a non-success
         // terminal status. Before #3161 there was no channel at all for this: the trigger silently
@@ -101,6 +108,34 @@ public sealed class AgentPromptAction : ICronAction
         // produced an unbroken streak of green runs indefinitely.
         if (triggerRequest.DeliveryError is { } deliveryError)
             context.RecordDeliveryFailure(deliveryError);
+    }
+
+    /// <summary>
+    /// Copies the trigger's reported tool count (#2985) and cost measurements (#2641) onto the
+    /// execution context. Extracted so the success and failure paths cannot drift: both run it,
+    /// exactly once, from the same finally.
+    /// </summary>
+    private static void RecordCost(CronExecutionContext context, InternalTriggerRequest triggerRequest)
+    {
+        // #2985: forward the turn's tool-invocation count to the execution context so the
+        // scheduler can apply the execution-class zero-tool rule at the existing run-outcome
+        // seam. Only agent-prompt reports a count; command/webhook actions leave it null, which
+        // the scheduler reads as "not applicable" rather than as zero.
+        if (triggerRequest.ToolInvocationCount is { } toolInvocationCount)
+            context.RecordToolInvocationCount(toolInvocationCount);
+
+        // #2641: forward the run's cost measurements. Every field is passed through exactly as the
+        // trigger reported it, including nulls - an unmeasured field must reach the store as NULL
+        // ("not measured"), never as a coerced zero that would present the run as free. The tool
+        // count is reused rather than re-derived so the cost row and the #2985 outcome decision can
+        // never disagree about how many tools ran. Duration is left null here because the SCHEDULER
+        // owns the clock that brackets the whole action invocation.
+        context.RecordCost(new CronRunCost(
+            TurnCount: triggerRequest.TurnCount,
+            ToolCallCount: triggerRequest.ToolInvocationCount,
+            DurationMs: null,
+            PromptTokens: triggerRequest.PromptTokens,
+            CompletionTokens: triggerRequest.CompletionTokens));
     }
 
     private static bool IsInQuietHours(QuietHoursConfig config, string timezoneId)

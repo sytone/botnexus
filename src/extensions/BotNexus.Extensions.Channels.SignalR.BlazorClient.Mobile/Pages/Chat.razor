@@ -906,8 +906,11 @@ else
             if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is { } convId)
                 await CommandDispatcher.ExecuteAsync(Store.ActiveAgentId, convId, pending);
         }
-        else
-            await Interaction.ResetSessionAsync(Store.ActiveAgentId);
+        // #3211 made ResetSessionAsync conversation-explicit. The mobile shell still derives its
+        // conversation from ambient state (that migration is #3213); it is passed through here so
+        // the call site is explicit even while the source of the id is not yet route-owned.
+        else if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is { } resetConvId)
+            await Interaction.ResetSessionAsync(Store.ActiveAgentId, resetConvId);
 
         await ForceScrollToBottomAsync();
     }

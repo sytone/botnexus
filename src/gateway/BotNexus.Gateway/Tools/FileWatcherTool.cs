@@ -23,6 +23,9 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
     public ToolTimeoutArgument? TimeoutArgument => new("timeout", ToolTimeoutUnit.Seconds);
     public string Label => "Watch File";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Local filesystem events.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Watch a file for changes and resume when it is modified, created, or deleted. Use to react to file saves or wait for build output.",

@@ -1,8 +1,7 @@
 using System.Diagnostics;
-using BotNexus.Agent.Core.Types;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Agent.Providers.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
-using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 namespace BotNexus.Gateway.Abstractions.Agents;
 

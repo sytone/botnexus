@@ -52,6 +52,9 @@ public sealed class GrepTool : IAgentTool
 
     public string Label => "Grep Search";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Matches from local files.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <summary>
     /// Executes new.
     /// </summary>

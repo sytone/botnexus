@@ -57,6 +57,9 @@ public sealed class SkillTool(
     public string Name => "skills";
     public string Label => "Skill Manager";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Skill content is authored and reviewed in-repo/on-disk by the operator.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "List available skills and load them into context. Use when you need domain-specific knowledge.",

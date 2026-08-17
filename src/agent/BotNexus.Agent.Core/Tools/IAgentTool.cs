@@ -122,6 +122,30 @@ public interface IAgentTool
     ToolTimeoutArgument? TimeoutArgument => null;
 
     /// <summary>
+    /// Declares where the content this tool returns originates, from the closed
+    /// <see cref="ToolContentSource"/> vocabulary. Consumed by <c>ToolExecutor</c> to accumulate
+    /// turn-level taint, which in turn quarantines memory writes made on a turn that read foreign
+    /// content (issue #2519).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Defaults to <see cref="ToolContentSource.Unknown"/>, which taints.</b> This is the
+    /// fail-closed posture required by the issue: a tool that has not been classified - including
+    /// one contributed by an extension written after this shipped - must not silently count as
+    /// trusted. The cost of the default is over-quarantining until a tool is classified, which is
+    /// recoverable; the cost of defaulting to <see cref="ToolContentSource.Local"/> would be a
+    /// silent laundering path, which is not.
+    /// </para>
+    /// <para>
+    /// Classify by the <i>origin of the returned bytes</i>, never by the tool's power or blast
+    /// radius. <c>shell</c> can do far more damage than <c>web_fetch</c> and is nonetheless
+    /// <see cref="ToolContentSource.Local"/>, because its output is produced inside the trust
+    /// domain the agent already occupies.
+    /// </para>
+    /// </remarks>
+    string ContentSource => ToolContentSource.Unknown;
+
+    /// <summary>
     /// Optional one-line snippet for system prompt tool listing.
     /// </summary>
     string? GetPromptSnippet() => null;

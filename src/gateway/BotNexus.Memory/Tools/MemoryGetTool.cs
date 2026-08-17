@@ -25,6 +25,9 @@ public sealed class MemoryGetTool : IAgentTool
 
     public string Label => "Memory Get";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Reads the agent's own memory store. Entries quarantined at write time carry their own untrusted marker in the content (#2519), so trust is conveyed by the entry, not by this tool.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Retrieve a specific memory entry by ID, or list recent memories from a session.",

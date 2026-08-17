@@ -16,8 +16,9 @@ public interface ISlashCommandDispatcher
     /// <see cref="SlashCommandKind.SendToAgent"/> commands are sent to the agent as message text.
     /// <para>
     /// #3063: <paramref name="conversationId"/> is required because the send path below no longer
-    /// re-derives a conversation from ambient client state. Callers supply the conversation the
-    /// palette was opened against.
+    /// re-derives a conversation from ambient client state. #3211 extended that to every action
+    /// path routed here (reset, compact, clear, gateway command), so the whole dispatch table is
+    /// now conversation-explicit. Callers supply the conversation the palette was opened against.
     /// </para>
     /// <para>
     /// When <see cref="SlashCommand.RequiresApproval"/> is set the dispatcher first consults the
@@ -65,17 +66,17 @@ public sealed class SlashCommandDispatcher(
 
     private Task Dispatch(string agentId, string conversationId, SlashCommand command) => command.Kind switch
     {
-        SlashCommandKind.ResetSession => _interaction.ResetSessionAsync(agentId),
-        SlashCommandKind.CompactSession => _interaction.CompactSessionAsync(agentId),
-        SlashCommandKind.ClearLocalMessages => ClearLocal(agentId),
+        SlashCommandKind.ResetSession => _interaction.ResetSessionAsync(agentId, conversationId),
+        SlashCommandKind.CompactSession => _interaction.CompactSessionAsync(agentId, conversationId),
+        SlashCommandKind.ClearLocalMessages => ClearLocal(agentId, conversationId),
         SlashCommandKind.SendToAgent => _interaction.SendMessageAsync(agentId, conversationId, command.Name),
-        SlashCommandKind.GatewayCommand => _interaction.ExecuteGatewayCommandAsync(agentId, command.Name),
+        SlashCommandKind.GatewayCommand => _interaction.ExecuteGatewayCommandAsync(agentId, conversationId, command.Name),
         _ => Task.CompletedTask
     };
 
-    private Task ClearLocal(string agentId)
+    private Task ClearLocal(string agentId, string conversationId)
     {
-        _interaction.ClearLocalMessages(agentId);
+        _interaction.ClearLocalMessages(agentId, conversationId);
         return Task.CompletedTask;
     }
 }

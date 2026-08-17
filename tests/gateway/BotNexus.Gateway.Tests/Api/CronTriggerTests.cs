@@ -1278,13 +1278,13 @@ public sealed class CronTriggerTests
         public Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default)
             => throw new AgentPromptInterruptedException(partial, cancellationToken);
 
-        public Task<AgentResponse> PromptAsync(BotNexus.Agent.Core.Types.UserMessage message, CancellationToken cancellationToken = default)
+        public Task<AgentResponse> PromptAsync(BotNexus.Gateway.Abstractions.Models.AgentUserMessage message, CancellationToken cancellationToken = default)
             => throw new AgentPromptInterruptedException(partial, cancellationToken);
 
         public IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(BotNexus.Agent.Core.Types.UserMessage message, CancellationToken cancellationToken = default)
+        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(BotNexus.Gateway.Abstractions.Models.AgentUserMessage message, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public Task AbortAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

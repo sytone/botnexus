@@ -54,6 +54,9 @@ public sealed class SkillAliasTool : IAgentTool
     /// <inheritdoc />
     public string Label { get; }
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Local skill metadata.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <inheritdoc />
     public Tool Definition { get; }
 

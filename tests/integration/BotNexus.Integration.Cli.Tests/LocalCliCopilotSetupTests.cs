@@ -126,6 +126,7 @@ public sealed class LocalCliCopilotSetupTests : IAsyncLifetime
             $"Local pack/install fixture did not succeed.\n" +
             $"PackExitCode={_fixture.PackExitCode}\nInstallExitCode={_fixture.InstallExitCode}\n" +
             (_fixture.LayoutFailure is { } layout ? layout + "\n\n" : string.Empty) +
+            (_fixture.PackIsolationFailure is { } iso ? iso + "\n\n" : string.Empty) +
             $"PackOutput:\n{_fixture.PackOutput}\n\nInstallOutput:\n{_fixture.InstallOutput}\n\nError:\n{_fixture.Error}");
     }
 }

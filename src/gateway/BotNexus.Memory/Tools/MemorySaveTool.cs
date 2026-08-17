@@ -30,6 +30,9 @@ public sealed class MemorySaveTool : IAgentTool
 
     public string Label => "Memory Save";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Returns only a locally generated save confirmation.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Append markdown memory notes. Use content only for today's daily note, or provide file_path for a specific note under memory root.",
@@ -112,10 +115,22 @@ public sealed class MemorySaveTool : IAgentTool
             : null;
         var tags = ParseTags(arguments.TryGetValue("tags", out var tagsValue) ? tagsValue : null);
 
+        // #2519: evaluate the ambient run taint ONCE, before any write path branches, so every
+        // target (file note, agent memory, shared store) applies the identical decision. Evaluating
+        // per-branch is how one path silently keeps laundering after the others are fixed.
+        var quarantine = MemoryQuarantine.Evaluate();
+        content = quarantine.ApplyTo(content);
+        if (quarantine.IsQuarantined)
+        {
+            // Tags carry the marker too, so a tag-filtered recall cannot select quarantined
+            // entries while dropping the signal that they are quarantined.
+            tags = AppendQuarantineTag(tags);
+        }
+
         // If saving to a shared store, validate access and write there
         if (!string.IsNullOrWhiteSpace(storeName))
         {
-            return await SaveToSharedStoreAsync(content, storeName!, category, tags, cancellationToken).ConfigureAwait(false);
+            return await SaveToSharedStoreAsync(content, storeName!, category, tags, quarantine, cancellationToken).ConfigureAwait(false);
         }
 
         // Standard agent-local save
@@ -136,12 +151,35 @@ public sealed class MemorySaveTool : IAgentTool
         var targetDescription = string.IsNullOrWhiteSpace(filePath)
             ? "default memory target"
             : filePath;
-        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, $"Appended memory note to {targetDescription}.")]);
+
+        // The confirmation states the quarantine explicitly. The model must not be able to believe
+        // it recorded first-party knowledge when it did not - a silent downgrade would leave it
+        // reasoning on a false premise about its own store.
+        var confirmation = quarantine.IsQuarantined
+            ? $"Appended memory note to {targetDescription}, QUARANTINED as untrusted-origin " +
+              $"because this run consumed content from {quarantine.ContributorSummary}. It will be " +
+              "recalled with an untrusted-origin marker and is not first-party knowledge."
+            : $"Appended memory note to {targetDescription}.";
+        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, confirmation)]);
+    }
+
+    /// <summary>
+    /// Adds the quarantine tag without disturbing caller-supplied tags, and without duplicating it
+    /// if the caller (or a re-entrant path) already supplied it.
+    /// </summary>
+    private static IReadOnlyList<string> AppendQuarantineTag(IReadOnlyList<string>? tags)
+    {
+        const string quarantineTag = "untrusted-origin";
+        var combined = new List<string>(tags ?? []);
+        if (!combined.Any(tag => string.Equals(tag, quarantineTag, StringComparison.OrdinalIgnoreCase)))
+            combined.Add(quarantineTag);
+        return combined;
     }
 
     private async Task<AgentToolResult> SaveToSharedStoreAsync(
         string content, string storeName, string? category,
-        IReadOnlyList<string>? tags, CancellationToken cancellationToken)
+        IReadOnlyList<string>? tags, MemoryQuarantineDecision quarantine,
+        CancellationToken cancellationToken)
     {
         if (_sharedRegistry is null)
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "Shared memory stores are not configured.")]);
@@ -160,13 +198,19 @@ public sealed class MemorySaveTool : IAgentTool
             SourceType = category ?? "tool",
             AgentId = _agentId,
             CreatedAt = DateTimeOffset.UtcNow,
-            // The agent invoked memory_save deliberately, so the content is its own (#2480).
-            Provenance = MemoryProvenance.Agent,
+            // The agent invoked memory_save deliberately, so the content is its own (#2480) - but
+            // only when the run that produced it was clean. A tainted run downgrades this to
+            // external-untrusted (#2519), which MemoryProvenance.IsFirstParty already rejects.
+            Provenance = quarantine.Provenance,
             MetadataJson = BuildMetadataJson(category, tags)
         };
 
         await store.InsertAsync(entry, cancellationToken).ConfigureAwait(false);
-        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, $"Saved memory note to shared store '{storeName}'.")]);
+        var sharedConfirmation = quarantine.IsQuarantined
+            ? $"Saved memory note to shared store '{storeName}', QUARANTINED as untrusted-origin " +
+              $"because this run consumed content from {quarantine.ContributorSummary}."
+            : $"Saved memory note to shared store '{storeName}'.";
+        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, sharedConfirmation)]);
     }
 
     private static IReadOnlyList<string>? CombineTags(string? category, IReadOnlyList<string>? tags)

@@ -69,6 +69,9 @@ public sealed class EditTool : IAgentTool
 
     public string Label => "Edit File";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Returns a locally generated edit confirmation/diff.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <summary>
     /// Executes new.
     /// </summary>

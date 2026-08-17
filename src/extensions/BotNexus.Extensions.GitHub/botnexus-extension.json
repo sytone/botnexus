@@ -1,7 +1,7 @@
 {
   "id": "botnexus-github",
   "name": "GitHub",
-  "description": "Platform-owned GitHub App installation credential. No agent tools in this slice.",
+  "description": "GitHub agent tools over a platform-owned GitHub App installation credential. Structured issue and pull-request operations with no agent-visible token.",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.GitHub.dll",
   "extensionTypes": ["tool"],
@@ -43,6 +43,36 @@
       "default": "60",
       "sensitive": false,
       "description": "Seconds before the reported expiry at which a cached token is refreshed."
+    },
+    {
+      "id": "defaultRepository",
+      "type": "string",
+      "required": false,
+      "sensitive": false,
+      "description": "Default 'owner/repo' used when a tool call omits the repository argument."
+    },
+    {
+      "id": "identity",
+      "type": "string",
+      "required": false,
+      "sensitive": false,
+      "description": "Human-readable label for the acting GitHub identity, reported in write results."
+    },
+    {
+      "id": "defaultPageSize",
+      "type": "integer",
+      "required": false,
+      "default": "30",
+      "sensitive": false,
+      "description": "Page size used when a list tool call does not specify one."
+    },
+    {
+      "id": "maxPageSize",
+      "type": "integer",
+      "required": false,
+      "default": "100",
+      "sensitive": false,
+      "description": "Upper bound on a list page. A larger request is clamped and the clamp is reported in the result."
     }
   ]
 }

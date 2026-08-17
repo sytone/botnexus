@@ -826,7 +826,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         public Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default)
             => Task.FromResult(new AgentResponse { Content = string.Empty });
 
-        public Task<AgentResponse> PromptAsync(UserMessage message, CancellationToken cancellationToken = default)
+        public Task<AgentResponse> PromptAsync(BotNexus.Gateway.Abstractions.Models.AgentUserMessage message, CancellationToken cancellationToken = default)
             => PromptAsync(message.Content, cancellationToken);
 
         public async IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -835,7 +835,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             yield break;
         }
 
-        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(UserMessage message, CancellationToken cancellationToken = default)
+        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(BotNexus.Gateway.Abstractions.Models.AgentUserMessage message, CancellationToken cancellationToken = default)
             => StreamAsync(message.Content, cancellationToken);
 
         public Task AbortAsync(CancellationToken cancellationToken = default)

@@ -485,6 +485,11 @@ public sealed class CronScheduler(
             throw;
         }
 
+        // #2641 AC1: hoisted out of the try so the OUTER error catch can still read the cost the
+        // action accumulated before it threw. Left null until assigned, so the catch distinguishes
+        // "failed before a context existed" (nothing to record) from "failed after doing work"
+        // (record it) - the difference between an honest NULL and a fabricated zero.
+        CronExecutionContext? executionContext = null;
         try
         {
             // Re-read the job inside the lock — another in-process run may have already
@@ -500,6 +505,7 @@ public sealed class CronScheduler(
                 TriggerType = triggerType,
                 Services = scope.ServiceProvider
             };
+            executionContext = context;
 
             var timeoutSeconds = ResolveJobTimeout(jobForRun);
 
@@ -521,7 +527,10 @@ public sealed class CronScheduler(
 
                 if (timeoutError is not null)
                 {
-                    await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.TimedOut, timeoutError, ct: ct)
+                    // #2641 AC1: a timed-out run records the cost of the work it did before the
+                    // timeout fired. This is the branch that matters most - a job that times out is
+                    // by definition one that consumed its entire budget.
+                    await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.TimedOut, timeoutError, cost: context.Cost, ct: ct)
                         .ConfigureAwait(false);
                     await FinalizeRunAsync(job.Id, jobForRun, triggeredAt, CronRunStatus.TimedOut, timeoutError, ct: ct)
                         .ConfigureAwait(false);
@@ -556,7 +565,7 @@ public sealed class CronScheduler(
                 var terminalStatus = outcome.Status;
                 var terminalError = outcome.Error;
 
-                await _cronStore.RecordRunCompleteAsync(run.Id, terminalStatus, terminalError, sessionId: context.SessionId, ct: ct).ConfigureAwait(false);
+                await _cronStore.RecordRunCompleteAsync(run.Id, terminalStatus, terminalError, sessionId: context.SessionId, cost: context.Cost, ct: ct).ConfigureAwait(false);
 
                 // Pinback via CAS: if the trigger created a new conversation for this run and the job
                 // has no pinned ConversationId yet, atomically stamp ours onto the job. If another
@@ -600,7 +609,7 @@ public sealed class CronScheduler(
                     _logger.LogInformation(
                         "Cron run aborted by operator (job deleted or disabled while running). JobId: {JobId}, RunId: {RunId}",
                         job.Id, run.Id);
-                    await RecordAbortedRunAsync(run.Id, job, triggeredAt, CronRunStatus.Aborted, OperatorAbortReason)
+                    await RecordAbortedRunAsync(run.Id, job, triggeredAt, CronRunStatus.Aborted, OperatorAbortReason, context.Cost)
                         .ConfigureAwait(false);
                     return run with
                     {
@@ -620,7 +629,7 @@ public sealed class CronScheduler(
                 _logger.LogWarning(
                     "Cron job aborted (cancellation requested). JobId: {JobId}, ActionType: {ActionType}",
                     job.Id, job.ActionType);
-                await RecordAbortedRunAsync(run.Id, job, triggeredAt).ConfigureAwait(false);
+                await RecordAbortedRunAsync(run.Id, job, triggeredAt, cost: context.Cost).ConfigureAwait(false);
                 throw;
             }
             finally
@@ -637,7 +646,11 @@ public sealed class CronScheduler(
             // conversation an agent can read.
             _logger.LogError(ex, "Cron job execution failed. JobId: {JobId}, ActionType: {ActionType}", job.Id, job.ActionType);
             var projectedError = CronErrorProjection.Project(ex);
-            await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, ex.Message, ct: ct).ConfigureAwait(false);
+            // #2641 AC1: a run that threw still cost what it cost. Passing the accumulated context
+            // cost here is what makes the acceptance criterion's "a failed run still records the
+            // cost of the work it did before failing" true on the error path, not just the timeout
+            // one.
+            await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, ex.Message, cost: executionContext?.Cost, ct: ct).ConfigureAwait(false);
             await FinalizeRunAsync(job.Id, job, triggeredAt, CronRunStatus.Error, projectedError, ct: ct).ConfigureAwait(false);
             var errorPathAlertFailure = await MaybeSendFailureAlertAsync(job, triggeredAt, projectedError, ct).ConfigureAwait(false);
             // #3161 AC3: same fail-closed recording on the error path. The containment seam is
@@ -1184,6 +1197,10 @@ public sealed class CronScheduler(
         if (timeoutSeconds is int armedTimeout)
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(armedTimeout));
 
+        // #2641 AC2: the scheduler owns the run clock. Stamped in a finally so it is recorded on
+        // EVERY exit - success, timeout, and host/operator cancellation alike - because a run that
+        // failed after 40 minutes is exactly the run an operator most needs the duration of.
+        var startedAt = _timeProvider.GetUtcNow();
         try
         {
             await action.ExecuteAsync(context, timeoutCts.Token).ConfigureAwait(false);
@@ -1195,6 +1212,10 @@ public sealed class CronScheduler(
                 "Cron job timed out after {TimeoutSeconds}s. JobId: {JobId}, ActionType: {ActionType}",
                 timeoutSeconds, context.Job.Id, context.Job.ActionType);
             return $"Job exceeded {timeoutSeconds}s timeout";
+        }
+        finally
+        {
+            context.RecordDuration((long)(_timeProvider.GetUtcNow() - startedAt).TotalMilliseconds);
         }
     }
 
@@ -1369,11 +1390,13 @@ public sealed class CronScheduler(
         CronJob job,
         DateTimeOffset triggeredAt,
         string status = CronRunStatus.Error,
-        string? reason = null)
+        string? reason = null,
+        CronRunCost? cost = null)
     {
         const string hostAbortReason = "Cron run aborted before completion.";
         var abortReason = reason ?? hostAbortReason;
-        await _cronStore.RecordRunCompleteAsync(runId, status, abortReason, ct: CancellationToken.None).ConfigureAwait(false);
+        // #2641 AC1: an aborted run is terminal and still records what it cost before the abort.
+        await _cronStore.RecordRunCompleteAsync(runId, status, abortReason, cost: cost, ct: CancellationToken.None).ConfigureAwait(false);
         await FinalizeRunAsync(job.Id, job, triggeredAt, status, abortReason, ct: CancellationToken.None).ConfigureAwait(false);
     }
 

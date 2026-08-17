@@ -64,6 +64,9 @@ public sealed class AgentFilesTool : IAgentTool
     /// <inheritdoc />
     public string Label => "Get Agent Files";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Local workspace convention files.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <inheritdoc />
     public Tool Definition => new(
         Name,

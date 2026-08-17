@@ -302,7 +302,7 @@ public sealed class FanOutRedundantReadTests
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = responseContent });
-        handle.Setup(h => h.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.PromptAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = responseContent });
 
         var supervisor = new Mock<IAgentSupervisor>();

@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -85,6 +86,12 @@ internal sealed class BuiltInCommandContributor(
             Name = "/reasoning",
             Description = "Show, set (/reasoning <minimal|low|medium|high|xhigh|max>), or clear (/reasoning clear) the per-conversation thinking override.",
             Category = "Session"
+        },
+        new CommandDescriptor
+        {
+            Name = "/tools",
+            Description = "Show (/tools), narrow (/tools disable <tool...> | /tools only <tool...>), or clear (/tools clear) the per-conversation tool overlay. Narrowing-only: it cannot grant a tool the agent lacks.",
+            Category = "Session"
         }
     ];
 
@@ -105,6 +112,7 @@ internal sealed class BuiltInCommandContributor(
             "/compact" => ExecuteCompactAsync(context, cancellationToken),
             "/model" => ExecuteModelOverrideAsync(context, cancellationToken),
             "/reasoning" => ExecuteReasoningOverrideAsync(context, cancellationToken),
+            "/tools" => ExecuteToolOverrideAsync(context, cancellationToken),
             _ => Task.FromResult(new CommandResult
             {
                 Title = "Command Not Found",
@@ -511,6 +519,129 @@ internal sealed class BuiltInCommandContributor(
         await store.PatchOverrideAsync(
             conversation.ConversationId,
             new ConversationOverridePatch { Model = model, Thinking = thinking },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Shows or narrows the per-conversation tool overlay (issue #2523).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Grammar: <c>/tools</c> shows the current overlay; <c>/tools disable exec shell</c> drops
+    /// those tools; <c>/tools only read grep</c> narrows to that subset; <c>/tools clear</c> removes
+    /// the overlay. Writes through <c>PatchOverrideAsync</c> for the same clobber-avoidance reason
+    /// as <c>/model</c> and <c>/reasoning</c> (#3228).
+    /// </para>
+    /// <para>
+    /// There is deliberately NO "enable a tool the agent lacks" verb. The overlay narrows the
+    /// agent's configured set and nothing more; granting a tool requires editing the agent, which
+    /// carries the appropriate authority. <c>SessionToolOverrideResolver</c> enforces this at
+    /// resolution time regardless of what is persisted here, so a hand-written override row cannot
+    /// bypass it either.
+    /// </para>
+    /// </remarks>
+    private async Task<CommandResult> ExecuteToolOverrideAsync(CommandExecutionContext context, CancellationToken cancellationToken)
+    {
+        const string Title = "Tool Override";
+
+        var (conversation, error) = await ResolveActiveConversationAsync(context, cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return new CommandResult { Title = Title, Body = error!, IsError = true };
+
+        var store = serviceProvider.GetService<IConversationStore>()!;
+        var current = SessionToolOverride.FromJson(conversation.ToolOverrideJson);
+
+        if (context.Arguments.Count == 0)
+            return new CommandResult { Title = Title, Body = DescribeToolOverride(current), IsError = false };
+
+        var verb = context.Arguments[0].Trim().ToLowerInvariant();
+        var names = context.Arguments.Skip(1)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name.Trim())
+            .ToList();
+
+        if (IsClearToken(verb))
+        {
+            await PatchToolOverrideAsync(store, conversation, null, cancellationToken).ConfigureAwait(false);
+            return new CommandResult { Title = Title, Body = "Cleared the tool overlay; this conversation gets the agent's full configured tool set.", IsError = false };
+        }
+
+        if (names.Count == 0)
+        {
+            return new CommandResult
+            {
+                Title = Title,
+                Body = $"Usage: /tools | /tools disable <tool...> | /tools only <tool...> | /tools clear\n\n{DescribeToolOverride(current)}",
+                IsError = true
+            };
+        }
+
+        SessionToolOverride updated;
+        string summary;
+        switch (verb)
+        {
+            case "disable":
+            case "drop":
+                updated = new SessionToolOverride
+                {
+                    EnabledTools = current?.EnabledTools,
+                    DisabledTools = [.. (current?.DisabledTools ?? []).Concat(names).Distinct(StringComparer.OrdinalIgnoreCase)]
+                };
+                summary = $"Disabled for this conversation: {string.Join(", ", names)}.";
+                break;
+
+            case "only":
+            case "enable":
+                updated = new SessionToolOverride
+                {
+                    EnabledTools = [.. names.Distinct(StringComparer.OrdinalIgnoreCase)],
+                    DisabledTools = current?.DisabledTools
+                };
+                summary = $"Narrowed this conversation to: {string.Join(", ", names)}. "
+                    + "Any name the agent does not have is refused, not granted.";
+                break;
+
+            default:
+                return new CommandResult
+                {
+                    Title = Title,
+                    Body = $"Unknown option '{verb}'. Use: /tools | /tools disable <tool...> | /tools only <tool...> | /tools clear",
+                    IsError = true
+                };
+        }
+
+        await PatchToolOverrideAsync(store, conversation, updated, cancellationToken).ConfigureAwait(false);
+        return new CommandResult { Title = Title, Body = $"{summary}\nTakes effect on the next turn.", IsError = false };
+    }
+
+    private static string DescribeToolOverride(SessionToolOverride? current)
+    {
+        if (current is null || !current.HasRestrictions)
+            return "No tool overlay set - this conversation uses the agent's full configured tool set.";
+
+        var lines = new List<string>();
+        if (current.EnabledTools is { Count: > 0 } enabled)
+            lines.Add($"Narrowed to: {string.Join(", ", enabled)}");
+        if (current.DisabledTools is { Count: > 0 } disabled)
+            lines.Add($"Disabled: {string.Join(", ", disabled)}");
+
+        lines.Add("The overlay can only narrow the agent's tool set; it never grants a tool the agent lacks.");
+        return string.Join("\n", lines);
+    }
+
+    private static async Task PatchToolOverrideAsync(
+        IConversationStore store,
+        Conversation conversation,
+        SessionToolOverride? overrides,
+        CancellationToken cancellationToken)
+    {
+        await store.PatchOverrideAsync(
+            conversation.ConversationId,
+            new ConversationOverridePatch
+            {
+                ToolOverrideJson = FieldUpdate<string?>.Set(
+                    overrides is { HasRestrictions: true } ? overrides.ToJson() : null)
+            },
             cancellationToken).ConfigureAwait(false);
     }
 

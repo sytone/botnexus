@@ -76,6 +76,7 @@ public sealed class DraftAttachmentSendFamilyTests : IDisposable
 
         await _interaction.Received(1).SteerAsync(
             "agent-1",
+            Arg.Any<string>(),
             "steer with file",
             Arg.Is<IReadOnlyList<DraftAttachment>>(x => x.Count == 1 && x[0].FileName == "notes.txt"));
         cut.FindAll("[data-testid='attachment-chip']").ShouldBeEmpty();
@@ -90,6 +91,7 @@ public sealed class DraftAttachmentSendFamilyTests : IDisposable
 
         await _interaction.Received(1).InterruptAndSteerAsync(
             "agent-1",
+            Arg.Any<string>(),
             "redirect with file",
             Arg.Is<IReadOnlyList<DraftAttachment>>(x => x.Count == 1 && x[0].FileName == "notes.txt"));
         cut.FindAll("[data-testid='attachment-chip']").ShouldBeEmpty();
@@ -104,6 +106,7 @@ public sealed class DraftAttachmentSendFamilyTests : IDisposable
 
         await _interaction.Received(1).FollowUpAsync(
             "agent-1",
+            Arg.Any<string>(),
             "follow up with file",
             Arg.Is<IReadOnlyList<DraftAttachment>>(x => x.Count == 1 && x[0].FileName == "notes.txt"));
         cut.FindAll("[data-testid='attachment-chip']").ShouldBeEmpty();

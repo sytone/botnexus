@@ -76,6 +76,25 @@ public sealed record InternalTriggerRequest
     public int? ToolInvocationCount { get; set; }
 
     /// <summary>
+    /// #2641: model turns the run consumed, written back by the trigger after the turn completes.
+    /// <c>null</c> means the trigger reported nothing - "not measured", never zero.
+    /// </summary>
+    public int? TurnCount { get; set; }
+
+    /// <summary>
+    /// #2641: provider-reported prompt tokens summed across every turn of the run, or <c>null</c>
+    /// when the provider reported no usage. Distinct from the per-request figure the session
+    /// compactor stores, which is deliberately the LAST request only.
+    /// </summary>
+    public long? PromptTokens { get; set; }
+
+    /// <summary>
+    /// #2641: provider-reported completion tokens summed across every turn, or <c>null</c> when
+    /// unmeasured.
+    /// </summary>
+    public long? CompletionTokens { get; set; }
+
+    /// <summary>
     /// Written back by the trigger when the run's <b>primary delivery</b> could not be honoured
     /// (#3161) - for example the job's pinned destination conversation no longer resolves, so the
     /// output was routed somewhere the operator is not reading. <c>null</c> means the trigger

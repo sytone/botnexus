@@ -309,18 +309,39 @@ public sealed class ConversationsController : ControllerBase
     /// <param name="conversationId">The conversation identifier.</param>
     /// <param name="request">The binding request body.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>201 with the created binding, or 404 if conversation not found.</returns>
+    /// <returns>201 with the created binding, 400 for a malformed request, 404 if the conversation is not found, or 409 when the address is already bound for this agent.</returns>
     [HttpPost("{conversationId}/bindings")]
     [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult> AddBinding(
         string conversationId,
         [FromBody] AddBindingRequest request,
         CancellationToken cancellationToken)
     {
+        if (request is null || string.IsNullOrWhiteSpace(request.ChannelType))
+            return BadRequest(new { error = "channelType is required." });
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
             return NotFound();
+
+        // Inbound routing resolves (agentId, channelType, channelAddress) to exactly one
+        // conversation. Allowing a second conversation of the same agent to claim the same pair
+        // would make ResolveByBindingAsync ambiguous and route messages non-deterministically,
+        // so an explicit attach that would create that ambiguity is refused up front (#140).
+        var channelType = ChannelKey.From(request.ChannelType);
+        var channelAddress = ChannelAddress.From(request.ChannelAddress ?? string.Empty);
+        var conflict = await FindConflictingBindingOwnerAsync(conversation.AgentId, channelType, channelAddress, cancellationToken);
+        if (conflict is not null)
+        {
+            return Conflict(new
+            {
+                error = $"{channelType.Value}:{channelAddress.Value} is already bound to conversation {conflict}.",
+                conflictingConversationId = conflict
+            });
+        }
 
         if (!Enum.TryParse<BindingMode>(request.Mode, ignoreCase: true, out var bindingMode))
             bindingMode = BindingMode.Interactive;
@@ -331,8 +352,8 @@ public sealed class ConversationsController : ControllerBase
         var binding = new ChannelBinding
         {
             BindingId = BindingId.Create(),
-            ChannelType = ChannelKey.From(request.ChannelType),
-            ChannelAddress = ChannelAddress.From(request.ChannelAddress ?? string.Empty),
+            ChannelType = channelType,
+            ChannelAddress = channelAddress,
             Mode = bindingMode,
             ThreadingMode = threadingMode,
             DisplayPrefix = request.DisplayPrefix,
@@ -345,6 +366,9 @@ public sealed class ConversationsController : ControllerBase
         var added = await _conversations.AddBindingAsync(ConversationId.From(conversationId), binding, cancellationToken);
         if (!added)
             return NotFound();
+
+        await AuditAsync(conversationId, "binding_added", "api", "rest-api", null, DescribeBinding(binding), cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created, ToBindingResponse(binding));
     }
@@ -371,12 +395,148 @@ public sealed class ConversationsController : ControllerBase
         // Transactional single-binding removal (#2139): deletes only the requested binding row,
         // so an unrelated binding added concurrently between the read and the write is not
         // resurrected or dropped by a whole-record rewrite.
+        var existing = conversation.ChannelBindings.FirstOrDefault(b =>
+            string.Equals(b.BindingId.Value, bindingId, StringComparison.Ordinal));
+
         var removed = await _conversations.RemoveBindingAsync(
             ConversationId.From(conversationId),
             BindingId.From(bindingId),
             cancellationToken);
-        return removed ? NoContent() : NotFound();
+        if (!removed)
+            return NotFound();
+
+        await AuditAsync(
+            conversationId,
+            "binding_removed",
+            "api",
+            "rest-api",
+            existing is null ? bindingId : DescribeBinding(existing),
+            null,
+            cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
+        return NoContent();
     }
+
+    /// <summary>
+    /// Moves an existing channel binding from one conversation to another (issue #140).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the "merge" / "re-home" operation: the binding keeps its identity, address, mode
+    /// and bound-at stamp, so the channel keeps delivering to the same address while future
+    /// inbound traffic resolves to the target conversation instead. Deleting and re-adding a
+    /// binding is <em>not</em> equivalent — it mints a new <c>BindingId</c>, which breaks any
+    /// outbound fan-out suppression keyed on the originating binding.
+    /// </para>
+    /// <para>Two guards keep routing unambiguous and are deliberately checked before the store call:</para>
+    /// <list type="bullet">
+    ///   <item>The target must belong to the <em>same agent</em>. Re-parenting under a different
+    ///     agent would silently re-route a live channel to a different brain — a surprise, not a
+    ///     binding edit.</item>
+    ///   <item>The target must not already hold a binding for the same (channel type, address),
+    ///     which would leave the agent with two candidate conversations for one address.</item>
+    /// </list>
+    /// </remarks>
+    /// <param name="conversationId">The conversation currently owning the binding.</param>
+    /// <param name="bindingId">The binding to move.</param>
+    /// <param name="request">The move request naming the target conversation.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>200 with the moved binding, 400 for a malformed or cross-agent move, 404 when the conversation or binding is not found, or 409 on an address collision at the target.</returns>
+    [HttpPost("{conversationId}/bindings/{bindingId}/move")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult> MoveBinding(
+        string conversationId,
+        string bindingId,
+        [FromBody] MoveBindingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.TargetConversationId))
+            return BadRequest(new { error = "targetConversationId is required." });
+
+        if (string.Equals(request.TargetConversationId, conversationId, StringComparison.Ordinal))
+            return BadRequest(new { error = "targetConversationId must differ from the source conversation." });
+
+        var sourceId = ConversationId.From(conversationId);
+        var source = await _conversations.GetAsync(sourceId, cancellationToken);
+        if (source is null)
+            return NotFound(new { error = $"Conversation {conversationId} not found." });
+
+        var binding = source.ChannelBindings.FirstOrDefault(b =>
+            string.Equals(b.BindingId.Value, bindingId, StringComparison.Ordinal));
+        if (binding is null)
+            return NotFound(new { error = $"Binding {bindingId} not found on conversation {conversationId}." });
+
+        var targetId = ConversationId.From(request.TargetConversationId);
+        var target = await _conversations.GetAsync(targetId, cancellationToken);
+        if (target is null)
+            return NotFound(new { error = $"Target conversation {request.TargetConversationId} not found." });
+
+        if (target.AgentId != source.AgentId)
+        {
+            return BadRequest(new
+            {
+                error = $"Cannot move a binding across agents: conversation {conversationId} belongs to {source.AgentId.Value} but {request.TargetConversationId} belongs to {target.AgentId.Value}."
+            });
+        }
+
+        if (target.ChannelBindings.Any(b => b.ChannelType == binding.ChannelType && b.ChannelAddress == binding.ChannelAddress))
+        {
+            return Conflict(new
+            {
+                error = $"{binding.ChannelType.Value}:{binding.ChannelAddress.Value} is already bound to conversation {request.TargetConversationId}.",
+                conflictingConversationId = request.TargetConversationId
+            });
+        }
+
+        // Transactional re-parent (#2139 store operation, wired to REST by #140): a single UPDATE
+        // of the binding row under both conversation locks, so neither aggregate is rewritten and
+        // the binding is never transiently absent from both.
+        var moved = await _conversations.MoveBindingAsync(sourceId, targetId, binding.BindingId, cancellationToken);
+        if (!moved)
+            return NotFound(new { error = $"Binding {bindingId} could not be moved; it is no longer on conversation {conversationId}." });
+
+        await AuditAsync(
+            conversationId,
+            "binding_moved",
+            "api",
+            "rest-api",
+            $"{DescribeBinding(binding)} on {conversationId}",
+            $"{DescribeBinding(binding)} on {request.TargetConversationId}",
+            cancellationToken);
+
+        // Both aggregates changed, so both are announced — announcing only the target would leave
+        // the source pane showing a binding that no longer exists there.
+        await NotifyConversationChangedBestEffortAsync("updated", source.AgentId.Value, conversationId, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", target.AgentId.Value, request.TargetConversationId, cancellationToken);
+
+        return Ok(ToBindingResponse(binding));
+    }
+
+    /// <summary>
+    /// Returns the id of a conversation of <paramref name="agentId"/> that already holds a binding
+    /// for <paramref name="channelType"/>/<paramref name="channelAddress"/>, or <c>null</c> when the
+    /// pair is unclaimed. Addressless bindings are exempt: an empty address is not a routable
+    /// identity, so several may legitimately coexist.
+    /// </summary>
+    private async Task<string?> FindConflictingBindingOwnerAsync(
+        AgentId agentId,
+        ChannelKey channelType,
+        ChannelAddress channelAddress,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(channelAddress.Value))
+            return null;
+
+        var existing = await _conversations.ResolveByBindingAsync(agentId, channelType, channelAddress, cancellationToken);
+        return existing?.ConversationId.Value;
+    }
+
+    /// <summary>Renders a binding for audit-entry values: stable, human-readable, and short enough to survive truncation.</summary>
+    private static string DescribeBinding(ChannelBinding binding)
+        => $"{binding.ChannelType.Value}:{binding.ChannelAddress.Value} ({binding.BindingId.Value})";
 
     /// <summary>
     /// Returns assembled conversation history across all sessions linked to this conversation,

@@ -321,11 +321,16 @@ builder.Services.AddTransient<ProviderLoggingHandler>(sp =>
     // Always wire the gateway's shared SecretRedactor into the handler so that any API key or
     // token that leaks into a request/response body (not just the well-known auth headers) is
     // scrubbed before it is written to the logs. Redaction is applied unconditionally whenever
-    // the handler logs; the config flag below only controls whether the handler runs at all.
+    // the handler logs; the config flag below only controls whether the handler logs at all.
     var redactor = sp.GetService<ISecretRedactor>();
+    // #3282: the flag is captured as a PREDICATE over the live options monitor, not as a bool.
+    // Reading it here would freeze the operator's choice at DI-construction time, which is exactly
+    // the restart requirement this indirection removes.
+    var configMonitor = sp.GetService<IOptionsMonitor<PlatformConfig>>();
     return new ProviderLoggingHandler(
         sp.GetRequiredService<ILogger<ProviderLoggingHandler>>(),
-        redactor is null ? null : redactor.Redact);
+        redactor is null ? null : redactor.Redact,
+        () => configMonitor?.CurrentValue?.Gateway?.EnableProviderRequestLogging == true);
 });
 builder.Services.AddHttpClient("BotNexus", client =>
 {
@@ -340,13 +345,11 @@ builder.Services.AddHttpClient("BotNexus", client =>
         sp.GetService<ILoggerFactory>()?.CreateLogger<TransientHttpRetryHandler>()))
 .AddHttpMessageHandler(sp =>
 {
-    // Conditionally attach the logging handler based on gateway config.
-    // The handler checks IsEnabled(Debug) internally — no log entries emitted when debug is off.
-    var config = sp.GetService<IOptionsMonitor<PlatformConfig>>()?.CurrentValue;
-    if (config?.Gateway?.EnableProviderRequestLogging == true)
-        return sp.GetRequiredService<ProviderLoggingHandler>();
-    // Return a no-op pass-through handler when logging is disabled.
-    return new NoOpDelegatingHandler();
+    // #3282: attached UNCONDITIONALLY. IHttpClientFactory caches this pipeline for the named
+    // client's handler lifetime, so any branch taken here is permanent until restart. The handler
+    // itself re-reads the config flag and the Debug level on every request, which is what makes
+    // `botnexus config set gateway.enableProviderRequestLogging true` take effect on a live gateway.
+    return sp.GetRequiredService<ProviderLoggingHandler>();
 });
 builder.Services.AddSingleton<HttpClient>(sp =>
 {
@@ -546,6 +549,22 @@ builder.Services.AddSingleton<BotNexus.Gateway.Diagnostics.LogDiagnosticsRingBuf
 builder.Services.AddSingleton<ILoggerProvider, BotNexus.Gateway.Diagnostics.LogDiagnosticsProvider>();
 
 var app = builder.Build();
+
+// #3282: bind gateway.logLevel to the Serilog level switch, then keep it bound. The initial call
+// applies the configured level (Serilog's own MinimumLevel was already overridden by the switch in
+// ConfigureGatewayLogging), and OnChange re-applies it whenever config.json is rewritten - the same
+// propagation seam used by CrossWorldInboundAuthService and DefaultToolPolicyProvider. Together with
+// the unconditionally-attached ProviderLoggingHandler this is what lets an operator or an agent turn
+// provider request logging on, capture traffic, and turn it off without restarting the platform.
+var logLevelMonitor = app.Services.GetRequiredService<IOptionsMonitor<PlatformConfig>>();
+GatewaySerilogConfiguration.ApplyLogLevel(logLevelMonitor.CurrentValue?.Gateway?.LogLevel);
+logLevelMonitor.OnChange(updated =>
+{
+    if (GatewaySerilogConfiguration.ApplyLogLevel(updated?.Gateway?.LogLevel))
+        Log.Information(
+            "Log level set to {LogLevel} from configuration",
+            GatewaySerilogConfiguration.LevelSwitch.MinimumLevel);
+});
 
 var platformConfig = app.Services.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
 var worldDescriptor = WorldDescriptorBuilder.Build(
@@ -846,10 +865,3 @@ static bool IsValidJsonFile(string path)
 /// </summary>
 public partial class Program;
 
-/// <summary>No-op delegating handler used when provider HTTP logging is disabled.</summary>
-file sealed class NoOpDelegatingHandler : DelegatingHandler
-{
-    protected override Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request, CancellationToken cancellationToken)
-        => base.SendAsync(request, cancellationToken);
-}

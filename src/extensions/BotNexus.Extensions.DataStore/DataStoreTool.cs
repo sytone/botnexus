@@ -24,6 +24,9 @@ public sealed class DataStoreTool(IDataStoreBackend backend) : IAgentTool
     public string Name => "data_store";
     public string Label => "Data Store";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Gateway-owned local data store.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Manage a per-agent structured SQLite data store. Ingest JSON arrays, run SELECT queries, insert rows, update rows, delete rows, count rows, inspect schema, list tables, or drop tables.",

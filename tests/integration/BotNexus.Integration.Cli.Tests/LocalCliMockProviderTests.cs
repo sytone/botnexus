@@ -65,6 +65,23 @@ public sealed class LocalCliMockProviderTests : IAsyncLifetime
             CliInstallLayout.FormatMissingAssemblyFailure(_fixture.ToolPath, missing, _fixture.InstalledFiles));
     }
 
+    /// <summary>
+    /// #3255: the pack that produced this fixture's package must have been isolated from the
+    /// repo's shared build trees. Asserted against the LIVE fixture, so a real run proves the
+    /// redirect took effect rather than only that the switch was typed.
+    /// </summary>
+    [Fact]
+    public void LocalPack_WasIsolatedFromTheSharedRepoBuildTrees()
+    {
+        AssertFixture();
+
+        CliPackIsolation.FindMissingIsolationSwitches(_fixture.PackArguments).ShouldBeEmpty(
+            CliPackIsolation.DescribeIsolationFailure(_fixture.PackArguments, _fixture.PackArtifactsDir));
+        CliPackIsolation.ArtifactsDirWasPopulated(_fixture.PackArtifactsDir).ShouldBeTrue(
+            CliPackIsolation.DescribeIsolationFailure(_fixture.PackArguments, _fixture.PackArtifactsDir));
+        _fixture.PackIsolationFailure.ShouldBeNull();
+    }
+
     [Fact]
     public async Task Init_ThenProviderAdd_MockProvider_WritesExpectedConfig()
     {
@@ -153,6 +170,7 @@ public sealed class LocalCliMockProviderTests : IAsyncLifetime
             $"Local pack/install fixture did not succeed.\n" +
             $"PackExitCode={_fixture.PackExitCode}\nInstallExitCode={_fixture.InstallExitCode}\n" +
             (_fixture.LayoutFailure is { } layout ? layout + "\n\n" : string.Empty) +
+            (_fixture.PackIsolationFailure is { } iso ? iso + "\n\n" : string.Empty) +
             $"PackOutput:\n{_fixture.PackOutput}\n\nInstallOutput:\n{_fixture.InstallOutput}\n\nError:\n{_fixture.Error}");
     }
 }

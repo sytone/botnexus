@@ -144,6 +144,61 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     /// <summary>
+    /// Persists the sub-agent run's own final assistant text onto its child session (#3256).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Before #3256 the sub-agent path wrote <see cref="MessageRole.Tool"/> rows and nothing else,
+    /// so all 533 sub-agent sessions in the store held exactly one role. Every other blocking
+    /// <c>PromptAsync</c> boundary (REST chat, agent exchange, the trigger projector) appends the
+    /// assistant row immediately after the tool timeline; the sub-agent path simply never did, and
+    /// its summary survived only as a transient completion event delivered to the parent. The
+    /// result was a <c>UserFacing</c> conversation that rendered as tool spam with no model output.
+    /// </para>
+    /// <para>
+    /// Ordering is load-bearing and mirrors <c>ChatController</c>: tool rows are written by
+    /// <see cref="PersistToolAuditAsync"/> on the run path, and this row lands afterwards from the
+    /// terminal completion path, so the transcript reads tools-then-summary rather than the
+    /// reverse. Best-effort by design like every other persistence side-effect here: a store fault
+    /// must not change the run's terminal disposition. Blank summaries are not persisted, so an
+    /// empty row is never manufactured for a run that genuinely said nothing.
+    /// </para>
+    /// </remarks>
+    /// <param name="childSessionId">The child session the run owns.</param>
+    /// <param name="summary">The normalized terminal summary, already the record's winning text.</param>
+    private async Task PersistAssistantSummaryAsync(SessionId childSessionId, string? summary)
+    {
+        if (_sessionStore is null || string.IsNullOrWhiteSpace(summary))
+            return;
+
+        try
+        {
+            var childSession = await _sessionStore.GetAsync(childSessionId, CancellationToken.None).ConfigureAwait(false);
+            if (childSession is null)
+                return;
+
+            childSession.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.Assistant,
+                Content = summary,
+                // The row is tagged as the sub-agent's own response so a renderer can tell a
+                // delegated run's summary apart from an ordinary assistant turn without inferring
+                // it from the session id shape.
+                Kind = MessageKind.SubAgentResponse
+            });
+
+            await _sessionStore.SaveAsync(childSession, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed persisting the assistant summary for child session '{ChildSessionId}'.",
+                childSessionId);
+        }
+    }
+
+    /// <summary>
     /// Eagerly mints the child run's <b>own</b> conversation and binds the freshly-created child
     /// session to it BEFORE <see cref="SpawnAsync"/> returns, so concurrent lookups
     /// (<see cref="ISessionStore.ListByConversationAsync"/>, /api/conversations/{id}/history,
@@ -903,6 +958,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // A timeout/failure may set the terminal record before entering the shared completion path.
         // Always publish and dispatch the record's winning terminal reason, never a late prompt result.
         var normalizedSummary = updated.ResultSummary ?? emptyResponseDiagnostic;
+
+        // #3256: the run's own words become durable here, on the child session, before the summary
+        // is handed to the parent as a transient completion event. Every terminal disposition
+        // routes through this method, so a timed-out or failed run records its diagnostic too.
+        await PersistAssistantSummaryAsync(updated.ChildSessionId, normalizedSummary).ConfigureAwait(false);
 
         // Update the sub-agent session row with the final status (best-effort).
         if (_sessionStore is not null && updated.CompletedAt.HasValue)

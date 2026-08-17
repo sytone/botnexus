@@ -76,6 +76,9 @@ public sealed class ExecTool : IAgentTool
     /// <inheritdoc />
     public string Label => "Exec";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Local process output; see ShellTool on power vs provenance.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <inheritdoc />
     public Tool Definition => new(
         Name,

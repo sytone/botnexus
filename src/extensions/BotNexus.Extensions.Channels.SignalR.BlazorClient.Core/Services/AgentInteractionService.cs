@@ -191,48 +191,48 @@ public sealed class AgentInteractionService : IAgentInteractionService
     public const string CanvasSubmissionKind = "canvas-submission";
 
     /// <summary>
-    /// Resolves the (conversationId, sessionId) pair that a conversation-targeted action
-    /// (steer, follow-up, abort, redirect, reset, compact) must act on, anchored to the
-    /// <em>currently displayed</em> conversation rather than the mutable agent-global
-    /// <see cref="AgentState.SessionId"/> fallback.
+    /// Resolves the session that a conversation-targeted action (steer, follow-up, abort, redirect,
+    /// reset, compact) must act on, given the conversation the CALLER named.
     /// </summary>
     /// <remarks>
-    /// The portal's ChatPanel is keyed only by agent id; the displayed conversation is
-    /// <see cref="AgentState.ActiveConversationId"/>. Earlier code routed these actions through
-    /// <c>AgentState.ActiveConversationSessionId</c>, which falls back to the agent-global
-    /// <c>SessionId</c>. A bulk session refresh could leave that global pointing at an unrelated
-    /// conversation's (often idle) session, so a steer landed on the wrong conversation and was
-    /// silently dropped. Resolving the session from the displayed conversation's own
-    /// <see cref="ConversationState.ActiveSessionId"/> with no global fallback guarantees the
-    /// action targets the conversation the user is actually looking at.
-    /// Returns <see langword="false"/> when there is no active conversation or it has no bound
-    /// session yet — callers should treat that as "nothing to act on" instead of guessing.
+    /// #3211 replaced the former <c>TryResolveActiveConversationTarget</c>, which re-derived the
+    /// conversation from ambient <see cref="AgentState.ActiveConversationId"/>. Ambient derivation
+    /// meant a deep link to a non-most-recent conversation could steer or abort a different
+    /// conversation entirely. The conversation is now an argument, and only the SESSION is resolved
+    /// here - from that conversation's own <see cref="ConversationState.ActiveSessionId"/> with no
+    /// agent-global <see cref="AgentState.SessionId"/> fallback (a bulk session refresh could leave
+    /// that global pointing at an unrelated conversation's idle session).
+    /// Returns <see langword="false"/> when the conversation is unknown to this agent or has no bound
+    /// session yet - callers should treat that as "nothing to act on" instead of guessing.
     /// </remarks>
-    private bool TryResolveActiveConversationTarget(string agentId, out string conversationId, out string sessionId)
+    private bool TryResolveConversationSession(string agentId, string conversationId, out ConversationState conversation, out string sessionId)
     {
-        conversationId = string.Empty;
+        conversation = null!;
         sessionId = string.Empty;
 
-        var agent = _store.GetAgent(agentId);
-        if (agent?.ActiveConversationId is not { } convId)
-            return false;
-        if (agent.Conversations.GetValueOrDefault(convId) is not { ActiveSessionId: { } sid })
+        if (string.IsNullOrEmpty(conversationId))
             return false;
 
-        conversationId = convId;
+        var agent = _store.GetAgent(agentId);
+        if (agent?.Conversations.GetValueOrDefault(conversationId) is not { ActiveSessionId: { } sid } conv)
+            return false;
+
+        conversation = conv;
         sessionId = sid;
         return true;
     }
 
-    public Task SteerAsync(string agentId, string content) => SteerAsync(agentId, content, []);
+    public Task SteerAsync(string agentId, string conversationId, string content)
+        => SteerAsync(agentId, conversationId, content, []);
 
     /// <inheritdoc />
-    public async Task SteerAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments)
+    public async Task SteerAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments)
     {
-        if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
+        if (!TryResolveConversationSession(agentId, conversationId, out var conv, out var sessionId))
             return;
+        var convId = conversationId;
 
-        AppendUserMessage(agentId, $"🔀 {content}");
+        AppendTo(conv, "User", $"🔀 {content}");
 
         // Add entry to steering queue panel
         var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.Steer, SteeringEntryStatus.Pending);
@@ -251,19 +251,21 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            AppendError(agentId, $"Steer failed: {ex.Message}");
+            AppendTo(conv, "Error", $"Steer failed: {ex.Message}");
         }
     }
 
-    public Task FollowUpAsync(string agentId, string content) => FollowUpAsync(agentId, content, []);
+    public Task FollowUpAsync(string agentId, string conversationId, string content)
+        => FollowUpAsync(agentId, conversationId, content, []);
 
     /// <inheritdoc />
-    public async Task FollowUpAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments)
+    public async Task FollowUpAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments)
     {
-        if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
+        if (!TryResolveConversationSession(agentId, conversationId, out var conv, out var sessionId))
             return;
+        var convId = conversationId;
 
-        AppendUserMessage(agentId, content);
+        AppendTo(conv, "User", content);
 
         // Add entry to steering queue panel with FollowUp kind
         var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending);
@@ -279,14 +281,15 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            AppendError(agentId, $"Follow-up failed: {ex.Message}");
+            AppendTo(conv, "Error", $"Follow-up failed: {ex.Message}");
         }
     }
 
-    public async Task AbortAsync(string agentId)
+    public async Task AbortAsync(string agentId, string conversationId)
     {
-        if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
+        if (!TryResolveConversationSession(agentId, conversationId, out var conv, out var sessionId))
             return;
+        var convId = conversationId;
 
         try
         {
@@ -294,7 +297,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            AppendError(agentId, $"Abort failed: {ex.Message}");
+            AppendTo(conv, "Error", $"Abort failed: {ex.Message}");
         }
         finally
         {
@@ -332,16 +335,17 @@ public sealed class AgentInteractionService : IAgentInteractionService
     // ── Session management ────────────────────────────────────────────────
 
 
-    public Task InterruptAndSteerAsync(string agentId, string message) => InterruptAndSteerAsync(agentId, message, []);
+    public Task InterruptAndSteerAsync(string agentId, string conversationId, string message)
+        => InterruptAndSteerAsync(agentId, conversationId, message, []);
 
     /// <inheritdoc />
-    public async Task InterruptAndSteerAsync(string agentId, string message, IReadOnlyList<DraftAttachment> attachments)
+    public async Task InterruptAndSteerAsync(string agentId, string conversationId, string message, IReadOnlyList<DraftAttachment> attachments)
     {
         if (string.IsNullOrWhiteSpace(message) && attachments.Count == 0) return;
-        if (!TryResolveActiveConversationTarget(agentId, out _, out var sessionId))
+        if (!TryResolveConversationSession(agentId, conversationId, out var conv, out var sessionId))
             return;
 
-        AppendUserMessage(agentId, "[redirect] " + message);
+        AppendTo(conv, "User", "[redirect] " + message);
 
         try
         {
@@ -350,16 +354,16 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 : await _hub.InterruptAndSteerWithMediaAsync(agentId, sessionId, message,
                     attachments.Select(ToContentPart).ToArray());
             if (!delivered)
-                AppendError(agentId, "Interrupt not delivered - agent was not running.");
+                AppendTo(conv, "Error", "Interrupt not delivered - agent was not running.");
         }
         catch (Exception ex)
         {
-            AppendError(agentId, "Interrupt and steer failed: " + ex.Message);
+            AppendTo(conv, "Error", "Interrupt and steer failed: " + ex.Message);
         }
     }
-    public async Task ResetSessionAsync(string agentId)
+    public async Task ResetSessionAsync(string agentId, string conversationId)
     {
-        if (!TryResolveActiveConversationTarget(agentId, out _, out var sessionId))
+        if (!TryResolveConversationSession(agentId, conversationId, out var conv, out var sessionId))
             return;
 
         try
@@ -369,14 +373,15 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            AppendError(agentId, $"Reset failed: {ex.Message}");
+            AppendTo(conv, "Error", $"Reset failed: {ex.Message}");
         }
     }
 
-    public async Task<CompactSessionResult?> CompactSessionAsync(string agentId)
+    public async Task<CompactSessionResult?> CompactSessionAsync(string agentId, string conversationId)
     {
-        if (!TryResolveActiveConversationTarget(agentId, out var convId, out var sessionId))
+        if (!TryResolveConversationSession(agentId, conversationId, out var conv, out var sessionId))
             return null;
+        var convId = conversationId;
 
         try
         {
@@ -386,20 +391,16 @@ public sealed class AgentInteractionService : IAgentInteractionService
             // which path (auto-compact via channel push, or this RPC) triggered
             // compaction. The gateway no longer fans this out via the SignalR
             // channel for hub-initiated compactions, so we render it here.
-            if (_store.GetConversation(convId) is { } conv)
-            {
-                var notificationText = result.Succeeded
-                    ? $"_[Session context compacted: {result.Summarized} older messages summarised, {result.Preserved} recent messages preserved. Continuing…]_"
-                    : $"_[Compaction failed: {result.FailureReason ?? "unknown error"}]_";
-                conv.AppendMessage(new ChatMessage("System", notificationText, DateTimeOffset.UtcNow));
-                _store.NotifyChanged();
-            }
+            var notificationText = result.Succeeded
+                ? $"_[Session context compacted: {result.Summarized} older messages summarised, {result.Preserved} recent messages preserved. Continuing…]_"
+                : $"_[Compaction failed: {result.FailureReason ?? "unknown error"}]_";
+            AppendTo(conv, "System", notificationText);
 
             return result;
         }
         catch (Exception ex)
         {
-            AppendError(agentId, $"Compact failed: {ex.Message}");
+            AppendTo(conv, "Error", $"Compact failed: {ex.Message}");
             return null;
         }
     }
@@ -879,10 +880,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// <summary>
     /// #2873: dispatches a gateway-owned slash command to <c>POST /api/commands/execute</c> and
     /// renders the resulting <c>CommandResult</c> locally. Deliberately has NO fall-through to
-    /// <see cref="SendMessageAsync(string, string)"/>: the whole defect was that command text
+    /// <see cref="SendMessageAsync(string, string, string)"/>: the whole defect was that command text
     /// reached the model, so every failure path here appends a visible Error row instead.
+    /// #3211: the conversation is an explicit argument rather than an ambient re-read, so the result
+    /// row can never render into a conversation the user is not looking at.
     /// </summary>
-    public async Task<bool> ExecuteGatewayCommandAsync(string agentId, string commandText)
+    public async Task<bool> ExecuteGatewayCommandAsync(string agentId, string conversationId, string commandText)
     {
         if (string.IsNullOrWhiteSpace(commandText))
         {
@@ -891,8 +894,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
 
         var agent = _store.GetAgent(agentId);
-        var convId = agent?.ActiveConversationId;
-        if (convId is null || agent!.Conversations.GetValueOrDefault(convId) is not { } conv)
+        if (string.IsNullOrEmpty(conversationId) ||
+            agent?.Conversations.GetValueOrDefault(conversationId) is not { } conv)
         {
             AppendError(agentId, $"Cannot run {commandText}: no active conversation.");
             return false;
@@ -907,19 +910,19 @@ public sealed class AgentInteractionService : IAgentInteractionService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Gateway command {Command} failed for agent {AgentId}.", Sanitise(commandText), Sanitise(agentId));
-            AppendError(agentId, $"Command {commandText} failed: {ex.Message}");
+            AppendTo(conv, "Error", $"Command {commandText} failed: {ex.Message}");
             return false;
         }
 
         if (result is null)
         {
-            AppendError(agentId, $"Command {commandText} was rejected by the gateway.");
+            AppendTo(conv, "Error", $"Command {commandText} was rejected by the gateway.");
             return false;
         }
 
         if (result.IsError)
         {
-            AppendError(agentId, $"{result.Title}: {result.Body}");
+            AppendTo(conv, "Error", $"{result.Title}: {result.Body}");
             return false;
         }
 
@@ -937,12 +940,13 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// </summary>
     public const string GatewayCommandKind = "gateway-command";
 
-    public void ClearLocalMessages(string agentId)
+    public void ClearLocalMessages(string agentId, string conversationId)
     {
+        if (string.IsNullOrEmpty(conversationId)) return;
         var agent = _store.GetAgent(agentId);
-        if (agent?.ActiveConversationId is null) return;
+        if (agent is null) return;
 
-        var conv = agent.Conversations.GetValueOrDefault(agent.ActiveConversationId);
+        var conv = agent.Conversations.GetValueOrDefault(conversationId);
         if (conv is null) return;
 
         conv.ClearMessages();
@@ -1246,7 +1250,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// Appends a locally-rendered row to an EXPLICITLY named conversation (#3063). The ambient
     /// <see cref="AppendUserMessage"/>/<see cref="AppendError"/> pair resolve their target through
     /// <c>ActiveConversationId</c>; the send path knows its conversation and must not consult
-    /// ambient state to echo into it.
+    /// ambient state to echo into it. #3211 moved every ACTION path (steer, follow-up, abort,
+    /// redirect, reset, compact, gateway command) onto this helper too, so a local echo can no
+    /// longer appear in a conversation other than the one the action targeted.
     /// </summary>
     private void AppendTo(ConversationState conversation, string role, string content)
     {

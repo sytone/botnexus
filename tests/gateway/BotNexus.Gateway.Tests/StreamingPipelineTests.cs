@@ -161,7 +161,7 @@ public sealed class StreamingPipelineTests
         var handle = new Mock<IAgentHandle>();
         handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
         handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
-        handle.Setup(h => h.PromptAsync(It.IsAny<BotNexus.Agent.Core.Types.UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.PromptAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "one shot" });
         await using var host = CreateHostWithHandle(sessionStore, channel.Object, handle.Object);
 
@@ -219,7 +219,7 @@ public sealed class StreamingPipelineTests
         handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
         handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
-        handle.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Agent.Core.Types.UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(streamEvents);
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))

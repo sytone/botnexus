@@ -319,10 +319,10 @@ public sealed class Phase5IntegrationTests
             }
         }
 
-        public Task<AgentResponse> PromptAsync(UserMessage message, CancellationToken cancellationToken = default)
+        public Task<AgentResponse> PromptAsync(BotNexus.Gateway.Abstractions.Models.AgentUserMessage message, CancellationToken cancellationToken = default)
             => PromptAsync(message.Content, cancellationToken);
 
-        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(UserMessage message, CancellationToken cancellationToken = default)
+        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(BotNexus.Gateway.Abstractions.Models.AgentUserMessage message, CancellationToken cancellationToken = default)
             => StreamAsync(message.Content, cancellationToken);
 
         public Task AbortAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

@@ -89,6 +89,25 @@ The tool respects the agent's workspace directory as the default working directo
 - The default timeout of 2 minutes applies unless overridden. Background processes have a separate 10-minute default.
 - When `noOutputTimeoutMs` is set, the process is killed if it produces no stdout/stderr within that window.
 
+## Failure Dispositions - Is It Safe To Retry?
+
+Every non-successful `exec` result carries a **disposition** stating how much the platform actually
+knows about whether the command's side effect happened. Before this existed a flat error string made
+a no-output-timeout kill indistinguishable from a command that never started - and the natural
+recovery from a flat error is to rerun it, which for a non-idempotent command executes the side
+effect a second time.
+
+| Disposition | Meaning | Retry-safe? |
+|---|---|---|
+| Completed | The command ran to completion; its exit status is authoritative. | n/a - the result is final |
+| `[not-dispatched]` | The command **provably never started**, so no side effect can have occurred. | **Yes**, once the underlying cause is resolved |
+| `[outcome-unknown]` | The command was dispatched but no authoritative result was obtained (killed on a timeout, a no-output timeout, or cancellation). It **may** have completed its side effect. | **No** - verify externally first |
+
+The two markers prefix guidance appended to the tool result, so the calling agent reads the
+retry-safety instruction directly rather than inferring it from the error text. Treat
+`[outcome-unknown]` as "I do not know", never as "it failed": for a non-idempotent command (a push, a
+deployment, a payment, a `git commit`) check the target system's state before doing anything else.
+
 ## Security
 
 - Commands run with the same permissions as the BotNexus gateway process.

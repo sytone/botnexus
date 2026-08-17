@@ -34,6 +34,9 @@ public sealed class DelayTool : IAgentTool
     public string Name => "delay";
     public string Label => "Delay / Wait";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Returns only a locally generated delay confirmation.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Pause execution for a specified duration. Use to wait before performing an action, or to create polling loops (e.g., review a document every few minutes).",

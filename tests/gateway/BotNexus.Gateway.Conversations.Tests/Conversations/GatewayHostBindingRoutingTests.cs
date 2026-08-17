@@ -147,7 +147,7 @@ public sealed class GatewayHostBindingRoutingTests
             .Returns(ToAsyncEnumerable([
                 new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello world" }
             ]));
-        handle.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerable([
                 new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello world" }
             ]));
@@ -269,7 +269,7 @@ public sealed class GatewayHostBindingRoutingTests
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });
-        handle.Setup(h => h.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.PromptAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });
         return handle;
     }
