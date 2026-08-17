@@ -489,6 +489,48 @@ A policy states what *should* happen. The merge engine reads it to decide what *
 Where the two disagree, that is a defect in the engine, not a reason to relabel the property.
 :::
 
+#### How the layers resolve
+
+The shared inheritance engine executes the declared policies against a stack of layers, lowest
+precedence first. For agents that stack is `agents.defaults`, then the individual agent block.
+
+The engine reads the **raw configuration document**, not a bound object. That is not an
+implementation detail: binding to a typed object collapses "the key was absent" and "the key was set
+to `null`" into an identical null field, and those two mean opposite things.
+
+| In the child layer | Means | Result |
+|---|---|---|
+| Key absent | "inherit from the layer above" | The parent's value is used |
+| Key present, value `null` | "suppress the inherited value" | No value, and the parent's is *not* restored |
+| Key present with a value | "override" | The child's value is used |
+
+This distinction is preserved end to end, including through the SQLite configuration store, because a
+relational `NULL` column cannot express it either.
+
+**Explicit falsy values are decisions, not absences.** `false`, `0`, `""`, `[]` and `{}` set in a
+child layer all override an inherited value. A merge written as `child ?? parent`, or one that skips
+a value equal to its type default, silently discards every one of them - an operator who sets
+`enabled: false` gets the inherited `true` and no error.
+
+**Inherited values are never copied into the child.** The engine does not write to any input layer
+and never materialises a value no layer supplied. Two consequences matter: an inherited secret stays
+in the layer that owns it rather than being duplicated into each agent block, and a child that
+inherits a value keeps tracking that value when the default later changes, instead of being frozen
+against the value that happened to be current when it was last saved.
+
+#### Provenance and validation
+
+The engine records which layer supplied each effective property. That drives the inherited/override
+indicators in the configuration UI, and it changes what a validation error can tell you:
+
+```
+heartbeat.intervalMinutes (from layer 'agents.defaults'): must be greater than zero
+```
+
+Without the layer name, an operator reads that the property is invalid, inspects their own agent
+block, finds nothing wrong, and is stuck - because the offending value came from the shared defaults
+layer. Naming both coordinates turns the hunt into a single edit.
+
 #### Per-agent properties
 
 Backed by `AgentDefinitionConfig`. Every key below is a real, bound property; a per-agent value
@@ -579,53 +621,66 @@ All providers inherit these properties:
 
 #### Copilot Provider: Supported Models
 
-The Copilot provider exposes **26 registered models** organized by API format:
+The Copilot provider exposes **31 registered models** organized by API format. The table below is
+generated from the built-in registrations in `BuiltInModels.cs`; `botnexus provider list --provider
+github-copilot` prints the same set from the live registry, which is the authority if the two ever
+disagree. **Extra-high** marks a model that accepts the `xhigh` thinking level.
 
 ##### Claude Models (Anthropic Messages API)
-| Model ID | Name | Reasoning | Context | Max Output | Input Types |
-|---|---|---|---|---|---|
-| `claude-haiku-4.5` | Claude Haiku 4.5 | No | 200K | 8K | text, image |
-| `claude-opus-4.5` | Claude Opus 4.5 | No | 200K | 16K | text, image |
-| `claude-opus-4.6` | Claude Opus 4.6 | **Yes** | 1M | 64K | text, image |
-| `claude-sonnet-4` | Claude Sonnet 4 | No | 200K | 8K | text, image |
-| `claude-sonnet-4.5` | Claude Sonnet 4.5 | No | 200K | 8K | text, image |
-| `claude-sonnet-4.6` | Claude Sonnet 4.6 | **Yes** | 200K | 8K | text, image |
+| Model ID | Name | Reasoning | Extra-high | Context | Max Output | Input Types |
+|---|---|---|---|---|---|---|
+| `claude-haiku-4.5` | Claude Haiku 4.5 | **Yes** | No | 144K | 32K | text, image |
+| `claude-opus-4.5` | Claude Opus 4.5 | **Yes** | No | 160K | 32K | text, image |
+| `claude-opus-4.6` | Claude Opus 4.6 | **Yes** | **Yes** | 200K | 64K | text, image |
+| `claude-opus-4.8` | Claude Opus 4.8 | **Yes** | **Yes** | 200K | 64K | text, image |
+| `claude-opus-5` | Claude Opus 5 | **Yes** | **Yes** | 200K | 64K | text, image |
+| `claude-sonnet-4` | Claude Sonnet 4 | **Yes** | No | 216K | 16K | text, image |
+| `claude-sonnet-4.5` | Claude Sonnet 4.5 | **Yes** | No | 144K | 32K | text, image |
+| `claude-sonnet-4.6` | Claude Sonnet 4.6 | **Yes** | No | 200K | 32K | text, image |
 
 ##### GPT Models (OpenAI Completions API)
-| Model ID | Name | Reasoning | Context | Max Output | Input Types |
-|---|---|---|---|---|---|
-| `gpt-4o` | GPT-4o | No | 128K | 16K | text, image |
-| `gpt-4o-mini` | GPT-4o mini | No | 128K | 16K | text, image |
-| `gpt-4.1` | GPT-4.1 | No | 128K | 16K | text |
-| `o1` | o1 | **Yes** | 200K | 100K | text, image |
-| `o1-mini` | o1-mini | **Yes** | 128K | 65K | text |
-| `o3` | o3 | **Yes** | 200K | 100K | text |
-| `o3-mini` | o3-mini | **Yes** | 200K | 100K | text |
-| `o4-mini` | o4-mini | **Yes** | 200K | 100K | text |
+| Model ID | Name | Reasoning | Extra-high | Context | Max Output | Input Types |
+|---|---|---|---|---|---|---|
+| `gpt-4o` | GPT-4o | No | No | 128K | 4K | text, image |
+| `gpt-4.1` | GPT-4.1 | No | No | 128K | 16K | text, image |
 
 ##### GPT-5 Models (OpenAI Responses API)
-| Model ID | Name | Reasoning | Context | Max Output | Input Types |
-|---|---|---|---|---|---|
-| `gpt-5` | GPT-5 | No | 200K | 100K | text |
-| `gpt-5-mini` | GPT-5 mini | No | 200K | 100K | text |
-| `gpt-5.1` | GPT-5.1 | No | 200K | 100K | text |
-| `gpt-5.2` | GPT-5.2 | No | 200K | 100K | text |
-| `gpt-5.2-codex` | GPT-5.2-Codex | No | 200K | 100K | text |
-| `gpt-5.4` | GPT-5.4 | No | 200K | 100K | text |
-| `gpt-5.4-mini` | GPT-5.4 mini | No | 200K | 100K | text |
+| Model ID | Name | Reasoning | Extra-high | Context | Max Output | Input Types |
+|---|---|---|---|---|---|---|
+| `gpt-5` | GPT-5 | **Yes** | No | 128K | 128K | text, image |
+| `gpt-5-mini` | GPT-5-mini | **Yes** | No | 264K | 64K | text, image |
+| `gpt-5.1` | GPT-5.1 | **Yes** | No | 264K | 64K | text, image |
+| `gpt-5.1-codex` | GPT-5.1-Codex | **Yes** | No | 400K | 128K | text, image |
+| `gpt-5.1-codex-max` | GPT-5.1-Codex-max | **Yes** | No | 400K | 128K | text, image |
+| `gpt-5.1-codex-mini` | GPT-5.1-Codex-mini | **Yes** | No | 400K | 128K | text, image |
+| `gpt-5.2` | GPT-5.2 | **Yes** | **Yes** | 264K | 64K | text, image |
+| `gpt-5.2-codex` | GPT-5.2-Codex | **Yes** | **Yes** | 400K | 128K | text, image |
+| `gpt-5.3-codex` | GPT-5.3-Codex | **Yes** | **Yes** | 400K | 128K | text, image |
+| `gpt-5.4` | GPT-5.4 | **Yes** | **Yes** | 400K | 128K | text, image |
+| `gpt-5.4-mini` | GPT-5.4 mini | **Yes** | **Yes** | 400K | 128K | text, image |
+| `gpt-5.5` | GPT-5.5 | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-5.6` | GPT-5.6 | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-5.6-luna` | GPT-5.6 Luna | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-5.6-sol` | GPT-5.6 Sol | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-5.6-terra` | GPT-5.6 Terra | **Yes** | **Yes** | 922K | 128K | text, image |
 
 ##### Gemini Models (OpenAI Completions API)
-| Model ID | Name | Reasoning | Context | Max Output | Input Types |
-|---|---|---|---|---|---|
-| `gemini-2.5-pro` | Gemini 2.5 Pro | No | 1M | 8K | text, image |
-| `gemini-3-flash-preview` | Gemini 3 Flash Preview | No | 1M | 8K | text, image |
-| `gemini-3-pro-preview` | Gemini 3 Pro Preview | No | 2M | 8K | text, image |
-| `gemini-3.1-pro-preview` | Gemini 3.1 Pro Preview | No | 2M | 8K | text, image |
+| Model ID | Name | Reasoning | Extra-high | Context | Max Output | Input Types |
+|---|---|---|---|---|---|---|
+| `gemini-2.5-pro` | Gemini 2.5 Pro | No | No | 128K | 64K | text, image |
+| `gemini-3-flash-preview` | Gemini 3 Flash | **Yes** | No | 128K | 64K | text, image |
+| `gemini-3-pro-preview` | Gemini 3 Pro Preview | **Yes** | No | 128K | 64K | text, image |
+| `gemini-3.1-pro-preview` | Gemini 3.1 Pro Preview | **Yes** | No | 128K | 64K | text, image |
 
 ##### Grok Models (OpenAI Completions API)
-| Model ID | Name | Reasoning | Context | Max Output | Input Types |
-|---|---|---|---|---|---|
-| `grok-code-fast-1` | Grok Code Fast 1 | No | 131K | 32K | text |
+| Model ID | Name | Reasoning | Extra-high | Context | Max Output | Input Types |
+|---|---|---|---|---|---|---|
+| `grok-code-fast-1` | Grok Code Fast 1 | **Yes** | No | 128K | 64K | text |
+
+> **Not available through Copilot.** Earlier revisions of this page listed `gpt-4o-mini`, `o1`,
+> `o1-mini`, `o3`, `o3-mini` and `o4-mini` under the Copilot provider. None of them is registered
+> for `github-copilot`; selecting one fails model resolution. `o3` and `o4-mini` are registered for
+> the **`openai`** provider only - reach them with an explicit `openai/o3` style model reference.
 
 **Configuration Example:**
 

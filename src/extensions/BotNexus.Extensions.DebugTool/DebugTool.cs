@@ -52,6 +52,9 @@ public sealed class DebugTool : IAgentTool
     public string Name => "platform_debug";
     public string Label => "Platform Debug";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Locally generated diagnostics.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Read-only inspection of platform sessions.db and gateway runtime state. Query sessions, conversations, history, sub-agents, or execute raw SELECT statements against the platform database.",

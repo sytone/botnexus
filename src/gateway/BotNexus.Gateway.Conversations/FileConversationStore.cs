@@ -332,6 +332,8 @@ public sealed class FileConversationStore : IConversationStore
                 conversation.ThinkingOverride = patch.Thinking.Value;
             if (patch.ContextWindow.IsSet)
                 conversation.ContextWindowOverride = patch.ContextWindow.Value;
+            if (patch.ToolOverrideJson.IsSet)
+                conversation.ToolOverrideJson = patch.ToolOverrideJson.Value;
             conversation.UpdatedAt = DateTimeOffset.UtcNow;
             await WriteFileAsync(conversation, ct).ConfigureAwait(false);
             return BackfillWorldId(conversation);

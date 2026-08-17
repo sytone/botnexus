@@ -21,6 +21,14 @@ public sealed record AddBindingRequest(
     string? ThreadingMode,
     string? DisplayPrefix);
 
+/// <summary>
+/// Request body for moving an existing channel binding to a different conversation
+/// (issue #140). The binding keeps its identity, address and mode; only its owning
+/// conversation changes, so channel history and routing continuity are preserved.
+/// </summary>
+/// <param name="TargetConversationId">The conversation to re-parent the binding onto. Must exist, must belong to the same agent, and must not already hold a binding for the same (channel type, address) pair.</param>
+public sealed record MoveBindingRequest(string TargetConversationId);
+
 /// <summary>Full conversation response including bindings.</summary>
 /// <remarks>
 /// <c>Kind</c>, <c>Source</c> and <c>Visibility</c> are the orthogonal provenance axes a client needs

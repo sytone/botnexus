@@ -307,6 +307,20 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 extensionResourcesToDispose.AddRange(contribution.ResourcesToDispose);
         }
 
+        // #2523: apply the per-session narrowing overlay LAST, once every source (workspace,
+        // registry, memory, providers, contributors) has contributed. Applying it earlier would
+        // miss the tools appended after that point, which is precisely the hole that would let a
+        // "disable exec for this session" instruction leave exec reachable.
+        //
+        // Narrowing-only by construction: SessionToolOverrideResolver filters THIS list and never
+        // appends, so a conversation override cannot introduce a tool the agent was not already
+        // going to receive. Pinned by SessionToolOverrideResolverTests on the resolved list.
+        tools = await ApplySessionToolOverrideAsync(
+            tools,
+            conversationStore => GetConversationIdAsync(conversationStore, _serviceProvider.GetService<ISessionStore>()),
+            descriptor.AgentId,
+            cancellationToken).ConfigureAwait(false);
+
         var hookDispatcher = _serviceProvider.GetService<IHookDispatcher>();
         BeforeToolCallDelegate? beforeToolCall = null;
         AfterToolCallDelegate? afterToolCall = null;
@@ -798,6 +812,71 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         }
     }
 
+    /// <summary>
+    /// Applies the bound conversation's per-session tool overlay to the fully-assembled tool list
+    /// (issue #2523), returning the narrowed list.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Returns <paramref name="tools"/> unchanged whenever there is no conversation store, no bound
+    /// conversation, no persisted overlay, or an unparseable one. That is deliberate: this overlay
+    /// is a convenience lever for reducing blast radius, NOT the security boundary. The agent's
+    /// configured tool set is the boundary, and it is what the overlay narrows from - so failing
+    /// open here can only ever restore the agent's normal, already-authorised tool set.
+    /// </para>
+    /// <para>
+    /// A refused widening is logged at warning: an operator who asked for a tool the agent does not
+    /// have needs to see that the request was dropped rather than silently ignored.
+    /// </para>
+    /// </remarks>
+    private async Task<List<IAgentTool>> ApplySessionToolOverrideAsync(
+        List<IAgentTool> tools,
+        Func<IConversationStore, Task<ConversationId?>> resolveConversationId,
+        AgentId agentId,
+        CancellationToken cancellationToken)
+    {
+        var conversationStore = _serviceProvider.GetService<IConversationStore>();
+        if (conversationStore is null)
+            return tools;
+
+        var conversationId = await resolveConversationId(conversationStore).ConfigureAwait(false);
+        if (conversationId is not { } id)
+            return tools;
+
+        var conversation = await conversationStore.GetAsync(id, cancellationToken).ConfigureAwait(false);
+        var overrides = SessionToolOverride.FromJson(conversation?.ToolOverrideJson);
+        if (overrides is null || !overrides.HasRestrictions)
+            return tools;
+
+        var policyProvider = _serviceProvider.GetService<DefaultToolPolicyProvider>();
+        var resolution = SessionToolOverrideResolver.Resolve(
+            [.. tools.Select(tool => tool.Name)],
+            overrides,
+            isPinned: policyProvider is null
+                ? DefaultToolPolicyProvider.RuntimePinnedTools.Contains
+                : policyProvider.IsPinned);
+
+        if (resolution.RefusedTools.Count > 0)
+        {
+            _logger.LogWarning(
+                "Session tool override for conversation '{ConversationId}' (agent '{AgentId}') requested {Count} tool(s) the agent does not have: {Refused}. " +
+                "Refused - this overlay can only narrow the agent's configured tool set, never widen it. Edit the agent's toolIds to grant a tool.",
+                id.Value, agentId.Value, resolution.RefusedTools.Count, string.Join(", ", resolution.RefusedTools));
+        }
+
+        if (!resolution.IsNarrowed && resolution.RefusedTools.Count == 0)
+            return tools;
+
+        var allowed = new HashSet<string>(resolution.Tools, StringComparer.OrdinalIgnoreCase);
+        var narrowed = tools.Where(tool => allowed.Contains(tool.Name)).ToList();
+
+        _logger.LogInformation(
+            "Session tool override narrowed agent '{AgentId}' from {Before} to {After} tool(s) for conversation '{ConversationId}'.",
+            agentId.Value, tools.Count, narrowed.Count, id.Value);
+
+        return narrowed;
+    }
+
     private static async Task<ConversationId?> ResolveConversationIdAsync(
         IConversationStore conversationStore,
         ISessionStore? sessionStore,
@@ -1033,7 +1112,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
-    public async Task<AgentResponse> PromptAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    public async Task<AgentResponse> PromptAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
         using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", AgentId);
@@ -1044,7 +1123,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         _activityTracker?.RecordActivity();
         try
         {
-            var messages = await _agent.PromptAsync(message, cancellationToken);
+            var messages = await _agent.PromptAsync(message.ToCore(), cancellationToken);
             var response = BuildResponse(messages);
 
             activity?.SetStatus(ActivityStatusCode.Ok);
@@ -1085,8 +1164,55 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         {
             Content = lastAssistant?.Content ?? string.Empty,
             Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            RunUsage = AggregateRunUsage(messages),
+            TurnCount = messages.OfType<AssistantAgentMessage>().Count(),
             ToolCalls = BuildToolCalls(messages, pendingToolCallIds: null)
         };
+    }
+
+    /// <summary>
+    /// #2641: sums provider-reported usage across every assistant message in a run so a blocking
+    /// caller (cron) can record what the whole run cost, not just its final turn.
+    /// </summary>
+    /// <remarks>
+    /// Returns <c>null</c> - not a zeroed usage - when no assistant message carried usage at all.
+    /// A zero here would reach <c>cron_runs.prompt_tokens</c> as a measured zero and present an
+    /// unmeasured run as a free one, which is the single most misleading value this feature can
+    /// produce. Only messages that actually reported usage contribute.
+    /// </remarks>
+    internal static AgentResponseUsage? AggregateRunUsage(IReadOnlyList<AgentMessage> messages)
+    {
+        long input = 0;
+        long output = 0;
+        var measured = false;
+
+        foreach (var assistant in messages.OfType<AssistantAgentMessage>())
+        {
+            if (assistant.Usage is not { } usage)
+                continue;
+
+            if (usage.InputTokens is null && usage.OutputTokens is null
+                && usage.CacheRead is null && usage.CacheWrite is null)
+            {
+                continue;
+            }
+
+            measured = true;
+
+            // Cache reads/writes are part of the prompt the model actually saw and are billed, so
+            // they are folded into the prompt side - the same total ProviderTokenUsageRecorder
+            // resolves. Omitting them would under-report cache-heavy providers by most of the
+            // prompt.
+            input += (usage.InputTokens ?? 0) + (usage.CacheRead ?? 0) + (usage.CacheWrite ?? 0);
+            output += usage.OutputTokens ?? 0;
+        }
+
+        if (!measured)
+            return null;
+
+        return new AgentResponseUsage(
+            InputTokens: input > int.MaxValue ? int.MaxValue : (int)input,
+            OutputTokens: output > int.MaxValue ? int.MaxValue : (int)output);
     }
 
     /// <summary>
@@ -1104,6 +1230,11 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         {
             Content = lastAssistant?.Content ?? string.Empty,
             Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            // #2641 AC1: an interrupted run still cost what it cost. Carrying the aggregate out on
+            // the partial response is what lets the timeout/abort paths record a real figure
+            // instead of leaving the most expensive runs on the platform unmeasured.
+            RunUsage = AggregateRunUsage(snapshot),
+            TurnCount = snapshot.OfType<AssistantAgentMessage>().Count(),
             ToolCalls = BuildToolCalls(snapshot, _agent.State.PendingToolCalls)
         };
         return new AgentPromptInterruptedException(partial, oce.CancellationToken);
@@ -1301,8 +1432,11 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
 
     /// <inheritdoc />
-    public IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
-        => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
+    public IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
+    {
+        var core = message.ToCore();
+        return StreamCoreAsync(ct => _agent.PromptAsync(core, ct), cancellationToken);
+    }
 
     /// <summary>
     /// Maps a raw <see cref="AgentEvent"/> to the gateway-facing <see cref="AgentStreamEvent"/>, or
@@ -1616,9 +1750,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// #2484: injects the COMPOSED message (text plus any vision payload) verbatim, so a steer
     /// dispatched with draft attachments delivers them. The string overload cannot carry images.
     /// </remarks>
-    public Task SteerAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    public Task SteerAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
-        _agent.Steer(message);
+        _agent.Steer(message.ToCore());
         return Task.CompletedTask;
     }
 
@@ -1656,13 +1790,13 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// #2484 typed counterpart: same abort/clear/enqueue sequence, but the composed message
     /// (including its vision payload) is enqueued intact instead of text only.
     /// </remarks>
-    public async Task InterruptAndSteerAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    public async Task InterruptAndSteerAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
 
         await _agent.AbortAsync();
         _agent.ClearSteeringQueue();
-        _agent.Steer(message);
+        _agent.Steer(message.ToCore());
     }
 
     /// <inheritdoc />
@@ -1722,19 +1856,22 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// is what round-trips through the pending-message queue, so a follow-up issued with draft
     /// attachments still carries them when the queue is drained after the current run settles.
     /// </remarks>
-    public Task<bool> TryFollowUpWhileRunningAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    public Task<bool> TryFollowUpWhileRunningAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
 
         if (!IsRunning)
             return Task.FromResult(false);
 
-        _agent.FollowUp(message);
+        // Map ONCE: the reclaim below is identity-sensitive, so the instance enqueued and the
+        // instance reclaimed must be the same object (#2438 ordering preserved under #3040).
+        var core = message.ToCore();
+        _agent.FollowUp(core);
 
         if (IsRunning)
             return Task.FromResult(true);
 
-        var reclaimedTyped = _agent.TryReclaimFollowUp(message);
+        var reclaimedTyped = _agent.TryReclaimFollowUp(core);
         return Task.FromResult(!reclaimedTyped);
     }
 

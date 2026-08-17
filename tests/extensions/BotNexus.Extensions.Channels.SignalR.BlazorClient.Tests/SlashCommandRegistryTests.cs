@@ -89,7 +89,7 @@ public class SlashCommandDispatcherTests
 
         await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
-        await interaction.Received(1).ResetSessionAsync(AgentId);
+        await interaction.Received(1).ResetSessionAsync(AgentId, ConversationId);
     }
 
     [Fact]
@@ -100,7 +100,7 @@ public class SlashCommandDispatcherTests
 
         await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
-        await interaction.Received(1).CompactSessionAsync(AgentId);
+        await interaction.Received(1).CompactSessionAsync(AgentId, ConversationId);
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class SlashCommandDispatcherTests
 
         await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
-        interaction.Received(1).ClearLocalMessages(AgentId);
+        interaction.Received(1).ClearLocalMessages(AgentId, ConversationId);
     }
 
     [Fact]
@@ -143,7 +143,7 @@ public class SlashCommandDispatcherTests
 
         await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
-        await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, name);
+        await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, ConversationId, name);
         await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 

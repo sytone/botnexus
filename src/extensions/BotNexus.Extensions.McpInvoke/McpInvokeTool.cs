@@ -50,6 +50,9 @@ public sealed class McpInvokeTool : IAgentTool, IAsyncDisposable
     /// <inheritdoc />
     public string Label => "MCP Invoke";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Relays a response from an arbitrary MCP endpoint chosen at call time.</summary>
+    public string ContentSource => ToolContentSource.Untrusted;
+
     /// <inheritdoc />
     public Tool Definition => new(
         Name,

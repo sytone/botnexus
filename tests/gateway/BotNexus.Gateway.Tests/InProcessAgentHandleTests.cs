@@ -72,11 +72,11 @@ public sealed class InProcessAgentHandleTests
         var capturingProvider = new CapturingStreamingTestProvider();
         var (_, handle) = CreateHandle(capturingProvider);
 
-        var images = new List<AgentImageContent>
+        var images = new List<BotNexus.Gateway.Abstractions.Models.AgentImageContent>
         {
             new("data:image/jpeg;base64,/9j/4AAQ==")
         };
-        var userMessage = new BotNexus.Agent.Core.Types.UserMessage("describe this image", images);
+        var userMessage = new BotNexus.Gateway.Abstractions.Models.AgentUserMessage("describe this image", images);
 
         var events = new List<AgentStreamEvent>();
         await foreach (var evt in handle.StreamAsync(userMessage))
@@ -108,11 +108,11 @@ public sealed class InProcessAgentHandleTests
         var capturingProvider = new CapturingStreamingTestProvider();
         var (_, handle) = CreateHandle(capturingProvider);
 
-        var images = new List<AgentImageContent>
+        var images = new List<BotNexus.Gateway.Abstractions.Models.AgentImageContent>
         {
             new("https://example.com/diagram.png")
         };
-        var userMessage = new BotNexus.Agent.Core.Types.UserMessage("explain the diagram", images);
+        var userMessage = new BotNexus.Gateway.Abstractions.Models.AgentUserMessage("explain the diagram", images);
 
         var response = await handle.PromptAsync(userMessage);
 

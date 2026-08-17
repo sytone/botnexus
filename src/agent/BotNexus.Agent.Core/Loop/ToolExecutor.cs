@@ -72,6 +72,8 @@ internal static class ToolExecutor
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            RecordTurnTaint(preparation.Prepared?.Tool, toolCall);
+
             var (result, isError) = preparation.Prepared is null
                 ? (preparation.Result!, preparation.IsError)
                 : await ExecutePreparedToolCallAsync(preparation.Prepared, emit, cancellationToken, config.ToolTimeout).ConfigureAwait(false);
@@ -140,6 +142,13 @@ internal static class ToolExecutor
                     config,
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            // Recorded before ANY tool in this batch is dispatched. Parallel mode has no ordering
+            // guarantee between siblings, so a memory_save racing a web_fetch could otherwise
+            // observe a not-yet-tainted turn and launder the fetched content. Preparation is
+            // sequential and completes for every call before execution begins, so classifying here
+            // makes the taint independent of completion order.
+            RecordTurnTaint(preparation.Prepared?.Tool, toolCall);
 
             if (preparation.Prepared is null)
             {
@@ -521,6 +530,49 @@ internal static class ToolExecutor
     /// </remarks>
     private static AgentToolResult ApplyOutputBudget(AgentToolResult result, AgentLoopConfig config)
         => ToolOutputBudget.Apply(result, config.EffectiveMaxToolOutputBytes);
+
+    /// <summary>
+    /// Records the content-source classification of a resolved tool into the ambient turn taint
+    /// scope (#2519), so a memory write later in the same run can be quarantined if any foreign
+    /// content was consumed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <see langword="null"/> tool means the call never resolved - an unregistered name, or
+    /// arguments the validator rejected. Nothing executed and no foreign bytes entered the
+    /// context; the only text produced is the executor's own locally generated diagnostic. That is
+    /// genuinely untainted, and deliberately so: treating a typo'd tool name as a taint source
+    /// would let a model poison its own turn by calling a nonexistent tool, converting a harmless
+    /// mistake into a denial of memory writes.
+    /// </para>
+    /// <para>
+    /// Conversely a tool that resolved is recorded regardless of whether its execution later
+    /// succeeds, times out or throws. A failed <c>web_fetch</c> can still have surfaced remote
+    /// bytes - a partial body, a server-controlled error page, an exception message quoting the
+    /// response - so the outcome is not evidence of cleanliness. This is the fail-closed reading.
+    /// </para>
+    /// </remarks>
+    private static void RecordTurnTaint(IAgentTool? tool, ToolCallContent toolCall)
+    {
+        if (tool is null)
+        {
+            return;
+        }
+
+        // The declaration is read defensively: a tool whose ContentSource property throws must not
+        // take the whole turn down, and must not be credited as trusted either. Unknown taints.
+        string declared;
+        try
+        {
+            declared = tool.ContentSource;
+        }
+        catch
+        {
+            declared = ToolContentSource.Unknown;
+        }
+
+        TurnTaintScope.RecordToolResult(toolCall.Name, declared);
+    }
 
     private static AgentToolResult BuildErrorResult(string message)
     {

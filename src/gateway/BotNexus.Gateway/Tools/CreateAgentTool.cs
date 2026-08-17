@@ -29,6 +29,9 @@ public sealed class CreateAgentTool(
     public string Name => "create_agent";
     public string Label => "Create Agent";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Returns a locally generated registration confirmation.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Create and register a new agent in the gateway. The agent will be available immediately after creation.",

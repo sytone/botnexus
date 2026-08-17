@@ -33,7 +33,7 @@ public sealed class FanOutStaleBindingTests
         h.Setup(x => x.IsRunning).Returns(false);
         h.Setup(x => x.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });
-        h.Setup(x => x.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+        h.Setup(x => x.PromptAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });
         return h;
     }

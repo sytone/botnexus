@@ -86,6 +86,9 @@ public sealed class TodoTool(
     public string Name => "todo";
     public string Label => "Todo";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). The agent's own checklist state.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Manage a per-conversation execution checklist the agent keeps for itself to track what it is doing across "

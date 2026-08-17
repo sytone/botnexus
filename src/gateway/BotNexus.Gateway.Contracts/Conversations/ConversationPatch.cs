@@ -74,6 +74,14 @@ public sealed record ConversationOverridePatch
     /// <summary>The context-window override, or a set <c>null</c> to clear it.</summary>
     public FieldUpdate<int?> ContextWindow { get; init; }
 
+    /// <summary>
+    /// The serialized per-session tool overlay (issue #2523), or a set <c>null</c> to clear it back
+    /// to the agent's full configured tool set. Carried on this patch rather than a new one because
+    /// it is the same kind of per-conversation execution override as the model/thinking fields and
+    /// benefits from the identical clobber-avoidance guarantee.
+    /// </summary>
+    public FieldUpdate<string?> ToolOverrideJson { get; init; }
+
     /// <summary>Gets a value indicating whether any field will be written.</summary>
-    public bool HasChanges => Model.IsSet || Thinking.IsSet || ContextWindow.IsSet;
+    public bool HasChanges => Model.IsSet || Thinking.IsSet || ContextWindow.IsSet || ToolOverrideJson.IsSet;
 }

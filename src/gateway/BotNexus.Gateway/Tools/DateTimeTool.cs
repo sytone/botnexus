@@ -36,6 +36,9 @@ public sealed class DateTimeTool : IAgentTool
     /// <inheritdoc />
     public string Label => "Get Date/Time";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Local clock.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <inheritdoc />
     public Tool Definition => new(
         Name,

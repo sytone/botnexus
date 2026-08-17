@@ -11,7 +11,8 @@ public class ProviderLoggingHandlerTests
     // ----- helpers -----
 
     private static (ProviderLoggingHandler handler, List<(LogLevel level, string msg)> logs) CreateHandler(
-        bool debugEnabled = true, HttpMessageHandler? inner = null, Func<string, string>? secretRedactor = null)
+        bool debugEnabled = true, HttpMessageHandler? inner = null, Func<string, string>? secretRedactor = null,
+        Func<bool>? isEnabled = null)
     {
         var captured = new List<(LogLevel level, string msg)>();
         var loggerMock = new Mock<ILogger<ProviderLoggingHandler>>();
@@ -29,7 +30,7 @@ public class ProviderLoggingHandlerTests
                 captured.Add((lvl, formatter.DynamicInvoke(state, null) as string ?? ""));
             });
 
-        var handler = new ProviderLoggingHandler(loggerMock.Object, secretRedactor)
+        var handler = new ProviderLoggingHandler(loggerMock.Object, secretRedactor, isEnabled)
         {
             InnerHandler = inner ?? new OkHandler()
         };
@@ -410,6 +411,102 @@ public class ProviderLoggingHandlerTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => throw new HttpRequestException("boom");
+    }
+
+    // ----- #3282: runtime toggle, re-evaluated per request -----
+
+    /// <summary>
+    /// The core regression for #3282. The SAME handler instance is invoked either side of the flag
+    /// flip, which is what distinguishes a per-request decision from a per-construction one: before
+    /// the fix the enable/disable branch lived in the DI pipeline factory, so a single instance could
+    /// only ever have one behaviour and no config change could alter it without a restart.
+    /// </summary>
+    [Fact]
+    public async Task EnabledPredicate_IsReEvaluatedPerRequest_OnSameHandlerInstance()
+    {
+        var enabled = false;
+        var (handler, logs) = CreateHandler(isEnabled: () => enabled);
+        var invoker = new HttpMessageInvoker(handler);
+
+        await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+        Assert.Empty(logs);
+
+        // Operator flips the flag on a running gateway - no new handler, no new pipeline.
+        enabled = true;
+        await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+        Assert.Contains(logs, l => l.msg.Contains("Provider HTTP request"));
+
+        // ...and off again, which must silence it without a restart.
+        logs.Clear();
+        enabled = false;
+        await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+        Assert.Empty(logs);
+    }
+
+    /// <summary>
+    /// The disabled predicate must short-circuit before any logging, while leaving the request itself
+    /// untouched: a diagnostics toggle that alters provider traffic would be worse than no toggle.
+    /// </summary>
+    [Fact]
+    public async Task DisabledPredicate_SuppressesLogging_ButStillSendsRequest()
+    {
+        var (handler, logs) = CreateHandler(isEnabled: () => false);
+        var invoker = new HttpMessageInvoker(handler);
+
+        var response = await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("{}", await response.Content.ReadAsStringAsync(CancellationToken.None));
+        Assert.Empty(logs);
+    }
+
+    /// <summary>
+    /// Both gates must hold. An operator who sets the flag but leaves the level at Information gets
+    /// no output, so the fix is incomplete without the runtime level switch that #3282 also adds.
+    /// </summary>
+    [Fact]
+    public async Task EnabledPredicate_StillRequiresDebugLevel()
+    {
+        var (handler, logs) = CreateHandler(debugEnabled: false, isEnabled: () => true);
+        var invoker = new HttpMessageInvoker(handler);
+
+        await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+
+        Assert.Empty(logs);
+    }
+
+    /// <summary>
+    /// Omitting the predicate must preserve the pre-#3282 contract - Debug alone decides - so every
+    /// existing construction site and test keeps its behaviour.
+    /// </summary>
+    [Fact]
+    public async Task NullPredicate_LogsWheneverDebugIsEnabled()
+    {
+        var (handler, logs) = CreateHandler(isEnabled: null);
+        var invoker = new HttpMessageInvoker(handler);
+
+        await invoker.SendAsync(MakeRequest(), CancellationToken.None);
+
+        Assert.Contains(logs, l => l.msg.Contains("Provider HTTP request"));
+    }
+
+    /// <summary>
+    /// Redaction is a security control, not a diagnostics feature: enabling the toggle at runtime must
+    /// not open a window in which secrets are logged raw (guards #2669/#2881/#3276).
+    /// </summary>
+    [Fact]
+    public async Task RedactionStillApplies_WhenEnabledViaPredicate()
+    {
+        var (handler, logs) = CreateHandler(isEnabled: () => true);
+        var invoker = new HttpMessageInvoker(handler);
+        var req = MakeRequest();
+        req.Headers.TryAddWithoutValidation("x-api-key", "sk-ant-secret");
+
+        await invoker.SendAsync(req, CancellationToken.None);
+
+        var requestLog = logs.First(l => l.msg.Contains("request"));
+        Assert.Contains("[REDACTED]", requestLog.msg);
+        Assert.DoesNotContain("sk-ant-secret", requestLog.msg);
     }
 
     private sealed class OkHandler : HttpMessageHandler

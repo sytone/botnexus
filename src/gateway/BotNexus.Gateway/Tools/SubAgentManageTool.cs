@@ -14,6 +14,9 @@ public sealed class SubAgentManageTool(
     public string Name => "manage_subagent";
     public string Label => "Manage Sub-Agent";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Gateway-owned sub-agent lifecycle state.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Get status or kill a sub-agent for this session.",

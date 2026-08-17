@@ -1600,6 +1600,145 @@ Each summary carries the run's task lineage (`parentAgentId` / `childAgentId`), 
 
 ---
 
+### Channel History
+
+**Endpoint:** `GET /api/channels/{channelType}/agents/{agentId}/history`
+
+**Description:** Loads an agent's message history for one channel with cursor-based pagination that
+spans **multiple sessions**. Unlike `GET /api/sessions/{id}/history`, which is bounded to a single
+session, this walks backwards across every session the agent has on that channel, newest first, so a
+long-running channel conversation reads as one continuous transcript.
+
+**Path Parameters:**
+- `channelType` (string, required) — the channel key, e.g. `signalr`, `telegram`
+- `agentId` (string, required)
+
+**Query Parameters:**
+- `cursor` (string, optional) — opaque continuation token in `{sessionId}:{messageIndex}` form. Omit
+  for the newest page; on subsequent calls pass the previous response's `nextCursor` verbatim.
+- `limit` (integer, optional, default: 50) — page size. Values above 200 are clamped to 200.
+
+**Response:** 200 OK
+```json
+{
+  "messages": [
+    {
+      "id": "msg-1",
+      "sessionId": "session-abc123",
+      "role": "assistant",
+      "content": "...",
+      "timestamp": "2026-08-17T09:00:00Z",
+      "metadata": {},
+      "toolName": null,
+      "toolCallId": null,
+      "isHistory": false,
+      "isCompactionSummary": false
+    }
+  ],
+  "nextCursor": "session-abc123:120",
+  "hasMore": true,
+  "sessionBoundaries": [
+    { "insertBeforeIndex": 40, "sessionId": "session-abc123", "startedAt": "2026-08-17T08:00:00Z" }
+  ]
+}
+```
+
+- `isHistory` marks an entry inside a folded historical range and `isCompactionSummary` marks a
+  compaction marker, so a client can render those distinctly from live turns. Both default to `false`
+  for consumers that ignore them.
+- `sessionBoundaries` tells the client where to draw a "new session started" divider: insert the
+  marker before the message at `insertBeforeIndex`.
+- **Terminate on `hasMore`, not on a short page.** The server clamps `limit`, so `returned < requested`
+  proves nothing about exhaustion.
+
+**Error Responses:**
+- `400 Bad Request` — `limit` is not greater than zero, or the cursor is malformed or out of range
+
+---
+
+### Conversation Sections
+
+User-defined, ordered, collapsible sidebar groupings and the assignment of conversations into them.
+All state is persisted **server-side per agent and world**, never in browser local storage, so a
+user's organisation survives across browsers, devices and gateway restarts. Deleting a section never
+deletes or archives its conversations — they return to their system section.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/agents/{agentId}/sections` | List sections in display order, plus the assignment map |
+| `POST` | `/api/agents/{agentId}/sections` | Create a section |
+| `PATCH` | `/api/agents/{agentId}/sections/{sectionId}` | Rename and/or set the collapsed preference |
+| `PUT` | `/api/agents/{agentId}/sections/order` | Reorder sections to match the supplied id sequence |
+| `DELETE` | `/api/agents/{agentId}/sections/{sectionId}` | Delete a section |
+| `PUT` | `/api/agents/{agentId}/sections/{sectionId}/conversations/{conversationId}` | Assign a conversation (replaces any prior assignment) |
+| `DELETE` | `/api/agents/{agentId}/sections/conversations/{conversationId}` | Unassign a conversation |
+
+**List response:** 200 OK
+```json
+{
+  "sections": [
+    {
+      "sectionId": "sec-01",
+      "agentId": "farnsworth",
+      "name": "Platform work",
+      "order": 0,
+      "isCollapsed": false,
+      "createdAt": "2026-08-17T09:00:00Z",
+      "updatedAt": "2026-08-17T09:00:00Z"
+    }
+  ],
+  "assignments": { "conv-123": "sec-01" }
+}
+```
+
+**Create body:** `{ "name": "Platform work", "isCollapsed": false }` — `isCollapsed` is optional and
+defaults to `false`. Returns `201 Created` with the section.
+
+**Update body:** `{ "name": "...", "isCollapsed": true }` — both fields are optional but **at least
+one is required**.
+
+**Reorder body:** `{ "sectionIds": ["sec-02", "sec-01"] }`. Returns `204 No Content`.
+
+**Error Responses:**
+- `400 Bad Request` — section name missing/blank, longer than 100 characters, or an update body with
+  neither `name` nor `isCollapsed`
+- `404 Not Found` — the section does not exist (on update, or when assigning a conversation to it)
+
+> **Authorization.** Sections are scoped to an agent's sidebar within a world. The portal transport is
+> currently unauthenticated (#527), so the effective boundary is the agent + world stamped by the
+> store; mutating endpoints resolve the owning agent from the section row.
+
+---
+
+### Cross-World Federation Relay
+
+**Endpoint:** `POST /api/federation/cross-world/relay`
+
+**Description:** Receives a relayed message from a **peer gateway** and runs it through the local
+target agent, returning the agent's response together with the receiver-local session id. This is the
+receiving half of cross-world agent-to-agent exchange; it is called by another BotNexus deployment,
+not by a portal client. It carries its own inbound authentication, separate from the rest of the API.
+
+**Request body:** `sourceWorldId`, `sourceAgentId`, `targetAgentId` and `message` are all required
+and rejected when blank. `remoteSessionId` is optional — supply the value returned by a previous turn
+to continue an in-flight exchange; omit it to mint a fresh session and conversation.
+
+**Response:** 200 OK — the agent's reply plus the receiver-local session id. Store that id as
+`remoteSessionId` for the next turn.
+
+**Error Responses:**
+- `400 Bad Request` — a required field is missing or blank
+- `404 Not Found` — a supplied `remoteSessionId` does not exist
+- `409 Conflict` — the supplied session exists but is not owned by the target agent, is not a
+  cross-world agent-to-agent session, or was minted for a different source world/agent pair
+
+> **Prompt-injection boundary.** Source identity is stashed on the conversation's `metadata` only. It
+> is deliberately **not** promoted into the conversation `title` or `purpose`, both of which are
+> rendered into the target agent's system prompt — putting caller-controlled strings there would be a
+> cross-prompt-injection vector.
+
+---
+
 ## System & Status
 
 ### Gateway Information

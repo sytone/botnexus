@@ -109,7 +109,7 @@ public sealed class GatewayCommandDispatchTests
         var executed = await sut.ExecuteAsync(AgentId, ConversationId, command);
 
         Assert.True(executed);
-        await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, "/status");
+        await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, ConversationId, "/status");
         await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!, default!);
     }
 
@@ -130,7 +130,7 @@ public sealed class GatewayCommandDispatchTests
         await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!, default!);
         await interaction.DidNotReceiveWithAnyArgs()
             .SendMessageAsync(default!, default!, default!, default!);
-        await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, name);
+        await interaction.Received(1).ExecuteGatewayCommandAsync(AgentId, ConversationId, name);
     }
 
     [Fact]
@@ -143,7 +143,7 @@ public sealed class GatewayCommandDispatchTests
         await sut.ExecuteAsync(AgentId, ConversationId, SlashCommandRegistry.All.Single(c => c.Name == "/prompts"));
 
         await interaction.Received(1).SendMessageAsync(AgentId, ConversationId, "/prompts");
-        await interaction.DidNotReceiveWithAnyArgs().ExecuteGatewayCommandAsync(default!, default!);
+        await interaction.DidNotReceiveWithAnyArgs().ExecuteGatewayCommandAsync(default!, default!, default!);
     }
 
     [Fact]
@@ -157,7 +157,7 @@ public sealed class GatewayCommandDispatchTests
         var executed = await new SlashCommandDispatcher(interaction, hook).ExecuteAsync(AgentId, ConversationId, command);
 
         Assert.False(executed);
-        await interaction.DidNotReceiveWithAnyArgs().ExecuteGatewayCommandAsync(default!, default!);
+        await interaction.DidNotReceiveWithAnyArgs().ExecuteGatewayCommandAsync(default!, default!, default!);
     }
 
     // ── AC1: happy path renders the CommandResult ─────────────────────────
@@ -169,7 +169,7 @@ public sealed class GatewayCommandDispatchTests
         rest.ExecuteCommandAsync(Arg.Any<CommandExecuteRequestDto>(), Arg.Any<CancellationToken>())
             .Returns(new CommandResultDto("Gateway Status", "Uptime: 3h", false));
 
-        var ok = await service.ExecuteGatewayCommandAsync(AgentId, "/status");
+        var ok = await service.ExecuteGatewayCommandAsync(AgentId, ConversationId, "/status");
 
         Assert.True(ok);
         var last = Messages(store)[^1];
@@ -188,7 +188,7 @@ public sealed class GatewayCommandDispatchTests
         rest.ExecuteCommandAsync(Arg.Any<CommandExecuteRequestDto>(), Arg.Any<CancellationToken>())
             .Returns(new CommandResultDto("Context", "ok", false));
 
-        await service.ExecuteGatewayCommandAsync(AgentId, "/context");
+        await service.ExecuteGatewayCommandAsync(AgentId, ConversationId, "/context");
 
         await rest.Received(1).ExecuteCommandAsync(
             Arg.Is<CommandExecuteRequestDto>(r =>
@@ -203,7 +203,7 @@ public sealed class GatewayCommandDispatchTests
         rest.ExecuteCommandAsync(Arg.Any<CommandExecuteRequestDto>(), Arg.Any<CancellationToken>())
             .Returns(new CommandResultDto("Gateway Status", "ok", false));
 
-        await service.ExecuteGatewayCommandAsync(AgentId, "/status");
+        await service.ExecuteGatewayCommandAsync(AgentId, ConversationId, "/status");
 
         Assert.DoesNotContain(Messages(store), m => m.Role == "User");
     }
@@ -217,7 +217,7 @@ public sealed class GatewayCommandDispatchTests
         rest.ExecuteCommandAsync(Arg.Any<CommandExecuteRequestDto>(), Arg.Any<CancellationToken>())
             .Returns(new CommandResultDto("Command Not Found", "Unknown command: /nope", true));
 
-        var ok = await service.ExecuteGatewayCommandAsync(AgentId, "/nope");
+        var ok = await service.ExecuteGatewayCommandAsync(AgentId, ConversationId, "/nope");
 
         Assert.False(ok);
         var last = Messages(store)[^1];
@@ -232,7 +232,7 @@ public sealed class GatewayCommandDispatchTests
         rest.ExecuteCommandAsync(Arg.Any<CommandExecuteRequestDto>(), Arg.Any<CancellationToken>())
             .Returns((CommandResultDto?)null);
 
-        var ok = await service.ExecuteGatewayCommandAsync(AgentId, "/status");
+        var ok = await service.ExecuteGatewayCommandAsync(AgentId, ConversationId, "/status");
 
         Assert.False(ok);
         Assert.Equal("Error", Messages(store)[^1].Role);
@@ -245,7 +245,7 @@ public sealed class GatewayCommandDispatchTests
         rest.ExecuteCommandAsync(Arg.Any<CommandExecuteRequestDto>(), Arg.Any<CancellationToken>())
             .Returns<Task<CommandResultDto?>>(_ => throw new HttpRequestException("boom"));
 
-        var ok = await service.ExecuteGatewayCommandAsync(AgentId, "/status");
+        var ok = await service.ExecuteGatewayCommandAsync(AgentId, ConversationId, "/status");
 
         Assert.False(ok);
         var last = Messages(store)[^1];
@@ -258,7 +258,7 @@ public sealed class GatewayCommandDispatchTests
     {
         var (service, _, rest) = CreateService(activeConversationId: null);
 
-        var ok = await service.ExecuteGatewayCommandAsync(AgentId, "/status");
+        var ok = await service.ExecuteGatewayCommandAsync(AgentId, ConversationId, "/status");
 
         Assert.False(ok);
         await rest.DidNotReceiveWithAnyArgs().ExecuteCommandAsync(default!, default);
@@ -269,7 +269,7 @@ public sealed class GatewayCommandDispatchTests
     {
         var (service, _, rest) = CreateService();
 
-        var ok = await service.ExecuteGatewayCommandAsync(AgentId, "   ");
+        var ok = await service.ExecuteGatewayCommandAsync(AgentId, ConversationId, "   ");
 
         Assert.False(ok);
         await rest.DidNotReceiveWithAnyArgs().ExecuteCommandAsync(default!, default);

@@ -28,6 +28,9 @@ public sealed class ProcessTool : IAgentTool
     public string Name => "process";
     public string Label => "Process Manager";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Output of a locally started process.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Manage background processes by PID. List, inspect, send input, read output, or kill processes.",

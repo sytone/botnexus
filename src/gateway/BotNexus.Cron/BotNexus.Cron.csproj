@@ -10,6 +10,8 @@
     <Compile Include="CronJob.cs" />
     <Compile Include="CronWebhookUrl.cs" />
     <Compile Include="CronRun.cs" />
+    <Compile Include="CronRunCost.cs" />
+    <Compile Include="CronJobCostRollup.cs" />
     <Compile Include="CronRunStatus.cs" />
     <Compile Include="ICronAction.cs" />
     <Compile Include="ICronStore.cs" />

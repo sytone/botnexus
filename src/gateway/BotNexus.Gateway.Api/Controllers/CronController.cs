@@ -281,6 +281,36 @@ public sealed class CronController(
         return Ok(await store.GetRunHistoryAsync(typedJobId, limit, cancellationToken));
     }
 
+    /// <summary>
+    /// Per-job cost rollup over a bounded window, ordered by TOTAL spend descending (#2641).
+    /// </summary>
+    /// <remarks>
+    /// Total, not per-run average, is the ranking that matters: a job costing a quarter as much per
+    /// run but firing 24x more often is the larger consumer, and a per-run figure alone reports it
+    /// as the cheaper one. The response echoes the effective window and a
+    /// <c>windowTruncatedByRetention</c> flag so a caller asking for more days than run retention
+    /// holds learns the total is bounded rather than silently reading a truncated number as a
+    /// complete one.
+    /// </remarks>
+    /// <param name="windowDays">Requested window in days; clamped to the configured run retention.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Cost rollups, most expensive total first.</returns>
+    [HttpGet("costs")]
+    public async Task<ActionResult<IReadOnlyList<CronJobCostRollup>>> Costs(
+        [FromQuery] int windowDays = 7,
+        CancellationToken cancellationToken = default)
+    {
+        var jobs = await store.ListAsync(ct: cancellationToken);
+        var jobIds = jobs.Select(job => job.Id).ToArray();
+
+        // An empty job set short-circuits to an empty result rather than an unscoped query - the
+        // #2838 rule, restated here because this controller builds the scope itself.
+        if (jobIds.Length == 0)
+            return Ok(Array.Empty<CronJobCostRollup>());
+
+        return Ok(await store.GetJobCostRollupsAsync(jobIds, windowDays, cancellationToken));
+    }
+
     private static string NormalizeActionType(string? actionType)
     {
         if (string.Equals(actionType, "agent-chat", StringComparison.OrdinalIgnoreCase))

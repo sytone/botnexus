@@ -14,6 +14,9 @@ public sealed class SubAgentListTool(
     public string Name => "list_subagents";
     public string Label => "List Sub-Agents";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Gateway-owned sub-agent registry.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "List active and completed sub-agents for the current session.",

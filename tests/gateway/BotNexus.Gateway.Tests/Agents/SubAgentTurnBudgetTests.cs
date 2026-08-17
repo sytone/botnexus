@@ -244,7 +244,7 @@ public sealed class SubAgentTurnBudgetTests
         }
 
         public Task<AgentResponse> PromptAsync(
-            BotNexus.Agent.Core.Types.UserMessage message,
+            BotNexus.Gateway.Abstractions.Models.AgentUserMessage message,
             CancellationToken cancellationToken = default)
             => PromptAsync(message.Content, cancellationToken);
 
@@ -252,7 +252,7 @@ public sealed class SubAgentTurnBudgetTests
             => throw new NotSupportedException();
 
         public IAsyncEnumerable<AgentStreamEvent> StreamAsync(
-            BotNexus.Agent.Core.Types.UserMessage message,
+            BotNexus.Gateway.Abstractions.Models.AgentUserMessage message,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 

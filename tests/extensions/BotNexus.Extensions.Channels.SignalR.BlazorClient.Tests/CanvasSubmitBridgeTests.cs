@@ -129,16 +129,16 @@ public sealed class CanvasSubmitBridgeTests : IDisposable
 
         public Task SendMessageAsync(string agentId, string conversationId, string content) => throw new NotSupportedException();
         public Task SendMessageAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
-        public Task SteerAsync(string agentId, string content) => throw new NotSupportedException();
-        public Task SteerAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
-        public Task FollowUpAsync(string agentId, string content) => throw new NotSupportedException();
-        public Task FollowUpAsync(string agentId, string content, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
-        public Task AbortAsync(string agentId) => throw new NotSupportedException();
-        public Task InterruptAndSteerAsync(string agentId, string message) => throw new NotSupportedException();
-        public Task InterruptAndSteerAsync(string agentId, string message, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
-        public Task ResetSessionAsync(string agentId) => throw new NotSupportedException();
-        public Task<bool> ExecuteGatewayCommandAsync(string agentId, string commandText) => throw new NotSupportedException();
-        public Task<CompactSessionResult?> CompactSessionAsync(string agentId) => throw new NotSupportedException();
+        public Task SteerAsync(string agentId, string conversationId, string content) => throw new NotSupportedException();
+        public Task SteerAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
+        public Task FollowUpAsync(string agentId, string conversationId, string content) => throw new NotSupportedException();
+        public Task FollowUpAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
+        public Task AbortAsync(string agentId, string conversationId) => throw new NotSupportedException();
+        public Task InterruptAndSteerAsync(string agentId, string conversationId, string message) => throw new NotSupportedException();
+        public Task InterruptAndSteerAsync(string agentId, string conversationId, string message, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
+        public Task ResetSessionAsync(string agentId, string conversationId) => throw new NotSupportedException();
+        public Task<bool> ExecuteGatewayCommandAsync(string agentId, string conversationId, string commandText) => throw new NotSupportedException();
+        public Task<CompactSessionResult?> CompactSessionAsync(string agentId, string conversationId) => throw new NotSupportedException();
         public Task<string?> CreateConversationAsync(string agentId, string? title = null, bool select = true) => throw new NotSupportedException();
         public Task SelectConversationAsync(string agentId, string conversationId) => throw new NotSupportedException();
         public Task<int> LoadMoreHistoryAsync(string agentId, string conversationId) => throw new NotSupportedException();
@@ -149,6 +149,6 @@ public sealed class CanvasSubmitBridgeTests : IDisposable
         public Task RefreshConversationsAsync(string agentId) => throw new NotSupportedException();
         public Task ViewSubAgentAsync(SubAgentInfo subAgent) => throw new NotSupportedException();
         public Task RespondToAskUserAsync(string conversationId, string requestId, string? freeFormText, string[]? selectedValues, bool cancelled) => throw new NotSupportedException();
-        public void ClearLocalMessages(string agentId) => throw new NotSupportedException();
+        public void ClearLocalMessages(string agentId, string conversationId) => throw new NotSupportedException();
     }
 }

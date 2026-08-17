@@ -1713,7 +1713,7 @@ public sealed class ChatPanelTests : IDisposable
 
         await cut.Find(".command-palette .command-item").ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
-        await _interaction.Received(1).ResetSessionAsync("agent-1");
+        await _interaction.Received(1).ResetSessionAsync("agent-1", Arg.Any<string>());
     }
 
     // --- #2141: long conversation title must not overlap header actions -------

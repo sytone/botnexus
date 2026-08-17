@@ -133,6 +133,13 @@ public static class AgentLoopRunner
         var messages = currentContext.Messages.ToList();
         IReadOnlyList<AgentMessage> followUpSeed = [];
 
+        // #2519: taint accumulation is scoped to the whole RUN, not to each provider turn. The
+        // laundering path this closes is inherently multi-turn - the model fetches a page on one
+        // turn, reasons about it on the next, and calls memory_save on a third - so a per-turn
+        // window would be clean again by the time the write happens and would enforce nothing.
+        // Monotonic within the scope: nothing here can clear an accumulated taint.
+        using var taintScope = TurnTaintScope.Begin();
+
         // Post-turn claim auditor (#1600, #1661): each completed turn is audited against the
         // tools that executed ON THAT TURN, so a no-tool fabrication turn is flagged even
         // when an earlier turn in the same run used a backing tool. Auditing is turn-scoped

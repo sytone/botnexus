@@ -3,6 +3,8 @@ using System.Text;
 using BotNexus.Memory.Embeddings;
 using BotNexus.Memory.Models;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
 using BotNexus.Persistence.Sqlite;
 
@@ -13,7 +15,8 @@ public sealed class SqliteMemoryStore(
     IFileSystem? fileSystem = null,
     MemoryLikeFallbackOptions? likeFallbackOptions = null,
     IMemoryEmbeddingService? embeddingService = null,
-    MemoryVectorSearchOptions? vectorSearchOptions = null) : IMemoryStore
+    MemoryVectorSearchOptions? vectorSearchOptions = null,
+    ILogger<SqliteMemoryStore>? logger = null) : IMemoryStore
 {
     private const double DefaultHalfLifeDays = 30d;
     private readonly string _dbPath = dbPath;
@@ -35,6 +38,8 @@ public sealed class SqliteMemoryStore(
 
     private readonly MemoryVectorSearchOptions _vectorSearchOptions =
         vectorSearchOptions ?? MemoryVectorSearchOptions.Default;
+
+    private readonly ILogger<SqliteMemoryStore> _logger = logger ?? NullLogger<SqliteMemoryStore>.Instance;
 
     private bool _initialized;
 
@@ -116,6 +121,12 @@ public sealed class SqliteMemoryStore(
             // captured for those rows, and it reads back as the fail-safe `unknown`.
             await EnsureProvenanceColumnsAsync(connection, ct).ConfigureAwait(false);
 
+            // #3244: report the scan ceiling being exceeded ONCE, here, rather than per query.
+            // Store open is the only place where the condition is a store-level fact rather than a
+            // per-search accident, and a per-query warning on a hot path would be noise an operator
+            // learns to ignore - which is how the condition stayed invisible for so long.
+            await WarnIfEmbeddedRowsExceedScanCeilingAsync(connection, ct).ConfigureAwait(false);
+
             _initialized = true;
         }
         finally
@@ -126,6 +137,53 @@ public sealed class SqliteMemoryStore(
 
     private static readonly string[] ProvenanceColumns =
         ["provenance", "origin_conversation_id", "origin_session_id"];
+
+    /// <summary>
+    /// Counts live embedded rows at store open and warns once if they exceed the vector scan
+    /// ceiling, so an operator learns that semantic recall is bounded before a user notices
+    /// missing memories (#3244, acceptance criterion 4).
+    /// </summary>
+    /// <remarks>
+    /// Called from inside the initialize critical section, which runs at most once per store
+    /// instance - that is the "once per store open" guarantee, not a separate latch that could
+    /// drift from it. The count is a cheap indexed-free aggregate and failure to compute it must
+    /// never prevent the store from opening, so any SQLite error is swallowed.
+    /// </remarks>
+    private async Task WarnIfEmbeddedRowsExceedScanCeilingAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        if (_vectorSearchOptions.MaxScanRows is not { } ceiling || ceiling <= 0)
+            return;
+
+        try
+        {
+            var embedded = await CountEmbeddedRowsAsync(connection, ct).ConfigureAwait(false);
+            if (embedded <= ceiling)
+                return;
+
+            _logger.LogWarning(
+                "Memory store '{DbPath}' holds {EmbeddedRowCount} embedded rows but a single vector search "
+                + "scans at most {VectorScanCeiling} (newest-first), so approximately {UnreachableRowCount} "
+                + "older row(s) can only be recalled lexically. Raise MemoryVectorSearchOptions.MaxScanRows "
+                + "or reduce the corpus.",
+                _dbPath,
+                embedded,
+                ceiling,
+                embedded - ceiling);
+        }
+        catch (SqliteException)
+        {
+            // Diagnostics must never be the reason a store fails to open.
+        }
+    }
+
+    /// <summary>Live (non-archived) rows carrying an embedding vector.</summary>
+    private static async Task<int> CountEmbeddedRowsAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM memories WHERE is_archived = 0 AND embedding IS NOT NULL";
+        var scalar = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return scalar is null or DBNull ? 0 : Convert.ToInt32(scalar, CultureInfo.InvariantCulture);
+    }
 
     /// <summary>
     /// Lazily adds the additive nullable provenance columns to an existing <c>memories</c> table.
@@ -280,10 +338,17 @@ public sealed class SqliteMemoryStore(
     /// </remarks>
     public async Task<IReadOnlyList<ScoredMemoryEntry>> SearchScoredAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
     {
+        var result = await SearchWithReportAsync(query, topK, filter, ct).ConfigureAwait(false);
+        return result.Entries;
+    }
+
+    /// <inheritdoc />
+    public async Task<MemorySearchResult> SearchWithReportAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
+    {
         await InitializeAsync(ct).ConfigureAwait(false);
         var sanitized = SanitizeFtsQuery(query);
         if (string.IsNullOrWhiteSpace(sanitized))
-            return [];
+            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted);
 
         var limit = Math.Clamp(topK, 1, 100);
         var lambda = Math.Log(2d) / DefaultHalfLifeDays;
@@ -311,9 +376,14 @@ public sealed class SqliteMemoryStore(
                     .ConfigureAwait(false);
             }
 
-            await AugmentWithVectorCandidatesAsync(connection, query, candidates, filter, ct).ConfigureAwait(false);
+            // The lexical ids are captured BEFORE the vector pass so the union rescue in
+            // AugmentWithVectorCandidatesAsync knows exactly which rows earned a similarity score
+            // on lexical evidence alone (#3244 AC5).
+            var lexicalIds = candidates.Keys.ToArray();
+            var report = await AugmentWithVectorCandidatesAsync(connection, query, candidates, filter, lexicalIds, ct)
+                .ConfigureAwait(false);
 
-            return HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda);
+            return new MemorySearchResult(HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda), report);
         }
         catch (SqliteException ex) when (SqliteRetryHelper.IsTransient(ex))
         {
@@ -439,8 +509,17 @@ public sealed class SqliteMemoryStore(
             DateTimeOffset? lastIndexedAt = reader.IsDBNull(1)
                 ? null
                 : DateTimeOffset.Parse(reader.GetString(1), CultureInfo.InvariantCulture);
+            await reader.CloseAsync().ConfigureAwait(false);
+
+            // #3244 AC3: the embedded row count and the ceiling it is measured against are store
+            // diagnostics, not search diagnostics - they are true between queries and are what an
+            // operator needs to see the truncation condition coming rather than discovering it from
+            // a user complaint about missing memories.
+            var embeddedCount = await CountEmbeddedRowsAsync(connection, token).ConfigureAwait(false);
+            var ceiling = _vectorSearchOptions.MaxScanRows is { } maxRows && maxRows > 0 ? maxRows : (int?)null;
+
             var sizeBytes = _fileSystem.File.Exists(_dbPath) ? _fileSystem.FileInfo.New(_dbPath).Length : 0L;
-            return new MemoryStoreStats(count, sizeBytes, lastIndexedAt);
+            return new MemoryStoreStats(count, sizeBytes, lastIndexedAt, embeddedCount, ceiling);
         }, ct).ConfigureAwait(false);
     }
 
@@ -644,13 +723,14 @@ public sealed class SqliteMemoryStore(
         return string.Join(" ", sanitized.Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
-    private Task<IReadOnlyList<ScoredMemoryEntry>> SearchWithLikeFallbackAsync(
+    private async Task<MemorySearchResult> SearchWithLikeFallbackAsync(
         string sanitizedQuery,
         int limit,
         MemorySearchFilter? filter,
         double lambda,
         CancellationToken ct)
-        => SearchWithLikeFallbackScoredAsync(sanitizedQuery, limit, filter, lambda, _likeFallbackOptions, ct);
+        => await SearchWithLikeFallbackWithReportAsync(sanitizedQuery, limit, filter, lambda, _likeFallbackOptions, ct)
+            .ConfigureAwait(false);
 
     /// <summary>
     /// Score-dropping projection of <see cref="SearchWithLikeFallbackScoredAsync"/>, kept so existing
@@ -689,6 +769,24 @@ public sealed class SqliteMemoryStore(
         MemoryLikeFallbackOptions fallbackOptions,
         CancellationToken ct)
     {
+        var result = await SearchWithLikeFallbackWithReportAsync(sanitizedQuery, limit, filter, lambda, fallbackOptions, ct)
+            .ConfigureAwait(false);
+        return result.Entries;
+    }
+
+    /// <summary>
+    /// The degraded-mode search core, returning the vector-scan report alongside the rows so the
+    /// truncation signal survives a fall back to LIKE rather than being silently dropped there
+    /// (#3244) - the degraded path is exactly where a caller most needs to know what was covered.
+    /// </summary>
+    private async Task<MemorySearchResult> SearchWithLikeFallbackWithReportAsync(
+        string sanitizedQuery,
+        int limit,
+        MemorySearchFilter? filter,
+        double lambda,
+        MemoryLikeFallbackOptions fallbackOptions,
+        CancellationToken ct)
+    {
         await InitializeAsync(ct).ConfigureAwait(false);
 
         var terms = sanitizedQuery
@@ -697,7 +795,7 @@ public sealed class SqliteMemoryStore(
             .ToArray();
 
         if (terms.Length == 0)
-            return [];
+            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted);
 
         await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -758,9 +856,11 @@ public sealed class SqliteMemoryStore(
         // The FTS index being unavailable says nothing about the embedding column, so the
         // degraded path still contributes vector evidence when a model is active. With no
         // model this collapses to exactly the previous lexical ordering.
-        await AugmentWithVectorCandidatesAsync(connection, sanitizedQuery, candidates, filter, ct).ConfigureAwait(false);
+        var lexicalIds = candidates.Keys.ToArray();
+        var report = await AugmentWithVectorCandidatesAsync(connection, sanitizedQuery, candidates, filter, lexicalIds, ct)
+            .ConfigureAwait(false);
 
-        return HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda);
+        return new MemorySearchResult(HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda), report);
     }
 
     /// <summary>
@@ -780,21 +880,94 @@ public sealed class SqliteMemoryStore(
     /// all simply leave the candidate without a similarity, which the ranker reads as "no
     /// evidence" and falls back to the lexical signal for that row.
     /// </para>
+    /// <para>
+    /// #3244 adds two things to that. First, the scan <em>counts</em> what it examined and returns a
+    /// <see cref="MemoryVectorScanReport"/>, so hitting the ceiling is a fact the caller can read
+    /// rather than an invisible event. Second, a bounded second pass scores any lexical candidate
+    /// the recency window excluded: without it an old row could match the query lexically yet be
+    /// structurally incapable of ever receiving a similarity score, which is the asymmetry that made
+    /// the truncation so hard to explain from the outside.
+    /// </para>
     /// </remarks>
-    private async Task AugmentWithVectorCandidatesAsync(
+    /// <param name="lexicalCandidateIds">
+    /// Ids already in the candidate set from the lexical pass, captured before this method runs.
+    /// Any of them missed by the bounded recency scan are scored by the union pass.
+    /// </param>
+    private async Task<MemoryVectorScanReport> AugmentWithVectorCandidatesAsync(
         SqliteConnection connection,
         string query,
         Dictionary<string, MemoryRankingCandidate> candidates,
         MemorySearchFilter? filter,
+        IReadOnlyList<string> lexicalCandidateIds,
         CancellationToken ct)
     {
+        // AC6: with embeddings off there is no query vector to compare against, so the scan is not
+        // merely skipped - it is never issued, and the report says so rather than claiming coverage.
         if (_embeddingService.ActiveIdentity is null)
-            return;
+            return MemoryVectorScanReport.NotAttempted;
 
         var generated = await _embeddingService.TryGenerateAsync(query, ct).ConfigureAwait(false);
         if (generated is not { } queryEmbedding)
-            return;
+            return MemoryVectorScanReport.NotAttempted;
 
+        var ceiling = _vectorSearchOptions.MaxScanRows is { } maxRows && maxRows > 0 ? maxRows : (int?)null;
+
+        HashSet<string> scanned = new(StringComparer.Ordinal);
+        var rowsScanned = await ScoreVectorRowsAsync(
+            connection, queryEmbedding, candidates, filter, restrictToIds: null, ceiling, scanned, ct)
+            .ConfigureAwait(false);
+
+        // AC5: rescue lexical candidates the recency window cut off. Bounded by the lexical
+        // candidate count, which the FTS/LIKE passes already cap, so this cannot reintroduce an
+        // unbounded scan. Skipped entirely when the first pass was exhaustive, because then every
+        // eligible row - lexical or not - was already scored.
+        var missedLexicalIds = ceiling is not null && rowsScanned >= ceiling
+            ? lexicalCandidateIds.Where(id => !scanned.Contains(id)).ToArray()
+            : [];
+
+        var unionRows = 0;
+        if (missedLexicalIds.Length > 0)
+        {
+            unionRows = await ScoreVectorRowsAsync(
+                connection, queryEmbedding, candidates, filter, missedLexicalIds, maxScanRows: null, scanned, ct)
+                .ConfigureAwait(false);
+        }
+
+        // Equality, not ">", is the whole signal: SQLite returns at most the LIMIT, so "exactly the
+        // ceiling" is the only observable evidence that more rows may have existed. It deliberately
+        // over-reports the boundary case where the corpus is exactly the ceiling - claiming coverage
+        // we do not have would be the failure this issue exists to remove.
+        var status = ceiling is not null && rowsScanned >= ceiling
+            ? MemoryVectorScanStatus.PossiblyTruncated
+            : MemoryVectorScanStatus.Complete;
+
+        return new MemoryVectorScanReport(status, rowsScanned, ceiling, unionRows);
+    }
+
+    /// <summary>
+    /// Runs one vector-scoring pass and folds its similarities into <paramref name="candidates"/>,
+    /// returning the number of rows the database actually returned.
+    /// </summary>
+    /// <remarks>
+    /// Single implementation for both the recency-bounded pass and the lexical-union rescue pass so
+    /// the two cannot drift on filters, decoding, identity checking, or merge semantics. The row
+    /// count is the count of rows READ, not of rows scored: a corrupt or identity-mismatched blob
+    /// still consumed scan budget, so counting only successful scores would under-report the scan
+    /// and hide a truncation.
+    /// </remarks>
+    /// <param name="restrictToIds">When non-null, scores only these ids and applies no row ceiling.</param>
+    /// <param name="maxScanRows">Row ceiling for the recency-ordered pass, or null for no ceiling.</param>
+    /// <param name="scanned">Accumulates every id the scan read, so the union pass can skip duplicates.</param>
+    private async Task<int> ScoreVectorRowsAsync(
+        SqliteConnection connection,
+        (EmbeddingIdentity Identity, float[] Vector) queryEmbedding,
+        Dictionary<string, MemoryRankingCandidate> candidates,
+        MemorySearchFilter? filter,
+        IReadOnlyList<string>? restrictToIds,
+        int? maxScanRows,
+        HashSet<string> scanned,
+        CancellationToken ct)
+    {
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
             """
@@ -812,19 +985,37 @@ public sealed class SqliteMemoryStore(
 
         AppendFilters(sql, command, filter);
 
+        if (restrictToIds is { Count: > 0 })
+        {
+            // Parameterised id list - never string-concatenated - so a memory id can no more reach
+            // the SQL text here than it can on any other path.
+            var names = new string[restrictToIds.Count];
+            for (var i = 0; i < restrictToIds.Count; i++)
+            {
+                names[i] = $"$unionId{i}";
+                command.Parameters.AddWithValue(names[i], restrictToIds[i]);
+            }
+
+            sql.AppendLine($"  AND m.id IN ({string.Join(", ", names)})");
+        }
+
         sql.AppendLine("ORDER BY m.created_at DESC");
-        if (_vectorSearchOptions.MaxScanRows is { } maxRows && maxRows > 0)
+        if (maxScanRows is { } limitRows)
         {
             sql.AppendLine("LIMIT $vectorScanLimit");
-            command.Parameters.AddWithValue("$vectorScanLimit", maxRows);
+            command.Parameters.AddWithValue("$vectorScanLimit", limitRows);
         }
 
         command.CommandText = sql.ToString();
 
+        var rowsRead = 0;
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var entry = ReadMemory(reader);
+            rowsRead++;
+            scanned.Add(entry.Id);
+
             if (!EmbeddingBlob.TryDecode(entry.Embedding, out var storedIdentity, out var storedVector))
                 continue;
 
@@ -838,6 +1029,8 @@ public sealed class SqliteMemoryStore(
                 ? existing with { Similarity = similarity }
                 : new MemoryRankingCandidate(entry, LexicalScore: 0d, similarity, ageDays);
         }
+
+        return rowsRead;
     }
 
     /// <summary>

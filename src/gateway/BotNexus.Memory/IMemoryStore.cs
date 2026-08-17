@@ -25,6 +25,27 @@ public interface IMemoryStore : IAsyncDisposable
     /// </remarks>
     Task<IReadOnlyList<ScoredMemoryEntry>> SearchScoredAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default);
 
+    /// <summary>
+    /// Searches like <see cref="SearchScoredAsync"/> but also returns a <see cref="MemoryVectorScanReport"/>
+    /// describing what the vector leg of retrieval actually examined (issue #3244).
+    /// </summary>
+    /// <remarks>
+    /// The vector scan is bounded by <see cref="MemoryVectorSearchOptions.MaxScanRows"/> and ordered
+    /// newest-first. Without this member, crossing that bound is invisible: a caller cannot tell
+    /// "nothing older matched" from "nothing older was considered", so recall silently truncates on
+    /// exactly the long-lived stores where old-memory recall matters most.
+    /// <para>
+    /// Required, not default-implemented, for exactly the reason recorded on
+    /// <see cref="SearchScoredAsync"/>: Moq intercepts default interface methods and returns
+    /// <see langword="null"/> rather than running the default body, so every mocked store would
+    /// hand back a null task at runtime. Requiring the member makes each implementer state its
+    /// scan-coverage behaviour explicitly, and the compiler enforces it. A store that runs no
+    /// bounded scan has an honest one-liner available: return
+    /// <see cref="MemoryVectorScanReport.NotAttempted"/>.
+    /// </para>
+    /// </remarks>
+    Task<MemorySearchResult> SearchWithReportAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default);
+
     Task DeleteAsync(string id, CancellationToken ct = default);
 
     /// <summary>

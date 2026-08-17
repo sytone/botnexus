@@ -73,8 +73,8 @@ public class SlashCommandApprovalHookTests
 
         Assert.False(executed);
         await hook.Received(1).IsApprovedAsync(AgentId, cmd);
-        await interaction.DidNotReceiveWithAnyArgs().ResetSessionAsync(default!);
-        interaction.DidNotReceiveWithAnyArgs().ClearLocalMessages(default!);
+        await interaction.DidNotReceiveWithAnyArgs().ResetSessionAsync(default!, default!);
+        interaction.DidNotReceiveWithAnyArgs().ClearLocalMessages(default!, default!);
         await interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 
@@ -101,6 +101,6 @@ public class SlashCommandApprovalHookTests
         var executed = await sut.ExecuteAsync(AgentId, ConversationId, cmd);
 
         Assert.True(executed);
-        await interaction.Received(1).CompactSessionAsync(AgentId);
+        await interaction.Received(1).CompactSessionAsync(AgentId, ConversationId);
     }
 }

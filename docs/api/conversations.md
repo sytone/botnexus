@@ -23,6 +23,7 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/ConversationsController.cs
 | POST | `/api/conversations/{conversationId}/reset` | Reset the active session. |
 | POST | `/api/conversations/{conversationId}/bindings` | Add a channel binding. |
 | DELETE | `/api/conversations/{conversationId}/bindings/{bindingId}` | Remove a channel binding. |
+| POST | `/api/conversations/{conversationId}/bindings/{bindingId}/move` | Move a channel binding to another conversation. |
 | GET | `/api/conversations/{conversationId}/history` | Get assembled cross-session history. |
 | GET | `/api/conversations/{conversationId}/audit` | Get the audit log. |
 | PUT | `/api/conversations/{conversationId}/override` | Set model / thinking / context override. |
@@ -90,14 +91,52 @@ Resets the active session without archiving the conversation. Returns `200 OK` w
 
 ### `POST /api/conversations/{conversationId}/bindings`
 
-Adds a channel binding. Body: `channelType`, `channelAddress`, `mode`,
-`threadingMode`, `displayPrefix`. Returns `201 Created` with the binding, or
-`404 Not Found` when the conversation does not exist.
+Adds a channel binding. Body: `channelType` (**required**), `channelAddress`, `mode`,
+`threadingMode`, `displayPrefix`. Returns `201 Created` with the binding.
+
+| Status | When |
+|--------|------|
+| `201 Created` | Binding attached. |
+| `400 Bad Request` | `channelType` missing or blank. |
+| `404 Not Found` | The conversation does not exist. |
+| `409 Conflict` | Another conversation of the same agent already holds a binding for this `(channelType, channelAddress)` pair. The response carries `conflictingConversationId`. |
+
+The conflict guard exists because inbound routing resolves
+`(agentId, channelType, channelAddress)` to exactly one conversation — a second
+claim on the same pair would route messages non-deterministically. Addressless
+bindings (empty `channelAddress`) are exempt.
 
 ### `DELETE /api/conversations/{conversationId}/bindings/{bindingId}`
 
 Removes a channel binding. Returns `204 No Content`, or `404 Not Found` when the
 conversation or binding does not exist.
+
+### `POST /api/conversations/{conversationId}/bindings/{bindingId}/move`
+
+Moves an existing binding to another conversation — the "merge two conversations"
+and "re-home a channel onto a long-running conversation" operation. Body:
+
+```json
+{ "targetConversationId": "c_abc..." }
+```
+
+The binding keeps its `bindingId`, address, mode and `boundAt`, so outbound
+fan-out suppression keyed on the originating binding keeps working. Detaching and
+re-attaching is **not** equivalent: it mints a new `bindingId`.
+
+| Status | When |
+|--------|------|
+| `200 OK` | Binding moved; the moved binding is returned. |
+| `400 Bad Request` | `targetConversationId` missing, equal to the source, or owned by a **different agent**. |
+| `404 Not Found` | Source conversation, target conversation, or the binding on the source does not exist. |
+| `409 Conflict` | The target already holds a binding for the same `(channelType, channelAddress)`. |
+
+Cross-agent moves are refused rather than performed: re-parenting a binding under a
+different agent would silently re-route a live channel to a different brain.
+
+Both the source and target conversations emit an `updated` change notification, and
+the move is recorded in the audit log as `binding_moved` (attach and detach record
+`binding_added` / `binding_removed`).
 
 ### `GET /api/conversations/{conversationId}/history`
 

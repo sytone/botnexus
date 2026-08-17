@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>BotNexus.Extensions.Channels.Test</RootNamespace>
+    <Description>Opt-in HTTP-driven test channel adapter for BotNexus — injects inbound messages and records outbound deliveries so integration tests can act as a real named channel.</Description>
+    <!--
+      Ships a manifest and is deployed like any other extension, so the loader must be able to
+      resolve its closure from its own directory. It has no third-party package dependencies, but
+      declaring the closure keeps it consistent with the other channel extensions and makes it a
+      "loadable extension directory" for ExtensionManifestValidityArchitectureTests.
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Required for the inbound/outbound HTTP surface (WebApplication, minimal-API mapping). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="botnexus-extension.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
+  </ItemGroup>
+</Project>

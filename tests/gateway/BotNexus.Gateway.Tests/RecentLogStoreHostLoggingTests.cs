@@ -46,6 +46,91 @@ public sealed class RecentLogStoreHostLoggingTests
         entries!.ShouldContain(entry => entry.Message.Contains("endpoint-visible"));
     }
 
+    /// <summary>
+    /// Issue #3282: the gateway's minimum log level must be changeable on a RUNNING logger. Both
+    /// assertions use one already-built pipeline - nothing is rebuilt between them - so a pass proves
+    /// the level is controlled by the runtime switch rather than baked in at <c>CreateLogger()</c>.
+    /// Without this, enabling provider request logging would still require a gateway restart.
+    /// Lives in this class so xUnit serialises it against the other tests that share the static switch.
+    /// </summary>
+    [Fact]
+    public void LogLevelSwitch_ChangesEffectiveLevel_WithoutRebuildingTheLogger()
+    {
+        var original = GatewaySerilogConfiguration.LevelSwitch.MinimumLevel;
+        try
+        {
+            using var harness = new HostLoggingHarness();
+            var logger = harness.CreateLogger<RecentLogStoreHostLoggingTests>();
+
+            // Raised to Debug, as `botnexus config set gateway.logLevel Debug` would.
+            GatewaySerilogConfiguration.ApplyLogLevel("Debug").ShouldBeTrue();
+            logger.LogDebug("switch entry {Marker}", "3282-on");
+            harness.Store.GetRecent(50)
+                .ShouldContain(entry => entry.Message.Contains("3282-on"));
+
+            // Lowered again on the same logger: the Debug entry must now be suppressed.
+            GatewaySerilogConfiguration.ApplyLogLevel("Warning").ShouldBeTrue();
+            logger.LogDebug("switch entry {Marker}", "3282-off");
+            harness.Store.GetRecent(50)
+                .ShouldNotContain(entry => entry.Message.Contains("3282-off"));
+        }
+        finally
+        {
+            GatewaySerilogConfiguration.LevelSwitch.MinimumLevel = original;
+        }
+    }
+
+    /// <summary>
+    /// A typo in <c>gateway.logLevel</c> must not silently blind the operator's logs, so an
+    /// unrecognised value is reported as not-applied and leaves the current level untouched.
+    /// </summary>
+    [Fact]
+    public void ApplyLogLevel_RejectsUnknownValues_AndPreservesCurrentLevel()
+    {
+        var original = GatewaySerilogConfiguration.LevelSwitch.MinimumLevel;
+        try
+        {
+            GatewaySerilogConfiguration.ApplyLogLevel("Debug").ShouldBeTrue();
+
+            GatewaySerilogConfiguration.ApplyLogLevel("Verbos").ShouldBeFalse();
+            GatewaySerilogConfiguration.ApplyLogLevel(null).ShouldBeFalse();
+            GatewaySerilogConfiguration.ApplyLogLevel("  ").ShouldBeFalse();
+
+            GatewaySerilogConfiguration.LevelSwitch.MinimumLevel
+                .ShouldBe(Serilog.Events.LogEventLevel.Debug);
+        }
+        finally
+        {
+            GatewaySerilogConfiguration.LevelSwitch.MinimumLevel = original;
+        }
+    }
+
+    /// <summary>
+    /// <c>gateway.logLevel</c> uses Microsoft.Extensions.Logging names while Serilog uses its own;
+    /// both spellings must map, or an operator setting "Trace" or "Critical" gets silence.
+    /// </summary>
+    [Theory]
+    [InlineData("Trace", Serilog.Events.LogEventLevel.Verbose)]
+    [InlineData("Verbose", Serilog.Events.LogEventLevel.Verbose)]
+    [InlineData("debug", Serilog.Events.LogEventLevel.Debug)]
+    [InlineData("Information", Serilog.Events.LogEventLevel.Information)]
+    [InlineData("Warning", Serilog.Events.LogEventLevel.Warning)]
+    [InlineData("Error", Serilog.Events.LogEventLevel.Error)]
+    [InlineData("Critical", Serilog.Events.LogEventLevel.Fatal)]
+    public void ApplyLogLevel_MapsConfiguredNames(string configured, Serilog.Events.LogEventLevel expected)
+    {
+        var original = GatewaySerilogConfiguration.LevelSwitch.MinimumLevel;
+        try
+        {
+            GatewaySerilogConfiguration.ApplyLogLevel(configured).ShouldBeTrue();
+            GatewaySerilogConfiguration.LevelSwitch.MinimumLevel.ShouldBe(expected);
+        }
+        finally
+        {
+            GatewaySerilogConfiguration.LevelSwitch.MinimumLevel = original;
+        }
+    }
+
     // Builds a real host container plus the shipped gateway Serilog configuration, mirroring how
     // Program.cs hands Serilog ownership of the ILoggerFactory.
     private sealed class HostLoggingHarness : IDisposable

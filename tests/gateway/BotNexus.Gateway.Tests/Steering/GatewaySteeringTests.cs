@@ -104,8 +104,8 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
 
         await host.ProcessAsync(CreateSteerMessage("steer content"), CancellationToken.None);
 
-        handle.Verify(h => h.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
-        handle.Verify(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        handle.Verify(h => h.PromptAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        handle.Verify(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -174,9 +174,9 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
 
         // SteerAsync called (steer injected) but no prompt/stream issued
         handle.Verify(h => h.SteerAsync("should not prompt", It.IsAny<CancellationToken>()), Times.Once);
-        handle.Verify(h => h.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        handle.Verify(h => h.PromptAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
         handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        handle.Verify(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        handle.Verify(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -201,7 +201,7 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         handle.SetupGet(h => h.SessionId).Returns(SessionA);
         handle.Setup(h => h.IsRunning).Returns(false); // Not running when steer is dequeued
         handle.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        handle.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(BlockingStream(agentRunning, agentCanFinish));
 
         var supervisor = CreateSupervisor(handle.Object, hasInstance: true);
@@ -243,7 +243,7 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         handle.SetupGet(h => h.SessionId).Returns(SessionA);
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        handle.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(BlockingStream(agentRunning, agentCanFinish));
 
         var supervisor = CreateSupervisor(handle.Object, hasInstance: true);
@@ -284,7 +284,7 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         handleA.SetupGet(h => h.AgentId).Returns(AgentA);
         handleA.SetupGet(h => h.SessionId).Returns(SessionA);
         handleA.Setup(h => h.IsRunning).Returns(true);
-        handleA.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+        handleA.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(BlockingStream(agentRunning, agentCanFinish));
 
         var sessionB = SessionId.From("session-2");
@@ -346,9 +346,9 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
 
         await orchestrator.AcceptAsync(CreateSteerMessage("should not prompt"));
 
-        handle.Verify(h => h.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        handle.Verify(h => h.PromptAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
         handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        handle.Verify(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        handle.Verify(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -403,7 +403,7 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         handle.SetupGet(h => h.SessionId).Returns(SessionA);
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        handle.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(BlockingStream(agentRunning, agentCanFinish));
 
         var supervisor = CreateSupervisor(handle.Object, hasInstance: true);
@@ -487,7 +487,7 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         handle.SetupGet(h => h.AgentId).Returns(AgentA);
         handle.SetupGet(h => h.SessionId).Returns(SessionA);
         handle.Setup(h => h.IsRunning).Returns(false);
-        handle.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerable([
                 new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "response" }
             ]));
@@ -506,7 +506,7 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
         await orchestrator.AcceptAsync(CreateMessage("follow up"));
 
         handle.Verify(h => h.StreamAsync(
-            It.Is<UserMessage>(m => m.Content == "follow up"),
+            It.Is<BotNexus.Gateway.Abstractions.Models.AgentUserMessage>(m => m.Content == "follow up"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

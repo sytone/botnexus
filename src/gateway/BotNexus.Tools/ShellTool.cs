@@ -117,6 +117,9 @@ public sealed class ShellTool : IAgentTool
         ? "Shell (PowerShell)"
         : "Bash";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Powerful, but its output is produced on the machine the agent already controls. Classification tracks the ORIGIN of the bytes, never the blast radius.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <inheritdoc />
     public Tool Definition => new(
         Name,

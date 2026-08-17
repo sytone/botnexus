@@ -6,6 +6,8 @@ using System.Text.Json;
 using BotNexus.Memory.Models;
 using BotNexus.Domain.Text;
 
+using BotNexus.Memory.Tools;
+
 namespace BotNexus.Memory;
 
 /// <summary>
@@ -75,7 +77,15 @@ internal static class MarkdownNoteIndexer
                 // first-party `agent` content (#2480). Note bodies may quote untrusted text, which
                 // is why the sanitiser below still runs - provenance records origin, it does not
                 // replace sanitisation.
-                Provenance = MemoryProvenance.Agent,
+                //
+                // #2519: a section carrying the quarantine marker was written on a run that
+                // consumed foreign content, so it is downgraded to external-untrusted here. The
+                // marker is checked per SECTION rather than per file because a single daily note
+                // accumulates writes from many runs, only some of which were tainted; stamping the
+                // whole file from one section's marker would either over- or under-report.
+                Provenance = MemoryQuarantine.IsQuarantined(section.Content)
+                    ? MemoryProvenance.ExternalUntrusted
+                    : MemoryProvenance.Agent,
                 // Same sanitisation contract as the conversation writer (#1560): note bodies can
                 // contain text an agent copied verbatim from an untrusted inbound message.
                 Content = UntrustedContentSanitizer.Sanitize(section.Content),

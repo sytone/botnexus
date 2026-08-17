@@ -334,4 +334,27 @@ public sealed record Conversation
     /// (issue #1706).
     /// </summary>
     public int? ContextWindowOverride { get; set; }
+
+    /// <summary>
+    /// Gets or sets the per-conversation tool-availability overlay as an opaque JSON string
+    /// (issue #2523). <c>null</c> means no overlay, so every session in this conversation gets the
+    /// agent's configured tool set unchanged - which is what every row persisted before this column
+    /// existed hydrates to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Persisted alongside <see cref="ModelOverride"/> and <see cref="TodoJson"/> so a
+    /// blast-radius restriction survives reconnect, a new session in the same conversation, and a
+    /// gateway restart. The store treats the value as opaque text; the concrete shape (a serialized
+    /// <c>SessionToolOverride</c> carrying <c>enabledTools</c> / <c>disabledTools</c>) is owned by
+    /// the gateway security layer that reads and writes it.
+    /// </para>
+    /// <para>
+    /// The overlay is <b>narrowing-only</b>: it can drop tools the agent has, but it can never grant
+    /// one the agent lacks. Widening through this field is structurally impossible in
+    /// <c>SessionToolOverrideResolver</c>, which is what stops a writable conversation column from
+    /// becoming a privilege-escalation seam.
+    /// </para>
+    /// </remarks>
+    public string? ToolOverrideJson { get; set; }
 }

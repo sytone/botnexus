@@ -61,6 +61,9 @@ public sealed class GlobTool : IAgentTool
     /// <inheritdoc />
     public string Label => "Glob Files";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Local filesystem path listing.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <inheritdoc />
     public Tool Definition => new(
         Name,

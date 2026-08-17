@@ -56,7 +56,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
         _store.GetMessages("conv-1").Returns(new List<ChatMessage>().AsReadOnly());
         _store.GetStreamState("conv-1").Returns(new ConversationStreamState());
 
-        _interaction.ResetSessionAsync(Arg.Any<string>()).Returns(Task.CompletedTask);
+        _interaction.ResetSessionAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.CompletedTask);
         _interaction.SendMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>()).Returns(Task.CompletedTask);
 
         _ctx.Services.AddSingleton(_store);
@@ -127,7 +127,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
 
         // #2873: /help is gateway-owned, so clicking it must reach the command pipeline and NOT
         // the model. This previously asserted SendMessageAsync, which was the defect itself.
-        await _interaction.Received(1).ExecuteGatewayCommandAsync("agent-1", "/help");
+        await _interaction.Received(1).ExecuteGatewayCommandAsync("agent-1", Arg.Any<string>(), "/help");
         await _interaction.DidNotReceiveWithAnyArgs().SendMessageAsync(default!, default!, default!);
     }
 
@@ -157,7 +157,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
 
         cut.Find("[data-testid='new-session-confirm-btn']").Click();
 
-        await _interaction.Received(1).ResetSessionAsync("agent-1");
+        await _interaction.Received(1).ResetSessionAsync("agent-1", Arg.Any<string>());
     }
 
     [Fact]
@@ -185,6 +185,6 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
 
         cut.Find("[data-testid='new-session-confirm-btn']").Click();
 
-        _interaction.Received(1).ClearLocalMessages("agent-1");
+        _interaction.Received(1).ClearLocalMessages("agent-1", Arg.Any<string>());
     }
 }

@@ -99,8 +99,8 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         await cut.InvokeAsync(() => followUpBtn.Click());
 
         // Follow Up must route to FollowUpAsync (queue after loop), NOT SteerAsync or SendMessageAsync.
-        await _interaction.Received(1).FollowUpAsync("agent-1", "Next, write the tests.");
-        await _interaction.DidNotReceive().SteerAsync("agent-1", Arg.Any<string>());
+        await _interaction.Received(1).FollowUpAsync("agent-1", Arg.Any<string>(), "Next, write the tests.");
+        await _interaction.DidNotReceive().SteerAsync("agent-1", Arg.Any<string>(), Arg.Any<string>());
         await _interaction.DidNotReceive().SendMessageAsync("agent-1", Arg.Any<string>(), Arg.Any<string>());
     }
 
@@ -160,6 +160,9 @@ public sealed class ProbeRound2ComponentTests : IDisposable
     public async Task ChatPanel_ConfirmNewSession_CallsResetSessionAsync()
     {
         SeedConnectedAgent("agent-1");
+        // #3211: the reset targets an explicit conversation, so the panel must have one to act on.
+        _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
@@ -170,7 +173,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         var confirmBtn = cut.Find(".confirm-btn");
         await cut.InvokeAsync(() => confirmBtn.Click());
 
-        await _interaction.Received(1).ResetSessionAsync("agent-1");
+        await _interaction.Received(1).ResetSessionAsync("agent-1", "conv-1");
     }
 
     // ── ChatPanel: Cancelling new session dialog hides dialog without calling service ──
@@ -186,7 +189,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         cut.Find(".cancel-btn").Click();
 
         Assert.Empty(cut.FindAll(".reset-confirm-overlay"));
-        await _interaction.DidNotReceive().ResetSessionAsync(Arg.Any<string>());
+        await _interaction.DidNotReceive().ResetSessionAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 
     // ── MainLayout: Clicking conversation calls IAgentInteractionService.SelectConversationAsync ──

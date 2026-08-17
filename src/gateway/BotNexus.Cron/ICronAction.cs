@@ -140,6 +140,54 @@ public sealed record CronExecutionContext
     {
         ToolInvocationCount = count < 0 ? 0 : count;
     }
+
+    /// <summary>
+    /// #2641: per-run cost measurements reported by the action, or a fully-null
+    /// <see cref="CronRunCost"/> when the action reported nothing. Never null itself, so a consumer
+    /// distinguishes "not measured" per field without also null-checking the container.
+    /// </summary>
+    public CronRunCost Cost { get; private set; } = new();
+
+    /// <summary>
+    /// Records what this run cost (#2641). Called by actions that can observe a turn's usage
+    /// (currently only <c>agent-prompt</c>); <c>command</c> and <c>webhook</c> actions never call it
+    /// and their runs therefore stay honestly unmeasured rather than being stamped with a zero that
+    /// would rank them as the cheapest jobs on the platform.
+    /// </summary>
+    /// <remarks>
+    /// Merge semantics are first-measurement-wins per field, mirroring
+    /// <see cref="RecordDeliveryFailure"/>: a later report that measured nothing must not erase an
+    /// earlier one that did. Negative values are clamped to zero - a negative token count is a
+    /// producer bug, and propagating it would corrupt every total it is summed into.
+    /// </remarks>
+    /// <param name="cost">The measurements to fold in.</param>
+    public void RecordCost(CronRunCost cost)
+    {
+        ArgumentNullException.ThrowIfNull(cost);
+
+        Cost = new CronRunCost(
+            TurnCount: Cost.TurnCount ?? ClampInt(cost.TurnCount),
+            ToolCallCount: Cost.ToolCallCount ?? ClampInt(cost.ToolCallCount),
+            DurationMs: Cost.DurationMs ?? ClampLong(cost.DurationMs),
+            PromptTokens: Cost.PromptTokens ?? ClampLong(cost.PromptTokens),
+            CompletionTokens: Cost.CompletionTokens ?? ClampLong(cost.CompletionTokens));
+    }
+
+    private static int? ClampInt(int? value) => value is null ? null : Math.Max(0, value.Value);
+
+    private static long? ClampLong(long? value) => value is null ? null : Math.Max(0L, value.Value);
+
+    /// <summary>
+    /// Stamps the run's wall-clock duration (#2641). Kept separate from <see cref="RecordCost"/>
+    /// because the scheduler - not the action - owns the clock: it brackets the whole action
+    /// invocation including dispatch and timeout handling, so it measures what the run actually
+    /// occupied rather than what the action noticed.
+    /// </summary>
+    /// <param name="durationMs">Elapsed milliseconds; negatives are clamped to zero.</param>
+    public void RecordDuration(long durationMs)
+    {
+        Cost = Cost with { DurationMs = Math.Max(0L, durationMs) };
+    }
 }
 
 public enum CronTriggerType

@@ -31,6 +31,9 @@ public sealed class ConversationTool(
     public string Name => "conversation";
     public string Label => "Conversation Context";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Gateway-owned conversation store.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Get, list, create, annotate, and archive persistent conversation context.",
