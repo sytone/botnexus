@@ -327,6 +327,7 @@ that is genuinely meant to endure. The current inventory:
 | Flag | Default | Effect |
 |------|---------|--------|
 | `GatewayDevOriginEnforcement` | off | Enforces the browser `Origin` header on keyless (dev-mode) requests, protecting the auto-granted `gateway-dev` admin identity from DNS-rebind and CSRF. See [Dev-Mode Origin Guard](./features/dev-origin-guard.md). |
+| `GatewayPermissionEnforcement` | off | Enforces each caller's `permissions` list at the gateway auth middleware; a caller lacking the scope its request requires is refused with `403 permission_denied`. While off, the decision is still evaluated and every would-be refusal is logged, so operators can size the change before opting in. See [Gateway Permission Enforcement](./features/gateway-permission-enforcement.md). |
 
 #### Reading and writing flags
 

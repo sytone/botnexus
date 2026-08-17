@@ -102,7 +102,15 @@ public sealed record GatewayCallerIdentity
     /// </summary>
     public IReadOnlyList<string> AllowedAgents { get; init; } = [];
 
-    /// <summary>Permissions granted to this caller.</summary>
+    /// <summary>
+    /// Permissions granted to this caller, drawn from the <c>GatewayScopes</c> vocabulary.
+    /// <b>This is an authorization control</b> (#2621): when the
+    /// <c>GatewayPermissionEnforcement</c> feature flag is enabled, <c>GatewayAuthMiddleware</c>
+    /// refuses a request whose required scope is absent from this list. <c>"*"</c> authorizes
+    /// everything. A scope outside the declared vocabulary grants nothing - the check fails closed.
+    /// While the flag is off the decision is still evaluated and every would-be refusal is logged
+    /// at Warning, so operators can size the change before opting in.
+    /// </summary>
     public IReadOnlyList<string> Permissions { get; init; } = [];
 
     /// <summary>Whether this caller has administrative privileges.</summary>

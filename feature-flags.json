@@ -17,6 +17,16 @@
       "dateRetired": null,
       "ignoreFlagAge": true,
       "$ignoreFlagAgeWhy": "Not a rollout flag on a clock. It stays until every operator has stated their origins, at which point the default flips on and the flag is retired - a staleness warning would just be noise against a decision already made deliberately (#1931)."
+    },
+    {
+      "featureName": "GatewayPermissionEnforcement",
+      "description": "Enforces GatewayIdentity.Permissions at the gateway auth middleware: a caller whose permissions do not include the scope its request requires is refused with 403 permission_denied. Off by default so enabling enforcement is an explicit operator decision - the satellite identity is narrowed to two scopes and would lose the REST surface the moment this flips. While off, the middleware still evaluates the decision and logs every request it WOULD have refused, which is how an operator establishes their real call set before opting in.",
+      "owner": "sytone",
+      "dateAdded": "2026-08-17",
+      "defaultState": false,
+      "dateRetired": null,
+      "ignoreFlagAge": true,
+      "$ignoreFlagAgeWhy": "Not on a clock. It stays until operators have read their audit logs and confirmed their callers' scope sets, at which point the default flips on and the flag is retired (#2621)."
     }
   ]
 }

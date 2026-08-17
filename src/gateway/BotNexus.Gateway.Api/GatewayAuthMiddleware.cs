@@ -1,9 +1,11 @@
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
+using Microsoft.FeatureManagement;
 
 namespace BotNexus.Gateway.Api;
 
@@ -15,12 +17,20 @@ public sealed class GatewayAuthMiddleware
 {
     internal const string CallerIdentityItemKey = "BotNexus.Gateway.CallerIdentity";
 
+    /// <summary>
+    /// Feature flag gating permission ENFORCEMENT (#2621). Off by default: while off the scope
+    /// decision is still evaluated and every would-be refusal is logged, so an operator can learn
+    /// their callers' real scope set before a denial can break anything.
+    /// </summary>
+    public const string PermissionEnforcementFeature = FeatureFlags.GatewayPermissionEnforcement;
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly RequestDelegate _next;
     private readonly IGatewayAuthHandler _authHandler;
     private readonly IFileProvider? _webRootFileProvider;
     private readonly ILogger<GatewayAuthMiddleware> _logger;
+    private readonly IFeatureManager? _featureManager;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GatewayAuthMiddleware"/> class.
@@ -29,16 +39,22 @@ public sealed class GatewayAuthMiddleware
     /// <param name="authHandler">The authentication handler for verifying caller credentials.</param>
     /// <param name="webHostEnvironment">The host environment used for web-root static file checks.</param>
     /// <param name="logger">The logger instance for diagnostic output.</param>
+    /// <param name="featureManager">
+    /// Feature manager used to evaluate <see cref="PermissionEnforcementFeature"/>. A null manager
+    /// (non-DI construction, e.g. tests) means enforcement is off and only audit logging runs.
+    /// </param>
     public GatewayAuthMiddleware(
         RequestDelegate next,
         IGatewayAuthHandler authHandler,
         IWebHostEnvironment webHostEnvironment,
-        ILogger<GatewayAuthMiddleware> logger)
+        ILogger<GatewayAuthMiddleware> logger,
+        IFeatureManager? featureManager = null)
     {
         _next = next;
         _authHandler = authHandler;
         _webRootFileProvider = webHostEnvironment.WebRootFileProvider;
         _logger = logger;
+        _featureManager = featureManager;
     }
 
     /// <summary>
@@ -94,7 +110,94 @@ public sealed class GatewayAuthMiddleware
         }
 
         context.Items[CallerIdentityItemKey] = identity;
+
+        if (!await IsPermittedAsync(context, identity, authContext.Method))
+            return;
+
         await _next(context);
+    }
+
+    /// <summary>
+    /// Evaluates the caller's permissions against the scope this request requires (#2621), writes
+    /// the 403 when enforcement is on and the caller is short, and returns whether the pipeline may
+    /// continue.
+    /// <para>
+    /// The decision is computed on EVERY authenticated request regardless of the flag. That is
+    /// deliberate: with the flag off the outcome is logged rather than applied, which is the only
+    /// way an operator can discover what enforcement would break before enabling it. A flag that
+    /// merely skipped the computation would leave them guessing.
+    /// </para>
+    /// </summary>
+    private async Task<bool> IsPermittedAsync(HttpContext context, GatewayCallerIdentity identity, string method)
+    {
+        var requiredScope = GatewayScopes.Resolve(context.Request.Path.Value, method);
+
+        if (GatewayScopes.IsAuthorized(identity.Permissions, requiredScope))
+            return true;
+
+        // Null means the path matched no known resource. It is reported distinctly because the two
+        // causes need different operator responses: an unmapped route is a coverage gap in
+        // GatewayScopes, a mapped one is a genuinely under-scoped caller.
+        var scopeForLog = requiredScope ?? "(unmapped path)";
+        var enforcing = await IsEnforcementEnabledAsync();
+
+        if (!enforcing)
+        {
+            _logger.LogWarning(
+                "Gateway permission audit: caller '{CallerId}' lacks scope '{RequiredScope}' for {Method} {Path} "
+                + "and would be REFUSED once '{Feature}' is enabled. Granted scopes: [{Granted}]. "
+                + "No action taken - enforcement is currently off.",
+                identity.CallerId,
+                scopeForLog,
+                method,
+                context.Request.Path,
+                PermissionEnforcementFeature,
+                string.Join(", ", identity.Permissions));
+            return true;
+        }
+
+        _logger.LogWarning(
+            "Gateway permission denied: caller '{CallerId}' lacks scope '{RequiredScope}' for {Method} {Path}. "
+            + "Granted scopes: [{Granted}].",
+            identity.CallerId,
+            scopeForLog,
+            method,
+            context.Request.Path,
+            string.Join(", ", identity.Permissions));
+
+        await WriteErrorAsync(
+            context,
+            StatusCodes.Status403Forbidden,
+            "permission_denied",
+            $"Caller '{identity.CallerId}' does not hold the required permission scope '{scopeForLog}'.");
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns whether permission enforcement is enabled. Every fallback is deliberately
+    /// enforcement-OFF, matching the dev-origin guard: an authorization control that turns itself
+    /// on because a feature-flag provider faulted would lock an operator out of their own gateway.
+    /// Note this is NOT a fail-open authorization decision - the scope check itself fails closed
+    /// (an unknown scope grants nothing); this only governs whether the rollout is live.
+    /// </summary>
+    private async Task<bool> IsEnforcementEnabledAsync()
+    {
+        if (_featureManager is null)
+            return false;
+
+        try
+        {
+            return await _featureManager.IsEnabledAsync(PermissionEnforcementFeature);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to evaluate feature flag '{Feature}'; treating gateway permission enforcement as disabled.",
+                PermissionEnforcementFeature);
+            return false;
+        }
     }
 
     private static bool ShouldSkipAuth(HttpRequest request, IFileProvider? webRootFileProvider)

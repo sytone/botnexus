@@ -200,6 +200,7 @@ export default defineConfig({
           { text: 'Security-Event Diagnostics', link: '/features/security-event-diagnostics' },
           { text: 'Tool-Audit Write-Ahead', link: '/features/tool-audit-write-ahead' },
           { text: 'Dev-Mode Origin Guard', link: '/features/dev-origin-guard' },
+          { text: 'Gateway Permission Enforcement', link: '/features/gateway-permission-enforcement' },
           { text: 'Portal Boot Diagnostics', link: '/features/portal-boot-diagnostics' },
           { text: 'AGENTS.md Conventions', link: '/features/agents-md-conventions' },
           { text: 'Agent 365 Observability', link: '/features/agent365-observability' },

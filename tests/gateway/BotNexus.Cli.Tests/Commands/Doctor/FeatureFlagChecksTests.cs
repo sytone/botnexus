@@ -25,6 +25,32 @@ public class FeatureFlagChecksTests
         return config;
     }
 
+    /// <summary>
+    /// A document carrying every declared flag at its documented default, except
+    /// <paramref name="overrideFlag"/> which is written with <paramref name="value"/> under
+    /// <paramref name="keySpelling"/> (defaulting to the flag's own name).
+    /// <para>
+    /// These fixtures were originally written against a single-flag inventory, where "the section
+    /// contains this one flag" and "every declared flag has a stated decision" were the same
+    /// sentence. They are not, and #2621 adding a second flag is what separated them. The
+    /// assertion is unchanged - the check must not nag about a flag whose value is stated - the
+    /// fixture is just no longer relying on there being exactly one flag in existence.
+    /// </para>
+    /// </summary>
+    private static ConfigDocument AllFlagsPresentExcept(string overrideFlag, object value, string? keySpelling = null)
+    {
+        var config = ConfigDocument.Empty();
+        foreach (var flag in FeatureFlags.All)
+        {
+            if (string.Equals(flag.Name, overrideFlag, StringComparison.OrdinalIgnoreCase))
+                continue;
+            config.Set($"{FeatureFlags.SectionName}.{flag.Name}", flag.Default);
+        }
+
+        config.Set($"{FeatureFlags.SectionName}.{keySpelling ?? overrideFlag}", value);
+        return config;
+    }
+
     // ── AC3: absent declared flags are reported ─────────────────────────────────────────
 
     [Fact]
@@ -58,7 +84,7 @@ public class FeatureFlagChecksTests
     public void SeedCheck_NotApplicableWhenFlagIsExplicitlyFalse()
     {
         // A deliberate "off" IS a stated decision - the check must not nag about it.
-        var root = Root("{\"FeatureManagement\":{\"" + FeatureFlags.GatewayDevOriginEnforcement + "\":false}}");
+        var root = AllFlagsPresentExcept(FeatureFlags.GatewayDevOriginEnforcement, false);
         new FeatureFlagSeedCheck().IsApplicable(root).ShouldBeFalse();
     }
 
@@ -67,7 +93,10 @@ public class FeatureFlagChecksTests
     {
         // Sad path: the binder is case-insensitive, so demanding exact case would make the fix
         // write a duplicate key shadowing the operator's real value.
-        var root = Root("""{"FeatureManagement":{"gatewaydevoriginenforcement":true}}""");
+        var root = AllFlagsPresentExcept(
+            FeatureFlags.GatewayDevOriginEnforcement,
+            true,
+            keySpelling: FeatureFlags.GatewayDevOriginEnforcement.ToLowerInvariant());
         new FeatureFlagSeedCheck().IsApplicable(root).ShouldBeFalse();
     }
 
