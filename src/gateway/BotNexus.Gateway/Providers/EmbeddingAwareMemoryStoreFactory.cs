@@ -3,6 +3,7 @@ using System.IO.Abstractions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Memory;
 using BotNexus.Memory.Embeddings;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Providers;
 
@@ -31,15 +32,21 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
     private readonly IFileSystem _fileSystem;
     private readonly IMemoryEmbeddingService _embeddingService;
     private readonly MemoryStoreFactory _existenceProbe;
+    private readonly ILoggerFactory? _loggerFactory;
     private readonly ConcurrentDictionary<string, IMemoryStore> _stores = new(StringComparer.OrdinalIgnoreCase);
 
     /// <param name="dbPathResolver">Maps an agent id to its store path.</param>
     /// <param name="embeddingService">Vector source, typically from <see cref="MemoryEmbeddingComposition"/>.</param>
     /// <param name="fileSystem">Filesystem abstraction.</param>
+    /// <param name="loggerFactory">
+    /// Supplies each store its logger so the #3244 vector-scan-ceiling warning actually reaches the
+    /// gateway log. Optional: with none, stores log to <c>NullLogger</c> exactly as before.
+    /// </param>
     public EmbeddingAwareMemoryStoreFactory(
         Func<string, string> dbPathResolver,
         IMemoryEmbeddingService embeddingService,
-        IFileSystem? fileSystem = null)
+        IFileSystem? fileSystem = null,
+        ILoggerFactory? loggerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(dbPathResolver);
         ArgumentNullException.ThrowIfNull(embeddingService);
@@ -47,6 +54,7 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
         _dbPathResolver = dbPathResolver;
         _embeddingService = embeddingService;
         _fileSystem = fileSystem ?? new FileSystem();
+        _loggerFactory = loggerFactory;
         _existenceProbe = new MemoryStoreFactory(dbPathResolver, _fileSystem);
     }
 
@@ -56,7 +64,13 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
         ArgumentException.ThrowIfNullOrWhiteSpace(agentId.Value);
 
         return _stores.GetOrAdd(agentId.Value, id =>
-            new SqliteMemoryStore(_dbPathResolver(id), _fileSystem, null, _embeddingService));
+            new SqliteMemoryStore(
+                _dbPathResolver(id),
+                _fileSystem,
+                null,
+                _embeddingService,
+                null,
+                _loggerFactory?.CreateLogger<SqliteMemoryStore>()));
     }
 
     /// <inheritdoc />

@@ -133,6 +133,64 @@ rows for that agent, bounded by a configurable row ceiling (default 5,000, newes
 the worst case stays finite. The FTS path is unaffected by this ceiling. ANN indexes
 (`sqlite-vec`, Qdrant) are explicitly out of scope for this slice.
 
+## Scan coverage and truncation (#3244)
+
+The ceiling is cost control and stays. What changed is that **crossing it is now observable**.
+Previously a truncated scan and an exhaustive one returned indistinguishable results, so on a
+store larger than the ceiling every entry older than the N most recent was silently unreachable
+by vector search — with no error, no warning and no diagnostic. A caller could not tell
+*"nothing older matched"* from *"nothing older was considered"*.
+
+Three things now make it visible.
+
+### 1. A structured per-search report
+
+`IMemoryStore.SearchWithReportAsync` returns a `MemorySearchResult` carrying a
+`MemoryVectorScanReport` alongside the ranked rows. `SearchScoredAsync` is unchanged and remains
+the projection that drops it.
+
+| `Status` | Meaning |
+| --- | --- |
+| `NotAttempted` | No scan ran — embeddings disabled, no active model, or no query vector. Lexical-only, and no scan cost was paid. |
+| `Complete` | Every eligible embedded row was examined. A row that did not surface genuinely did not match. |
+| `PossiblyTruncated` | The scan returned exactly the ceiling, so older embedded rows may exist that were never scored. |
+
+The report also carries `RowsScanned`, `ScanCeiling`, `LexicalUnionRowsScanned`, and an
+`Explain()` rendering. `PossiblyTruncated` is deliberately raised on `rowsScanned >= ceiling`
+rather than on strict inequality: SQLite returns at most the `LIMIT`, so "exactly the ceiling" is
+the only observable evidence more rows may have existed. That over-reports the exact-boundary
+case, which is the correct direction to be wrong in — claiming coverage we do not have is the
+precise failure this exists to remove.
+
+The API surfaces it on `GET /api/memory/{agentId}/entries` under a `vectorScan` object.
+
+### 2. The lexical candidate union
+
+A truncated scan runs a second, bounded pass over any row already in the **lexical** candidate
+set for the same query that the recency window excluded. Without it an old row could match the
+query lexically yet be structurally incapable of ever receiving a similarity score — the
+asymmetry that made the original behaviour so hard to explain from the outside. The pass is
+bounded by the lexical candidate count (already capped by the FTS/LIKE passes), applies the
+identical filter predicates, and is skipped entirely when the first pass was exhaustive.
+
+### 3. Store-level diagnostics and a once-per-open warning
+
+`MemoryStoreStats` reports `EmbeddedEntryCount`, `VectorScanCeiling` and the derived
+`ExceedsVectorScanCeiling`, all rendered by the Memory tab via `GET /api/memory`. The two numbers
+are reported together because a row count means nothing without the bound it is compared against.
+
+When the embedded row count exceeds the ceiling the store logs a warning **once per store open**,
+not once per query — the condition is a property of the store, and a per-query warning on a hot
+path is noise an operator learns to ignore.
+
+### Configuration
+
+The ceiling is `MemoryVectorSearchOptions.MaxScanRows`, supplied to the store at construction
+(default 5,000). Setting it to `0` or `null` removes the ceiling entirely, in which case every
+scan is exhaustive by construction and always reports `Complete`. There is deliberately no
+gateway config key for it yet — raising the default is a measured-cost decision that belongs with
+the adaptive-ceiling work, not a knob shipped ahead of the evidence.
+
 ## Providing an embedding generator
 
 The store depends on `IMemoryEmbeddingService`, which wraps the provider-neutral

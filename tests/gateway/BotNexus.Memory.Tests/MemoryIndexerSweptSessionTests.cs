@@ -333,6 +333,11 @@ public sealed class MemoryIndexerSweptSessionTests
             return entries.Select(entry => new ScoredMemoryEntry(entry, 0d)).ToList();
         }
 
+        // #3244: explicit pass-through with a NotAttempted scan report - this stub runs no bounded
+        // vector scan, so claiming any coverage would be a lie the caller could act on.
+        public async Task<MemorySearchResult> SearchWithReportAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
+            => new(await SearchScoredAsync(query, topK, filter, ct), MemoryVectorScanReport.NotAttempted);
+
         public Task DeleteAsync(string id, CancellationToken ct = default)
         {
             Interlocked.Increment(ref _attempts);
