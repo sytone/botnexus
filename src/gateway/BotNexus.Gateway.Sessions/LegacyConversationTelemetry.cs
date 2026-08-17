@@ -82,6 +82,8 @@ public readonly record struct LegacyConversationTelemetrySnapshot
 /// </remarks>
 public static class LegacyConversationTelemetry
 {
+    private static readonly AsyncLocal<LegacyConversationTelemetryScope?> s_currentScope = new();
+
     private static long s_totalResolves;
     private static long s_totalCreates;
     private static long s_totalBinds;
@@ -90,10 +92,48 @@ public static class LegacyConversationTelemetry
     private static long s_saveTimeStampResolves;
     private static long s_unspecifiedResolves;
 
+    /// <summary>
+    /// The scope, if any, that is ambient on the current async flow. Assigned by
+    /// <see cref="BeginScope"/> and restored on dispose.
+    /// </summary>
+    internal static LegacyConversationTelemetryScope? CurrentScope
+    {
+        get => s_currentScope.Value;
+        set => s_currentScope.Value = value;
+    }
+
+    /// <summary>
+    /// Begins an accumulator scoped to the current async flow, in addition to the
+    /// process-wide counters.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// #3227. The process-wide counters are the right shape for the production audit
+    /// question ("has anything in this process touched the shim?") but they are the wrong
+    /// shape for a test, which needs to attribute increments to <b>its own</b> activity.
+    /// A before/after delta on the statics is only correct when nothing else in the
+    /// process increments them in between, which xUnit's parallel collections make
+    /// untrue. Serialising the tests would not fix it either: any concurrently running
+    /// production-shaped code path would still inflate the delta.
+    /// </para>
+    /// <para>
+    /// The scope flows on <see cref="AsyncLocal{T}"/>, so increments raised by other
+    /// threads or other tests are structurally incapable of landing in it. Scopes nest;
+    /// an increment is credited to the innermost scope and to every ancestor.
+    /// </para>
+    /// <para>
+    /// Cost on the production path is one <see cref="AsyncLocal{T}"/> read per record
+    /// call, and no allocation at all when no scope is active - which is always the case
+    /// outside tests, since nothing in <c>src/</c> calls this method.
+    /// </para>
+    /// </remarks>
+    public static LegacyConversationTelemetryScope BeginScope() => new();
+
     /// <summary>Records one resolve attributed to <paramref name="reason"/>.</summary>
     public static void RecordResolve(LegacyResolveReason reason)
     {
         Interlocked.Increment(ref s_totalResolves);
+        s_currentScope.Value?.RecordResolve(reason);
 
         switch (reason)
         {
@@ -113,10 +153,18 @@ public static class LegacyConversationTelemetry
     }
 
     /// <summary>Records that a resolve minted a brand-new legacy conversation.</summary>
-    public static void RecordCreate() => Interlocked.Increment(ref s_totalCreates);
+    public static void RecordCreate()
+    {
+        Interlocked.Increment(ref s_totalCreates);
+        s_currentScope.Value?.RecordCreate();
+    }
 
     /// <summary>Records that a bind actually wrote an active-session pointer.</summary>
-    public static void RecordBind() => Interlocked.Increment(ref s_totalBinds);
+    public static void RecordBind()
+    {
+        Interlocked.Increment(ref s_totalBinds);
+        s_currentScope.Value?.RecordBind();
+    }
 
     /// <summary>Reads all counters. Individual reads are atomic; the set is not a torn-free transaction.</summary>
     public static LegacyConversationTelemetrySnapshot Snapshot() => new()

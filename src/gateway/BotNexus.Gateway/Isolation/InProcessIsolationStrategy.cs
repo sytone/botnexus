@@ -1391,6 +1391,74 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             _ => null
         };
 
+    /// <summary>
+    /// Maps one agent event and writes it to the stream channel, classifying any failure as either
+    /// caller-initiated cancellation (control flow) or a genuine fault (issue #3230).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Archiving a conversation cancels the in-flight turn's token, and
+    /// <c>ChannelWriter.WriteAsync(token)</c> then throws <see cref="TaskCanceledException"/>. That
+    /// is orderly teardown, not a fault, so it must log at Debug, must NOT push a synthetic
+    /// <c>Internal streaming error</c> event at the client, and must NOT fault the channel with
+    /// <c>TryComplete(ex)</c>. This is the same distinction the two sibling catches in
+    /// <c>StreamCoreAsync</c> already make.
+    /// </para>
+    /// <para>
+    /// The guard keys on <b>token state</b> via <paramref name="isCallerCancellation"/>, never on the
+    /// exception type alone: an <see cref="OperationCanceledException"/> raised while no token was
+    /// signalled is a genuine fault and keeps the Error path, the error event and the channel fault.
+    /// Extracted as an internal static so both branches are pinned independently by test.
+    /// </para>
+    /// </remarks>
+    internal static async Task WriteAgentEventAsync(
+        AgentEvent agentEvent,
+        string messageId,
+        System.Threading.Channels.ChannelWriter<AgentStreamEvent> writer,
+        Func<AgentEvent, string, AgentStreamEvent?> map,
+        CancellationToken cancellationToken,
+        Func<bool> isCallerCancellation,
+        ILogger logger,
+        AgentId agentId,
+        SessionId sessionId)
+    {
+        try
+        {
+            var streamEvent = map(agentEvent, messageId);
+
+            if (streamEvent is not null)
+                await writer.WriteAsync(streamEvent, cancellationToken);
+        }
+        catch (OperationCanceledException) when (isCallerCancellation())
+        {
+            // Caller cancelled the stream (conversation archived, client disconnected, host
+            // shutting down). Control flow, not a fault: no error event, no channel fault.
+            logger.LogDebug(
+                "Agent event stream cancelled for '{AgentId}' session '{SessionId}'",
+                agentId,
+                sessionId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error processing agent event in stream for '{AgentId}' session '{SessionId}'", agentId, sessionId);
+            try
+            {
+                await writer.WriteAsync(new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.Error,
+                    ErrorMessage = $"Internal streaming error: {ex.Message}",
+                    MessageId = messageId
+                }, cancellationToken);
+            }
+            catch
+            {
+                // Best-effort error notification.
+            }
+
+            writer.TryComplete(ex);
+        }
+    }
+
     private async IAsyncEnumerable<AgentStreamEvent> StreamCoreAsync(
         Func<CancellationToken, Task> runPrompt,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -1404,37 +1472,26 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         var events = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
         using var promptCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-        using var subscription = _agent.Subscribe(async (agentEvent, cancellationToken) =>
+        using var subscription = _agent.Subscribe(async (agentEvent, eventCancellation) =>
         {
             // Liveness: any agent event (content delta, tool start/end, message end)
             // is proof the gateway is actively progressing this turn. (#1320)
             _activityTracker?.RecordActivity();
-            try
-            {
-                var streamEvent = MapAgentEvent(agentEvent, messageId);
 
-                if (streamEvent is not null)
-                    await events.Writer.WriteAsync(streamEvent, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error processing agent event in stream for '{AgentId}' session '{SessionId}'", AgentId, SessionId);
-                try
-                {
-                    await events.Writer.WriteAsync(new AgentStreamEvent
-                    {
-                        Type = AgentStreamEventType.Error,
-                        ErrorMessage = $"Internal streaming error: {ex.Message}",
-                        MessageId = messageId
-                    }, cancellationToken);
-                }
-                catch
-                {
-                    // Best-effort error notification.
-                }
-
-                events.Writer.TryComplete(ex);
-            }
+            // #3230: the cancellation predicate is hoisted so it is the SAME condition the two
+            // sibling catches in this method already use - caller cancelled the stream, or the
+            // linked prompt token tripped. Passing it as a delegate keeps the guard evaluated at
+            // throw time (token state), never at subscribe time.
+            await WriteAgentEventAsync(
+                agentEvent,
+                messageId,
+                events.Writer,
+                MapAgentEvent,
+                eventCancellation,
+                () => promptCancellation.IsCancellationRequested || cancellationToken.IsCancellationRequested,
+                _logger,
+                AgentId,
+                SessionId);
         });
 
         async Task RunPromptAsync()
