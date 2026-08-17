@@ -71,6 +71,9 @@ public sealed class ReadTool : IAgentTool
 
     public string Label => "Read File";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Local filesystem content inside the workspace the agent already controls.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <summary>
     /// Executes new.
     /// </summary>

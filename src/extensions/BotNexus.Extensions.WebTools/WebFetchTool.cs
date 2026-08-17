@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
@@ -58,6 +58,9 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
 
     /// <inheritdoc />
     public string Label => "Web Fetch";
+
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Every byte returned is the remote page body, authored by whoever controls the URL.</summary>
+    public string ContentSource => ToolContentSource.Network;
 
     /// <inheritdoc />
     public Tool Definition => new(

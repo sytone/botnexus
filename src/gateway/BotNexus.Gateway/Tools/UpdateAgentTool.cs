@@ -22,6 +22,9 @@ public sealed class UpdateAgentTool(
     public string Name => "update_agent";
     public string Label => "Update Agent";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Returns a locally generated update confirmation.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Update fields on an existing registered agent. Only provided fields are changed; omitted fields are preserved.",

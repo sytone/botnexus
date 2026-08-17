@@ -206,6 +206,7 @@ export default defineConfig({
           { text: 'Session Consistency', link: '/features/session-consistency' },
           { text: 'Conversation Provenance', link: '/features/conversation-provenance' },
           { text: 'Hybrid Memory Retrieval', link: '/features/hybrid-memory-retrieval' },
+          { text: 'Memory Taint Quarantine', link: '/features/memory-taint-quarantine' },
           { text: 'Skills', link: '/skills' },
           { text: 'Cron & Scheduling', link: '/cron-and-scheduling' },
         ],

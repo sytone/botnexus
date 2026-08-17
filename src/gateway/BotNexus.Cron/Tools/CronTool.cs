@@ -46,6 +46,9 @@ public sealed class CronTool(
     public string Name => "cron";
     public string Label => "Cron Job Manager";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Gateway-owned cron store.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Manage scheduled cron jobs. Create, list, update, delete, and run cron jobs. A job is either an 'agent-prompt' job (the default - costs a model turn on every fire, requires 'message' or 'templateName') or a 'command' job (runs 'shellCommand' directly and costs no tokens, requires 'shellCommand').",

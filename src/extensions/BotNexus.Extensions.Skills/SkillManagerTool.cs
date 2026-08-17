@@ -47,6 +47,9 @@ public sealed class SkillManagerTool(
     public string Name => "skill_manage";
     public string Label => "Skill Manager (Write)";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Returns locally generated skill-management confirmations.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "Create, edit, patch, and delete skills and their supporting files. Create a skill when a complex task succeeded, errors were overcome, a user-corrected approach worked, a non-trivial workflow was discovered, or the user asks to remember a procedure. Update a skill when its instructions are stale, wrong, or missing pitfalls. Prefer patch over a full edit. A good skill has trigger conditions, numbered steps, exact commands, pitfalls, and verification steps; put reusable content in support files under references/, templates/, scripts/, or assets/. Avoid one-off PR/issue/session-artifact skills. Ask before creating or deleting skills in the foreground unless the user explicitly requested it. Only available when skill management is enabled for this agent.",

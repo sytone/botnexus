@@ -37,6 +37,9 @@ public sealed class ListDirectoryTool : IAgentTool
     public string Name => "ls";
     public string Label => "List Directory";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Local filesystem listing.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "List directory entries up to 2 levels deep in a sorted listing.",

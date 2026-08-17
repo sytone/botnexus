@@ -59,6 +59,9 @@ public sealed class WriteTool : IAgentTool
     /// <inheritdoc />
     public string Label => "Write File";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Returns a locally generated write confirmation.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     /// <inheritdoc />
     public Tool Definition => new(
         Name,

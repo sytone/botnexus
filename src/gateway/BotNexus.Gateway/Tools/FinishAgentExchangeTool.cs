@@ -55,6 +55,9 @@ public sealed class FinishAgentExchangeTool(
     public string Name => "finish_agent_exchange";
     public string Label => "Finish agent exchange";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Returns a locally generated control-flow acknowledgement.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         // Description doubles as an active-prompt-injection mitigation: the model is told to ignore

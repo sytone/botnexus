@@ -8,6 +8,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using BotNexus.Domain.Text;
 
+using BotNexus.Memory.Tools;
+
 namespace BotNexus.Memory;
 
 /// <summary>
@@ -273,8 +275,16 @@ public sealed class MarkdownAgentMemory : IAgentMemory
                 if (DateOnly.TryParse(file.Name, out var date))
                 {
                     // Daily notes under the agent's own memory root are written by the agent
-                    // itself through memory_save, so they are first-party `agent` content (#2480).
-                    dailyNotes.Add(new AgentMemoryDailyNote(date, trimmed, MemoryProvenance.Agent));
+                    // itself through memory_save, so they are first-party `agent` content (#2480)
+                    // -- UNLESS the note was quarantined at write time because the run that
+                    // produced it consumed foreign content (#2519). Markdown notes have no
+                    // provenance column, so the marker embedded in the content IS the provenance
+                    // record; deriving it here is what stops a quarantined note from being handed
+                    // back as first-party knowledge on a later session.
+                    var provenance = MemoryQuarantine.IsQuarantined(trimmed)
+                        ? MemoryProvenance.ExternalUntrusted
+                        : MemoryProvenance.Agent;
+                    dailyNotes.Add(new AgentMemoryDailyNote(date, trimmed, provenance));
                 }
             }
         }

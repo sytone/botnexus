@@ -22,6 +22,9 @@ public sealed class SessionTool(
     public string Name => "sessions";
     public string Label => "Session Manager";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Gateway-owned session store.</summary>
+    public string ContentSource => ToolContentSource.Local;
+
     public Tool Definition => new(
         Name,
         "List, inspect, and search past conversation sessions. Use to recall previous discussions.",

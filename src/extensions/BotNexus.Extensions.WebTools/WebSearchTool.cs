@@ -61,6 +61,9 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
     /// <inheritdoc />
     public string Label => "Web Search";
 
+    /// <summary>Content source classification for turn-taint accumulation (#2519). Result titles and snippets are attacker-influenceable remote text (SEO-poisonable).</summary>
+    public string ContentSource => ToolContentSource.Network;
+
     /// <inheritdoc />
     public Tool Definition => new(
         Name,
