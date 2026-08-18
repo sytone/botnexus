@@ -186,10 +186,24 @@ public readonly record struct DynamicModelCapabilities(
     }
 
     /// <summary>
-    /// Family heuristic for the extended (1M) context window: the Anthropic-direct Claude Sonnet 4 /
-    /// 4.5 and Opus 4.5 families advertise it. Config authors targeting an OpenAI-compatible local
-    /// endpoint (Ollama, LM Studio) get the standard single-window default unless they declare
-    /// otherwise.
+    /// Family heuristic for the extended (1M) context window: the Claude Sonnet 4+ and Opus 4.5+
+    /// families advertise it. Config authors targeting an OpenAI-compatible local endpoint (Ollama,
+    /// LM Studio) get the standard single-window default unless they declare otherwise.
+    /// <para>
+    /// #3364: this was a pair of literal id prefixes (<c>claude-sonnet-4</c>, <c>claude-opus-4-5</c>)
+    /// which only ever matched the Anthropic-DIRECT id spellings, so a Copilot-served
+    /// <c>claude-opus-4.8</c> or <c>claude-opus-5</c> was classified standard-context and the portal
+    /// context-window picker had a single tier to choose between. Expressed as a family+version gate
+    /// via <see cref="ModelFamilyVersion"/>, both spellings and every future generation resolve
+    /// identically without another edit.
+    /// </para>
+    /// <para>
+    /// Deliberately NOT fail-open for an unversioned Claude id, unlike the thinking heuristics in
+    /// <see cref="ModelCapabilityHeuristics"/>. The asymmetry is real: guessing thinking forward at
+    /// worst produces a loud protocol error, whereas guessing extended context forward OFFERS THE
+    /// USER A 1M TIER the model would reject at request time. Widening a picker on a guess is the
+    /// failure mode this issue is about, so an unrecognised id keeps its single declared window.
+    /// </para>
     /// </summary>
     /// <param name="modelId">The model id.</param>
     /// <returns>True when the family is known to support the extended context window.</returns>
@@ -197,11 +211,24 @@ public readonly record struct DynamicModelCapabilities(
     {
         ArgumentNullException.ThrowIfNull(modelId);
 
-        // Anthropic-direct Claude Sonnet 4/4.5 and Opus 4.5 carry the 1M extended window.
-        if (modelId.StartsWith("claude-sonnet-4", StringComparison.OrdinalIgnoreCase) ||
-            modelId.StartsWith("claude-opus-4-5", StringComparison.OrdinalIgnoreCase))
+        // Claude Sonnet 4+ and Opus 4.5+ carry the 1M extended window, whether the id arrives in the
+        // Anthropic-direct dated spelling (claude-sonnet-4-20250514, claude-opus-4-5-20250929) or the
+        // Copilot dotted spelling (claude-sonnet-4.6, claude-opus-4.8, claude-opus-5).
+        if (ModelFamilyVersion.IsAtLeast(modelId, "sonnet", SonnetExtendedContextMajor))
+            return true;
+
+        if (ModelFamilyVersion.IsAtLeast(modelId, "opus", OpusExtendedContextMajor, OpusExtendedContextMinor))
             return true;
 
         return false;
     }
+
+    /// <summary>Sonnet gained the 1M extended context window at 4.</summary>
+    private const int SonnetExtendedContextMajor = 4;
+
+    /// <summary>Opus gained the 1M extended context window at 4.5.</summary>
+    private const int OpusExtendedContextMajor = 4;
+
+    /// <summary>Minor component of the Opus extended-context floor.</summary>
+    private const int OpusExtendedContextMinor = 5;
 }
