@@ -55,6 +55,56 @@ public class WebToolsContributorTests
         GetCopilotEndpoint(searchTool).ShouldBeNull();
     }
 
+    // -----------------------------------------------------------------------------------------
+    // #3360 AC1 - the contributor supplies the DI-resolved ISecretRedactor to BOTH tools.
+    // -----------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ContributeAsync_SuppliesTheResolvedSecretRedactorToBothTools()
+    {
+        var redactor = new PassThroughRedactor();
+        var context = BuildContext(searchProvider: "brave", apiKey: "token");
+
+        var contribution = await new WebToolsContributor(secretRedactor: redactor).ContributeAsync(context);
+
+        // Asserting on the tools rather than on the contributor is the point: an implementation
+        // that accepted the dependency and dropped it would satisfy a constructor-signature test
+        // and leak exactly as before.
+        GetRedactor(contribution.Tools.OfType<WebFetchTool>().ShouldHaveSingleItem())
+            .ShouldBeSameAs(redactor);
+        GetRedactor(contribution.Tools.OfType<WebSearchTool>().ShouldHaveSingleItem())
+            .ShouldBeSameAs(redactor);
+    }
+
+    [Fact]
+    public async Task ContributeAsync_WithNoRedactorRegistered_StillContributesBothTools()
+    {
+        // The dependency is OPTIONAL by design: the extension load context prunes any contributor
+        // whose constructor the host container cannot satisfy, so a required parameter would
+        // silently delete both web tools on a host with no redactor registered.
+        var context = BuildContext(searchProvider: "brave", apiKey: "token");
+
+        var contribution = await new WebToolsContributor().ContributeAsync(context);
+
+        contribution.Tools.OfType<WebFetchTool>().ShouldHaveSingleItem();
+        contribution.Tools.OfType<WebSearchTool>().ShouldHaveSingleItem();
+        GetRedactor(contribution.Tools.OfType<WebFetchTool>().First()).ShouldBeNull();
+    }
+
+    private static ISecretRedactor? GetRedactor(object tool)
+    {
+        var field = tool.GetType().GetField("_secretRedactor", BindingFlags.Instance | BindingFlags.NonPublic);
+        field.ShouldNotBeNull($"{tool.GetType().Name} must hold the injected ISecretRedactor (#3360).");
+        return (ISecretRedactor?)field!.GetValue(tool);
+    }
+
+    private sealed class PassThroughRedactor : ISecretRedactor
+    {
+        public string Redact(string input) => input;
+
+        public string RedactForExternalDelivery(string input) => input;
+    }
+
     private static string? GetCopilotEndpoint(WebSearchTool tool)
     {
         var field = typeof(WebSearchTool).GetField("_copilotApiEndpoint", BindingFlags.Instance | BindingFlags.NonPublic);
