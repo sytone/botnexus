@@ -187,6 +187,7 @@ export default defineConfig({
           { text: 'Debugging', link: '/development/debugging' },
           { text: 'Compat Shim Lifecycle', link: '/development/compat-shim-lifecycle' },
           { text: 'PR and Commit Conventions', link: '/development/pr-and-commit-conventions' },
+          { text: 'Source Generator Survey', link: '/development/source-generator-survey' },
           { text: 'Seam-Test Reviewer Checklist', link: '/seam-test-reviewer-checklist' },
         ],
       },
