@@ -68,26 +68,10 @@ public sealed class ExportTranscriptAssemblyArchitectureTests
     /// </summary>
     [Fact]
     public void ExportDocumentAssembler_ReferencesTheSharedProjection()
-    {
-        var assemblerType = typeof(ExportDocumentAssembler);
-        var projectionType = typeof(ConversationHistoryProjection);
-
-        var referencingMethods = assemblerType
-            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
-            .Where(m => m.GetMethodBody() is not null)
-            .Where(m =>
-            {
-                var il = m.GetMethodBody()!.GetILAsByteArray();
-                return il is not null && ContainsCallTo(m.Module, il, projectionType);
-            })
-            .Select(m => m.Name)
-            .ToArray();
-
-        referencingMethods.ShouldNotBeEmpty(
-            $"{assemblerType.Name} does not call {projectionType.Name}.Project. Both export scopes " +
-            "must consume the same projection the portal history endpoint uses (#3278 AC9); " +
-            "assembling entries directly reintroduces the drift the issue exists to prevent.");
-    }
+        => AssertCallsProjection(typeof(ExportDocumentAssembler),
+            $"{nameof(ExportDocumentAssembler)} does not call {nameof(ConversationHistoryProjection)}.Project. " +
+            "Both export scopes must consume the same projection the portal history endpoint uses " +
+            "(#3278 AC9); assembling entries directly reintroduces the drift the issue exists to prevent.");
 
     /// <summary>
     /// The history assembler that serves the portal must consume the same projection, so the two
@@ -95,25 +79,40 @@ public sealed class ExportTranscriptAssemblyArchitectureTests
     /// </summary>
     [Fact]
     public void ConversationHistoryAssembler_ReferencesTheSharedProjection()
+        => AssertCallsProjection(typeof(ConversationHistoryAssembler),
+            $"{nameof(ConversationHistoryAssembler)} no longer calls " +
+            $"{nameof(ConversationHistoryProjection)}.Project, so the portal history endpoint and the " +
+            "export routes have diverged onto separate transcript assembly paths (#3278 AC9).");
+
+    /// <summary>
+    /// Asserts that <paramref name="consumer"/> contains an IL call to
+    /// <see cref="ConversationHistoryProjection"/>.
+    /// </summary>
+    /// <remarks>
+    /// Both call sites are in <c>async</c> methods, whose bodies the compiler moves into a nested
+    /// state-machine type - the <c>MoveNext</c> of a generated struct, not the method that declares
+    /// them. Scanning only the declared methods therefore finds nothing and produces a false
+    /// failure, which is exactly what the first version of this fence did. Nested types must be
+    /// walked too.
+    /// </remarks>
+    private static void AssertCallsProjection(Type consumer, string because)
     {
-        var assemblerType = typeof(ConversationHistoryAssembler);
         var projectionType = typeof(ConversationHistoryProjection);
 
-        var referencingMethods = assemblerType
-            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
+        var candidates = new List<Type> { consumer };
+        candidates.AddRange(consumer.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic));
+
+        var found = candidates
+            .SelectMany(t => t.GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
             .Where(m => m.GetMethodBody() is not null)
-            .Where(m =>
+            .Any(m =>
             {
                 var il = m.GetMethodBody()!.GetILAsByteArray();
                 return il is not null && ContainsCallTo(m.Module, il, projectionType);
-            })
-            .Select(m => m.Name)
-            .ToArray();
+            });
 
-        referencingMethods.ShouldNotBeEmpty(
-            $"{assemblerType.Name} no longer calls {projectionType.Name}.Project, so the portal " +
-            "history endpoint and the export routes have diverged onto separate transcript " +
-            "assembly paths (#3278 AC9).");
+        found.ShouldBeTrue(because);
     }
 
     /// <summary>

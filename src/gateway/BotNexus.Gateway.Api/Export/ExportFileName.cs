@@ -67,6 +67,12 @@ public static class ExportFileName
         var sb = new StringBuilder(normalized.Length);
         foreach (var ch in normalized)
         {
+            // Stop at the cap rather than slicing afterwards. Building to length means the string is
+            // never cut mid-character, which is also why this file needs no surrogate-safe truncation
+            // helper (#2883): by construction every appended char is a single ASCII code unit.
+            if (sb.Length >= MaxSlugLength)
+                break;
+
             if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark)
                 continue;
 
@@ -79,9 +85,6 @@ public static class ExportFileName
         }
 
         var slug = sb.ToString().Trim('-');
-
-        if (slug.Length > MaxSlugLength)
-            slug = slug[..MaxSlugLength].Trim('-');
 
         if (slug.Length == 0)
             return FallbackSlug;

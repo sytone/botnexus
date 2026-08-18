@@ -113,15 +113,23 @@ public sealed class ExportDocumentAssembler
         // A session may be linked to a conversation, orphaned (#732), or point at a conversation row
         // that no longer exists. Only a successful lookup contributes the parent summary; the export
         // must still succeed in the other two cases with a session-only header.
+        //
+        // ConversationId is a Vogen value object, so on an orphan session it is UNINITIALIZED and
+        // reading .Value throws ValueObjectValidationException rather than returning null or empty.
+        // IsInitialized must therefore be checked before the value is touched at all.
+        var linkedConversationId = session.ConversationId.IsInitialized()
+            && !string.IsNullOrWhiteSpace(session.ConversationId.Value)
+                ? session.ConversationId.Value
+                : null;
+
         Conversation? conversation = null;
-        if (!string.IsNullOrWhiteSpace(session.ConversationId.Value))
+        if (linkedConversationId is not null)
             conversation = await _conversations.GetAsync(session.ConversationId, cancellationToken);
 
         return new ExportDocument
         {
             Scope = ExportScope.Session,
-            ConversationId = conversation?.ConversationId.Value
-                ?? (string.IsNullOrWhiteSpace(session.ConversationId.Value) ? null : session.ConversationId.Value),
+            ConversationId = conversation?.ConversationId.Value ?? linkedConversationId,
             Title = conversation?.Title,
             Purpose = conversation?.Purpose,
             Status = conversation?.Status.ToString(),
