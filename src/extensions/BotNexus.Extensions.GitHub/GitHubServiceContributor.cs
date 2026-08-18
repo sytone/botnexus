@@ -33,6 +33,27 @@ public sealed class GitHubServiceContributor : IServiceContributor
             return options;
         });
 
+        services.TryAddSingleton<IGitHubIdentityResolver>(provider =>
+        {
+            var options = provider.GetRequiredService<GitHubCredentialOptions>();
+            var httpFactory = provider.GetService<IHttpClientFactory>();
+            var timeProvider = provider.GetService<TimeProvider>() ?? TimeProvider.System;
+            var loggerFactory = provider.GetService<ILoggerFactory>();
+
+            // One token source and one cache PER IDENTITY. This is what makes two agents on
+            // different profiles independent in a single process (#2733 AC4): there is no shared
+            // mutable identity for one agent's activity to change out from under another's.
+            return new ConfiguredGitHubIdentityResolver(options, identity => new CachedGitHubCredentialProvider(
+                new HttpGitHubInstallationTokenSource(
+                    httpFactory?.CreateClient("botnexus-github") ?? new HttpClient(),
+                    options,
+                    timeProvider,
+                    identity),
+                timeProvider,
+                TimeSpan.FromSeconds(Math.Max(0, options.ExpirySkewSeconds)),
+                loggerFactory?.CreateLogger<CachedGitHubCredentialProvider>()));
+        });
+
         services.TryAddSingleton<IGitHubInstallationTokenSource>(provider => new HttpGitHubInstallationTokenSource(
             provider.GetService<IHttpClientFactory>()?.CreateClient("botnexus-github") ?? new HttpClient(),
             provider.GetRequiredService<GitHubCredentialOptions>(),
@@ -53,13 +74,20 @@ public sealed class GitHubServiceContributor : IServiceContributor
         // identity a configuration decision rather than a tool argument.
         services.AddSingleton<IAgentToolContributor>(provider =>
         {
-            var credentials = provider.GetRequiredService<IGitHubCredentialProvider>();
+            var resolver = provider.GetRequiredService<IGitHubIdentityResolver>();
+            var fallback = provider.GetRequiredService<IGitHubCredentialProvider>();
             var options = provider.GetRequiredService<GitHubCredentialOptions>();
             var httpFactory = provider.GetService<IHttpClientFactory>();
 
-            return new GitHubToolsContributor(_ => new HttpGitHubApiClient(
+            return new GitHubToolsContributor((GitHubToolsConfig _, BotNexus.Domain.Primitives.AgentId agentId) => new HttpGitHubApiClient(
                 httpFactory?.CreateClient("botnexus-github") ?? new HttpClient(),
-                credentials,
+                // A host with no per-agent identity map keeps the single platform identity it had
+                // before #2733; a host that HAS one gets strict per-agent resolution that fails
+                // closed. Silently downgrading a configured host to the shared identity would
+                // re-introduce exactly the cross-agent authorship bug this issue closes.
+                options.AgentIdentities.Count == 0 && options.Identities.Count == 0
+                    ? fallback
+                    : new AgentScopedGitHubCredentialProvider(resolver, agentId),
                 options));
         });
     }

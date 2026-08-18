@@ -35,6 +35,23 @@ public sealed class GitHubCredentialOptions
     public string ApiBaseAddress { get; set; } = "https://api.github.com/";
 
     /// <summary>
+    /// Named GitHub App identity profiles, keyed by profile name (#2733). Multiple identities are a
+    /// configuration fact, never a mutation of ambient CLI state.
+    /// </summary>
+    [JsonPropertyName("identities")]
+    public Dictionary<string, GitHubIdentityOptions> Identities { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Maps agent id to the name of the profile in <see cref="Identities"/> that agent acts as
+    /// (#2733). An agent absent from this map has NO GitHub identity and fails closed rather than
+    /// silently borrowing another agent's authorship.
+    /// </summary>
+    [JsonPropertyName("agentIdentities")]
+    public Dictionary<string, string> AgentIdentities { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// How long before the reported expiry the cached token is treated as expired. A non-zero skew
     /// stops a token that is valid at the moment of the check from expiring in flight on the wire.
     /// </summary>

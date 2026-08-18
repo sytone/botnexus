@@ -22,34 +22,46 @@ public sealed class HttpGitHubInstallationTokenSource : IGitHubInstallationToken
     private readonly HttpClient _httpClient;
     private readonly GitHubCredentialOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly GitHubActingIdentity? _identity;
 
     /// <summary>Creates a source over an <see cref="HttpClient"/>, options, and a clock.</summary>
+    /// <remarks>
+    /// <paramref name="identity"/> selects a resolved per-agent identity (#2733). When it is
+    /// <c>null</c> the source falls back to the flat top-level <c>GitHub</c> settings, which keeps
+    /// the single-identity hosts that predate #2733 working unchanged.
+    /// </remarks>
     public HttpGitHubInstallationTokenSource(
         HttpClient httpClient,
         GitHubCredentialOptions options,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        GitHubActingIdentity? identity = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _identity = identity;
     }
 
     /// <inheritdoc />
     public async Task<GitHubInstallationToken> MintAsync(CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(_options.AppId))
+        var appId = _identity?.AppId ?? _options.AppId;
+        var installationId = _identity?.InstallationId ?? _options.InstallationId;
+        var privateKeyPath = _identity?.PrivateKeyPath ?? _options.PrivateKeyPath;
+
+        if (string.IsNullOrWhiteSpace(appId))
             throw new GitHubCredentialException("GitHub App id is not configured.");
-        if (string.IsNullOrWhiteSpace(_options.InstallationId))
+        if (string.IsNullOrWhiteSpace(installationId))
             throw new GitHubCredentialException("GitHub App installation id is not configured.");
-        if (string.IsNullOrWhiteSpace(_options.PrivateKeyPath))
+        if (string.IsNullOrWhiteSpace(privateKeyPath))
             throw new GitHubCredentialException("GitHub App private key path is not configured.");
 
-        var pem = await File.ReadAllTextAsync(_options.PrivateKeyPath!, cancellationToken).ConfigureAwait(false);
-        var jwt = CreateAppJwt(_options.AppId!, pem, _timeProvider.GetUtcNow());
+        var pem = await File.ReadAllTextAsync(privateKeyPath!, cancellationToken).ConfigureAwait(false);
+        var jwt = CreateAppJwt(appId!, pem, _timeProvider.GetUtcNow());
 
         var requestUri = new Uri(
             new Uri(_options.ApiBaseAddress, UriKind.Absolute),
-            $"app/installations/{_options.InstallationId}/access_tokens");
+            $"app/installations/{installationId}/access_tokens");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwt);
