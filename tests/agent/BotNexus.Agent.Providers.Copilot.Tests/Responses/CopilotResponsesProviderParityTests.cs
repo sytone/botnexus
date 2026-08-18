@@ -138,8 +138,13 @@ public class CopilotResponsesProviderParityTests
         result.Content.OfType<TextContent>().Single().Text.ShouldBe("Understood now");
     }
 
+    // #3336 CONTRACT CHANGE, deliberately re-pinned rather than deleted. See the sibling comment
+    // in CopilotMessagesProviderParityTests: the CRLF framing is a Copilot TRANSPORT artifact
+    // declared by the provider, not a gpt-5.6 model-family trait, so a pre-gpt-5.6 model on this
+    // transport is normalized too. The inverted assertion is equally strict, and the interior-CRLF
+    // case below pins the invariant that actually protects model content.
     [Fact]
-    public async Task Stream_PreGpt56_PreservesLeadingCrLfVerbatim()
+    public async Task Stream_PreGpt56Model_StillNormalizesLeadingCrLf_BecauseTheQuirkIsTransportDeclared()
     {
         const string sse =
             "event: response.output_text.delta\n" +
@@ -159,7 +164,31 @@ public class CopilotResponsesProviderParityTests
             .GetResultAsync()
             .WaitAsync(TimeSpan.FromSeconds(10));
 
-        result.Content.OfType<TextContent>().Single().Text.ShouldBe("\r\nintentional");
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("intentional");
+    }
+
+    [Fact]
+    public async Task Stream_PreGpt56Model_InteriorCrLf_SurvivesAsContent()
+    {
+        const string sse =
+            "event: response.output_text.delta\n" +
+            "data: {\"item_id\":\"msg_1\",\"delta\":\"before\\r\\nafter\"}\n\n" +
+            "event: response.completed\n" +
+            "data: {\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n";
+
+        var handler = new RecordingHandler(_ => SseResponse(sse));
+        var provider = new CopilotResponsesProvider(
+            new HttpClient(handler),
+            NullLogger<CopilotResponsesProvider>.Instance);
+
+        var result = await provider.Stream(
+                BuildModel(),
+                BuildContext(),
+                new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
+            .GetResultAsync()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("before\r\nafter");
     }
 
     private static async Task<(RecordingHandler CopilotHandler, RecordingHandler OpenAIHandler)> DriveBothProvidersAsync()
