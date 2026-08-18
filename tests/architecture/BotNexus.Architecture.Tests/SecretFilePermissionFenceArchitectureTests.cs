@@ -41,6 +41,9 @@ public sealed class SecretFilePermissionFenceArchitectureTests
         "src/gateway/BotNexus.Gateway.Configuration/PlatformConfigWriter.cs",
         // Second atomic rewrite seam for the same config.json, at gateway startup.
         "src/gateway/BotNexus.Gateway.Configuration/ConfigNormalisationHostedService.cs",
+        // #2854 provider-shape migration: atomically rewrites config.json AND writes a byte-for-byte
+        // pre-migration backup of it, so both writes carry provider API keys.
+        "src/gateway/BotNexus.Gateway.Configuration/ProviderConfigMigrationHostedService.cs",
         // Byte-for-byte backup copies of config.json, secrets included.
         "src/gateway/BotNexus.Gateway.Configuration/ConfigBackupService.cs",
         // auth.json - OAuth refresh/access tokens (gateway side).

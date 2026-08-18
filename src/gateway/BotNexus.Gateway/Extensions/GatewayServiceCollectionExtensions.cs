@@ -564,6 +564,12 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IConfigSchemaContributor, CronSchemaContributor>();
         services.AddSingleton<IConfigSchemaContributor, SessionStoreSchemaContributor>();
         services.AddSingleton<IConfigSchemaContributor, RateLimitSchemaContributor>();
+        // #2854 (PR #3277 review): migrate pre-capability provider entries to the nested shape.
+        // Registered BEFORE ConfigHydrationService so hydration fills defaults into the migrated
+        // document — running it after would let hydration write defaults at the legacy flat paths that
+        // this service has just emptied, immediately recreating the shape it exists to remove.
+        services.AddHostedService<ProviderConfigMigrationHostedService>();
+
         services.AddHostedService<ConfigHydrationService>();
 
         // #2646 PBI 2 / #2766: the configuration shadow migration. Placed AFTER

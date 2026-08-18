@@ -179,6 +179,27 @@ replacement path (`providers.<key>.chat.<field>`); it is a warning, never a load
 presence of a capability object *is* the config-side declaration, so no separate `capabilities` array
 exists. `enabled: false` removes every capability from both halves.
 
+### Automatic migration
+
+You do not have to hand-edit an existing `config.json`. At startup the gateway rewrites any
+pre-#2854 provider entry into the nested shape, moving each flat chat field to
+`providers.<key>.chat.<field>`. The transform:
+
+- **moves, never copies** — the flat key is removed so no value is left behind that looks live but
+  is not;
+- **is idempotent** — it runs on every start, and a document already in the new shape is not
+  rewritten at all (no file churn, no backup);
+- **preserves an explicit nested value** — if both shapes set the same field, the nested one wins
+  and the stale flat key is dropped, matching the precedence the runtime already applies;
+- **writes a backup first** — the original document is copied byte-for-byte to
+  `config.json.pre-2854.bak` before any rewrite, so rollback is a file copy;
+- **never fails startup** — if migration fails for any reason the gateway continues on the existing
+  configuration, which remains fully supported.
+
+The SQLite configuration store needs no separate key migration: store keys are derived by flattening
+the JSON document, so `providers.openai.defaultModel` becomes `providers.openai.chat.defaultModel`
+in the store as a direct consequence of the document changing shape.
+
 ---
 
 ## Configuration Hierarchy
