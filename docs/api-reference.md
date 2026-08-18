@@ -1313,6 +1313,52 @@ X-Api-Key: your-api-key
 
 ---
 
+### Export Session Transcript (Markdown or HTML)
+
+**Endpoint:** `GET /api/sessions/{sessionId}/export/{format}`
+
+**Description:** Render the session transcript in the requested format, including the session's parent conversation summary when it is linked to one. `format` is `markdown` or `html` (`md` / `htm` accepted). Secret redaction is always enabled on this route.
+
+**Parameters:**
+- `sessionId` (string, path) — Session ID
+- `format` (string, path) — `markdown` or `html`
+
+**Response:** 200 OK — `text/markdown` or `text/html` file attachment named `<slug>-<yyyy-MM-dd>.<ext>`.
+
+**Error Responses:**
+- `400 Bad Request` — Unrecognised format
+- `404 Not Found` — Session does not exist
+
+---
+
+### Export Conversation Transcript (Markdown or HTML)
+
+**Endpoint:** `GET /api/conversations/{conversationId}/export/{format}`
+
+**Description:** Render the whole conversation — every linked session, with visible session boundary markers — as a downloadable transcript. The transcript is assembled from the same projection that serves `GET /api/conversations/{id}/history`, so a download always agrees with what the portal shows.
+
+The document header carries the conversation id, title, purpose, status, created/updated timestamps, owning agent, conversation-scoped instructions, any model / thinking / context-window overrides, the included session ids with per-session metadata, and the message and tool-call totals.
+
+Secret redaction is always enabled on this route. The HTML output is self-contained: one inline `<style>` block, no `<script>` element, and no remote asset reference.
+
+**Parameters:**
+- `conversationId` (string, path) — Conversation ID
+- `format` (string, path) — `markdown` or `html`
+
+**Request:**
+```http
+GET /api/conversations/c_abc123/export/html
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK — `text/markdown` or `text/html` file attachment named `<slug>-<yyyy-MM-dd>.<ext>`, UTF-8 encoded. An empty conversation returns a valid document containing the header and an explicit "no messages" note; archived conversations remain exportable and report their archived status.
+
+**Error Responses:**
+- `400 Bad Request` — Unrecognised format
+- `404 Not Found` — Conversation does not exist
+
+---
+
 ### List Live Sub-Agents for a Session
 
 **Endpoint:** `GET /api/sessions/{sessionId}/subagents`
