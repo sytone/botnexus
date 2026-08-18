@@ -48,6 +48,11 @@ else
            it, which is what makes /activity/costs a destination rather than a scroll target. *@
         <ActivityCostView />
     }
+    else if (string.Equals(ActiveSection, "cron", StringComparison.OrdinalIgnoreCase))
+    {
+        @* #3289: the cron cost subsection. Same replace-not-append rule as /activity/costs. *@
+        <CronCostView />
+    }
     else
     {
         <ActivityDashboard />

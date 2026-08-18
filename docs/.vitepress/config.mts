@@ -210,6 +210,7 @@ export default defineConfig({
           { text: 'Session Consistency', link: '/features/session-consistency' },
           { text: 'Conversation Provenance', link: '/features/conversation-provenance' },
           { text: 'Conversation Cost', link: '/features/conversation-cost' },
+          { text: 'Cron Cost', link: '/features/cron-cost' },
           { text: 'Hybrid Memory Retrieval', link: '/features/hybrid-memory-retrieval' },
           { text: 'Memory Taint Quarantine', link: '/features/memory-taint-quarantine' },
           { text: 'Provider Health Events', link: '/features/provider-health-events' },
