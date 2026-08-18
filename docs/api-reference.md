@@ -8,15 +8,16 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 2. [Sparse Fieldsets](#sparse-fieldsets-fields)
 3. [Authentication](#authentication)
 4. [Agent Management](#agent-management)
-5. [Skills Management](#skills-management)
-6. [Channels Management](#channels-management)
-7. [Extensions Management](#extensions-management)
-8. [Chat](#chat)
-9. [Commands](#commands)
-10. [Session Management](#session-management)
-11. [System & Status](#system--status)
-12. [Error Handling](#error-handling)
-13. [Webhooks](#webhooks)
+5. [Model Discovery](#model-discovery)
+6. [Skills Management](#skills-management)
+7. [Channels Management](#channels-management)
+8. [Extensions Management](#extensions-management)
+9. [Chat](#chat)
+10. [Commands](#commands)
+11. [Session Management](#session-management)
+12. [System & Status](#system--status)
+13. [Error Handling](#error-handling)
+14. [Webhooks](#webhooks)
 
 ---
 
@@ -468,6 +469,82 @@ X-Api-Key: your-api-key
 
 **Error Responses:**
 - `404 Not Found` — No active instance for the given agent/session
+
+---
+
+## Model Discovery
+
+Model discovery is served by `ModelsController`. Both endpoints are **read-only** and return the
+same `ModelInfo` projection, ordered by display name (case-insensitive). They report what the
+model registry knows — they do not verify that the provider is reachable or that a credential is
+present.
+
+### List Models
+
+**Endpoint:** `GET /api/models`
+
+**Description:** List available models across every registered provider.
+
+**Query parameters:**
+- `provider` (string, optional) — Restrict the result to a single provider (e.g. `anthropic`). When omitted, every registered provider is included.
+- `agentId` (string, optional) — Apply an agent's allow-list. When supplied, the result is filtered to that agent's permitted model IDs and defaults to that agent's own provider unless `provider` is also given.
+
+**Request:**
+```http
+GET /api/models?provider=anthropic
+X-Api-Key: your-api-key
+```
+
+**Response:** `200 OK`
+```json
+[
+  {
+    "name": "Claude Sonnet 4.5",
+    "modelId": "claude-sonnet-4-5",
+    "id": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "supportedThinkingLevels": ["low", "medium", "high"],
+    "supportedContextSizes": [200000]
+  }
+]
+```
+
+**Response fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Display name of the model. |
+| `modelId` | string | Model identifier. |
+| `id` | string | Alias for `modelId` — the same value, kept for client compatibility. |
+| `provider` | string | Provider the model is registered under (e.g. `github-copilot`, `anthropic`, `openai`). |
+| `supportedThinkingLevels` | string[] | Wire-form thinking levels the model supports. Empty when the model supports none. |
+| `supportedContextSizes` | int[] | Context-window sizes, in tokens, the model supports. Empty when the model exposes no selectable sizes. |
+
+**Error Responses:**
+- `404 Not Found` — `agentId` was supplied but no such agent is registered.
+
+### List Models for an Agent
+
+**Endpoint:** `GET /api/agents/{agentId}/models`
+
+**Description:** Path-form equivalent of `GET /api/models?agentId={agentId}` — returns the models
+that agent is allowed to use. Prefer this route when the agent is the subject of the request; the
+query-parameter form exists for clients that page over the whole catalogue.
+
+**Parameters:**
+- `agentId` (string, path) — Agent ID
+- `provider` (string, query, optional) — Restrict to one provider instead of the agent's own provider.
+
+**Request:**
+```http
+GET /api/agents/assistant/models
+X-Api-Key: your-api-key
+```
+
+**Response:** `200 OK` — same `ModelInfo` array shape as [List Models](#list-models).
+
+**Error Responses:**
+- `404 Not Found` — Agent not found.
 
 ---
 
