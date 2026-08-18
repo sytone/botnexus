@@ -42,8 +42,8 @@ public sealed class SqlitePoolCleanupGuardTests
             if (Path.GetFileName(file) == "SqlitePoolCleanupGuardTests.cs")
                 continue;
 
-            var text = File.ReadAllText(file);
-            if (Regex.IsMatch(text, @"ClearAllPools\s*\("))
+            var code = StripComments(File.ReadAllText(file));
+            if (Regex.IsMatch(code, @"ClearAllPools\s*\("))
                 offenders.Add(Path.GetRelativePath(testRoot, file).Replace(Path.DirectorySeparatorChar, '/'));
         }
 
@@ -51,6 +51,23 @@ public sealed class SqlitePoolCleanupGuardTests
             "SqliteConnection.ClearAllPools() is process-global and disposes sibling tests' live SQLite "
             + "handles under parallel collections (#3324). Use SqlitePoolCleanup.ClearPoolFor(dbPath) instead. "
             + "Offending files: " + string.Join(", ", offenders));
+    }
+
+    /// <summary>
+    /// Removes block and line comments so the scan sees CODE only.
+    /// </summary>
+    /// <remarks>
+    /// Without this, the guard reddens on its own remediation: the doc comments explaining WHY
+    /// <c>ClearAllPools</c> is banned, and the <c>// NOT ClearAllPools()</c> markers left at each
+    /// converted call site, both contain the banned token. Verified empirically - run
+    /// <c>20260818031500-433a5706</c> failed for exactly that reason. Deleting those comments to
+    /// satisfy the guard would have destroyed the explanation that stops the next author
+    /// reintroducing the bug, so the guard is narrowed instead.
+    /// </remarks>
+    private static string StripComments(string source)
+    {
+        var withoutBlocks = Regex.Replace(source, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        return Regex.Replace(withoutBlocks, @"//.*?$", string.Empty, RegexOptions.Multiline);
     }
 
     /// <summary>
