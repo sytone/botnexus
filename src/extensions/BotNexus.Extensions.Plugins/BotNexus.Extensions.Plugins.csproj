@@ -22,6 +22,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      #2683 slice 4: the plugin-update cron action and its platform-wide provisioner are declared
+      here rather than inside BotNexus.Cron because the update logic belongs to the plugin domain -
+      cron supplies only the trigger. The dependency therefore points extension -> scheduler, the
+      same direction every other action-owning consumer takes, and BotNexus.Cron gains no knowledge
+      of plugins.
+    -->
+    <ProjectReference Include="..\..\gateway\BotNexus.Cron\BotNexus.Cron.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="NJsonSchema" />
   </ItemGroup>

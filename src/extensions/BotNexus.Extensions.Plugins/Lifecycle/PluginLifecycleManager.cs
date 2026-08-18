@@ -1,3 +1,4 @@
+using BotNexus.Extensions.Plugins.Cron;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -22,12 +23,13 @@ namespace BotNexus.Extensions.Plugins.Lifecycle;
 /// silently lose it. Directories are pruned only when they are empty after the recorded files go.
 /// </para>
 /// </remarks>
-public sealed class PluginLifecycleManager
+public sealed class PluginLifecycleManager : IPluginUpdateService
 {
     private readonly PluginStateStore _store;
     private readonly IPluginSourceFetcher _fetcher;
     private readonly PluginManifestParser _parser;
     private readonly TimeProvider _timeProvider;
+    private readonly IPluginInstallObserver? _installObserver;
     private readonly ILogger<PluginLifecycleManager> _logger;
 
     /// <summary>Creates a manager over a plugin root.</summary>
@@ -36,17 +38,24 @@ public sealed class PluginLifecycleManager
     /// <param name="parser">Manifest parser used to validate fetched content.</param>
     /// <param name="timeProvider">Clock, injectable so install timestamps are deterministic in tests.</param>
     /// <param name="logger">Logger, optional.</param>
+    /// <param name="installObserver">
+    /// Notified after a SUCCESSFUL install (#2683). Optional so this type stays constructible with
+    /// no cron infrastructure at all - a consumer that only parses or removes plugins must not be
+    /// forced to compose a scheduler.
+    /// </param>
     public PluginLifecycleManager(
         PluginStateStore store,
         IPluginSourceFetcher fetcher,
         PluginManifestParser? parser = null,
         TimeProvider? timeProvider = null,
-        ILogger<PluginLifecycleManager>? logger = null)
+        ILogger<PluginLifecycleManager>? logger = null,
+        IPluginInstallObserver? installObserver = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _fetcher = fetcher ?? throw new ArgumentNullException(nameof(fetcher));
         _parser = parser ?? new PluginManifestParser();
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _installObserver = installObserver;
         _logger = logger ?? NullLogger<PluginLifecycleManager>.Instance;
     }
 
@@ -122,6 +131,27 @@ public sealed class PluginLifecycleManager
                 record.Name,
                 record.ResolvedVersion,
                 files.Count);
+
+            // #2683: the platform-wide plugin-update job is provisioned by the act of installing a
+            // plugin. It fires only on SUCCESS - a failed install materialised nothing, so a job
+            // scheduled for it would run forever over content that does not exist. Failure to
+            // provision must not fail an install that has already completed: the plugin is on disk
+            // and its record is written, and reporting that as a failed install would be a lie the
+            // caller could act on destructively.
+            if (_installObserver is not null)
+            {
+                try
+                {
+                    await _installObserver.OnPluginInstalledAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Plugin {Plugin} installed, but provisioning the plugin-update cron job failed.",
+                        record.Name);
+                }
+            }
 
             return new PluginOperationResult
             {

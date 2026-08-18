@@ -856,7 +856,7 @@ Schedule recurring tasks like heartbeats, reports, or maintenance jobs.
 **Cron Job Settings:**
 - `name` (string): Display name
 - `schedule` (string): Cron expression (5-field format)
-- `actionType` (string): `agent-prompt`, `command`, `webhook`, `memory-dreaming`, `skill-review`, `agent-converse`, or `heartbeat` - see [Cron & Scheduling](../cron-and-scheduling#job-types)
+- `actionType` (string): `agent-prompt`, `command`, `webhook`, `memory-dreaming`, `skill-review`, `agent-converse`, `plugin-update`, or `heartbeat` - see [Cron & Scheduling](../cron-and-scheduling#job-types)
 - `agentId` (string): Target agent (for `agent-prompt` jobs)
 - `message` (string): Prompt message (for `agent-prompt` jobs)
 - `webhookUrl` (string): Webhook URL (for `webhook` jobs)
