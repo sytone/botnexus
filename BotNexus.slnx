@@ -2,6 +2,7 @@
   <Folder Name="/src/extensions/">
     <Project Path="src/extensions/BotNexus.Extensions.AudioTranscription/BotNexus.Extensions.AudioTranscription.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Plugins/BotNexus.Extensions.Plugins.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Plugins.Api/BotNexus.Extensions.Plugins.Api.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Skills/BotNexus.Extensions.Skills.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Mcp/BotNexus.Extensions.Mcp.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.McpInvoke/BotNexus.Extensions.McpInvoke.csproj" />
@@ -97,6 +98,7 @@
     <Project Path="tests/extensions/BotNexus.Extensions.McpInvoke.Tests/BotNexus.Extensions.McpInvoke.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.ProcessTool.Tests/BotNexus.Extensions.ProcessTool.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Plugins.Tests/BotNexus.Extensions.Plugins.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.Plugins.Api.Tests/BotNexus.Extensions.Plugins.Api.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Skills.Tests/BotNexus.Extensions.Skills.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.WebTools.Tests/BotNexus.Extensions.WebTools.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.BrowserTools.Tests/BotNexus.Extensions.BrowserTools.Tests.csproj" />

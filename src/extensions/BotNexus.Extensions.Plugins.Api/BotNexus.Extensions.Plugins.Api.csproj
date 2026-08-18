@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      The HTTP surface for the plugin model lives in its own project rather than in
+      BotNexus.Extensions.Plugins because that project is deliberately free of an ASP.NET
+      dependency (it is the on-disk contract and its parser), and rather than in
+      BotNexus.Gateway.Api because the gateway dependency boundary forbids a gateway project
+      referencing an extension - see
+      BotNexus.Gateway.Tests.Architecture.GatewayProjectDependencyBoundaryTests.
+    -->
+    <RootNamespace>BotNexus.Extensions.Plugins.Api</RootNamespace>
+    <Description>HTTP endpoints exposing installed plugins, their versions, update and trust state to the portal.</Description>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BotNexus.Extensions.Plugins\BotNexus.Extensions.Plugins.csproj" />
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="botnexus-extension.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Extensions.Plugins.Api.Tests" />
+  </ItemGroup>
+</Project>
