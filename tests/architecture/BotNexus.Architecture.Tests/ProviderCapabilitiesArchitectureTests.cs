@@ -58,7 +58,11 @@ public class ProviderCapabilitiesArchitectureTests
     /// </summary>
     private static readonly string[] BaselineSubstringGatingFiles =
     [
-        "src/agent/BotNexus.Agent.Providers.Copilot/CopilotTextDeltaNormalizer.cs",
+        // CopilotTextDeltaNormalizer.cs was removed from this baseline by #3336: its
+        // modelId.StartsWith("gpt-5.6") gate is gone, replaced by the transport-quirk flag
+        // ProviderCapabilities.FramesStreamedTextDeltasWithCrlf. Migrating a site OUT of the
+        // baseline is exactly what the Baseline_ContainsOnlyFilesThatStillCarryTheShape test
+        // demands, and is the only sanctioned way this list shrinks.
         "src/agent/BotNexus.Agent.Providers.Copilot/Completions/CopilotCompletionsRequestBuilder.cs",
         "src/agent/BotNexus.Agent.Providers.Core/Compatibility/CompatResolver.cs",
         "src/agent/BotNexus.Agent.Providers.Core/Registry/DynamicModelCapabilities.cs",

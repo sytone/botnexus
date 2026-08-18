@@ -1496,6 +1496,11 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 {
                     Type = AgentStreamEventType.MessageEnd,
                     MessageId = messageId,
+                    // #3336: carry the provider's reconciled final text to the persistence seam. The
+                    // parsers now prefer the provider's own block value over delta-assembled text,
+                    // but the gateway persists a concatenation of the ContentDelta events that were
+                    // ALREADY emitted, so without this the correction never reached session_history.
+                    FinalContent = assistant.Content,
                     Usage = assistant.Usage is null ? null : new AgentResponseUsage(
                         InputTokens: assistant.Usage.InputTokens,
                         OutputTokens: assistant.Usage.OutputTokens,

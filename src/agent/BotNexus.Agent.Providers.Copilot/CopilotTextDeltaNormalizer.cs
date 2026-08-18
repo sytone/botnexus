@@ -3,7 +3,7 @@ namespace BotNexus.Agent.Providers.Copilot;
 /// <summary>
 /// The single implementation of Copilot text-delta transport normalization, applied identically by
 /// every Copilot transport - Responses, Messages and Completions (#2443). Removes the confirmed
-/// Copilot gpt-5.6 per-delta CRLF transport prefix before provider parsers accumulate text, while
+/// Copilot per-delta CRLF transport prefix before provider parsers accumulate text, while
 /// leaving every semantic character after that prefix untouched.
 /// </summary>
 /// <remarks>
@@ -15,6 +15,14 @@ namespace BotNexus.Agent.Providers.Copilot;
 /// </remarks>
 internal static class CopilotTextDeltaNormalizer
 {
+    /// <summary>
+    /// The Copilot transports' declared answer to "does this wire frame text deltas with CRLF?"
+    /// (#3336). Every Copilot provider's <c>ProviderCapabilities</c> declaration AND every
+    /// <see cref="Normalize"/> call site reads this one symbol, so a provider cannot declare the
+    /// quirk while its parser silently skips the strip, or vice versa.
+    /// </summary>
+    internal const bool CopilotTransportFramesTextDeltasWithCrlf = true;
+
     private static long _hitCount;
 
     /// <summary>
@@ -32,18 +40,24 @@ internal static class CopilotTextDeltaNormalizer
     /// content to the agent loop.
     /// </summary>
     /// <remarks>
-    /// The Copilot Responses endpoint frames gpt-5.6 text deltas with a CRLF transport
+    /// The Copilot Responses endpoint frames some text deltas with a CRLF transport
     /// prefix. The original SSE-era fix (#2052) stripped a single leading <c>\r\n</c>, but
-    /// the capability-aware WebSocket transport (#2082) surfaced fragments where gpt-5.6-sol
+    /// the capability-aware WebSocket transport (#2082) surfaced fragments where the stream
     /// prefixes <em>every</em> token with framing - sometimes more than one pair - which
     /// persisted as one-token-per-line output (#2119). We therefore strip <em>all</em>
     /// leading <c>\r\n</c> pairs. This is safe because genuine Markdown boundaries emitted by
     /// the model arrive as bare <c>\n</c> (LF) characters, never as CRLF, so real newlines,
     /// lists, paragraphs, and code blocks are preserved verbatim.
+    /// <para>
+    /// Whether the strip applies is decided by the caller's declared
+    /// <c>ProviderCapabilities.FramesStreamedTextDeltasWithCrlf</c>, NOT by a model-id prefix.
+    /// The old <c>gpt-5.6</c> gate encoded a model-family hypothesis that the <c>claude-opus-5</c>
+    /// evidence in #3336 falsifies; a transport artifact is declared by the transport.
+    /// </para>
     /// </remarks>
-    internal static string Normalize(string modelId, string delta)
+    internal static string Normalize(bool transportFramesTextDeltasWithCrlf, string delta)
     {
-        if (!modelId.StartsWith("gpt-5.6", StringComparison.OrdinalIgnoreCase))
+        if (!transportFramesTextDeltasWithCrlf)
             return delta;
 
         var offset = 0;
