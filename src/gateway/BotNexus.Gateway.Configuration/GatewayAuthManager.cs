@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using System.IO.Abstractions;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Core;
+using BotNexus.Gateway.Abstractions.Providers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -19,17 +20,91 @@ public sealed class GatewayAuthManager
     private readonly IFileSystem _fileSystem;
     private readonly string _authFilePath;
     private readonly string _legacyAuthFilePath;
+    private readonly IProviderHealthObserver _healthObserver;
+
+    /// <summary>
+    /// The credential-refresh call, indirected so that a test can drive the upstream-failure path.
+    ///
+    /// <para>
+    /// The refresh goes through a static <c>CopilotOAuth</c> call, which cannot be made to return a
+    /// 502/503 from a test. Without this seam the entire refresh-failure branch - the branch the
+    /// whole of #3281 is about - would be unreachable by any test, and its coverage would be a claim
+    /// rather than a demonstration. Production wiring is unchanged: the default is the real call.
+    /// </para>
+    /// </summary>
+    private readonly Func<AuthEntry, CancellationToken, Task<AuthEntry>> _refreshEntry;
     private readonly object _sync = new();
     private Dictionary<string, AuthEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
 
     public GatewayAuthManager(IOptionsMonitor<PlatformConfig> platformConfig, ILogger<GatewayAuthManager> logger, IFileSystem fileSystem)
+        : this(platformConfig, logger, fileSystem, NullProviderHealthObserver.Instance)
     {
+    }
+
+    /// <summary>
+    /// Creates an auth manager that reports credential outcomes to a health observer (#3281).
+    /// The observer receives every refresh attempt so that repeated upstream failures can become a
+    /// <c>health.degraded</c> event instead of a log line nobody sees.
+    /// </summary>
+    public GatewayAuthManager(
+        IOptionsMonitor<PlatformConfig> platformConfig,
+        ILogger<GatewayAuthManager> logger,
+        IFileSystem fileSystem,
+        IProviderHealthObserver healthObserver)
+        : this(platformConfig, logger, fileSystem, healthObserver, RefreshEntryAsync)
+    {
+    }
+
+    /// <summary>
+    /// Test-facing constructor that also substitutes the credential-refresh call so the
+    /// upstream-failure branch can be exercised deterministically (#3281).
+    /// </summary>
+    internal GatewayAuthManager(
+        IOptionsMonitor<PlatformConfig> platformConfig,
+        ILogger<GatewayAuthManager> logger,
+        IFileSystem fileSystem,
+        IProviderHealthObserver healthObserver,
+        Func<AuthEntry, CancellationToken, Task<AuthEntry>> refreshEntry)
+    {
+        _refreshEntry = refreshEntry ?? throw new ArgumentNullException(nameof(refreshEntry));
         _platformConfig = platformConfig;
         _logger = logger;
         _fileSystem = fileSystem;
+        _healthObserver = healthObserver ?? NullProviderHealthObserver.Instance;
         _authFilePath = Path.Combine(PlatformConfigLoader.GetDefaultConfigDirectory(_fileSystem), AuthFileName);
         _legacyAuthFilePath = Path.Combine(Environment.CurrentDirectory, ".botnexus-agent", AuthFileName);
+    }
+
+    /// <summary>
+    /// Resolves a provider credential and reports why the attempt ended as it did (#3281).
+    ///
+    /// <para>
+    /// Prefer this over <see cref="GetApiKeyAsync"/> when the caller needs to distinguish an upstream
+    /// outage from a provider that was simply never configured. <see cref="GetApiKeyAsync"/> remains
+    /// the convenience projection that drops the reason.
+    /// </para>
+    /// </summary>
+    public async Task<ProviderCredentialOutcome> ResolveCredentialAsync(string provider, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(provider))
+        {
+            return ProviderCredentialOutcome.NotConfigured();
+        }
+
+        var authOutcome = await ResolveAuthEntryCredentialAsync(provider, cancellationToken).ConfigureAwait(false);
+        if (authOutcome.Status != ProviderCredentialStatus.NotConfigured)
+        {
+            return authOutcome;
+        }
+
+        // No auth.json entry, but a key may still be declared in config or the environment. A
+        // refresh failure above is returned as-is and never overwritten by a fallback lookup: the
+        // fault is the more important fact about the provider's health.
+        var fallbackKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        return string.IsNullOrWhiteSpace(fallbackKey)
+            ? ProviderCredentialOutcome.NotConfigured()
+            : ProviderCredentialOutcome.Success(fallbackKey);
     }
 
     /// <summary>
@@ -236,29 +311,109 @@ public sealed class GatewayAuthManager
 
     private async Task<string?> GetApiKeyFromAuthEntryAsync(string provider, CancellationToken cancellationToken)
     {
+        var outcome = await ResolveAuthEntryCredentialAsync(provider, cancellationToken).ConfigureAwait(false);
+        return outcome.ApiKey;
+    }
+
+    /// <summary>
+    /// Resolves a credential from <c>auth.json</c> and reports <em>why</em> the attempt ended as it
+    /// did (#3281).
+    ///
+    /// <para>
+    /// This method exists because the previous shape returned a bare <c>null</c> for three unrelated
+    /// conditions - no auth entry, a failed refresh, and an absent credential - which made an upstream
+    /// outage indistinguishable from a provider nobody had configured. The failure was logged and then
+    /// discarded at this exact seam, so no caller could ever react to it. Returning the reason is what
+    /// makes a provider-health signal possible at all.
+    /// </para>
+    ///
+    /// <para>
+    /// Only a <em>refresh failure</em> is reported to the health observer. A missing auth entry is a
+    /// steady state, not an outage, and reporting it as one would fire a degraded-health event on every
+    /// host that simply does not use a given provider.
+    /// </para>
+    /// </summary>
+    private async Task<ProviderCredentialOutcome> ResolveAuthEntryCredentialAsync(string provider, CancellationToken cancellationToken)
+    {
         LoadAuthEntries();
 
         if (!TryGetAuthEntry(provider, out var entry))
         {
-            return null;
+            return ProviderCredentialOutcome.NotConfigured();
         }
 
         if (!NeedsRefresh(entry))
         {
-            return entry.Access;
+            return string.IsNullOrWhiteSpace(entry.Access)
+                ? ProviderCredentialOutcome.NotConfigured()
+                : ProviderCredentialOutcome.Success(entry.Access);
         }
 
         try
         {
-            var refreshed = await RefreshEntryAsync(entry, cancellationToken).ConfigureAwait(false);
+            var refreshed = await _refreshEntry(entry, cancellationToken).ConfigureAwait(false);
             UpdateEntry(provider, refreshed);
-            return refreshed.Access;
+            var success = ProviderCredentialOutcome.Success(refreshed.Access);
+            await NotifyHealthObserverAsync(provider, success, cancellationToken).ConfigureAwait(false);
+            return success;
+        }
+        catch (OperationCanceledException)
+        {
+            // Caller-driven cancellation is not a provider fault and must not be reported as one.
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed refreshing auth credentials for provider '{Provider}'.", provider);
-            return null;
+
+            var failure = ProviderCredentialOutcome.Failed(
+                ex.GetType().Name,
+                ExtractStatusCode(ex),
+                ex.Message);
+
+            await NotifyHealthObserverAsync(provider, failure, cancellationToken).ConfigureAwait(false);
+            return failure;
         }
+    }
+
+    /// <summary>
+    /// Reports an outcome to the health observer without ever letting it break credential
+    /// resolution. An observer fault must not escalate a recoverable provider outage into a
+    /// failure of the code attempting to report that outage.
+    /// </summary>
+    private async Task NotifyHealthObserverAsync(string provider, ProviderCredentialOutcome outcome, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _healthObserver.RecordAsync(provider, outcome, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Provider health observer failed for provider '{Provider}'.", provider);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort extraction of the upstream HTTP status code from a refresh failure.
+    ///
+    /// <para>
+    /// <see cref="HttpRequestException.StatusCode"/> is populated when the failure came from
+    /// <c>EnsureSuccessStatusCode</c>, which is the path the observed outage took. It is left null
+    /// for transport-level faults (DNS, connection reset) where no status exists - null means "no
+    /// status observed", never zero, so that a missing measurement is not presented as a real one.
+    /// </para>
+    /// </summary>
+    private static int? ExtractStatusCode(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is HttpRequestException { StatusCode: { } status })
+            {
+                return (int)status;
+            }
+        }
+
+        return null;
     }
 
     private static bool NeedsRefresh(AuthEntry entry)
@@ -393,7 +548,11 @@ public sealed class GatewayAuthManager
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    private sealed class AuthEntry
+    /// <summary>
+    /// A single credential record from <c>auth.json</c>. Internal rather than private so the
+    /// refresh seam above can be substituted from tests (#3281); it is not part of the public API.
+    /// </summary>
+    internal sealed class AuthEntry
     {
         [JsonPropertyName("type")]
         public string Type { get; set; } = "oauth";

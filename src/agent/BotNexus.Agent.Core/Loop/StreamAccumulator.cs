@@ -241,7 +241,11 @@ internal static class StreamAccumulator
             return final;
         }
 
-        var result = await stream.GetResultAsync().ConfigureAwait(false);
+        // No terminal event was observed, so the final message must come from the stream's result
+        // task. That await is outside the cancellation-observing enumeration above, so it is bound
+        // to the caller's token explicitly (#3293) - otherwise a producer that never completes the
+        // result strands this turn with no error, no cancellation and no timeout.
+        var result = await stream.GetResultAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
         final = StripNonExecutableToolCalls(MessageConverter.ToAgentMessage(result));
         ReplacePartialWithFinal(contextMessages, final, partialAddedToContext);
 

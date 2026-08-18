@@ -44,6 +44,28 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/ConversationsController.cs
 
 Returns `200 OK` with a JSON array of conversation summaries (active only).
 
+### `GET /api/conversations/costs`
+
+Returns `200 OK` with a JSON array of per-conversation cost rollups, ranked by accumulation
+descending with a deterministic conversation-id tie-break. One row per listed conversation.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `conversationId` | string | The conversation the row addresses |
+| `sessionCount` | int | How many sessions the conversation spans (the ramp signal) |
+| `messageCount` | int | Transcript entries accumulated across those sessions |
+| `compactionSummaryCount` | int \| null | Compaction summaries carried (the context-pressure signal) |
+| `totalTokens` | long \| null | Provider tokens attributed to the conversation |
+
+The nullable fields are nullable on the wire: **`null` means the signal was not measured, and is
+never equivalent to `0`.** A measured zero and an unmeasured value are deliberately distinguishable,
+because reporting the latter as the former would present "we did not look" as "this conversation is
+free". `totalTokens` is `null` for every conversation today — no per-conversation provider-usage
+measurement exists on this seam yet.
+
+The rollup is derived at read time from the session and transcript tables; no stored counter backs
+it. See [Conversation Cost](../features/conversation-cost.md).
+
 ### `GET /api/conversations/{conversationId}`
 
 Returns `200 OK` with the full conversation (including channel bindings), or

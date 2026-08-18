@@ -142,6 +142,17 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationCostDto>> GetConversationCostsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var result = await _http.GetFromJsonAsync<List<ConversationCostDto>>(
+            $"{_apiBaseUrl}conversations/costs",
+            cancellationToken);
+        return result as IReadOnlyList<ConversationCostDto> ?? [];
+    }
+
+    /// <inheritdoc />
     public async Task<SessionPageDto> GetSessionsAsync(
         string? agentId = null,
         int? limit = null,

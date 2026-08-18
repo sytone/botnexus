@@ -231,4 +231,57 @@ public class StreamAccumulatorTests
         contextMessages.Count().ShouldBe(3);
         contextMessages.OfType<AssistantAgentMessage>().ShouldHaveSingleItem();
     }
+
+    /// <summary>
+    /// #3293 AC3: when a stream drains with no terminal event, the accumulator falls through to
+    /// <c>GetResultAsync</c>. That await sits outside the cancellation-observing enumeration, so a
+    /// producer that ends without a result used to strand the turn permanently. The producer now
+    /// faults that task, and the accumulator must surface the failure rather than hang.
+    /// </summary>
+    [Fact]
+    public async Task AccumulateAsync_StreamEndsWithoutTerminalEvent_ThrowsWithinBoundedWait()
+    {
+        var stream = new LlmStream();
+        var partial = CreateAssistantMessage("half a sentence");
+
+        stream.Push(new StartEvent(partial));
+        stream.Push(new TextDeltaEvent(0, "half a sentence", partial));
+        stream.EndWithoutResult("transport closed before a terminal event");
+
+        var accumulate = StreamAccumulator.AccumulateAsync(
+            stream,
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        var completed = await Task.WhenAny(accumulate, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.ShouldBeSameAs(accumulate, "AccumulateAsync must complete, not hang, when the stream ends with no result");
+
+        var ex = await Should.ThrowAsync<LlmStreamIncompleteException>(() => accumulate);
+        ex.Reason.ShouldBe("transport closed before a terminal event");
+    }
+
+    /// <summary>
+    /// #3293: the fallback result await is now bound to the caller's cancellation token, so a
+    /// producer that never completes at all is cancellable instead of stranding the turn forever.
+    /// </summary>
+    [Fact]
+    public async Task AccumulateAsync_StreamNeverCompletesResult_ObservesCancellation()
+    {
+        var stream = new LlmStream();
+        var partial = CreateAssistantMessage("orphaned");
+        using var cts = new CancellationTokenSource();
+
+        stream.Push(new StartEvent(partial));
+
+        var accumulate = StreamAccumulator.AccumulateAsync(
+            stream,
+            _ => Task.CompletedTask,
+            cts.Token);
+
+        cts.Cancel();
+
+        var completed = await Task.WhenAny(accumulate, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.ShouldBeSameAs(accumulate, "AccumulateAsync must observe cancellation rather than hang");
+        await Should.ThrowAsync<OperationCanceledException>(() => accumulate);
+    }
 }

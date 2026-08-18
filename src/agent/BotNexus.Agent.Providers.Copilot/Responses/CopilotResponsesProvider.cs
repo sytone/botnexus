@@ -193,7 +193,10 @@ public sealed class CopilotResponsesProvider : IApiProvider
                 catch (Exception ex)
                 {
                     parseFailure = ex;
-                    normalized.End();
+                    // The parse died before any terminal event, so there is no final message to
+                    // report. Say that explicitly (#3293) rather than completing the channel with a
+                    // pending result task, which would strand any awaiter of GetResultAsync.
+                    normalized.EndWithoutResult($"Copilot Responses stream parse failed: {ex.Message}");
                 }
             });
 

@@ -41,5 +41,15 @@ else
         <div class="activity-subnav-notice" data-testid="activity-subnav-unknown" role="status">@UnknownSectionMessage</div>
     }
 
-    <ActivityDashboard />
+    @if (string.Equals(ActiveSection, "costs", StringComparison.OrdinalIgnoreCase))
+    {
+        @* #2898: the first real Activity subsection. The overview dashboard is deliberately NOT
+           rendered alongside it - a subsection replaces the default view rather than appending to
+           it, which is what makes /activity/costs a destination rather than a scroll target. *@
+        <ActivityCostView />
+    }
+    else
+    {
+        <ActivityDashboard />
+    }
 }
