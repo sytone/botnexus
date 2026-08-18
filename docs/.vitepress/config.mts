@@ -184,6 +184,7 @@ export default defineConfig({
           { text: 'Azure Build and Test Runner', link: '/development/azure-build-test-runner' },
           { text: 'Maintenance Orchestration', link: '/development/autonomous-maintenance-orchestration' },
           { text: 'Validation Receipts', link: '/development/validation-receipts' },
+          { text: 'Spike: Workflow Conversations', link: '/development/spike-workflow-conversations' },
           { text: 'Debugging', link: '/development/debugging' },
           { text: 'Compat Shim Lifecycle', link: '/development/compat-shim-lifecycle' },
           { text: 'PR and Commit Conventions', link: '/development/pr-and-commit-conventions' },
