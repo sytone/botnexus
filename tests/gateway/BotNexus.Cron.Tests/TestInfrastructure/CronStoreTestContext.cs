@@ -1,5 +1,4 @@
 using BotNexus.Domain.Primitives;
-using Microsoft.Data.Sqlite;
 using System.IO.Abstractions;
 
 namespace BotNexus.Cron.Tests.TestInfrastructure;
@@ -63,7 +62,8 @@ internal sealed class CronStoreTestContext : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        SqliteConnection.ClearAllPools();
+        // NOT ClearAllPools(): that is process-global and kills sibling tests' live handles (#3324).
+        SqlitePoolCleanup.ClearPoolFor(DbPath);
         if (!Directory.Exists(TempDirectory))
             return;
 
