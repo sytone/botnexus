@@ -173,9 +173,28 @@ jobs:
       # package and then install the chromium binary without `--with-deps`.
       - name: Install Playwright system dependencies
         shell: bash
+        # BOUNDED BY DESIGN (#3365). This step used to hang ~29 minutes inside apt and was then
+        # killed by the job's own 30-minute ceiling, so no Playwright test ran at all and the job
+        # reported a permanent red X on unrelated PRs. Observed on #3322/#3323/#3325/#3368/#3371/
+        # #3374, every one at ~30m; the same step succeeds in about a minute when the mirror is
+        # healthy, which is what makes it an availability problem rather than a package problem.
+        #
+        # The Azure mirror answers `Ign:` for every index and apt silently falls through to
+        # archive.ubuntu.com, which is where it stalls with no output. Retries plus explicit
+        # network timeouts turn that indefinite stall into a bounded, diagnosable failure, and
+        # timeout(1) caps the whole step well under the job ceiling so a hang can never again
+        # consume the entire slot. A red check that is always red is one nobody reads -- which is
+        # the actual damage, because it sits directly beside core-tests.
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          set -euo pipefail
+          apt_opts=(
+            -o Acquire::Retries=3
+            -o Acquire::http::Timeout=20
+            -o Acquire::https::Timeout=20
+          )
+          timeout 5m sudo apt-get "${apt_opts[@]}" update
+          timeout 5m sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends \
             libasound2t64 libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 \
             libcups2t64 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 \
             libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 libatspi2.0-0t64
