@@ -126,6 +126,10 @@ try {
         @{ name = 'ARTIFACT_BLOB_URL'; value = $artifactUrl }
         @{ name = 'TEST_MODE'; value = $Mode }
         @{ name = 'BASE_REF'; value = $BaseRef }
+        # #3305: the runner sets its own deadline strictly inside this budget so it ends the
+        # run on a path it controls and still has time to upload artifacts. Passed in rather
+        # than hardcoded in the image so the two numbers cannot drift apart.
+        @{ name = 'REPLICA_TIMEOUT_SECONDS'; value = [string]($ReplicaTimeoutMinutes * 60) }
     )
     $startBody = @{ containers = $template.containers } | ConvertTo-Json -Depth 30 -Compress
     $bodyPath = Join-Path $tempRoot 'start.json'
@@ -177,6 +181,14 @@ try {
     # provably green (#3115). A nested copy is a regression, not an acceptable location.
     $resultFile = Get-ChildItem -Path $OutputPath -Filter result.json -File | Select-Object -First 1
     $result = if ($resultFile) { Get-Content $resultFile.FullName -Raw | ConvertFrom-Json } else { $null }
+
+    # #3305: a run that overran its budget now says so IN the contract, and names the projects
+    # that had not reported. Before this the only evidence was an empty directory, which cannot
+    # distinguish a hang from a slow suite and attributes the cost to nothing at all.
+    $runnerTimeout = if ($result -and $result.PSObject.Properties['timeout']) { $result.timeout } else { $null }
+    if ($runnerTimeout) {
+        Write-Warning ("Runner deadline expired after {0:N0}s of a {1}s test budget. {2}" -f $runnerTimeout.elapsedSeconds, $runnerTimeout.deadlineSeconds, $runnerTimeout.attribution)
+    }
     $playwrightArtifact = Get-ChildItem -Path $OutputPath -Filter playwright.log -Recurse | Select-Object -First 1
     $requiredArtifactsPresent = $Mode -ne 'strict' -or $null -ne $playwrightArtifact
 
@@ -206,7 +218,13 @@ try {
 
     if ($status.properties.status -ne 'Succeeded' -or $null -eq $result -or $result.exitCode -ne 0 -or -not $requiredArtifactsPresent) {
         $artifactFailure = if ($requiredArtifactsPresent) { '' } else { ' The strict Playwright artifact is missing; the deployed runner does not prove strict mode.' }
-        $timeoutNote = if ($timedOut) { (' The run reached the {0} min replica timeout, so it was killed rather than completing - treat this as a hang, not a test failure.' -f $budgetMinutes) } else { '' }
+        $timeoutNote = if ($runnerTimeout) {
+            (' The runner stopped the test phase at its own {0}s deadline, inside the {1} min replica budget, so artifacts were still uploaded. {2}' -f $runnerTimeout.deadlineSeconds, $budgetMinutes, $runnerTimeout.attribution)
+        }
+        elseif ($timedOut) {
+            (' The run reached the {0} min replica timeout, so it was killed rather than completing - treat this as a hang, not a test failure.' -f $budgetMinutes)
+        }
+        else { '' }
         throw "Azure validation failed. Execution status: $($status.properties.status).$artifactFailure$timeoutNote Artifacts: $OutputPath"
     }
 
