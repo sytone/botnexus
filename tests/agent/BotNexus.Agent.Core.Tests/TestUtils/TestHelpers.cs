@@ -37,7 +37,8 @@ internal static class TestHelpers
         AfterToolCallDelegate? afterToolCall = null,
         TimeSpan? toolTimeout = null,
         TimeSpan? beforeToolCallTimeout = null,
-        Action<string>? onDiagnostic = null)
+        Action<string>? onDiagnostic = null,
+        BotNexus.Agent.Core.Loop.IHostSuspendDetector? suspendDetector = null)
     {
         return new AgentLoopConfig(
             Model: model ?? CreateTestModel(),
@@ -53,7 +54,8 @@ internal static class TestHelpers
             GenerationSettings: new SimpleStreamOptions(),
             ToolTimeout: toolTimeout,
             BeforeToolCallTimeout: beforeToolCallTimeout,
-            OnDiagnostic: onDiagnostic);
+            OnDiagnostic: onDiagnostic,
+            SuspendDetector: suspendDetector);
     }
 
     public static AgentOptions CreateTestOptions(
