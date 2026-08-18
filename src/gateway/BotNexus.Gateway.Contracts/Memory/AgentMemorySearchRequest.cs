@@ -47,6 +47,18 @@ public sealed record AgentMemorySearchResult(
     /// </remarks>
     public string Provenance { get; init; } = "unknown";
 
+    /// <summary>
+    /// The trust tier derived from <see cref="Provenance"/> - <c>trusted</c>, <c>derived</c>,
+    /// <c>untrusted</c> or <c>quarantined</c> (issue #3232).
+    /// </summary>
+    /// <remarks>
+    /// Derived on read from the provenance above rather than carried independently, so the two can
+    /// never disagree on the wire. Rendered alongside provenance rather than instead of it: the
+    /// provenance says where the content came from, the tier says what the retrieval pipeline did
+    /// about it, and a reader auditing a surprising result needs both.
+    /// </remarks>
+    public string TrustTier { get; init; } = "untrusted";
+
     /// <summary>Conversation the content originated in, when recorded.</summary>
     public string? OriginConversationId { get; init; }
 

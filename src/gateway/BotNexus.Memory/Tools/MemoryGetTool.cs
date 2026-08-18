@@ -133,6 +133,9 @@ public sealed class MemoryGetTool : IAgentTool
             // Normalized, never raw: a pre-provenance row must render as `unknown` rather than
             // as a blank field the model could read as an absence of concern (#2480).
             $"Provenance: {entry.NormalizedProvenance}",
+            // #3232: the derived consequence of that provenance, rendered alongside it so a reader
+            // sees not just where the row came from but how retrieval treated it.
+            $"Trust: {MemoryTrust.ToWireValue(entry.TrustTier)}",
             $"Session: {entry.SessionId ?? "(none)"}",
             $"Content: {preview}");
     }

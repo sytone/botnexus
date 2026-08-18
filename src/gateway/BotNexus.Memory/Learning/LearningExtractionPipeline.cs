@@ -59,6 +59,11 @@ public sealed class LearningExtractionPipeline
                 SourceSessionId = entry.SessionId ?? string.Empty,
                 SourceTurnIndex = entry.TurnIndex ?? 0,
                 TargetStore = null,
+                // The distilled item inherits the origin of the row it was distilled from, so a
+                // quarantined transcript row cannot shed its provenance by passing through
+                // extraction (#3232 AC3). Content is consulted as well as the column because a
+                // quarantined row carries its marker in the text.
+                ContributingProvenances = [ContributingProvenanceOf(entry)],
             };
 
             extracted.Add(knowledge);
@@ -75,6 +80,24 @@ public sealed class LearningExtractionPipeline
 
         return Task.FromResult(routed);
     }
+
+    /// <summary>
+    /// The provenance an extracted item inherits from its source row.
+    /// </summary>
+    /// <remarks>
+    /// Derived through <see cref="MemoryEntry.TrustTier"/> rather than read straight off the
+    /// column, so an in-content quarantine marker (#2519) on a row whose column says otherwise
+    /// still downgrades the extracted item. Mapping tier back to a vocabulary value keeps
+    /// <see cref="ExtractedKnowledge.ContributingProvenances"/> expressed in the one closed
+    /// vocabulary rather than introducing a parallel representation.
+    /// </remarks>
+    private static string ContributingProvenanceOf(MemoryEntry entry)
+        => entry.TrustTier switch
+        {
+            MemoryTrustTier.Quarantined => MemoryProvenance.ExternalUntrusted,
+            MemoryTrustTier.Untrusted => MemoryProvenance.Unknown,
+            _ => entry.NormalizedProvenance,
+        };
 
     /// <summary>
     /// Parses a stored turn-pair row back into its two role records.

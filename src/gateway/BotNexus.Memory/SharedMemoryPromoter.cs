@@ -39,6 +39,7 @@ public sealed class SharedMemoryPromoter
         ArgumentNullException.ThrowIfNull(items);
 
         var promoted = 0;
+        var refused = 0;
 
         foreach (var item in items)
         {
@@ -46,6 +47,24 @@ public sealed class SharedMemoryPromoter
 
             if (item.TargetStore is null)
                 continue;
+
+            // Promotion refusal (#3232 AC6). A shared store is read by agents that never saw the
+            // originating turn and cannot judge the content's origin for themselves, so promotion
+            // is an authority transfer, not a copy. Non-first-party material is refused rather
+            // than promoted-and-labelled: the label would have to survive every future read path
+            // to be worth anything, and one that forgets it reopens the laundering route this
+            // issue exists to close. The content stays in the origin agent's own store.
+            if (!item.IsPromotable)
+            {
+                refused++;
+                _logger.LogWarning(
+                    "Refusing to promote non-first-party knowledge to shared store '{Store}' for agent '{AgentId}': provenance={Provenance}, contributors=[{Contributors}]",
+                    item.TargetStore,
+                    agentId,
+                    item.Provenance,
+                    string.Join(", ", item.ContributingProvenances));
+                continue;
+            }
 
             if (!_registry.CanWrite(agentId, item.TargetStore))
             {
@@ -80,9 +99,11 @@ public sealed class SharedMemoryPromoter
                 SessionId = item.SourceSessionId,
                 TurnIndex = item.SourceTurnIndex,
                 SourceType = "dreaming",
-                // Consolidated knowledge the agent derived itself; the originating session is
-                // preserved separately so the promoted row does not lose its trail (#2480).
-                Provenance = MemoryProvenance.Agent,
+                // The promoted row carries the LEAST-TRUSTED contributing provenance, not a fresh
+                // first-party stamp (#3232 AC3/AC7). Re-stamping on ingest is the exact laundering
+                // step the trust boundary exists to prevent; the originating session is preserved
+                // separately so the promoted row does not lose its trail (#2480).
+                Provenance = item.Provenance,
                 OriginSessionId = item.SourceSessionId,
                 Content = item.Content,
                 MetadataJson = BuildMetadataJson(item),
@@ -98,8 +119,8 @@ public sealed class SharedMemoryPromoter
         }
 
         _logger.LogInformation(
-            "Shared memory promotion complete: {Promoted}/{Total} items promoted for agent '{AgentId}'",
-            promoted, items.Count(i => i.TargetStore is not null), agentId);
+            "Shared memory promotion complete: {Promoted}/{Total} items promoted for agent '{AgentId}' ({Refused} refused as non-first-party)",
+            promoted, items.Count(i => i.TargetStore is not null), agentId, refused);
 
         return promoted;
     }
