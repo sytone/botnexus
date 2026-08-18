@@ -15,9 +15,18 @@ public sealed class CronTool(
     bool allowCrossAgentCron = false,
     ModelRegistry? modelRegistry = null,
     ICommandCronAuthorizer? commandAuthorizer = null,
-    ICronAlertTargetResolver? alertTargetResolver = null) : IAgentTool
+    ICronAlertTargetResolver? alertTargetResolver = null,
+    ConversationId? creatingConversationId = null) : IAgentTool
 {
     private readonly AgentId _agentId = agentId;
+
+    /// <summary>
+    /// #2412: the DURABLE conversation the creating agent is speaking in, threaded in by the tool
+    /// provider from the memoised bound-conversation resolver (conversation store / session store),
+    /// never from a transient or policy-scoped routing key. <c>null</c> for a CLI or REST caller
+    /// with no conversation context, which is what preserves the <c>isolated</c> default for them.
+    /// </summary>
+    private readonly ConversationId? _creatingConversationId = creatingConversationId;
 
     /// <summary>
     /// #2462 (AUTHORING half): every create/update that would persist a <c>shellCommand</c> is
@@ -268,6 +277,16 @@ public sealed class CronTool(
             // to a create today.
             FailureAlertsEnabled = arguments.TryGetValue("failureAlertsEnabled", out var fae) && fae is bool b4 && b4,
             FailureAlertConversationId = alertConversationId,
+            // #2412 clause 1: an agent-prompt job created by an agent mid-conversation is bound to
+            // that conversation up front, through THE single CronConversationDefault decision, so
+            // its output lands where it was asked for instead of in a fresh cron conversation the
+            // human is not reading. Command jobs, system jobs, and callers with no conversation
+            // context (CLI/API) all resolve to null and keep today's isolated behaviour verbatim.
+            ConversationId = CronConversationDefault.Resolve(
+                actionType,
+                isSystemJob: false,
+                explicitConversationId: null,
+                creatingConversationId: _creatingConversationId),
             TimeZone = timeZone,
             CreatedBy = _agentId.Value,
             CreatedAt = now,

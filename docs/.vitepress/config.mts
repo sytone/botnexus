@@ -202,6 +202,7 @@ export default defineConfig({
           { text: 'Security-Event Diagnostics', link: '/features/security-event-diagnostics' },
           { text: 'Tool-Audit Write-Ahead', link: '/features/tool-audit-write-ahead' },
           { text: 'Per-Session Tool Overrides', link: '/features/session-tool-overrides' },
+          { text: 'Cron Session Targets', link: '/features/cron-session-targets' },
           { text: 'Dev-Mode Origin Guard', link: '/features/dev-origin-guard' },
           { text: 'Portal Boot Diagnostics', link: '/features/portal-boot-diagnostics' },
           { text: 'AGENTS.md Conventions', link: '/features/agents-md-conventions' },
