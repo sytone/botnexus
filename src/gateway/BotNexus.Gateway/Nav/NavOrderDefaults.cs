@@ -40,6 +40,9 @@ public static class NavOrderDefaults
     /// <summary>Stable key for the Cron Jobs nav item.</summary>
     public const string Cron = "cron";
 
+    /// <summary>Stable key for the Plugins nav item (#3346).</summary>
+    public const string Plugins = "plugins";
+
     /// <summary>
     /// Default order number for each built-in nav key. Lower numbers render higher in the sidebar.
     /// Tools (20) intentionally precedes Chat (30).
@@ -54,5 +57,6 @@ public static class NavOrderDefaults
         [Skills] = 50,
         [Agents] = 60,
         [Cron] = 70,
+        [Plugins] = 80,
     };
 }

@@ -225,9 +225,10 @@
         public const string Skills = "skills";
         public const string Agents = "agents";
         public const string Cron = "cron";
+        public const string Plugins = "plugins";
 
         public static readonly IReadOnlyList<string> DefaultOrder =
-            [Home, Activity, Tools, Chat, Configuration, Skills, Agents, Cron];
+            [Home, Activity, Tools, Chat, Configuration, Skills, Agents, Cron, Plugins];
     }
 
     /// <summary>
@@ -363,6 +364,7 @@
         NavOrderKeys.Skills => RenderSkillsNav(),
         NavOrderKeys.Agents => RenderAgentsNav(),
         NavOrderKeys.Cron => RenderCronNav(),
+        NavOrderKeys.Plugins => RenderPluginsNav(),
         _ => _ => { }
     };
 
@@ -719,6 +721,16 @@
            predates the helper; renaming it would break live consumers for zero functional gain. The
            route-derived "nav-cron" is emitted alongside it as data-testid-alias. *@
         @NavAnchor(NavOrderKeys.Cron, @<text>&#x23F0; Cron Jobs</text>, "nav-cron-jobs")
+    };
+
+    // #3346: the Plugins page (#2687) shipped routed at /plugins but with no sidebar entry, so it
+    // was reachable only by typing the URL. This is deliberately one more entry in the existing
+    // list - it goes through the same NavAnchor helper (so it gets the route-derived nav-plugins
+    // testid for free) and the same NavOrderKeys/NavOrderDefaults ordering model, with no
+    // special-casing, so user order overrides apply to it exactly as to any other built-in.
+    private RenderFragment RenderPluginsNav() => __builder =>
+    {
+        @NavAnchor(NavOrderKeys.Plugins, @<text>&#x1F9E9; Plugins</text>)
     };
 
     protected override void OnInitialized()
