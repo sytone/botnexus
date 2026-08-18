@@ -85,6 +85,43 @@ public sealed class PromptSectionWiringTests
     }
 
     [Fact]
+    public void SubAgentScopingSection_AppearsWhenSpawnToolAvailable()
+    {
+        var prompt = BuildFullPrompt(tools: ["read", "spawn_subagent"]);
+
+        prompt.ShouldContain("<subagent_scoping>");
+        prompt.ShouldContain("</subagent_scoping>");
+        prompt.ShouldContain("Budget by stage, not by feature");
+        prompt.ShouldContain("1500");
+    }
+
+    [Fact]
+    public void SubAgentScopingSection_OmittedWhenSpawnToolAbsent()
+    {
+        // #2444: an agent with no dispatch capability pays no tokens for scoping advice.
+        var prompt = BuildFullPrompt(tools: ["read", "write", "shell"]);
+
+        prompt.ShouldNotContain("<subagent_scoping>");
+        prompt.ShouldNotContain("Budget by stage, not by feature");
+    }
+
+    [Fact]
+    public void SectionOrder_SubAgentScoping_AfterSkillsAndBeforeMemory()
+    {
+        var prompt = BuildFullPrompt(tools: ["read", "skills", "spawn_subagent"]);
+
+        var skillsIdx = prompt.IndexOf("<skills>", StringComparison.Ordinal);
+        var scopingIdx = prompt.IndexOf("<subagent_scoping>", StringComparison.Ordinal);
+        var memoryIdx = prompt.IndexOf("<memory>", StringComparison.Ordinal);
+
+        skillsIdx.ShouldBeGreaterThan(-1);
+        scopingIdx.ShouldBeGreaterThan(-1);
+        memoryIdx.ShouldBeGreaterThan(-1);
+        skillsIdx.ShouldBeLessThan(scopingIdx);
+        scopingIdx.ShouldBeLessThan(memoryIdx);
+    }
+
+    [Fact]
     public void ModelGuidanceSection_AppearsForClaudeModel()
     {
         var prompt = BuildFullPrompt(model: "claude-sonnet-4-20250514");
