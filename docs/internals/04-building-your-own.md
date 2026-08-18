@@ -840,9 +840,12 @@ public sealed class MyLlmProvider(HttpClient httpClient) : IApiProvider
             }
             catch (OperationCanceledException)
             {
+                // Cancellation is an ErrorEvent carrying StopReason.Aborted, never a DoneEvent
+                // (#3292). DoneEvent is the normal-completion arm of the union; a cancelled turn
+                // did not complete, and the conformance suite asserts this shape by name.
                 var aborted = BuildFinalMessage(
                     model, contentBlocks, usage, StopReason.Aborted, responseId);
-                stream.Push(new DoneEvent(StopReason.Aborted, aborted));
+                stream.Push(new ErrorEvent(StopReason.Aborted, aborted));
                 stream.End(aborted);
             }
             catch (Exception ex)

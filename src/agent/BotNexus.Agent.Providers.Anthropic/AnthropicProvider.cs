@@ -88,6 +88,10 @@ public sealed partial class AnthropicProvider(HttpClient httpClient, ISecretReda
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                // Cancellation is normalized as ErrorEvent(StopReason.Aborted) across every producer
+                // (#3292), asserted by StreamingProviderConformanceTests. DoneEvent is the
+                // normal-completion arm of the union and a cancelled turn did not complete, so this
+                // shape - already correct here - is the one the shared engines converged onto.
                 var msg = BuildMessage(model, contentBlocks, usage, StopReason.Aborted, null, responseId);
                 stream.Push(new ErrorEvent(StopReason.Aborted, msg));
                 stream.End(msg);
