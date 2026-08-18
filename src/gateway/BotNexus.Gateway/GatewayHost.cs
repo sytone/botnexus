@@ -182,7 +182,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             this,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<DefaultInboundMessageOrchestrator>.Instance,
             channelManager,
-            Math.Max(sessionQueueCapacity, 1));
+            Math.Max(sessionQueueCapacity, 1),
+            // #3028: the steer-vs-queue decision moves server-side. Both collaborators are built from
+            // dependencies GatewayHost already holds, so every transport that reaches the orchestrator
+            // - channel adapters, the SignalR hub, the REST endpoints - resolves delivery through ONE
+            // seam instead of each caller choosing a mechanism for itself.
+            new DefaultInboundDeliveryResolver(supervisor),
+            new AgentHandleSteerDeliverer(
+                supervisor,
+                sessions,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentHandleSteerDeliverer>.Instance));
     }
 
     /// <summary>

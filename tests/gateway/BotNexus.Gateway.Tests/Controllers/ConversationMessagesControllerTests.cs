@@ -388,6 +388,69 @@ public sealed class ConversationMessagesControllerTests
         return await _conversations.CreateAsync(conversation);
     }
 
+    // ── #3028 clause 4: the endpoint can express delivery intent ──────────────────────────────
+
+    /// <summary>
+    /// #3028 AC4: the endpoint's DEFAULT is queue-only. This pins the documented promise that a
+    /// caller who says nothing never interrupts a running turn - the exact guarantee the #2998
+    /// endpoint previously had by accident rather than by statement.
+    /// </summary>
+    [Fact]
+    public async Task Post_WithoutDeliveryMode_RequestsAutoWhichAlwaysQueues()
+    {
+        var conversation = await CreateConversationAsync();
+        var controller = CreateController();
+
+        var result = await controller.PostMessage(
+            AgentSlug, conversation.ConversationId.Value,
+            new PostConversationMessageRequest("routine status ping"),
+            CancellationToken.None);
+
+        result.ShouldBeOfType<AcceptedResult>();
+        var inbound = await AwaitAcceptedAsync();
+        inbound.RoutingHints!.DeliveryMode.ShouldBe(InboundDeliveryMode.Auto);
+    }
+
+    /// <summary>
+    /// #3028 AC4: a caller CAN express steer intent, and it reaches the orchestrator verbatim so the
+    /// server-side resolver - not the caller - gets to decide whether it is honourable.
+    /// </summary>
+    [Fact]
+    public async Task Post_WithSteerDelivery_CarriesSteerIntentToTheOrchestrator()
+    {
+        var conversation = await CreateConversationAsync();
+        var controller = CreateController();
+
+        var result = await controller.PostMessage(
+            AgentSlug, conversation.ConversationId.Value,
+            new PostConversationMessageRequest("stop, check CI first", Delivery: InboundDeliveryMode.Steer),
+            CancellationToken.None);
+
+        result.ShouldBeOfType<AcceptedResult>();
+        var inbound = await AwaitAcceptedAsync();
+        inbound.RoutingHints!.DeliveryMode.ShouldBe(InboundDeliveryMode.Steer);
+    }
+
+    /// <summary>
+    /// #3028 AC4: interrupt intent must survive the trip too, and must NOT be silently normalised to
+    /// steer - the two are different mechanisms with different consequences for the running turn.
+    /// </summary>
+    [Fact]
+    public async Task Post_WithInterruptDelivery_CarriesInterruptIntentToTheOrchestrator()
+    {
+        var conversation = await CreateConversationAsync();
+        var controller = CreateController();
+
+        await controller.PostMessage(
+            AgentSlug, conversation.ConversationId.Value,
+            new PostConversationMessageRequest("abort that", Delivery: InboundDeliveryMode.Interrupt),
+            CancellationToken.None);
+
+        var inbound = await AwaitAcceptedAsync();
+        inbound.RoutingHints!.DeliveryMode.ShouldBe(InboundDeliveryMode.Interrupt);
+        inbound.RoutingHints.DeliveryMode.ShouldNotBe(InboundDeliveryMode.Steer);
+    }
+
     private ConversationMessagesController CreateController() =>
         new(_conversations,
             _sessions,

@@ -35,5 +35,19 @@ public enum InboundDispatchStatus
     /// exception is rethrown to the caller of <see cref="IInboundMessageOrchestrator.AcceptAsync"/>;
     /// the status is provided for callers that catch and inspect.
     /// </summary>
-    Rejected = 3
+    Rejected = 3,
+
+    /// <summary>
+    /// The message was injected into a turn that was already running rather than queued for a turn
+    /// of its own (#3028). No new agent run was started and
+    /// <see cref="InboundDispatchResult.Dispatches"/> is empty, because a steer produces no separate
+    /// dispatch — the running turn absorbs it.
+    /// </summary>
+    /// <remarks>
+    /// This status is only ever returned when the caller explicitly asked for
+    /// <see cref="BotNexus.Gateway.Abstractions.Models.InboundDeliveryMode.Steer"/> or
+    /// <see cref="BotNexus.Gateway.Abstractions.Models.InboundDeliveryMode.Interrupt"/> AND a turn
+    /// was running. The default <c>Auto</c> intent never yields it.
+    /// </remarks>
+    Steered = 4
 }

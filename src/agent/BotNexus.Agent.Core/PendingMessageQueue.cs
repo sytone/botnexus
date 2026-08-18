@@ -32,6 +32,12 @@ internal sealed class PendingMessageQueue
     /// limit while a single long-running turn is in flight (#2438). Overflow is an
     /// explicit, observable rejection - <see cref="PendingMessageQueueFullException"/> -
     /// never a silent drop, so the caller can tell the sender their message was refused.
+    ///
+    /// <para>NOT THE SAME KNOB as the gateway's inbound queue capacity (#3028). This bounds messages
+    /// injected into a turn ALREADY RUNNING; <c>DefaultInboundMessageOrchestrator.DefaultQueueCapacity</c>
+    /// (64) bounds messages waiting for a turn of their own. A message counts against exactly one of
+    /// them, chosen server-side by <c>IInboundDeliveryResolver</c>, so neither can block the other.
+    /// The relationship is documented in one place: <c>docs/development/inbound-delivery-modes.md</c>.</para>
     /// </remarks>
     public int Capacity { get; set; }
 

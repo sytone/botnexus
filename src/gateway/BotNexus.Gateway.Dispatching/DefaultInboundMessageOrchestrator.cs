@@ -18,6 +18,35 @@ namespace BotNexus.Gateway.Dispatching;
 /// conversation when the delivery names one, otherwise the session, otherwise the
 /// channel composite (#2123). Everything mapping to one key runs strictly FIFO; distinct
 /// keys run in parallel.
+/// </para>
+/// <para>
+/// <b>Queue capacity, and its relationship to the agent's steering queue (#3028 AC7).</b> Two bounded
+/// queues sit on an inbound message's path and they bound different things:
+/// </para>
+/// <list type="bullet">
+/// <item>
+/// <description>
+/// <see cref="DefaultQueueCapacity"/> (64) bounds the <em>gateway</em> per-isolation-unit FIFO of
+/// messages waiting for their own turn. Overflow is reported as
+/// <see cref="InboundDispatchStatus.Busy"/> with user-visible <see cref="BusyMessage"/> feedback.
+/// It is configurable per host via the constructor's <c>queueCapacity</c> parameter.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <c>PendingMessageQueue.Capacity</c> in <c>BotNexus.Agent.Core</c> bounds the <em>agent's</em>
+/// steering/follow-up queue: messages injected into a turn ALREADY running, drained at the loop's
+/// steering drain points according to <c>QueueMode</c>. Zero (the default) means unbounded; overflow
+/// throws <c>PendingMessageQueueFullException</c> so the accepting boundary can report the refusal.
+/// </description>
+/// </item>
+/// </list>
+/// <para>
+/// They are independent by design and neither is a fallback for the other: a message counts against
+/// exactly one of them, decided by <see cref="IInboundDeliveryResolver"/>. Queue-bound messages never
+/// consume steering capacity, and steered messages never consume gateway queue capacity — so a busy
+/// gateway queue cannot block a steer, and a saturated steering queue cannot block normal traffic.
+/// </para>
 /// </remarks>
 public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestrator, IChannelDispatcher, IAsyncDisposable
 {
@@ -34,6 +63,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     private readonly IInboundMessageProcessor _processor;
     private readonly ILogger<DefaultInboundMessageOrchestrator> _logger;
     private readonly IChannelManager? _channelManager;
+    private readonly IInboundDeliveryResolver? _deliveryResolver;
+    private readonly IInboundSteerDeliverer? _steerDeliverer;
     private readonly int _queueCapacity;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues =
         new(StringComparer.OrdinalIgnoreCase);
@@ -46,11 +77,20 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     /// <see cref="DefaultQueueCapacity"/>; pass a smaller value in tests to
     /// assert backpressure behaviour.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="deliveryResolver"/> and <paramref name="steerDeliverer"/> are the #3028 seam:
+    /// when BOTH are supplied the orchestrator can route a message to a running turn instead of the
+    /// FIFO queue. When either is absent the orchestrator queues unconditionally, which is exactly
+    /// its pre-#3028 behaviour — so the many direct-construction call sites in tests and hosts keep
+    /// working unchanged, and the steering path is opt-in at composition time rather than implicit.
+    /// </remarks>
     public DefaultInboundMessageOrchestrator(
         IInboundMessageProcessor processor,
         ILogger<DefaultInboundMessageOrchestrator> logger,
         IChannelManager? channelManager = null,
-        int queueCapacity = DefaultQueueCapacity)
+        int queueCapacity = DefaultQueueCapacity,
+        IInboundDeliveryResolver? deliveryResolver = null,
+        IInboundSteerDeliverer? steerDeliverer = null)
     {
         ArgumentNullException.ThrowIfNull(processor);
         ArgumentNullException.ThrowIfNull(logger);
@@ -63,6 +103,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         _logger = logger;
         _channelManager = channelManager;
         _queueCapacity = queueCapacity;
+        _deliveryResolver = deliveryResolver;
+        _steerDeliverer = steerDeliverer;
     }
 
     /// <summary>
@@ -92,6 +134,75 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         return queueState.Queue.Writer.TryWrite(queueItem);
     }
 
+    /// <summary>
+    /// Consults the #3028 delivery seam and, when it resolves to a live-turn mechanism, injects the
+    /// message into the running turn instead of queueing it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Returns <see langword="false"/> — meaning "carry on and queue" — in every case the steer did
+    /// not happen: no seam wired, intent was <c>Auto</c>/<c>Queue</c>, no turn running, or the
+    /// deliverer reported it could not inject. That last case matters: the turn can end between the
+    /// resolver's check and the injection, and a message must never be dropped because it lost that
+    /// race. Falling through to the queue is the safe direction to be wrong in.
+    /// </para>
+    /// <para>
+    /// A deliverer that THROWS is also treated as a non-delivery rather than propagated. Steering is
+    /// an optimisation over queueing; a broken steer path must degrade to the historical behaviour,
+    /// not fail an inbound message that would otherwise have been delivered fine.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> TrySteerAsync(InboundMessage message, CancellationToken cancellationToken)
+    {
+        if (_deliveryResolver is null || _steerDeliverer is null)
+        {
+            return false;
+        }
+
+        InboundDeliveryDecision decision;
+        try
+        {
+            decision = await _deliveryResolver.ResolveAsync(message, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Inbound delivery resolution failed for channel '{ChannelType}'; falling back to queue.",
+                message.ChannelType);
+            return false;
+        }
+
+        if (decision.Resolved is not (InboundDeliveryMode.Steer or InboundDeliveryMode.Interrupt))
+        {
+            if (decision.FellBackToQueue)
+            {
+                _logger.LogInformation(
+                    "Inbound message requested {Requested} but no turn was running; queued instead.",
+                    decision.Requested);
+            }
+            return false;
+        }
+
+        try
+        {
+            var delivered = await _steerDeliverer.TryDeliverAsync(message, decision, cancellationToken);
+            if (!delivered)
+            {
+                _logger.LogInformation(
+                    "Inbound {Requested} could not be injected into a running turn; queued instead.",
+                    decision.Requested);
+            }
+            return delivered;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Inbound {Requested} injection failed for channel '{ChannelType}'; falling back to queue.",
+                decision.Requested, message.ChannelType);
+            return false;
+        }
+    }
+
     /// <inheritdoc />
     public async Task<InboundDispatchResult> AcceptAsync(
         InboundMessage message,
@@ -109,6 +220,16 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 nameof(message));
         }
 
+        // #3028: the steer/queue decision is made HERE, server-side, before anything touches the
+        // FIFO queue. The resolver reads the caller's stated intent and the server-owned evidence
+        // (is a turn actually running?) and collapses them to one mechanism. Absent the seam this
+        // is a no-op and the message queues exactly as it always did.
+        var steered = await TrySteerAsync(message, cancellationToken);
+        if (steered)
+        {
+            return InboundDispatchResult.Steered();
+        }
+
         var queueKey = GetQueueKey(message);
         var queueState = _sessionQueues.GetOrAdd(queueKey, CreateSessionQueueState);
         var queueItem = new QueuedInboundMessage(message);
@@ -118,7 +239,6 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
             await SendBusyFeedbackAsync(message, cancellationToken);
             return InboundDispatchResult.Busy();
         }
-
         try
         {
             return await queueItem.Completion.Task.WaitAsync(cancellationToken);
