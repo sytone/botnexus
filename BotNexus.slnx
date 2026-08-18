@@ -142,6 +142,7 @@
   </Folder>
   <Folder Name="/tests/persistence/">
     <Project Path="tests/persistence/BotNexus.Persistence.Sqlite.Tests/BotNexus.Persistence.Sqlite.Tests.csproj" />
+    <Project Path="tests/persistence/BotNexus.Persistence.Seam.Tests/BotNexus.Persistence.Seam.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/BotNexus.SourceGenerators/BotNexus.SourceGenerators.csproj" />

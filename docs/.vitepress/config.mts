@@ -178,6 +178,7 @@ export default defineConfig({
           { text: 'Git Worktree Config Hardening', link: '/development/git-worktree-config-hardening' },
           { text: 'Gateway Crash Diagnostics', link: '/development/gateway-crash-diagnostics' },
           { text: 'Running Impacted Tests', link: '/development/running-tests' },
+          { text: 'Persistence Seam Testing', link: '/development/persistence-seam-testing' },
           { text: 'Pre-Commit Gate', link: '/development/pre-commit-gate' },
           { text: 'Stale-Base Merges', link: '/development/stale-base-merges' },
           { text: 'Documentation Grooming', link: '/development/documentation-grooming' },
