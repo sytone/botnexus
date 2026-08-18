@@ -28,6 +28,23 @@ public sealed class SqliteUsageTelemetryStore : IUsageTelemetry, IAsyncDisposabl
     private bool _initialized;
 
     /// <summary>
+    /// The schema version this build of the usage-telemetry store writes and understands (#2835).
+    /// </summary>
+    /// <remarks>
+    /// Bump this in the same commit as the schema change, and add the matching migration to
+    /// <see cref="Migrations"/>. The runner refuses a migration targeting a version beyond this
+    /// constant, so forgetting the bump fails at the call site rather than shipping a step that can
+    /// never run.
+    /// </remarks>
+    public const int CurrentSchemaVersion = 1;
+
+    /// <summary>
+    /// The ordered forward-only migrations for this store. Empty at version 1: existing stores adopt
+    /// version 1 as their baseline rather than replaying a history that was never recorded.
+    /// </summary>
+    private static readonly SqliteSchemaMigration[] Migrations = [];
+
+    /// <summary>
     /// Creates a store persisting to <paramref name="dbPath"/>. The parent directory is created on
     /// first use. Pass an <see cref="IFileSystem"/> in tests to run against an in-memory filesystem.
     /// </summary>
@@ -76,6 +93,15 @@ public sealed class SqliteUsageTelemetryStore : IUsageTelemetry, IAsyncDisposabl
                 );
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            // #2835: declare and enforce this store's schema version AFTER the DDL and after the
+            // identity guard has run on open. There are no migrations yet because version 1 is this
+            // store's baseline - the PBI explicitly excludes backfilling history for shapes already
+            // shipped - but the version is recorded now so the FIRST real schema change has a
+            // defined starting point, and so a store written by a future build is refused today
+            // rather than silently half-read by this one.
+            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+
             _initialized = true;
         }
         finally
