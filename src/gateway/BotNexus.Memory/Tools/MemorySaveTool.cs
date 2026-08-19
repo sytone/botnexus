@@ -16,14 +16,16 @@ public sealed class MemorySaveTool : IAgentTool
     private readonly IAgentMemory _agentMemory;
     private readonly string _agentId;
     private readonly ISharedMemoryStoreRegistry? _sharedRegistry;
+    private readonly IMemoryEnablementProvider? _enablement;
 
-    public MemorySaveTool(IAgentMemory agentMemory, string agentId, ISharedMemoryStoreRegistry? sharedRegistry = null)
+    public MemorySaveTool(IAgentMemory agentMemory, string agentId, ISharedMemoryStoreRegistry? sharedRegistry = null, IMemoryEnablementProvider? enablement = null)
     {
         _agentMemory = agentMemory ?? throw new ArgumentNullException(nameof(agentMemory));
         _agentId = string.IsNullOrWhiteSpace(agentId)
             ? throw new ArgumentException("Agent ID is required.", nameof(agentId))
             : agentId;
         _sharedRegistry = sharedRegistry;
+        _enablement = enablement;
     }
 
     public string Name => "memory_save";
@@ -103,6 +105,13 @@ public sealed class MemorySaveTool : IAgentTool
         AgentToolUpdateCallback? onUpdate = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        // #3361: live revocation, evaluated before argument coercion, quarantine evaluation and any
+        // write path branch - so a disabled agent makes zero calls into IAgentMemory or any shared
+        // store, and no partial side effect (a quarantine tag, a shared-store insert) can escape.
+        if (MemoryEnablementGate.Refuse(_enablement) is { } refusal)
+            return refusal;
+
         var content = ToStringValue(arguments["content"])!;
         var filePath = arguments.TryGetValue("file_path", out var filePathValue)
             ? ToStringValue(filePathValue)
