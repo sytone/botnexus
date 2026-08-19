@@ -68,18 +68,22 @@ public sealed class SkillPromptHookHandler
             Path.Combine(botnexusHome, PluginSkillRootResolver.PluginRootDirectoryName),
             _fileSystem);
 
+        var config = ResolveSkillsConfig(descriptor);
+
         var allSkills = SkillDiscovery.Discover(
             globalSkillsDir,
             agentSkillsDir,
             workspaceSkillsDir,
             _fileSystem,
             _logger,
-            pluginSkillsDirs: pluginSkillsDirs);
+            pluginSkillsDirs: pluginSkillsDirs,
+            // #3355: the operator's scoped acknowledgements travel with the same per-agent config
+            // that already gates the skills system, so remediation is config-driven and auditable.
+            securityAcknowledgements: config?.SecurityAcknowledgements);
 
         if (allSkills.Count == 0)
             return Task.FromResult<BeforePromptBuildResult?>(null);
 
-        var config = ResolveSkillsConfig(descriptor);
         var resolution = SkillResolver.Resolve(allSkills, config);
         if (resolution.Loaded.Count == 0 && resolution.Available.Count == 0)
             return Task.FromResult<BeforePromptBuildResult?>(null);

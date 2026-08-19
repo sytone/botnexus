@@ -60,7 +60,9 @@ public sealed class SkillTool(
             // Plugin skills join at the global/shared tier (#2684). Resolved on every call for the
             // same reason the directories are re-scanned: a plugin installed mid-session must
             // become visible without a restart.
-            pluginSkillsDirs: PluginSkillRootResolver.Resolve(pluginRootDir, _fileSystem));
+            pluginSkillsDirs: PluginSkillRootResolver.Resolve(pluginRootDir, _fileSystem),
+            // #3355: scoped operator acknowledgements let a skill that legitimately shells out load.
+            securityAcknowledgements: config?.SecurityAcknowledgements);
 
     public IReadOnlyList<SkillDefinition> GetDiscoveredSkills() => DiscoverSkills();
 
