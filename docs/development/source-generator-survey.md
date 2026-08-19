@@ -131,6 +131,10 @@ this is regression prevention, not a live bug.** Filed as
 [#3320](https://github.com/Sytone/botnexus/issues/3320), scoped as a one-tool spike rather than a
 fleet conversion.
 
+> **Spike outcome:** the conversion succeeded on `GrepTool` with a byte-identical schema. See
+> [Tool schema generator spike](./tool-schema-generator-spike.md) for the measurement, the per-tool
+> cost, and the proceed/stop recommendation.
+
 **Hand-maintained today.** The issue's measured figure was **42 of 44** `*Tool.cs` files hand-writing
 an inline `"type": "object"` schema. Re-measured on the merged base: **49** real `*Tool.cs` files in
 `src` (excluding the `IAgentTool`/`Tool` contract types and any `bin`/`obj` output), **47** containing

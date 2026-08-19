@@ -11,6 +11,24 @@
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
   </ItemGroup>
 
+  <!--
+    The grep tool's parameter schema and prepare-stage copy list are GENERATED from the attributes on
+    GrepToolSchema (#3320). The generator must be referenced as an Analyzer, not as an assembly -
+    referencing it normally would load a netstandard2.0 compile-time-only library into the runtime
+    closure and the generator would never run.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\tools\BotNexus.SourceGenerators\BotNexus.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <!--
+    The generated GrepToolSchema container is internal - it is an implementation detail of the tool,
+    not public API - but its parameter table is what the #3320 tests assert against.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DiffPlex" />
     <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
