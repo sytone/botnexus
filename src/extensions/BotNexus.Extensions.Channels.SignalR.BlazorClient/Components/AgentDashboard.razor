@@ -12,7 +12,7 @@
     else
     {
         <div class="agent-card-grid">
-            @foreach (var (agentId, agent) in Store.Agents.Where(a => !a.Value.IsReadOnly))
+            @foreach (var (agentId, agent) in OrderedAgents())
             {
                 <div class="agent-card @(agent.IsStreaming ? "agent-card--active" : "")"
                      data-testid="agent-card"
@@ -58,6 +58,30 @@
 
     private void HandleStateChanged() =>
         _ = InvokeAsync(StateHasChanged);
+
+    /// <summary>
+    /// Keeps immediately relevant agents easiest to find without making an idle roster unstable:
+    /// streaming first, then latest known conversation activity, user agents before built-ins, and
+    /// finally a deterministic identity tie-break. Observer entries are projections, not roster
+    /// members, so they remain excluded regardless of mutable session telemetry.
+    /// </summary>
+    private IEnumerable<KeyValuePair<string, AgentState>> OrderedAgents() =>
+        Store.Agents
+            .Where(a => !a.Value.IsReadOnly)
+            .OrderByDescending(a => a.Value.IsStreaming)
+            .ThenByDescending(a => LatestActivity(a.Value))
+            .ThenBy(a => a.Value.IsBuiltIn)
+            .ThenBy(a => AgentLabel(a.Value), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(a => a.Key, StringComparer.OrdinalIgnoreCase);
+
+    private static DateTimeOffset LatestActivity(AgentState agent) =>
+        agent.Conversations.Values
+            .Select(c => c.UpdatedAt)
+            .DefaultIfEmpty(DateTimeOffset.MinValue)
+            .Max();
+
+    private static string AgentLabel(AgentState agent) =>
+        string.IsNullOrWhiteSpace(agent.DisplayName) ? agent.AgentId : agent.DisplayName;
 
     private void NavigateToAgent(AgentState agent)
     {

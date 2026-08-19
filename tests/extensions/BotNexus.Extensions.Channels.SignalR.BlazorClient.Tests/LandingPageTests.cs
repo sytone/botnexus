@@ -165,6 +165,45 @@ public sealed class LandingPageTests : IDisposable
     }
 
     [Fact]
+    public void Renders_agent_roster_below_the_conversation_starter_with_identity_content()
+    {
+        var alpha = new AgentState
+        {
+            AgentId = "alpha",
+            DisplayName = "Alpha",
+            Emoji = "🔬",
+            Description = "Platform engineer"
+        };
+        var beta = new AgentState { AgentId = "beta", DisplayName = "Beta" };
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["alpha"] = alpha,
+            ["beta"] = beta
+        };
+        _store.Agents.Returns(agents);
+        _store.GetAgent("alpha").Returns(alpha);
+        _store.GetAgent("beta").Returns(beta);
+
+        var cut = RenderPage();
+
+        // Ordering is asserted with ONE document-order query rather than two `Find` calls compared
+        // by reference: bUnit re-queries the rendered tree on every `Find`, so the two nodes are not
+        // reference-identical and an index/ReferenceEquals comparison silently reports -1 for both.
+        // `FindAll` with a grouped selector returns matches in document order, which is the property
+        // the issue actually requires - the roster renders BELOW the prompt.
+        var ordered = cut.FindAll(".home-starter, [data-testid='home-agent-roster']");
+        Assert.Equal(2, ordered.Count);
+        Assert.Contains("home-starter", ordered[0].ClassName);
+        Assert.Equal("home-agent-roster", ordered[1].GetAttribute("data-testid"));
+
+        var roster = ordered[1];
+        Assert.Contains("Meet your agents", roster.TextContent);
+        Assert.Contains("Alpha", roster.TextContent);
+        Assert.Contains("🔬", roster.TextContent);
+        Assert.Contains("Platform engineer", roster.TextContent);
+    }
+
+    [Fact]
     public void Renders_empty_agent_state_when_no_agents_are_available()
     {
         SeedAgents();
@@ -173,6 +212,7 @@ public sealed class LandingPageTests : IDisposable
 
         cut.Find("[data-testid='home-no-agents']");
         Assert.Empty(cut.FindAll("[data-testid='home-send']"));
+        Assert.Empty(cut.FindAll("[data-testid='home-agent-roster']"));
     }
 
     // -- Agent + model preselection -------------------------------------------------

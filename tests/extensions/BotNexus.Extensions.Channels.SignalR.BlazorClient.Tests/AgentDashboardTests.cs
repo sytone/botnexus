@@ -59,6 +59,72 @@ public sealed class AgentDashboardTests : IDisposable
     }
 
     [Fact]
+    public void Orders_streaming_then_recent_then_user_agents_then_stable_identity()
+    {
+        var recent = new AgentState { AgentId = "recent", DisplayName = "Zulu" };
+        recent.Conversations["recent-conversation"] = new ConversationState
+        {
+            ConversationId = "recent-conversation",
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        };
+
+        var older = new AgentState { AgentId = "older", DisplayName = "Alpha" };
+        older.Conversations["older-conversation"] = new ConversationState
+        {
+            ConversationId = "older-conversation",
+            UpdatedAt = DateTimeOffset.UtcNow.AddHours(-1)
+        };
+
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["built-in"] = new() { AgentId = "built-in", DisplayName = "Able", IsBuiltIn = true },
+            ["streaming"] = new() { AgentId = "streaming", DisplayName = "Streaming", IsStreaming = true },
+            ["older"] = older,
+            ["recent"] = recent,
+            ["user-idle"] = new() { AgentId = "user-idle", DisplayName = "Beta" }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        var orderedIds = cut.FindAll("[data-testid='agent-card']")
+            .Select(card => card.GetAttribute("data-agent-id") ?? string.Empty)
+            .ToArray();
+        Assert.Equal(["streaming", "recent", "older", "user-idle", "built-in"], orderedIds);
+    }
+
+    [Fact]
+    public void Activity_order_updates_when_store_changes()
+    {
+        var alpha = new AgentState { AgentId = "alpha", DisplayName = "Alpha" };
+        var beta = new AgentState { AgentId = "beta", DisplayName = "Beta" };
+        alpha.Conversations["a"] = new ConversationState
+        {
+            ConversationId = "a",
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-2)
+        };
+        beta.Conversations["b"] = new ConversationState
+        {
+            ConversationId = "b",
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        };
+        _store.Agents.Returns(new Dictionary<string, AgentState>
+        {
+            ["alpha"] = alpha,
+            ["beta"] = beta
+        }.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+        Assert.Equal("beta", cut.Find("[data-testid='agent-card']").GetAttribute("data-agent-id"));
+
+        alpha.IsStreaming = true;
+        _store.OnChanged += Raise.Event<Action>();
+
+        cut.WaitForAssertion(() =>
+            Assert.Equal("alpha", cut.Find("[data-testid='agent-card']").GetAttribute("data-agent-id")));
+    }
+
+    [Fact]
     public void Active_streaming_agent_card_has_active_class()
     {
         var agents = new Dictionary<string, AgentState>
