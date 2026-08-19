@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Extensions.Channels.Matrix;
 
@@ -56,6 +57,7 @@ public sealed class MatrixHttpClient : IMatrixClient
 
     private readonly HttpClient _http;
     private readonly string _userId;
+    private readonly ISecretRedactor? _secretRedactor;
 
     // Matrix requires a client-generated transaction ID on send so a retried request is
     // de-duplicated by the homeserver rather than posting the message twice. A per-client
@@ -76,7 +78,16 @@ public sealed class MatrixHttpClient : IMatrixClient
     /// The account's access token. Unwrapped exactly once here, to build the <c>Authorization</c>
     /// header; the raw string is never stored on this instance.
     /// </param>
-    public MatrixHttpClient(HttpClient http, string userId, MatrixAccessToken accessToken)
+    /// <param name="secretRedactor">
+    /// Optional redactor applied to homeserver-controlled error text before it is interpolated into a
+    /// <see cref="MatrixApiException"/> message (#3398). The <c>Authorization</c> header set below
+    /// carries the account access token, and a homeserver - or an error-echoing proxy in front of one -
+    /// can reflect that header back in its error body or reason phrase, which would otherwise put the
+    /// credential into gateway logs and agent-facing text. <see langword="null"/> is a deliberate
+    /// no-op rather than a blanket drop, mirroring <c>ProviderHttpErrorHelper</c>, so an un-wired
+    /// caller keeps its diagnostics instead of silently losing them.
+    /// </param>
+    public MatrixHttpClient(HttpClient http, string userId, MatrixAccessToken accessToken, ISecretRedactor? secretRedactor = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
@@ -86,6 +97,7 @@ public sealed class MatrixHttpClient : IMatrixClient
 
         _http = http;
         _userId = userId;
+        _secretRedactor = secretRedactor;
 
         // Bearer header rather than the deprecated ?access_token= query parameter, so the secret
         // never lands in homeserver access logs or proxy traces. This is the single Reveal() site:
@@ -153,7 +165,7 @@ public sealed class MatrixHttpClient : IMatrixClient
         return string.Concat(_txnPrefix, ".", ordinal.ToString(CultureInfo.InvariantCulture));
     }
 
-    private static async Task EnsureSuccessAsync(HttpResponseMessage response, string operation, CancellationToken cancellationToken)
+    private async Task EnsureSuccessAsync(HttpResponseMessage response, string operation, CancellationToken cancellationToken)
     {
         if (response.IsSuccessStatusCode)
             return;
@@ -172,11 +184,25 @@ public sealed class MatrixHttpClient : IMatrixClient
             // load-bearing signal for classification, so an unparseable body must not mask it.
         }
 
+        // Redact ONCE, before any interpolation, and cover BOTH reflection surfaces: a remote that
+        // echoes a credential into its error body can just as easily put it in the reason phrase, so
+        // scrubbing only the body would leave the second hole open (#3398). errcode is a fixed
+        // Matrix enum-like token, but it is still remote-controlled text, so it goes through too.
+        var safeErrorCode = Redact(errorCode);
+        var safeDetail = Redact(errorText ?? response.ReasonPhrase);
+
         throw new MatrixApiException(
             response.StatusCode,
             errorCode,
-            $"Matrix {operation} failed with HTTP {(int)response.StatusCode} ({errorCode ?? "no errcode"}): {errorText ?? response.ReasonPhrase}");
+            $"Matrix {operation} failed with HTTP {(int)response.StatusCode} ({safeErrorCode ?? "no errcode"}): {safeDetail}");
     }
+
+    /// <summary>
+    /// Applies the redactor to untrusted homeserver text. Null redactor and null/empty input are
+    /// pass-through, so redaction can never turn a diagnosable failure into a blank one.
+    /// </summary>
+    private string? Redact(string? text)
+        => _secretRedactor is null || string.IsNullOrEmpty(text) ? text : _secretRedactor.Redact(text);
 
     private sealed class MatrixErrorBody
     {
@@ -193,7 +219,12 @@ public sealed class MatrixHttpClient : IMatrixClient
 /// account from an <see cref="IHttpClientFactory"/>.
 /// </summary>
 /// <param name="httpClientFactory">Factory supplying pooled <see cref="HttpClient"/> instances.</param>
-public sealed class DefaultMatrixClientFactory(IHttpClientFactory httpClientFactory) : IMatrixClientFactory
+/// <param name="secretRedactor">
+/// Optional redactor threaded into each client so homeserver-controlled error text is scrubbed
+/// before it reaches a <see cref="MatrixApiException"/> message (#3398). Optional so the extension
+/// still resolves in a host that has not registered one.
+/// </param>
+public sealed class DefaultMatrixClientFactory(IHttpClientFactory httpClientFactory, ISecretRedactor? secretRedactor = null) : IMatrixClientFactory
 {
     /// <summary>
     /// Per-request HTTP timeout. Must exceed the maximum permitted <c>/sync</c> long-poll timeout
@@ -203,6 +234,7 @@ public sealed class DefaultMatrixClientFactory(IHttpClientFactory httpClientFact
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(660);
 
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
+    private readonly ISecretRedactor? _secretRedactor = secretRedactor;
 
     /// <inheritdoc />
     public IMatrixClient Create(string accountName, string homeserver, string userId, MatrixAccessToken accessToken)
@@ -213,6 +245,6 @@ public sealed class DefaultMatrixClientFactory(IHttpClientFactory httpClientFact
         http.BaseAddress = new Uri(homeserver.TrimEnd('/') + "/", UriKind.Absolute);
         http.Timeout = RequestTimeout;
 
-        return new MatrixHttpClient(http, userId, accessToken);
+        return new MatrixHttpClient(http, userId, accessToken, _secretRedactor);
     }
 }

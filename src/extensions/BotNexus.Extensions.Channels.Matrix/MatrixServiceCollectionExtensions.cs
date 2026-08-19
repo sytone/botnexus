@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -37,7 +38,12 @@ public static class MatrixServiceCollectionExtensions
             services.Configure(configure);
 
         services.AddHttpClient();
-        services.TryAddSingleton<IMatrixClientFactory, DefaultMatrixClientFactory>();
+        // Explicit factory rather than TryAddSingleton<T,TImpl>: the redactor is an OPTIONAL dependency
+        // (#3398) and must resolve to null in a host that never registered one, instead of failing
+        // activation. GetService, not GetRequiredService, is the load-bearing part.
+        services.TryAddSingleton<IMatrixClientFactory>(sp => new DefaultMatrixClientFactory(
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetService<ISecretRedactor>()));
         services.AddSingleton<IChannelAdapter, MatrixChannelAdapter>();
 
         return services;
