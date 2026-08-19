@@ -38,6 +38,15 @@ public sealed class CompactionSkipReason : IEquatable<CompactionSkipReason>
     public static readonly CompactionSkipReason EmptyHistory = Register("EmptyHistory");
 
     /// <summary>
+    /// #3362: reading the session history/transcript FAILED (I/O, permissions, deserialization,
+    /// store unavailable). Distinct from <see cref="EmptyHistory"/>, which means the read
+    /// succeeded and genuinely returned nothing. Before this code existed a failed read produced a
+    /// zero-entry snapshot indistinguishable from an empty session, and the operator was told the
+    /// summarization model had returned an empty response — a fault that had not occurred.
+    /// </summary>
+    public static readonly CompactionSkipReason HistoryReadFailed = Register("HistoryReadFailed");
+
+    /// <summary>
     /// The turn split produced no summarizable entries (and the PreservedTurns fallback also found
     /// none). This is the branch behind the observed repeating abort loop: the session keeps
     /// growing while every split remains unsummarizable.

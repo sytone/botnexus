@@ -74,6 +74,14 @@ public interface ISessionCompactionCoordinator
 /// <param name="TokensBefore">Approximate token count before compaction.</param>
 /// <param name="TokensAfter">Approximate token count after compaction.</param>
 /// <param name="FailureReason">Human-readable reason when <paramref name="Applied"/> is false.</param>
+/// <param name="SkipReason">Stable machine-readable code naming the abort branch.</param>
+/// <param name="FailureExceptionType">
+/// #3362: the CLR type name of the exception that aborted compaction, when one was thrown
+/// (e.g. <c>IOException</c>). Null when no exception was involved. Carried separately from
+/// <paramref name="FailureReason"/> so an operator can tell an I/O fault from a deserialization
+/// fault without parsing prose — the collapsed cause information is exactly what made a read
+/// failure look like a summarization-model failure.
+/// </param>
 public sealed record SessionCompactionOutcome(
     bool Succeeded,
     bool Applied,
@@ -83,4 +91,5 @@ public sealed record SessionCompactionOutcome(
     int TokensBefore,
     int TokensAfter,
     string? FailureReason,
-    CompactionSkipReason? SkipReason = null);
+    CompactionSkipReason? SkipReason = null,
+    string? FailureExceptionType = null);

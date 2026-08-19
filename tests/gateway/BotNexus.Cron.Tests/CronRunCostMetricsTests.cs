@@ -290,7 +290,8 @@ public sealed class CronRunCostMetricsTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            // NOT ClearAllPools(): process-global, disposes sibling tests' live handles (#3324).
+            SqlitePoolCleanup.ClearPoolFor(dbPath);
             if (Directory.Exists(tempDirectory))
                 Directory.Delete(tempDirectory, recursive: true);
         }

@@ -62,6 +62,24 @@ public static class HybridMemoryRanker
     public const double SimilarityWeight = 0.4d;
 
     /// <summary>
+    /// Applies the row's derived trust coefficient to an already-blended relevance score (#3232).
+    /// </summary>
+    /// <remarks>
+    /// Multiplicative and applied last, after fusion and decay, for two reasons. It composes with
+    /// whichever scoring path ran - the hybrid blend or the degraded lexical-only formula - without
+    /// either having to know trust exists. And it is monotonic within a tier, so trust reorders
+    /// rows <i>between</i> tiers while leaving relevance ordering intact <i>within</i> one, which
+    /// is what makes the result still explainable as "most relevant first, discounted for origin".
+    /// <para>
+    /// Deliberately a weighting rather than a pre-rank filter. Dropping untrusted rows before
+    /// ranking makes an untrusted-only corpus indistinguishable from an empty one, and those two
+    /// situations call for opposite responses from the caller.
+    /// </para>
+    /// </remarks>
+    private static double ApplyTrustWeight(MemoryEntry entry, double score)
+        => score * MemoryTrust.RankWeight(entry.TrustTier);
+
+    /// <summary>
     /// Normalised similarity assigned to a row that carries no comparable vector. Sits at the
     /// midpoint of the normalised range so such a row is neither rewarded nor penalised for
     /// the absence of an embedding.
@@ -138,7 +156,9 @@ public static class HybridMemoryRanker
             scored = candidates
                 .Select(candidate => new ScoredMemoryEntry(
                     candidate.Entry,
-                    candidate.LexicalScore * Decay(candidate.AgeDays, lambda)));
+                    ApplyTrustWeight(
+                        candidate.Entry,
+                        candidate.LexicalScore * Decay(candidate.AgeDays, lambda))));
         }
         else
         {
@@ -153,7 +173,9 @@ public static class HybridMemoryRanker
                         : NeutralSimilarityPrior;
 
                     var fused = (LexicalWeight * lexicalNormalised) + (SimilarityWeight * similarityNormalised);
-                    return new ScoredMemoryEntry(candidate.Entry, fused * Decay(candidate.AgeDays, lambda));
+                    return new ScoredMemoryEntry(
+                        candidate.Entry,
+                        ApplyTrustWeight(candidate.Entry, fused * Decay(candidate.AgeDays, lambda)));
                 });
         }
 

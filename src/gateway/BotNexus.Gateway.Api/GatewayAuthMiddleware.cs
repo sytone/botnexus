@@ -59,6 +59,13 @@ public sealed class GatewayAuthMiddleware
         {
             Headers = context.Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString(), StringComparer.OrdinalIgnoreCase),
             QueryParameters = context.Request.Query.ToDictionary(q => q.Key, q => q.Value.ToString(), StringComparer.OrdinalIgnoreCase),
+            // Deliberately NOT routed through RequestLogText (#3260). These two values are the
+            // auth handler's INPUT, not log output: a handler matches on the exact path and
+            // method it was asked about. Escaping them here would change what is being
+            // authenticated, which is a correctness defect dressed up as hardening. The
+            // sanitisation belongs at the point of logging, and the architecture fence
+            // GatewayRequestLogSanitisationFenceArchitectureTests scopes itself to logging and
+            // telemetry calls for exactly this reason.
             Path = context.Request.Path.Value ?? string.Empty,
             Method = context.WebSockets.IsWebSocketRequest ? "WS" : context.Request.Method
         };
@@ -66,7 +73,12 @@ public sealed class GatewayAuthMiddleware
         var authResult = await _authHandler.AuthenticateAsync(authContext, context.RequestAborted);
         if (!authResult.IsAuthenticated)
         {
-            _logger.LogWarning("Gateway request denied: {Path}. Reason: {Reason}", context.Request.Path, authResult.FailureReason);
+            // Sanitised at the seam (#3260): this is the line a reviewer reads to establish what
+            // an UNAUTHENTICATED caller attempted, so its path is hostile by construction.
+            _logger.LogWarning(
+                "Gateway request denied: {Path}. Reason: {Reason}",
+                RequestLogText.SafePath(context.Request.Path.Value),
+                authResult.FailureReason);
             await WriteErrorAsync(
                 context,
                 StatusCodes.Status401Unauthorized,

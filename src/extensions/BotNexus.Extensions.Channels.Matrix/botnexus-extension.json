@@ -1,0 +1,63 @@
+{
+  "id": "botnexus-matrix",
+  "name": "Matrix Channel",
+  "description": "Matrix Client-Server API channel adapter - per-agent homeserver accounts, /sync long poll, m.room.message send/receive",
+  "version": "0.1.0",
+  "entryAssembly": "BotNexus.Extensions.Channels.Matrix.dll",
+  "extensionTypes": ["channel"],
+  "enabled": true,
+  "configSchema": [
+    {
+      "id": "homeserver",
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Base URL of the Matrix homeserver, e.g. https://matrix.example.com. Shared by every configured agent account unless the agent overrides it."
+    },
+    {
+      "id": "userId",
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "Fully-qualified Matrix user ID for this agent's account, e.g. @farnsworth:example.com."
+    },
+    {
+      "id": "accessToken",
+      "type": "string",
+      "required": true,
+      "sensitive": true,
+      "description": "Matrix access token for this agent's account. Obtained from a login call or the homeserver admin API."
+    },
+    {
+      "id": "agentId",
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "description": "BotNexus agent ID that messages arriving on this Matrix account route to."
+    },
+    {
+      "id": "autoJoin",
+      "type": "boolean",
+      "required": false,
+      "default": "true",
+      "sensitive": false,
+      "description": "Whether the account automatically accepts room invites observed on /sync."
+    },
+    {
+      "id": "syncTimeoutMs",
+      "type": "integer",
+      "required": false,
+      "default": "30000",
+      "sensitive": false,
+      "description": "Long-poll timeout in milliseconds passed to the Matrix /sync endpoint."
+    },
+    {
+      "id": "streamingBufferMs",
+      "type": "integer",
+      "required": false,
+      "default": "750",
+      "sensitive": false,
+      "description": "Minimum interval in milliseconds between streaming edit (m.replace) updates for a single in-flight response."
+    }
+  ]
+}

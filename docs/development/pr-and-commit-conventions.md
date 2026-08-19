@@ -213,6 +213,32 @@ What makes the evidence useful:
   `No visible UI change — pure refactor` instead of attaching media. The guard accepts that as an
   explicit opt-out; it does not accept silence.
 
+## Generated vs hand-maintained shapes
+
+When a change introduces a shape that must be kept in sync with another representation of the same
+knowledge, **say so in the PR body and state whether generation was considered.**
+
+The test is not "is this repetitive". It is: **if these two copies disagree, what happens?**
+
+- *A compile error, or a loud failure* → hand-maintenance is fine. Say that and move on.
+- *Nothing — it reads as a clean pass* → this is the recurring defect family in this repo (#2764 a
+  doctor check reading a path nothing binds; #2767 one flag name declared twice with nothing binding
+  them; #2700 a fence scoped where the violation could not occur). Generation is the lever that
+  **removes** the second copy rather than defending it with one more fence.
+
+One sentence in the PR body discharges this — for example *"the new hub event is declared only on
+`IGatewayHubClient`; the client registration is hand-written and would fail silently if omitted —
+covered by the generator candidate in #2770"*. This is a prompt to answer the question, not a gate:
+no workflow blocks on it.
+
+Prefer an **attribute** over a **declarative file**. An attribute sits on the thing it describes and
+moves with it; a file is a second place to remember and can be orphaned. Use a file only where the
+data must be enumerable *before* any code references it — `feature-flags.json` (#2769) is so far the
+only such case.
+
+The ranked inventory of candidate sites, with measured drift and the candidates explicitly rejected,
+lives in [Source generator survey](./source-generator-survey.md).
+
 ## Enforcement
 
 `.github/workflows/pr-conventions-guard.yml` checks every PR against these rules. It reuses the safety

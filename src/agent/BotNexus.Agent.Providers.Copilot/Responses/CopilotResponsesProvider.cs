@@ -72,7 +72,10 @@ public sealed class CopilotResponsesProvider : IApiProvider
     /// </summary>
     public ProviderCapabilities Capabilities { get; } = new(
         RecoversLeakedToolCallMarkup: true,
-        SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
+        SystemPromptPlacement: SystemPromptPlacement.FirstMessage,
+        // #3336: the CRLF delta framing is a Copilot TRANSPORT artifact, declared here rather than
+        // sniffed from a model-id prefix that the claude-opus-5 evidence falsified.
+        FramesStreamedTextDeltasWithCrlf: CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf);
 
     /// <inheritdoc />
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
@@ -306,7 +309,8 @@ public sealed class CopilotResponsesProvider : IApiProvider
         SecretRedactor: secretRedactor);
 
     private static string NormalizeTextDelta(LlmModel model, string delta)
-        => CopilotTextDeltaNormalizer.Normalize(model.Id, delta);
+        => CopilotTextDeltaNormalizer.Normalize(
+            CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf, delta);
 
     private static string MapThinkingLevel(ThinkingLevel level) => level switch
     {

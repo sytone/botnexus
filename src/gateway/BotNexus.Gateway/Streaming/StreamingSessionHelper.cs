@@ -66,6 +66,11 @@ public static class StreamingSessionHelper
         // NULL. The #1198 branch itself is unchanged; it is simply no longer reachable once real
         // assistant content has been emitted.
         var emittedAssistantContent = false;
+        // #3336: index into streamedContent at which the CURRENT assistant message's text begins.
+        // MessageEnd carries the provider's reconciled final text for that message only, so the
+        // replacement is scoped to this message's tail - a whole-buffer overwrite would discard an
+        // earlier message's text when a single turn produces more than one.
+        var currentMessageStart = 0;
         var toolStartIds = new HashSet<string>(StringComparer.Ordinal);
         var toolEndIds = new HashSet<string>(StringComparer.Ordinal);
         var toolStartEntries = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
@@ -92,8 +97,35 @@ public static class StreamingSessionHelper
                     hadThinkingContent = true;
                     thinkingBuffer.Append(evt.ThinkingContent);
                     break;
+                case AgentStreamEventType.MessageStart:
+                    // #3336: anchor the current message's slice of the shared content buffer.
+                    currentMessageStart = streamedContent.Length;
+                    break;
                 case AgentStreamEventType.MessageEnd:
                     hadMessageEnd = true;
+                    // #3336: the provider's own final text for this message wins over the text we
+                    // assembled from deltas, mirroring StreamAssemblyConformance.Reconcile at the
+                    // parser seam. The deltas were already emitted (and already rendered live), so
+                    // this is the only point at which a transport artifact can be kept out of
+                    // session_history. NULL means the provider supplied nothing to check against -
+                    // never "the message was empty" - so absence leaves the assembled text alone.
+                    if (evt.FinalContent is { } reconciled)
+                    {
+                        // The buffer is cleared at every TurnEnd, so the anchor can outlive the text
+                        // it pointed at. Clamp rather than index blindly.
+                        var anchor = Math.Min(currentMessageStart, streamedContent.Length);
+                        var assembled = streamedContent.ToString(anchor, streamedContent.Length - anchor);
+                        // An EMPTY final never overwrites non-empty assembled text. Reconciliation
+                        // exists to remove transport artifacts, not to delete a model's answer, and
+                        // several terminal paths report a contentless completion (#2921). Deleting
+                        // real content would be a strictly worse defect than the one being fixed.
+                        if (reconciled.Length > 0
+                            && !string.Equals(assembled, reconciled, StringComparison.Ordinal))
+                        {
+                            streamedContent.Length = anchor;
+                            streamedContent.Append(reconciled);
+                        }
+                    }
                     // #2522 producer seam: a MessageEnd carries the provider's reported usage for
                     // the request that produced this assistant message, and the session is writable
                     // and about to be persisted by the flush below. Stamp the prompt-token count
@@ -232,6 +264,8 @@ public static class StreamingSessionHelper
                         emittedAssistantContent = true;
                         thinkingBuffer.Clear();
                         streamedContent.Clear();
+                        // #3336: the buffer this anchor indexed into is gone.
+                        currentMessageStart = 0;
                     }
                     session.AddEntries(turnSnapshot);
                     // Do NOT remove the crash sentinel here (#2135). A streamed agent run can

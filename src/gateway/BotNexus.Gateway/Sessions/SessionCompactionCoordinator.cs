@@ -87,7 +87,14 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Compaction call failed for session {SessionId}; history unchanged.", sessionId);
+            // #3362: attribute the failure instead of collapsing it. A read-shaped fault (I/O,
+            // permissions, deserialization, store unavailable) is NOT a summarization failure, and
+            // the exception type is carried through so the true fault is diagnosable.
+            var thrownSkipReason = ClassifyThrownException(ex);
+            _logger.LogWarning(
+                ex,
+                "Compaction call failed for session {SessionId} ({ExceptionType}, reason={SkipReason}); history unchanged.",
+                sessionId, ex.GetType().Name, thrownSkipReason);
             return new SessionCompactionOutcome(
                 Succeeded: false,
                 Applied: false,
@@ -96,8 +103,9 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
                 EntriesPreserved: 0,
                 TokensBefore: 0,
                 TokensAfter: 0,
-                FailureReason: ex.Message,
-                SkipReason: CompactionSkipReason.SummarizationFailed);
+                FailureReason: DescribeFailure(thrownSkipReason, ex),
+                SkipReason: thrownSkipReason,
+                FailureExceptionType: ex.GetType().Name);
         }
 
         // 3. Apply + persist. Track outcome for the caller.
@@ -192,9 +200,12 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
             }
         }
 
+        // #3362: the reason is DERIVED from the outcome. It used to be hard-coded to the
+        // summarization-empty-response text for every non-success, which reported an I/O or
+        // deserialization fault as a summarization-model fault that had not occurred.
         string? failureReason = null;
         if (!result.Succeeded)
-            failureReason = "Compaction aborted: the summarization model returned an empty response. Session history was not modified.";
+            failureReason = DescribeFailure(skipReason, exception: null);
         else if (historyOutcome == HistoryReplaceOutcome.Aborted)
             failureReason = "Compaction conflicted with a concurrent change to the session. Session history was not modified — please try again.";
 
@@ -208,6 +219,67 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
             TokensAfter: result.TokensAfter,
             FailureReason: failureReason,
             SkipReason: skipReason);
+    }
+
+    /// <summary>
+    /// #3362: maps an exception that escaped the compactor onto the skip reason that names what
+    /// actually broke. Read-shaped faults (I/O, permissions, deserialization, disposed store) are
+    /// <see cref="CompactionSkipReason.HistoryReadFailed"/>; everything else remains
+    /// <see cref="CompactionSkipReason.SummarizationFailed"/>, so the pre-existing discriminator
+    /// is narrowed rather than cannibalised.
+    /// </summary>
+    private static CompactionSkipReason ClassifyThrownException(Exception ex) => ex switch
+    {
+        IOException => CompactionSkipReason.HistoryReadFailed,
+        UnauthorizedAccessException => CompactionSkipReason.HistoryReadFailed,
+        System.Text.Json.JsonException => CompactionSkipReason.HistoryReadFailed,
+        ObjectDisposedException => CompactionSkipReason.HistoryReadFailed,
+        _ => CompactionSkipReason.SummarizationFailed,
+    };
+
+    /// <summary>
+    /// #3362: derives the operator-visible message from the skip reason. The
+    /// "summarization model returned an empty response" text is now reserved for
+    /// <see cref="CompactionSkipReason.EmptySummary"/> — the one branch where that is what
+    /// happened — and every other branch names its own cause.
+    /// </summary>
+    private static string DescribeFailure(CompactionSkipReason? reason, Exception? exception)
+    {
+        var detail = exception is null ? string.Empty : $" ({exception.GetType().Name}: {exception.Message})";
+
+        if (reason is null)
+            return $"Compaction did not complete and session history was not modified.{detail}";
+
+        if (reason == CompactionSkipReason.EmptySummary)
+            return "Compaction aborted: the summarization model returned an empty response. Session history was not modified.";
+
+        if (reason == CompactionSkipReason.HistoryReadFailed)
+            return $"Compaction aborted: the session history could not be read{detail}. Session history was not modified — this is a storage or transcript fault, not a summarization failure.";
+
+        if (reason == CompactionSkipReason.EmptyHistory)
+            return "Compaction skipped: the session history is empty, so there was nothing to summarise.";
+
+        if (reason == CompactionSkipReason.NoSummarizableTurns)
+            return "Compaction skipped: no summarizable turns were found. Session history was not modified.";
+
+        if (reason == CompactionSkipReason.SummarizationTimeout)
+            return "Compaction aborted: the summarization call timed out. Session history was not modified.";
+
+        if (reason == CompactionSkipReason.SummarizationFailed)
+            return $"Compaction aborted: the summarization call failed{detail}. Session history was not modified.";
+
+        if (reason == CompactionSkipReason.CircuitBreakerOpen)
+            return "Compaction skipped: the compaction circuit breaker is open after repeated failures. Session history was not modified.";
+
+        if (reason == CompactionSkipReason.ConcurrentHistoryChange)
+            return "Compaction conflicted with a concurrent change to the session. Session history was not modified — please try again.";
+
+        if (reason == CompactionSkipReason.SessionRebound)
+            return "Compaction was discarded because the session was deleted or reset while it was in progress.";
+
+        // Forward-compatible: an unknown code from a newer build still names itself rather than
+        // inheriting some other branch's story.
+        return $"Compaction did not complete (reason={reason}). Session history was not modified.{detail}";
     }
 
     public string BuildNotificationText(SessionCompactionOutcome outcome)

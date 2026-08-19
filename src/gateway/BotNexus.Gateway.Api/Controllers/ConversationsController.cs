@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Api.Export;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Resolution;
@@ -658,6 +659,46 @@ public sealed class ConversationsController : ControllerBase
             cancellationToken);
 
         return result is null ? NotFound() : Ok(result);
+    }
+
+    /// <summary>
+    /// Exports the whole conversation - every linked session, with visible session boundary markers -
+    /// as a downloadable transcript in the requested format (issue #3278).
+    /// </summary>
+    /// <remarks>
+    /// The transcript is assembled by <see cref="ExportDocumentAssembler"/> over
+    /// <see cref="ConversationHistoryProjection"/>, the same projection
+    /// <see cref="IConversationHistoryAssembler"/> serves the history endpoint from, so a downloaded
+    /// transcript can never disagree with what the portal renders for the same conversation.
+    /// Secret redaction defaults to ON for every export route regardless of the
+    /// <c>TranscriptExportOptions</c> setting: that option governs the pre-existing session
+    /// markdown route's historical byte-for-byte behaviour, whereas these new routes have no legacy
+    /// output contract to preserve and so choose the safe default (#3278 acceptance criterion 5).
+    /// </remarks>
+    /// <param name="conversationId">The conversation identifier.</param>
+    /// <param name="format">Export format: <c>markdown</c> or <c>html</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The rendered transcript as a UTF-8 file download, 400 for an unknown format, or 404.</returns>
+    [HttpGet("{conversationId}/export/{format}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> ExportTranscript(
+        string conversationId,
+        string format,
+        CancellationToken cancellationToken = default)
+    {
+        if (!ExportFormat.TryParse(format, out var exportFormat))
+            return BadRequest(new { error = "format must be 'markdown' or 'html'." });
+
+        var assembler = new ExportDocumentAssembler(_conversations, _sessions);
+        var document = await assembler.AssembleConversationAsync(
+            ConversationId.From(conversationId), cancellationToken);
+
+        if (document is null)
+            return NotFound();
+
+        return ExportResponse.File(document, exportFormat, this);
     }
 
     /// <summary>

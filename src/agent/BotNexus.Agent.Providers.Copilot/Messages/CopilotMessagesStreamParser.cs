@@ -271,7 +271,7 @@ internal static class CopilotMessagesStreamParser
         {
             case "text_delta":
                 var text = CopilotTextDeltaNormalizer.Normalize(
-                    model.Id,
+                    CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf,
                     delta.GetProperty("text").GetString() ?? "");
                 if (text.Length == 0)
                     break;
@@ -325,6 +325,20 @@ internal static class CopilotMessagesStreamParser
         switch (blockType)
         {
             case "text":
+                // The provider's own authoritative text for the block, when the stop frame carries
+                // one. Reconciling against it is the free per-block checksum #2443 introduced and
+                // #3336 found wired into only ONE of the three parsers, which is why the CRLF
+                // family survived into a fourth recurrence on the relay paths. Fail-open: a stop
+                // frame with no final value yields null and the assembled text stands.
+                accumulated = StreamAssemblyConformance.Reconcile(
+                    accumulated,
+                    StreamBlockFinalText.TryRead(data),
+                    model.Provider,
+                    model.Id,
+                    "github-copilot-messages",
+                    "sse",
+                    deltaCount: 0,
+                    logger: null);
                 contentBlocks.Add(new TextContent(accumulated, signature));
                 var textPartial = buildMessage(model, contentBlocks, usage, StopReason.Stop, null, responseId);
                 stream.Push(new TextEndEvent(index, accumulated, textPartial));

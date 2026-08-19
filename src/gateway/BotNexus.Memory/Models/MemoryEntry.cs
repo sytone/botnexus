@@ -41,4 +41,21 @@ public sealed record MemoryEntry
     /// column so an absent, stale or malformed value can never present as first-party.
     /// </summary>
     public string NormalizedProvenance => MemoryProvenance.Normalize(Provenance);
+
+    /// <summary>
+    /// The trust tier derived from <see cref="Provenance"/> and the content's quarantine marker
+    /// at read time (#3232).
+    /// </summary>
+    /// <remarks>
+    /// Computed, never stored. A persisted tier column could drift from the provenance it was
+    /// derived from, and a drifted trust value fails open - which is the one direction a trust
+    /// signal must never fail in. See <see cref="MemoryTrust"/> for the derivation and its policy.
+    /// </remarks>
+    public MemoryTrustTier TrustTier => MemoryTrust.DeriveFromContent(Provenance, Content);
+
+    /// <summary>
+    /// Whether this row may be weighed as the agent's own knowledge - and therefore whether it is
+    /// eligible for always-on context injection and automatic promotion (#3232).
+    /// </summary>
+    public bool IsFirstParty => MemoryTrust.IsFirstParty(TrustTier);
 }

@@ -100,7 +100,8 @@ internal sealed class CronToolProvider(
     CronScheduler? cronScheduler,
     BotNexus.Agent.Providers.Core.Registry.ModelRegistry? modelRegistry = null,
     BotNexus.Cron.Actions.ICommandCronAuthorizer? commandAuthorizer = null,
-    BotNexus.Cron.ICronAlertTargetResolver? alertTargetResolver = null) : IToolProvider
+    BotNexus.Cron.ICronAlertTargetResolver? alertTargetResolver = null,
+    IConversationStore? conversationStore = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context)
@@ -111,9 +112,22 @@ internal sealed class CronToolProvider(
     }
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<IAgentTool>> CreateToolsAsync(ToolProviderContext context)
+    public async Task<IReadOnlyList<IAgentTool>> CreateToolsAsync(ToolProviderContext context)
     {
         var allowCrossAgentCron = ResolveAllowCrossAgentCron(context.Descriptor);
+
+        // #2412: resolve the DURABLE conversation this agent is speaking in, through the same
+        // memoised bound-conversation resolver every other conversation-aware provider uses
+        // (session store first, then the conversation whose ActiveSessionId matches). It is a
+        // persisted store key, NOT a transient or policy-scoped routing token - a policy-scoped key
+        // can be empty and cleanup-retired, which would leave created jobs pointing at a
+        // conversation that no longer exists. A null conversation store, or a session with no
+        // bound conversation (CLI / REST / headless exec), yields null and the tool then keeps the
+        // pre-#2412 isolated default.
+        ConversationId? creatingConversationId = conversationStore is not null
+            ? await context.ResolveConversationId(conversationStore).ConfigureAwait(false)
+            : null;
+
         IReadOnlyList<IAgentTool> tools =
             // #2462: the command-authoring gate is threaded in here so the model-facing cron tool
             // refuses to persist a shellCommand the exec-tool policy would deny. A null authorizer
@@ -121,8 +135,8 @@ internal sealed class CronToolProvider(
             // #2838: the alert-target resolver is threaded in so the tool can validate a
             // failureAlertConversationId through the SAME CronAlertTarget seam the REST API uses.
             // A null resolver fails closed inside CronTool for any supplied target.
-            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer, alertTargetResolver)];
-        return Task.FromResult(tools);
+            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer, alertTargetResolver, creatingConversationId)];
+        return tools;
     }
 
     private static bool ResolveAllowCrossAgentCron(AgentDescriptor descriptor)

@@ -17,6 +17,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <!--
+      Plugin skills are discovered at the global/shared precedence tier (#2684). The reference is
+      to the plugin LIFECYCLE types only: skill discovery asks the installed-plugin record which
+      skills directories exist and does nothing else with plugins. Reusing that record rather than
+      scanning the plugin root is what keeps unrecorded content out of agent context.
+    -->
+    <ProjectReference Include="..\BotNexus.Extensions.Plugins\BotNexus.Extensions.Plugins.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Yaml\BotNexus.Yaml.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />

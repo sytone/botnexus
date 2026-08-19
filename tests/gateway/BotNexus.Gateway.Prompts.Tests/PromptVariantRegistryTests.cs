@@ -11,6 +11,7 @@ namespace BotNexus.Gateway.Prompts.Tests;
 /// the negative cases require MALFORMED declarations to exist in this assembly, and an
 /// assembly-wide scan would then fail every other test in the file.
 /// </remarks>
+[Collection(ReflectionScanCollection.Name)]
 public sealed class PromptVariantRegistryTests
 {
     private const string Section = "test-section";

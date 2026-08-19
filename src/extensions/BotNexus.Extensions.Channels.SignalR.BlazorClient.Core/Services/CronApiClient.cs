@@ -128,6 +128,30 @@ public sealed class CronApiClient
         }
     }
 
+    /// <summary>
+    /// Returns the per-job cost rollup over a bounded window, most expensive TOTAL first (#2641,
+    /// consumed by #3289).
+    /// </summary>
+    /// <remarks>
+    /// Consumes <c>GET /api/cron/costs</c> exactly as it stands - no new endpoint, no new query, no
+    /// new persisted column. The gateway already orders by total descending and already clamps the
+    /// window to run retention, reporting the clamp on each rollup.
+    /// </remarks>
+    /// <param name="windowDays">Requested window in days; the gateway clamps it to run retention.</param>
+    public async Task<(IReadOnlyList<CronJobCostDto> Costs, string? Error)> CostsAsync(int windowDays = 7)
+    {
+        try
+        {
+            var result = await _http.GetFromJsonAsync<List<CronJobCostDto>>(
+                $"/api/cron/costs?windowDays={windowDays}", JsonOptions);
+            return (result as IReadOnlyList<CronJobCostDto> ?? [], null);
+        }
+        catch (Exception ex)
+        {
+            return ([], ex.Message);
+        }
+    }
+
     private static async Task<string> ReadErrorAsync(HttpResponseMessage response)
     {
         try

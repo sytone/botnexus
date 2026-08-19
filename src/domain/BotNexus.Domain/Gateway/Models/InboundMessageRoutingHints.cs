@@ -46,10 +46,17 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// <param name="RequestedConversationId">
 /// Optional explicit conversation target supplied by the transport.
 /// </param>
+/// <param name="DeliveryMode">
+/// Delivery semantics the transport is asking for (#3028). Defaults to
+/// <see cref="InboundDeliveryMode.Auto"/>, which preserves the historical queue-only behaviour, so
+/// every existing writer site keeps its current semantics without change. The gateway — not the
+/// caller — resolves this intent to a concrete mechanism.
+/// </param>
 public sealed record InboundMessageRoutingHints(
     AgentId? RequestedAgentId,
     SessionId? RequestedSessionId,
-    ConversationId? RequestedConversationId)
+    ConversationId? RequestedConversationId,
+    InboundDeliveryMode DeliveryMode = InboundDeliveryMode.Auto)
 {
     /// <summary>
     /// An "all-empty" hint payload. Useful as a default for code paths where no
@@ -103,17 +110,19 @@ public sealed record InboundMessageRoutingHints(
     public static InboundMessageRoutingHints? LiftFromStrings(
         string? targetAgentId,
         string? sessionId,
-        string? conversationId)
+        string? conversationId,
+        InboundDeliveryMode deliveryMode = InboundDeliveryMode.Auto)
     {
         var agent = LiftAgentId(targetAgentId);
         var session = LiftSessionId(sessionId);
         var conversation = LiftConversationId(conversationId);
-        if (agent is null && session is null && conversation is null)
+        if (agent is null && session is null && conversation is null
+            && deliveryMode == InboundDeliveryMode.Auto)
         {
             return null;
         }
 
-        return new InboundMessageRoutingHints(agent, session, conversation);
+        return new InboundMessageRoutingHints(agent, session, conversation, deliveryMode);
     }
 
     private static ConversationId? LiftConversationId(string? raw)

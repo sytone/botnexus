@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Skills\BotNexus.Extensions.Skills.csproj" />
+    <!-- Plugin skill discovery (#2684) is exercised through the plugin lifecycle record types. -->
+    <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Plugins\BotNexus.Extensions.Plugins.csproj" />
   </ItemGroup>
 
 

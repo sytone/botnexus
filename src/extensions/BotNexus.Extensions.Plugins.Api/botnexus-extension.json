@@ -1,0 +1,10 @@
+{
+  "id": "botnexus-plugins-api",
+  "name": "Plugins API",
+  "description": "HTTP endpoints exposing installed plugins, their versions, update and trust state to the portal.",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.Plugins.Api.dll",
+  "extensionTypes": ["endpoint-contributor"],
+  "enabled": true,
+  "configSchema": []
+}

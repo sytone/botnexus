@@ -48,7 +48,9 @@ public sealed class CopilotCompletionsProvider(
     /// </summary>
     public ProviderCapabilities Capabilities { get; } = new(
         RecoversLeakedToolCallMarkup: true,
-        SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
+        SystemPromptPlacement: SystemPromptPlacement.FirstMessage,
+        // #3336: transport-declared CRLF delta framing, not a model-id prefix guess.
+        FramesStreamedTextDeltasWithCrlf: CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf);
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
         => CompletionsStreamEngine.StreamAsync(BuildProfile(secretRedactor), _httpClient, logger, model, context, options);
@@ -105,5 +107,6 @@ public sealed class CopilotCompletionsProvider(
         // Third transport, same single normalizer (#2443). Responses and Messages already applied
         // it; Completions did not, which is the asymmetry that let #2170 reproduce #2049 verbatim
         // after model discovery switched endpoints.
-        NormalizeTextDelta: static (model, delta) => CopilotTextDeltaNormalizer.Normalize(model.Id, delta));
+        NormalizeTextDelta: static (model, delta) => CopilotTextDeltaNormalizer.Normalize(
+            CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf, delta));
 }

@@ -73,7 +73,12 @@ public sealed class SessionContextProjectorArchitectureTests
             // go to the model?". Routing it through the projector would reintroduce the defect --
             // it would drop every folded row again. The two flags never form a combined predicate
             // here, so the fitness function's grep signal is a false positive on this file.
-            "ConversationHistoryAssembler.cs",
+            //
+            // #3278: that projection was extracted verbatim out of ConversationHistoryAssembler into
+            // ConversationHistoryProjection so the export routes could consume the SAME code rather
+            // than re-deriving it. The allowlist rationale above moved with the code - it is still
+            // exactly one file, still the UI-side predicate, still not a copy of the LLM-context one.
+            "ConversationHistoryProjection.cs",
         };
 
         var offenders = Directory

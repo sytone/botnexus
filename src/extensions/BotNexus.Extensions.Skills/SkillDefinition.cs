@@ -71,6 +71,14 @@ public sealed record SkillLinkedFile
 /// <summary>Where a skill was discovered from (lower values overridden by higher).</summary>
 public enum SkillSource
 {
+    /// <summary>
+    /// A skill shipped by an installed plugin (#2684). Sits at the SAME precedence tier as
+    /// <see cref="Global"/> and is scanned immediately before it, so a shared skill the operator
+    /// authored themselves overrides a plugin's skill of the same name, and an agent- or
+    /// workspace-scoped skill still wins over both. A plugin can therefore never silently displace
+    /// content the operator wrote.
+    /// </summary>
+    Plugin = -1,
     Global = 0,
     Agent = 1,
     Workspace = 2

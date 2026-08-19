@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <!-- #3278: the export HTML renderer's inertness guarantee (no <script>, no remote asset
+         reference) is asserted by PARSING the produced document and walking its DOM. A string
+         match over the whole document would pass on a file that merely spells the tag
+         differently, so the test needs a real HTML parser. -->
+    <PackageReference Include="AngleSharp" />
     <!-- Vogen is pinned PrivateAssets="all" in BotNexus.Domain so the generator cannot leak into
          the Blazor WASM payload (#2329). This project asserts on Vogen types directly, so it
          declares its own reference rather than relying on transitive flow. -->

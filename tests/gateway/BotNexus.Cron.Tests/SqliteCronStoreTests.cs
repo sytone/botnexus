@@ -222,7 +222,8 @@ public sealed class SqliteCronStoreTests
             corrupt.Parameters.AddWithValue("$bad", "{ this is not valid json ");
             (await corrupt.ExecuteNonQueryAsync()).ShouldBe(1);
         }
-        SqliteConnection.ClearAllPools();
+        // NOT ClearAllPools(): process-global, disposes sibling tests' live handles (#3324).
+        SqlitePoolCleanup.ClearPoolFor(context.DbPath);
 
         // Must NOT throw: the corrupt row is skipped-to-safe (null metadata), not fatal.
         var jobs = await context.Store.ListAsync();
@@ -252,7 +253,8 @@ public sealed class SqliteCronStoreTests
             corrupt.Parameters.AddWithValue("$bad", "[not, valid");
             (await corrupt.ExecuteNonQueryAsync()).ShouldBe(1);
         }
-        SqliteConnection.ClearAllPools();
+        // NOT ClearAllPools(): process-global, disposes sibling tests' live handles (#3324).
+        SqlitePoolCleanup.ClearPoolFor(context.DbPath);
 
         var loaded = await context.Store.GetAsync(JobId.From("job-tpl"));
 

@@ -287,45 +287,82 @@ internal static class ToolExecutor
             // below. Allowing execution on a timeout would turn a liveness bug into a policy bypass.
             var budget = config.BeforeToolCallTimeout ?? AgentLoopConfig.DefaultBeforeToolCallTimeout;
             var budgetEnabled = budget > TimeSpan.Zero && budget != Timeout.InfiniteTimeSpan;
+            var suspendDetector = config.SuspendDetector ?? HostSuspendDetector.Instance;
 
-            using var hookCts = budgetEnabled
-                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                : null;
-            if (hookCts is not null)
-            {
-                hookCts.CancelAfter(budget);
-            }
+            // #3356: the budget is armed with CancelAfter, which is WALL clock and therefore keeps
+            // running while the host is asleep. A hook in flight across a 4h41m workstation suspend
+            // was reported as having overrun a 15s budget by 16945s and the call was denied, even
+            // though nothing had executed slowly -- the process was frozen. So a breach is only
+            // believed when the ACTIVE-time clock agrees the hook really consumed its window. When
+            // it does not, the measurement is discarded (not the budget: the hook is given one
+            // fresh window on the now-awake host) rather than converted into a policy denial.
+            // A genuinely slow hook has active time >= budget, so it still fails closed unchanged.
+            var suspendRetryUsed = false;
 
-            var hookToken = hookCts?.Token ?? cancellationToken;
-            var startedAt = Stopwatch.GetTimestamp();
+            while (true)
+            {
+                using var hookCts = budgetEnabled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                    : null;
+                if (hookCts is not null)
+                {
+                    hookCts.CancelAfter(budget);
+                }
 
-            try
-            {
-                beforeResult = await config.BeforeToolCall(beforeContext, hookToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (
-                hookCts is not null &&
-                hookCts.IsCancellationRequested &&
-                !cancellationToken.IsCancellationRequested)
-            {
-                // Budget breach, not turn cancellation. The ambient token is untouched, so this is
-                // unambiguously the hook overrunning its own deadline.
-                return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                return new ToolPreparation(
-                    null,
-                    BuildErrorResult($"BeforeToolCall hook failed: {ex.Message}"),
-                    true);
-            }
+                var hookToken = hookCts?.Token ?? cancellationToken;
+                var startedAt = Stopwatch.GetTimestamp();
+                var activeStartedAt = suspendDetector.GetTimestamp();
 
-            // A hook that swallows its cancellation token and returns normally after the budget
-            // elapsed must not be treated as a policy decision either -- it produced its answer
-            // outside the window it was given.
-            if (hookCts is not null && hookCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-            {
-                return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
+                try
+                {
+                    beforeResult = await config.BeforeToolCall(beforeContext, hookToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (
+                    hookCts is not null &&
+                    hookCts.IsCancellationRequested &&
+                    !cancellationToken.IsCancellationRequested)
+                {
+                    // Budget breach, not turn cancellation. The ambient token is untouched, so this
+                    // is either the hook overrunning its own deadline or a host suspend.
+                    if (!suspendRetryUsed &&
+                        IsAttributableToHostSuspend(suspendDetector, activeStartedAt, budget))
+                    {
+                        suspendRetryUsed = true;
+                        ReportSuspendDiscardedMeasurement(config, toolCall, budget, startedAt);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        continue;
+                    }
+
+                    return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    return new ToolPreparation(
+                        null,
+                        BuildErrorResult($"BeforeToolCall hook failed: {ex.Message}"),
+                        true);
+                }
+
+                // A hook that swallows its cancellation token and returns normally after the budget
+                // elapsed must not be treated as a policy decision either -- it produced its answer
+                // outside the window it was given.
+                if (hookCts is not null && hookCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    // ...unless the window was only exceeded on the wall clock. Here the hook DID
+                    // produce a verdict and the active-time clock says it produced it inside its
+                    // budget, so the verdict stands: there is nothing to retry and discarding a
+                    // real decision would deny the call for a reason that never happened.
+                    if (IsAttributableToHostSuspend(suspendDetector, activeStartedAt, budget))
+                    {
+                        ReportSuspendDiscardedMeasurement(config, toolCall, budget, startedAt);
+                    }
+                    else
+                    {
+                        return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
+                    }
+                }
+
+                break;
             }
 
             // Genuine turn cancellation still propagates as cancellation, never as a hook timeout.
@@ -572,6 +609,65 @@ internal static class ToolExecutor
         }
 
         TurnTaintScope.RecordToolResult(toolCall.Name, declared);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when a wall-clock budget breach is attributable to the host
+    /// having been suspended rather than to the hook running slowly (#3356).
+    /// </summary>
+    /// <remarks>
+    /// The test is deliberately the direct one: how much time did the process actually spend
+    /// <i>running</i> since the hook started? This is a measurement question, not a heuristic about
+    /// sleep events, so it needs no power-notification subscription and behaves identically for a
+    /// suspend, a hibernate, or a VM pause.
+    /// <para>
+    /// The threshold is a <b>substantial</b> shortfall (half the budget), not a bare
+    /// <c>active &lt; budget</c>. Two clocks are involved and the unbiased one is coarse (~15.6ms on
+    /// Windows), so a genuinely slow hook can read a hair under its budget on the second clock; a
+    /// bare comparison would then excuse it and silently weaken the fail-closed gate. The two cases
+    /// are not close in reality -- a real suspend leaves active time near zero against a 15s budget,
+    /// while a wedged provider consumes essentially all of it -- so a wide margin costs nothing and
+    /// removes the tie. A hook that genuinely overran is rejected here, which is what keeps the
+    /// fail-closed path non-vacuous.
+    /// </para>
+    /// </remarks>
+    private static bool IsAttributableToHostSuspend(
+        IHostSuspendDetector detector,
+        long activeStartedAt,
+        TimeSpan budget)
+    {
+        var active = detector.GetElapsedActiveTime(activeStartedAt);
+        return active < TimeSpan.FromTicks(budget.Ticks / 2);
+    }
+
+    /// <summary>
+    /// Reports that a budget measurement was discarded because the host was suspended across it
+    /// (#3356). The text is deliberately distinct from <see cref="BuildBeforeToolCallTimeout"/> so
+    /// an operator reading the log is not sent to investigate a policy provider that never ran
+    /// slowly, which was half the cost of the original defect.
+    /// </summary>
+    private static void ReportSuspendDiscardedMeasurement(
+        AgentLoopConfig config,
+        ToolCallContent toolCall,
+        TimeSpan budget,
+        long startedAt)
+    {
+        var elapsed = Stopwatch.GetElapsedTime(startedAt);
+        var message =
+            $"BeforeToolCall budget measurement discarded for tool '{toolCall.Name}' " +
+            $"(call {toolCall.Id}): {elapsed.TotalSeconds:F1}s of wall-clock elapsed against a " +
+            $"{budget.TotalSeconds:F1}s budget, but the host was suspended for most of it and the " +
+            "hook's running time stayed within budget. This is not a hook timeout and the tool " +
+            "call was not blocked.";
+
+        try
+        {
+            config.OnDiagnostic?.Invoke(message);
+        }
+        catch
+        {
+            // A misbehaving diagnostic sink must never change the outcome.
+        }
     }
 
     private static AgentToolResult BuildErrorResult(string message)

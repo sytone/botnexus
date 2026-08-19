@@ -158,6 +158,28 @@ Renders the transcript via `SessionTranscriptRenderer`.
 
 Secret redaction follows the gateway's transcript-export configuration.
 
+### `GET /api/sessions/{sessionId}/export/{format}`
+
+Renders the session transcript in the requested format, where `format` is `markdown` or `html`
+(`md` and `htm` are accepted aliases). Unlike the legacy route above, this one includes the
+session's **parent conversation summary** when the session is linked to one, and it renders
+through the shared export document model rather than `SessionTranscriptRenderer` directly.
+
+| Status | Condition |
+|--------|-----------|
+| `200 OK` | `text/markdown` or `text/html` file download named `<slug>-<yyyy-MM-dd>.<ext>`. |
+| `400 Bad Request` | Unrecognised `format`. |
+| `404 Not Found` | No such session. |
+
+Because `markdown` is a literal segment on the legacy route, that route continues to win for
+`/export/markdown`; existing callers are unaffected. Secret redaction is **always on** for this
+route regardless of `gateway.transcriptExport.redactSecrets`, which governs only the legacy
+route's historical byte-for-byte output.
+
+The HTML output is a standalone document: styling is one inline `<style>` block, and it contains
+no `<script>` element and no remote asset reference, so it opens correctly offline and cannot
+execute content from the transcript.
+
 ---
 
 ## Metadata

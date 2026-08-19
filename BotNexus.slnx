@@ -2,6 +2,7 @@
   <Folder Name="/src/extensions/">
     <Project Path="src/extensions/BotNexus.Extensions.AudioTranscription/BotNexus.Extensions.AudioTranscription.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Plugins/BotNexus.Extensions.Plugins.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Plugins.Api/BotNexus.Extensions.Plugins.Api.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Skills/BotNexus.Extensions.Skills.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Mcp/BotNexus.Extensions.Mcp.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.McpInvoke/BotNexus.Extensions.McpInvoke.csproj" />
@@ -20,6 +21,7 @@
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Agent365/BotNexus.Extensions.Channels.Agent365.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Tui/BotNexus.Extensions.Channels.Tui.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.ServiceBus/BotNexus.Extensions.Channels.ServiceBus.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.Matrix/BotNexus.Extensions.Channels.Matrix.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Test/BotNexus.Extensions.Channels.Test.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Qmd/BotNexus.Extensions.Qmd.csproj" />
   </Folder>
@@ -97,10 +99,12 @@
     <Project Path="tests/extensions/BotNexus.Extensions.McpInvoke.Tests/BotNexus.Extensions.McpInvoke.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.ProcessTool.Tests/BotNexus.Extensions.ProcessTool.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Plugins.Tests/BotNexus.Extensions.Plugins.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.Plugins.Api.Tests/BotNexus.Extensions.Plugins.Api.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Skills.Tests/BotNexus.Extensions.Skills.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.WebTools.Tests/BotNexus.Extensions.WebTools.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.BrowserTools.Tests/BotNexus.Extensions.BrowserTools.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.ServiceBus.Tests/BotNexus.Extensions.Channels.ServiceBus.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.Channels.Matrix.Tests/BotNexus.Extensions.Channels.Matrix.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.Test.Tests/BotNexus.Extensions.Channels.Test.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.Agent365.Tests/BotNexus.Extensions.Channels.Agent365.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Qmd.Tests/BotNexus.Extensions.Qmd.Tests.csproj" />
@@ -142,6 +146,7 @@
   </Folder>
   <Folder Name="/tests/persistence/">
     <Project Path="tests/persistence/BotNexus.Persistence.Sqlite.Tests/BotNexus.Persistence.Sqlite.Tests.csproj" />
+    <Project Path="tests/persistence/BotNexus.Persistence.Seam.Tests/BotNexus.Persistence.Seam.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/BotNexus.SourceGenerators/BotNexus.SourceGenerators.csproj" />

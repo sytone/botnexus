@@ -1,3 +1,4 @@
+using BotNexus.Extensions.Plugins.Lifecycle;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
@@ -61,7 +62,20 @@ public sealed class SkillPromptHookHandler
         var agentSkillsDir = Path.Combine(botnexusHome, "agents", hookEvent.AgentId.Value, "skills");
         var workspaceSkillsDir = Path.Combine(workspacePath, "skills");
 
-        var allSkills = SkillDiscovery.Discover(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, _fileSystem, _logger);
+        // Plugin-shipped skills join at the global/shared tier (#2684). Resolution is driven by the
+        // installed-plugin record, so a directory that was never installed contributes nothing.
+        var pluginSkillsDirs = PluginSkillRootResolver.Resolve(
+            Path.Combine(botnexusHome, PluginSkillRootResolver.PluginRootDirectoryName),
+            _fileSystem);
+
+        var allSkills = SkillDiscovery.Discover(
+            globalSkillsDir,
+            agentSkillsDir,
+            workspaceSkillsDir,
+            _fileSystem,
+            _logger,
+            pluginSkillsDirs: pluginSkillsDirs);
+
         if (allSkills.Count == 0)
             return Task.FromResult<BeforePromptBuildResult?>(null);
 

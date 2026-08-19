@@ -19,6 +19,15 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
     private readonly bool _ownsHttpClient;
 
     /// <summary>
+    /// Optional secret redactor (#3360). Consumed at exactly one place -- <see cref="ErrorResult"/> --
+    /// so a future <c>catch</c> branch cannot reach an unredacted message by forgetting to call it,
+    /// mirroring the single-choke-point discipline
+    /// <see cref="ProviderHttpErrorHelper.ThrowForFailedResponse"/> established for the provider
+    /// path in #2881.
+    /// </summary>
+    private readonly ISecretRedactor? _secretRedactor;
+
+    /// <summary>
     /// Maximum number of redirects the tool will follow before giving up. Each hop is
     /// re-validated against the SSRF policy, so a bounded count also caps redirect loops.
     /// </summary>
@@ -29,9 +38,13 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    public WebFetchTool(WebFetchConfig config, HttpClient? httpClient = null)
+    public WebFetchTool(
+        WebFetchConfig config,
+        HttpClient? httpClient = null,
+        ISecretRedactor? secretRedactor = null)
     {
         _config = config;
+        _secretRedactor = secretRedactor;
 
         if (httpClient is not null)
         {
@@ -265,7 +278,11 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
                     ["content_type"] = contentType
                 };
                 var errorJson = JsonSerializer.Serialize(errorMetadata, MetadataJsonOptions);
-                return TextResult(
+                // NOT a catch branch, and the reason it must still be redacted: ReasonPhrase is
+                // written by the SERVER and `url` is caller-supplied, so this is the one error path
+                // an attacker can drive on demand. A fix that only wrapped the catch blocks would
+                // leave the most reachable leak in place.
+                return ErrorResult(
                     $"{errorJson}\n\nHTTP {statusCode} {response.ReasonPhrase} when fetching {url}");
             }
 
@@ -331,30 +348,55 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
         }
         catch (ResponseContentTooLargeException ex)
         {
-            return TextResult(
+            return ErrorResult(
                 $"Response body exceeded the {ex.MaxBytes}-byte limit and was discarded to protect the gateway from excessive memory use.");
         }
         catch (HttpRequestException ex)
         {
-            return TextResult($"HTTP error: {ex.Message}");
+            return ErrorResult($"HTTP error: {ex.Message}");
         }
         catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
         {
-            return TextResult($"Request timed out after {_config.TimeoutSeconds}s.");
+            return ErrorResult($"Request timed out after {_config.TimeoutSeconds}s.");
         }
         catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return TextResult("Request cancelled.");
+            return ErrorResult("Request cancelled.");
         }
         catch (RedirectBlockedException ex)
         {
-            return TextResult(ex.Message);
+            return ErrorResult(ex.Message);
         }
         catch (Exception ex)
         {
-            return TextResult($"Error fetching URL: {ex.Message}");
+            return ErrorResult($"Error fetching URL: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// THE model-visible error boundary for this tool (#3360). Every failure path -- the
+    /// non-success-status branch and all six <c>catch</c> branches -- returns through here, so
+    /// redaction is one decision rather than one-per-branch.
+    ///
+    /// <para>
+    /// <b>Why error text needs this when success bodies already pass
+    /// <c>UntrustedContentSanitizer</c> (#2813).</b> That sanitizer is a prompt-injection markup
+    /// filter, not a secret redactor, and it never ran on the error paths. An intermediary proxy
+    /// can embed a credential in an exception message or a reflected header in a
+    /// <c>ReasonPhrase</c>; the result is persisted to the transcript, which the memory indexer
+    /// reads, so a leak here survives session deletion.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>A null redactor is a deliberate pass-through, not a blanket drop</b> -- the same contract
+    /// as <c>ProviderHttpErrorHelper.Redact</c>, so a host that has not wired the redactor keeps
+    /// its diagnostics rather than silently losing them.
+    /// </para>
+    /// </summary>
+    private AgentToolResult ErrorResult(string message)
+        => TextResult(_secretRedactor is null || string.IsNullOrEmpty(message)
+            ? message
+            : _secretRedactor.Redact(message));
 
     /// <summary>
     /// Issues a GET for <paramref name="url"/> and follows redirects manually, re-validating

@@ -1,0 +1,190 @@
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject CronApiClient CronApi
+@inject NavigationManager Nav
+
+@* #3289: the cron cost subsection. Every number is read off GET /api/cron/costs as served; the one
+   value this view DERIVES rather than transcribes is tool calls per turn, and it is deliberately
+   absent - not zero - whenever it is undefined. *@
+<div class="activity-cost" data-testid="cron-cost">
+    <div class="activity-dashboard-header">
+        <h2 class="activity-dashboard-title">Cron cost</h2>
+        <span class="activity-dashboard-subtitle">Scheduled jobs ranked by total spend</span>
+    </div>
+
+    <div class="activity-filter-bar" role="group" aria-label="Cron cost window" data-testid="cron-cost-filter-bar">
+        <select class="activity-filter-select" data-testid="cron-cost-window"
+                aria-label="Cost window"
+                value="@_windowDays"
+                @onchange="OnWindowChanged">
+            <option value="1">Last 24 hours</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+        </select>
+    </div>
+
+    @if (_truncated)
+    {
+        @* AC7: a truncated total that LOOKS complete is worse than a visibly bounded one. *@
+        <div class="activity-subnav-notice" role="status" data-testid="cron-cost-truncated">
+            Window clamped to @(_effectiveWindowDays?.ToString() ?? "the configured") day(s) of run
+            retention - totals cover less than the requested window.
+        </div>
+    }
+
+    @if (_isLoading && _rows is null)
+    {
+        <div class="activity-loading" data-testid="cron-cost-loading">Loading cron cost&#x2026;</div>
+    }
+    else if (_loadError)
+    {
+        <div class="activity-error" data-testid="cron-cost-error">Could not load cron cost.</div>
+    }
+    else if (_rows is { Count: 0 })
+    {
+        <div class="activity-empty" data-testid="cron-cost-empty">
+            No cron runs were recorded in this window.
+        </div>
+    }
+    else if (_rows is { } rows)
+    {
+        <div class="activity-table-scroll" data-testid="cron-cost-table-scroll" tabindex="0" role="region" aria-label="Cron cost table">
+        <table class="activity-table" data-testid="cron-cost-table">
+            <thead>
+                <tr>
+                    <th scope="col">Job</th>
+                    <th scope="col">Runs</th>
+                    <th scope="col">Measured</th>
+                    <th scope="col">Total tokens</th>
+                    <th scope="col">Total tool calls</th>
+                    <th scope="col">Total turns</th>
+                    <th scope="col">Total duration</th>
+                    <th scope="col">Tokens / run</th>
+                    <th scope="col" title="Tool calls per model turn - high values suggest a job groping rather than acting">Tool calls / turn</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in rows)
+                {
+                    var cost = row.Cost;
+                    var unmeasured = cost.MeasuredRunCount == 0;
+                    <tr class="activity-row @(unmeasured ? "activity-cost-unmeasured" : "")"
+                        data-testid="cron-cost-row"
+                        data-job-id="@row.JobId"
+                        data-measured="@Measured(!unmeasured)"
+                        tabindex="0"
+                        role="link"
+                        @onclick="() => NavigateToJob(row)"
+                        @onkeydown="e => OnRowKeyDown(e, row)">
+                        <td class="activity-cell-title">
+                            <span class="activity-conversation-title" data-testid="cron-cost-job" title="@row.JobId">@row.JobName</span>
+                        </td>
+                        <td class="activity-cell-channels" data-testid="cron-cost-runs">@cost.RunCount</td>
+                        <td class="activity-cell-channels" data-testid="cron-cost-measured-runs">@cost.MeasuredRunCount</td>
+                        <td class="activity-cell-channels @(cost.TotalTokens is null ? "activity-cost-unmeasured" : "")"
+                            data-testid="cron-cost-total-tokens"
+                            data-measured="@Measured(cost.TotalTokens is not null)">@CronCostProjection.FormatCount(cost.TotalTokens)</td>
+                        <td class="activity-cell-channels @(cost.TotalToolCalls is null ? "activity-cost-unmeasured" : "")"
+                            data-testid="cron-cost-total-tool-calls"
+                            data-measured="@Measured(cost.TotalToolCalls is not null)">@CronCostProjection.FormatCount(cost.TotalToolCalls)</td>
+                        <td class="activity-cell-channels @(cost.TotalTurns is null ? "activity-cost-unmeasured" : "")"
+                            data-testid="cron-cost-total-turns"
+                            data-measured="@Measured(cost.TotalTurns is not null)">@CronCostProjection.FormatCount(cost.TotalTurns)</td>
+                        <td class="activity-cell-channels @(cost.TotalDurationMs is null ? "activity-cost-unmeasured" : "")"
+                            data-testid="cron-cost-total-duration"
+                            data-measured="@Measured(cost.TotalDurationMs is not null)">@CronCostProjection.FormatDuration(cost.TotalDurationMs)</td>
+                        <td class="activity-cell-channels @(cost.AverageTokensPerRun is null ? "activity-cost-unmeasured" : "")"
+                            data-testid="cron-cost-avg-tokens"
+                            data-measured="@Measured(cost.AverageTokensPerRun is not null)">@CronCostProjection.FormatAverage(cost.AverageTokensPerRun)</td>
+                        @* The derived column - the reason this subsection exists. *@
+                        <td class="activity-cell-channels @(row.ToolCallsPerTurn is null ? "activity-cost-unmeasured" : "")"
+                            data-testid="cron-cost-tool-calls-per-turn"
+                            data-measured="@Measured(row.ToolCallsPerTurn is not null)">@CronCostProjection.FormatRatio(row.ToolCallsPerTurn)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<CronCostRow>? _rows;
+    private bool _isLoading;
+    private bool _loadError;
+    private bool _truncated;
+    private int? _effectiveWindowDays;
+    private int _windowDays = 7;
+
+    /// <summary>Requested cost window in days. Overridable so tests can pin the query argument.</summary>
+    [Parameter] public int WindowDays { get; set; } = 7;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _windowDays = WindowDays;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            var (costs, error) = await CronApi.CostsAsync(_windowDays);
+            var (jobs, _) = await CronApi.ListAsync();
+            if (error is not null)
+            {
+                _loadError = true;
+                _rows = null;
+                return;
+            }
+
+            var rows = CronCostProjection.Project(costs, jobs);
+            _rows = rows;
+            _truncated = CronCostProjection.WindowTruncated(rows);
+            _effectiveWindowDays = CronCostProjection.EffectiveWindowDays(rows);
+            _loadError = false;
+        }
+        catch
+        {
+            _loadError = true;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task OnWindowChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var days) && days > 0)
+        {
+            _windowDays = days;
+            await LoadAsync();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Navigates using the ROW'S OWN job id (#3289 AC8) - never an index into the rendered list, so
+    /// a re-sort cannot redirect a click.
+    /// </summary>
+    private void NavigateToJob(CronCostRow row) =>
+        Nav.NavigateTo(CronCostProjection.NavigationTarget(row));
+
+    private void OnRowKeyDown(KeyboardEventArgs e, CronCostRow row)
+    {
+        if (e.Key is "Enter" or " ")
+            NavigateToJob(row);
+    }
+
+    /// <summary>
+    /// Renders the measured/unmeasured marker as an explicit STRING rather than a bool.
+    /// </summary>
+    /// <remarks>
+    /// Blazor OMITS an attribute whose value is <c>false</c>, so a bool here would emit
+    /// <c>data-measured</c> only on measured cells and leave the unmeasured ones with no attribute
+    /// at all - making "not measured" indistinguishable from "this markup predates the attribute".
+    /// That is the null/zero collapse AC5 exists to prevent, reappearing one layer down in the DOM.
+    /// </remarks>
+    private static string Measured(bool measured) => measured ? "true" : "false";
+}
