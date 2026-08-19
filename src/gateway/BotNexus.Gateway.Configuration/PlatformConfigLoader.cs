@@ -461,6 +461,26 @@ public static class PlatformConfigLoader
         }
     }
 
+    /// <summary>
+    /// The legacy top-level property names <see cref="MigrateLegacyGatewaySettings(PlatformConfig, JsonElement)"/>
+    /// lifts into <c>gateway</c>. A document containing any of these is an <em>old-schema</em>
+    /// document: it still loads, but only because the migration step rewrites it on the way in.
+    /// </summary>
+    /// <remarks>
+    /// #2884. Backup restore has to be able to report "this snapshot needs migrating" as a verdict
+    /// distinct from "valid" and from "unloadable", because restoring an old-schema snapshot
+    /// verbatim is its own outage. That verdict is exactly "does the document use these keys", so
+    /// the set is named here beside the migration that consumes it rather than being re-listed by
+    /// the caller. Any key added to the migration must be added here too;
+    /// <c>ConfigBackupRestoreServiceTests</c> asserts the two agree.
+    /// </remarks>
+    public static readonly IReadOnlyList<string> LegacyRootSettingKeys =
+    [
+        "listenUrl", "defaultAgentId", "agentsDirectory", "sessionsDirectory", "logLevel",
+        "apiKeys", "sessionStore", "compaction", "cors", "rateLimit", "extensions",
+        "locations", "crossWorld",
+    ];
+
     internal static PlatformConfig MigrateLegacyGatewaySettings(PlatformConfig config, string rawJson)
     {
         ArgumentNullException.ThrowIfNull(config);

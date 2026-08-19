@@ -103,4 +103,26 @@ internal static class CliConfigMutation
         var backupsDir = Path.Combine(directory, "backups");
         return new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
     }
+
+    /// <summary>
+    /// Creates the restore service for <paramref name="configPath"/> (#2884), wiring the backup
+    /// store and the writer to the <em>same</em> filesystem and backups directory the write path
+    /// uses.
+    /// </summary>
+    /// <remarks>
+    /// Constructed here rather than at the call site so the backups directory is derived in exactly
+    /// one place. A restore that enumerated a different directory from the one
+    /// <see cref="CreateWriter"/> writes into would list snapshots it could not restore, and
+    /// restore snapshots it had never listed.
+    /// </remarks>
+    public static ConfigBackupRestoreService CreateRestoreService(string configPath)
+    {
+        var directory = Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath();
+        PlatformConfigLoader.EnsureConfigDirectory(directory);
+
+        var fileSystem = new System.IO.Abstractions.FileSystem();
+        var backups = new ConfigBackupService(Path.Combine(directory, "backups"), fileSystem);
+        var writer = new PlatformConfigWriter(configPath, fileSystem, backups);
+        return new ConfigBackupRestoreService(backups, writer, fileSystem);
+    }
 }

@@ -13,7 +13,8 @@ This guide documents all configuration options for BotNexus. Configuration is st
 7. [Cron & Scheduling](#cron--scheduling)
 8. [Session Management](#session-management)
 9. [Security & Authentication](#security--authentication)
-10. [Complete Example](#complete-example)
+10. [Backups & Restore](#backups--restore)
+11. [Complete Example](#complete-example)
 
 ---
 
@@ -1025,6 +1026,42 @@ A background cleanup service expires and prunes old sessions.
   }
 }
 ```
+
+---
+
+## Backups & Restore
+
+BotNexus copies `~/.botnexus/config.json` into `~/.botnexus/backups/` before every mutation, as
+`config-{yyyyMMdd}-{HHmmss}-{reason}.json`. The newest 50 are kept and older ones are pruned.
+
+List them, with a verdict saying whether each one still loads against the current schema:
+
+```bash
+botnexus config backups list
+```
+
+```
+Id                                         Timestamp             Reason                  Size    Verdict
+config-20260102-090000-before-provider...  2026-01-02 09:00:00   before-provider-update  4821 B  valid
+config-20260101-101500-before-agent-cr...  2026-01-01 10:15:00   before-agent-create     4770 B  valid
+```
+
+Restore one. **The restore is a dry run unless you pass `--commit`:**
+
+```bash
+# Preview: validates the backup, writes nothing.
+botnexus config restore config-20260101-101500-before-agent-create
+
+# Perform it.
+botnexus config restore config-20260101-101500-before-agent-create --commit
+```
+
+The restore validates and migrates the snapshot before writing, refuses a snapshot that would not
+load, resolves any redacted `***` secrets back to the live values instead of overwriting them, and
+backs up the pre-restore document first. Copying a backup over `config.json` by hand skips all of
+that - use the command.
+
+See the [Configuration Guide](../configuration.md#backups-and-restore) for the full detail.
 
 ---
 

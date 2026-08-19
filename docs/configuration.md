@@ -10,12 +10,13 @@ BotNexus uses a hierarchical, dictionary-based configuration model with a unifie
 4. [Project Defaults: appsettings.json](#project-defaults-appsettingsjson)
 5. [Configuration Sections](#configuration-sections)
 6. [Prompt Templates](#prompt-templates)
-7. [JSON Schema Validation](#json-schema-validation)
-8. [Hot Reload](#hot-reload)
-9. [Extension Configuration](#extension-configuration)
-10. [Environment Variable Overrides](#environment-variable-overrides)
-11. [Security Best Practices](#security-best-practices)
-12. [Examples](#examples)
+7. [Backups and restore](#backups-and-restore)
+8. [JSON Schema Validation](#json-schema-validation)
+9. [Hot Reload](#hot-reload)
+10. [Extension Configuration](#extension-configuration)
+11. [Environment Variable Overrides](#environment-variable-overrides)
+12. [Security Best Practices](#security-best-practices)
+13. [Examples](#examples)
 
 ---
 
@@ -1927,6 +1928,63 @@ This is a **direct OTLP** integration: BotNexus takes **no dependency** on any `
 
 To disable Agent 365 export again, set `agent365.enabled` back to `false` (or remove the section) - egress to Agent 365 stops immediately.
 
+
+---
+
+## Backups and restore
+
+Every mutation of `config.json` - through the CLI, the portal, or the gateway itself - first copies
+the current document into `~/.botnexus/backups/` as
+`config-{yyyyMMdd}-{HHmmss}-{reason}.json`. The trailing slug records what triggered the write
+(`before-provider-update`, `before-agent-create-larry`, ...), so a backup can be identified without
+opening it. The newest 50 are retained; older ones are pruned automatically. Backups carry the same
+owner-only file permissions as `config.json`, because a backup is a byte-for-byte copy of it,
+secrets included.
+
+### Listing backups
+
+```powershell
+botnexus config backups list
+```
+
+Each row carries the backup id, its timestamp, the trigger reason, its size, and a **verdict**
+describing whether it can still be loaded against the *current* schema:
+
+| Verdict | Meaning |
+|---|---|
+| `valid` | Parses and passes current-schema validation. Safe to restore. |
+| `needs-migration` | Written by an older build: it still uses legacy top-level keys that the loader lifts into `gateway`. Restorable - the restore migrates it before validating - but the bytes on disk are not what will be written. |
+| `unloadable` | Does not parse, or fails schema validation. **Cannot be restored.** |
+
+### Restoring a backup
+
+```powershell
+# Dry run - validates the backup and reports what would happen. Writes nothing.
+botnexus config restore config-20260101-101500-before-provider-update
+
+# Perform the restore.
+botnexus config restore config-20260101-101500-before-provider-update --commit
+```
+
+**Restore is a dry run unless you pass `--commit`.** This is the one config command whose stated
+purpose is to discard the current document, so committing is opt-in: a mistyped id gives you a
+preview rather than an overwritten config.
+
+The restore is validated, not a file copy, and that difference matters in three ways:
+
+- **A snapshot that fails validation is refused.** Nothing is written and `config.json` is left
+  byte-for-byte unchanged, so a bad backup cannot leave the gateway unable to start.
+- **Redacted secrets do not overwrite live ones.** A snapshot taken from a redacted view can contain
+  `***` placeholders; the restore resolves each one back to the value currently on disk. Copying the
+  file by hand does *not* do this and will destroy the real secret.
+- **The pre-restore document is backed up first**, tagged `before-restore-{id}`, so a restore is
+  itself undoable.
+
+> Copying a file out of `~/.botnexus/backups/` over `~/.botnexus/config.json` by hand skips all
+> three protections. Use `botnexus config restore`.
+
+Only `config.json` is covered. Sessions, the cron store, and memory are separate stores with their
+own lifecycles and are not restored by this command.
 
 ---
 
