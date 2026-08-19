@@ -11,3 +11,4 @@ BNFF003 | FeatureFlags | Warning | A live flag is past the configured age thresh
 BNTS001 | ToolSchema | Error | A tool parameter declares a JSON type that is not a JSON Schema type keyword.
 BNTS002 | ToolSchema | Error | A tool parameter name is declared more than once.
 BNTS003 | ToolSchema | Error | A tool parameter alias targets a key that is not declared before it.
+BNHE001 | HubEvents | Error | An interface marked [HubEventInventory] declares no methods, so the inventory would be empty.

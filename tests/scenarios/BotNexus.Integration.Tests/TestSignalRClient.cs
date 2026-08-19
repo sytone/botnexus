@@ -1,24 +1,21 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using BotNexus.Extensions.Channels.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Integration.Tests;
 
 /// <summary>
-/// SignalR test client that mirrors WebUI behavior (hub.js, events.js, chat.js, session-store.js).
-/// All event registration, connection lifecycle, and message flow matches the real JS client.
+/// SignalR test client that mirrors portal behavior: event registration, connection lifecycle and
+/// message flow match what the Blazor client does.
 /// </summary>
 public class TestSignalRClient : IAsyncDisposable
 {
-    // All events the WebUI registers (events.js) — must match exactly
-    private static readonly string[] AllHubEvents =
-    [
-        "Connected", "SessionReset",
-        "MessageStart", "ContentDelta", "ThinkingDelta",
-        "ToolStart", "ToolEnd", "MessageEnd", "Error",
-        "SubAgentSpawned", "SubAgentCompleted", "SubAgentFailed", "SubAgentKilled"
-    ];
+    // Generated from IGatewayHubClient (#3318) rather than restated here. The hand-written array
+    // this replaced carried 13 of the interface's 24 events, so eleven declared events were
+    // unobservable to this suite - a regression in any of them looked like a quiet passing run.
+    private static readonly string[] AllHubEvents = HubEvents.All;
 
     private readonly HubConnection _connection;
     private readonly ConcurrentDictionary<string, List<ReceivedEvent>> _events = new();
@@ -63,7 +60,7 @@ public class TestSignalRClient : IAsyncDisposable
                 var eventList = _events.GetOrAdd(sessionId, _ => []);
                 lock (eventList) { eventList.Add(evt); }
 
-                // Track streaming state per session (like WebUI events.js)
+                // Track streaming state per session (as the portal client does)
                 if (method == "MessageStart")
                     _streamingSessions[sessionId] = true;
                 else if (method is "MessageEnd" or "Error")
