@@ -134,6 +134,16 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `readTool.largeReadThresholdBytes` | int | `20480` (20 KiB) | UTF-8 byte size above which a `read` result gets an appended size indicator naming `offset` and `limit`. Content is never truncated. `0` or less disables the indicator |
 | `readTool.elideUnchangedRereads` | bool | `true` | Whether re-reading an **unchanged** slice in the same session returns a short marker instead of the full body. The file is still read and hashed on every call, so a changed file can never take the cheap path |
 | `workspace.maxReportFileSizeBytes` | int | `524288` (512 KB) | Max bytes read from a report file for portal preview; larger files are truncated and flagged. `0` means no limit |
+| `autoUpdate.enabled` | bool | `false` | Enable background GitHub polling and the gateway self-update endpoint |
+| `autoUpdate.checkIntervalMinutes` | int | `60` | How often to poll GitHub for a new commit. Minimum `5` |
+| `autoUpdate.branch` | string | `main` | Branch tracked for new commits (owner/name default to `sytone`/`botnexus`) |
+| `autoUpdate.cliPath` | string | `null` | Absolute path to the CLI that performs the update. Required when `enabled` is true, or `update/start` returns `412` |
+| `autoUpdate.sourcePath` | string | `null` | Absolute path to the source tree, passed to the CLI as `--source`. Required when `enabled` is true |
+| `crossWorld.peers.<key>.endpoint` | string | `null` | Peer gateway base URL used for outbound cross-world relay |
+| `crossWorld.peers.<key>.apiKey` | string | `null` | Shared key presented on outbound relay calls to that peer. Secret — redacted by the config API |
+| `crossWorld.inbound.enabled` | bool | `true` | Whether the inbound cross-world relay endpoint accepts traffic |
+| `crossWorld.inbound.allowedWorlds` | array | `[]` | Source world IDs permitted to relay in. Empty allows **no** source world — it is an allow-list |
+| `crossWorld.inbound.apiKeys` | map | `{}` | Shared keys keyed by source world ID. Secret — redacted by the config API |
 
 ### Remote and mesh access
 

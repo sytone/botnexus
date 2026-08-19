@@ -1516,6 +1516,87 @@ This limit applies to the reports API only. The workspace file API
 ([`GET /api/agents/{agentId}/workspace/{path}`](./api-reference.md#agent-workspace-files)) uses a
 fixed 512 KB read cap that is not configurable.
 
+#### Gateway Self-Update (`autoUpdate`)
+
+Controls the background poller that watches a GitHub branch for new commits and the endpoints that
+act on it ([`GET /api/gateway/update/status`](./api-reference.md#gateway-self-update) and its
+`check`/`start` siblings). The whole section is **off by default**: with `enabled` false the poller
+never runs and `POST /api/gateway/update/start` refuses the request.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AutoUpdate.Enabled` | bool | `false` | Enables background GitHub polling and the self-update endpoint. |
+| `AutoUpdate.CheckIntervalMinutes` | int | `60` | How often to poll GitHub for a new commit. Minimum `5`; a smaller value is a configuration error. |
+| `AutoUpdate.RepositoryOwner` | string | `sytone` | GitHub repository owner to poll. |
+| `AutoUpdate.RepositoryName` | string | `botnexus` | GitHub repository name to poll. |
+| `AutoUpdate.Branch` | string | `main` | Branch tracked for new commits. |
+| `AutoUpdate.CliPath` | string | `null` | Absolute path to the BotNexus CLI entry point that performs the update. **Required when `Enabled` is true.** A path ending in `.dll` is launched via `dotnet`; anything else is run directly. |
+| `AutoUpdate.SourcePath` | string | `null` | Absolute path to the BotNexus source tree, passed to the CLI update command as `--source`. **Required when `Enabled` is true.** |
+| `AutoUpdate.Channel` | string | `null` | Update channel forwarded to the CLI (typically `stable`, `beta` or `dev`). Null or empty uses the CLI's own default channel. |
+| `AutoUpdate.ShutdownDelaySeconds` | int | `2` | Seconds to wait after the endpoint returns `202` before the gateway stops itself, so the response is delivered before the process exits. Minimum `1`. |
+
+`CliPath` and `SourcePath` are jointly required: with `Enabled` true and either one missing,
+`POST /api/gateway/update/start` returns `412 Precondition Failed` rather than starting a process it
+cannot complete.
+
+```json
+{
+  "gateway": {
+    "autoUpdate": {
+      "enabled": true,
+      "checkIntervalMinutes": 60,
+      "branch": "main",
+      "cliPath": "/opt/botnexus/BotNexus.Cli.dll",
+      "sourcePath": "/opt/botnexus/src"
+    }
+  }
+}
+```
+
+#### Cross-World Federation (`crossWorld`)
+
+Gateway-to-gateway federation, which is what makes an agent in one world reachable from another. The
+outbound half is the `peers` map; the inbound half is the `inbound` policy enforced by
+[`POST /api/federation/cross-world/relay`](./api-reference.md#cross-world-federation-relay).
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `CrossWorld.Peers.<key>.WorldId` | string | _(dictionary key)_ | Canonical world ID for this peer. Defaults to the map key when omitted. |
+| `CrossWorld.Peers.<key>.Endpoint` | string | `null` | Peer gateway base URL used for outbound relay calls. |
+| `CrossWorld.Peers.<key>.ApiKey` | string | `null` | Shared API key presented on outbound relay calls. Secret — redacted by the config API and the portal. |
+| `CrossWorld.Peers.<key>.Enabled` | bool | `true` | Whether this peer is used for outbound calls. |
+| `CrossWorld.Inbound.Enabled` | bool | `true` | Whether the inbound relay endpoint accepts cross-world traffic at all. |
+| `CrossWorld.Inbound.AllowedWorlds` | string[] | _(none)_ | Source world IDs permitted to relay in. **Empty means no source world is allowed** — this is an allow-list, not a deny-list, so leaving it unset accepts nothing. |
+| `CrossWorld.Inbound.ApiKeys` | map | _(none)_ | Shared API keys keyed by source world ID. Secret — redacted by the config API and the portal. |
+| `CrossWorld.Agents.<key>.WorldId` | string | `null` | World hosting an explicitly-discoverable remote agent. |
+| `CrossWorld.Agents.<key>.AgentId` | string | `null` | Remote agent ID within that world. |
+| `CrossWorld.Agents.<key>.Description` | string | `null` | Operator-facing description shown for the discovery entry. |
+
+The separate top-level `gateway.crossWorldPermissions` list is a different control: each entry names
+a `targetWorldId` plus optional `allowedAgents` and `allowInbound`/`allowOutbound` flags (both
+`true` by default), and grants communication with that world. `crossWorld` supplies the transport
+and credentials; `crossWorldPermissions` decides who may use it.
+
+```json
+{
+  "gateway": {
+    "crossWorld": {
+      "peers": {
+        "research-world": {
+          "endpoint": "https://research.example.com",
+          "apiKey": "peer-shared-key"
+        }
+      },
+      "inbound": {
+        "enabled": true,
+        "allowedWorlds": ["research-world"],
+        "apiKeys": { "research-world": "peer-shared-key" }
+      }
+    }
+  }
+}
+```
+
 #### Shell Execution Settings
 
 Gateway-level shell settings control the default shell behavior for all agents. Individual agents can override these with per-agent `shellCommand` (see [Agent Configuration](#agentconfig-per-agent-customization)).
