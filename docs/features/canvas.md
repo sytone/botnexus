@@ -90,10 +90,16 @@ Canvas state is also accessible via the conversations REST API:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/conversations/{id}/canvas-state` | Get all canvas state for a conversation |
-| `GET` | `/api/conversations/{id}/canvas-state/{key}` | Get a specific state key |
+| `GET` | `/api/agents/{agentId}/conversations/{conversationId}/canvas` | Get the rendered canvas HTML (`text/html`). `204 No Content` when the conversation has no canvas. |
+| `PUT` | `/api/agents/{agentId}/conversations/{conversationId}/canvas` | Replace the canvas HTML. An empty body clears it. Returns `204 No Content`. |
+| `GET` | `/api/conversations/{id}/canvas-state` | Get all canvas state for a conversation. Returns `{}` when none has been set. |
+| `GET` | `/api/conversations/{id}/canvas-state/{key}` | Get a specific state key. `404 Not Found` when the key is absent. |
 | `POST` | `/api/conversations/{id}/canvas-state/{key}` | Set a state key (body is the JSON value) |
-| `DELETE` | `/api/conversations/{id}/canvas-state/{key}` | Delete a specific state key |
+| `DELETE` | `/api/conversations/{id}/canvas-state/{key}` | Delete a specific state key. Idempotent — returns `204 No Content` even when the key did not exist. |
+
+All six routes return `404 Not Found` when the conversation itself does not exist. The two HTML
+routes are agent-scoped while the state routes are not: canvas state belongs to the conversation,
+so any agent bound to it reads and writes the same keys.
 
 ## SignalR Notifications
 

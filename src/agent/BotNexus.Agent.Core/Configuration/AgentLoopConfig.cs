@@ -105,7 +105,8 @@ public record AgentLoopConfig(
     BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
     string? AuthProfile = null,
     Func<double>? RetryRandomSource = null,
-    int? MaxToolOutputBytes = null)
+    int? MaxToolOutputBytes = null,
+    BotNexus.Agent.Core.Loop.IHostSuspendDetector? SuspendDetector = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).

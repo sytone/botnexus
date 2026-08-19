@@ -75,6 +75,65 @@ public sealed class GitHubCredentialEnvironmentFenceArchitectureTests
             + "See src/gateway/BotNexus.Gateway.Abstractions/Extensions/IServiceContributor.cs.");
     }
 
+    [Fact]
+    public void GitHubExtension_NeverInvokesGhAuthSwitchOrReadsAmbientCliIdentity()
+    {
+        // #2733 AC2. The acting identity is resolved from configuration keyed by agent id; ambient
+        // `gh auth` state is process-global, so ONE agent switching accounts silently re-authors
+        // another agent's writes. A unit test only observes the paths it calls - a source scan
+        // catches a shell-out on a branch no test exercises.
+        var offenders = new List<string>();
+
+        foreach (var file in EnumerateSources())
+        {
+            // Comments are stripped first: several files legitimately DISCUSS `gh auth switch` in
+            // their remarks, explaining why the mechanism replaces it. Scanning raw text would make
+            // this fence fail on its own documentation - and the incentive to delete the
+            // explanation is worse than no fence at all.
+            var text = StripComments(File.ReadAllText(file));
+            var relative = Path.GetRelativePath(RepoRoot, file).Replace('\\', '/');
+
+            if (Regex.IsMatch(text, @"auth\s+switch", RegexOptions.IgnoreCase))
+                offenders.Add($"{relative}: references a `gh auth switch` invocation.");
+
+            if (Regex.IsMatch(text, @"gh\.exe|Process\s*\.\s*Start"))
+                offenders.Add($"{relative}: starts an external process (the gh CLI is the concern).");
+
+            if (Regex.IsMatch(text, @"GetEnvironmentVariable"))
+                offenders.Add($"{relative}: reads an ambient token from the process environment.");
+        }
+
+        offenders.ShouldBeEmpty(
+            "The GitHub extension must never mutate or read the ambient `gh` CLI account (#2733 AC2). "
+            + "Acting identity is configuration keyed by agent id, resolved by "
+            + "ConfiguredGitHubIdentityResolver; there is deliberately no switch operation to call:"
+            + Environment.NewLine + string.Join(Environment.NewLine, offenders));
+    }
+
+    [Fact]
+    public void GitHubExtension_ExposesAPerAgentIdentityResolver()
+    {
+        // Vacuity guard for the fence above: "contains no auth switch" is trivially true of an
+        // extension with no identity mechanism at all. The mechanism must be present.
+        var hasResolver = EnumerateSources()
+            .Any(path => Path.GetFileName(path) == "ConfiguredGitHubIdentityResolver.cs");
+
+        hasResolver.ShouldBeTrue(
+            "ConfiguredGitHubIdentityResolver must exist (#2733 AC1): without a configuration-keyed "
+            + "resolver, the `no auth switch` fence passes vacuously over an extension that has no "
+            + "identity mechanism at all.");
+    }
+
+    /// <summary>
+    /// Removes <c>//</c> line comments and <c>/* */</c> block comments so the fences below match
+    /// executable code only.
+    /// </summary>
+    private static string StripComments(string source)
+    {
+        var withoutBlocks = Regex.Replace(source, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        return Regex.Replace(withoutBlocks, @"^\s*//.*$", string.Empty, RegexOptions.Multiline);
+    }
+
     private static string[] EnumerateSources()
     {
         if (!Directory.Exists(ExtensionRoot))

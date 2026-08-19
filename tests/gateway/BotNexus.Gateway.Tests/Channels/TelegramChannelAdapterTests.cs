@@ -149,6 +149,19 @@ public sealed class TelegramChannelAdapterTests
         sendCall.ParseMode.ShouldBe("MarkdownV2");
     }
 
+    /// <summary>
+    /// Hang guard for a signal that the polling loop is expected to raise essentially immediately.
+    /// </summary>
+    /// <remarks>
+    /// This is deliberately NOT a scheduling budget (#3303). The observation the test makes is
+    /// signal-gated: the fake handler parks every poll after the second one, so the loop cannot
+    /// out-run or hot-loop past the assertion, and "the second poll happened" is an awaited fact
+    /// rather than a race against thread-pool latency on a contended container. The only job left
+    /// for a wall clock is to convert a genuine dead loop into a failing test rather than a hung
+    /// one, which is why the value is generous: when the test is green it is never waited on.
+    /// </remarks>
+    private static readonly TimeSpan PollingSignalHangGuard = TimeSpan.FromMinutes(2);
+
     [Fact]
     public async Task Polling_TracksOffset_AndDoesNotDispatchDuplicates()
     {
@@ -182,6 +195,14 @@ public sealed class TelegramChannelAdapterTests
                 }
 
                 secondPollSeen.TrySetResult();
+
+                // Park here instead of returning. On the success path the loop has no inter-poll
+                // delay, so returning would hot-loop getUpdates on a background thread for as long
+                // as the assertions take -- burning a thread-pool thread on the very container
+                // whose scheduling latency this test used to race. Parking makes the poll count an
+                // observed constant (2, plus this parked third call) instead of a function of how
+                // busy the machine is, and StopAsync cancels the wait through the loop's own token.
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 return JsonOk(Array.Empty<TelegramUpdate>());
             }
 
@@ -199,7 +220,7 @@ public sealed class TelegramChannelAdapterTests
             .Returns(Task.CompletedTask);
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        await secondPollSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await secondPollSeen.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         offsets.Count.ShouldBeGreaterThanOrEqualTo(2);

@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -7,6 +8,7 @@ using AgentId = BotNexus.Domain.Primitives.AgentId;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using BotNexus.Gateway.Api;
+using BotNexus.Gateway.Api.Export;
 using BotNexus.Memory;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -34,6 +36,7 @@ public sealed class SessionsController : ControllerBase
     private readonly TranscriptExportOptions _transcriptExport;
     private readonly IAgentSupervisor? _supervisor;
     private readonly IMemoryStoreFactory? _memoryStoreFactory;
+    private readonly IConversationStore? _conversations;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SessionsController"/> class.
@@ -49,6 +52,12 @@ public sealed class SessionsController : ControllerBase
     /// memory rows (#2956). Optional: memory is a configurable subsystem and the controller must
     /// resolve without it.
     /// </param>
+    /// <param name="conversations">
+    /// Conversation store used by the format-parameterised export route to attach the session's
+    /// parent conversation summary (#3278 acceptance criterion 4). Optional so test harnesses that
+    /// construct this controller directly keep resolving; when absent the export route returns 404
+    /// rather than silently emitting a transcript with no provenance header.
+    /// </param>
     public SessionsController(
         ISessionStore sessions,
         ISubAgentManager? subAgentManager = null,
@@ -56,7 +65,8 @@ public sealed class SessionsController : ControllerBase
         ILogger<SessionsController>? logger = null,
         IOptions<TranscriptExportOptions>? transcriptExport = null,
         IAgentSupervisor? supervisor = null,
-        IMemoryStoreFactory? memoryStoreFactory = null)
+        IMemoryStoreFactory? memoryStoreFactory = null,
+        IConversationStore? conversations = null)
     {
         _transcriptExport = transcriptExport?.Value ?? new TranscriptExportOptions();
         _sessions = sessions;
@@ -65,6 +75,7 @@ public sealed class SessionsController : ControllerBase
         _logger = logger;
         _supervisor = supervisor;
         _memoryStoreFactory = memoryStoreFactory;
+        _conversations = conversations;
     }
 
     /// <summary>Lists sessions, optionally filtered by agent ID.</summary>
@@ -334,6 +345,52 @@ public sealed class SessionsController : ControllerBase
 
         var bytes = System.Text.Encoding.UTF8.GetBytes(markdown);
         return File(bytes, "text/markdown", $"session-{sessionId}.md");
+    }
+
+    /// <summary>
+    /// Exports the session transcript in the requested format, including the parent conversation
+    /// summary when the session is linked to one (issue #3278).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the format-parameterised route that adds HTML output. The pre-existing
+    /// <c>{sessionId}/export/markdown</c> action above is deliberately left in place and unchanged:
+    /// it has a published byte-for-byte output contract gated on <see cref="TranscriptExportOptions"/>,
+    /// and MVC's literal-segment precedence means <c>markdown</c> continues to bind there rather than
+    /// to this route's <c>{format}</c> parameter. Existing callers therefore see no change at all,
+    /// while <c>html</c> falls through to here.
+    /// </para>
+    /// <para>
+    /// Redaction defaults to ON here, unlike the legacy route, because this route has no historical
+    /// output to preserve (#3278 acceptance criterion 5).
+    /// </para>
+    /// </remarks>
+    /// <param name="sessionId">Session identifier.</param>
+    /// <param name="format">Export format: <c>markdown</c> or <c>html</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The rendered transcript as a UTF-8 file download, 400 for an unknown format, or 404.</returns>
+    [HttpGet("{sessionId}/export/{format}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> ExportTranscript(
+        string sessionId,
+        string format,
+        CancellationToken cancellationToken = default)
+    {
+        if (!ExportFormat.TryParse(format, out var exportFormat))
+            return BadRequest(new { error = "format must be 'markdown' or 'html'." });
+
+        if (_conversations is null)
+            return NotFound();
+
+        var assembler = new ExportDocumentAssembler(_conversations, _sessions);
+        var document = await assembler.AssembleSessionAsync(SessionId.From(sessionId), cancellationToken);
+
+        if (document is null)
+            return NotFound();
+
+        return ExportResponse.File(document, exportFormat, this);
     }
 
     /// <summary>

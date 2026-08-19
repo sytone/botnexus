@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 
@@ -20,12 +21,30 @@ namespace BotNexus.Extensions.GitHub;
 /// </remarks>
 public sealed class GitHubToolsContributor : IAgentToolContributor
 {
-    private readonly Func<GitHubToolsConfig, IGitHubApiClient> _clientFactory;
+    private readonly Func<GitHubToolsConfig, AgentId, IGitHubApiClient> _clientFactory;
 
-    /// <summary>Creates the contributor over a factory that builds the REST client per agent.</summary>
-    public GitHubToolsContributor(Func<GitHubToolsConfig, IGitHubApiClient> clientFactory)
+    /// <summary>
+    /// Creates the contributor over a factory that builds the REST client per agent, receiving the
+    /// agent's resolved tool config and its agent id.
+    /// </summary>
+    /// <remarks>
+    /// The agent id is a factory parameter rather than ambient state because the acting identity is
+    /// derived from it (#2733). Passing it explicitly means the client for agent A is constructed
+    /// against A's identity and cannot later be repointed at B's.
+    /// </remarks>
+    public GitHubToolsContributor(Func<GitHubToolsConfig, AgentId, IGitHubApiClient> clientFactory)
     {
         _clientFactory = clientFactory ?? throw new ArgumentNullException(nameof(clientFactory));
+    }
+
+    /// <summary>
+    /// Creates the contributor over a factory that ignores the agent id. Retained for hosts and
+    /// tests that bind a single client irrespective of the acting agent.
+    /// </summary>
+    public GitHubToolsContributor(Func<GitHubToolsConfig, IGitHubApiClient> clientFactory)
+    {
+        ArgumentNullException.ThrowIfNull(clientFactory);
+        _clientFactory = (config, _) => clientFactory(config);
     }
 
     /// <inheritdoc />
@@ -40,7 +59,7 @@ public sealed class GitHubToolsContributor : IAgentToolContributor
         if (config is null)
             return Task.FromResult(new AgentToolContribution([]));
 
-        var api = _clientFactory(config);
+        var api = _clientFactory(config, context.Descriptor.AgentId);
         IReadOnlyList<IAgentTool> tools =
         [
             new GitHubIssueGetTool(api, config),

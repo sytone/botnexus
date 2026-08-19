@@ -53,9 +53,11 @@ public sealed class OpenAIStreamProcessor
         string? responseId = null;
 
         var currentTextIndex = -1;
+        var currentRefusalIndex = -1;
         var currentThinkingIndex = -1;
         string? currentThinkingSignature = null;
         var textAccumulator = new StringBuilder();
+        var refusalAccumulator = new StringBuilder();
         var thinkingAccumulator = new StringBuilder();
 
         var toolCallState = new Dictionary<int, (string Id, string Name, StringBuilder Args, int ContentIndex, string? ThoughtSignature, Dictionary<string, object?>? LastParsedArgs, int LastParsedLength)>();
@@ -156,17 +158,41 @@ public sealed class OpenAIStreamProcessor
                     if (!choice.TryGetProperty("delta", out var delta))
                         continue;
 
+                    string? refusalDelta = null;
                     if (delta.TryGetProperty("refusal", out var refusalProp) &&
                         refusalProp.ValueKind == JsonValueKind.String &&
                         !string.IsNullOrWhiteSpace(refusalProp.GetString()))
                     {
                         stopReason = StopReason.Refusal;
+                        // The string itself used to be read for presence and thrown away, so a
+                        // refused turn rendered as an empty assistant message. It is accumulated
+                        // into a RefusalContent block below (#3295).
+                        refusalDelta = refusalProp.GetString();
                     }
 
                     if (!startEmitted)
                     {
                         stream.Push(new StartEvent(BuildPartial()));
                         startEmitted = true;
+                    }
+
+                    if (refusalDelta is { Length: > 0 })
+                    {
+                        // Refusal gets its own block and its own index rather than being folded
+                        // into the text accumulator, so a consumer can distinguish safety output
+                        // from prose at the moment it streams (#3295). It reuses the text triad
+                        // events because RefusalContent is a TextContent, so existing consumers
+                        // keep rendering it unchanged.
+                        if (currentRefusalIndex < 0)
+                        {
+                            currentRefusalIndex = contentBlocks.Count;
+                            contentBlocks.Add(new RefusalContent(string.Empty));
+                            stream.Push(new TextStartEvent(currentRefusalIndex, BuildPartial()));
+                        }
+
+                        refusalAccumulator.Append(refusalDelta);
+                        contentBlocks[currentRefusalIndex] = new RefusalContent(refusalAccumulator.ToString());
+                        stream.Push(new TextDeltaEvent(currentRefusalIndex, refusalDelta, BuildPartial()));
                     }
 
                     string? reasoningField = null;
@@ -358,6 +384,9 @@ public sealed class OpenAIStreamProcessor
 
         if (currentThinkingIndex >= 0)
             stream.Push(new ThinkingEndEvent(currentThinkingIndex, thinkingAccumulator.ToString(), BuildPartial()));
+
+        if (currentRefusalIndex >= 0)
+            stream.Push(new TextEndEvent(currentRefusalIndex, refusalAccumulator.ToString(), BuildPartial()));
 
         if (currentTextIndex >= 0)
             stream.Push(new TextEndEvent(currentTextIndex, textAccumulator.ToString(), BuildPartial()));

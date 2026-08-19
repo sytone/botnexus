@@ -12,6 +12,18 @@ public sealed class SharedMemoryPromoterTests
     private readonly Mock<IMemoryStore> _store = new();
     private readonly SharedMemoryPromoter _promoter;
 
+    /// <summary>
+    /// The contributing-provenance set that <see cref="LearningExtractionPipeline"/> records for an
+    /// item distilled from a first-party row (#3232).
+    /// </summary>
+    /// <remarks>
+    /// Stated explicitly in these fixtures rather than left empty, because an empty contributing set
+    /// legitimately means "origin unestablished" and is refused promotion. Leaving it empty would
+    /// route every one of these cases down the refusal branch and stop them exercising the dedup,
+    /// access-control and insert behaviour they exist to cover.
+    /// </remarks>
+    private static readonly string[] FirstParty = [MemoryProvenance.Agent];
+
     public SharedMemoryPromoterTests()
     {
         _promoter = new SharedMemoryPromoter(_registry.Object, NullLogger.Instance);
@@ -38,7 +50,7 @@ public sealed class SharedMemoryPromoterTests
 
         var items = new List<ExtractedKnowledge>
         {
-            new() { Content = "test", Category = KnowledgeCategory.Decision, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 1, TargetStore = "shared-store" }
+            new() { Content = "test", Category = KnowledgeCategory.Decision, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 1, TargetStore = "shared-store", ContributingProvenances = FirstParty }
         };
 
         var result = await _promoter.PromoteAsync("agent-1", items);
@@ -54,7 +66,7 @@ public sealed class SharedMemoryPromoterTests
 
         var items = new List<ExtractedKnowledge>
         {
-            new() { Content = "test", Category = KnowledgeCategory.Pattern, Confidence = 0.8, SourceSessionId = "s1", SourceTurnIndex = 1, TargetStore = "shared-store" }
+            new() { Content = "test", Category = KnowledgeCategory.Pattern, Confidence = 0.8, SourceSessionId = "s1", SourceTurnIndex = 1, TargetStore = "shared-store", ContributingProvenances = FirstParty }
         };
 
         var result = await _promoter.PromoteAsync("agent-1", items);
@@ -81,7 +93,7 @@ public sealed class SharedMemoryPromoterTests
 
         var items = new List<ExtractedKnowledge>
         {
-            new() { Content = "This is some important architectural decision about the system design", Category = KnowledgeCategory.Decision, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 1, TargetStore = "shared-store" }
+            new() { Content = "This is some important architectural decision about the system design", Category = KnowledgeCategory.Decision, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 1, TargetStore = "shared-store", ContributingProvenances = FirstParty }
         };
 
         var result = await _promoter.PromoteAsync("agent-1", items);
@@ -100,7 +112,7 @@ public sealed class SharedMemoryPromoterTests
 
         var items = new List<ExtractedKnowledge>
         {
-            new() { Content = "New insight about deployment patterns", Category = KnowledgeCategory.Pattern, Confidence = 0.85, SourceSessionId = "s1", SourceTurnIndex = 3, TargetStore = "shared-store" }
+            new() { Content = "New insight about deployment patterns", Category = KnowledgeCategory.Pattern, Confidence = 0.85, SourceSessionId = "s1", SourceTurnIndex = 3, TargetStore = "shared-store", ContributingProvenances = FirstParty }
         };
 
         var result = await _promoter.PromoteAsync("agent-1", items);
@@ -125,9 +137,9 @@ public sealed class SharedMemoryPromoterTests
 
         var items = new List<ExtractedKnowledge>
         {
-            new() { Content = "Item 1", Category = KnowledgeCategory.Fact, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 1, TargetStore = "shared-store" },
-            new() { Content = "Item 2", Category = KnowledgeCategory.Fact, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 2, TargetStore = "no-access-store" },
-            new() { Content = "Item 3", Category = KnowledgeCategory.Fact, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 3, TargetStore = null },
+            new() { Content = "Item 1", Category = KnowledgeCategory.Fact, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 1, TargetStore = "shared-store", ContributingProvenances = FirstParty },
+            new() { Content = "Item 2", Category = KnowledgeCategory.Fact, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 2, TargetStore = "no-access-store", ContributingProvenances = FirstParty },
+            new() { Content = "Item 3", Category = KnowledgeCategory.Fact, Confidence = 0.9, SourceSessionId = "s1", SourceTurnIndex = 3, TargetStore = null, ContributingProvenances = FirstParty },
         };
 
         var result = await _promoter.PromoteAsync("agent-1", items);

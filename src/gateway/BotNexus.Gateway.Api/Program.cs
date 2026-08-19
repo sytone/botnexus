@@ -44,10 +44,8 @@ using BotNexus.Gateway.Webhooks;
 const string GatewayCorsPolicy = "GatewayCorsPolicy";
 
 Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console()
-    .WriteTo.File(
-        Path.Combine(BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "logs", "botnexus-bootstrap-.log"),
-        rollingInterval: RollingInterval.Day)
+    .ConfigureBootstrapLogging(
+        Path.Combine(BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "logs", "botnexus-bootstrap-.log"))
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions

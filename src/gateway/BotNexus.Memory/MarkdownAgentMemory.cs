@@ -289,9 +289,22 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             }
         }
 
+        // Trust gate BEFORE budgeting (#3232 AC5). Order matters: budgeting after exclusion means
+        // the surviving first-party notes get the whole budget rather than sharing it with content
+        // that was about to be discarded, and the exclusion disclosure is itself subject to the cap.
+        var (eligible, excludedCount) = MemoryInjectionGate.Apply(dailyNotes);
+
+        if (excludedCount > 0)
+        {
+            _logger.LogWarning(
+                "Withheld {ExcludedCount} non-first-party daily note(s) from always-on context for agent {AgentId}; they remain retrievable via memory_search.",
+                excludedCount,
+                _agentId);
+        }
+
         // Rough token estimate: ~4 chars per token, computed by the budget helper so the reported
         // count and the enforced cap are expressed in identical units.
-        var budgeted = MemoryPromptBudget.Apply(dailyNotes, maxTokenBudget);
+        var budgeted = MemoryPromptBudget.Apply(eligible, maxTokenBudget);
 
         if (budgeted.WasTrimmed)
         {
@@ -349,6 +362,9 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             // Always the normalized value, never the raw column: recall must not be able to
             // present a NULL or malformed provenance as anything other than `unknown` (#2480).
             Provenance = entry.NormalizedProvenance,
+            // Derived from the same row, not defaulted: a caller that renders the tier must see the
+            // tier the ranker actually applied to this row (#3232 AC8).
+            TrustTier = MemoryTrust.ToWireValue(entry.TrustTier),
             OriginConversationId = entry.OriginConversationId,
             OriginSessionId = entry.OriginSessionId
         };

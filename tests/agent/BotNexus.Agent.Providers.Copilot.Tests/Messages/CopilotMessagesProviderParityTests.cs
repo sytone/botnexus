@@ -132,8 +132,16 @@ public class CopilotMessagesProviderParityTests
         result.Content.OfType<TextContent>().Single().Text.ShouldBe(expected);
     }
 
+    // #3336 CONTRACT CHANGE, deliberately re-pinned rather than deleted.
+    // This test previously asserted that a NON-gpt-5.6 model preserved a leading CRLF verbatim,
+    // encoding the 2026-07 hypothesis that the framing artifact belonged to one model family. The
+    // claude-opus-5 corruption evidence in #3336 falsifies that: the artifact is a property of the
+    // Copilot TRANSPORT, so every model on this transport is now normalized. The assertion is not
+    // weakened - the inverted case (a leading CRLF is stripped) is asserted just as strictly, and
+    // the genuinely load-bearing invariant (an INTERIOR CRLF is content and survives) is added,
+    // because that is the property whose loss would actually delete model output.
     [Fact]
-    public async Task Stream_NonGpt56_PreservesLeadingCrLfVerbatim()
+    public async Task Stream_NonGpt56Model_StillNormalizesLeadingCrLf_BecauseTheQuirkIsTransportDeclared()
     {
         var sse = BuildTextSse(["\r\nintentional"]);
         var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
@@ -145,7 +153,25 @@ public class CopilotMessagesProviderParityTests
             .GetResultAsync()
             .WaitAsync(TimeSpan.FromSeconds(10));
 
-        result.Content.OfType<TextContent>().Single().Text.ShouldBe("\r\nintentional");
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("intentional");
+    }
+
+    [Fact]
+    public async Task Stream_NonGpt56Model_InteriorCrLf_SurvivesAsContent()
+    {
+        // The strip is leading-only. A CRLF inside a delta is model content and must never be
+        // touched - this is the assertion that keeps the widened normalization honest.
+        var sse = BuildTextSse(["before\r\nafter"]);
+        var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
+
+        var result = await provider.Stream(
+                BuildModel(),
+                BuildContext(),
+                new CopilotMessagesOptions { ApiKey = "test-copilot-token" })
+            .GetResultAsync()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("before\r\nafter");
     }
 
     private static async Task<(RecordingHandler CopilotHandler, RecordingHandler AnthropicHandler)> DriveBothProvidersAsync()

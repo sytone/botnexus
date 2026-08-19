@@ -74,6 +74,28 @@ Three properties are deliberate:
 
 Because artifacts are deleted after each run, pass `-KeepRemoteArtifacts` when the timings are the point of the run.
 
+### Timeouts produce evidence, not an empty directory
+
+The Container Apps replica timeout is a **hard kill**: when it expires the replica is destroyed, the entrypoint's `finally` block never executes, and the artifact upload that lives in that block never happens. Before #3305 a run that overran therefore produced an **empty** artifact directory — no `result.json`, no TRX, no timing log. That outcome cannot distinguish a genuine hang from a suite that is merely slow, and it attributes the cost to nothing at all. Two measured `-Mode full` runs on one worktree died exactly that way at 20.1 minutes against a 20-minute budget.
+
+The runner now keeps **its own deadline, set strictly inside the platform budget**, and ends the run on a path it controls:
+
+- The client passes the budget through `REPLICA_TIMEOUT_SECONDS`, derived from `-ReplicaTimeoutMinutes`, so the runner's deadline cannot drift from `replicaTimeout` in `main.bicep`.
+- `Get-RunnerDeadlineSeconds` subtracts a 90-second reserve. That reserve is what pays for writing `result.json` and completing the upload; landing exactly on the platform budget would reproduce the original defect.
+- The test phase runs through `Invoke-BoundedProcess` rather than a blocking `& dotnet test | Tee-Object` pipeline. A pipeline returns only when the child exits, so there is no instant at which the runner could notice it is about to be killed. The child is killed with its whole process tree, because testhost processes outlive their parent and a survivor would keep writing into the results directory during the upload.
+- `result.json` gains a `timeout` object — `null` on an ordinary run — carrying the elapsed time, the deadline, the assemblies that did report, and the projects that did not.
+
+The attribution is derived from the TRX that exist **at the moment of the deadline**, not from filenames: `dotnet test` writes every project's TRX into one directory under the same prefix, so the names carry no project identity. The assembly is read out of each row's `storage` attribute by text scan rather than an XML parse, because a TRX truncated by a kill is frequently not well-formed and refusing to read it would discard the only evidence the run produced.
+
+Two properties are deliberate:
+
+- **A filtered run never accuses a project it was not going to run.** `core` excludes the browser/E2E projects, so their absence from the results is by design. A confidently wrong attribution is worse than none.
+- **An empty outstanding set is stated, not filled in.** "Every project reported and the phase still overran" is a real and different finding — the overrun is outside test execution — and inventing a culprit would hide it.
+
+`infra/buildtest/runner/tests/RunnerTimeout.Tests.ps1` pins all of this, including the truncated-TRX case and the sensitivity of the derivation to the budget; `RunnerDeadlineConsistencyTests` fails the build if the budget stops being passed through or the bound is removed.
+
+**The budget itself was deliberately not raised.** A larger number would hide the defect rather than remove it: the failure mode was "killed, no evidence", not "killed too early". Whether `-Mode full` genuinely needs more than 20 minutes is a separate question, answerable only once a timed-out run produces attribution — which is what this change delivers.
+
 A successful `strict`, `impacted`, or `full` run writes a receipt under the worktree's Git metadata. The receipt records a SHA-256 fingerprint over the current HEAD, resolved base commit, and exact Git tree containing staged, unstaged, and untracked files. `Validate-PreCommit.ps1` recalculates that fingerprint when it is invoked. It skips redundant validation only when the receipt matches exactly; any content or base-ref change invalidates it and starts a new remote run. Note that no git hook consumes this receipt: #2841 removed the pre-commit hook, and `scripts/repo/install-hooks.ps1` activates only the `pre-push` `core.bare` guard (#1602). The client refuses to issue a strict receipt unless the downloaded artifacts include `playwright.log`; this fails safely when an older deployed runner treats the mode as impacted-only. Impacted, full, and Playwright-only receipts remain useful diagnostic evidence but do not bypass strict validation.
 
 **Remote is the default and local is opt-in (#2158).** With nothing configured, `Resolve-BotNexusValidationMode` returns `remote`. Local validation spawns real gateway processes on the development host; when their parent dies the children survive, and because every gateway opens the shared cron store they claim scheduled jobs belonging to the live gateway and fail them. On 2026-08-06 three such orphans - two of them 30+ hours old - starved the live gateway until the portal would not load. To choose local deliberately, set `BOTNEXUS_VALIDATION_MODE=local` at process, user, or machine scope (process scope wins), pass `-ValidationMode local`, or use the `-LocalFallback` / `BOTNEXUS_VALIDATION_LOCAL_FALLBACK=1` aliases.

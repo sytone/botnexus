@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -25,14 +26,21 @@ public sealed class PluginStateStore
     };
 
     private readonly string _statePath;
+    private readonly IFileSystem _fileSystem;
 
     /// <summary>Creates a store over the state file inside <paramref name="pluginRoot"/>.</summary>
     /// <param name="pluginRoot">Directory holding installed plugins.</param>
-    public PluginStateStore(string pluginRoot)
+    /// <param name="fileSystem">
+    /// Filesystem abstraction, defaulting to the real filesystem. Injectable so a consumer that
+    /// merely READS the record set - notably skill discovery - can be exercised against an
+    /// in-memory filesystem without materialising plugin content on disk.
+    /// </param>
+    public PluginStateStore(string pluginRoot, IFileSystem? fileSystem = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginRoot);
-        PluginRoot = Path.GetFullPath(pluginRoot);
-        _statePath = Path.Combine(PluginRoot, StateFileName);
+        _fileSystem = fileSystem ?? new FileSystem();
+        PluginRoot = _fileSystem.Path.GetFullPath(pluginRoot);
+        _statePath = _fileSystem.Path.Combine(PluginRoot, StateFileName);
     }
 
     /// <summary>Absolute path of the directory holding installed plugins.</summary>
@@ -47,12 +55,12 @@ public sealed class PluginStateStore
     /// </summary>
     public IReadOnlyList<InstalledPlugin> Read()
     {
-        if (!File.Exists(_statePath))
+        if (!_fileSystem.File.Exists(_statePath))
         {
             return [];
         }
 
-        var json = File.ReadAllText(_statePath);
+        var json = _fileSystem.File.ReadAllText(_statePath);
         if (string.IsNullOrWhiteSpace(json))
         {
             return [];
@@ -71,14 +79,14 @@ public sealed class PluginStateStore
     public void Write(IReadOnlyList<InstalledPlugin> plugins)
     {
         ArgumentNullException.ThrowIfNull(plugins);
-        Directory.CreateDirectory(PluginRoot);
+        _fileSystem.Directory.CreateDirectory(PluginRoot);
 
         var ordered = plugins.OrderBy(static p => p.Name, StringComparer.Ordinal).ToList();
         var json = JsonSerializer.Serialize(ordered, SerializerOptions);
 
         var temp = _statePath + ".tmp";
-        File.WriteAllText(temp, json);
-        File.Move(temp, _statePath, overwrite: true);
+        _fileSystem.File.WriteAllText(temp, json);
+        _fileSystem.File.Move(temp, _statePath, overwrite: true);
     }
 
     /// <summary>Inserts or replaces one record, keyed by <see cref="InstalledPlugin.Name"/>.</summary>

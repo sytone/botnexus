@@ -57,10 +57,15 @@ public class CopilotTransportNormalizationSeamTests
         var hook = BuildCompletionsProfile().NormalizeTextDelta!;
 
         hook(Model("gpt-5.6"), "\r\n\r\nHello")
-            .ShouldBe(CopilotTextDeltaNormalizer.Normalize("gpt-5.6", "\r\n\r\nHello"));
+            .ShouldBe(CopilotTextDeltaNormalizer.Normalize(
+                CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf, "\r\n\r\nHello"));
 
-        hook(Model("claude-sonnet-4"), "\r\nuntouched")
-            .ShouldBe(CopilotTextDeltaNormalizer.Normalize("claude-sonnet-4", "\r\nuntouched"));
+        // #3336: the discriminator is the transport, not the model id, so a claude-shaped model on
+        // this Copilot transport must get the SAME treatment - which is what the old model-id gate
+        // got wrong.
+        hook(Model("claude-opus-5"), "\r\nframed")
+            .ShouldBe(CopilotTextDeltaNormalizer.Normalize(
+                CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf, "\r\nframed"));
     }
 
     // Non-vacuity: the seam must actually transform something on the fire case, otherwise the

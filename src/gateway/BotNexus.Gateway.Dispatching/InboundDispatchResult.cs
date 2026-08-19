@@ -37,11 +37,18 @@ public sealed record InboundDispatchResult(
     public static InboundDispatchResult Busy() =>
         new(InboundDispatchStatus.Busy, EmptyDispatches);
 
-    /// <summary>
+        /// <summary>
     /// Convenience factory for a rejected outcome (processor raised). The
     /// originating exception is rethrown to the caller — this factory is
     /// primarily a placeholder for callers that catch and inspect.
     /// </summary>
     public static InboundDispatchResult Rejected() =>
         new(InboundDispatchStatus.Rejected, EmptyDispatches);
+
+    /// <summary>
+    /// Convenience factory for a steered outcome: the message was injected into a turn already in
+    /// flight (#3028), so no separate dispatch ran.
+    /// </summary>
+    public static InboundDispatchResult Steered() =>
+        new(InboundDispatchStatus.Steered, EmptyDispatches);
 }

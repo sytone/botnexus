@@ -305,6 +305,19 @@ internal static class AnthropicStreamParser
         switch (blockType)
         {
             case "text":
+                // Same reconciliation as the Responses and Copilot-Messages parsers (#3336). It
+                // was wired into ResponsesStreamParser alone, so an Anthropic-shaped stream had no
+                // protection at all against a per-delta transport artifact reaching history.
+                // Fail-open: a stop frame with no final value yields null and assembled stands.
+                accumulated = StreamAssemblyConformance.Reconcile(
+                    accumulated,
+                    StreamBlockFinalText.TryRead(data),
+                    model.Provider,
+                    model.Id,
+                    "anthropic-messages",
+                    "sse",
+                    deltaCount: 0,
+                    logger: null);
                 contentBlocks.Add(new TextContent(accumulated, signature));
                 var textPartial = buildMessage(model, contentBlocks, usage, StopReason.Stop, null, responseId);
                 stream.Push(new TextEndEvent(index, accumulated, textPartial));

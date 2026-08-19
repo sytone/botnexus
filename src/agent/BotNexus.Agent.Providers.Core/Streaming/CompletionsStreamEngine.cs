@@ -375,7 +375,17 @@ public static class CompletionsStreamEngine
     }
 
     /// <summary>
-    /// Pushes the canonical done event/end for a cancelled completion turn.
+    /// Pushes the canonical terminal event/end for a cancelled completion turn.
+    /// <para>
+    /// This is an <see cref="ErrorEvent"/>, not a <see cref="DoneEvent"/> (#3292). <c>DoneEvent</c>
+    /// is the normal-completion arm of the event union, so <c>DoneEvent(StopReason.Aborted)</c> was
+    /// a contradiction: a consumer switching on event type - the documented way to consume this
+    /// union - read a user cancellation as a successful turn. <c>AnthropicProvider</c> and
+    /// <c>CopilotMessagesProvider</c> already emitted the error shape; this converges on theirs.
+    /// The <see cref="StopReason"/> is unchanged, so anything keying off the finish reason (the
+    /// agent loop, telemetry outcome mapping, <c>MessageTransformer</c>'s replay filter) is
+    /// unaffected.
+    /// </para>
     /// </summary>
     public static void EmitAborted(LlmStream stream, string api, LlmModel model)
     {
@@ -390,7 +400,7 @@ public static class CompletionsStreamEngine
             ResponseId: null,
             Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
-        stream.Push(new DoneEvent(StopReason.Aborted, message));
+        stream.Push(new ErrorEvent(StopReason.Aborted, message));
         stream.End(message);
     }
 }

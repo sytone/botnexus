@@ -60,6 +60,79 @@ public class StreamAccumulatorTests
         result.FinishReason.ShouldBe(StopReason.Aborted);
     }
 
+    /// <summary>
+    /// #3292 AC3: the accumulated message for a cancelled turn must still carry
+    /// <see cref="StopReason.Aborted"/> after the shared engines moved from <c>DoneEvent</c> to
+    /// <c>ErrorEvent</c>. This drives the REAL producer (<see cref="ResponsesStreamEngine.EmitAborted"/>),
+    /// not a hand-built event, so a regression in the emit shape reddens here rather than being
+    /// papered over by a fixture that constructs whatever the assertion expects.
+    /// <para>
+    /// The <c>ErrorEvent</c> arm of <see cref="StreamAccumulator"/> re-applies <c>error.Reason</c>
+    /// onto the converted message; the <c>DoneEvent</c> arm did not. That is why the shape change is
+    /// behaviour-preserving for the accumulator - both arms emit a <c>MessageEndEvent</c> - and this
+    /// test is what pins that claim instead of asserting it in prose.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task AccumulateAsync_EngineEmittedAbort_ProducesAbortedFinishReasonAndMessageEnd()
+    {
+        var stream = new LlmStream();
+        var model = new LlmModel(
+            Id: "gpt-4o",
+            Name: "GPT-4o",
+            Api: "openai-responses",
+            Provider: "openai",
+            BaseUrl: "https://api.openai.com/v1",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 128000,
+            MaxTokens: 16384);
+        var eventTypes = new List<AgentEventType>();
+
+        ResponsesStreamEngine.EmitAborted(stream, "openai-responses", model);
+
+        var result = await StreamAccumulator.AccumulateAsync(
+            stream,
+            evt =>
+            {
+                eventTypes.Add(evt.Type);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        result.FinishReason.ShouldBe(StopReason.Aborted);
+        eventTypes.ShouldBe(new[] { AgentEventType.MessageStart, AgentEventType.MessageEnd });
+    }
+
+    /// <summary>
+    /// The Completions engine is the second producer whose shape changed in #3292; asserting it
+    /// separately keeps the guarantee per-producer rather than assuming the two engines stay in
+    /// step by inspection.
+    /// </summary>
+    [Fact]
+    public async Task AccumulateAsync_CompletionsEngineEmittedAbort_ProducesAbortedFinishReason()
+    {
+        var stream = new LlmStream();
+        var model = new LlmModel(
+            Id: "gpt-4o",
+            Name: "GPT-4o",
+            Api: "openai-completions",
+            Provider: "openai",
+            BaseUrl: "https://api.openai.com/v1",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 128000,
+            MaxTokens: 16384);
+
+        CompletionsStreamEngine.EmitAborted(stream, "openai-completions", model);
+
+        var result = await StreamAccumulator.AccumulateAsync(stream, _ => Task.CompletedTask, CancellationToken.None);
+
+        result.FinishReason.ShouldBe(StopReason.Aborted);
+    }
+
     [Fact]
     public async Task AccumulateAsync_UpdatesContextMessagesWithStreamingPartial()
     {

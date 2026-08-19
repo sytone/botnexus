@@ -494,6 +494,7 @@ The following section IDs cannot be overridden (safety-critical or runtime data)
 | `tool-enforcement` | 32 | Tool calling rules and constraints |
 | `shell-efficiency` | 35 | Shell scripting best practices |
 | `skills-guidance` | 55 | Skills loading and creation guidance (conditional: only when skills tools available) |
+| `subagent-scoping` | 57 | Sub-agent dispatch scoping: stage budgets, staged sequencing, snapshot/commit discipline (conditional: only when `spawn_subagent` is available) |
 | `model-guidance` | 135 | Per-model-family behavioral defaults, resolved through the [prompt-variant ladder](#attribute-declared-instruction-variants) |
 
 ### Attribute-Declared Instruction Variants

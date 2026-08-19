@@ -19,6 +19,7 @@ public sealed class CompactionSkipReasonTests
         // them breaks existing log/telemetry queries, so they are duplicated here on purpose.
         CompactionSkipReason.CircuitBreakerOpen.Value.ShouldBe("CircuitBreakerOpen");
         CompactionSkipReason.EmptyHistory.Value.ShouldBe("EmptyHistory");
+        CompactionSkipReason.HistoryReadFailed.Value.ShouldBe("HistoryReadFailed");
         CompactionSkipReason.NoSummarizableTurns.Value.ShouldBe("NoSummarizableTurns");
         CompactionSkipReason.SummarizationTimeout.Value.ShouldBe("SummarizationTimeout");
         CompactionSkipReason.EmptySummary.Value.ShouldBe("EmptySummary");
@@ -33,6 +34,7 @@ public sealed class CompactionSkipReasonTests
         // ToString() is what the coordinator's structured log line renders, so it is pinned too.
         CompactionSkipReason.CircuitBreakerOpen.ToString().ShouldBe("CircuitBreakerOpen");
         CompactionSkipReason.EmptyHistory.ToString().ShouldBe("EmptyHistory");
+        CompactionSkipReason.HistoryReadFailed.ToString().ShouldBe("HistoryReadFailed");
         CompactionSkipReason.NoSummarizableTurns.ToString().ShouldBe("NoSummarizableTurns");
         CompactionSkipReason.SummarizationTimeout.ToString().ShouldBe("SummarizationTimeout");
         CompactionSkipReason.EmptySummary.ToString().ShouldBe("EmptySummary");
@@ -44,6 +46,7 @@ public sealed class CompactionSkipReasonTests
     [Theory]
     [InlineData("CircuitBreakerOpen")]
     [InlineData("EmptyHistory")]
+    [InlineData("HistoryReadFailed")]
     [InlineData("NoSummarizableTurns")]
     [InlineData("SummarizationTimeout")]
     [InlineData("EmptySummary")]
@@ -63,6 +66,7 @@ public sealed class CompactionSkipReasonTests
     [Theory]
     [InlineData("CircuitBreakerOpen")]
     [InlineData("EmptyHistory")]
+    [InlineData("HistoryReadFailed")]
     [InlineData("NoSummarizableTurns")]
     [InlineData("SummarizationTimeout")]
     [InlineData("EmptySummary")]
@@ -134,12 +138,13 @@ public sealed class CompactionSkipReasonTests
     }
 
     [Fact]
-    public void DeclaredMembers_AreDistinct_AndNumberExactlyEight()
+    public void DeclaredMembers_AreDistinct_AndNumberExactlyNine()
     {
         var declared = new[]
         {
             CompactionSkipReason.CircuitBreakerOpen,
             CompactionSkipReason.EmptyHistory,
+            CompactionSkipReason.HistoryReadFailed,
             CompactionSkipReason.NoSummarizableTurns,
             CompactionSkipReason.SummarizationTimeout,
             CompactionSkipReason.EmptySummary,
@@ -148,8 +153,10 @@ public sealed class CompactionSkipReasonTests
             CompactionSkipReason.SessionRebound,
         };
 
-        declared.Length.ShouldBe(8);
-        declared.Select(r => r.Value).Distinct(StringComparer.OrdinalIgnoreCase).Count().ShouldBe(8);
+        // #3362 added HistoryReadFailed (eight -> nine). The count is pinned so a new member is a
+        // deliberate, reviewed contract change rather than a silent addition.
+        declared.Length.ShouldBe(9);
+        declared.Select(r => r.Value).Distinct(StringComparer.OrdinalIgnoreCase).Count().ShouldBe(9);
     }
 
     [Fact]
@@ -167,6 +174,7 @@ public sealed class CompactionSkipReasonTests
     {
         "CircuitBreakerOpen" => CompactionSkipReason.CircuitBreakerOpen,
         "EmptyHistory" => CompactionSkipReason.EmptyHistory,
+        "HistoryReadFailed" => CompactionSkipReason.HistoryReadFailed,
         "NoSummarizableTurns" => CompactionSkipReason.NoSummarizableTurns,
         "SummarizationTimeout" => CompactionSkipReason.SummarizationTimeout,
         "EmptySummary" => CompactionSkipReason.EmptySummary,

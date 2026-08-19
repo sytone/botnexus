@@ -29,6 +29,15 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
     private readonly GatewayAuthManager? _authManager;
 
+    /// <summary>
+    /// #3362: the seam through which the history snapshot is READ. Defaults to
+    /// <c>GatewaySession.SnapshotHistoryForCompaction</c>. It exists so a read FAILURE is a
+    /// representable, testable state: before this, the only way a snapshot could be empty was for
+    /// the session to be empty, so the compactor had no vocabulary for "the read broke" and
+    /// stamped <see cref="CompactionSkipReason.EmptyHistory"/> either way.
+    /// </summary>
+    private readonly Func<GatewaySession, HistorySnapshot> _historySnapshotReader;
+
 
     /// <summary>
     /// Tracks consecutive compaction failures per session for circuit breaker logic.
@@ -65,13 +74,14 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// Based on ~80% of a 128K token model's input capacity (chars/4 ≈ tokens).
     /// </summary>
     internal const int MaxSummarizationPromptChars = 400_000;
-    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null, IOptionsMonitor<PlatformConfig>? platformConfig = null, GatewayAuthManager? authManager = null)
+    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null, IOptionsMonitor<PlatformConfig>? platformConfig = null, GatewayAuthManager? authManager = null, Func<GatewaySession, HistorySnapshot>? historySnapshotReader = null)
     {
         _llmClient = llmClient;
         _logger = logger;
         _redactor = redactor;
         _platformConfig = platformConfig;
         _authManager = authManager;
+        _historySnapshotReader = historySnapshotReader ?? (static session => session.SnapshotHistoryForCompaction());
     }
 
 
@@ -298,7 +308,28 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // captured under the runtime lock. The compactor operates only on this
         // immutable snapshot below; live `session.History` is not read again until
         // the caller applies the result via TryReplaceHistoryFromSnapshot (#532).
-        var snap = session.SnapshotHistoryForCompaction();
+        //
+        // #3362: the READ is fenced on its own. A failure here (I/O, permissions,
+        // deserialization, store unavailable) is NOT an empty history and must not be reported as
+        // one. The catch is deliberately narrow in EFFECT rather than in shape: it filters out
+        // OperationCanceledException so caller cancellation still propagates, and it re-stamps
+        // nothing else about the pipeline - it only names the branch.
+        HistorySnapshot snap;
+        try
+        {
+            snap = _historySnapshotReader(session);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var readFailures = RecordFailure(sessionKey);
+            _logger.LogWarning(
+                ex,
+                "Compaction could not READ history for session {SessionId} ({ExceptionType}); " +
+                "history is unchanged and this is NOT an empty session. Consecutive failures: {Failures}.",
+                sessionKey, ex.GetType().Name, readFailures);
+            return CompactionResult.Skipped(skipReason: CompactionSkipReason.HistoryReadFailed);
+        }
+
         var history = snap.Entries;
         if (history.Count == 0)
         {

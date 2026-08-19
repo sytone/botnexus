@@ -445,8 +445,62 @@ the memory store.
 reads back as `unknown`. There is deliberately no backfill to a trusted value - `NULL` is the
 honest record that provenance was never captured.
 
-> Recording provenance is separate from acting on it. Retrieval-time gating and quarantine of
-> untrusted entries are tracked separately; nothing described here filters or blocks anything.
+> Recording provenance is separate from acting on it. What consumes it - trust tiers at rank,
+> injection and promotion time - is described in [Memory trust tiers](#memory-trust-tiers) below.
+
+### Memory trust tiers
+
+Provenance records *where content came from*. A **trust tier** is what the retrieval pipeline
+*does about it*. The tier is a pure function of the provenance, derived at read time by
+`MemoryTrust.Derive` and never stored.
+
+| Provenance | Trust tier | Rank weight | Always-on injection | Auto-promotion |
+| --- | --- | --- | --- | --- |
+| `user` | `trusted` | full | yes | eligible |
+| `agent`, `tool` | `derived` | full | yes | eligible |
+| `unknown` | `untrusted` | reduced | no | refused |
+| `external-untrusted` | `quarantined` | reduced further | no | refused |
+
+**Derived, never persisted.** There is no trust column. A stored tier could drift from the
+provenance it was computed from - through a partial migration, a direct SQL edit, or a write path
+that forgot to recompute it - and a drifted trust value fails *open*, presenting untrusted content
+as first-party. Recomputing on read makes that class of bug unrepresentable.
+
+**Weighted at rank, filtered at injection.** These look inconsistent and are not. A search result
+is *pulled* by an explicit query and rendered with its provenance and trust lines, so the caller
+can see what it is looking at; down-weighting keeps it discoverable and explainable. Always-on
+context is *pushed* into the system prompt every turn with no query and no opportunity to decline,
+which makes it indistinguishable from the agent's own standing instructions - the exact position an
+attacker wants their text to occupy. So ranking discounts, and injection excludes.
+
+Nothing is ever dropped *before* ranking. A pre-rank filter would make a store holding only
+untrusted material indistinguishable from an empty store, and those two situations call for
+opposite responses.
+
+**Exclusion is disclosed.** When the injection gate withholds notes it appends a
+`> [memory injection: N note(s) withheld ...]` line naming the count and pointing at
+`memory_search`, so the agent can still retrieve the content deliberately instead of concluding the
+note was never written.
+
+**Mixtures take the least-trusted contributor.** A summary distilled from several rows is stamped
+with the worst provenance that went into it, never the most common one, and the contributing set is
+recorded on the extracted item. Majority-voting a mixture would erase the single hostile
+contributor that is the entire reason to be looking. An item with no recorded contributors resolves
+to `unknown`, not to a first-party value.
+
+**Promotion is an authority transfer, not a copy.** Agents reading a shared store never saw the
+originating turn and cannot judge the content's origin for themselves, so `SharedMemoryPromoter`
+refuses non-first-party items outright. A promoted row keeps its contributing provenance and is
+never re-stamped as first-party on ingest.
+
+**Legacy rows stay reachable.** `NULL`-provenance rows resolve to `unknown`/`untrusted`:
+down-weighted, excluded from always-on injection, ineligible for promotion - but fully searchable
+and fully readable. There is no backfill to a trusted value, and no tier is weighted to zero,
+because a zero weight is a silent pre-rank drop by another name.
+
+**Surfacing.** `memory_search` and `memory_get` render a `Trust:` line alongside the existing
+`Provenance:` line. Provenance says where the content came from; the tier says how retrieval
+treated it. A reader auditing a surprising result needs both.
 
 ### Backward Compatibility
 

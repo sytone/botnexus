@@ -47,6 +47,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
     {
         var stream = new LlmStream();
+        var ct = options?.CancellationToken ?? CancellationToken.None;
 
         _ = Task.Run(async () =>
         {
@@ -59,6 +60,18 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
             {
                 await StreamCoreAsync(model, context, options, stream);
                 activity?.SetStatus(ActivityStatusCode.Ok);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Cancellation is normalized as ErrorEvent(StopReason.Aborted) across every producer
+                // (#3292). This provider had NO cancellation arm at all, so a user cancellation fell
+                // through to the general catch below and was reported as StopReason.Error - the same
+                // reason a 500 or a malformed body produces. That collapse was found by the
+                // conformance assertion added in #3292, not by the original audit.
+                var abortedMessage = CreateAbortedMessage(model);
+                stream.Push(new ErrorEvent(StopReason.Aborted, abortedMessage));
+                stream.End(abortedMessage);
+                activity?.SetStatus(ActivityStatusCode.Error, "Operation canceled");
             }
             catch (Exception ex)
             {
@@ -498,6 +511,27 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
             updated = updated with { TotalTokens = totalTokens.GetInt32() };
 
         return updated with { Cost = ModelRegistry.CalculateCost(model, updated) };
+    }
+
+    /// <summary>
+    /// The canonical cancelled-turn message for this provider (#3292). Separate from
+    /// <see cref="CreateErrorMessage"/> because a cancelled turn is not a failed one: it carries
+    /// <see cref="StopReason.Aborted"/>, and its text is the fixed "Request was cancelled" wording
+    /// the shared engines use rather than a transport exception message.
+    /// </summary>
+    private static AssistantMessage CreateAbortedMessage(LlmModel model)
+    {
+        return new AssistantMessage(
+            Content: [],
+            Api: "openai-compat",
+            Provider: model.Provider,
+            ModelId: model.Id,
+            Usage: Usage.Empty(),
+            StopReason: StopReason.Aborted,
+            ErrorMessage: "Request was cancelled",
+            ResponseId: null,
+            Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        );
     }
 
     private static AssistantMessage CreateErrorMessage(LlmModel model, string error)

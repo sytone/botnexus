@@ -107,6 +107,10 @@ public static class ResponsesStreamParser
         var started = false;
         var stopReason = StopReason.Stop;
         var sawRefusal = false;
+        // Text items whose content arrived on the refusal channel. Membership decides which
+        // content-block kind the item is rebuilt into on every later delta and on item.done, so a
+        // refusal can never be silently re-labelled as ordinary prose (#3295).
+        var refusalItems = new HashSet<string>(StringComparer.Ordinal);
 
         var textStates = new Dictionary<string, (int ContentIndex, StringBuilder Text)>(StringComparer.Ordinal);
         var thinkingStates = new Dictionary<string, (int ContentIndex, StringBuilder Text)>(StringComparer.Ordinal);
@@ -249,7 +253,12 @@ public static class ResponsesStreamParser
                 if (evt.Event is "response.output_text.delta" or "response.refusal.delta")
                 {
                     EnsureStart();
-                    if (evt.Event is "response.refusal.delta")
+                    // Refusal is tracked per text item, not just per response: the block this
+                    // item's content is rebuilt into must stay a RefusalContent for every
+                    // subsequent delta, otherwise the second fragment would silently demote the
+                    // block back to ordinary prose (#3295).
+                    var isRefusal = evt.Event is "response.refusal.delta";
+                    if (isRefusal)
                     {
                         sawRefusal = true;
                         stopReason = StopReason.Refusal;
@@ -260,17 +269,23 @@ public static class ResponsesStreamParser
                         delta = normalizeTextDelta(model, delta);
                     if (delta.Length == 0) continue;
 
+                    var stateKeyForRefusal = itemId ?? Guid.NewGuid().ToString("N");
                     if (itemId is null || !textStates.TryGetValue(itemId, out var state))
                     {
                         var index = contentBlocks.Count;
-                        contentBlocks.Add(new TextContent(""));
+                        contentBlocks.Add(isRefusal ? new RefusalContent("") : new TextContent(""));
                         state = (index, new StringBuilder());
-                        textStates[itemId ?? Guid.NewGuid().ToString("N")] = state;
+                        textStates[stateKeyForRefusal] = state;
                         stream.Push(new TextStartEvent(index, BuildPartial()));
                     }
 
+                    if (isRefusal)
+                        refusalItems.Add(stateKeyForRefusal);
+
                     state.Text.Append(delta);
-                    contentBlocks[state.ContentIndex] = new TextContent(state.Text.ToString());
+                    contentBlocks[state.ContentIndex] = refusalItems.Contains(stateKeyForRefusal)
+                        ? new RefusalContent(state.Text.ToString())
+                        : new TextContent(state.Text.ToString());
                     stream.Push(new TextDeltaEvent(state.ContentIndex, delta, BuildPartial()));
                     if (itemId is not null)
                     {
@@ -343,7 +358,9 @@ public static class ResponsesStreamParser
                     {
                         doneState.Text.Clear();
                         doneState.Text.Append(canonical);
-                        contentBlocks[doneState.ContentIndex] = new TextContent(canonical);
+                        contentBlocks[doneState.ContentIndex] = refusalItems.Contains(itemId)
+                            ? new RefusalContent(canonical)
+                            : new TextContent(canonical);
                         textStates[itemId] = doneState;
                     }
 
@@ -367,9 +384,14 @@ public static class ResponsesStreamParser
 
                         case "message" when itemId is not null && textStates.TryGetValue(itemId, out var textState):
                             var phase = GetString(item, "phase");
-                            contentBlocks[textState.ContentIndex] = new TextContent(
-                                textState.Text.ToString(),
-                                EncodeTextSignatureV1(itemId, phase));
+                            // A refusal item must close as a RefusalContent. Rebuilding it as a
+                            // plain TextContent here would undo the classification at the very
+                            // last event, which is precisely the silent demotion #3295 is about.
+                            contentBlocks[textState.ContentIndex] = refusalItems.Contains(itemId)
+                                ? new RefusalContent(textState.Text.ToString())
+                                : new TextContent(
+                                    textState.Text.ToString(),
+                                    EncodeTextSignatureV1(itemId, phase));
                             stream.Push(new TextEndEvent(textState.ContentIndex, textState.Text.ToString(), BuildPartial()));
                             textStates.Remove(itemId);
                             break;

@@ -48,6 +48,7 @@
     <Compile Include="CronAlertTarget.cs" />
     <Compile Include="CronModelPreflight.cs" />
     <Compile Include="CronAgentPreflight.cs" />
+    <Compile Include="CronConversationDefault.cs" />
     <Compile Include="CronErrorProjection.cs" />
   </ItemGroup>
 
