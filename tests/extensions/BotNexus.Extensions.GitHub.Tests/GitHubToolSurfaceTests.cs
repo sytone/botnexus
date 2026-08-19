@@ -52,6 +52,9 @@ public sealed class GitHubToolSurfaceTests
             new GitHubIssueCommentTool(api, config),
             new GitHubPullRequestGetTool(api, config),
             new GitHubPullRequestListTool(api, config),
+            new GitHubPullRequestChecksTool(api, config),
+            new GitHubPullRequestDiffTool(api, config),
+            new GitHubWorkflowRunsTool(api, config),
             new GitHubApiTool(api, config),
         ];
     }
@@ -150,13 +153,16 @@ public sealed class GitHubToolSurfaceTests
                      (new GitHubIssueCommentTool(api, config), new() { ["number"] = 1, ["body"] = "hi" }),
                      (new GitHubPullRequestGetTool(api, config), new() { ["number"] = 1 }),
                      (new GitHubPullRequestListTool(api, config), new()),
+                     (new GitHubPullRequestChecksTool(api, config), new() { ["number"] = 1 }),
+                     (new GitHubPullRequestDiffTool(api, config), new() { ["number"] = 1 }),
+                     (new GitHubWorkflowRunsTool(api, config), new()),
                      (new GitHubApiTool(api, config), new() { ["path"] = "user" }),
                  })
         {
             results.Add(await GitHubFixtures.InvokeAsync(invocation.Tool, invocation.Args));
         }
 
-        results.Count.ShouldBe(6, "vacuity guard: every tool must have produced a result to scan");
+        results.Count.ShouldBe(9, "vacuity guard: every tool must have produced a result to scan");
         handler.SawAuthorizationHeader.ShouldBeTrue(
             "vacuity guard: the credential must actually have been attached, or this test proves nothing");
 
@@ -226,9 +232,31 @@ public sealed class GitHubToolSurfaceTests
         contribution.Tools.Select(t => t.Name).ShouldBe(
             [
                 "github_issue_get", "github_issue_list", "github_issue_comment",
-                "github_pr_get", "github_pr_list", "github_api",
+                "github_pr_get", "github_pr_list", "github_pr_checks", "github_pr_diff",
+                "github_workflow_runs", "github_api",
             ],
             ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task Contributor_ContributesEveryNamedReadTool()
+    {
+        // #2734 AC1, asserted by NAME rather than by count: a count assertion stays green if a read
+        // tool is swapped for a different one, which is precisely the regression that matters.
+        var contributor = new GitHubToolsContributor(_ => new RecordingGitHubApiClient());
+
+        var contribution = await contributor.ContributeAsync(ContextFor(ConfigElement(
+            """{"defaultRepository":"Sytone/botnexus"}""")));
+
+        var names = contribution.Tools.Select(t => t.Name).ToArray();
+        foreach (var required in new[]
+                 {
+                     "github_issue_get", "github_issue_list", "github_pr_get", "github_pr_list",
+                     "github_pr_checks", "github_pr_diff", "github_workflow_runs",
+                 })
+        {
+            names.ShouldContain(required, $"{required} must be registered (#2734 AC1)");
+        }
     }
 
     [Fact]
@@ -327,11 +355,17 @@ public sealed class GitHubToolSurfaceTests
             if (request.Headers.Authorization?.Parameter == _expectedToken)
                 SawAuthorizationHeader = true;
 
-            var isList = request.RequestUri!.AbsolutePath.EndsWith("issues", StringComparison.Ordinal)
-                         || request.RequestUri.AbsolutePath.EndsWith("pulls", StringComparison.Ordinal);
+            var path = request.RequestUri!.AbsolutePath;
+            var isList = path.EndsWith("issues", StringComparison.Ordinal)
+                         || path.EndsWith("pulls", StringComparison.Ordinal)
+                         || path.EndsWith("files", StringComparison.Ordinal);
 
             var payload = _status == System.Net.HttpStatusCode.OK
-                ? (isList ? "[]" : GitHubFixtures.Issue)
+                ? path.EndsWith("check-runs", StringComparison.Ordinal)
+                    ? """{"total_count":0,"check_runs":[]}"""
+                    : path.EndsWith("runs", StringComparison.Ordinal)
+                        ? """{"total_count":0,"workflow_runs":[]}"""
+                        : isList ? "[]" : GitHubFixtures.PullRequest
                 : """{"message":"Bad credentials"}""";
 
             return Task.FromResult(new HttpResponseMessage(_status)

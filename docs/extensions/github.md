@@ -124,6 +124,9 @@ fail when called - a tool the model can see but never use is a tax paid on every
 | `github_issue_comment` | Post a comment on an issue **or** a pull request. |
 | `github_pr_get` | Read one pull request, including merge state and diff statistics. |
 | `github_pr_list` | List pull requests with explicit pagination. |
+| `github_pr_checks` | Read the CI check runs for a pull request, with a rollup summary. |
+| `github_pr_diff` | Read a pull request's changed files, optionally with unified patch hunks. |
+| `github_workflow_runs` | List GitHub Actions workflow runs, filterable by workflow, branch and status. |
 | `github_api` | Escape hatch: any REST path with the managed credential. |
 
 ### No tool takes a credential
@@ -160,6 +163,44 @@ a caller conclude the repository is small when it merely hit a bound.
 `hasMore` is derived from a full page, so it can over-report by one page at an exact boundary. That
 is the correct direction to be wrong in: claiming completeness you do not have is the defect being
 avoided.
+
+`github_workflow_runs` is the exception: the Actions API returns a real `total_count`, so its
+`hasMore` is *computed* from the total rather than inferred from a full page. It reports `totalCount`
+alongside the page bounds.
+
+### Reading CI state
+
+`github_pr_checks` resolves the pull request's head commit SHA and then reads the check runs for it.
+Both calls happen inside one tool because check runs are addressed by SHA, not by pull request
+number - the shell equivalent was two `gh` invocations plus a `--jq` filter to thread the SHA between
+them.
+
+The result carries a derived rollup so an agent does not count conclusions itself:
+
+```json
+{
+  "tool": "github_pr_checks",
+  "number": 3300,
+  "headSha": "a1b2c3d…",
+  "summary": { "total": 3, "succeeded": 1, "failed": 1, "pending": 1, "allCompleted": false },
+  "checkRuns": [ { "name": "build", "status": "completed", "conclusion": "success" } ]
+}
+```
+
+`allCompleted` exists because "green" is not "no failures": a run set that has not finished also has
+zero failures. An in-flight run keeps `conclusion: null` rather than a substituted `"pending"`, so a
+red pull request can never be read as merely slow.
+
+### Diffs are file records, not diff text
+
+`github_pr_diff` returns the pull request's changed files as records - `path`, `status`, `additions`,
+`deletions` - rather than GitHub's raw `.diff` media type. A raw diff is exactly the command text
+this extension exists to stop returning: answering "which files changed" from it means parsing file
+boundaries out of a string.
+
+The unified patch hunk is available per file, but only when `includePatch` is set. Patch text is
+unbounded, and a large pull request would otherwise spend an entire transcript budget on hunks the
+caller never asked for.
 
 ### Comments use the REST path
 

@@ -166,6 +166,28 @@ public abstract class GitHubToolBase : IAgentTool
         };
     }
 
+    /// <summary>Reads an optional boolean argument, tolerating raw <see cref="JsonElement"/> values.</summary>
+    /// <remarks>
+    /// Returns <c>null</c> for an absent argument rather than <c>false</c>, so a tool can tell "the
+    /// caller did not say" from "the caller said no" and apply its own default explicitly.
+    /// </remarks>
+    protected static bool? ReadBool(IReadOnlyDictionary<string, object?> args, string key)
+    {
+        if (!args.TryGetValue(key, out var value) || value is null)
+            return null;
+
+        return value switch
+        {
+            bool b => b,
+            JsonElement { ValueKind: JsonValueKind.True } => true,
+            JsonElement { ValueKind: JsonValueKind.False } => false,
+            JsonElement { ValueKind: JsonValueKind.Null } => null,
+            JsonElement { ValueKind: JsonValueKind.String } el when bool.TryParse(el.GetString(), out var b) => b,
+            string s when bool.TryParse(s, out var b) => b,
+            _ => null,
+        };
+    }
+
     /// <summary>Reads a required integer argument.</summary>
     protected static int RequireInt(IReadOnlyDictionary<string, object?> args, string key) =>
         ReadInt(args, key) ?? throw new ArgumentException($"{key} is required.");
