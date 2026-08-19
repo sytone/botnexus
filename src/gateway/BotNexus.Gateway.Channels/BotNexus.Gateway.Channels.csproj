@@ -8,6 +8,12 @@
   <ItemGroup>
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+    <!-- #3399: CrossWorldChannelAdapter's relay error path reuses ProviderHttpErrorHelper's bounded
+         + redacted error-detail seam (#2881) rather than hand-rolling a second inline formatter.
+         Gateway.Contracts already references Agent.Core, which references Agent.Providers.Core, so
+         this is an explicit spelling of an edge that is already in the graph transitively - not a
+         new layering dependency. -->
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

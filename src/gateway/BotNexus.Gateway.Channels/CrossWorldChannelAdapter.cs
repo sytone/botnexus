@@ -1,6 +1,8 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using BotNexus.Agent.Providers.Core;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 
@@ -9,14 +11,30 @@ namespace BotNexus.Gateway.Channels;
 /// <summary>
 /// Represents cross world channel adapter.
 /// </summary>
+/// <remarks>
+/// #3399: the relay request carries the shared cross-world credential in an
+/// <c>X-Cross-World-Key</c> header, so a peer world that reflects request headers into its error
+/// page round-trips that credential back to us. The error path therefore reads only a bounded
+/// prefix of the peer's response and passes both that prefix and the reason phrase through
+/// <see cref="ISecretRedactor"/> before either reaches an exception message - the same seam the
+/// provider layer adopted in #2881, reused rather than reimplemented.
+/// </remarks>
 public sealed class CrossWorldChannelAdapter(
     ILogger<CrossWorldChannelAdapter> logger,
     HttpClient httpClient,
-    CrossWorldChannelOptions? options = null) : ChannelAdapterBase(logger)
+    CrossWorldChannelOptions? options = null,
+    ISecretRedactor? secretRedactor = null) : ChannelAdapterBase(logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _httpClient = httpClient;
     private readonly CrossWorldChannelOptions _options = options ?? new CrossWorldChannelOptions();
+
+    /// <summary>
+    /// Optional. <see langword="null"/> is a deliberate no-op rather than a blanket drop of the
+    /// error detail, matching the #2881 convention: an un-wired composition root keeps its
+    /// diagnostics instead of silently losing them. The DI registration supplies the real redactor.
+    /// </summary>
+    private readonly ISecretRedactor? _secretRedactor = secretRedactor;
 
     public override ChannelKey ChannelType => ChannelKey.From("cross-world");
     public override string DisplayName => "Cross-World Federation";
@@ -83,9 +101,16 @@ public sealed class CrossWorldChannelAdapter(
         using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            // Bounded FIRST (a hostile peer must not be able to buffer an arbitrary body into a
+            // message we persist), redacted SECOND but before any interpolation. The reason phrase
+            // is redacted too: it is just as remote-controlled as the body, and scrubbing only the
+            // body would leave an obvious second channel for the reflected key.
+            var detail = await ProviderHttpErrorHelper
+                .ReadBoundedRedactedErrorDetailAsync(response, _secretRedactor, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var reason = ProviderHttpErrorHelper.RedactDiagnosticText(response.ReasonPhrase, _secretRedactor);
             throw new InvalidOperationException(
-                $"Cross-world relay failed: {(int)response.StatusCode} {response.ReasonPhrase}. {body}");
+                $"Cross-world relay failed: {(int)response.StatusCode} {reason}. {detail}");
         }
 
         var relayResponse = await response.Content.ReadFromJsonAsync<CrossWorldRelayResponse>(JsonOptions, cancellationToken)
