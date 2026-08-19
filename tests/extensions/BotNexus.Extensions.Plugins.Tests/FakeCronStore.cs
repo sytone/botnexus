@@ -42,6 +42,9 @@ internal sealed class FakeCronStore : ICronStore
     public Task<IReadOnlyList<CronJob>> ListAsync(AgentId? agentId = null, CancellationToken ct = default) =>
         throw new NotSupportedException("The plugin-update provisioner must not enumerate jobs.");
 
+    public Task SetBackoffUntilAsync(JobId jobId, DateTimeOffset? backoffUntil, CancellationToken ct = default) =>
+        throw new NotSupportedException("The plugin-update provisioner must not set a backoff floor.");
+
     public Task SetNextRunAtAsync(JobId jobId, DateTimeOffset? nextRunAt, CancellationToken ct = default) =>
         throw new NotSupportedException("The plugin-update provisioner must not schedule runs.");
 
