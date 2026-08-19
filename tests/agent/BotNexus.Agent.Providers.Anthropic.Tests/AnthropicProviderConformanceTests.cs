@@ -53,6 +53,44 @@ public sealed class AnthropicProviderConformanceTests : StreamingProviderConform
             "data: {\"type\":\"message_stop\"}");
     }
 
+    /// <summary>
+    /// Two <c>tool_use</c> blocks at distinct wire indices whose <c>input_json_delta</c> frames
+    /// interleave. Anthropic's parser is keyed by block index, so a regression that collapsed it to a
+    /// single "current block" cursor would emit a delta for a closed index - which is exactly the
+    /// breach the #3300 validator reports.
+    /// </summary>
+    protected override string BuildInterleavedToolCallPayload(
+        string firstToolCallId,
+        string firstToolName,
+        string firstArgumentsJson,
+        string secondToolCallId,
+        string secondToolName,
+        string secondArgumentsJson,
+        string providerStopReason)
+    {
+        var firstArgs = JsonSerializer.Serialize(firstArgumentsJson);
+        var secondArgs = JsonSerializer.Serialize(secondArgumentsJson);
+        return JoinLines(
+            "event: message_start",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}",
+            "event: content_block_start",
+            $"data: {{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{{\"type\":\"tool_use\",\"id\":\"{firstToolCallId}\",\"name\":\"{firstToolName}\"}}}}",
+            "event: content_block_start",
+            $"data: {{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{{\"type\":\"tool_use\",\"id\":\"{secondToolCallId}\",\"name\":\"{secondToolName}\"}}}}",
+            "event: content_block_delta",
+            $"data: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"input_json_delta\",\"partial_json\":{firstArgs}}}}}",
+            "event: content_block_delta",
+            $"data: {{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{{\"type\":\"input_json_delta\",\"partial_json\":{secondArgs}}}}}",
+            "event: content_block_stop",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}",
+            "event: content_block_stop",
+            "data: {\"type\":\"content_block_stop\",\"index\":1}",
+            "event: message_delta",
+            $"data: {{\"type\":\"message_delta\",\"delta\":{{\"stop_reason\":\"{providerStopReason}\"}}}}",
+            "event: message_stop",
+            "data: {\"type\":\"message_stop\"}");
+    }
+
     protected override string BuildFinishReasonPayload(string providerStopReason) =>
         JoinLines(
             "event: message_start",

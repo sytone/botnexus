@@ -83,12 +83,101 @@ public abstract class StreamingProviderConformanceTests
     [MemberData(nameof(TextCases))]
     public async Task Stream_EmitsExpectedEventSequence(string text)
     {
-        if (!SupportsStreamingSequence)
-            return;
-
         var (_, events) = await ExecuteAsync(BuildTextPayload(text, MapCanonicalStopReason("stop")));
 
         events.Select(e => e.Type).ShouldBe(ExpectedTextEventSequence);
+    }
+
+    // --- Producer-agnostic ordering invariants (#3300) ---
+
+    /// <summary>
+    /// The normalized event grammar holds for a plain-text turn, checked against
+    /// <see cref="AssistantMessageEventOrdering"/> rather than against a per-fixture expectation.
+    /// <para>
+    /// This is the assertion <see cref="Stream_EmitsExpectedEventSequence"/> cannot make. That test
+    /// compares the emitted sequence to <see cref="ExpectedTextEventSequence"/>, which each derived
+    /// fixture may override - so a producer emitting a self-consistently wrong sequence declares the
+    /// wrong sequence as its expectation and passes. The rules checked here are stated once, in the
+    /// production assembly, in terms no fixture can supply or relax.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TextCases))]
+    public async Task Stream_TextTurn_SatisfiesOrderingInvariants(string text)
+    {
+        var (_, events) = await ExecuteAsync(BuildTextPayload(text, MapCanonicalStopReason("stop")));
+
+        AssertOrdering(events, "plain-text turn");
+    }
+
+    /// <summary>
+    /// The grammar also holds for a single tool call, where the block being opened and closed is a
+    /// <c>toolcall_*</c> rather than a <c>text_*</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ToolCallCases))]
+    public async Task Stream_ToolCallTurn_SatisfiesOrderingInvariants(
+        string toolCallId, string toolName, string argumentsJson)
+    {
+        var (_, events) = await ExecuteAsync(
+            BuildToolCallPayload(toolCallId, toolName, argumentsJson, MapCanonicalStopReason("tool_use")));
+
+        AssertOrdering(events, "single tool call turn");
+    }
+
+    /// <summary>
+    /// Two tool calls whose argument deltas interleave on the wire - the case the pre-#3300 suite
+    /// never exercised. A producer that tracks only "the current block" instead of a per-content-index
+    /// block table emits a delta for an index it has already closed, or closes an index twice, and
+    /// nothing before this test noticed.
+    /// </summary>
+    [Fact]
+    public async Task Stream_InterleavedToolCalls_SatisfyOrderingInvariants()
+    {
+        var payload = BuildInterleavedToolCallPayload(
+            "call_a", "search", "{\"query\":\"weather\"}",
+            "call_b", "lookup", "{\"id\":\"42\"}",
+            MapCanonicalStopReason("tool_use"));
+
+        var (result, events) = await ExecuteAsync(payload);
+
+        AssertOrdering(events, "interleaved two-tool-call turn");
+
+        // Guards the ordering assertion above against vacuity from the other direction: a producer
+        // that dropped one of the two calls entirely would emit a perfectly well-ordered stream.
+        result.Content.OfType<ToolCallContent>().Count().ShouldBe(2,
+            "both interleaved tool calls must survive normalization; a well-ordered stream that lost " +
+            "one of them still loses a tool call");
+    }
+
+    /// <summary>
+    /// Ordering rules this provider is excused from, keyed by the rule id on
+    /// <see cref="AssistantMessageEventOrdering"/> with the reason as the value.
+    /// <para>
+    /// This replaces the pre-#3300 <c>SupportsStreamingSequence</c> early <c>return</c>, which made a
+    /// skipped provider indistinguishable from a passing one in the run output. An exclusion here is
+    /// named, reasoned, and narrow: it waives exactly one rule, and every other rule still applies.
+    /// The default is empty because no provider currently has a legitimate excuse - if one appears,
+    /// the excuse must be written down next to the code that needs it.
+    /// </para>
+    /// </summary>
+    protected virtual IReadOnlyDictionary<string, string> ExcludedOrderingRules =>
+        new Dictionary<string, string>();
+
+    private void AssertOrdering(IReadOnlyList<AssistantMessageEvent> events, string scenario)
+    {
+        var violations = AssistantMessageEventOrdering.Validate(events);
+        var excluded = ExcludedOrderingRules;
+
+        var enforced = violations.Where(v => !excluded.ContainsKey(v.Rule)).ToList();
+
+        enforced.ShouldBeEmpty(
+            $"{GetType().Name} violated the normalized event ordering grammar on the {scenario} " +
+            $"(#3300):{Environment.NewLine}" +
+            string.Join(
+                Environment.NewLine,
+                enforced.Select(v => $"  [{v.Rule}] at event {v.EventIndex}: {v.Message}")) +
+            $"{Environment.NewLine}Observed sequence: {string.Join(", ", events.Select(e => e.Type))}");
     }
 
     // --- HTTP error handling tests ---
@@ -228,7 +317,6 @@ public abstract class StreamingProviderConformanceTests
         }
     }
 
-    protected virtual bool SupportsStreamingSequence => true;
 
     // --- Capability declaration conformance (#2432) ---
 
@@ -297,6 +385,22 @@ public abstract class StreamingProviderConformanceTests
     protected abstract LlmModel CreateModel();
     protected abstract string BuildTextPayload(string text, string providerStopReason);
     protected abstract string BuildToolCallPayload(string toolCallId, string toolName, string argumentsJson, string providerStopReason);
+
+    /// <summary>
+    /// Build a wire payload carrying two tool calls whose argument deltas interleave, so the producer
+    /// must maintain per-content-index block state rather than a single "current block" cursor.
+    /// Abstract rather than virtual on purpose: a default implementation would silently degrade to
+    /// the single-call case for any provider that forgot to supply one, which is the exact failure
+    /// mode #3300 exists to remove.
+    /// </summary>
+    protected abstract string BuildInterleavedToolCallPayload(
+        string firstToolCallId,
+        string firstToolName,
+        string firstArgumentsJson,
+        string secondToolCallId,
+        string secondToolName,
+        string secondArgumentsJson,
+        string providerStopReason);
     protected abstract string BuildFinishReasonPayload(string providerStopReason);
     protected abstract string BuildUsagePayload(int inputTokens, int outputTokens, string providerStopReason);
     protected abstract string MapCanonicalStopReason(string canonicalReason);
