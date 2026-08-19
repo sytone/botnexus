@@ -49,7 +49,7 @@ public sealed class WebhookInboundConversationReuseTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(_dbPath);
         foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
         {
             var path = _dbPath + suffix;

@@ -161,7 +161,7 @@ public sealed class SqliteSessionStorePostRunFenceTests : IDisposable
     {
         try
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePoolCleanup.ClearPoolFor(_dbPath);
             if (File.Exists(_dbPath))
             {
                 for (var attempt = 0; attempt < 5; attempt++)

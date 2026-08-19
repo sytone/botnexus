@@ -130,7 +130,9 @@ public sealed class FileAgentWorkspaceManagerTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        // No SQLite pool cleanup: this class uses MockFileSystem exclusively and never opens a
+        // database, so the ClearAllPools() that used to sit here could only ever affect other
+        // tests' connections - a pure blast radius with no local benefit (#3392).
 
         if (_fileSystem.Directory.Exists(_homePath))
             _fileSystem.Directory.Delete(_homePath, recursive: true);

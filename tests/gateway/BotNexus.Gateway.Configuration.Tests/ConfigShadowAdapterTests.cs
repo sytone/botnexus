@@ -18,7 +18,7 @@ public sealed class ConfigShadowAdapterTests : IDisposable
 
     public void Dispose()
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(_dbPath);
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {
             var path = _dbPath + suffix;

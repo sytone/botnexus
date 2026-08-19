@@ -21,7 +21,7 @@ public sealed class SqliteWebhookRunStoreTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(_dbPath);
         if (File.Exists(_dbPath)) File.Delete(_dbPath);
         return Task.CompletedTask;
     }

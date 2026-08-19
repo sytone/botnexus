@@ -33,7 +33,7 @@ public sealed class SqliteConnectionFactoryDisposalTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolsUnder(_dir);
         try
         {
             if (Directory.Exists(_dir))

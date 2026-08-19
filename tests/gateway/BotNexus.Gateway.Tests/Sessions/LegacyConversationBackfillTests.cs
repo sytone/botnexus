@@ -564,7 +564,7 @@ public sealed class LegacyConversationBackfillTests
         {
             try
             {
-                SqliteConnection.ClearAllPools();
+                SqlitePoolCleanup.ClearPoolFor(_dbPath);
                 if (File.Exists(_dbPath))
                 {
                     for (var i = 0; i < 5; i++)

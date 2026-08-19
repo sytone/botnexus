@@ -848,7 +848,7 @@ public sealed class SqliteConversationStoreTests
             corrupt.Parameters.AddWithValue("$id", conv.ConversationId.Value);
             (await corrupt.ExecuteNonQueryAsync()).ShouldBe(1);
         }
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolForConnectionString(fixture.ConnectionString);
 
         // Fresh store (empty cache) forces a real column read + hydrate. Must NOT throw.
         var loaded = await fixture.CreateStore().GetAsync(conv.ConversationId);
@@ -879,7 +879,7 @@ public sealed class SqliteConversationStoreTests
             corrupt.Parameters.AddWithValue("$id", bad.ConversationId.Value);
             (await corrupt.ExecuteNonQueryAsync()).ShouldBe(1);
         }
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolForConnectionString(fixture.ConnectionString);
 
         var all = await fixture.CreateStore().ListAsync(Agent("agent-a"));
 
@@ -945,7 +945,7 @@ public sealed class SqliteConversationStoreTests
             cmd.CommandText = "DROP TABLE IF EXISTS race_probe; CREATE TABLE race_probe(x);";
             await cmd.ExecuteNonQueryAsync();
         }
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolForConnectionString(fixture.ConnectionString);
 
         // Directly exercise the helper's tolerance: attempt to add a column that already exists
         // on the conversations table. The store's migration pass runs on open and must swallow
@@ -969,7 +969,7 @@ public sealed class SqliteConversationStoreTests
             }
             threw.ShouldBeTrue("Pre-condition: re-adding an existing column must raise SQLite duplicate-column error.");
         }
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolForConnectionString(fixture.ConnectionString);
 
         // A fresh store open re-runs the full migration pass over the already-migrated schema.
         // With the race-tolerant helper this must not throw for ANY column.

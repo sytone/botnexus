@@ -31,7 +31,7 @@ public sealed class SqliteSessionStoreConversationCostTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolForConnectionString(_connectionString);
         try
         {
             if (File.Exists(_dbPath))

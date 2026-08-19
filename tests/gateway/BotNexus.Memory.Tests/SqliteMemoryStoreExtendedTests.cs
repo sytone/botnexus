@@ -212,7 +212,7 @@ public sealed class SqliteMemoryStoreExtendedTests : IDisposable
             loaded.ShouldNotBeNull();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(dbPath);
         Directory.Delete(tempDirectory, true);
     }
 
@@ -269,6 +269,7 @@ public sealed class SqliteMemoryStoreExtendedTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        // No pool cleanup is needed here: the tests in this class either use MemoryStoreTestContext,
+        // which clears its own pool in DisposeAsync, or clear their own ad-hoc database inline.
     }
 }

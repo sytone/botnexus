@@ -39,7 +39,9 @@
   <ItemGroup>
     <Compile Include="..\BotNexus.Gateway.Tests\TestOptionsMonitor.cs" Link="TestOptionsMonitor.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\BotNexus.Testing\SqlitePoolCleanup.cs" Link="Shared\SqlitePoolCleanup.cs" />
+    <Using Include="BotNexus.Testing" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
 </Project>
-
-
-

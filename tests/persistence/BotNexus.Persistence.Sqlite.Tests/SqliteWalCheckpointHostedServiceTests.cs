@@ -28,7 +28,8 @@ public sealed class SqliteWalCheckpointHostedServiceTests : IDisposable
         {
             try { h.Dispose(); } catch { /* best effort */ }
         }
-        SqliteConnection.ClearAllPools();
+        foreach (var h in _holders)
+            SqlitePoolCleanup.ClearPoolForConnectionString(h.ConnectionString);
         try { Directory.Delete(_dir, recursive: true); } catch { /* best effort */ }
     }
 

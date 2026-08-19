@@ -33,7 +33,7 @@ public sealed class ExtensionStateStoreTests
 
         public async ValueTask DisposeAsync()
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePoolCleanup.ClearPoolFor(DbPath);
             if (!Directory.Exists(TempDirectory))
                 return;
 

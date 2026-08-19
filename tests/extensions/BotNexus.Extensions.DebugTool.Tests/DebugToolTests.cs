@@ -18,7 +18,7 @@ public sealed class DebugToolTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(_dbPath);
         if (File.Exists(_dbPath))
             File.Delete(_dbPath);
     }

@@ -21,7 +21,7 @@ public sealed class SqliteUsageTelemetryStoreSchemaVersionTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolsUnder(_dir);
         try
         {
             Directory.Delete(_dir, recursive: true);
@@ -81,7 +81,7 @@ public sealed class SqliteUsageTelemetryStoreSchemaVersionTests : IDisposable
             Assert.Equal(1, update.ExecuteNonQuery());
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(DbPath);
 
         await using var reopened = new SqliteUsageTelemetryStore(DbPath);
         var error = await Assert.ThrowsAsync<SqliteSchemaVersionMismatchException>(

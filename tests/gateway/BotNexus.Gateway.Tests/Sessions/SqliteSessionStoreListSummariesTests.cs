@@ -33,7 +33,7 @@ public sealed class SqliteSessionStoreListSummariesTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolForConnectionString(_connectionString);
         try
         {
             if (File.Exists(_dbPath))

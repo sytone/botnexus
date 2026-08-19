@@ -20,7 +20,7 @@ public sealed class SqliteStoreIdentityGuardTests : IDisposable
     public void Dispose()
     {
         SqliteStoreIdentityGuard.Reset();
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolsUnder(_directory);
         try
         {
             Directory.Delete(_directory, recursive: true);
@@ -215,7 +215,7 @@ public sealed class SqliteStoreIdentityGuardTests : IDisposable
         Assert.True(threw, "World A must be refused the world B store.");
 
         // The load-bearing assertion: zero phantom rows on disk, in the shape #2819 produced.
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolForConnectionString(ConnectionString(worldBStore));
         using var raw = new SqliteConnection(ConnectionString(worldBStore));
         raw.Open();
         using var count = raw.CreateCommand();
@@ -314,7 +314,7 @@ public sealed class SqliteStoreIdentityGuardTests : IDisposable
             return null;
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolForConnectionString(ConnectionString(path));
         using var connection = new SqliteConnection(ConnectionString(path));
         connection.Open();
         using var exists = connection.CreateCommand();

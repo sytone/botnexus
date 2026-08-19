@@ -31,7 +31,8 @@ public sealed class MemoryIsolationTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            foreach (var agent in new[] { "agent-a", "agent-b" })
+                SqlitePoolCleanup.ClearPoolFor(Path.Combine(tempRoot, agent, "memory.db"));
             if (Directory.Exists(tempRoot))
             {
                 for (var attempt = 0; attempt < 5; attempt++)

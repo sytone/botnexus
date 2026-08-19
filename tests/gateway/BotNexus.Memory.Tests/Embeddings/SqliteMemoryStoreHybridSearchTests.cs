@@ -27,7 +27,7 @@ public sealed class SqliteMemoryStoreHybridSearchTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(_dbPath);
         if (Directory.Exists(_tempDirectory))
         {
             try { Directory.Delete(_tempDirectory, true); } catch (IOException) { }

@@ -41,4 +41,9 @@
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Tests\BotNexus.Scenarios.Tests.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\BotNexus.Testing\SqlitePoolCleanup.cs" Link="Shared\SqlitePoolCleanup.cs" />
+    <Using Include="BotNexus.Testing" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
 </Project>
