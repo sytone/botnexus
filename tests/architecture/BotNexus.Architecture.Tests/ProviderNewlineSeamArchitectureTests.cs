@@ -31,6 +31,25 @@ public class ProviderNewlineSeamArchitectureTests
         @"(Replace|Trim|TrimStart|TrimEnd|Split|StartsWith|EndsWith|Contains|IndexOf)\s*\(\s*[^)]*\\r",
         RegexOptions.Compiled);
 
+    /// <summary>
+    /// Matches joining a projection of assistant text blocks with a separator, i.e. the operation
+    /// that INSERTS content the model never emitted (the inverse of the mutation regex above, which
+    /// deletes it). Anchored to a statement that also projects <c>OfType&lt;TextContent&gt;()</c>, so it
+    /// targets stream assembly specifically.
+    /// </summary>
+    private static readonly Regex SeparatorJoinOverTextBlocks = new(
+        @"string\.Join\s*\(\s*(?<sep>Environment\.NewLine|""(?!""\s*\))[^""]+"")[^;]*?OfType<TextContent>",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    /// <summary>
+    /// A tool RESULT is a list of independent output blocks we ourselves produced, not a single
+    /// model utterance split by transport chunking. Separating those with a newline is correct and
+    /// must not be flagged - only assistant/completion assembly is in scope for #3425.
+    /// </summary>
+    private static bool IsToolResultAssembly(string statement) =>
+        statement.Contains("toolResult", StringComparison.OrdinalIgnoreCase) ||
+        statement.Contains("textBlocks", StringComparison.Ordinal);
+
     private static string RepoRoot => FindRepoRoot();
 
     /// <summary>
@@ -124,6 +143,90 @@ public class ProviderNewlineSeamArchitectureTests
         CarriageReturnMutation.IsMatch(clean).ShouldBeFalse(
             "Positive pin: pushing an unmodified delta must be accepted, else the fence over-tightens.");
     }
+
+    /// <summary>
+    /// A file assembles final assistant text if it projects <c>TextContent</c> blocks into one
+    /// string. Those are the files where inserting a separator fabricates model output.
+    /// </summary>
+    private static bool AssemblesTextBlocks(string source) =>
+        source.Contains("OfType<TextContent>", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Streamed text blocks must be concatenated with NO separator (#3425).
+    /// </summary>
+    /// <remarks>
+    /// A stream chunk boundary is transport metadata: the provider may split a response anywhere,
+    /// including mid-word, so a separator inserted between blocks is text the model never emitted.
+    /// <c>string.Join(Environment.NewLine, ...)</c> in <c>MessageConverter.ToAgentMessage</c> and
+    /// <c>LlmSessionCompactor</c> injected a literal CRLF between every block on Windows and
+    /// corrupted 1,033 persisted assistant messages across 15 agents into one-token-per-line output.
+    /// <para>
+    /// This is the INVERSE of the mutation fence above and is why that fence did not catch it: the
+    /// defect added characters rather than removing them, so no CR-aware call ever appeared in the
+    /// source. Both directions must be fenced or the family recurs a seventh time.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void FinalAssistantText_IsConcatenatedWithoutASeparator()
+    {
+        var violations = new List<string>();
+
+        foreach (var file in EnumerateSourceFiles())
+        {
+            var source = StripComments(File.ReadAllText(file));
+            if (!AssemblesTextBlocks(source))
+                continue;
+
+            foreach (Match match in SeparatorJoinOverTextBlocks.Matches(source))
+            {
+                if (IsToolResultAssembly(match.Value))
+                    continue;
+
+                violations.Add($"{Relative(file)}: {Collapse(match.Value)}");
+            }
+        }
+
+        violations.ShouldBeEmpty(
+            "Streamed assistant text blocks must be joined with string.Concat, never a separator " +
+            "(#3425). A chunk boundary carries no implied newline: joining with Environment.NewLine " +
+            "injects a literal CRLF between every token and corrupts persisted history. Violations: " +
+            string.Join("; ", violations));
+    }
+
+    /// <summary>
+    /// Proven-red for the separator fence: it must fire on the exact shape of the #3425 defect and
+    /// stay silent on the corrected form, otherwise it is decoration.
+    /// </summary>
+    [Fact]
+    public void SeparatorDetector_FiresOnTheDefectShapeAndNotOnConcat()
+    {
+        const string violating = """
+            var text = string.Join(Environment.NewLine, msg.Content.OfType<TextContent>().Select(c => c.Text));
+            """;
+        const string alsoViolating = """
+            var text = string.Join("\n", msg.Content.OfType<TextContent>().Select(c => c.Text));
+            """;
+        const string clean = """
+            var text = string.Concat(msg.Content.OfType<TextContent>().Select(c => c.Text));
+            """;
+        const string toolResult = """
+            var textResult = string.Join("\n", toolResult.Content.OfType<TextContent>().Select(t => t.Text));
+            """;
+
+        AssemblesTextBlocks(violating).ShouldBeTrue();
+        SeparatorJoinOverTextBlocks.IsMatch(violating).ShouldBeTrue(
+            "The detector must match the Environment.NewLine join that caused #3425.");
+        SeparatorJoinOverTextBlocks.IsMatch(alsoViolating).ShouldBeTrue(
+            "A literal separator is the same defect on non-Windows hosts.");
+        SeparatorJoinOverTextBlocks.IsMatch(clean).ShouldBeFalse(
+            "Positive pin: separator-free concatenation must be accepted.");
+        IsToolResultAssembly(toolResult).ShouldBeTrue(
+            "Tool-result blocks are independent outputs we produced, not one chunk-split utterance; " +
+            "flagging them would over-tighten the fence into a false positive.");
+    }
+
+    private static string Collapse(string value) =>
+        Regex.Replace(value, @"\s+", " ").Trim();
 
     /// <summary>
     /// Comments legitimately discuss <c>\r\n</c> - this whole subsystem is documented in terms of it.

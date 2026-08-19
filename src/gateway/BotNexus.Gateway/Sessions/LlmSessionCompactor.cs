@@ -961,8 +961,14 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             completion.Content.Count,
             completion.Content.OfType<TextContent>().Count());
 
-        var result = string.Join(
-            Environment.NewLine,
+        // Streamed text blocks are concatenated with NO separator (#3425). A chunk boundary is
+        // transport metadata, so joining with Environment.NewLine injected a literal \r\n between
+        // every block on Windows - the same defect that corrupted 1,033 assistant messages via
+        // MessageConverter.ToAgentMessage. A corrupted compaction summary is worse than a corrupted
+        // message: it is re-fed to the model as the entire history of the conversation.
+        // The whitespace-only filter is retained deliberately - it drops empty blocks rather than
+        // inserting anything - but it must never trim or alter a block that has content.
+        var result = string.Concat(
             completion.Content
                 .OfType<TextContent>()
                 .Select(content => content.Text)

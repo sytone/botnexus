@@ -54,10 +54,28 @@ internal static class MessageConverter
     /// </summary>
     /// <param name="providerMessage">The provider assistant message.</param>
     /// <returns>An AgentAssistantMessage with accumulated content, tool calls, and usage.</returns>
+    /// <remarks>
+    /// Text blocks are concatenated with NO separator (#3425). A stream chunk boundary is transport
+    /// metadata, not content: the provider may split a response anywhere, including mid-word, so any
+    /// separator inserted between blocks is text the model never emitted.
+    /// <para>
+    /// This previously used <c>string.Join(Environment.NewLine, ...)</c>, which on Windows injected a
+    /// literal <c>\r\n</c> between every text block and corrupted 1,033 persisted assistant messages
+    /// across 15 agents into one-token-per-line output (<c>/pl</c> + <c>anning</c>). Mitm captures of
+    /// the GitHub Copilot CLI against the identical endpoints show the wire carries no CR at all -
+    /// 0 raw CR bytes across 3,025 provider deltas - which is why VS Code and the Copilot CLI never
+    /// exhibited the symptom. The corruption was manufactured here, on our side of the parser, which
+    /// is also why five successive transport-side CRLF strips never fixed it.
+    /// </para>
+    /// <para>
+    /// Genuine model newlines arrive INSIDE a block's text as bare LF and are preserved verbatim.
+    /// Never reintroduce a separator here, and never trim or whitespace-normalize a block: the only
+    /// correct assembly of streamed text is exact ordered concatenation.
+    /// </para>
+    /// </remarks>
     public static AssistantAgentMessage ToAgentMessage(ProviderAssistantMessage providerMessage)
     {
-        var text = string.Join(
-            Environment.NewLine,
+        var text = string.Concat(
             providerMessage.Content
                 .OfType<TextContent>()
                 .Select(content => content.Text));
