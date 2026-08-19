@@ -1540,4 +1540,317 @@ public sealed class ActivityDashboardProjectionTests
 
         Assert.Equal(without, with);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // #3421: cron job id -> job name + last-run health.
+    // ---------------------------------------------------------------------------------------
+
+    private static CronJobDto Job(
+        string id,
+        string name = "Daily log analysis",
+        string? lastRunStatus = "ok",
+        DateTimeOffset? lastRunAt = null,
+        DateTimeOffset? nextRunAt = null) =>
+        new()
+        {
+            Id = id,
+            Name = name,
+            LastRunStatus = lastRunStatus!,
+            LastRunAt = lastRunAt,
+            NextRunAt = nextRunAt
+        };
+
+    private static ActivityRow ProjectOneWithCron(
+        ConversationSummaryDto conv,
+        IEnumerable<CronJobDto>? jobs) =>
+        ActivityDashboardProjection.Project(
+            [conv],
+            new ActivityDashboardFilter(IncludeCron: true),
+            Now,
+            ActivityDashboardProjection.CronHealthById(jobs)).Single();
+
+    /// <summary>
+    /// AC1: a null job list - which is exactly what a failed <c>GET /api/cron</c> yields - must
+    /// produce an empty map rather than throwing. The dashboard's conversation table cannot be
+    /// allowed to depend on the cron API being alive.
+    /// </summary>
+    [Fact]
+    public void CronHealthById_returns_an_empty_map_for_a_null_or_empty_job_list()
+    {
+        Assert.Empty(ActivityDashboardProjection.CronHealthById(null));
+        Assert.Empty(ActivityDashboardProjection.CronHealthById([]));
+    }
+
+    /// <summary>
+    /// AC1: first-wins on a duplicated job id, matching the de-duplication rule in
+    /// <c>InvolvedAgents</c>. Asserts the FIRST entry's name specifically, so a last-wins
+    /// implementation fails rather than merely producing "one entry".
+    /// </summary>
+    [Fact]
+    public void CronHealthById_deduplicates_on_job_id_first_wins()
+    {
+        var map = ActivityDashboardProjection.CronHealthById(
+        [
+            Job("j1", name: "First"),
+            Job("j1", name: "Second")
+        ]);
+
+        Assert.Single(map);
+        Assert.Equal("First", map["j1"].Name);
+    }
+
+    /// <summary>
+    /// AC1: a job with no usable id contributes nothing rather than keying the map on an empty
+    /// string, which would then match any row whose source id was itself blank.
+    /// </summary>
+    [Fact]
+    public void CronHealthById_skips_jobs_with_no_usable_id()
+    {
+        var map = ActivityDashboardProjection.CronHealthById([Job("   "), Job("j1")]);
+
+        Assert.Single(map);
+        Assert.True(map.ContainsKey("j1"));
+    }
+
+    /// <summary>
+    /// AC1: a blank name and a blank status collapse to null, so "present but empty" and "absent"
+    /// cannot render differently - the same normalisation posture as the purpose and role fields.
+    /// </summary>
+    [Fact]
+    public void CronHealthById_normalizes_blank_name_and_status_to_null()
+    {
+        var map = ActivityDashboardProjection.CronHealthById([Job("j1", name: "  ", lastRunStatus: "  ")]);
+
+        Assert.Null(map["j1"].Name);
+        Assert.Null(map["j1"].LastRunStatus);
+    }
+
+    /// <summary>
+    /// AC2: the resolved health reaches the row. Without this every other clause here is vacuous.
+    /// </summary>
+    [Fact]
+    public void A_cron_row_whose_source_id_names_a_known_job_carries_that_jobs_health()
+    {
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "j1"),
+            [Job("j1", name: "Nightly digest", lastRunStatus: "failed")]);
+
+        Assert.NotNull(row.CronHealth);
+        Assert.Equal("j1", row.CronHealth!.JobId);
+        Assert.Equal("Nightly digest", row.CronHealth.Name);
+        Assert.Equal("failed", row.CronHealth.LastRunStatus);
+    }
+
+    /// <summary>
+    /// AC3: the pairing refusal. A non-cron row must NOT resolve cron health even when its source id
+    /// collides with a real job id, because <c>SourceId</c> is documented as meaningful only paired
+    /// with <c>Source</c>. Asserts the id IS on the row while the health is still null, so the test
+    /// cannot pass merely because the id was absent - that is the difference between pinning the
+    /// refusal and pinning an accident.
+    /// </summary>
+    [Fact]
+    public void A_non_cron_row_never_resolves_cron_health_even_on_a_colliding_source_id()
+    {
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Webhook", sourceId: "j1"),
+            [Job("j1")]);
+
+        Assert.Equal("j1", row.SourceId);
+        Assert.Null(row.CronHealth);
+    }
+
+    /// <summary>
+    /// AC4: a cron row naming a job the client does not know about carries no health, so it renders
+    /// exactly as it did before this shipped rather than showing a half-resolved attribution.
+    /// </summary>
+    [Fact]
+    public void A_cron_row_naming_an_unknown_job_carries_no_health()
+    {
+        var row = ProjectOneWithCron(Conv("c1", source: "Cron", sourceId: "missing"), [Job("j1")]);
+
+        Assert.Equal("missing", row.SourceId);
+        Assert.Null(row.CronHealth);
+    }
+
+    /// <summary>
+    /// AC8 (projection half): a failed cron fetch - modelled as a null map - leaves every row's
+    /// health null, so the row is otherwise identical to the pre-#3421 projection.
+    /// </summary>
+    /// <remarks>
+    /// Compares field-by-field rather than with record equality: <c>ActivityRow</c>'s synthesised
+    /// <c>Equals</c> compares <c>InvolvedAgents</c> by REFERENCE (it is a <c>List</c>), so two
+    /// structurally identical projections of the same input are never record-equal and a whole-record
+    /// assertion here would fail for a reason that has nothing to do with cron health.
+    /// </remarks>
+    [Fact]
+    public void A_failed_cron_fetch_leaves_every_row_unchanged()
+    {
+        var conv = Conv("c1", source: "Cron", sourceId: "j1");
+        var filter = new ActivityDashboardFilter(IncludeCron: true);
+
+        var baseline = ActivityDashboardProjection.Project([conv], filter, Now).Single();
+        var withFailedFetch = ActivityDashboardProjection.Project(
+            [conv], filter, Now, ActivityDashboardProjection.CronHealthById(null)).Single();
+
+        Assert.Null(baseline.CronHealth);
+        Assert.Null(withFailedFetch.CronHealth);
+        Assert.Equal(baseline with { InvolvedAgents = [] }, withFailedFetch with { InvolvedAgents = [] });
+        Assert.Equal(
+            baseline.InvolvedAgents.Select(a => (a.AgentId, a.Role)),
+            withFailedFetch.InvolvedAgents.Select(a => (a.AgentId, a.Role)));
+    }
+
+    /// <summary>
+    /// AC5: successful statuses classify as <c>ok</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("ok")]
+    [InlineData("success")]
+    [InlineData("Succeeded")]
+    [InlineData("COMPLETED")]
+    public void A_successful_last_run_classifies_as_ok(string status)
+    {
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "j1"),
+            [Job("j1", lastRunStatus: status)]);
+
+        Assert.Equal("ok", ActivityDashboardProjection.CronHealthModifier(row));
+    }
+
+    /// <summary>
+    /// AC5: every failure-shaped status the scheduler records classifies as <c>failed</c>, including
+    /// <c>timeout</c> and <c>no_tool_calls</c> - the two outcomes behind the standing "job failing
+    /// silently for four days" evidence that motivated this slice.
+    /// </summary>
+    [Theory]
+    [InlineData("error")]
+    [InlineData("failed")]
+    [InlineData("Failure")]
+    [InlineData("timeout")]
+    [InlineData("aborted")]
+    [InlineData("no_tool_calls")]
+    public void A_failing_last_run_classifies_as_failed(string status)
+    {
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "j1"),
+            [Job("j1", lastRunStatus: status)]);
+
+        Assert.Equal("failed", ActivityDashboardProjection.CronHealthModifier(row));
+    }
+
+    /// <summary>
+    /// AC5: the fail-open direction matters. An unrecognised status from a newer gateway, and a job
+    /// that has never run, both classify as <c>unknown</c> - never <c>ok</c>. Presenting an
+    /// unclassifiable outcome as healthy is precisely the silent failure this feature exists to end,
+    /// so this test asserts the negative explicitly rather than only the positive.
+    /// </summary>
+    [Theory]
+    [InlineData("some-future-status")]
+    [InlineData(null)]
+    public void An_unrecognised_or_absent_last_run_status_classifies_as_unknown_never_ok(string? status)
+    {
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "j1"),
+            [Job("j1", lastRunStatus: status)]);
+
+        var modifier = ActivityDashboardProjection.CronHealthModifier(row);
+        Assert.Equal("unknown", modifier);
+        Assert.NotEqual("ok", modifier);
+    }
+
+    /// <summary>
+    /// AC5: a row with no resolved health returns null, not <c>unknown</c>. The two are different
+    /// claims - "nothing to say" renders no dot at all, whereas "unknown" asserts a job exists whose
+    /// state is unreadable - and collapsing them would put a dot on every non-cron row.
+    /// </summary>
+    [Fact]
+    public void A_row_with_no_resolved_health_yields_a_null_modifier_not_unknown()
+    {
+        var row = ProjectOneWithCron(Conv("c1"), [Job("j1")]);
+
+        Assert.Null(ActivityDashboardProjection.CronHealthModifier(row));
+    }
+
+    /// <summary>
+    /// AC7 (projection half): a resolved job name is rendered verbatim when it fits the bound.
+    /// </summary>
+    [Fact]
+    public void A_short_job_name_renders_verbatim()
+    {
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "j1"),
+            [Job("j1", name: "Nightly digest")]);
+
+        Assert.Equal("Nightly digest", ActivityDashboardProjection.CronHealthLabel(row));
+    }
+
+    /// <summary>
+    /// AC6: a name over the bound is elided to exactly bound+1 characters. Asserting the exact
+    /// LENGTH rather than merely "contains an ellipsis" is what pins the bound: an implementation
+    /// emitting the whole name plus an ellipsis satisfies a contains-check while still putting an
+    /// unbounded value in the DOM, which is the defect the cap exists to prevent.
+    /// </summary>
+    [Fact]
+    public void A_job_name_over_the_display_bound_is_elided()
+    {
+        var name = new string('n', ActivityDashboardProjection.CronNameDisplayLength + 25);
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "j1"),
+            [Job("j1", name: name)]);
+
+        var label = ActivityDashboardProjection.CronHealthLabel(row);
+
+        Assert.NotNull(label);
+        Assert.Equal(ActivityDashboardProjection.CronNameDisplayLength + 1, label!.Length);
+        Assert.EndsWith("\u2026", label, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AC7: a resolved job with no name yields a null label, so the row falls back to the pre-#3421
+    /// raw-id rendering rather than emitting an empty element where the attribution used to be.
+    /// </summary>
+    [Fact]
+    public void A_resolved_job_with_no_name_yields_a_null_label()
+    {
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "j1"),
+            [Job("j1", name: "")]);
+
+        Assert.NotNull(row.CronHealth);
+        Assert.Null(ActivityDashboardProjection.CronHealthLabel(row));
+    }
+
+    /// <summary>
+    /// Resolving the id to a name must not LOSE the id: the id is what a reader needs to search the
+    /// cron store with, and it stays on the row (and therefore reachable in the tooltip) regardless.
+    /// </summary>
+    [Fact]
+    public void Resolving_a_job_name_does_not_discard_the_source_id()
+    {
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "j1"),
+            [Job("j1", name: "Nightly digest")]);
+
+        Assert.Equal("j1", row.SourceId);
+        Assert.Equal("j1", ActivityDashboardProjection.SourceLabel(row));
+    }
+
+    /// <summary>
+    /// Cron health is per-row context and contributes to no count, so widening the row must leave
+    /// the summary strip byte-identical. Pins the deliberate non-change rather than assuming it.
+    /// </summary>
+    [Fact]
+    public void Cron_health_does_not_affect_the_summary_strip()
+    {
+        var conv = Conv("c1", source: "Cron", sourceId: "j1");
+        var filter = new ActivityDashboardFilter(IncludeCron: true);
+
+        var without = ActivityDashboardProjection.Summarize(
+            ActivityDashboardProjection.Project([conv], filter, Now));
+        var with = ActivityDashboardProjection.Summarize(
+            ActivityDashboardProjection.Project(
+                [conv], filter, Now, ActivityDashboardProjection.CronHealthById([Job("j1")])));
+
+        Assert.Equal(without, with);
+    }
 }

@@ -5816,6 +5816,37 @@ h3.conversation-title.editable:hover {
     opacity: 0.75;
 }
 
+/* #3421: last-run health of the cron job that minted the row. A dot rather than another badge -
+   it QUALIFIES the attribution immediately before it rather than classifying the row, and the badge
+   row already carries origin, read-only and pin. Colour is the only channel here, so the element
+   also carries title + aria-label text: a colour-only signal is unreadable to a screen reader and
+   to a colour-blind reader, and "this job has been failing for four days" must not be either. */
+.activity-cron-health {
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-left: 0.3rem;
+    border-radius: 50%;
+    vertical-align: middle;
+    background: var(--text-muted, #888);
+}
+
+.activity-cron-health--ok {
+    background: var(--success, #3fb950);
+}
+
+.activity-cron-health--failed {
+    background: var(--danger, #f85149);
+}
+
+/* Unknown is deliberately NOT green. An unrecognised status from a newer gateway means "we cannot
+   tell", and rendering that as healthy is exactly the silent-failure this feature exists to end. */
+.activity-cron-health--unknown {
+    background: var(--text-muted, #888);
+    opacity: 0.6;
+}
+
 /* #3204: the author's stated purpose for the conversation. Deliberately NOT a .activity-badge and
    not monospace like .activity-source-id - this is prose written to be read, not a category to be
    scanned nor a literal to be copied. It takes a full-width flex row of its own so it can never

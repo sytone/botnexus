@@ -175,7 +175,16 @@ public sealed class CopilotResponsesProvider : IApiProvider
                             if (json is null)
                             {
                                 if (!receivedTerminalEvent)
-                                    throw new WebSocketException("Copilot Responses WebSocket closed before a terminal response event.");
+                                {
+                                    // #3366: attribute the close instead of emitting one fixed message for
+                                    // every cause. A 1009 and a 1011 must not read identically in the log.
+                                    var close = socket.LastClose;
+                                    var detail = close is null ? "no close frame was observed" : close.Describe();
+                                    throw new CopilotResponsesWebSocketClosedException(
+                                        close,
+                                        $"Copilot Responses WebSocket closed before a terminal response event ({detail}).");
+                                }
+
                                 return null;
                             }
 
@@ -217,7 +226,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
         catch (Exception ex) when (ex is not OperationCanceledException && !semanticOutput)
         {
             activity?.SetTag("botnexus.provider.transport.fallback", "sse");
-            activity?.SetTag("botnexus.provider.transport.fallback_reason", ex.GetType().Name);
+            activity?.SetTag("botnexus.provider.transport.fallback_reason", DescribeFallbackReason(ex));
             _logger.LogWarning(ex,
                 "Copilot Responses WebSocket failed before semantic output for {Model}; falling back to SSE", model.Id);
             await ForwardAsync(StreamSse(model, context, options), output, options?.CancellationToken ?? CancellationToken.None).ConfigureAwait(false);
@@ -234,6 +243,16 @@ public sealed class CopilotResponsesProvider : IApiProvider
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
         }
     }
+
+    /// <summary>
+    /// Describes why the WebSocket transport gave up. A server close carries its numeric close code so
+    /// telemetry can distinguish a payload-size close from a capacity or policy close (#3366); any other
+    /// failure falls back to the CLR exception type name as before.
+    /// </summary>
+    private static string DescribeFallbackReason(Exception ex)
+        => ex is CopilotResponsesWebSocketClosedException closed
+            ? $"{nameof(CopilotResponsesWebSocketClosedException)}:{closed.Close?.Code?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}"
+            : ex.GetType().Name;
 
     private static bool IsSemantic(AssistantMessageEvent evt) => evt is
         TextStartEvent or TextDeltaEvent or ThinkingStartEvent or ThinkingDeltaEvent or

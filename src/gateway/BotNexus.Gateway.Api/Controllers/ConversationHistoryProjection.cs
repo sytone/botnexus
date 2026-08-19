@@ -1,5 +1,6 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Api.Export;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -39,6 +40,18 @@ public static class ConversationHistoryProjection
 
         var allEntries = new List<ConversationHistoryEntry>();
 
+        // Per-session emission ordinal backing ConversationHistoryEntry.EntryId (#3279). Keyed by
+        // session id rather than a single running counter so an entry's id does not change when an
+        // EARLIER session in the same conversation gains or loses turns - a shared partial-range
+        // link must keep naming the same exchange.
+        var ordinals = new Dictionary<string, int>(StringComparer.Ordinal);
+        string NextEntryId(SessionId sessionId)
+        {
+            ordinals.TryGetValue(sessionId.Value, out var next);
+            ordinals[sessionId.Value] = next + 1;
+            return ExportEntryId.Build(sessionId, next);
+        }
+
         for (var i = 0; i < linkedSessions.Count; i++)
         {
             var session = linkedSessions[i];
@@ -50,6 +63,7 @@ public static class ConversationHistoryProjection
                 allEntries.Add(new ConversationHistoryEntry
                 {
                     Kind = "boundary",
+                    EntryId = NextEntryId(previousSession.SessionId),
                     SessionId = previousSession.SessionId.Value,
                     AgentId = previousSession.AgentId.Value,
                     Timestamp = previousSession.UpdatedAt,
@@ -99,6 +113,7 @@ public static class ConversationHistoryProjection
                     allEntries.Add(new ConversationHistoryEntry
                     {
                         Kind = "compaction",
+                        EntryId = NextEntryId(session.SessionId),
                         SessionId = session.SessionId.Value,
                         AgentId = session.AgentId.Value,
                         Timestamp = entry.Timestamp,
@@ -112,6 +127,7 @@ public static class ConversationHistoryProjection
                 allEntries.Add(new ConversationHistoryEntry
                 {
                     Kind = "message",
+                    EntryId = NextEntryId(session.SessionId),
                     SessionId = session.SessionId.Value,
                     AgentId = session.AgentId.Value,
                     Role = entry.Role.ToString().ToLowerInvariant(),

@@ -22,8 +22,9 @@ public sealed class MemorySearchTool : IAgentTool
     private readonly int _defaultTopK;
     private readonly int _maxTopK;
     private readonly ISharedMemoryStoreRegistry? _sharedRegistry;
+    private readonly IMemoryEnablementProvider? _enablement;
 
-    public MemorySearchTool(IAgentMemory agentMemory, string agentId, MemoryAgentConfig? config = null, ISharedMemoryStoreRegistry? sharedRegistry = null)
+    public MemorySearchTool(IAgentMemory agentMemory, string agentId, MemoryAgentConfig? config = null, ISharedMemoryStoreRegistry? sharedRegistry = null, IMemoryEnablementProvider? enablement = null)
     {
         _agentMemory = agentMemory ?? throw new ArgumentNullException(nameof(agentMemory));
         _agentId = string.IsNullOrWhiteSpace(agentId)
@@ -32,6 +33,7 @@ public sealed class MemorySearchTool : IAgentTool
         _defaultTopK = Math.Max(1, config?.Search?.DefaultTopK ?? 10);
         _maxTopK = Math.Max(_defaultTopK, config?.Search?.MaxTopK ?? 100);
         _sharedRegistry = sharedRegistry;
+        _enablement = enablement;
     }
 
     public string Name => "memory_search";
@@ -131,6 +133,11 @@ public sealed class MemorySearchTool : IAgentTool
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        // #3361: live revocation. Evaluated ahead of the store-specific branch as well as the
+        // own/shared scopes, so no reachable search path can outlive the disablement.
+        if (MemoryEnablementGate.Refuse(_enablement) is { } refusal)
+            return refusal;
 
         var query = ToStringValue(arguments["query"]) ?? string.Empty;
         var topK = arguments.TryGetValue("topK", out var topKValue) && topKValue is not null

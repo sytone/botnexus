@@ -4,6 +4,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Api.Models;
+using BotNexus.Gateway.Api.Workspace;
 using BotNexus.Gateway.Security;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -51,6 +52,7 @@ public sealed class WorkspaceController : ControllerBase
     private readonly IAgentRegistry _agentRegistry;
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IFileSystem _fileSystem;
+    private readonly WorkspaceTreeCache _treeCache;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WorkspaceController"/> class.
@@ -58,14 +60,20 @@ public sealed class WorkspaceController : ControllerBase
     /// <param name="agentRegistry">Agent registry used to validate known agent identifiers.</param>
     /// <param name="workspaceManager">Workspace manager used to resolve per-agent workspace roots.</param>
     /// <param name="fileSystem">Filesystem abstraction used for testable file-system reads.</param>
+    /// <param name="treeCache">
+    /// Revalidating cache for the depth-limited workspace tree (issue #3357). Optional so existing
+    /// construction sites keep working; a per-instance cache then simply never survives the request.
+    /// </param>
     public WorkspaceController(
         IAgentRegistry agentRegistry,
         IAgentWorkspaceManager workspaceManager,
-        IFileSystem fileSystem)
+        IFileSystem fileSystem,
+        WorkspaceTreeCache? treeCache = null)
     {
         _agentRegistry = agentRegistry;
         _workspaceManager = workspaceManager;
         _fileSystem = fileSystem;
+        _treeCache = treeCache ?? new WorkspaceTreeCache();
     }
 
     /// <summary>
@@ -99,8 +107,25 @@ public sealed class WorkspaceController : ControllerBase
             });
         }
 
+        // Serve the cached tree when the stamps captured during the last walk still match the
+        // filesystem. The validator is rebuilt and re-applied on every miss, so caching never
+        // short-circuits DefaultPathValidator for content that was not already vetted.
+        var cached = _treeCache.TryGet(_fileSystem, AgentId.From(agentId), depth, workspaceRoot);
+        if (cached is not null)
+        {
+            return Ok(new WorkspaceDirectoryResponse
+            {
+                Path = string.Empty,
+                DepthLimit = depth,
+                Entries = cached
+            });
+        }
+
         var validator = new DefaultPathValidator(policy: null, workspaceRoot);
-        var entries = BuildTreeEntries(workspaceRoot, workspaceRoot, validator, depth, 0);
+        var stamps = new List<WorkspaceTreeStamp>();
+        var entries = BuildTreeEntries(workspaceRoot, workspaceRoot, validator, depth, 0, stamps);
+        stamps.Add(StampDirectory(workspaceRoot));
+        _treeCache.Set(AgentId.From(agentId), depth, workspaceRoot, entries, stamps);
         return Ok(new WorkspaceDirectoryResponse
         {
             Path = string.Empty,
@@ -153,7 +178,7 @@ public sealed class WorkspaceController : ControllerBase
                 Type = "directory",
                 Path = WorkspacePathSecurity.ToWorkspaceRelativePath(_fileSystem, workspaceRoot, resolvedFinalPath),
                 DepthLimit = 0,
-                Entries = BuildTreeEntries(workspaceRoot, resolvedFinalPath, validator, depthLimit: 0, currentDepth: 0)
+                Entries = BuildTreeEntries(workspaceRoot, resolvedFinalPath, validator, depthLimit: 0, currentDepth: 0, stamps: null)
             });
         }
 
@@ -196,7 +221,8 @@ public sealed class WorkspaceController : ControllerBase
         string currentDirectory,
         DefaultPathValidator validator,
         int depthLimit,
-        int currentDepth)
+        int currentDepth,
+        List<WorkspaceTreeStamp>? stamps)
     {
         var entries = new List<WorkspaceEntryDto>();
 
@@ -229,8 +255,12 @@ public sealed class WorkspaceController : ControllerBase
             var relativePath = WorkspacePathSecurity.ToWorkspaceRelativePath(_fileSystem, workspaceRoot, entryPath);
             if (isDirectory)
             {
+                // Stamp every directory we render, whether or not we descend into it: a file added
+                // to or removed from a leaf directory bumps that directory's mtime and must
+                // invalidate the cached tree even though its children were not enumerated.
+                stamps?.Add(StampDirectory(entryPath));
                 var children = currentDepth < depthLimit
-                    ? BuildTreeEntries(workspaceRoot, entryPath, validator, depthLimit, currentDepth + 1)
+                    ? BuildTreeEntries(workspaceRoot, entryPath, validator, depthLimit, currentDepth + 1, stamps)
                     : [];
                 entries.Add(new WorkspaceEntryDto
                 {
@@ -266,6 +296,27 @@ public sealed class WorkspaceController : ControllerBase
                 continue;
             }
 
+            // File stamps carry length + mtime because an in-place edit does not touch the parent
+            // directory's mtime; without them a modified file would be served stale (AC2).
+            if (stamps is not null)
+            {
+                DateTime lastWriteUtc;
+                try
+                {
+                    lastWriteUtc = _fileSystem.FileInfo.New(entryPath).LastWriteTimeUtc;
+                }
+                catch (IOException)
+                {
+                    continue;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    continue;
+                }
+
+                stamps.Add(new WorkspaceTreeStamp(entryPath, IsDirectory: false, size, lastWriteUtc));
+            }
+
             entries.Add(new WorkspaceEntryDto
             {
                 Name = _fileSystem.Path.GetFileName(entryPath),
@@ -276,6 +327,26 @@ public sealed class WorkspaceController : ControllerBase
         }
 
         return entries;
+    }
+
+    private WorkspaceTreeStamp StampDirectory(string directoryPath)
+    {
+        DateTime lastWriteUtc;
+        try
+        {
+            lastWriteUtc = _fileSystem.DirectoryInfo.New(directoryPath).LastWriteTimeUtc;
+        }
+        catch (IOException)
+        {
+            // An unreadable timestamp must never look like a stable one, or the tree would pin.
+            lastWriteUtc = DateTime.MinValue;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            lastWriteUtc = DateTime.MinValue;
+        }
+
+        return new WorkspaceTreeStamp(directoryPath, IsDirectory: true, Length: 0, lastWriteUtc);
     }
 
     /// <summary>

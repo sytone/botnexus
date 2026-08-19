@@ -3,6 +3,7 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Memory.Models;
+using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Memory.Tools;
@@ -14,11 +15,13 @@ public sealed class MemoryGetTool : IAgentTool
 
     private readonly IMemoryStore _memoryStore;
     private readonly int _maxLimit;
+    private readonly IMemoryEnablementProvider? _enablement;
 
-    public MemoryGetTool(IMemoryStore memoryStore, int maxLimit = DefaultMaxLimit)
+    public MemoryGetTool(IMemoryStore memoryStore, int maxLimit = DefaultMaxLimit, IMemoryEnablementProvider? enablement = null)
     {
         _memoryStore = memoryStore;
         _maxLimit = Math.Max(1, maxLimit);
+        _enablement = enablement;
     }
 
     public string Name => "memory_get";
@@ -89,6 +92,11 @@ public sealed class MemoryGetTool : IAgentTool
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        // #3361: live revocation. Checked before any store access so a disabled agent makes zero
+        // calls into IMemoryStore, not merely a call whose result is discarded.
+        if (MemoryEnablementGate.Refuse(_enablement) is { } refusal)
+            return refusal;
 
         if (arguments.TryGetValue("id", out var idValue) && !string.IsNullOrWhiteSpace(ToStringValue(idValue)))
         {

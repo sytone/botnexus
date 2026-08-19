@@ -56,4 +56,12 @@ public sealed class SkillsConfig
     /// this gate is opt-in. Deleting shared skills additionally requires <see cref="AllowSkillDeletion"/>.
     /// </summary>
     public bool AllowSharedSkillManagement { get; set; }
+
+    /// <summary>
+    /// Operator-recorded acknowledgements of specific critical security-scan findings (#3355).
+    /// Each entry clears exactly one <c>skill + ruleId + relative file path</c> triple, optionally
+    /// pinned to a <c>sha256</c> of the reviewed file. This is intentionally NOT a "disable
+    /// scanning" switch: any critical finding without a matching entry still skips the skill.
+    /// </summary>
+    public List<SkillSecurityAcknowledgement>? SecurityAcknowledgements { get; set; }
 }

@@ -53,6 +53,29 @@ public static class ToolOutputBudget
         "This result succeeded but was too large to return in full - rerun with a narrower scope, paginate, or select fewer items.";
 
     /// <summary>
+    /// The name of the tool that reads a truncated payload back through its continuation handle.
+    /// </summary>
+    public const string ContinuationToolName = "tool_output_continue";
+
+    /// <summary>
+    /// The single recovery instruction that makes a truncation RECOVERABLE (issue #2760): it names
+    /// the handle, so the remaining bytes are reachable rather than lost.
+    /// </summary>
+    /// <remarks>
+    /// This supersedes narrowing as the FIRST thing the model should try. The forensics behind #2760
+    /// showed narrowing guidance alone produced identical retries, because the caller had no dial to
+    /// turn on the surface it had actually invoked; a handle is always actionable.
+    /// </remarks>
+    public static string ContinuationGuidance(string handle, long nextOffset)
+        => $"Call {ContinuationToolName} with handle=\"{handle}\" and offset={nextOffset} to retrieve the next portion.";
+
+    /// <summary>
+    /// Renders the <c>nextLink</c> line surfaced when the oversized payload carried one.
+    /// </summary>
+    public static string NextLinkNotice(string nextLink)
+        => $"[nextLink: {nextLink}]";
+
+    /// <summary>
     /// Applies the budget to a tool result, returning a bounded successful projection when the
     /// result's text content exceeds <paramref name="maxBytes"/> UTF-8 bytes.
     /// </summary>
@@ -75,6 +98,23 @@ public static class ToolOutputBudget
     /// </remarks>
     [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(result))]
     public static AgentToolResult? Apply(AgentToolResult? result, int maxBytes = DefaultMaxBytes)
+        => Apply(result, maxBytes, ToolOutputContinuationStore.Shared);
+
+    /// <summary>
+    /// Applies the budget using an explicit continuation store (issue #2760).
+    /// </summary>
+    /// <param name="result">The result produced by the tool (or by the after-tool-call hook).</param>
+    /// <param name="maxBytes">The UTF-8 byte budget. Zero or negative disables the cap.</param>
+    /// <param name="continuationStore">
+    /// Where the full payload is retained so the truncated projection can carry a handle. A null
+    /// store degrades to the pre-#2760 behaviour - truncation with narrowing guidance only - rather
+    /// than throwing, because a missing recovery aid must never be worse than no cap at all.
+    /// </param>
+    [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(result))]
+    public static AgentToolResult? Apply(
+        AgentToolResult? result,
+        int maxBytes,
+        ToolOutputContinuationStore? continuationStore)
     {
         if (result is null || maxBytes <= 0 || result.Content.Count == 0)
         {
@@ -98,6 +138,7 @@ public static class ToolOutputBudget
         var bounded = new List<AgentToolContent>(result.Content.Count + 1);
         var remaining = maxBytes;
         var omittedBytes = 0L;
+        var fullText = new StringBuilder();
 
         foreach (var block in result.Content)
         {
@@ -106,6 +147,8 @@ public static class ToolOutputBudget
                 bounded.Add(block);
                 continue;
             }
+
+            fullText.Append(block.Value);
 
             var blockBytes = Encoding.UTF8.GetByteCount(block.Value);
             if (blockBytes <= remaining)
@@ -125,12 +168,75 @@ public static class ToolOutputBudget
             remaining = 0;
         }
 
-        bounded.Add(new AgentToolContent(
-            AgentToolContentType.Text,
-            $"[tool output truncated: {omittedBytes} bytes omitted of {totalTextBytes} total] {NarrowingGuidance}"));
+        var complete = fullText.ToString();
+        var retainedTotalBytes = totalTextBytes - omittedBytes;
+
+        var marker = new StringBuilder()
+            .Append($"[tool output truncated: {omittedBytes} bytes omitted of {totalTextBytes} total] ")
+            .Append(NarrowingGuidance);
+
+        // The nextLink is the one field that makes an oversized upstream page recoverable at the
+        // SOURCE rather than merely re-readable from our buffer, so it is surfaced even though the
+        // body carrying it was cut (AC4).
+        var nextLink = TryExtractNextLink(complete);
+        if (nextLink is not null)
+        {
+            marker.Append(' ').Append(NextLinkNotice(nextLink));
+        }
+
+        if (continuationStore is not null)
+        {
+            var handle = continuationStore.Store(complete);
+            marker.Append(' ').Append(ContinuationGuidance(handle, retainedTotalBytes));
+        }
+
+        bounded.Add(new AgentToolContent(AgentToolContentType.Text, marker.ToString()));
 
         return result with { Content = bounded };
     }
+
+    /// <summary>
+    /// Extracts an OData/Graph <c>nextLink</c> value from a payload, if one is present.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a textual scan rather than a JSON parse: the payload reaching this seam is
+    /// oversized by definition and may be NDJSON, a partial body, or not JSON at all, so parsing
+    /// would fail on exactly the inputs that need the link most. A scan that finds nothing simply
+    /// omits the line.
+    /// </remarks>
+    internal static string? TryExtractNextLink(string text)
+    {
+        foreach (var key in NextLinkKeys)
+        {
+            var index = text.IndexOf(key, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+            {
+                continue;
+            }
+
+            var cursor = index + key.Length;
+            while (cursor < text.Length && (text[cursor] is ' ' or ':' or '"' or '\t'))
+            {
+                cursor++;
+            }
+
+            var end = cursor;
+            while (end < text.Length && text[end] is not ('"' or '\n' or '\r'))
+            {
+                end++;
+            }
+
+            var value = text[cursor..end].Trim();
+            if (value.Length > 0)
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static readonly string[] NextLinkKeys = ["\"@odata.nextLink\"", "\"nextLink\""];
 
     /// <summary>
     /// Returns the longest prefix of <paramref name="value"/> that fits in

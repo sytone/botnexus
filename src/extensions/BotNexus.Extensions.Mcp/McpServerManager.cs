@@ -186,6 +186,51 @@ public sealed class McpServerManager : IAsyncDisposable
     }
 
     /// <summary>
+    /// Gracefully stops and drops the connections whose server id satisfies <paramref name="predicate"/>.
+    /// </summary>
+    /// <remarks>
+    /// Selective teardown exists so an owner that registered a subset of servers - a plugin, for
+    /// instance - can retire exactly its own without stopping servers it does not own. Matching is
+    /// by the id the client was registered under, which is the only identity the manager holds.
+    /// </remarks>
+    /// <param name="predicate">Selects server ids to stop.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The server ids that were actually stopped.</returns>
+    public async Task<IReadOnlyList<string>> StopServersAsync(
+        Func<string, bool> predicate,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+
+        List<McpClient> matched;
+        lock (_clients)
+        {
+            matched = _clients.Where(c => predicate(c.ServerId)).ToList();
+            foreach (var client in matched)
+            {
+                _clients.Remove(client);
+            }
+        }
+
+        var stopped = new List<string>(matched.Count);
+        foreach (var client in matched)
+        {
+            stopped.Add(client.ServerId);
+            try
+            {
+                await client.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best-effort cleanup — the client is already off the roster either way, so a
+                // faulting dispose must not leave a stopped server still looking registered.
+            }
+        }
+
+        return stopped;
+    }
+
+    /// <summary>
     /// Gracefully stops all MCP server connections.
     /// </summary>
     public async Task StopAllAsync(CancellationToken ct = default)

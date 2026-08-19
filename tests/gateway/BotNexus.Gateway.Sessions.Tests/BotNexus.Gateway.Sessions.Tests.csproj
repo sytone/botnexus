@@ -16,6 +16,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
+    <!-- #2836: InMemoryConversationStore is the trivial IConversationStore the home-scope tests need
+         to construct a FileSessionStore. Referencing the real one beats a hand-rolled fake that could
+         drift from the contract. -->
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Conversations\BotNexus.Gateway.Conversations.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text;
@@ -5,6 +6,7 @@ using System.Text.Json;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Copilot.Discovery;
 using BotNexus.Agent.Providers.Copilot.Responses;
+using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -182,6 +184,87 @@ public sealed class CopilotResponsesTransportTests
         result.Content.OfType<TextContent>().Single().Text.ShouldBe("hello");
     }
 
+    [Fact]
+    public async Task WebSocketCloseAfterSemanticOutput_SurfacesCloseCodeAndReason()
+    {
+        // #3366 AC2/AC4: a server close carrying 1009 + a reason must reach the surfaced failure.
+        // Semantic output already happened, so SSE replay is suppressed (AC5) and the error text is
+        // the observable channel for the close evidence.
+        var socket = new StubWebSocketTransport(messages:
+        [
+            "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}",
+            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"hello\"}"
+        ], close: new CopilotResponsesCloseFrame(1009, "request payload too large"));
+        var handler = new RecordingHandler(_ => SseResponse(FixtureEvents()));
+        var provider = new CopilotResponsesProvider(new HttpClient(handler), NullLogger<CopilotResponsesProvider>.Instance, socket);
+
+        var result = await provider.Stream(MapModel(["/responses", "ws:/responses"]), BuildContext(), Options())
+            .GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        handler.RequestCount.ShouldBe(0);
+        result.ErrorMessage.ShouldNotBeNull();
+        result.ErrorMessage!.ShouldContain("1009");
+        result.ErrorMessage!.ShouldContain("request payload too large");
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("hello");
+    }
+
+    [Fact]
+    public async Task WebSocketCloseBeforeSemanticOutput_TagsFallbackReasonWithCloseCode()
+    {
+        // #3366 AC3: the fallback reason tag must distinguish a 1008 close from any other cause,
+        // and AC5: the SSE replay still happens because no semantic output was emitted.
+        // The fallback tag is set before the SSE forward runs, so capturing the activity at START and
+        // reading its tags after the result is deterministic; ActivityStopped fires only when the
+        // provider method returns, which is AFTER the awaited result completes.
+        var activities = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == ProviderDiagnostics.Source.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStarted = activity => { lock (activities) activities.Add(activity); }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var socket = new StubWebSocketTransport(close: new CopilotResponsesCloseFrame(1008, "policy violation"));
+        var handler = new RecordingHandler(_ => SseResponse(FixtureEvents()));
+        var provider = new CopilotResponsesProvider(new HttpClient(handler), NullLogger<CopilotResponsesProvider>.Instance, socket);
+
+        var result = await provider.Stream(MapModel(["/responses", "ws:/responses"]), BuildContext(), Options())
+            .GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        handler.RequestCount.ShouldBe(1);
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("hello\n");
+        List<Activity> observed;
+        lock (activities) observed = [.. activities];
+        var reasons = observed
+            .Select(a => a.GetTagItem("botnexus.provider.transport.fallback_reason") as string)
+            .Where(value => value != null)
+            .ToList();
+        reasons.ShouldContain(value => value != null && value.Contains("1008"));
+    }
+
+    [Fact]
+    public async Task WebSocketCloseWithNoReason_StillReportsTheCloseCode()
+    {
+        // #3366: a close frame with an empty reason must still carry its numeric code, and must not
+        // fabricate a reason string.
+        var socket = new StubWebSocketTransport(messages:
+        [
+            "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}",
+            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"hello\"}"
+        ], close: new CopilotResponsesCloseFrame(1011, null));
+        var provider = new CopilotResponsesProvider(
+            new HttpClient(new RecordingHandler(_ => throw new InvalidOperationException("SSE replay must be suppressed."))),
+            NullLogger<CopilotResponsesProvider>.Instance,
+            socket);
+
+        var result = await provider.Stream(MapModel(["/responses", "ws:/responses"]), BuildContext(), Options())
+            .GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.ErrorMessage.ShouldNotBeNull();
+        result.ErrorMessage!.ShouldContain("1011");
+    }
+
     private static CopilotResponsesOptions Options() => new() { ApiKey = "test-token" };
 
     private static CopilotResponsesOptions SseOptions() => new()
@@ -291,10 +374,12 @@ public sealed class CopilotResponsesTransportTests
     private sealed class StubWebSocketTransport(
         IReadOnlyList<string>? messages = null,
         Exception? connectFailure = null,
-        Exception? receiveFailure = null) : ICopilotResponsesWebSocketTransport
+        Exception? receiveFailure = null,
+        CopilotResponsesCloseFrame? close = null) : ICopilotResponsesWebSocketTransport
     {
         private readonly Queue<string> _messages = new(messages ?? []);
         public int ConnectCount { get; private set; }
+        public CopilotResponsesCloseFrame? LastClose { get; private set; }
         public ValueTask ConnectAsync(Uri uri, IReadOnlyDictionary<string, string> headers, CancellationToken cancellationToken)
         {
             ConnectCount++;
@@ -304,7 +389,9 @@ public sealed class CopilotResponsesTransportTests
         public ValueTask<string?> ReceiveAsync(CancellationToken cancellationToken)
         {
             if (_messages.TryDequeue(out var message)) return ValueTask.FromResult<string?>(message);
-            return receiveFailure is null ? ValueTask.FromResult<string?>(null) : ValueTask.FromException<string?>(receiveFailure);
+            if (receiveFailure is not null) return ValueTask.FromException<string?>(receiveFailure);
+            LastClose = close;
+            return ValueTask.FromResult<string?>(null);
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

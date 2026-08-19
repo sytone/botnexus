@@ -13,7 +13,8 @@ This guide documents all configuration options for BotNexus. Configuration is st
 7. [Cron & Scheduling](#cron--scheduling)
 8. [Session Management](#session-management)
 9. [Security & Authentication](#security--authentication)
-10. [Complete Example](#complete-example)
+10. [Backups & Restore](#backups--restore)
+11. [Complete Example](#complete-example)
 
 ---
 
@@ -134,6 +135,16 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `readTool.largeReadThresholdBytes` | int | `20480` (20 KiB) | UTF-8 byte size above which a `read` result gets an appended size indicator naming `offset` and `limit`. Content is never truncated. `0` or less disables the indicator |
 | `readTool.elideUnchangedRereads` | bool | `true` | Whether re-reading an **unchanged** slice in the same session returns a short marker instead of the full body. The file is still read and hashed on every call, so a changed file can never take the cheap path |
 | `workspace.maxReportFileSizeBytes` | int | `524288` (512 KB) | Max bytes read from a report file for portal preview; larger files are truncated and flagged. `0` means no limit |
+| `autoUpdate.enabled` | bool | `false` | Enable background GitHub polling and the gateway self-update endpoint |
+| `autoUpdate.checkIntervalMinutes` | int | `60` | How often to poll GitHub for a new commit. Minimum `5` |
+| `autoUpdate.branch` | string | `main` | Branch tracked for new commits (owner/name default to `sytone`/`botnexus`) |
+| `autoUpdate.cliPath` | string | `null` | Absolute path to the CLI that performs the update. Required when `enabled` is true, or `update/start` returns `412` |
+| `autoUpdate.sourcePath` | string | `null` | Absolute path to the source tree, passed to the CLI as `--source`. Required when `enabled` is true |
+| `crossWorld.peers.<key>.endpoint` | string | `null` | Peer gateway base URL used for outbound cross-world relay |
+| `crossWorld.peers.<key>.apiKey` | string | `null` | Shared key presented on outbound relay calls to that peer. Secret — redacted by the config API |
+| `crossWorld.inbound.enabled` | bool | `true` | Whether the inbound cross-world relay endpoint accepts traffic |
+| `crossWorld.inbound.allowedWorlds` | array | `[]` | Source world IDs permitted to relay in. Empty allows **no** source world — it is an allow-list |
+| `crossWorld.inbound.apiKeys` | map | `{}` | Shared keys keyed by source world ID. Secret — redacted by the config API |
 
 ### Remote and mesh access
 
@@ -1025,6 +1036,42 @@ A background cleanup service expires and prunes old sessions.
   }
 }
 ```
+
+---
+
+## Backups & Restore
+
+BotNexus copies `~/.botnexus/config.json` into `~/.botnexus/backups/` before every mutation, as
+`config-{yyyyMMdd}-{HHmmss}-{reason}.json`. The newest 50 are kept and older ones are pruned.
+
+List them, with a verdict saying whether each one still loads against the current schema:
+
+```bash
+botnexus config backups list
+```
+
+```
+Id                                         Timestamp             Reason                  Size    Verdict
+config-20260102-090000-before-provider...  2026-01-02 09:00:00   before-provider-update  4821 B  valid
+config-20260101-101500-before-agent-cr...  2026-01-01 10:15:00   before-agent-create     4770 B  valid
+```
+
+Restore one. **The restore is a dry run unless you pass `--commit`:**
+
+```bash
+# Preview: validates the backup, writes nothing.
+botnexus config restore config-20260101-101500-before-agent-create
+
+# Perform it.
+botnexus config restore config-20260101-101500-before-agent-create --commit
+```
+
+The restore validates and migrates the snapshot before writing, refuses a snapshot that would not
+load, resolves any redacted `***` secrets back to the live values instead of overwriting them, and
+backs up the pre-restore document first. Copying a backup over `config.json` by hand skips all of
+that - use the command.
+
+See the [Configuration Guide](../configuration.md#backups-and-restore) for the full detail.
 
 ---
 

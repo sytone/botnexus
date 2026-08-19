@@ -45,6 +45,40 @@ public sealed record CronJob
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset? LastRunAt { get; init; }
     public DateTimeOffset? NextRunAt { get; init; }
+
+    /// <summary>
+    /// Optional job-authored floor on the next wake (#3350): the instant before which this job has
+    /// asked <b>not</b> to be woken, regardless of what its expression says.
+    ///
+    /// <para>
+    /// This exists because <see cref="NextRunAt"/> was carrying two different meanings at once -
+    /// "the expression's next occurrence, cached" and "the time this job asked to be woken" - and
+    /// the scheduler's stale-correction branch is only sound under the first. That branch pulls a
+    /// stored wake time back whenever the expression computes something sooner, which is right for
+    /// a schedule-driven job whose expression was edited and wrong for a self-paced job that
+    /// deliberately backed off. The two cases were indistinguishable to a comparison, so they are
+    /// now distinguished by a field instead of inferred.
+    /// </para>
+    /// <para>
+    /// The scheduler wakes a job at <c>max(NextRunAt, BackoffUntil)</c>. It owns
+    /// <see cref="NextRunAt"/> and may correct it freely; it <b>never</b> moves this value forward.
+    /// The floor is consumed by the run it deferred, so a spent backoff cannot be mistaken later
+    /// for a live one.
+    /// </para>
+    /// <para>
+    /// <b>Scheduler-owned runtime bookkeeping</b>, like <see cref="NextRunAt"/> and the
+    /// <c>LastRun*</c> columns: written only through <see cref="ICronStore.SetBackoffUntilAsync"/>
+    /// and never by a definition update, so a concurrent controller/tool edit round-tripping the
+    /// record cannot silently cancel a job's pacing (#2133).
+    /// </para>
+    /// <para>
+    /// <c>null</c> means <i>not paced</i> - no floor at all, which is byte-identical to the
+    /// behaviour before this column existed. A row written by an earlier build reads NULL and is
+    /// therefore scheduled exactly as it is today, the same inert-default rule as #2554 and #2634.
+    /// </para>
+    /// </summary>
+    public DateTimeOffset? BackoffUntil { get; init; }
+
     public string? LastRunStatus { get; init; }
     public string? LastRunError { get; init; }
     /// <summary>

@@ -70,6 +70,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     private readonly IMemoryStoreFactory _memoryStoreFactory;
     private readonly IAgentMemoryFactory _agentMemoryFactory;
     private readonly ISharedMemoryStoreRegistry? _sharedMemoryRegistry;
+    private readonly IAgentRegistry? _agentRegistry;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<InProcessIsolationStrategy> _logger;
 
@@ -85,7 +86,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         IAgentMemoryFactory agentMemoryFactory,
         IServiceProvider serviceProvider,
         ILogger<InProcessIsolationStrategy> logger,
-        ISharedMemoryStoreRegistry? sharedMemoryRegistry = null)
+        ISharedMemoryStoreRegistry? sharedMemoryRegistry = null,
+        IAgentRegistry? agentRegistry = null)
     {
         _llmClient = llmClient;
         _authManager = authManager;
@@ -97,6 +99,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         _memoryStoreFactory = memoryStoreFactory;
         _agentMemoryFactory = agentMemoryFactory;
         _sharedMemoryRegistry = sharedMemoryRegistry;
+        _agentRegistry = agentRegistry;
         _serviceProvider = serviceProvider;
         _logger = logger;
     }
@@ -214,9 +217,17 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // Memory tools work immediately; the store initializes in the background.
             _ = memoryStore.InitializeAsync(CancellationToken.None);
             var agentMemory = _agentMemoryFactory.Create(descriptor.AgentId.Value);
-            tools.Add(new MemorySaveTool(agentMemory, descriptor.AgentId.Value, _sharedMemoryRegistry));
-            tools.Add(new MemorySearchTool(agentMemory, descriptor.AgentId.Value, descriptor.Memory, _sharedMemoryRegistry));
-            tools.Add(new MemoryGetTool(memoryStore));
+            // #3361: registration-time gating stays the fast path - a never-enabled agent still gets
+            // no memory tools in its schema at all - but the tools now also carry a LIVE enablement
+            // check, because this handle is cached and is evicted only by explicit lifecycle events,
+            // none of which is configuration-driven. Without the second check, disabling memory for a
+            // long-lived agent would take effect at no defined time, possibly never.
+            var enablement = _agentRegistry is null
+                ? null
+                : new RegistryMemoryEnablementProvider(_agentRegistry, descriptor.AgentId);
+            tools.Add(new MemorySaveTool(agentMemory, descriptor.AgentId.Value, _sharedMemoryRegistry, enablement));
+            tools.Add(new MemorySearchTool(agentMemory, descriptor.AgentId.Value, descriptor.Memory, _sharedMemoryRegistry, enablement));
+            tools.Add(new MemoryGetTool(memoryStore, MemoryGetTool.DefaultMaxLimit, enablement));
         }
 
         // #1382 Finding 1: the per-tool availability + allowlist gates that previously issued 23

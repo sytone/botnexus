@@ -10,12 +10,13 @@ BotNexus uses a hierarchical, dictionary-based configuration model with a unifie
 4. [Project Defaults: appsettings.json](#project-defaults-appsettingsjson)
 5. [Configuration Sections](#configuration-sections)
 6. [Prompt Templates](#prompt-templates)
-7. [JSON Schema Validation](#json-schema-validation)
-8. [Hot Reload](#hot-reload)
-9. [Extension Configuration](#extension-configuration)
-10. [Environment Variable Overrides](#environment-variable-overrides)
-11. [Security Best Practices](#security-best-practices)
-12. [Examples](#examples)
+7. [Backups and restore](#backups-and-restore)
+8. [JSON Schema Validation](#json-schema-validation)
+9. [Hot Reload](#hot-reload)
+10. [Extension Configuration](#extension-configuration)
+11. [Environment Variable Overrides](#environment-variable-overrides)
+12. [Security Best Practices](#security-best-practices)
+13. [Examples](#examples)
 
 ---
 
@@ -1244,7 +1245,11 @@ An oversize result is returned as a **bounded successful projection**, never as 
 
 - the retained prefix is cut on a rune boundary, so a CJK character or an emoji surrogate pair is never sliced into replacement characters;
 - a single marker records the omitted byte count, e.g. `[tool output truncated: 43776 bytes omitted of 300000 total]`;
-- one consistent line of narrowing guidance follows it, so the model can learn exactly one recovery behaviour across every tool: rerun with a narrower scope, paginate, or select fewer items.
+- one consistent line of narrowing guidance follows it, so the model can learn exactly one recovery behaviour across every tool: rerun with a narrower scope, paginate, or select fewer items;
+- a **continuation handle** follows that, naming the `tool_output_continue` tool and the byte offset to resume from. The full payload is retained in a bounded, oldest-first-evicting in-memory store, so the omitted bytes remain reachable rather than lost (#2760). Truncation alone was not enough in practice: forensics recorded the same oversized call retried four times unchanged, because the suggested remedy named a parameter the invoked surface did not expose, whereas a handle is always actionable.
+- when the oversized payload carries an OData/Graph `@odata.nextLink`, that value is surfaced in the marker too, even though the body containing it was cut away - it is the one field that makes the page recoverable at the source.
+
+Call `tool_output_continue` with the `handle` and `offset` from the marker to page through the remainder; each response reports the next offset and whether the payload is complete. A handle that has been evicted reports itself as unknown rather than returning empty content, so "re-run the tool" and "here is nothing" never share a symbol.
 
 Image content blocks are passed through untouched - an encoded image cannot be truncated into a smaller valid image, only into a broken one.
 
@@ -1515,6 +1520,87 @@ Controls how much of a report file the gateway will read when serving it to the 
 This limit applies to the reports API only. The workspace file API
 ([`GET /api/agents/{agentId}/workspace/{path}`](./api-reference.md#agent-workspace-files)) uses a
 fixed 512 KB read cap that is not configurable.
+
+#### Gateway Self-Update (`autoUpdate`)
+
+Controls the background poller that watches a GitHub branch for new commits and the endpoints that
+act on it ([`GET /api/gateway/update/status`](./api-reference.md#gateway-self-update) and its
+`check`/`start` siblings). The whole section is **off by default**: with `enabled` false the poller
+never runs and `POST /api/gateway/update/start` refuses the request.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AutoUpdate.Enabled` | bool | `false` | Enables background GitHub polling and the self-update endpoint. |
+| `AutoUpdate.CheckIntervalMinutes` | int | `60` | How often to poll GitHub for a new commit. Minimum `5`; a smaller value is a configuration error. |
+| `AutoUpdate.RepositoryOwner` | string | `sytone` | GitHub repository owner to poll. |
+| `AutoUpdate.RepositoryName` | string | `botnexus` | GitHub repository name to poll. |
+| `AutoUpdate.Branch` | string | `main` | Branch tracked for new commits. |
+| `AutoUpdate.CliPath` | string | `null` | Absolute path to the BotNexus CLI entry point that performs the update. **Required when `Enabled` is true.** A path ending in `.dll` is launched via `dotnet`; anything else is run directly. |
+| `AutoUpdate.SourcePath` | string | `null` | Absolute path to the BotNexus source tree, passed to the CLI update command as `--source`. **Required when `Enabled` is true.** |
+| `AutoUpdate.Channel` | string | `null` | Update channel forwarded to the CLI (typically `stable`, `beta` or `dev`). Null or empty uses the CLI's own default channel. |
+| `AutoUpdate.ShutdownDelaySeconds` | int | `2` | Seconds to wait after the endpoint returns `202` before the gateway stops itself, so the response is delivered before the process exits. Minimum `1`. |
+
+`CliPath` and `SourcePath` are jointly required: with `Enabled` true and either one missing,
+`POST /api/gateway/update/start` returns `412 Precondition Failed` rather than starting a process it
+cannot complete.
+
+```json
+{
+  "gateway": {
+    "autoUpdate": {
+      "enabled": true,
+      "checkIntervalMinutes": 60,
+      "branch": "main",
+      "cliPath": "/opt/botnexus/BotNexus.Cli.dll",
+      "sourcePath": "/opt/botnexus/src"
+    }
+  }
+}
+```
+
+#### Cross-World Federation (`crossWorld`)
+
+Gateway-to-gateway federation, which is what makes an agent in one world reachable from another. The
+outbound half is the `peers` map; the inbound half is the `inbound` policy enforced by
+[`POST /api/federation/cross-world/relay`](./api-reference.md#cross-world-federation-relay).
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `CrossWorld.Peers.<key>.WorldId` | string | _(dictionary key)_ | Canonical world ID for this peer. Defaults to the map key when omitted. |
+| `CrossWorld.Peers.<key>.Endpoint` | string | `null` | Peer gateway base URL used for outbound relay calls. |
+| `CrossWorld.Peers.<key>.ApiKey` | string | `null` | Shared API key presented on outbound relay calls. Secret — redacted by the config API and the portal. |
+| `CrossWorld.Peers.<key>.Enabled` | bool | `true` | Whether this peer is used for outbound calls. |
+| `CrossWorld.Inbound.Enabled` | bool | `true` | Whether the inbound relay endpoint accepts cross-world traffic at all. |
+| `CrossWorld.Inbound.AllowedWorlds` | string[] | _(none)_ | Source world IDs permitted to relay in. **Empty means no source world is allowed** — this is an allow-list, not a deny-list, so leaving it unset accepts nothing. |
+| `CrossWorld.Inbound.ApiKeys` | map | _(none)_ | Shared API keys keyed by source world ID. Secret — redacted by the config API and the portal. |
+| `CrossWorld.Agents.<key>.WorldId` | string | `null` | World hosting an explicitly-discoverable remote agent. |
+| `CrossWorld.Agents.<key>.AgentId` | string | `null` | Remote agent ID within that world. |
+| `CrossWorld.Agents.<key>.Description` | string | `null` | Operator-facing description shown for the discovery entry. |
+
+The separate top-level `gateway.crossWorldPermissions` list is a different control: each entry names
+a `targetWorldId` plus optional `allowedAgents` and `allowInbound`/`allowOutbound` flags (both
+`true` by default), and grants communication with that world. `crossWorld` supplies the transport
+and credentials; `crossWorldPermissions` decides who may use it.
+
+```json
+{
+  "gateway": {
+    "crossWorld": {
+      "peers": {
+        "research-world": {
+          "endpoint": "https://research.example.com",
+          "apiKey": "peer-shared-key"
+        }
+      },
+      "inbound": {
+        "enabled": true,
+        "allowedWorlds": ["research-world"],
+        "apiKeys": { "research-world": "peer-shared-key" }
+      }
+    }
+  }
+}
+```
 
 #### Shell Execution Settings
 
@@ -1927,6 +2013,63 @@ This is a **direct OTLP** integration: BotNexus takes **no dependency** on any `
 
 To disable Agent 365 export again, set `agent365.enabled` back to `false` (or remove the section) - egress to Agent 365 stops immediately.
 
+
+---
+
+## Backups and restore
+
+Every mutation of `config.json` - through the CLI, the portal, or the gateway itself - first copies
+the current document into `~/.botnexus/backups/` as
+`config-{yyyyMMdd}-{HHmmss}-{reason}.json`. The trailing slug records what triggered the write
+(`before-provider-update`, `before-agent-create-larry`, ...), so a backup can be identified without
+opening it. The newest 50 are retained; older ones are pruned automatically. Backups carry the same
+owner-only file permissions as `config.json`, because a backup is a byte-for-byte copy of it,
+secrets included.
+
+### Listing backups
+
+```powershell
+botnexus config backups list
+```
+
+Each row carries the backup id, its timestamp, the trigger reason, its size, and a **verdict**
+describing whether it can still be loaded against the *current* schema:
+
+| Verdict | Meaning |
+|---|---|
+| `valid` | Parses and passes current-schema validation. Safe to restore. |
+| `needs-migration` | Written by an older build: it still uses legacy top-level keys that the loader lifts into `gateway`. Restorable - the restore migrates it before validating - but the bytes on disk are not what will be written. |
+| `unloadable` | Does not parse, or fails schema validation. **Cannot be restored.** |
+
+### Restoring a backup
+
+```powershell
+# Dry run - validates the backup and reports what would happen. Writes nothing.
+botnexus config restore config-20260101-101500-before-provider-update
+
+# Perform the restore.
+botnexus config restore config-20260101-101500-before-provider-update --commit
+```
+
+**Restore is a dry run unless you pass `--commit`.** This is the one config command whose stated
+purpose is to discard the current document, so committing is opt-in: a mistyped id gives you a
+preview rather than an overwritten config.
+
+The restore is validated, not a file copy, and that difference matters in three ways:
+
+- **A snapshot that fails validation is refused.** Nothing is written and `config.json` is left
+  byte-for-byte unchanged, so a bad backup cannot leave the gateway unable to start.
+- **Redacted secrets do not overwrite live ones.** A snapshot taken from a redacted view can contain
+  `***` placeholders; the restore resolves each one back to the value currently on disk. Copying the
+  file by hand does *not* do this and will destroy the real secret.
+- **The pre-restore document is backed up first**, tagged `before-restore-{id}`, so a restore is
+  itself undoable.
+
+> Copying a file out of `~/.botnexus/backups/` over `~/.botnexus/config.json` by hand skips all
+> three protections. Use `botnexus config restore`.
+
+Only `config.json` is covered. Sessions, the cron store, and memory are separate stores with their
+own lifecycles and are not restored by this command.
 
 ---
 

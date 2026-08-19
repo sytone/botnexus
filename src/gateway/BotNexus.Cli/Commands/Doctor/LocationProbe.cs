@@ -35,6 +35,22 @@ internal static class LocationProbe
     /// can continue with the remaining checks.
     /// </summary>
     public static async Task<LocationHealthResult> CheckLocationAsync(Location location, HttpClient httpClient, CancellationToken cancellationToken)
+        => await CheckLocationAsync(location, httpClient, worldId: null, cancellationToken);
+
+    /// <summary>
+    /// Probes a single location, additionally checking a filesystem location's world sentinel against
+    /// <paramref name="worldId"/> when one is supplied (#2836).
+    /// </summary>
+    /// <param name="worldId">
+    /// The world this process is running as, or <see langword="null"/> to skip the identity check.
+    /// Must be the single already-resolved world ID - re-deriving it here would give the identity and
+    /// the path a common failure mode, and the check would agree with itself while both were wrong.
+    /// </param>
+    public static async Task<LocationHealthResult> CheckLocationAsync(
+        Location location,
+        HttpClient httpClient,
+        string? worldId,
+        CancellationToken cancellationToken)
     {
         var target = location.Path ?? "(unset)";
         if (location.Type == LocationType.FileSystem)
@@ -42,9 +58,18 @@ internal static class LocationProbe
             if (string.IsNullOrWhiteSpace(location.Path))
                 return new LocationHealthResult(target, LocationHealthStatus.Error, "not found (path missing)");
 
-            return Directory.Exists(location.Path) || File.Exists(location.Path)
-                ? new LocationHealthResult(target, LocationHealthStatus.Healthy, "accessible")
-                : new LocationHealthResult(target, LocationHealthStatus.Error, "not found");
+            if (!Directory.Exists(location.Path) && !File.Exists(location.Path))
+                return new LocationHealthResult(target, LocationHealthStatus.Error, "not found");
+
+            // #2836: an accessible directory that belongs to ANOTHER world is the failure this probe
+            // most needs to surface. "Accessible" was previously the whole answer, which is exactly
+            // how #2819 stayed invisible - the misdirected fallback path existed and was readable, so
+            // every accessibility check passed while the data sat in the wrong home.
+            var foreignWorld = DescribeForeignWorld(location.Path, worldId);
+            if (foreignWorld is not null)
+                return new LocationHealthResult(target, LocationHealthStatus.Error, foreignWorld);
+
+            return new LocationHealthResult(target, LocationHealthStatus.Healthy, "accessible");
         }
 
         if (location.Type == LocationType.Api || location.Type == LocationType.RemoteNode)
@@ -134,6 +159,38 @@ internal static class LocationProbe
         {
             return new LocationHealthResult(connectionString, LocationHealthStatus.Warning, $"unreachable ({ex.GetType().Name})");
         }
+    }
+
+    /// <summary>
+    /// Returns a message when <paramref name="path"/> carries a world sentinel naming a different
+    /// world, otherwise <see langword="null"/>. Never throws: <c>doctor</c> reports, it does not fail
+    /// (#2836).
+    /// </summary>
+    internal static string? DescribeForeignWorld(string path, string? worldId)
+    {
+        if (string.IsNullOrWhiteSpace(worldId) || !Directory.Exists(path))
+            return null;
+
+        var sentinelPath = Path.Combine(path, WorldSentinel.FileName);
+        if (!File.Exists(sentinelPath))
+            return null;
+
+        WorldSentinelDocument? sentinel;
+        try
+        {
+            sentinel = WorldSentinel.Parse(File.ReadAllText(sentinelPath));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        // Same asymmetry as the resolver: no sentinel, or an unreadable one, presents no competing
+        // identity and is not reported as a mismatch.
+        var verdict = WorldSentinel.Classify(worldId!, sentinel, homeIsPopulated: true);
+        return verdict == WorldSentinelVerdict.Mismatch
+            ? $"wrong world (declares '{sentinel!.WorldId}', running as '{worldId}')"
+            : null;
     }
 
     private static string ParseCommand(string endpoint)

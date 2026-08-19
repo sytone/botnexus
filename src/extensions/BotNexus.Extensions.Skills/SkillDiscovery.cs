@@ -37,6 +37,12 @@ public static class SkillDiscovery
     /// an empty sequence, which is what a machine with no plugins installed yields - leaves the
     /// pre-existing three-scope resolution byte-identical.
     /// </param>
+    /// <param name="securityAcknowledgements">
+    /// Optional operator-recorded acknowledgements of specific critical scan findings (#3355).
+    /// Each entry clears exactly one <c>skill + ruleId + relative file</c> triple; any critical
+    /// finding NOT covered by an entry still skips the skill. Null or empty leaves the previous
+    /// "any critical finding blocks the skill" behaviour unchanged.
+    /// </param>
     public static IReadOnlyList<SkillDefinition> Discover(
         string? globalSkillsDir,
         string? agentSkillsDir,
@@ -44,7 +50,8 @@ public static class SkillDiscovery
         IFileSystem? fileSystem = null,
         ILogger? logger = null,
         SkillTrustMode trustMode = SkillTrustMode.Disabled,
-        IReadOnlyList<string>? pluginSkillsDirs = null)
+        IReadOnlyList<string>? pluginSkillsDirs = null,
+        IReadOnlyList<SkillSecurityAcknowledgement>? securityAcknowledgements = null)
     {
         var fs = fileSystem ?? new FileSystem();
         var skills = new Dictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
@@ -56,13 +63,13 @@ public static class SkillDiscovery
         {
             foreach (var pluginSkillsDir in pluginSkillsDirs)
             {
-                ScanDirectory(skills, pluginSkillsDir, SkillSource.Plugin, fs, logger, trustMode);
+                ScanDirectory(skills, pluginSkillsDir, SkillSource.Plugin, fs, logger, trustMode, securityAcknowledgements);
             }
         }
 
-        ScanDirectory(skills, globalSkillsDir, SkillSource.Global, fs, logger, trustMode);
-        ScanDirectory(skills, agentSkillsDir, SkillSource.Agent, fs, logger, trustMode);
-        ScanDirectory(skills, workspaceSkillsDir, SkillSource.Workspace, fs, logger, trustMode);
+        ScanDirectory(skills, globalSkillsDir, SkillSource.Global, fs, logger, trustMode, securityAcknowledgements);
+        ScanDirectory(skills, agentSkillsDir, SkillSource.Agent, fs, logger, trustMode, securityAcknowledgements);
+        ScanDirectory(skills, workspaceSkillsDir, SkillSource.Workspace, fs, logger, trustMode, securityAcknowledgements);
 
         return skills.Values.ToList();
     }
@@ -73,7 +80,8 @@ public static class SkillDiscovery
         SkillSource source,
         IFileSystem fileSystem,
         ILogger? logger,
-        SkillTrustMode trustMode)
+        SkillTrustMode trustMode,
+        IReadOnlyList<SkillSecurityAcknowledgement>? securityAcknowledgements)
     {
         if (string.IsNullOrWhiteSpace(directory) || !fileSystem.Directory.Exists(directory))
             return;
@@ -107,13 +115,19 @@ public static class SkillDiscovery
                     continue;
                 }
 
-                // Security scan: block skills with critical findings
+                // Security scan: block skills with critical findings that no operator has
+                // acknowledged. #3355 — a bare count gave the operator nothing to act on, so the
+                // outstanding findings are named individually by relative path and ruleId.
                 var scanSummary = SkillSecurityScanner.ScanDirectory(skillDir, fileSystem: fileSystem);
-                if (scanSummary.Critical > 0)
+                var outstanding = FindUnacknowledgedCriticalFindings(
+                    scanSummary, skill.Name, skillDir, fileSystem, securityAcknowledgements);
+
+                if (outstanding.Count > 0)
                 {
                     logger?.LogWarning(
-                        "Skill at '{SkillDir}' skipped: security scan found {CriticalCount} critical finding(s).",
-                        skillDir, scanSummary.Critical);
+                        "Skill at '{SkillDir}' skipped: security scan found unacknowledged critical finding(s): {Findings}. " +
+                        "Record a scoped acknowledgement (skill + ruleId + file) to load it anyway.",
+                        skillDir, string.Join("; ", outstanding));
                     continue;
                 }
 
@@ -150,6 +164,43 @@ public static class SkillDiscovery
                     skillDir, ex.Message);
             }
         }
+    }
+
+    /// <summary>
+    /// Reduces a scan summary to the critical findings the operator has NOT acknowledged,
+    /// formatted as <c>relative/path.mjs:LINE (ruleId)</c> so the log line alone is actionable.
+    /// </summary>
+    /// <remarks>
+    /// Matching is per-FINDING, never per-file and never per-skill: a second, different rule
+    /// firing in an already-acknowledged file yields a new entry here and still skips the skill.
+    /// That is the whole point of #3355 clause 3 — an acknowledgement records what a human
+    /// actually reviewed, so it must not inherit approval for something they never saw.
+    /// </remarks>
+    private static List<string> FindUnacknowledgedCriticalFindings(
+        ScanSummary scanSummary,
+        string skillName,
+        string skillDir,
+        IFileSystem fileSystem,
+        IReadOnlyList<SkillSecurityAcknowledgement>? acknowledgements)
+    {
+        var outstanding = new List<string>();
+
+        foreach (var finding in scanSummary.Findings)
+        {
+            if (finding.Severity != ScanSeverity.Critical)
+                continue;
+
+            var relative = Path.GetRelativePath(skillDir, finding.File).Replace('\\', '/');
+
+            var acknowledged = acknowledgements is { Count: > 0 }
+                && acknowledgements.Any(ack => SkillSecurityAcknowledgements.IsAcknowledged(
+                    ack, skillName, relative, finding.RuleId, fileSystem, finding.File));
+
+            if (!acknowledged)
+                outstanding.Add($"{relative}:{finding.Line} ({finding.RuleId})");
+        }
+
+        return outstanding;
     }
 
     /// <summary>

@@ -61,6 +61,65 @@ internal static class GitHubProjections
         ["url"] = Str(element, "html_url"),
     };
 
+    /// <summary>Projects a single check run from the check-runs endpoint.</summary>
+    /// <remarks>
+    /// <c>conclusion</c> is null while a run is still in flight. Keeping it null rather than
+    /// substituting "pending" preserves the distinction between "not finished" and "finished with an
+    /// unknown outcome" - collapsing them is how a caller concludes a red PR is merely slow.
+    /// </remarks>
+    internal static Dictionary<string, object?> CheckRun(JsonElement element) => new(StringComparer.Ordinal)
+    {
+        ["id"] = Int(element, "id"),
+        ["name"] = Str(element, "name"),
+        ["status"] = Str(element, "status"),
+        ["conclusion"] = Str(element, "conclusion"),
+        ["startedAt"] = Str(element, "started_at"),
+        ["completedAt"] = Str(element, "completed_at"),
+        ["url"] = Str(element, "html_url"),
+    };
+
+    /// <summary>Projects one changed file from the pull-request files endpoint.</summary>
+    /// <remarks>
+    /// The unified <c>patch</c> hunk is projected only when the caller asks for it. It is unbounded
+    /// text and a large PR would otherwise spend the whole transcript budget on a diff the agent
+    /// only wanted the file list from.
+    /// </remarks>
+    internal static Dictionary<string, object?> PullRequestFile(JsonElement element, bool includePatch)
+    {
+        var projected = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["path"] = Str(element, "filename"),
+            ["status"] = Str(element, "status"),
+            ["additions"] = Int(element, "additions"),
+            ["deletions"] = Int(element, "deletions"),
+            ["changes"] = Int(element, "changes"),
+            ["previousPath"] = Str(element, "previous_filename"),
+        };
+
+        if (includePatch)
+            projected["patch"] = Str(element, "patch");
+
+        return projected;
+    }
+
+    /// <summary>Projects one workflow run.</summary>
+    internal static Dictionary<string, object?> WorkflowRun(JsonElement element) => new(StringComparer.Ordinal)
+    {
+        ["id"] = Int(element, "id"),
+        ["name"] = Str(element, "name"),
+        ["workflowId"] = Int(element, "workflow_id"),
+        ["runNumber"] = Int(element, "run_number"),
+        ["attempt"] = Int(element, "run_attempt"),
+        ["event"] = Str(element, "event"),
+        ["status"] = Str(element, "status"),
+        ["conclusion"] = Str(element, "conclusion"),
+        ["branch"] = Str(element, "head_branch"),
+        ["headSha"] = Str(element, "head_sha"),
+        ["createdAt"] = Str(element, "created_at"),
+        ["updatedAt"] = Str(element, "updated_at"),
+        ["url"] = Str(element, "html_url"),
+    };
+
     private static object?[] Labels(JsonElement element)
     {
         if (element.ValueKind != JsonValueKind.Object

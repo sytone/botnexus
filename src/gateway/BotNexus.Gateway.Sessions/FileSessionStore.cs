@@ -12,6 +12,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Sessions;
@@ -89,14 +90,26 @@ public sealed class FileSessionStore : SessionStoreBase
     /// <see cref="Session.ConversationId"/> defensively at save time.
     /// </param>
     /// <param name="redactor">When provided, secrets in content are redacted before storage.</param>
+    /// <param name="home">
+    /// The already-verified BotNexus home (#2836). When supplied, the store path must live inside it;
+    /// a path outside is refused rather than created. Optional so hosts that have not opted into
+    /// world identity behave exactly as before - the same inert-by-default posture the SQLite guard
+    /// takes.
+    /// </param>
     public FileSessionStore(
         string storePath,
         ILogger<FileSessionStore> logger,
         IFileSystem fileSystem,
         IConversationStore conversationStore,
-        ISecretRedactor? redactor = null)
+        ISecretRedactor? redactor = null,
+        IVerifiedHome? home = null)
         : base(conversationStore)
     {
+        // Ordered deliberately: the containment check runs BEFORE CreateDirectory, so a store path
+        // outside the verified home leaves no directory behind. A guard that throws after scaffolding
+        // has already written into the world it was refusing (#2836 AC5).
+        HomeScope.EnsureWithin(home, storePath);
+
         _storePath = storePath;
         _logger = logger;
         _fileSystem = fileSystem;

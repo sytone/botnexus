@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Channels;
 using BotNexus.Extensions.Mcp.Protocol;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Extensions.Mcp.Transport;
 
@@ -21,6 +23,25 @@ public sealed class HttpSseMcpTransport : IMcpTransport
     /// <summary>Ceiling for SSE reconnect backoff, in milliseconds.</summary>
     private const double MaxReconnectDelayMs = 30_000;
 
+    /// <summary>
+    /// Capacity of the inbound response buffer (#3400).
+    /// <para>
+    /// The SSE pump writes every inbound frame, but the correlator reads exactly ONE frame per
+    /// outbound request, so anything unmatched - a server-initiated notification, a duplicate, a
+    /// late reply to a call that already timed out - was retained for the life of the transport.
+    /// With an unbounded channel that is a remote-input-driven managed-heap growth path: a chatty
+    /// or hostile MCP endpoint can grow the gateway heap monotonically until dispose.
+    /// </para>
+    /// <para>
+    /// 256 is deliberately far above any legitimate in-flight depth (the client issues one request
+    /// at a time per transport) while still being a hard ceiling. The overflow policy is
+    /// <see cref="BoundedChannelFullMode.DropOldest"/>: the NEWEST response is the one a waiting
+    /// caller is most likely to be correlating, and a stale unmatched frame is by definition the
+    /// one nobody is waiting for. Drops are never silent - see <see cref="OnResponseDropped"/>.
+    /// </para>
+    /// </summary>
+    internal const int ResponseChannelCapacity = 256;
+
     private readonly Uri _endpoint;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
@@ -34,8 +55,9 @@ public sealed class HttpSseMcpTransport : IMcpTransport
     private int _reinitRequestId;
     private CancellationTokenSource? _sseCts;
     private Task? _sseTask;
-    private readonly Channel<JsonRpcResponse> _responseChannel =
-        Channel.CreateUnbounded<JsonRpcResponse>(new UnboundedChannelOptions { SingleReader = false });
+    private readonly Channel<JsonRpcResponse> _responseChannel;
+    private readonly ILogger _logger;
+    private int _droppedResponses;
     private bool _connected;
     private bool _disposed;
 
@@ -47,15 +69,25 @@ public sealed class HttpSseMcpTransport : IMcpTransport
     /// <param name="httpClient">Optional pre-configured HttpClient. If null, one is created internally.</param>
     /// <param name="connectTimeout">Connection timeout. Default: 30 seconds.</param>
     /// <param name="maxReconnectAttempts">Maximum SSE reconnection attempts. Default: 3.</param>
+    /// <param name="logger">Optional logger. Used to surface response-buffer saturation (#3400).</param>
     public HttpSseMcpTransport(
         Uri endpoint,
         IReadOnlyDictionary<string, string>? headers = null,
         HttpClient? httpClient = null,
         TimeSpan? connectTimeout = null,
-        int maxReconnectAttempts = 3)
+        int maxReconnectAttempts = 3,
+        ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         _endpoint = endpoint;
+        _logger = logger ?? NullLogger.Instance;
+        _responseChannel = Channel.CreateBounded<JsonRpcResponse>(
+            new BoundedChannelOptions(ResponseChannelCapacity)
+            {
+                SingleReader = false,
+                FullMode = BoundedChannelFullMode.DropOldest,
+            },
+            OnResponseDropped);
         _headers = headers;
         _ownsHttpClient = httpClient is null;
         _httpClient = httpClient ?? CreateDefaultHttpClient();
@@ -83,6 +115,32 @@ public sealed class HttpSseMcpTransport : IMcpTransport
 
     private static HttpClient CreateDefaultHttpClient()
         => new(CreateDefaultHandler(), disposeHandler: true);
+
+    /// <summary>
+    /// Number of inbound responses evicted because the bounded buffer was saturated (#3400).
+    /// A non-zero value means the transport is receiving frames faster than the correlator
+    /// consumes them, which is itself the diagnostic signal - the drop is observable, not silent.
+    /// </summary>
+    internal int DroppedResponses => Volatile.Read(ref _droppedResponses);
+
+    /// <summary>Current depth of the bounded inbound response buffer (#3400 test seam).</summary>
+    internal int BufferedResponseCount => _responseChannel.Reader.Count;
+
+    /// <summary>
+    /// Invoked by the bounded channel for every evicted response. Emits a warning naming the
+    /// endpoint so a saturating MCP server is attributable in the gateway log rather than
+    /// silently discarded.
+    /// </summary>
+    private void OnResponseDropped(JsonRpcResponse dropped)
+    {
+        var total = Interlocked.Increment(ref _droppedResponses);
+        _logger.LogWarning(
+            "MCP response buffer saturated for {Endpoint}: dropped oldest response (id {ResponseId}); capacity {Capacity}, total dropped {TotalDropped}.",
+            _endpoint,
+            dropped.Id,
+            ResponseChannelCapacity,
+            total);
+    }
 
     /// <summary>Gets the session ID assigned by the server, if any.</summary>
     internal string? SessionId => _sessionId;

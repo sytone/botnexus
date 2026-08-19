@@ -1,8 +1,120 @@
 using System.IO.Abstractions;
 
+using BotNexus.Domain.World;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
 namespace BotNexus.Gateway.Configuration;
 
-public sealed class BotNexusHome
+/// <summary>
+/// Reads and writes the <c>world.json</c> sentinel at the root of a BotNexus home (#2836).
+/// </summary>
+/// <remarks>
+/// This is the <see cref="IFileSystem"/>-backed half of <see cref="WorldSentinel"/>: Domain owns the
+/// parsing and the comparison so every consumer reaches the same verdict, and this owns the IO so
+/// the gateway keeps its testable filesystem abstraction.
+/// </remarks>
+public static class HomeWorldSentinel
+{
+    /// <summary>The sentinel file name. Re-exported so callers need only one using.</summary>
+    public const string FileName = WorldSentinel.FileName;
+
+    /// <summary>Reads and parses a home's sentinel, or <see langword="null"/> when absent/unreadable.</summary>
+    public static WorldSentinelDocument? Read(IFileSystem fileSystem, string homePath)
+    {
+        ArgumentNullException.ThrowIfNull(fileSystem);
+        ArgumentException.ThrowIfNullOrWhiteSpace(homePath);
+
+        var path = Path.Combine(homePath, FileName);
+        if (!fileSystem.File.Exists(path))
+            return null;
+
+        try
+        {
+            return WorldSentinel.Parse(fileSystem.File.ReadAllText(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // An unreadable sentinel presents no competing identity. Treated as absent, which routes
+            // to adoption rather than refusal - see WorldSentinel.Parse for why that asymmetry is
+            // deliberate.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Classifies a home against the running world, throwing on mismatch. Performs <b>no writes</b>:
+    /// AC5 requires that a process pointed at a foreign home leaves it byte-for-byte untouched, so
+    /// verification must be strictly separable from stamping.
+    /// </summary>
+    public static WorldSentinelVerdict Verify(IFileSystem fileSystem, string homePath, string worldId)
+    {
+        var sentinel = Read(fileSystem, homePath);
+        var verdict = WorldSentinel.Classify(worldId, sentinel, IsPopulated(fileSystem, homePath));
+
+        if (verdict == WorldSentinelVerdict.Mismatch)
+            throw new HomeWorldIdentityMismatchException(worldId, sentinel!.WorldId, homePath);
+
+        return verdict;
+    }
+
+    /// <summary>
+    /// Writes the sentinel for a home that does not already carry a usable one.
+    /// </summary>
+    /// <remarks>
+    /// The skip condition is "already declares a world", not "a file exists". An existing but
+    /// unparseable sentinel must be rewritten: <see cref="WorldSentinel.Parse"/> deliberately treats
+    /// it as absent, so leaving the corrupt bytes in place would make the home permanently unstamped
+    /// while looking stamped - the guard would silently never fire for it again. A sentinel that does
+    /// name a world is never rewritten, because that would reset <c>created_at</c> and destroy the
+    /// record of when the home was created.
+    /// </remarks>
+    public static void Stamp(IFileSystem fileSystem, string homePath, string worldId)
+    {
+        var path = Path.Combine(homePath, FileName);
+        if (Read(fileSystem, homePath) is not null)
+            return;
+
+        try
+        {
+            fileSystem.Directory.CreateDirectory(homePath);
+            fileSystem.File.WriteAllText(
+                path,
+                WorldSentinel.Serialize(worldId, ResolveVersion()));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Two legitimate cases, neither of which may fail a start: a read-only home mount
+            // (Docker :ro), and a first-start race where the gateway, the CLI and cron all stamp the
+            // same fresh home at once. The loser of that race sees the winner's file - which names
+            // the same world - so the identity is still correct; only the timestamp's owner differs.
+        }
+    }
+
+    private static bool IsPopulated(IFileSystem fileSystem, string homePath)
+    {
+        if (!fileSystem.Directory.Exists(homePath))
+            return false;
+
+        try
+        {
+            return fileSystem.Directory
+                .EnumerateFileSystemEntries(homePath)
+                .Any(entry => !string.Equals(Path.GetFileName(entry), FileName, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Cannot prove it is empty, so assume it is not: adoption warns, and a spurious warning is
+            // strictly safer than silently absorbing populated state.
+            return true;
+        }
+    }
+
+    private static string ResolveVersion()
+        => typeof(HomeWorldSentinel).Assembly.GetName().Version?.ToString() ?? "unknown";
+}
+
+public sealed class BotNexusHome : IVerifiedHome
 {
     public const string HomeOverrideEnvVar = "BOTNEXUS_HOME";
     public const string DataDirOverrideEnvVar = "BOTNEXUS_DATA_DIR";
@@ -35,12 +147,43 @@ public sealed class BotNexusHome
     ];
 
     private readonly IFileSystem _fileSystem;
+    private readonly string? _worldId;
+    private readonly ILogger _logger;
+    private readonly WorldSentinelVerdict _verdict;
+    private int _adoptionWarned;
 
-    public BotNexusHome(IFileSystem fileSystem, string? homePath = null, string? dataPath = null)
+    /// <summary>
+    /// Resolves a home and, when a world identity is supplied, verifies the home's sentinel against
+    /// it (#2836).
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why verification happens in the constructor.</b> Every file-backed store derives its
+    /// path from this object. Verifying here means the mismatch is detected before any consumer can
+    /// hold a path into the wrong world, and - because <see cref="HomeWorldSentinel.Verify"/> writes
+    /// nothing - a refused home is left untouched on disk (AC5).</para>
+    /// <para><b>Why <paramref name="worldId"/> is optional.</b> The guard is inert when no identity is
+    /// configured, matching <c>SqliteStoreIdentityGuard</c>: tests, tools and hosts that have not
+    /// opted in behave exactly as before. Verification is only meaningful once the process can state
+    /// which world it is. The value must be the single already-resolved <c>WorldId</c>, never
+    /// re-derived here - a second derivation would fail identically in both the identity and the path,
+    /// and the guard would pass over wrong data (#2834).</para>
+    /// </remarks>
+    public BotNexusHome(
+        IFileSystem fileSystem,
+        string? homePath = null,
+        string? dataPath = null,
+        string? worldId = null,
+        ILogger? logger = null)
     {
         _fileSystem = fileSystem;
+        _logger = logger ?? NullLogger.Instance;
+        _worldId = string.IsNullOrWhiteSpace(worldId) ? null : worldId;
         RootPath = ResolveHomePath(homePath);
         DataPath = ResolveDataPath(dataPath) ?? RootPath;
+
+        _verdict = _worldId is null
+            ? WorldSentinelVerdict.Match
+            : HomeWorldSentinel.Verify(_fileSystem, RootPath, _worldId);
     }
 
     public BotNexusHome(string? homePath = null)
@@ -61,6 +204,12 @@ public sealed class BotNexusHome
     public string DataPath { get; }
 
     public string AgentsPath => Path.Combine(DataPath, "agents");
+
+    /// <summary>
+    /// The world this home was verified against, or <see langword="null"/> when no identity was
+    /// supplied and the sentinel guard is inert (#2836).
+    /// </summary>
+    public string? WorldId => _worldId;
 
     public static string ResolveHomePath(string? homePath = null)
     {
@@ -124,6 +273,36 @@ public sealed class BotNexusHome
         {
             try { _fileSystem.Directory.CreateDirectory(RootPath); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* read-only — skip */ }
+        }
+
+        StampWorldSentinel();
+    }
+
+    /// <summary>
+    /// Stamps the home's world sentinel when the constructor's verdict calls for it, warning once for
+    /// an adoption (#2836).
+    /// </summary>
+    /// <remarks>
+    /// The warning latch is per-instance rather than process-wide on purpose: <see cref="Initialize"/>
+    /// is re-entered by <see cref="GetAgentDirectory"/> on every call, so an unlatched warning would
+    /// fire once per agent directory and train operators to ignore the one message that means their
+    /// data is in the wrong place.
+    /// </remarks>
+    private void StampWorldSentinel()
+    {
+        if (_worldId is null || _verdict == WorldSentinelVerdict.Match)
+            return;
+
+        HomeWorldSentinel.Stamp(_fileSystem, RootPath, _worldId);
+
+        if (_verdict == WorldSentinelVerdict.Adopt
+            && Interlocked.Exchange(ref _adoptionWarned, 1) == 0)
+        {
+            _logger.LogWarning(
+                "Adopted unstamped BotNexus home '{HomePath}' into world {WorldId}. The home predates " +
+                "world-identity stamping; if this path is not this world's data, stop the process now.",
+                RootPath,
+                _worldId);
         }
     }
 

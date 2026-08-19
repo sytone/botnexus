@@ -118,6 +118,19 @@ internal sealed class OutboundResponseDeliverer(
                 ChannelAddress = binding.ChannelAddress,
                 Content = content,
                 SessionId = sessionId.Value,
+                // #3181: stamp the conversation this fan-out belongs to. Without it every
+                // envelope reached the adapter with ConversationId unset, so the Service Bus
+                // #2815 validity guard fell through its precedence chain to ChannelAddress -
+                // the AGENT ID for a gateway-created binding - and correctly refused to emit
+                // a message certain to dead-letter. The conversation was already in hand as a
+                // parameter; it was simply never wired onto the message.
+                //
+                // Null (not string.Empty) when uninitialized: OutboundMessage.ConversationId
+                // is an opt-in routing key whose consumers test `is { Length: > 0 }`, so an
+                // empty string would be an indistinguishable-but-present value that defeats
+                // that check. Calling .Value on a default-constructed Vogen struct throws,
+                // so the guard is load-bearing rather than defensive tidiness.
+                ConversationId = conversationId.IsInitialized() ? conversationId.Value : null,
                 // Binding-aware fields: let the adapter render prefix decoration when
                 // configured. Native sub-addresses (e.g. Telegram forum topics) are
                 // already encoded in ChannelAddress by the originating adapter.

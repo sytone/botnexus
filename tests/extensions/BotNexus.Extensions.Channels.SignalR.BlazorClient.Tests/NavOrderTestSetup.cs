@@ -39,7 +39,8 @@ internal static class NavOrderTestSetup
               { "key": "configuration", "order": 40 },
               { "key": "skills", "order": 50 },
               { "key": "agents", "order": 60 },
-              { "key": "cron", "order": 70 }
+              { "key": "cron", "order": 70 },
+              { "key": "plugins", "order": 80 }
             ]
             """;
 

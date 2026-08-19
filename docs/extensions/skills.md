@@ -156,6 +156,67 @@ These flags live in the agent extension config under `botnexus-skills`:
 | `AllowSkillDeletion` | `true` | Allows `delete` and `remove_file`. |
 | `AllowSharedSkillManagement` | `false` | Allows writing to the global all-agent skills dir via `scope: shared`. Wide blast radius -- opt-in. |
 
+## Security scanning and scoped acknowledgements
+
+Every skill directory is scanned at discovery time by `SkillSecurityScanner`. A skill with **any
+critical finding is skipped** — it never reaches any agent. That is the right default, but many
+legitimate skills exist precisely to shell out (`child_process`) or to read `process.env` in order
+to authenticate an HTTP call, and both of those are critical rules (`dangerous-exec`,
+`env-harvesting`).
+
+### The skip warning names the findings
+
+The discovery warning identifies each outstanding finding by **relative path, line and ruleId**, so
+the log line alone is actionable:
+
+```text
+[WRN] Skill at '<skills-root>/teamnexus' skipped: security scan found
+      unacknowledged critical finding(s): scripts/node/connect-board.mjs:12 (dangerous-exec);
+      scripts/node/msconnect.mjs:41 (env-harvesting).
+      Record a scoped acknowledgement (skill + ruleId + file) to load it anyway.
+```
+
+### Acknowledging a reviewed finding
+
+An operator who has read the flagged code and accepts it records an acknowledgement in the agent's
+`botnexus-skills` extension config. Each entry clears **exactly one** finding:
+
+```json
+{
+  "botnexus-skills": {
+    "securityAcknowledgements": [
+      {
+        "skill": "teamnexus",
+        "ruleId": "dangerous-exec",
+        "file": "scripts/node/connect-board.mjs",
+        "reason": "Skill exists to drive the board CLI; reviewed 2026-08-18.",
+        "sha256": "9f2b..."
+      }
+    ]
+  }
+}
+```
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `skill` | yes | Skill directory name. Case-insensitive. |
+| `ruleId` | yes | The scanner rule that was reviewed, e.g. `dangerous-exec`. |
+| `file` | yes | Path of the reviewed file **relative to the skill directory**. Either slash style. |
+| `sha256` | no | Hex SHA-256 of the reviewed file content. When present, the acknowledgement stops applying the moment the file changes. |
+| `reason` | no | Operator justification. Carried for audit; never matched on. |
+
+**This is not a "disable scanning" switch, by design:**
+
+- It is scoped to one `skill + ruleId + file` triple. An acknowledgement for `dangerous-exec` in
+  one file says nothing about `dangerous-exec` in another file, or about any other rule.
+- It does **not widen**. If the acknowledged file is later edited so that a *new* critical rule
+  fires, that new finding is unacknowledged and the skill is skipped again — with the new finding
+  named in the warning.
+- Adding `sha256` pins the approval to the exact content that was reviewed, so any edit at all to
+  that file revokes the acknowledgement until a human looks again.
+
+Warn- and info-severity findings never blocked discovery and are unaffected.
+
 ## Skill Directory Structure
 
 Each skill follows the [Agent Skills specification](https://agentskills.io/specification):

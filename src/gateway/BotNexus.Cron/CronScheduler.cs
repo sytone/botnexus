@@ -351,18 +351,39 @@ public sealed class CronScheduler(
                 continue;
             }
 
-            // Detect stale NextRunAt: if the schedule was changed to fire sooner
-            // than the stored value, correct it so the job isn't stuck waiting on
-            // a NextRunAt that no longer matches the current schedule.
-            if (computedNext is not null && computedNext < job.NextRunAt)
+            // Detect stale NextRunAt: if the schedule was changed to fire sooner than the stored
+            // value, correct it so the job isn't stuck waiting on a NextRunAt that no longer
+            // matches the current schedule.
+            //
+            // #3350: this correction is sound ONLY under the reading "NextRunAt is the expression's
+            // next occurrence, cached". It is unsound under the other reading the field used to
+            // carry - "the time this job asked to be woken" - because a job that deliberately backs
+            // off writes a LATER value on purpose, and "computed is sooner than stored" cannot tell
+            // a deliberate deferral from a stale cache. The two meanings now live in two fields:
+            // NextRunAt is the cache and is corrected freely here; BackoffUntil is the job-authored
+            // floor and is never moved forward by the scheduler.
+            var correctedNextRun = job.NextRunAt.Value;
+            if (computedNext is not null && computedNext < correctedNextRun)
             {
-                await _cronStore.SetNextRunAtAsync(job.Id, computedNext, ct).ConfigureAwait(false);
-                if (computedNext > now)
-                    continue;
+                correctedNextRun = computedNext.Value;
+                await _cronStore.SetNextRunAtAsync(job.Id, correctedNextRun, ct).ConfigureAwait(false);
             }
 
-            if (job.NextRunAt > now)
+            // The effective wake is the LATER of the corrected cache and the job's own floor, so a
+            // correction can pull the cache back without pulling the job's requested pacing back
+            // with it. With no backoff - the overwhelmingly common case, and every row written
+            // before #3350 - this is exactly the pre-existing computation.
+            var effectiveNextRun = job.BackoffUntil is { } floor && floor > correctedNextRun
+                ? floor
+                : correctedNextRun;
+
+            if (effectiveNextRun > now)
                 continue;
+
+            // The floor is consumed by the run it deferred: a spent backoff left in place would be
+            // indistinguishable to a later reader from a live one.
+            if (job.BackoffUntil is not null)
+                await _cronStore.SetBackoffUntilAsync(job.Id, null, ct).ConfigureAwait(false);
 
             dueJobs.Add((job, expression));
         }

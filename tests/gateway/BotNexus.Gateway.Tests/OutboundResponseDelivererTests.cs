@@ -322,6 +322,100 @@ public sealed class OutboundResponseDelivererTests
         OutboundResponseDeliverer.IsNonDeliverableChannel(ChannelKey.From("slack")).ShouldBeFalse();
     }
 
+    // ── #3181: fan-out must stamp the conversation onto the envelope ──────────
+    // DeliverToBindingAsync always received a ConversationId parameter but never assigned it,
+    // so every fan-out envelope reached the adapter with ConversationId unset. On Service Bus
+    // the #2815 validity guard then fell through its precedence chain to ChannelAddress -
+    // the agent id for a gateway-created binding - and correctly refused to emit.
+
+    /// <summary>
+    /// AC2: drives a fan-out to a gateway-created binding whose ChannelAddress is the AGENT ID
+    /// (exactly the shape the Service Bus refusals were logged against) and asserts the envelope
+    /// carries the conversation. This is the clause that reddens when the AC1 assignment is
+    /// reverted: with ConversationId unset the adapter's precedence chain reaches its
+    /// ChannelAddress fallback, which is 'keel' - a known agent id, not a wire destination.
+    /// </summary>
+    [Fact]
+    public async Task FanOutAsync_StampsConversationId_SoAdapterNeverFallsBackToChannelAddress()
+    {
+        // The real-world shape: a gateway-created binding addressed by agent id.
+        const string AgentIdAddress = "keel";
+        const string ExternalConversation = "19:meeting_abcd1234@thread.v2";
+        var binding = Binding("bind-sb", "servicebus", AgentIdAddress);
+
+        var router = new Mock<IConversationRouter>();
+        router.Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([binding]);
+
+        var adapter = Adapter("servicebus");
+        var sent = new List<OutboundMessage>();
+        adapter.Setup(a => a.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<OutboundMessage, CancellationToken>((m, _) => sent.Add(m)).Returns(Task.CompletedTask);
+
+        var deliverer = CreateDeliverer(router.Object, ChannelManager(adapter).Object);
+
+        await deliverer.FanOutAsync(
+            SourceMessage(), SessionId.From(SessionIdStr), "reply text",
+            ConversationId.From(ExternalConversation), CancellationToken.None);
+
+        var envelope = sent.ShouldHaveSingleItem();
+        // The load-bearing clause: the conversation the fan-out belongs to is on the envelope.
+        envelope.ConversationId.ShouldBe(ExternalConversation);
+        // And it is genuinely non-empty, so ResolveOutboundConversationIdCore resolves at step 1
+        // ("the producing session's own destination always wins") and never reaches step 4.
+        envelope.ConversationId.ShouldNotBeNullOrWhiteSpace();
+        // Non-vacuity: the address really is the agent id, so a fallback to ChannelAddress would
+        // be the refused value. Without this the assertion above could pass trivially.
+        envelope.ChannelAddress.Value.ShouldBe(AgentIdAddress);
+        envelope.ConversationId.ShouldNotBe(envelope.ChannelAddress.Value);
+    }
+
+    /// <summary>
+    /// AC4: an uninitialised ConversationId must NOT produce an envelope carrying an empty or
+    /// default value. Null is the explicit, tested outcome - consumers test
+    /// <c>is { Length: &gt; 0 }</c>, so <c>string.Empty</c> would be a present-but-meaningless
+    /// value that silently defeats that check instead of falling back cleanly.
+    /// </summary>
+    [Fact]
+    public async Task FanOutAsync_UninitializedConversationId_LeavesEnvelopeConversationIdNull()
+    {
+        var binding = Binding("bind-uninit", "telegram", "chat-uninit");
+
+        var router = new Mock<IConversationRouter>();
+        router.Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([binding]);
+
+        var adapter = Adapter("telegram");
+        var sent = new List<OutboundMessage>();
+        adapter.Setup(a => a.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<OutboundMessage, CancellationToken>((m, _) => sent.Add(m)).Returns(Task.CompletedTask);
+
+        var deliverer = CreateDeliverer(router.Object, ChannelManager(adapter).Object);
+
+        // The Vogen "unset" sentinel. Calling .Value on it throws, so an unguarded assignment
+        // would fail the fan-out entirely rather than deliver.
+        await deliverer.FanOutAsync(
+            SourceMessage(), SessionId.From(SessionIdStr), "reply text",
+            UninitialisedConversationId(), CancellationToken.None);
+
+        var envelope = sent.ShouldHaveSingleItem();
+        envelope.ConversationId.ShouldBeNull();
+        // Delivery still happens - an unset conversation degrades to the prior behaviour
+        // (adapters fall back to SessionId), it does not drop the message.
+        envelope.Content.ShouldBe("reply text");
+        envelope.SessionId.ShouldBe(SessionIdStr);
+    }
+
+    // Vogen prohibits writing `default(ConversationId)` directly (VOG009), but a zero-initialised
+    // ARRAY slot of that type still yields the uninitialised sentinel - which is exactly how one
+    // reaches production (an unbacked Session.ConversationId before the store backfills it).
+    // Producing it this way is the honest reproduction, not a workaround for the analyzer.
+    private static ConversationId UninitialisedConversationId()
+    {
+        var slot = new ConversationId[1];
+        return slot[0];
+    }
+
     /// <summary>
     /// Minimal <see cref="ILogger{T}"/> that records rendered messages per level, so a test can
     /// assert on the ABSENCE of a warning - something <see cref="NullLogger{T}"/> cannot express.

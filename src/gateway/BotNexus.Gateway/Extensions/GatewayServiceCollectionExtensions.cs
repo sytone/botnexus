@@ -194,7 +194,10 @@ public static class GatewayServiceCollectionExtensions
             new CrossWorldChannelAdapter(
                 serviceProvider.GetRequiredService<ILogger<CrossWorldChannelAdapter>>(),
                 serviceProvider.GetService<HttpClient>() ?? new HttpClient(),
-                serviceProvider.GetService<CrossWorldChannelOptions>()));
+                serviceProvider.GetService<CrossWorldChannelOptions>(),
+                // #3399: without this the relay error path falls back to the null no-op redactor and
+                // a peer world reflecting X-Cross-World-Key into its error page leaks the shared key.
+                serviceProvider.GetService<ISecretRedactor>()));
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<CrossWorldChannelAdapter>());
         services.AddSingleton<ISubAgentManager, DefaultSubAgentManager>();
         services.TryAddSingleton<SessionLifecycleEvents>();

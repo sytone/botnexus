@@ -33,7 +33,7 @@ public static class ExportMarkdownRenderer
         ArgumentNullException.ThrowIfNull(document);
 
         var sb = new StringBuilder();
-        var heading = document.Scope == ExportScope.Conversation ? "Conversation Transcript" : "Session Transcript";
+        var heading = ExportHeading.For(document.Scope);
         sb.AppendLine($"# {heading}");
         sb.AppendLine();
 
@@ -81,6 +81,18 @@ public static class ExportMarkdownRenderer
         sb.AppendLine($"- **Messages:** {document.MessageCount}");
         sb.AppendLine($"- **Tool calls:** {document.ToolCallCount}");
         sb.AppendLine($"- **Exported:** {document.GeneratedAt:yyyy-MM-dd HH:mm:ss} UTC");
+
+        // #3279 AC3: the omission note is rendered immediately after the totals, not buried at the
+        // foot of the file, because the totals directly above it are range totals and a reader must
+        // learn that before drawing any conclusion from them.
+        if (document.Range is { } range)
+        {
+            sb.AppendLine($"- **Scope:** excerpt");
+            sb.AppendLine($"- **Range:** `{range.FirstEntryId}` to `{range.LastEntryId}`");
+            sb.AppendLine($"- **Entries omitted:** {document.OmittedEntryCount}");
+            sb.AppendLine();
+            sb.AppendLine($"> **Note:** {document.OmissionNote}");
+        }
 
         if (!string.IsNullOrWhiteSpace(document.Instructions))
         {

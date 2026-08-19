@@ -67,6 +67,9 @@ public sealed class GitHubToolsContributor : IAgentToolContributor
             new GitHubIssueCommentTool(api, config),
             new GitHubPullRequestGetTool(api, config),
             new GitHubPullRequestListTool(api, config),
+            new GitHubPullRequestChecksTool(api, config),
+            new GitHubPullRequestDiffTool(api, config),
+            new GitHubWorkflowRunsTool(api, config),
             new GitHubApiTool(api, config),
         ];
 

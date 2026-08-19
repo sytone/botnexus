@@ -2,6 +2,7 @@
 @inject IClientStateStore Store
 @inject IGatewayRestClient Rest
 @inject NavigationManager Nav
+@inject IServiceProvider Services
 @implements IDisposable
 
 <div class="activity-dashboard" data-testid="activity-dashboard">
@@ -199,11 +200,27 @@
                             {
                                 @* #3105: WHICH job or registration minted this row, as opposed to the
                                    origin badge's WHAT KIND. Rendered immediately after the origin badge
-                                   it qualifies, and only ever when that badge is present. *@
+                                   it qualifies, and only ever when that badge is present.
+                                   #3421: when the cron registry resolves the id to a job NAME, the name
+                                   is shown instead - the id is not lost, it moves to the tooltip. *@
+                                var cronName = ActivityDashboardProjection.CronHealthLabel(row);
                                 <span class="activity-source-id"
                                       data-testid="activity-source-id"
                                       data-source-id="@row.SourceId"
-                                      title="@OriginTooltip(row)">@sourceLabel</span>
+                                      title="@OriginTooltip(row)">@(cronName ?? sourceLabel)</span>
+                            }
+                            @if (ActivityDashboardProjection.CronHealthModifier(row) is { } cronHealthModifier)
+                            {
+                                @* #3421: last-run outcome of the job that minted this row. A dot, not a
+                                   badge: it qualifies the attribution beside it rather than classifying
+                                   the row, and the badge row is already carrying its full load. Renders
+                                   only when a job actually resolved, so a row whose id matches nothing
+                                   is byte-identical to its pre-#3421 rendering. *@
+                                <span class="activity-cron-health activity-cron-health--@cronHealthModifier"
+                                      data-testid="activity-cron-health"
+                                      data-health="@cronHealthModifier"
+                                      title="@CronHealthTooltip(row)"
+                                      aria-label="@CronHealthTooltip(row)"></span>
                             }
                             @if (ActivityDashboardProjection.PurposeLabel(row) is { } purposeLabel)
                             {
@@ -252,6 +269,11 @@
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
     private ActivityDashboardFilter _filter = new();
+
+    // #3421: resolved optionally rather than @inject'ed so a host that has not registered the cron
+    // client (and every existing bUnit fixture) renders the dashboard exactly as before instead of
+    // throwing at construction. Mirrors the Mobile Chat.razor precedent for the same client.
+    private CronApiClient? CronApi => Services.GetService(typeof(CronApiClient)) as CronApiClient;
     private ElementReference _agentSelect;
     private IReadOnlyList<ActivityRow>? _rows;
     private ActivitySummary? _summary;
@@ -274,7 +296,25 @@
         try
         {
             var conversations = await Rest.GetAllConversationsAsync();
-            _rows = ActivityDashboardProjection.Project(conversations, _filter, DateTimeOffset.UtcNow);
+
+            // #3421: cron health is a SEPARATE, non-fatal fetch. CronApiClient.ListAsync already
+            // swallows its own transport errors into an (empty, error) result, so a dead cron API
+            // degrades the dashboard to its pre-#3421 rendering rather than failing the whole load -
+            // the conversation table is the page's reason to exist and must not depend on it.
+            IReadOnlyDictionary<string, ActivityCronHealth> cronHealth;
+            try
+            {
+                var (jobs, error) = CronApi is null
+                    ? ((IReadOnlyList<CronJobDto>)[], "cron client not registered")
+                    : await CronApi.ListAsync();
+                cronHealth = ActivityDashboardProjection.CronHealthById(error is null ? jobs : null);
+            }
+            catch
+            {
+                cronHealth = ActivityDashboardProjection.CronHealthById(null);
+            }
+
+            _rows = ActivityDashboardProjection.Project(conversations, _filter, DateTimeOffset.UtcNow, cronHealth);
             _summary = ActivityDashboardProjection.Summarize(_rows);
             _loadError = false;
         }
@@ -493,6 +533,25 @@
         return ActivityDashboardProjection.SourceLabel(row) is null
             ? pair
             : $"{pair} \u00b7 Originator: {row.SourceId}";
+    }
+
+    /// <summary>
+    /// Hover detail for the cron-health dot (#3421): the job's name and its last-run outcome, plus
+    /// when it last ran. Deliberately its OWN tooltip rather than another clause appended to
+    /// <see cref="OriginTooltip"/>, because it hangs off a separate element - a reader hovering the
+    /// dot is asking "is this job healthy?", not "where did this row come from?".
+    /// </summary>
+    private static string CronHealthTooltip(ActivityRow row)
+    {
+        var health = row.CronHealth;
+        if (health is null)
+            return string.Empty;
+
+        var name = string.IsNullOrWhiteSpace(health.Name) ? health.JobId : health.Name;
+        var status = string.IsNullOrWhiteSpace(health.LastRunStatus) ? "never run" : health.LastRunStatus;
+        var when = health.LastRunAt is { } at ? $" \u00b7 Last run: {at:u}" : string.Empty;
+
+        return $"Cron job: {name} \u00b7 Last run status: {status}{when}";
     }
 
     private static string FormatRelative(DateTimeOffset ts)

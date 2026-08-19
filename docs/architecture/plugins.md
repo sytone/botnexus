@@ -200,6 +200,57 @@ The update preference is read before any work, so a pinned plugin's source is ne
 filter applied after the fetch would cost a clone per run to reach a foregone conclusion, and would
 make "pinned" observationally identical to "already current".
 
+## MCP servers
+
+A plugin may declare MCP servers. They are registered with the **existing** `McpServerManager`
+in `BotNexus.Extensions.Mcp`, never with a plugin-only registry: plugin servers are ordinary MCP
+servers, and a second registry would mean a second lifecycle, a second warmup path and a second
+place for a leaked server process to hide.
+
+`PluginMcpServerRegistrar` owns the policy; `IMcpServerHost` is the narrow seam it talks through
+so the policy is testable without spawning real servers. `McpServerManagerHost` is the only
+production implementation and does nothing but delegate.
+
+### Collision is impossible by construction
+
+Every declared name is scoped **at registration time** into `plugin:<plugin>:<server>`. Two
+plugins that both declare `github` register as `plugin:alpha:github` and `plugin:beta:github`
+and both resolve. This is deliberately not detect-and-warn: a collision that has to be detected
+is a collision that already happened, and which plugin won would depend on discovery order.
+
+The separator is a character a plugin identifier cannot contain - plugin names are lowercase
+kebab-case - so a scoped id parses unambiguously back into its two parts. An unscoped id, such
+as a user-configured server, is never claimed by any plugin.
+
+### Declaration file
+
+The manifest key `mcpServers` names the declaration file. As with every other component, `null`
+means *discover by convention* rather than *has none*: `.botnexus-plugin/mcp.json` then
+`.mcp.json` are probed in order. Both the wrapper form (`{ "mcpServers": { ... } }`) and a bare
+root map are accepted, the latter because that is what the equivalent files in the wider MCP
+ecosystem look like.
+
+An explicit manifest path is still confined to the plugin directory. A manifest is authored by
+whoever wrote the plugin, so treating its path as trusted would let a plugin point the loader at
+any file on the host and have the contents parsed as server configuration.
+
+### Removal unregisters exactly that plugin's servers
+
+Selection is by the plugin scope encoded in the server id, so removing a plugin can never take
+down a server another plugin - or the user's own configuration - registered, even when the two
+declared the same name.
+
+### Trust is decided before anything starts
+
+Under `Enforce`, an untrusted plugin's servers are **never handed to the manager** - not started
+and then stopped. An MCP server start is a process spawn or an outbound credentialled
+connection, so "start it and reconsider" would already have done the damage. Under `Warn` the
+failure is logged and registration proceeds; under `Disabled` no verification happens.
+
+`PluginTrustMode` mirrors `SkillTrustMode` member for member, pinned by an architecture fence.
+Plugins reuse the skills trust model (#2682) rather than introducing a second vocabulary,
+because two vocabularies is how the enforced set and the reported set drift apart.
+
 ## Skill discovery
 
 A plugin's `skills/` directory participates in the existing skill merge at the **global/shared
