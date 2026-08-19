@@ -189,6 +189,16 @@ try {
     if ($runnerTimeout) {
         Write-Warning ("Runner deadline expired after {0:N0}s of a {1}s test budget. {2}" -f $runnerTimeout.elapsedSeconds, $runnerTimeout.deadlineSeconds, $runnerTimeout.attribution)
     }
+    # #3314: per-project cost is reported on EVERY run, not only on a timeout. The measured
+    # `full` run finished inside its budget with timeout=null, so the #3305 attribution never
+    # fired and nothing on disk said where the time went. Surfacing the top costs here means
+    # the answer is in the operator's console rather than in a parser they have to write.
+    $projectCosts = if ($result -and $result.PSObject.Properties['projectCosts']) { @($result.projectCosts) } else { @() }
+    if ($projectCosts.Count -gt 0) {
+        $topCosts = ($projectCosts | Select-Object -First 3 | ForEach-Object { "{0} {1:N1}s" -f $_.project, $_.seconds }) -join '; '
+        Write-Host "Most expensive projects: $topCosts (full table: runner-cost.log)." -ForegroundColor DarkGray
+    }
+
     $playwrightArtifact = Get-ChildItem -Path $OutputPath -Filter playwright.log -Recurse | Select-Object -First 1
     $requiredArtifactsPresent = $Mode -ne 'strict' -or $null -ne $playwrightArtifact
 

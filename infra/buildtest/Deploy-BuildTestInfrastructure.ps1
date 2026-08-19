@@ -128,13 +128,49 @@ if ($tagExists) {
     Write-Host "Runner image $RunnerImageTag already published and content is unchanged; skipping build."
 }
 else {
-    az acr build `
-        --subscription $SubscriptionId `
-        --registry $acrName `
-        --image "botnexus-buildtest-runner:$RunnerImageTag" `
-        --file (Join-Path $runnerPath 'Dockerfile') `
-        $runnerPath
-    if ($LASTEXITCODE -ne 0) { throw 'Runner image build failed.' }
+    # FORCE UTF-8 ON THE CLI'S OWN STDOUT (#3314).
+    #
+    # MEASURED, TWICE, DETERMINISTICALLY: `az acr build` streams the remote build log through
+    # colorama, which writes to a Windows console encoded cp1252 by default. The apt output of
+    # this very Dockerfile contains U+2192 ('->'), so the CLI dies mid-stream with
+    # `UnicodeEncodeError: 'charmap' codec can't encode character '\u2192'` and exits non-zero.
+    #
+    # THE BUILD ITSELF SUCCEEDS. The failure is purely in printing the log, but it lands after
+    # `az acr build` has already queued the run, so the throw below reports "Runner image build
+    # failed" for an image that is being published normally. That is the worst shape of false
+    # alarm: it stops the deployment while the thing it claims failed is fine, and the operator
+    # cannot tell without going to the registry by hand -- which is exactly what #3314 had to do
+    # before the runner could be deployed at all.
+    #
+    # PYTHONIOENCODING is the documented Python-level control and is scoped to this call.
+    $previousIoEncoding = $env:PYTHONIOENCODING
+    $env:PYTHONIOENCODING = 'utf-8'
+    try {
+        az acr build `
+            --subscription $SubscriptionId `
+            --registry $acrName `
+            --image "botnexus-buildtest-runner:$RunnerImageTag" `
+            --file (Join-Path $runnerPath 'Dockerfile') `
+            $runnerPath
+        $buildExitCode = $LASTEXITCODE
+    }
+    finally {
+        $env:PYTHONIOENCODING = $previousIoEncoding
+    }
+
+    # VERIFY AGAINST THE REGISTRY, NOT THE EXIT CODE. The registry is the authority on whether
+    # the image exists; the exit code additionally reports console-encoding faults in the log
+    # stream. Re-checking the tag turns a cosmetic streaming failure into a no-op instead of a
+    # blocked deployment, while a genuinely failed build still throws because the tag is absent.
+    if ($buildExitCode -ne 0) {
+        $tagsAfterBuild = @(az acr repository show-tags --subscription $SubscriptionId --name $acrName --repository botnexus-buildtest-runner -o tsv 2>$null)
+        if ($tagsAfterBuild -contains $RunnerImageTag) {
+            Write-Warning "az acr build exited $buildExitCode, but tag '$RunnerImageTag' is present in the registry, so the image published and only the log stream failed. Continuing."
+        }
+        else {
+            throw "Runner image build failed (az acr build exited $buildExitCode and tag '$RunnerImageTag' is not present in the registry)."
+        }
+    }
 }
 
 # SUBMIT ASYNCHRONOUSLY, THEN POLL (#3118).

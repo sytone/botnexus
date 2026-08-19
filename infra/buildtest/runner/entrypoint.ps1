@@ -18,7 +18,9 @@ $artifactsRoot = Join-Path $workRoot 'artifacts'
 $resultsRoot = Join-Path $artifactsRoot 'test-results'
 $runnerResultScript = '/runner/RunnerResult.ps1'
 $runnerTimeoutScript = '/runner/RunnerTimeout.ps1'
+$runnerCostScript = '/runner/RunnerCost.ps1'
 . $runnerTimeoutScript
+. $runnerCostScript
 
 # SELF-IMPOSED DEADLINE (#3305)
 #
@@ -362,6 +364,29 @@ finally {
         }
     }
 
+    # PER-PROJECT COST ATTRIBUTION (#3314).
+    #
+    # Emitted on EVERY run -- green, red, or timed out -- rather than only on the timeout path.
+    # #3305's attribution answers "which project was still running when we were killed", but
+    # the measured `full` run (20260819033413-38a9b933) finished in 13.7 min of its 20 min
+    # budget with timeout=null, so that path never fired and the artifacts said nothing at all
+    # about where the time went. Answering #3314 required a throwaway TRX parser written
+    # outside the repo. This makes the same answer a durable artifact instead.
+    #
+    # Best-effort throughout, for the same reason as the timing log: a diagnostic must never be
+    # able to turn a passing suite red.
+    try {
+        $costTrx = @(Get-ChildItem -Path $resultsRoot -Filter '*.trx' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+        $projectCosts = @(Get-RunnerProjectCosts -TrxPaths $costTrx)
+        $testPhaseSeconds = if ($phaseTimings.Contains('test')) { [double]$phaseTimings['test'].seconds } else { 0.0 }
+        Format-RunnerCostReport -Costs $projectCosts -TestPhaseSeconds $testPhaseSeconds -Mode $mode |
+            Set-Content -Path (Join-Path $artifactsRoot 'runner-cost.log') -ErrorAction Stop
+    }
+    catch {
+        # Deliberately swallowed: see the AC4 note at the top of this script.
+        $projectCosts = @()
+    }
+
     @{
         runId = $runId
         mode = $mode
@@ -370,6 +395,9 @@ finally {
         completedUtc = [DateTime]::UtcNow.ToString('o')
         tests = $testResult
         timings = $phaseTimings
+        # #3314: per-project cost travels IN the contract as well as in runner-cost.log, so a
+        # caller can attribute the run without re-parsing TRX. Always present, never inferred.
+        projectCosts = $projectCosts
         # #3305: a timeout is REPRESENTED here rather than inferred from an absent artifact.
         # $null on an ordinary run, so the field distinguishes "did not time out" from "we
         # never got to write anything" -- which an empty directory could not.
