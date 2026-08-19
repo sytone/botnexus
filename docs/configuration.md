@@ -1244,7 +1244,11 @@ An oversize result is returned as a **bounded successful projection**, never as 
 
 - the retained prefix is cut on a rune boundary, so a CJK character or an emoji surrogate pair is never sliced into replacement characters;
 - a single marker records the omitted byte count, e.g. `[tool output truncated: 43776 bytes omitted of 300000 total]`;
-- one consistent line of narrowing guidance follows it, so the model can learn exactly one recovery behaviour across every tool: rerun with a narrower scope, paginate, or select fewer items.
+- one consistent line of narrowing guidance follows it, so the model can learn exactly one recovery behaviour across every tool: rerun with a narrower scope, paginate, or select fewer items;
+- a **continuation handle** follows that, naming the `tool_output_continue` tool and the byte offset to resume from. The full payload is retained in a bounded, oldest-first-evicting in-memory store, so the omitted bytes remain reachable rather than lost (#2760). Truncation alone was not enough in practice: forensics recorded the same oversized call retried four times unchanged, because the suggested remedy named a parameter the invoked surface did not expose, whereas a handle is always actionable.
+- when the oversized payload carries an OData/Graph `@odata.nextLink`, that value is surfaced in the marker too, even though the body containing it was cut away - it is the one field that makes the page recoverable at the source.
+
+Call `tool_output_continue` with the `handle` and `offset` from the marker to page through the remainder; each response reports the next offset and whether the payload is complete. A handle that has been evicted reports itself as unknown rather than returning empty content, so "re-run the tool" and "here is nothing" never share a symbol.
 
 Image content blocks are passed through untouched - an encoded image cannot be truncated into a smaller valid image, only into a broken one.
 
