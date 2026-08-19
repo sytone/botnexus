@@ -28,6 +28,26 @@ public interface ICronStore
     Task SetNextRunAtAsync(JobId jobId, DateTimeOffset? nextRunAt, CancellationToken ct = default);
 
     /// <summary>
+    /// Scheduler-owned narrow write of <c>BackoffUntil</c> only (#3350): the job-authored floor
+    /// before which the job has asked not to be woken. Passing <c>null</c> clears the floor.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is deliberately a SEPARATE method rather than an extra parameter on
+    /// <see cref="SetNextRunAtAsync"/>. The whole point of #3350 is that the expression cache and
+    /// the job-authored floor are two different facts with two different owners; a single write
+    /// that could set both would re-entangle them at the very seam introduced to separate them,
+    /// and would let a routine reschedule silently cancel a backoff.
+    /// </para>
+    /// <para>
+    /// Like <see cref="SetNextRunAtAsync"/> it touches no definition column, no <c>LastRun*</c>
+    /// bookkeeping and not the conversation pin, so it cannot clobber a concurrent definition
+    /// edit (#2133) - and symmetrically, a definition update must never write this column.
+    /// </para>
+    /// </remarks>
+    Task SetBackoffUntilAsync(JobId jobId, DateTimeOffset? backoffUntil, CancellationToken ct = default);
+
+    /// <summary>
     /// Scheduler-owned narrow write of terminal run bookkeeping (<c>LastRunAt</c>,
     /// <c>LastRunStatus</c>, <c>LastRunError</c>) for a completed run. Never touches
     /// definition columns, <c>NextRunAt</c>, or the conversation pin, so run finalization

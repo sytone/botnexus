@@ -565,6 +565,7 @@ public sealed partial class CronControllerTests
                 NextRunAt = existing.NextRunAt,
                 LastRunStatus = existing.LastRunStatus,
                 LastRunError = existing.LastRunError,
+                BackoffUntil = existing.BackoffUntil,
                 ConversationId = existing.ConversationId
             };
             _jobs[job.Id.Value] = merged;
@@ -575,6 +576,14 @@ public sealed partial class CronControllerTests
         {
             if (_jobs.TryGetValue(jobId.Value, out var existing))
                 _jobs[jobId.Value] = existing with { NextRunAt = nextRunAt };
+            return Task.CompletedTask;
+        }
+
+        public Task SetBackoffUntilAsync(JobId jobId, DateTimeOffset? backoffUntil, CancellationToken ct = default)
+        {
+            // Mirrors the SQLite narrow write (#3350): one column, and specifically NOT NextRunAt.
+            if (_jobs.TryGetValue(jobId.Value, out var existing))
+                _jobs[jobId.Value] = existing with { BackoffUntil = backoffUntil };
             return Task.CompletedTask;
         }
 

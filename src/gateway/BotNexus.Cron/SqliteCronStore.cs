@@ -106,7 +106,8 @@ public sealed class SqliteCronStore(
                      failure_alert_conversation_id TEXT NULL,
                      delete_job_after_run INTEGER NOT NULL DEFAULT 0,
                      expires_at TEXT NULL,
-                     execution_class INTEGER NOT NULL DEFAULT 0
+                     execution_class INTEGER NOT NULL DEFAULT 0,
+                     backoff_until TEXT NULL
                  );
 
                 CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled_next_run_at
@@ -277,6 +278,18 @@ public sealed class SqliteCronStore(
             try { await migrateExecutionClass.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
             catch (SqliteException) { /* column already exists */ }
 
+            // Migrate existing databases: add backoff_until if missing (#3350). NULLable with no
+            // default, and NULL means "not paced": no floor, so an existing row is scheduled purely
+            // from its expression exactly as it is today. A non-NULL default would be a fabricated
+            // claim that every job on the platform had asked to be deferred - the inert-default rule
+            // #2554/#2634 established at this same seam.
+            await using var migrateBackoffUntil = connection.CreateCommand();
+            migrateBackoffUntil.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN backoff_until TEXT NULL;
+                """;
+            try { await migrateBackoffUntil.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
             // #2641: add the per-run cost columns if missing. ALL of them are NULLable with NO
             // default, which is the whole point: a run recorded before these columns existed
             // measured nothing, and a NULL here must read as "not measured", never as a free run.
@@ -331,12 +344,12 @@ public sealed class SqliteCronStore(
                 INSERT INTO cron_jobs (
                     id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                     enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                    failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class
+                    failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class, backoff_until
                 )
                 VALUES (
                     $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
                     $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId, $deleteAfterRun, $scheduleActivatedAt,
-                    $failureAlertsEnabled, $failureAlertConversationId, $deleteJobAfterRun, $expiresAt, $executionClass
+                    $failureAlertsEnabled, $failureAlertConversationId, $deleteJobAfterRun, $expiresAt, $executionClass, $backoffUntil
                 )
                 """;
             BindJob(command, created);
@@ -365,7 +378,7 @@ public sealed class SqliteCronStore(
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class
+                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class, backoff_until
             FROM cron_jobs
             WHERE id = $id
             """;
@@ -387,7 +400,7 @@ public sealed class SqliteCronStore(
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class
+                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class, backoff_until
             FROM cron_jobs
             WHERE $agentId IS NULL OR agent_id = $agentId
             ORDER BY created_at DESC
@@ -502,6 +515,41 @@ public sealed class SqliteCronStore(
                 WHERE id = $jobId
                 """;
             command.Parameters.AddWithValue("$nextRunAt", ToNullableString(nextRunAt));
+            command.Parameters.AddWithValue("$jobId", jobId.Value);
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Scheduler-owned narrow write of <c>backoff_until</c> only (#3350) - the job-authored floor
+    /// before which the job asked not to be woken; <c>null</c> clears it.
+    /// </summary>
+    /// <remarks>
+    /// Kept separate from <see cref="SetNextRunAtAsync"/> on purpose: the expression cache and the
+    /// job-authored floor are the two meanings #3350 exists to pull apart, and a single write able
+    /// to touch both would let an ordinary post-run reschedule silently cancel a live backoff. Like
+    /// its sibling it writes exactly one column, so it cannot clobber a concurrent definition edit
+    /// (#2133).
+    /// </remarks>
+    public async Task SetBackoffUntilAsync(JobId jobId, DateTimeOffset? backoffUntil, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE cron_jobs
+                SET backoff_until = $backoffUntil
+                WHERE id = $jobId
+                """;
+            command.Parameters.AddWithValue("$backoffUntil", ToNullableString(backoffUntil));
             command.Parameters.AddWithValue("$jobId", jobId.Value);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
@@ -1035,6 +1083,7 @@ public sealed class SqliteCronStore(
         command.Parameters.AddWithValue("$deleteJobAfterRun", job.DeleteJobAfterRun ? 1 : 0);
         command.Parameters.AddWithValue("$expiresAt", ToNullableString(job.ExpiresAt));
         command.Parameters.AddWithValue("$executionClass", job.ExecutionClass ? 1 : 0);
+        command.Parameters.AddWithValue("$backoffUntil", ToNullableString(job.BackoffUntil));
     }
 
     private CronJob ReadJob(SqliteDataReader reader)
@@ -1089,7 +1138,12 @@ public sealed class SqliteCronStore(
             // #2985: absent/NULL reads as NOT execution-class. Same inert-default rule as the
             // columns above - an upgrade must never start demoting existing jobs' runs to a
             // non-success status nobody opted into.
-            ExecutionClass = !reader.IsDBNull(28) && reader.GetInt32(28) != 0
+            ExecutionClass = !reader.IsDBNull(28) && reader.GetInt32(28) != 0,
+
+            // #3350: NULL means "not paced" - no job-authored floor, so the job wakes purely on its
+            // expression cache, exactly as it did before the column existed. Coercing this to a
+            // concrete instant would invent a deferral no job ever requested.
+            BackoffUntil = reader.IsDBNull(29) ? null : ParseDate(reader.GetString(29))
         };
     }
 
