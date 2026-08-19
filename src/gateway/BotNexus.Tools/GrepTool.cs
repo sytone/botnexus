@@ -61,25 +61,14 @@ public sealed class GrepTool : IAgentTool
     /// <param name="Name">The name.</param>
     /// <param name="arguments">The arguments.</param>
     /// <returns>The new result.</returns>
+    /// <remarks>
+    /// The schema is GENERATED from <see cref="GrepToolSchema"/> (#3320), not hand-written here. It is
+    /// the same declaration that drives <see cref="PrepareArgumentsAsync"/>, so the two cannot disagree.
+    /// </remarks>
     public Tool Definition => new(
         Name,
         "Search file contents using pattern matching. Returns matching lines with file paths and line numbers.",
-        JsonDocument.Parse("""
-            {
-              "type": "object",
-              "properties": {
-                "pattern": { "type": "string", "description": "Search pattern (supports regex)" },
-                "path": { "type": "string", "description": "Directory or file to search (default: working directory)" },
-                "glob": { "type": "string", "description": "Glob pattern to include files (e.g., *.cs, *.ts)" },
-                "ignore_case": { "type": "boolean", "description": "Perform case-insensitive matching (default: false)" },
-                "ignoreCase": { "type": "boolean", "description": "Case-insensitive matching alias." },
-                "literal": { "type": "boolean", "description": "Treat pattern as literal string (default: false)" },
-                "context": { "type": "integer", "description": "Number of lines to show before and after each match (default: 0)" },
-                "limit": { "type": "integer", "description": "Maximum results to return (default: 100)" }
-              },
-              "required": ["pattern"]
-            }
-            """).RootElement.Clone());
+        JsonDocument.Parse(GrepToolSchema.SchemaJson).RootElement.Clone());
 
     /// <summary>
     /// Executes prepare arguments async.
@@ -92,24 +81,46 @@ public sealed class GrepTool : IAgentTool
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var pattern = ReadRequiredString(arguments, "pattern");
+        // The copy list is the GENERATED declaration order, not a hand-written sequence of
+        // TryGetValue calls. Adding a parameter to GrepToolSchema makes it available here with no
+        // second edit - the #2641 defect (declared in the schema, forgotten in the copy list) has no
+        // representation. First writer wins, so a canonical key always beats its aliases.
+        var prepared = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var sourceKeys = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var parameter in GrepToolSchema.Parameters)
+        {
+            if (!arguments.TryGetValue(parameter.Name, out var raw) || raw is null)
+            {
+                if (parameter.Required)
+                {
+                    throw new ArgumentException($"Missing required argument: {parameter.Name}.");
+                }
+
+                continue;
+            }
+
+            if (prepared.ContainsKey(parameter.TargetKey))
+            {
+                continue;
+            }
+
+            prepared[parameter.TargetKey] = parameter.JsonType switch
+            {
+                "boolean" => ReadBool(raw, parameter.Name),
+                "integer" => ReadInt(raw, parameter.Name),
+                _ => ReadString(raw, parameter.Name)
+            };
+            sourceKeys[parameter.TargetKey] = parameter.Name;
+        }
+
+        var pattern = (string)prepared["pattern"]!;
         if (string.IsNullOrWhiteSpace(pattern))
         {
             throw new ArgumentException("pattern cannot be empty.");
         }
 
-        var prepared = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["pattern"] = pattern
-        };
-
-        var literal = false;
-        if (arguments.TryGetValue("literal", out var literalObj) && literalObj is not null)
-        {
-            literal = ReadBool(literalObj, "literal");
-            prepared["literal"] = literal;
-        }
-
+        var literal = prepared.TryGetValue("literal", out var literalObj) && literalObj is bool parsedLiteralArg && parsedLiteralArg;
         var effectivePattern = literal ? Regex.Escape(pattern) : pattern;
         try
         {
@@ -120,59 +131,24 @@ public sealed class GrepTool : IAgentTool
             throw new ArgumentException($"Invalid regex pattern: {ex.Message}", nameof(arguments), ex);
         }
 
-        if (arguments.TryGetValue("path", out var pathObj) && pathObj is not null)
+        // Range rules stay hand-written: they are per-parameter semantics, not schema shape, and the
+        // spike deliberately does not try to generate them. The originating spelling is reported so
+        // an alias caller still sees its own key name in the error.
+        if (prepared.TryGetValue("context", out var contextObj) && contextObj is int contextLines && contextLines < 0)
         {
-            prepared["path"] = ReadString(pathObj, "path");
+            throw new ArgumentOutOfRangeException(nameof(arguments), "context must be >= 0.");
         }
 
-        if (arguments.TryGetValue("glob", out var globObj) && globObj is not null)
+        if (prepared.TryGetValue("limit", out var limitObj) && limitObj is int limit)
         {
-            prepared["glob"] = ReadString(globObj, "glob");
-        }
-        else if (arguments.TryGetValue("include", out var includeObj) && includeObj is not null)
-        {
-            prepared["glob"] = ReadString(includeObj, "include");
-        }
-
-        if (arguments.TryGetValue("ignore_case", out var ignoreCaseObj) && ignoreCaseObj is not null)
-        {
-            prepared["ignore_case"] = ReadBool(ignoreCaseObj, "ignore_case");
-        }
-        else if (arguments.TryGetValue("ignoreCase", out var ignoreCaseAliasObj) && ignoreCaseAliasObj is not null)
-        {
-            prepared["ignore_case"] = ReadBool(ignoreCaseAliasObj, "ignoreCase");
-        }
-
-        if (arguments.TryGetValue("context", out var contextObj) && contextObj is not null)
-        {
-            var contextLines = ReadInt(contextObj, "context");
-            if (contextLines < 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(arguments), "context must be >= 0.");
-            }
-
-            prepared["context"] = contextLines;
-        }
-
-        if (arguments.TryGetValue("limit", out var limitObj) && limitObj is not null)
-        {
-            var limit = ReadInt(limitObj, "limit");
             if (limit <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(arguments), "limit must be greater than 0.");
+                throw new ArgumentOutOfRangeException(
+                    nameof(arguments),
+                    $"{sourceKeys["limit"]} must be greater than 0.");
             }
 
             prepared["limit"] = Math.Min(limit, MaxLimit);
-        }
-        else if (arguments.TryGetValue("max_results", out var maxResultsObj) && maxResultsObj is not null)
-        {
-            var maxResults = ReadInt(maxResultsObj, "max_results");
-            if (maxResults <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(arguments), "max_results must be greater than 0.");
-            }
-
-            prepared["limit"] = Math.Min(maxResults, MaxLimit);
         }
 
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
@@ -509,16 +485,6 @@ public sealed class GrepTool : IAgentTool
 
         return relative.StartsWith($".git{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
                relative.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string ReadRequiredString(IReadOnlyDictionary<string, object?> arguments, string key)
-    {
-        if (!arguments.TryGetValue(key, out var value) || value is null)
-        {
-            throw new ArgumentException($"Missing required argument: {key}.");
-        }
-
-        return ReadString(value, key);
     }
 
     private static string ReadString(object value, string key)

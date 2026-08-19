@@ -54,6 +54,108 @@ public sealed class OpenAIProviderConformanceTests : StreamingProviderConformanc
             Data(new { choices = new[] { new { finish_reason = providerStopReason, delta = new { } } } }),
             "data: [DONE]");
 
+    /// <summary>
+    /// Two tool calls at wire indices 0 and 1 whose argument fragments arrive interleaved across
+    /// frames. The completions stream processor keys its block state by tool-call index, so a
+    /// regression to a single "current block" cursor would emit a delta for an index it had already
+    /// closed - the breach the #3300 ordering validator reports.
+    /// </summary>
+    protected override string BuildInterleavedToolCallPayload(
+        string firstToolCallId,
+        string firstToolName,
+        string firstArgumentsJson,
+        string secondToolCallId,
+        string secondToolName,
+        string secondArgumentsJson,
+        string providerStopReason)
+    {
+        var firstHalf = firstArgumentsJson[..(firstArgumentsJson.Length / 2)];
+        var firstRest = firstArgumentsJson[(firstArgumentsJson.Length / 2)..];
+        var secondHalf = secondArgumentsJson[..(secondArgumentsJson.Length / 2)];
+        var secondRest = secondArgumentsJson[(secondArgumentsJson.Length / 2)..];
+
+        return JoinLines(
+            Data(new
+            {
+                id = "resp_1",
+                choices = new[]
+                {
+                    new
+                    {
+                        delta = new
+                        {
+                            tool_calls = new object[]
+                            {
+                                new
+                                {
+                                    index = 0,
+                                    id = firstToolCallId,
+                                    type = "function",
+                                    function = new { name = firstToolName, arguments = firstHalf }
+                                }
+                            }
+                        }
+                    }
+                }
+            }),
+            Data(new
+            {
+                choices = new[]
+                {
+                    new
+                    {
+                        delta = new
+                        {
+                            tool_calls = new object[]
+                            {
+                                new
+                                {
+                                    index = 1,
+                                    id = secondToolCallId,
+                                    type = "function",
+                                    function = new { name = secondToolName, arguments = secondHalf }
+                                }
+                            }
+                        }
+                    }
+                }
+            }),
+            Data(new
+            {
+                choices = new[]
+                {
+                    new
+                    {
+                        delta = new
+                        {
+                            tool_calls = new object[]
+                            {
+                                new { index = 0, function = new { arguments = firstRest } }
+                            }
+                        }
+                    }
+                }
+            }),
+            Data(new
+            {
+                choices = new[]
+                {
+                    new
+                    {
+                        delta = new
+                        {
+                            tool_calls = new object[]
+                            {
+                                new { index = 1, function = new { arguments = secondRest } }
+                            }
+                        }
+                    }
+                }
+            }),
+            Data(new { choices = new[] { new { finish_reason = providerStopReason, delta = new { } } } }),
+            "data: [DONE]");
+    }
+
     protected override string BuildFinishReasonPayload(string providerStopReason) =>
         JoinLines(
             Data(new { id = "resp_1", choices = new[] { new { delta = new { content = "ok" } } } }),

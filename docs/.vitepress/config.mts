@@ -192,6 +192,7 @@ export default defineConfig({
           { text: 'Compat Shim Lifecycle', link: '/development/compat-shim-lifecycle' },
           { text: 'PR and Commit Conventions', link: '/development/pr-and-commit-conventions' },
           { text: 'Source Generator Survey', link: '/development/source-generator-survey' },
+          { text: 'Tool Schema Generator Spike', link: '/development/tool-schema-generator-spike' },
           { text: 'Seam-Test Reviewer Checklist', link: '/seam-test-reviewer-checklist' },
         ],
       },
