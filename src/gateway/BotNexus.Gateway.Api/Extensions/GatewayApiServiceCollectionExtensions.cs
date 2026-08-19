@@ -3,6 +3,7 @@ using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Api.Filters;
 using BotNexus.Gateway.Api.Logging;
 using BotNexus.Gateway.Api.Triggers;
+using BotNexus.Gateway.Api.Workspace;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -40,6 +41,12 @@ public static class GatewayApiServiceCollectionExtensions
         // the same assembled history view be reused by the SignalR/portal path; the controller
         // also has a constructor fallback so the endpoint works even without this registration.
         services.TryAddSingleton<IConversationHistoryAssembler, ConversationHistoryAssembler>();
+
+        // The workspace tree cache must be a singleton or it caches nothing: the portal polls
+        // GET /api/agents/{id}/workspace every ~2 minutes and each call re-walked 1000-2600 entries
+        // (issue #3357). It revalidates against the filesystem on every hit, so a singleton lifetime
+        // buys the saved walk without buying staleness.
+        services.TryAddSingleton<WorkspaceTreeCache>();
 
         // Register the sparse-fieldset projection as a global result filter so every GET endpoint
         // honours ?fields=a,b,c without per-controller wiring (issue #1782). It is a no-op unless the
