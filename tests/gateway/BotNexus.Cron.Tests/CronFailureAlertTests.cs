@@ -168,7 +168,8 @@ public sealed class CronFailureAlertTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            // NOT ClearAllPools(): process-global, disposes sibling tests' live handles (#3324).
+            SqlitePoolCleanup.ClearPoolFor(dbPath);
             try { Directory.Delete(tempDirectory, recursive: true); } catch (IOException) { }
         }
     }

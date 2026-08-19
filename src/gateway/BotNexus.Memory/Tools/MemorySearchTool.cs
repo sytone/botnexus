@@ -6,6 +6,7 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Memory.Models;
 
 namespace BotNexus.Memory.Tools;
 
@@ -199,6 +200,9 @@ public sealed class MemorySearchTool : IAgentTool
                         RelevanceScore: scored.Score)
                     {
                         Provenance = scored.Entry.NormalizedProvenance,
+                        // AC7: the origin agent's provenance and derived tier travel with the row.
+                        // A shared-store read is never re-stamped as first-party on ingest.
+                        TrustTier = MemoryTrust.ToWireValue(scored.Entry.TrustTier),
                         OriginConversationId = scored.Entry.OriginConversationId,
                         OriginSessionId = scored.Entry.OriginSessionId
                     });
@@ -253,6 +257,8 @@ public sealed class MemorySearchTool : IAgentTool
                 RelevanceScore: scored.Score)
             {
                 Provenance = scored.Entry.NormalizedProvenance,
+                // AC7: cross-store retrieval preserves the origin agent's trust classification.
+                TrustTier = MemoryTrust.ToWireValue(scored.Entry.TrustTier),
                 OriginConversationId = scored.Entry.OriginConversationId,
                 OriginSessionId = scored.Entry.OriginSessionId
             }),
@@ -313,6 +319,10 @@ public sealed class MemorySearchTool : IAgentTool
             // #2480: origin, not just kind. Without this a summarised GitHub issue body reads back
             // on a later session as first-party agent knowledge with its provenance erased.
             lines.Add($"Provenance: {entry.Provenance}");
+            // #3232: the tier is what the pipeline DID about that provenance - down-weighted at
+            // rank, withheld from always-on injection, refused for promotion. Provenance alone
+            // left the consequence implicit and therefore ignorable.
+            lines.Add($"Trust: {entry.TrustTier}");
             lines.Add($"Preview: {preview}");
             lines.Add(string.Empty);
         }

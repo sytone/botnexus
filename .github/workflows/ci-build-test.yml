@@ -38,9 +38,19 @@ on:
 
 # Redundant CI: on a PR that pushes several commits in quick succession, cancel the
 # superseded in-flight run so the latest commit wins instead of stacking builds.
-# Push runs on main are grouped per ref but not cancelled. See issue #1548.
+#
+# Push runs on main are NOT cancel-in-progress -- but that alone does not guarantee every
+# merge gets gated (#3309). A concurrency group holds at most ONE pending run: when merges land
+# faster than the suite completes, GitHub cancels the older PENDING run to make room for the
+# newer one, so an entire burst of merges can collapse into a single executed run. On 2026-08-17,
+# 15 merges landed in 13 minutes and 11 main push runs were cancelled that way -- which is how a
+# commit that reddened main reached the PR queue unnoticed.
+#
+# Keying the group by SHA instead of by ref gives every merged commit its own group, so no main
+# push run can ever supersede another. Bursty merges then queue rather than silently vanish, and
+# main's true red/green state is recorded per commit. See issues #1548 and #3309.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -163,9 +173,28 @@ jobs:
       # package and then install the chromium binary without `--with-deps`.
       - name: Install Playwright system dependencies
         shell: bash
+        # BOUNDED BY DESIGN (#3365). This step used to hang ~29 minutes inside apt and was then
+        # killed by the job's own 30-minute ceiling, so no Playwright test ran at all and the job
+        # reported a permanent red X on unrelated PRs. Observed on #3322/#3323/#3325/#3368/#3371/
+        # #3374, every one at ~30m; the same step succeeds in about a minute when the mirror is
+        # healthy, which is what makes it an availability problem rather than a package problem.
+        #
+        # The Azure mirror answers `Ign:` for every index and apt silently falls through to
+        # archive.ubuntu.com, which is where it stalls with no output. Retries plus explicit
+        # network timeouts turn that indefinite stall into a bounded, diagnosable failure, and
+        # timeout(1) caps the whole step well under the job ceiling so a hang can never again
+        # consume the entire slot. A red check that is always red is one nobody reads -- which is
+        # the actual damage, because it sits directly beside core-tests.
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          set -euo pipefail
+          apt_opts=(
+            -o Acquire::Retries=3
+            -o Acquire::http::Timeout=20
+            -o Acquire::https::Timeout=20
+          )
+          timeout 5m sudo apt-get "${apt_opts[@]}" update
+          timeout 5m sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends \
             libasound2t64 libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 \
             libcups2t64 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 \
             libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 libatspi2.0-0t64

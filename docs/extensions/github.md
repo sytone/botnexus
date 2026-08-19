@@ -63,6 +63,54 @@ Bound from the `GitHub` configuration section:
 Nothing contacts GitHub until the first authenticated request, so an unconfigured host pays no
 startup cost; it fails at first use with a `GitHubCredentialException` naming the missing setting.
 
+### Per-agent acting identity
+
+A host that needs more than one acting identity declares them by name and maps agents onto them.
+Multiple identities are a **configuration fact**, never a mutation of the ambient `gh` CLI account:
+
+```json
+{
+  "GitHub": {
+    "identities": {
+      "farnsworth-app": {
+        "appId": "4039269",
+        "installationId": "12345678",
+        "privateKeyPath": "/secrets/farnsworth-bot.pem"
+      },
+      "nova-app": {
+        "appId": "4039270",
+        "installationId": "87654321",
+        "privateKeyPath": "/secrets/nova-bot.pem"
+      }
+    },
+    "agentIdentities": {
+      "farnsworth": "farnsworth-app",
+      "nova": "nova-app"
+    }
+  }
+}
+```
+
+| Key | Description |
+| --- | --- |
+| `identities:<name>` | A named GitHub App identity profile. Requires `appId`, `installationId` and `privateKeyPath`. |
+| `agentIdentities:<agentId>` | The profile name the given agent acts as. |
+
+Each profile gets its own credential provider and its own token cache, so two agents running
+concurrently in one process cannot re-author one another's writes. Ambient `gh auth switch` state is
+process-global and does exactly that, which is why it is a red line - and why the mechanism here has
+no switch operation at all.
+
+**Resolution fails closed.** An agent that is not mapped, names a profile that does not exist, or
+names an incomplete profile gets a `GitHubCredentialException` whose message contains the
+**configuration key** that is missing - for example
+`GitHub:identities:nova-app:privateKeyPath`. It deliberately never falls back to another identity:
+a fallback would succeed under the wrong authorship, which cannot be undone once the write lands.
+The message names keys only, never configured values.
+
+Hosts that declare neither `identities` nor `agentIdentities` keep the single flat identity bound
+from `appId`/`installationId`/`privateKeyPath` and are unaffected.
+
 ## Agent tools
 
 Tools are contributed **per agent** by `GitHubToolsContributor`. An agent with no

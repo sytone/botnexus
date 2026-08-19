@@ -33,6 +33,31 @@ public sealed record ExtractedKnowledge
     public required string SourceSessionId { get; init; }
     public required int SourceTurnIndex { get; init; }
     public string? TargetStore { get; init; }
+
+    /// <summary>
+    /// The provenance of every source entry this item was distilled from (#3232 AC3).
+    /// </summary>
+    /// <remarks>
+    /// Recorded as the full contributing set rather than a single collapsed value, because the
+    /// collapse is lossy and the audit question - "what went into this row?" - cannot be answered
+    /// from the result. <see cref="Provenance"/> performs the collapse on demand; this keeps the
+    /// evidence for it.
+    /// </remarks>
+    public IReadOnlyList<string> ContributingProvenances { get; init; } = [];
+
+    /// <summary>
+    /// The provenance this item must be stamped with: the least-trusted contributing value.
+    /// </summary>
+    /// <remarks>
+    /// Least-trusted, never most-common. A summary that mixed agent reasoning with a hostile issue
+    /// body is exactly as trustworthy as the issue body, and majority-voting the mixture would
+    /// erase the single contributor that is the entire reason to be looking. An item with no
+    /// recorded contributors resolves to <c>unknown</c> rather than to a first-party value.
+    /// </remarks>
+    public string Provenance => MemoryTrust.ResolveDerivedProvenance(ContributingProvenances);
+
+    /// <summary>Whether this item is eligible for automatic promotion into a shared store (#3232 AC6).</summary>
+    public bool IsPromotable => MemoryTrust.IsFirstParty(MemoryTrust.Derive(Provenance));
 }
 
 /// <summary>

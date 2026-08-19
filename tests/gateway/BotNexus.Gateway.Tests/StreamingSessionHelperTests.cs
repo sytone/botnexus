@@ -1025,6 +1025,109 @@ public sealed class StreamingSessionHelperTests
         entry.ResolveKind().ShouldBe(BotNexus.Domain.Primitives.MessageKind.Message);
     }
 
+    // #3336: persistence-seam reconciliation ------------------------------------------------
+    // The parsers prefer the provider's final block text, but the gateway persists a
+    // CONCATENATION of the ContentDelta events it already emitted. Without the MessageEnd
+    // FinalContent channel the corrected value never reaches session_history, which is why the
+    // CRLF family survived four issues on the relay paths.
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_MessageEndFinalContent_ReplacesCrlfFramedDeltasInHistory()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-3336-crlf"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        const string canonical = "Line one\nLine two with https://example.com/a_b";
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m1" },
+                // Exactly the reported wire shape: one CRLF per token.
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "\r\nLine", MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "\r\n one", MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "\r\n\nLine two with https://example.com/a_b", MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = "m1", FinalContent = canonical }
+            ]),
+            session,
+            store.Object);
+
+        var entry = session.History.ShouldHaveSingleItem();
+
+        entry.Content.ShouldBe(canonical);
+        entry.Content.ShouldNotContain("\r");
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_MessageEndWithoutFinalContent_PersistsAssembledDeltasUnchanged()
+    {
+        // Fail-open: NULL means "the provider gave us nothing to check against", never "the
+        // message was empty". Every provider that supplies no final text must be unaffected.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-3336-null"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "alpha", MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = " beta", MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = "m1" }
+            ]),
+            session,
+            store.Object);
+
+        session.History.ShouldHaveSingleItem().Content.ShouldBe("alpha beta");
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_EmptyFinalContent_DoesNotDeleteStreamedText()
+    {
+        // Guard against the strictly worse defect: reconciliation removes transport artifacts, it
+        // must never delete a model's answer because a terminal path reported no content (#2921).
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-3336-empty"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "real answer", MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = "m1", FinalContent = "" }
+            ]),
+            session,
+            store.Object);
+
+        session.History.ShouldHaveSingleItem().Content.ShouldBe("real answer");
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_MultiMessageTurn_ReconcilesOnlyTheCurrentMessage()
+    {
+        // The content buffer is shared across messages within a turn, so a whole-buffer overwrite
+        // would silently discard the FIRST message's text. Two messages, only the second carrying
+        // a divergent final, is the shape that catches it.
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-3336-multi"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "first ", MessageId = "m1" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = "m1", FinalContent = "first " },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = "m2" },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "\r\nsecond", MessageId = "m2" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = "m2", FinalContent = "second" }
+            ]),
+            session,
+            store.Object);
+
+        var entry = session.History.ShouldHaveSingleItem();
+
+        // The first message's text survives; only the second message's slice was reconciled.
+        entry.Content.ShouldBe("first second");
+    }
+
     private static async IAsyncEnumerable<AgentStreamEvent> ToAsyncEnumerable(IEnumerable<AgentStreamEvent> events)
     {
         foreach (var evt in events)

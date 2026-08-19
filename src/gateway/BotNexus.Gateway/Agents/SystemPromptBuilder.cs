@@ -180,6 +180,7 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(PromptOrder.Safety, BuildSafetySection, xmlTag: "safety"))
             .Add(new LambdaPromptSection(PromptOrder.Cli, BuildCliSection, xmlTag: "cli"))
             .Add(SkillsGuidanceSection.Create())
+            .Add(SubAgentScopingSection.Create())
             .Add(new LambdaPromptSection(PromptOrder.Memory, BuildMemoryGuidanceSection, xmlTag: "memory"))
             .Add(new LambdaPromptSection(PromptOrder.SelfUpdate, BuildSelfUpdateSection, static context => GetGatewayData(context).HasGateway && !GetGatewayData(context).IsMinimal))
             .Add(new LambdaPromptSection(PromptOrder.ModelAliases, BuildModelAliasesSection))

@@ -144,6 +144,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
         var supportsExtraHigh = SupportsExtraHighThinking(id, family);
         var input = ResolveInputModalities(info);
         var (contextWindow, maxTokens) = ResolveLimits(info);
+        var extendedContext = ResolveExtendedContext(info, id);
         var compat = api == "github-copilot-completions" ? CopilotCompletionsCompat : null;
 
         var model = new LlmModel(
@@ -158,6 +159,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
             ContextWindow: contextWindow,
             MaxTokens: maxTokens,
             SupportsExtraHighThinking: supportsExtraHigh,
+            SupportsExtendedContextWindow: extendedContext,
             Headers: CopilotHeaders,
             Compat: compat);
         CopilotResolvedModelDescriptors.Set(model, info.SupportedEndpoints);
@@ -266,6 +268,57 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     {
         var supportsVision = info.Capabilities?.Supports?.Vision ?? false;
         return supportsVision ? ["text", "image"] : ["text"];
+    }
+
+    /// <summary>
+    /// The context-window size above which a discovered model is treated as extended-context capable
+    /// when Copilot states no <c>long_context</c> capability. Mirrors
+    /// <c>ModelRegistry.StandardContextWindow</c>: a model whose advertised prompt budget already
+    /// exceeds the standard 200K ceiling is by definition serving more than one tier.
+    /// </summary>
+    private const int StandardContextWindow = 200_000;
+
+    /// <summary>
+    /// Resolves <see cref="LlmModel.SupportsExtendedContextWindow"/> for a discovered model (#3364).
+    /// Before this existed the flag was never set at all on the discovery path, so it took the record
+    /// default of <see langword="false"/> and <c>ModelRegistry.GetSupportedContextSizes</c> returned a
+    /// single-element list for EVERY Copilot model - which is what rendered the portal's context-window
+    /// picker unselectable.
+    /// <para>
+    /// Precedence is deliberate and is what keeps acceptance criterion 4 ("must not offer a 1M tier on
+    /// a model that would reject it") true:
+    /// </para>
+    /// <list type="number">
+    /// <item>An explicit <c>capabilities.supports.long_context</c> wins in BOTH directions - a stated
+    /// <see langword="false"/> pins the model to one tier even for a family the heuristic would widen.</item>
+    /// <item>Otherwise an advertised <c>max_prompt_tokens</c> above the standard 200K ceiling is itself
+    /// proof of an extended window.</item>
+    /// <item>Otherwise the shared family heuristic decides, so a discovered model and a config-declared
+    /// model of the same generation can never disagree.</item>
+    /// </list>
+    /// </summary>
+    /// <param name="info">The discovered model info.</param>
+    /// <param name="id">The resolved model id.</param>
+    /// <returns>True when the model should expose the selectable extended context tier.</returns>
+    public static bool ResolveExtendedContext(CopilotModelInfo info, string id)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+
+        // 1. An explicit provider statement is authoritative in both directions.
+        var declared = info.Capabilities?.Supports?.LongContext;
+
+        // 2. Payload silent: an advertised prompt budget beyond the standard ceiling proves it.
+        if (declared is null &&
+            info.Capabilities?.Limits is { } declaredLimits &&
+            declaredLimits.TryGetValue("max_prompt_tokens", out var declaredPromptEl) &&
+            declaredPromptEl.TryGetInt32(out var declaredPromptTokens) &&
+            declaredPromptTokens > StandardContextWindow)
+        {
+            declared = true;
+        }
+
+        // 3. Fall back to the shared family heuristic when the payload says nothing either way.
+        return DynamicModelCapabilities.Infer(id, declaredExtendedContext: declared).SupportsExtendedContextWindow;
     }
 
     private static (int ContextWindow, int MaxTokens) ResolveLimits(CopilotModelInfo info)

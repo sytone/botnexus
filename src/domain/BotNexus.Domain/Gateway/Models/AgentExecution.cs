@@ -153,6 +153,19 @@ public sealed record AgentStreamEvent
     public string? ErrorMessage { get; init; }
     /// <summary>Token usage (for <see cref=`AgentStreamEventType.MessageEnd`/>).</summary>
     public AgentResponseUsage? Usage { get; init; }
+    /// <summary>
+    /// The provider's own authoritative final text for the completed assistant message, carried on
+    /// <see cref=`AgentStreamEventType.MessageEnd`/> when the provider supplied one (#3336).
+    /// </summary>
+    /// <remarks>
+    /// The persistence path concatenates <see cref="ContentDelta"/> values, so a parser-level
+    /// reconciliation against the provider's final block text never reached <c>session_history</c>:
+    /// the deltas already emitted carried the transport artifact and the corrected block value had
+    /// nowhere to travel. This field is that channel. It is nullable and NULL means "the provider
+    /// gave us nothing to check against", never "the message was empty" - a consumer must fall back
+    /// to the accumulated deltas rather than treating absence as an empty message.
+    /// </remarks>
+    public string? FinalContent { get; init; }
     /// <summary>Message identifier for correlation.</summary>
     public string? MessageId { get; init; }
     /// <summary>Session identifier for client-side routing verification.</summary>

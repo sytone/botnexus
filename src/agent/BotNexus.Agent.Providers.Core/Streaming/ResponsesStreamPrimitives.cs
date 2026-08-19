@@ -92,6 +92,13 @@ public static class ResponsesStreamHelpers
     /// Maps a Responses-API completion <c>status</c> string to the core <see cref="StopReason"/>.
     /// Unknown, in-progress, or absent statuses fall back to <see cref="StopReason.Stop"/>.
     /// </summary>
+    /// <remarks>
+    /// <c>cancelled</c> is deliberately NOT grouped with <c>failed</c> (#3294): a cancellation is a
+    /// caller decision, not a provider failure, so it normalises to <see cref="StopReason.Aborted"/>
+    /// — the same value the out-of-band <c>ResponsesStreamEngine.EmitAborted</c> path already emits
+    /// for the identical event. Grouping them made one user cancellation surface two different ways
+    /// depending on whether the abort arrived in-band on the SSE stream or out-of-band.
+    /// </remarks>
     public static StopReason MapStopReason(string? status) => status switch
     {
         "completed" => StopReason.Stop,
@@ -99,7 +106,7 @@ public static class ResponsesStreamHelpers
         "refusal" => StopReason.Refusal,
         "content_filter" => StopReason.Sensitive,
         "failed" => StopReason.Error,
-        "cancelled" => StopReason.Error,
+        "cancelled" => StopReason.Aborted,
         "in_progress" => StopReason.Stop,
         "queued" => StopReason.Stop,
         _ => StopReason.Stop

@@ -117,7 +117,7 @@ public sealed class ConversationMessagesController(
 
         var content = request.Message!.Trim();
         var senderId = BuildSenderId(request.Sender);
-        var inbound = BuildInboundMessage(typedAgentId, typedConversationId, content, senderId);
+        var inbound = BuildInboundMessage(typedAgentId, typedConversationId, content, senderId, request.Delivery);
 
         if (!request.Wake)
             return await AppendWithoutWakingAsync(inbound, typedAgentId, content, senderId, cancellationToken);
@@ -224,8 +224,15 @@ public sealed class ConversationMessagesController(
     /// <c>WebhookInboundController.ExecuteAgentAsync</c> builds, differing only in channel and sender:
     /// routing is expressed entirely through <see cref="InboundMessageRoutingHints"/>.
     /// </summary>
+    /// <remarks>
+    /// The delivery mode rides in the routing hints rather than in a separate argument to the
+    /// orchestrator, because it is the same class of information: what the transport is asking the
+    /// gateway to do with this message. The gateway still decides whether the request is honourable
+    /// (#3028) — this only states the intent.
+    /// </remarks>
     private static InboundMessage BuildInboundMessage(
-        AgentId agentId, ConversationId conversationId, string content, string senderId)
+        AgentId agentId, ConversationId conversationId, string content, string senderId,
+        InboundDeliveryMode delivery = InboundDeliveryMode.Auto)
         => new()
         {
             ChannelType = ApiChannel,
@@ -236,7 +243,8 @@ public sealed class ConversationMessagesController(
             RoutingHints = new InboundMessageRoutingHints(
                 RequestedAgentId: agentId,
                 RequestedSessionId: null,
-                RequestedConversationId: conversationId),
+                RequestedConversationId: conversationId,
+                DeliveryMode: delivery),
             Metadata = new Dictionary<string, object?>
             {
                 ["apiSender"] = senderId
@@ -267,10 +275,20 @@ public sealed class ConversationMessagesController(
 /// <c>cron:pr-doctor</c>. Stored namespaced as <c>api:{sender}</c>. Display text only: it is
 /// caller-supplied and is never an authorization input.
 /// </param>
+/// <param name="Delivery">
+/// Delivery semantics requested for this message (#3028 AC4). Defaults to
+/// <see cref="InboundDeliveryMode.Auto"/>, which <b>always queues</b>: the message waits for the
+/// agent's current turn to finish and then takes a turn of its own. It never interrupts a running
+/// turn. Pass <c>steer</c> to inject into a turn already in flight, or <c>interrupt</c> to abort the
+/// running turn and redirect it. Both fall back to queueing when no turn is running — they are
+/// requests, not guarantees. Ignored when <see cref="Wake"/> is <see langword="false"/>, since an
+/// append-only write schedules no turn at all.
+/// </param>
 public sealed record PostConversationMessageRequest(
     string? Message,
     bool Wake = true,
-    string? Sender = null);
+    string? Sender = null,
+    InboundDeliveryMode Delivery = InboundDeliveryMode.Auto);
 
 /// <summary>
 /// <c>202 Accepted</c> body for a posted conversation message: the identifiers a caller needs to read

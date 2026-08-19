@@ -1,6 +1,7 @@
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.WebTools;
@@ -11,10 +12,29 @@ namespace BotNexus.Extensions.WebTools;
 public sealed class WebToolsContributor : IAgentToolContributor
 {
     private readonly ILoggerFactory? _loggerFactory;
+    private readonly ISecretRedactor? _secretRedactor;
 
-    public WebToolsContributor(ILoggerFactory? loggerFactory = null)
+    /// <summary>
+    /// Creates the contributor.
+    /// </summary>
+    /// <param name="loggerFactory">Optional logger factory for the contributed tools.</param>
+    /// <param name="secretRedactor">
+    /// Optional secret redactor (#3360), resolved from DI when the host has registered one. Both
+    /// web tools return untrusted, server-influenced error text to the model, and that text is
+    /// persisted to the transcript; this is where the redaction seam #2881 introduced for the
+    /// provider path is threaded into the extension. Optional rather than required on purpose --
+    /// the extension load context activates contributors from the host container and an
+    /// unsatisfiable constructor parameter would get the whole contributor pruned at startup
+    /// (see <c>PruneUnconstructableExtensionServices</c>), silently removing both web tools. A
+    /// null redactor is a pass-through no-op inside the tools, so an unwired host keeps its
+    /// diagnostics.
+    /// </param>
+    public WebToolsContributor(
+        ILoggerFactory? loggerFactory = null,
+        ISecretRedactor? secretRedactor = null)
     {
         _loggerFactory = loggerFactory;
+        _secretRedactor = secretRedactor;
     }
 
     /// <inheritdoc />
@@ -30,7 +50,7 @@ public sealed class WebToolsContributor : IAgentToolContributor
 
         var tools = new List<IAgentTool>();
         var fetchConfig = config.Fetch ?? new WebFetchConfig();
-        tools.Add(new WebFetchTool(fetchConfig));
+        tools.Add(new WebFetchTool(fetchConfig, secretRedactor: _secretRedactor));
 
         if (config.Search is { } searchConfig)
         {
@@ -49,7 +69,8 @@ public sealed class WebToolsContributor : IAgentToolContributor
                         ? ct => context.GetProviderApiKeyAsync(context.Descriptor.ApiProvider, ct)
                         : null,
                     copilotApiEndpoint: copilotApiEndpoint,
-                    logger: _loggerFactory?.CreateLogger<WebSearchTool>()));
+                    logger: _loggerFactory?.CreateLogger<WebSearchTool>(),
+                    secretRedactor: _secretRedactor));
             }
         }
 

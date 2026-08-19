@@ -15,10 +15,35 @@ The Skills extension provides the runtime infrastructure for loading, managing, 
 
 The Skills extension is built-in and enabled by default. No explicit configuration is required.
 
-Skills are discovered from:
+Skills are discovered from, in increasing order of precedence:
 
-1. **Global directory**: `~/.botnexus/skills/<skill-name>/SKILL.md`
-2. **Agent workspace**: `~/.botnexus/agents/<agent-id>/workspace/skills/<skill-name>/SKILL.md`
+1. **Installed plugins**: `~/.botnexus/plugins/<plugin-name>/skills/<skill-name>/SKILL.md`
+2. **Global directory**: `~/.botnexus/skills/<skill-name>/SKILL.md`
+3. **Agent directory**: `~/.botnexus/agents/<agent-id>/skills/<skill-name>/SKILL.md`
+4. **Agent workspace**: `~/.botnexus/agents/<agent-id>/workspace/skills/<skill-name>/SKILL.md`
+
+When the same skill name appears at more than one level, the higher-numbered one wins.
+
+### Plugin skills
+
+A plugin bundles skills alongside its other components and ships them as one unit. Its skills
+join discovery at the **global/shared tier**, immediately *below* the global directory, so:
+
+- a plugin skill is available to every agent, like a global skill;
+- a global, agent, or workspace skill of the same name **overrides** it.
+
+That ordering is deliberate. A plugin can add capability but can never silently displace a
+skill the operator wrote themselves — installing a plugin should never change the meaning of
+an existing name.
+
+Only plugins recorded in `installed-plugins.json` contribute skills. A directory dropped into
+the plugin root by hand was never installed, has no removal manifest and no known provenance,
+so it is ignored rather than surfaced into agent context.
+
+Plugin skills go through exactly the same validation, security scan and trust verification as
+every other skill. Under `TrustMode: Enforce` a plugin skill whose `trust.json` catalog does
+not match its content on disk is skipped and the refusal logged; under `Warn` it is loaded and
+the violation logged. See [plugin architecture](../architecture/plugins.md).
 
 ## Tools Provided
 

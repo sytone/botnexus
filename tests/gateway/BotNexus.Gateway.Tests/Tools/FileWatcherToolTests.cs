@@ -178,6 +178,26 @@ public sealed class FileWatcherToolTests : IDisposable
         await act.ShouldThrowAsync<ArgumentException>();
     }
 
+    /// <summary>
+    /// Proves the 999s request is clamped to the configured 2s maximum.
+    /// </summary>
+    /// <remarks>
+    /// This assertion used to bound <see cref="Stopwatch.ElapsedMilliseconds"/> above by 4000ms for a
+    /// 2-second clamp. That measured runner scheduling and <see cref="FileSystemWatcher"/> teardown, not
+    /// the clamp, and a contended hosted runner measured 7771ms — a red gate on a diff that cannot reach
+    /// this tool (#3333). The upper bound is now expressed two ways that a loaded machine cannot breach
+    /// but an unclamped tool cannot satisfy:
+    /// <list type="number">
+    /// <item>The tool's own readiness notice reports the EFFECTIVE timeout it is about to wait for, so
+    /// <c>timeout: 2s</c> observes the clamped value directly with no wall clock involved. A mutant that
+    /// honours the requested 999s announces <c>timeout: 999s</c> and fails here within milliseconds.</item>
+    /// <item>A generous <see cref="ClampWatchdog"/> ceiling replaces the tight 4000ms bound. It is ~15x
+    /// the clamped wait, so scheduling noise cannot trip it, yet a mutant that waits 999s never completes
+    /// and fails deterministically instead of hanging the suite until the test host is killed.</item>
+    /// </list>
+    /// The lower bound is retained: it is the non-vacuity guard proving the tool actually waited out the
+    /// clamped timeout rather than returning immediately, and no amount of load can make a wait too fast.
+    /// </remarks>
     [Fact]
     public async Task FileWatcherTool_ClampsTimeout()
     {
@@ -186,18 +206,49 @@ public sealed class FileWatcherToolTests : IDisposable
         var path = Path.Combine(root, "clamped.txt");
         await File.WriteAllTextAsync(path, "unchanged");
 
+        string? readinessNotice = null;
+
         var stopwatch = Stopwatch.StartNew();
-        var result = await ExecuteAsync(tool, new Dictionary<string, object?>
-        {
-            ["path"] = path,
-            ["event"] = "modified",
-            ["timeout"] = 999
-        });
+        var watch = ExecuteAsync(
+            tool,
+            new Dictionary<string, object?>
+            {
+                ["path"] = path,
+                ["event"] = "modified",
+                ["timeout"] = 999
+            },
+            CancellationToken.None,
+            update =>
+            {
+                var text = update.Content
+                    .FirstOrDefault(c => c.Type == AgentToolContentType.Text)?.Value;
+
+                if (text is not null && text.Contains("Watching '", StringComparison.Ordinal))
+                    readinessNotice = text;
+            });
+
+        var completed = await Task.WhenAny(watch, Task.Delay(ClampWatchdog));
+        completed.ShouldBeSameAs(
+            watch,
+            $"The watch did not return within {ClampWatchdog.TotalSeconds:0}s, so the 999-second request " +
+            "was not clamped to the configured 2-second maximum.");
+
+        var result = await watch;
+
+        // The effective timeout the tool armed itself with — the clamp, observed directly.
+        readinessNotice.ShouldNotBeNull();
+        readinessNotice.ShouldContain("timeout: 2s");
 
         stopwatch.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(1800);
-        stopwatch.ElapsedMilliseconds.ShouldBeLessThan(4000);
         ReadText(result).ShouldContain("Timeout after 2 seconds");
     }
+
+    /// <summary>
+    /// Upper bound for <see cref="FileWatcherTool_ClampsTimeout"/>. Generous enough that runner
+    /// contention cannot breach it (the observed worst case for a 2s clamp was 7.8s), tight enough that
+    /// an unclamped 999-second wait fails the test rather than stalling the run.
+    /// </summary>
+    private static readonly TimeSpan ClampWatchdog = TimeSpan.FromSeconds(30);
 
     [Fact]
     public async Task FileWatcherTool_ReportsElapsedTime()

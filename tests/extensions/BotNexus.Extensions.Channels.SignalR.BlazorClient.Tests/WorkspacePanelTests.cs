@@ -2,6 +2,7 @@ using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.JSInterop;
 using NSubstitute;
 using System.Globalization;
 using Shouldly;
@@ -16,10 +17,38 @@ public sealed class WorkspacePanelTests : IDisposable
     public WorkspacePanelTests()
     {
         _ctx.Services.AddSingleton(_restClient);
-        _ctx.JSInterop.SetupVoid("BotNexus.splitter.init", _ => true);
+        // Issue #3312: SetupVoid() only REGISTERS a handler — it leaves the handler's
+        // TaskCompletionSource pending. bUnit's JSRuntimeInvocationHandlerBase.HandleAsync
+        // then arms a timer for BunitContext.DefaultWaitTimeout and faults the awaited task
+        // with JSRuntimeInvocationNotSetException if nothing completes the source in time.
+        // WorkspacePanel awaits this call in OnAfterRenderAsync(firstRender: true), so on a
+        // loaded CI agent the timer could win the race and produce a false red on an
+        // unrelated PR. SetVoidResult() completes the source up front, making the stub
+        // resolve synchronously and the fixture timing-independent.
+        //
+        // Mode stays Strict (the default) deliberately: JSRuntimeMode.Loose would also stop
+        // the exception, but it would silently swallow any NEW unstubbed interop call the
+        // panel starts making, which is coverage this class currently has.
+        _ctx.JSInterop.SetupVoid("BotNexus.splitter.init", _ => true).SetVoidResult();
     }
 
     public void Dispose() => _ctx.Dispose();
+
+    [Fact]
+    public void Splitter_interop_stub_completes_immediately_so_first_render_cannot_race_it()
+    {
+        // Regression guard for #3312. A bare SetupVoid(...) leaves the handler pending, so the
+        // returned ValueTask stays incomplete until either SetVoidResult() is called or the
+        // DefaultWaitTimeout timer faults it. Asserting the task is ALREADY complete on return
+        // is what distinguishes the fixed fixture from the racy one: revert the SetVoidResult()
+        // call above and this assertion fails.
+        var invocation = _ctx.JSInterop.JSRuntime.InvokeVoidAsync(
+            "BotNexus.splitter.init", "workspace-panel-agent-1", "bn-workspace-tree-width-agent-1", 560, 200, 0.7, 0.5);
+
+        invocation.IsCompleted.ShouldBeTrue(
+            "the splitter stub must resolve synchronously; a pending handler is what raced first render in #3312");
+        invocation.IsCompletedSuccessfully.ShouldBeTrue();
+    }
 
     [Fact]
     public void Shows_loading_state_while_initial_request_is_pending()

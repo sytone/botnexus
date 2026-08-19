@@ -17,6 +17,24 @@ $sourceRoot = Join-Path $workRoot 'src'
 $artifactsRoot = Join-Path $workRoot 'artifacts'
 $resultsRoot = Join-Path $artifactsRoot 'test-results'
 $runnerResultScript = '/runner/RunnerResult.ps1'
+$runnerTimeoutScript = '/runner/RunnerTimeout.ps1'
+. $runnerTimeoutScript
+
+# SELF-IMPOSED DEADLINE (#3305)
+#
+# The platform replica timeout is a HARD kill: when it expires the replica is destroyed and the
+# finally block below -- the only thing that writes result.json and uploads artifacts -- never
+# runs. Two measured `full` runs died exactly that way and produced an EMPTY artifact directory,
+# leaving no way to tell a hang from a slow suite or to name the project still executing.
+#
+# So the runner keeps its own clock, set inside the platform budget, and ends the run on a path
+# it controls with time left to finalise. The budget is passed in rather than hardcoded so it
+# cannot drift from replicaTimeout in main.bicep; the default matches the deployed 1200s.
+$replicaTimeoutSeconds = if ($env:REPLICA_TIMEOUT_SECONDS) { [int]$env:REPLICA_TIMEOUT_SECONDS } else { 1200 }
+$runDeadlineSeconds = Get-RunnerDeadlineSeconds -BudgetSeconds $replicaTimeoutSeconds
+$runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$timeoutRecord = $null
+
 New-Item -ItemType Directory -Path $payloadRoot, $artifactsRoot, $resultsRoot -Force | Out-Null
 
 # PHASE TIMING (#2889)
@@ -234,11 +252,24 @@ try {
     # silently discarded -- the run would then report success regardless of the test outcome.
     # That is precisely the fail-open class #2851 was raised to eliminate, so the measurement
     # must not reintroduce it.
+    #
+    # The test phase additionally runs under the runner's OWN deadline (#3305). A blocking
+    # `& dotnet test | Tee-Object` pipeline returns only when the child exits, so there is no
+    # instant at which the runner could notice it is about to be killed by the platform.
+    # Starting the child explicitly and polling it is what makes the finalise-and-upload path
+    # in the finally block reachable at all when the suite overruns. Whatever remains of the
+    # deadline after restore and build is what the tests get: charging the test phase the wall
+    # clock already spent is deliberate, because the reserve exists to protect the upload.
+    $testBudgetSeconds = [int][Math]::Max(30, $runDeadlineSeconds - $runStopwatch.Elapsed.TotalSeconds)
+    $testLog = Join-Path $artifactsRoot 'test.log'
+    $playwrightLog = Join-Path $artifactsRoot 'playwright.log'
+    $e2eProject = 'tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj'
     $testStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    switch ($mode) {
+    $run = switch ($mode) {
         'full' {
-            & dotnet test tests/dirs.proj --nologo --tl:off -c Debug --no-build --logger "trx;LogFilePrefix=runner" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
-            $exitCode = $LASTEXITCODE
+            Invoke-BoundedProcess -FilePath 'dotnet' -TimeoutSeconds $testBudgetSeconds -LogPath $testLog -ArgumentList @(
+                'test', 'tests/dirs.proj', '--nologo', '--tl:off', '-c', 'Debug', '--no-build',
+                '--logger', 'trx;LogFilePrefix=runner', '--results-directory', $resultsRoot)
         }
         'core' {
             # Everything except the browser/E2E projects. Those are quarantined while the
@@ -247,28 +278,51 @@ try {
             # therefore certified a green gate that had silently skipped them. Core must be
             # trustworthy before E2E is folded back in.
             $coreFilter = 'FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E'
-            & dotnet test tests/dirs.proj --nologo --tl:off -c Debug --no-build --filter $coreFilter --logger "trx;LogFilePrefix=runner" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
-            $exitCode = $LASTEXITCODE
+            Invoke-BoundedProcess -FilePath 'dotnet' -TimeoutSeconds $testBudgetSeconds -LogPath $testLog -ArgumentList @(
+                'test', 'tests/dirs.proj', '--nologo', '--tl:off', '-c', 'Debug', '--no-build',
+                '--filter', $coreFilter,
+                '--logger', 'trx;LogFilePrefix=runner', '--results-directory', $resultsRoot)
         }
         'strict' {
-            & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -From $baseRef -NoBuild -ResultsDirectory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
-            $exitCode = $LASTEXITCODE
-            if ($exitCode -eq 0) {
-                & dotnet test tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj --nologo --tl:off -c Debug --no-build --logger "trx;LogFileName=playwright.trx" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'playwright.log')
-                $exitCode = $LASTEXITCODE
+            $impacted = Invoke-BoundedProcess -FilePath 'pwsh' -TimeoutSeconds $testBudgetSeconds -LogPath $testLog -ArgumentList @(
+                '-NoProfile', '-File', './scripts/repo/test-impacted.ps1', '-From', $baseRef, '-NoBuild', '-ResultsDirectory', $resultsRoot)
+            if ($impacted.ExitCode -ne 0 -or $impacted.TimedOut) {
+                $impacted
+            }
+            else {
+                $remaining = [int][Math]::Max(30, $runDeadlineSeconds - $runStopwatch.Elapsed.TotalSeconds)
+                Invoke-BoundedProcess -FilePath 'dotnet' -TimeoutSeconds $remaining -LogPath $playwrightLog -ArgumentList @(
+                    'test', $e2eProject, '--nologo', '--tl:off', '-c', 'Debug', '--no-build',
+                    '--logger', 'trx;LogFileName=playwright.trx', '--results-directory', $resultsRoot)
             }
         }
         'playwright' {
-            & dotnet test tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj --nologo --tl:off -c Debug --no-build --logger "trx;LogFileName=playwright.trx" --results-directory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'playwright.log')
-            $exitCode = $LASTEXITCODE
+            Invoke-BoundedProcess -FilePath 'dotnet' -TimeoutSeconds $testBudgetSeconds -LogPath $playwrightLog -ArgumentList @(
+                'test', $e2eProject, '--nologo', '--tl:off', '-c', 'Debug', '--no-build',
+                '--logger', 'trx;LogFileName=playwright.trx', '--results-directory', $resultsRoot)
         }
         default {
-            & pwsh -NoProfile -File ./scripts/repo/test-impacted.ps1 -From $baseRef -NoBuild -ResultsDirectory $resultsRoot 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'test.log')
-            $exitCode = $LASTEXITCODE
+            Invoke-BoundedProcess -FilePath 'pwsh' -TimeoutSeconds $testBudgetSeconds -LogPath $testLog -ArgumentList @(
+                '-NoProfile', '-File', './scripts/repo/test-impacted.ps1', '-From', $baseRef, '-NoBuild', '-ResultsDirectory', $resultsRoot)
         }
     }
+    $exitCode = $run.ExitCode
     $testStopwatch.Stop()
-    Write-PhaseTiming -Phase 'test' -Status $(if ($exitCode -eq 0) { 'ok' } else { 'failed' }) -Seconds $testStopwatch.Elapsed.TotalSeconds
+    Write-PhaseTiming -Phase 'test' -Status $(if ($run.TimedOut) { 'timed-out' } elseif ($exitCode -eq 0) { 'ok' } else { 'failed' }) -Seconds $testStopwatch.Elapsed.TotalSeconds
+
+    if ($run.TimedOut) {
+        # ATTRIBUTION (#3305 AC2). Derived from the TRX that DO exist at this instant, which is
+        # the entire reason the deadline lands early -- a platform kill leaves nothing to read.
+        # Excluded projects are passed through so a filtered run never accuses a project it was
+        # never going to execute; a confident wrong attribution is worse than none.
+        $partialTrx = @(Get-ChildItem -Path $resultsRoot -Filter '*.trx' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+        $completedAssemblies = @(Get-CompletedTestAssemblies -TrxPaths $partialTrx)
+        $excluded = if ($mode -eq 'core') { @('BotNexus.Integration.E2E', 'BotNexus.E2E') } else { @() }
+        $unfinished = @(Get-UnfinishedTestProjects -ExpectedProjects (Get-ExpectedTestProjects -TestsRoot (Join-Path $sourceRoot 'tests')) -CompletedAssemblies $completedAssemblies -ExcludedProjects $excluded)
+        $timeoutRecord = New-RunnerTimeoutRecord -Phase 'test' -ElapsedSeconds $testStopwatch.Elapsed.TotalSeconds -DeadlineSeconds $testBudgetSeconds -CompletedAssemblies $completedAssemblies -UnfinishedProjects $unfinished
+        $exitCode = 1
+        throw "Test phase exceeded the runner deadline of $testBudgetSeconds s. $($timeoutRecord.attribution)"
+    }
 
     if ($strictResults) {
         . $runnerResultScript
@@ -316,6 +370,10 @@ finally {
         completedUtc = [DateTime]::UtcNow.ToString('o')
         tests = $testResult
         timings = $phaseTimings
+        # #3305: a timeout is REPRESENTED here rather than inferred from an absent artifact.
+        # $null on an ordinary run, so the field distinguishes "did not time out" from "we
+        # never got to write anything" -- which an empty directory could not.
+        timeout = $timeoutRecord
     } | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $artifactsRoot 'result.json')
 
     Write-Host 'Uploading test artifacts with managed identity...'

@@ -62,8 +62,8 @@ public sealed class RequestCancellationMiddleware
 
             _logger.LogDebug(
                 "Request {Method} {Path} was aborted by the client; responding {StatusCode}.",
-                context.Request.Method,
-                context.Request.Path.Value ?? "/",
+                RequestLogText.Safe(context.Request.Method),
+                RequestLogText.SafePath(context.Request.Path.Value),
                 ClientClosedRequestStatusCode);
         }
     }

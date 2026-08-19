@@ -4,6 +4,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Extensions.Plugins.Lifecycle;
 using BotNexus.Extensions.Skills.Security;
 using BotNexus.Extensions.Skills.Telemetry;
 using System.IO.Abstractions;
@@ -19,7 +20,8 @@ public sealed class SkillTool(
     string? agentSkillsDir,
     string? workspaceSkillsDir,
     SkillsConfig? config,
-    ISkillUsageTelemetry? telemetry = null) : IAgentTool
+    ISkillUsageTelemetry? telemetry = null,
+    string? pluginRootDir = null) : IAgentTool
 {
     private readonly IFileSystem _fileSystem = new FileSystem();
     private readonly ConcurrentDictionary<string, byte> _sessionLoaded = new(StringComparer.OrdinalIgnoreCase);
@@ -50,7 +52,15 @@ public sealed class SkillTool(
     private readonly IReadOnlyList<SkillDefinition>? _staticSkills;
 
     private IReadOnlyList<SkillDefinition> DiscoverSkills()
-        => _staticSkills ?? SkillDiscovery.Discover(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, _fileSystem);
+        => _staticSkills ?? SkillDiscovery.Discover(
+            globalSkillsDir,
+            agentSkillsDir,
+            workspaceSkillsDir,
+            _fileSystem,
+            // Plugin skills join at the global/shared tier (#2684). Resolved on every call for the
+            // same reason the directories are re-scanned: a plugin installed mid-session must
+            // become visible without a restart.
+            pluginSkillsDirs: PluginSkillRootResolver.Resolve(pluginRootDir, _fileSystem));
 
     public IReadOnlyList<SkillDefinition> GetDiscoveredSkills() => DiscoverSkills();
 

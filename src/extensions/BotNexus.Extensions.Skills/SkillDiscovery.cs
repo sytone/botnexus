@@ -22,23 +22,43 @@ public static class SkillDiscovery
     private static readonly string[] LinkedFileDirs = ["references", "templates", "scripts", "assets"];
 
     /// <summary>
-    /// Discovers and merges skills from global, agent, and workspace directories.
+    /// Discovers and merges skills from plugin, global, agent, and workspace directories.
     /// </summary>
     /// <param name="globalSkillsDir">Optional path to the global skills directory.</param>
     /// <param name="agentSkillsDir">Optional path to the agent-level skills directory.</param>
     /// <param name="workspaceSkillsDir">Optional path to the workspace-level skills directory.</param>
     /// <param name="fileSystem">Optional filesystem abstraction (defaults to real filesystem).</param>
     /// <param name="logger">Optional logger; when supplied, emits warnings for skipped skills.</param>
+    /// <param name="trustMode">Trust verification mode applied to every scanned skill.</param>
+    /// <param name="pluginSkillsDirs">
+    /// Optional skills directories belonging to installed plugins (#2684), typically produced by
+    /// <c>PluginSkillRootResolver.Resolve</c>. Scanned FIRST, at the global/shared tier, so a
+    /// same-named global, agent or workspace skill still wins. Omitting this argument - or passing
+    /// an empty sequence, which is what a machine with no plugins installed yields - leaves the
+    /// pre-existing three-scope resolution byte-identical.
+    /// </param>
     public static IReadOnlyList<SkillDefinition> Discover(
         string? globalSkillsDir,
         string? agentSkillsDir,
         string? workspaceSkillsDir,
         IFileSystem? fileSystem = null,
         ILogger? logger = null,
-        SkillTrustMode trustMode = SkillTrustMode.Disabled)
+        SkillTrustMode trustMode = SkillTrustMode.Disabled,
+        IReadOnlyList<string>? pluginSkillsDirs = null)
     {
         var fs = fileSystem ?? new FileSystem();
         var skills = new Dictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
+
+        // Plugin skills are scanned before the global directory rather than merged into it: they
+        // share the global tier but must LOSE a name collision with operator-authored shared
+        // content, and "scanned first" is precisely how this dictionary expresses "lower priority".
+        if (pluginSkillsDirs is { Count: > 0 })
+        {
+            foreach (var pluginSkillsDir in pluginSkillsDirs)
+            {
+                ScanDirectory(skills, pluginSkillsDir, SkillSource.Plugin, fs, logger, trustMode);
+            }
+        }
 
         ScanDirectory(skills, globalSkillsDir, SkillSource.Global, fs, logger, trustMode);
         ScanDirectory(skills, agentSkillsDir, SkillSource.Agent, fs, logger, trustMode);

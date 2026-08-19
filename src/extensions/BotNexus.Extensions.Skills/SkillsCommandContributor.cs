@@ -461,6 +461,7 @@ public sealed class SkillsCommandContributor : ICommandContributor
     private static string MapSource(SkillSource source)
         => source switch
         {
+            SkillSource.Plugin => "Plugin",
             SkillSource.Global => "Global",
             SkillSource.Agent => "Agent",
             SkillSource.Workspace => "Workspace",

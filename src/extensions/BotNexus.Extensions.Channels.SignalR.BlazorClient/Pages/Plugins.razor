@@ -1,0 +1,247 @@
+@page "/plugins"
+@page "/plugins/{PluginId}"
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject PluginsApiClient PluginsApi
+@inject NavigationManager Nav
+
+<PageTitle>BotNexus &mdash; Plugins</PageTitle>
+
+<div class="agents-page" data-testid="plugins-page">
+
+    <header class="agents-toolbar">
+        <h2>&#x1F9E9; Plugins</h2>
+        <div class="agents-toolbar-actions">
+            @if (!string.IsNullOrEmpty(_statusMessage))
+            {
+                <span class="agents-status @_statusClass" role="status" data-testid="plugins-status">@_statusMessage</span>
+            }
+            <button class="toolbar-btn" @onclick="LoadAsync" disabled="@_loading" title="Refresh plugin list">&#x21BB; Reload</button>
+        </div>
+    </header>
+
+    @* AC4 sad path. An id that is not installed is a non-fatal notice above the ordinary list,
+       never an error page: a stale bookmark or a plugin removed since the link was shared is a
+       normal thing to happen, and blanking the page would hide the very list that answers it. *@
+    @if (_unknownPluginId is not null)
+    {
+        <div class="agents-status warning" role="status" data-testid="plugin-unknown-notice">
+            Plugin '@_unknownPluginId' is not installed. Showing all installed plugins.
+        </div>
+    }
+
+    @if (_loading)
+    {
+        <div class="config-loading" aria-live="polite" data-testid="plugins-loading">
+            <div class="loading-spinner small"></div>
+            <span>Loading plugins.</span>
+        </div>
+    }
+    else if (_error is not null)
+    {
+        <div class="agents-error" role="alert" data-testid="plugins-error">&#x26A0;&#xFE0F; @_error</div>
+    }
+    else if (_plugins.Count == 0)
+    {
+        <div class="agents-empty" data-testid="plugins-empty">
+            <p>No plugins installed. Plugins are installed from the CLI against a marketplace source.</p>
+        </div>
+    }
+    else
+    {
+        <table class="agents-table" aria-label="Installed plugins" data-testid="plugins-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Version</th>
+                    <th>Update</th>
+                    <th>Trust</th>
+                    <th>Auto-update</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var plugin in _plugins)
+                {
+                    <tr data-testid="plugin-row" data-plugin-id="@plugin.Name"
+                        class="@(IsSelected(plugin) ? "selected" : null)">
+                        <td class="agents-id">
+                            <a href="plugins/@plugin.Name" data-testid="plugin-link">@plugin.Name</a>
+                        </td>
+                        <td data-testid="plugin-version">@DisplayVersion(plugin)</td>
+                        <td data-testid="plugin-update-state">@UpdateLabel(plugin)</td>
+                        <td data-testid="plugin-trust-state" title="@plugin.TrustDetail">@TrustLabel(plugin)</td>
+                        <td>
+                            <label class="plugin-autoupdate-toggle">
+                                <input type="checkbox"
+                                       data-testid="plugin-autoupdate-toggle"
+                                       aria-label="Auto-update @plugin.Name"
+                                       checked="@plugin.UpdatesEnabled"
+                                       disabled="@(_savingPlugin == plugin.Name)"
+                                       @onchange="@(e => ToggleAutoUpdateAsync(plugin, e))" />
+                                <span>@(plugin.UpdatesEnabled ? "Enabled" : "Pinned")</span>
+                            </label>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @if (_selected is not null)
+        {
+            <section class="cron-page-card" data-testid="plugin-detail">
+                <h3 data-testid="plugin-detail-name">@_selected.Name</h3>
+                <dl class="plugin-detail-list">
+                    <dt>Source</dt>
+                    <dd data-testid="plugin-detail-source">@_selected.Source</dd>
+                    <dt>Reference</dt>
+                    <dd data-testid="plugin-detail-reference">@(_selected.Reference ?? "(default branch)")</dd>
+                    <dt>Installed revision</dt>
+                    <dd data-testid="plugin-detail-revision">@_selected.ResolvedVersion</dd>
+                    <dt>Manifest version</dt>
+                    <dd data-testid="plugin-detail-manifest-version">@(_selected.ManifestVersion ?? "(unversioned)")</dd>
+                    <dt>Installed</dt>
+                    <dd data-testid="plugin-detail-installed-at">@_selected.InstalledAtUtc.UtcDateTime.ToString("u")</dd>
+                    <dt>Recorded files</dt>
+                    <dd data-testid="plugin-detail-file-count">@_selected.FileCount</dd>
+                    <dt>Trust</dt>
+                    <dd data-testid="plugin-detail-trust">@TrustLabel(_selected) &mdash; @_selected.TrustDetail</dd>
+                </dl>
+            </section>
+        }
+    }
+</div>
+
+@code {
+    /// <summary>
+    /// Route-addressed plugin selection (AC4). Selection lives in the route rather than in a
+    /// private field so a plugin is linkable and survives a reload - the mistake the cron page
+    /// made and this page is required not to repeat.
+    /// </summary>
+    [Parameter] public string? PluginId { get; set; }
+
+    private IReadOnlyList<PluginRowDto> _plugins = [];
+    private PluginRowDto? _selected;
+    private string? _unknownPluginId;
+    private bool _loading = true;
+    private string? _error;
+    private string? _savingPlugin;
+    private string? _statusMessage;
+    private string _statusClass = "";
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    protected override void OnParametersSet() => ResolveSelection();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            _plugins = await PluginsApi.ListAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load plugins: {ex.Message}";
+            _plugins = [];
+        }
+        finally
+        {
+            _loading = false;
+            ResolveSelection();
+        }
+    }
+
+    // An unknown id yields a notice plus the unselected list. It is resolved only once the list
+    // has loaded, because "not in an empty list" during the initial fetch would flash a false
+    // "not installed" notice for an id that is about to resolve perfectly well.
+    private void ResolveSelection()
+    {
+        if (string.IsNullOrWhiteSpace(PluginId))
+        {
+            _selected = null;
+            _unknownPluginId = null;
+            return;
+        }
+
+        if (_loading)
+        {
+            return;
+        }
+
+        _selected = _plugins.FirstOrDefault(p => string.Equals(p.Name, PluginId, StringComparison.Ordinal));
+        _unknownPluginId = _selected is null ? PluginId : null;
+    }
+
+    private bool IsSelected(PluginRowDto plugin) =>
+        _selected is not null && string.Equals(_selected.Name, plugin.Name, StringComparison.Ordinal);
+
+    private static string DisplayVersion(PluginRowDto plugin) =>
+        plugin.ManifestVersion is { Length: > 0 } manifestVersion
+            ? manifestVersion
+            : ShortRevision(plugin.ResolvedVersion);
+
+    private static string ShortRevision(string revision) =>
+        revision.Length > 12 ? revision[..12] : revision;
+
+    private static string UpdateLabel(PluginRowDto plugin) => plugin.UpdateState switch
+    {
+        PluginUpdateStateDto.Current => "Up to date",
+        PluginUpdateStateDto.UpdateAvailable => plugin.AvailableVersion is { Length: > 0 } available
+            ? $"Update available ({ShortRevision(available)})"
+            : "Update available",
+        PluginUpdateStateDto.Pinned => "Pinned - not checked",
+        PluginUpdateStateDto.ProbeFailed => $"Check failed: {plugin.UpdateProbeError}",
+        _ => "Not checked",
+    };
+
+    private static string TrustLabel(PluginRowDto plugin) => plugin.TrustState switch
+    {
+        PluginTrustStateDto.Verified => "Verified",
+        PluginTrustStateDto.Modified => "Modified",
+        _ => "Unverified",
+    };
+
+    private async Task ToggleAutoUpdateAsync(PluginRowDto plugin, ChangeEventArgs args)
+    {
+        var desired = args.Value is bool value ? value : !plugin.UpdatesEnabled;
+        _savingPlugin = plugin.Name;
+        try
+        {
+            var updated = await PluginsApi.SetUpdatePreferenceAsync(plugin.Name, desired);
+            if (updated is null)
+            {
+                // The row is left showing the persisted preference, not the attempted one: a
+                // toggle that reads back as changed when the gateway rejected it is worse than
+                // one that visibly snapped back.
+                SetStatus($"Could not save the auto-update preference for '{plugin.Name}'.", "error");
+                return;
+            }
+
+            _plugins = _plugins
+                .Select(p => string.Equals(p.Name, updated.Name, StringComparison.Ordinal) ? updated : p)
+                .ToList();
+            ResolveSelection();
+            SetStatus(
+                updated.UpdatesEnabled
+                    ? $"Auto-update enabled for '{updated.Name}'."
+                    : $"'{updated.Name}' is pinned; updates will not replace it.",
+                "success");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not save the auto-update preference: {ex.Message}", "error");
+        }
+        finally
+        {
+            _savingPlugin = null;
+        }
+    }
+
+    private void SetStatus(string message, string cssClass)
+    {
+        _statusMessage = message;
+        _statusClass = cssClass;
+    }
+}

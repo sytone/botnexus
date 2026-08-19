@@ -44,7 +44,7 @@ public class ResponsesStreamPrimitivesTests
     [InlineData("refusal", StopReason.Refusal)]
     [InlineData("content_filter", StopReason.Sensitive)]
     [InlineData("failed", StopReason.Error)]
-    [InlineData("cancelled", StopReason.Error)]
+    [InlineData("cancelled", StopReason.Aborted)]
     [InlineData("in_progress", StopReason.Stop)]
     [InlineData("queued", StopReason.Stop)]
     [InlineData("something_unknown", StopReason.Stop)]
@@ -52,6 +52,21 @@ public class ResponsesStreamPrimitivesTests
     public void MapStopReason_MapsKnownStatusesAndFallsBackToStop(string? status, StopReason expected)
     {
         ResponsesStreamHelpers.MapStopReason(status).ShouldBe(expected);
+    }
+
+    /// <summary>
+    /// AC1/AC2 of #3294, asserted by name so the cancelled arm cannot be silently folded back into
+    /// the error arm: a caller-cancelled Responses turn is an abort, not a provider failure, and it
+    /// must normalise identically to the out-of-band <c>ResponsesStreamEngine.EmitAborted</c> path.
+    /// </summary>
+    [Fact]
+    public void MapStopReason_Cancelled_MapsToAborted_NotError()
+    {
+        ResponsesStreamHelpers.MapStopReason("cancelled").ShouldBe(StopReason.Aborted);
+        ResponsesStreamHelpers.MapStopReason("cancelled").ShouldNotBe(StopReason.Error);
+
+        // Sad path: a genuine provider failure stays Error, so the fix does not blur the two.
+        ResponsesStreamHelpers.MapStopReason("failed").ShouldBe(StopReason.Error);
     }
 
     [Fact]

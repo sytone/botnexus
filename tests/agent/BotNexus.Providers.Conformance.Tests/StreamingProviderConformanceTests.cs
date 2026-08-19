@@ -153,42 +153,78 @@ public abstract class StreamingProviderConformanceTests
         result.Content.ShouldBeEmpty("malformed JSON should not produce content");
     }
 
+    /// <summary>
+    /// Cancellation must produce ONE normalized shape across every producer: an
+    /// <see cref="ErrorEvent"/> carrying <see cref="StopReason.Aborted"/> (#3292).
+    /// <para>
+    /// This assertion is deliberately named and exclusive. Its predecessor,
+    /// <c>Stream_CancellationDuringStreaming_ThrowsOrEmitsError</c>, asserted the disjunction
+    /// "throws, or errors, or returns anything at all", which is satisfied by BOTH shapes and is
+    /// precisely why the Responses/Completions engines emitting <c>DoneEvent(Aborted)</c> while
+    /// Anthropic emitted <c>ErrorEvent(Aborted)</c> survived undetected. A <c>DoneEvent</c> is the
+    /// normal-completion case of the event union; a cancelled turn did not complete, so a consumer
+    /// switching on event type - the documented way to consume this union - would have classified
+    /// those cancellations as successes.
+    /// </para>
+    /// <para>
+    /// The old test also raced by construction: it cancelled inside the handler and then returned a
+    /// complete, well-formed success payload, so "the response arrived before cancellation was
+    /// observed" was an accepted outcome and the cancellation path was frequently never entered.
+    /// The stalling handler below removes the race - the request cannot complete, so the only way
+    /// out of the provider's request loop is the cancellation catch.
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task Stream_CancellationDuringStreaming_ThrowsOrEmitsError()
+    public async Task Stream_Cancellation_EmitsErrorEventWithAbortedReason()
     {
         using var cts = new CancellationTokenSource();
-
-        var handler = new RecordingHandler(_ =>
-        {
-            // Simulate slow response
-            cts.Cancel();
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    BuildTextPayload("hello", MapCanonicalStopReason("stop")),
-                    Encoding.UTF8,
-                    "text/event-stream")
-            };
-        });
+        var handler = new StallingHandler();
 
         var provider = CreateProvider(handler);
         var options = CreateOptions() with { CancellationToken = cts.Token };
         var stream = provider.Stream(CreateModel(), CreateContext(), options);
+        cts.CancelAfter(TimeSpan.FromMilliseconds(250));
 
-        // With cancellation, the provider may either:
-        // 1. Throw OperationCanceledException
-        // 2. Return error result
-        // 3. Return normal result (race: response arrived before cancellation was checked)
-        // All three are acceptable behaviors for this race condition.
-        try
+        var events = new List<AssistantMessageEvent>();
+        // Bound the read: a producer that emits no terminal event at all would otherwise hang the
+        // whole suite. A thrown OperationCanceledException here is a loud failure, which is what a
+        // silently-never-terminating stream deserves.
+        using var readTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await foreach (var evt in stream.WithCancellation(readTimeout.Token))
+            events.Add(evt);
+
+        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        events.ShouldNotBeEmpty(
+            $"{provider.GetType().Name} must emit a terminal event for a cancelled turn, not end the " +
+            "stream silently");
+        var terminal = events[^1];
+
+        var error = terminal.ShouldBeOfType<ErrorEvent>(
+            $"{provider.GetType().Name} must normalize cancellation to ErrorEvent(StopReason.Aborted) " +
+            "(#3292). DoneEvent is the normal-completion case and a cancelled turn did not complete, " +
+            "so a consumer switching on event type would read this cancellation as a success.");
+        error.Reason.ShouldBe(StopReason.Aborted);
+
+        events.OfType<DoneEvent>().ShouldBeEmpty(
+            "a cancelled turn must not emit a DoneEvent at all - carrying StopReason.Aborted on the " +
+            "completion event is the contradiction #3292 exists to remove");
+
+        result.StopReason.ShouldBe(StopReason.Aborted);
+    }
+
+    /// <summary>
+    /// A handler that never completes its request, so the only exit from the provider's request loop
+    /// is the caller's cancellation token. Returning a canned response instead would reintroduce the
+    /// race the #3292 assertion exists to eliminate.
+    /// </summary>
+    private sealed class StallingHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
-            // If we get here without throwing, any result is acceptable
-            result.ShouldNotBeNull();
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected — cancellation propagated correctly
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
         }
     }
 

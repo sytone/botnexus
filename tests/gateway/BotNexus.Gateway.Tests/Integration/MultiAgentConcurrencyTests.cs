@@ -60,14 +60,19 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
-        var responses = new ConcurrentDictionary<string, (string Content, DateTimeOffset ReceivedAt)>();
+        // Arrival is recorded as a monotonic ordinal rather than a wall-clock timestamp:
+        // DateTimeOffset.UtcNow has ~15ms granularity on a contended runner, so two deltas that
+        // genuinely arrived in order can carry identical timestamps and make a strict-inequality
+        // ordering assertion flake (#3372). The ordinal is strictly increasing by construction.
+        var responses = new ConcurrentDictionary<string, (string Content, long Arrival)>();
+        var arrivalCounter = 0L;
 
         // Register handler BEFORE sending messages
         using var _ = connection.On<AgentStreamEvent>("ContentDelta", payload =>
         {
             if (payload.SessionId is { } sid && payload.ContentDelta is not null)
             {
-                responses.TryAdd(sid.Value, (payload.ContentDelta, DateTimeOffset.UtcNow));
+                responses.TryAdd(sid.Value, (payload.ContentDelta, Interlocked.Increment(ref arrivalCounter)));
             }
         });
 
@@ -95,7 +100,7 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         responses[fastSessionId!].Content.ShouldBe("fast-response");
 
         // CRITICAL: fast agent should respond before slow agent
-        responses[fastSessionId!].ReceivedAt.ShouldBeLessThan(responses[slowSessionId!].ReceivedAt);
+        responses[fastSessionId!].Arrival.ShouldBeLessThan(responses[slowSessionId!].Arrival);
     }
 
     /// <summary>
@@ -124,13 +129,15 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
-        var responses = new ConcurrentDictionary<string, (string Content, DateTimeOffset ReceivedAt)>();
+        // Monotonic arrival ordinal — see the note in SendMessage_TwoAgentsConcurrently_BothReceiveResponses (#3372).
+        var responses = new ConcurrentDictionary<string, (string Content, long Arrival)>();
+        var arrivalCounter = 0L;
 
         using var _ = connection.On<AgentStreamEvent>("ContentDelta", payload =>
         {
             if (payload.SessionId is { } sid && payload.ContentDelta is not null)
             {
-                responses.TryAdd(sid.Value, (payload.ContentDelta, DateTimeOffset.UtcNow));
+                responses.TryAdd(sid.Value, (payload.ContentDelta, Interlocked.Increment(ref arrivalCounter)));
             }
         });
 
@@ -156,8 +163,8 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         responses.ShouldContainKey(fastSessionId);
 
         // Verify responses came in the right order (fastest first)
-        responses[fastSessionId].ReceivedAt.ShouldBeLessThan(responses[mediumSessionId].ReceivedAt);
-        responses[mediumSessionId].ReceivedAt.ShouldBeLessThan(responses[slowSessionId].ReceivedAt);
+        responses[fastSessionId].Arrival.ShouldBeLessThan(responses[mediumSessionId].Arrival);
+        responses[mediumSessionId].Arrival.ShouldBeLessThan(responses[slowSessionId].Arrival);
     }
 
     /// <summary>
@@ -186,13 +193,15 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
 
-        var responses = new ConcurrentDictionary<string, (string Content, DateTimeOffset ReceivedAt)>();
+        // Monotonic arrival ordinal — see the note in SendMessage_TwoAgentsConcurrently_BothReceiveResponses (#3372).
+        var responses = new ConcurrentDictionary<string, (string Content, long Arrival)>();
+        var arrivalCounter = 0L;
 
         using var _ = connection.On<AgentStreamEvent>("ContentDelta", payload =>
         {
             if (payload.SessionId is { } sid && payload.ContentDelta is not null)
             {
-                responses.TryAdd(sid.Value, (payload.ContentDelta, DateTimeOffset.UtcNow));
+                responses.TryAdd(sid.Value, (payload.ContentDelta, Interlocked.Increment(ref arrivalCounter)));
             }
         });
 
@@ -218,8 +227,11 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         responses[sessionA].Content.ShouldBe("response-a");
         responses[sessionB].Content.ShouldBe("response-b");
 
-        // Assert agent-b responded before agent-a (proves no serialization)
-        responses[sessionB].ReceivedAt.ShouldBeLessThan(responses[sessionA].ReceivedAt);
+        // Assert agent-b responded before agent-a (proves no serialization).
+        // agent-a is a 2s agent started first; agent-b is a 100ms agent started 100ms later. If the
+        // hub serialized per-connection work, b's delta could only arrive after a's, so a strictly
+        // lower arrival ordinal for b is exactly the non-serialization property.
+        responses[sessionB].Arrival.ShouldBeLessThan(responses[sessionA].Arrival);
     }
 
     /// <summary>

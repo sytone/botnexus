@@ -4,10 +4,10 @@ A **plugin** is a directory that bundles BotNexus components - skills, agents, c
 and MCP server definitions - so they can be distributed and installed as one unit instead of
 being copied file by file.
 
-This document describes the **on-disk contract** and the **install / update / remove
-lifecycle**. Trust decisions, cron-triggered updates, and wiring into skill discovery, agent
-config sources or MCP are deliberately out of scope here and are covered by later slices of
-the plugin epic (#2623).
+This document describes the **on-disk contract**, the **install / update / remove
+lifecycle**, and how a plugin's skills join skill discovery. Plugin-granularity trust
+catalogs (#2682), cron-triggered updates, and wiring into agent config sources or MCP are
+deliberately out of scope here and are covered by later slices of the plugin epic (#2623).
 
 ## Directory layout
 
@@ -200,3 +200,38 @@ The update preference is read before any work, so a pinned plugin's source is ne
 filter applied after the fetch would cost a clone per run to reach a foregone conclusion, and would
 make "pinned" observationally identical to "already current".
 
+## Skill discovery
+
+A plugin's `skills/` directory participates in the existing skill merge at the **global/shared
+tier** (#2684). `SkillSource` gained a `Plugin` member and `SkillDiscovery` scans plugin skill
+roots immediately *before* the global directory, which is how the merge dictionary expresses
+"lower priority".
+
+The resulting precedence is `Plugin` < `Global` < `Agent` < `Workspace`. Plugin and global sit
+at the same conceptual tier - both are visible to every agent - but a name collision resolves
+in favour of the global directory. A plugin may add capability; it may never silently displace
+a skill the operator wrote themselves, because installing a plugin should not change the
+meaning of a name that already worked.
+
+### The installed record decides what contributes
+
+`PluginSkillRootResolver` derives skill roots from `installed-plugins.json`, never by
+enumerating subdirectories of the plugin root. This is the same reasoning that makes install
+refuse an existing-but-unrecorded directory: such a directory has no known provenance and no
+removal manifest. Discovering skills out of it would be a trivial way to smuggle content into
+every agent's prompt by dropping a folder next to real plugins.
+
+The resolver returns plain directory paths and nothing else. Parsing, validation, the security
+scan and trust verification all already live in `SkillDiscovery`, and a second discovery
+implementation for plugins is precisely how the enforced set and the surfaced set drift apart.
+
+### Trust
+
+Plugin skills are verified by the existing per-skill `SkillTrustVerifier` on the shared scan
+path, so `Disabled` / `Warn` / `Enforce` behave identically to any other skill: under `Enforce`
+a skill whose `trust.json` catalog does not match its content is skipped and the refusal is
+logged; under `Warn` it is loaded and the violation logged.
+
+Note that this is trust at **skill** granularity, applied to skills that happen to come from a
+plugin. A catalog generated over the whole plugin at install time - so that a plugin shipping
+no `trust.json` is itself covered - is sibling issue #2682 and is not yet implemented.

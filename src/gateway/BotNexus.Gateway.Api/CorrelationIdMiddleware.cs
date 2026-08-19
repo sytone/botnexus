@@ -62,7 +62,9 @@ public sealed class CorrelationIdMiddleware
             System.Diagnostics.Activity.Current?.SetTag("botnexus.channel.type", channel);
 
         GatewayTelemetry.Requests.Add(1,
-            new KeyValuePair<string, object?>("http.route", context.Request.Path.Value ?? "/"),
+            // Sanitised at the seam (#3260): a metric dimension is exported into the same log/OTLP
+            // pipeline as a message, so an unbounded caller-controlled route forges records there too.
+            new KeyValuePair<string, object?>("http.route", RequestLogText.SafePath(context.Request.Path.Value)),
             new KeyValuePair<string, object?>("botnexus.session.id", sessionId),
             new KeyValuePair<string, object?>("botnexus.agent.id", agentId),
             new KeyValuePair<string, object?>("botnexus.channel.type", channel));
