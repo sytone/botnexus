@@ -85,12 +85,19 @@ public sealed class ConversationAutoTitleService
     /// <param name="userText">The first user message text.</param>
     /// <param name="preferredModelId">Optional model ID from auxiliary.titling config.</param>
     /// <param name="timeoutSeconds">Per-call timeout in seconds; non-positive falls back to 30.</param>
+    /// <param name="sessionId">
+    /// #3417: the id of the session that originated this conversation turn, threaded onto the
+    /// outgoing <c>SimpleStreamOptions.SessionId</c> so the titling request carries the same session
+    /// identity every interactive request does. Optional: a caller with no resolved session still
+    /// titles, it simply emits no cache key. Typed (#3099) so a blank id is not representable.
+    /// </param>
     public void TriggerProvisionalBestEffort(
         ConversationId conversationId,
         AgentId agentId,
         string userText,
         string? preferredModelId,
-        int timeoutSeconds = 30)
+        int timeoutSeconds = 30,
+        SessionId? sessionId = null)
     {
         _ = Task.Run(async () =>
         {
@@ -98,7 +105,7 @@ public sealed class ConversationAutoTitleService
             {
                 await GenerateProvisionalAndSaveAsync(
                     conversationId, agentId, userText, preferredModelId,
-                    timeoutSeconds, CancellationToken.None);
+                    timeoutSeconds, CancellationToken.None, sessionId);
             }
             catch (Exception ex)
             {
@@ -121,13 +128,15 @@ public sealed class ConversationAutoTitleService
     /// <param name="assistantText">The first assistant response text.</param>
     /// <param name="preferredModelId">Optional model ID from auxiliary.titling config.</param>
     /// <param name="timeoutSeconds">Per-call timeout in seconds from auxiliary.titling config; non-positive falls back to 30.</param>
+    /// <param name="sessionId">#3417: originating session id, threaded onto the outgoing options.</param>
     public void TriggerBestEffort(
         ConversationId conversationId,
         AgentId agentId,
         string? userText,
         string assistantText,
         string? preferredModelId,
-        int timeoutSeconds = 30)
+        int timeoutSeconds = 30,
+        SessionId? sessionId = null)
     {
         _ = Task.Run(async () =>
         {
@@ -135,7 +144,7 @@ public sealed class ConversationAutoTitleService
             {
                 await GenerateAndSaveAsync(
                     conversationId, agentId, userText, assistantText, preferredModelId,
-                    timeoutSeconds, CancellationToken.None);
+                    timeoutSeconds, CancellationToken.None, sessionId);
             }
             catch (Exception ex)
             {
@@ -159,7 +168,8 @@ public sealed class ConversationAutoTitleService
         string userText,
         string? preferredModelId,
         int timeoutSeconds,
-        CancellationToken ct)
+        CancellationToken ct,
+        SessionId? sessionId = null)
     {
         // Provisional titling only ever applies to a brand-new, still-default-titled conversation.
         var conversation = await _store.GetAsync(conversationId, ct).ConfigureAwait(false);
@@ -189,7 +199,7 @@ public sealed class ConversationAutoTitleService
         }
 
         var prompt = BuildProvisionalPrompt(userText);
-        var title = await CompleteTitleAsync(model, prompt, conversationId, timeoutSeconds, ct).ConfigureAwait(false);
+        var title = await CompleteTitleAsync(model, prompt, conversationId, timeoutSeconds, sessionId, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(title))
             return null;
 
@@ -233,7 +243,8 @@ public sealed class ConversationAutoTitleService
         string assistantText,
         string? preferredModelId,
         int timeoutSeconds,
-        CancellationToken ct)
+        CancellationToken ct,
+        SessionId? sessionId = null)
     {
         // Load conversation and check that it is still eligible for titling: either the default
         // title, or a provisional title that has not yet been refined (refine-once, #2126).
@@ -270,7 +281,7 @@ public sealed class ConversationAutoTitleService
 
         // Call LLM.
         var prompt = BuildPrompt(userText, assistantText);
-        var title = await CompleteTitleAsync(model, prompt, conversationId, timeoutSeconds, ct).ConfigureAwait(false);
+        var title = await CompleteTitleAsync(model, prompt, conversationId, timeoutSeconds, sessionId, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(title))
             return null;
 
@@ -313,6 +324,7 @@ public sealed class ConversationAutoTitleService
         string prompt,
         ConversationId conversationId,
         int timeoutSeconds,
+        SessionId? sessionId,
         CancellationToken ct)
     {
         var context = new Context(
@@ -329,11 +341,17 @@ public sealed class ConversationAutoTitleService
             // #2025: resolve credentials through the shared GatewayAuthManager seam and thread the
             // key into the provider options, exactly as the foreground agent loop and the compactor
             // do. A null auth manager yields null-key options -> provider env fallback.
+            // #3417: the same seam now also carries the originating session id, so the titling
+            // request is correlatable and eligible for the Copilot prompt cache. When there is no
+            // auth manager AND no session id there is still nothing to say, so null options are
+            // preserved verbatim - behaviour-preserving for the pre-#2025 shape.
             var streamOptions = _authManager is not null
                 ? await _authManager
-                    .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions: null, ct)
+                    .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions: null, sessionId, ct)
                     .ConfigureAwait(false)
-                : null;
+                : sessionId is { } resolvedSessionId
+                    ? new SimpleStreamOptions { SessionId = resolvedSessionId.Value }
+                    : null;
 
             completion = await _llmClient
                 .CompleteSimpleAsync(model, context, streamOptions)

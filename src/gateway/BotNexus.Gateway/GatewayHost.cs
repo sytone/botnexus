@@ -1738,7 +1738,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             typedAgentId,
             userText,
             titling?.Model,
-            titling?.TimeoutSeconds ?? 30);
+            titling?.TimeoutSeconds ?? 30,
+            // #3417: background LLM calls carry the originating session identity, exactly as every
+            // interactive provider path does, so the Copilot prompt-cache key is emitted.
+            session.SessionId);
     }
 
     private void TryTriggerAutoTitle(GatewaySession session, AgentId typedAgentId)
@@ -1787,7 +1790,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             userText,
             assistantText,
             titling?.Model,
-            titling?.TimeoutSeconds ?? 30);
+            titling?.TimeoutSeconds ?? 30,
+            // #3417: see TryTriggerProvisionalTitle - same session-identity threading.
+            session.SessionId);
     }
 
     private SessionType ResolveSessionType(GatewaySession session, InboundMessage message, bool isNewSession)

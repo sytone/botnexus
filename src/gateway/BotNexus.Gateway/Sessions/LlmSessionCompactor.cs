@@ -449,7 +449,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         string summary;
         try
         {
-            summary = await CallLlmForSummaryAsync(summaryPrompt, effectiveOptions, cancellationToken).ConfigureAwait(false);
+            summary = await CallLlmForSummaryAsync(summaryPrompt, effectiveOptions, session.SessionId, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -822,6 +822,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     private async Task<string> CallLlmForSummaryAsync(
         string summaryPrompt,
         CompactionOptions options,
+        SessionId? sessionId,
         CancellationToken cancellationToken)
     {
         var candidates = BuildCandidateModels(options.SummarizationModel, options.SummarizationProvider);
@@ -846,7 +847,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 model.Id, model.Provider, i + 1, candidates.Count);
 
             var (result, transientFailure) =
-                await TryCallModelAsync(model, context, options, cancellationToken).ConfigureAwait(false);
+                await TryCallModelAsync(model, context, options, sessionId, cancellationToken).ConfigureAwait(false);
 
             if (!string.IsNullOrWhiteSpace(result))
             {
@@ -906,6 +907,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         LlmModel model,
         Context context,
         CompactionOptions options,
+        SessionId? sessionId,
         CancellationToken cancellationToken)
     {
         // Resolve API key from GatewayAuthManager (OAuth token from auth.json).
@@ -919,15 +921,21 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // #2025: credential resolution + options threading go through the shared
         // GatewayAuthManager.CreateAuthenticatedOptionsAsync seam so every background LLM caller
         // (compaction, auto-title) authenticates identically instead of rolling its own.
+        // #3417: the compacted session's identity travels with the request. This is the single
+        // largest prompt the gateway ever sends (up to MaxSummarizationPromptChars = 400,000 chars),
+        // and without SessionId the Copilot Responses builder's prompt_cache_key branch never fires,
+        // so the one request that benefits most from prompt caching was the one request never
+        // eligible for it. It also makes a misbehaving background call correlatable provider-side.
         var baseOptions = new SimpleStreamOptions
         {
             CancellationToken = cancellationToken,
-            StreamSetupTimeoutMs = ResolveStreamSetupTimeoutMs(model, options)
+            StreamSetupTimeoutMs = ResolveStreamSetupTimeoutMs(model, options),
+            SessionId = sessionId?.Value
         };
 
         var streamOptions = _authManager is not null
             ? await _authManager
-                .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions, cancellationToken)
+                .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions, sessionId, cancellationToken)
                 .ConfigureAwait(false)
             : baseOptions;
 
