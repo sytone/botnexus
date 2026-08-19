@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Mcp;
@@ -37,6 +38,14 @@ internal static class McpServerWarmupCache
     }
 
     internal static int Count => WarmupEntriesByKey.Count;
+
+    /// <summary>
+    /// Reports whether a warmup entry exists for exactly this agent/config pair.
+    /// Exists so callers (notably tests) can observe their <em>own</em> registration
+    /// without reading a process-global count that unrelated agents also mutate.
+    /// </summary>
+    internal static bool Contains(AgentId agentId, McpExtensionConfig config)
+        => WarmupEntriesByKey.ContainsKey(BuildKey(agentId.Value, config));
 
     private static string BuildKey(string agentId, McpExtensionConfig config)
     {

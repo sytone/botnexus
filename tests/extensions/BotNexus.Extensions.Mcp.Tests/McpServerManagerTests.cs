@@ -270,15 +270,20 @@ public class McpServerManagerTests
     [Fact]
     public async Task McpServerWarmupHostedService_StartAsync_KicksOffConfiguredAgents()
     {
-        await McpServerWarmupCache.DisposeAllAsync();
-        var countBefore = McpServerWarmupCache.Count;
-        var descriptor = CreateDescriptor(new McpExtensionConfig
+        // Identity, not count: sibling tests share the process-global warmup cache, so any
+        // assertion on its size (absolute or delta) races them. A uniquely-keyed agent id
+        // makes this test's own entry observable regardless of what siblings add (#3393).
+        var agentId = AgentId.From("warmup-hosted-service-" + Guid.NewGuid().ToString("N"));
+        var config = new McpExtensionConfig
         {
             Servers = new Dictionary<string, McpServerConfig>
             {
                 ["empty"] = new McpServerConfig()
             }
-        });
+        };
+        var descriptor = CreateDescriptor(config, agentId);
+        McpServerWarmupCache.Contains(agentId, config).ShouldBeFalse("precondition: nothing registered this agent yet");
+
         var registry = new StubAgentRegistry([descriptor]);
         var service = new McpServerWarmupHostedService(registry, NullLoggerFactory.Instance);
 
@@ -286,10 +291,8 @@ public class McpServerManagerTests
         {
             await service.StartAsync(CancellationToken.None);
 
-            // Assert that the service added exactly one entry to the cache.
-            // Use delta instead of absolute count to avoid flakes when other
-            // tests running in parallel also interact with the static cache.
-            (McpServerWarmupCache.Count - countBefore).ShouldBe(1);
+            McpServerWarmupCache.Contains(agentId, config)
+                .ShouldBeTrue("StartAsync must register a warmup entry for the configured agent");
         }
         finally
         {
@@ -297,12 +300,12 @@ public class McpServerManagerTests
         }
     }
 
-    private static AgentDescriptor CreateDescriptor(McpExtensionConfig config)
+    private static AgentDescriptor CreateDescriptor(McpExtensionConfig config, AgentId? agentId = null)
     {
         var element = JsonSerializer.SerializeToElement(config, JsonContext.Default.McpExtensionConfig);
         return new AgentDescriptor
         {
-            AgentId = AgentId.From("test-agent"),
+            AgentId = agentId ?? AgentId.From("test-agent"),
             DisplayName = "Test Agent",
             ModelId = "test-model",
             ApiProvider = "test-provider",
