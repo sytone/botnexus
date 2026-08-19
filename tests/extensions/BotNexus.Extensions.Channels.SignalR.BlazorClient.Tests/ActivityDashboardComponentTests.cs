@@ -1029,4 +1029,142 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         Assert.Contains("activity-purpose", element.GetAttribute("class"));
         Assert.DoesNotContain("activity-badge", element.GetAttribute("class"));
     }
+
+    // ── Cron job health (#3421) ──────────────────────────────────────────
+
+    /// <summary>
+    /// Stub handler so the component test can register a REAL <see cref="CronApiClient"/> - the type
+    /// is a concrete class over <see cref="HttpClient"/> with no interface, so the seam is the
+    /// transport, not the client. Serving canned JSON keeps the test exercising the client's own
+    /// deserialisation rather than a hand-built double that could drift from it.
+    /// </summary>
+    private sealed class StubCronHandler(string json, bool fail) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (fail)
+                throw new HttpRequestException("cron api unavailable");
+
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private void SetupCronJobs(string json, bool fail = false)
+    {
+        var http = new HttpClient(new StubCronHandler(json, fail))
+        {
+            BaseAddress = new Uri("http://localhost")
+        };
+        _ctx.Services.AddSingleton(new CronApiClient(http));
+    }
+
+    /// <summary>
+    /// AC7: a scheduled row whose job id resolves renders the job's NAME in the attribution slot and
+    /// a health dot beside it, while the raw id stays reachable in hover detail. Asserted together
+    /// because "resolved the name" and "did not lose the id" are the two halves of one contract.
+    /// </summary>
+    [Fact]
+    public void Renders_the_resolved_cron_job_name_and_a_health_dot()
+    {
+        SetupConversations(Conv("c1", title: "Nightly", source: "Cron", sourceId: "j1"));
+        SetupCronJobs("""[{"id":"j1","name":"Nightly digest","lastRunStatus":"failed"}]""");
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+
+        cut.WaitForAssertion(() =>
+            Assert.Equal("Nightly digest", cut.Find("[data-testid='activity-source-id']").TextContent));
+
+        var dot = cut.Find("[data-testid='activity-cron-health']");
+        Assert.Equal("failed", dot.GetAttribute("data-health"));
+
+        // The dot is colour-only visually, so its accessible text must carry the same claim.
+        Assert.Contains("Nightly digest", dot.GetAttribute("aria-label"), StringComparison.Ordinal);
+        Assert.Contains("failed", dot.GetAttribute("aria-label"), StringComparison.Ordinal);
+
+        // Resolving the name must not lose the id - it stays in the attribution's hover detail.
+        Assert.Contains(
+            "j1",
+            cut.Find("[data-testid='activity-source-id']").GetAttribute("title"),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AC7: a row whose job id resolves to nothing renders NO health element and keeps showing the
+    /// raw id - i.e. exactly its pre-#3421 rendering. Asserted in the same render as a resolving
+    /// row so the negative cannot pass merely because the fixture had nothing to render.
+    /// </summary>
+    [Fact]
+    public void Renders_no_health_element_for_a_row_whose_job_is_unknown()
+    {
+        SetupConversations(
+            Conv("c1", title: "Known", source: "Cron", sourceId: "j1"),
+            Conv("c2", title: "Unknown", source: "Cron", sourceId: "ghost"));
+        SetupCronJobs("""[{"id":"j1","name":"Nightly digest","lastRunStatus":"ok"}]""");
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
+
+        cut.WaitForAssertion(() =>
+            Assert.Single(cut.FindAll("[data-testid='activity-cron-health']")));
+
+        var byRow = cut.FindAll("[data-testid='activity-row']")
+            .ToDictionary(
+                r => r.GetAttribute("data-conversation-id")!,
+                r => r);
+
+        Assert.NotNull(byRow["c1"].QuerySelector("[data-testid='activity-cron-health']"));
+        Assert.Null(byRow["c2"].QuerySelector("[data-testid='activity-cron-health']"));
+
+        // The unresolved row still shows its raw id, unchanged from before this shipped.
+        Assert.Equal(
+            "ghost",
+            byRow["c2"].QuerySelector("[data-testid='activity-source-id']")!.TextContent);
+    }
+
+    /// <summary>
+    /// AC8: a failed cron fetch must degrade, not break. The table still renders every row, the raw
+    /// id attribution is untouched, and no health element appears anywhere - asserted against the
+    /// live DOM rather than inferred from the projection, because the failure being guarded is the
+    /// component throwing out of its load path.
+    /// </summary>
+    [Fact]
+    public void A_failed_cron_fetch_leaves_the_dashboard_rendering_exactly_as_before()
+    {
+        SetupConversations(Conv("c1", title: "Nightly", source: "Cron", sourceId: "j1"));
+        SetupCronJobs("[]", fail: true);
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+
+        Assert.Empty(cut.FindAll("[data-testid='activity-cron-health']"));
+        Assert.Equal("j1", cut.Find("[data-testid='activity-source-id']").TextContent);
+        Assert.Empty(cut.FindAll("[data-testid='activity-error']"));
+    }
+
+    /// <summary>
+    /// A host that never registered the cron client must render the dashboard unchanged rather than
+    /// throwing at construction. Pins the optional-resolution decision: every pre-existing fixture in
+    /// this class relies on it, so a regression to a hard <c>@inject</c> would fail broadly and
+    /// confusingly - this test names the reason.
+    /// </summary>
+    [Fact]
+    public void Renders_without_a_registered_cron_client()
+    {
+        SetupConversations(Conv("c1", title: "Nightly", source: "Cron", sourceId: "j1"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
+
+        Assert.Empty(cut.FindAll("[data-testid='activity-cron-health']"));
+        Assert.Equal("j1", cut.Find("[data-testid='activity-source-id']").TextContent);
+    }
 }

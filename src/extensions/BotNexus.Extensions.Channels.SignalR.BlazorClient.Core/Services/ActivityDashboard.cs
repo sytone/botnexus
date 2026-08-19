@@ -177,6 +177,41 @@ public sealed record ActivityDashboardFilter(
 public sealed record ActivityAgentRef(string AgentId, string? Role = null);
 
 /// <summary>
+/// Health of the cron job that minted a scheduled row (#3421), resolved from the job id #3105 put
+/// on the row. Carries the job's own name plus its last-run outcome, so a scheduled row can say
+/// <em>which</em> job it is and <em>whether that job is currently failing</em> instead of showing an
+/// opaque identifier.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is a projection of data the client already fetches from <c>GET /api/cron</c>; no new
+/// endpoint, controller or query path exists for it. It is supplied to <see cref="ActivityDashboardProjection.Project"/>
+/// as a <em>parameter</em> rather than fetched inside the projection, matching the
+/// <c>PortalConversationGrouping</c> precedent (#3073): the projection stays pure, and a failed
+/// cron fetch degrades to an empty map instead of throwing or emptying the table.
+/// </para>
+/// </remarks>
+/// <param name="JobId">The cron job id - the same value carried on <see cref="ActivityRow.SourceId"/>.</param>
+/// <param name="Name">The job's configured name. May be blank when the job was created without one.</param>
+/// <param name="LastRunStatus">
+/// The job's last recorded run status verbatim from the gateway, or <see langword="null"/> when the
+/// job has never run. Never interpreted here - <see cref="ActivityDashboardProjection.CronHealthModifier"/>
+/// owns the classification so display copy and styling stay split.
+/// </param>
+/// <param name="LastRunAt">When the job last ran, or <see langword="null"/> if it never has.</param>
+/// <param name="NextRunAt">
+/// The job's next scheduled fire time, or <see langword="null"/> when it is disabled or unscheduled.
+/// Carried on the record but deliberately not rendered by this slice - a countdown is its own
+/// design question and would need a ticking clock the dashboard does not have.
+/// </param>
+public sealed record ActivityCronHealth(
+    string JobId,
+    string? Name,
+    string? LastRunStatus,
+    DateTimeOffset? LastRunAt = null,
+    DateTimeOffset? NextRunAt = null);
+
+/// <summary>
 /// A single projected row on the Home / Activity dashboard: one active conversation plus the derived
 /// signals the row renders (involved agents, last-activity, status, cron flag).
 /// </summary>
@@ -236,6 +271,12 @@ public sealed record ActivityAgentRef(string AgentId, string? Role = null);
 /// the chat surface cannot disagree about what is live. This is the row's only <em>present-tense</em>
 /// signal - <c>LastActivity</c>, <c>Status</c>, <c>Source</c> and the pin all describe the past.
 /// </param>
+/// <param name="CronHealth">
+/// The health of the cron job that minted this row (#3421), or <see langword="null"/> when the row
+/// is not cron-sourced, names no job, or names a job the client does not know about. Never populated
+/// for a non-cron row even when <see cref="ActivityRow.SourceId"/> is set, because <c>SourceId</c> is
+/// meaningful only paired with <c>Source</c> - the same pairing discipline <c>SourceLabel</c> enforces.
+/// </param>
 /// <param name="Purpose">
 /// The author's own one-line description of why this conversation exists (#3204), or
 /// <see langword="null"/> when none was set. Carried straight through from the server-stamped
@@ -268,7 +309,8 @@ public sealed record ActivityRow(
     DateTimeOffset? PinnedAt = null,
     string? ActiveSessionId = null,
     string? SourceId = null,
-    string? Purpose = null)
+    string? Purpose = null,
+    ActivityCronHealth? CronHealth = null)
 {
     /// <summary>
     /// Whether a session is running in this conversation right now. Computed from
@@ -434,6 +476,119 @@ public static class ActivityDashboardProjection
     }
 
     /// <summary>
+    /// Builds the job-id to health map the dashboard projection consumes (#3421), from the job list
+    /// the client already fetches via <c>CronApiClient.ListAsync()</c>. Pure and dependency-free:
+    /// the fetch stays at the call site so the projection remains unit-testable without HTTP.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see langword="null"/> or an empty list yields an empty map rather than throwing - a failed
+    /// cron fetch must degrade the dashboard to its pre-#3421 rendering, never break it.
+    /// </para>
+    /// <para>
+    /// First-wins on a duplicated job id, matching the de-duplication rule in
+    /// <see cref="InvolvedAgents"/>: a list that names the same id twice must resolve to one health
+    /// record deterministically rather than to whichever entry happened to be last.
+    /// </para>
+    /// </remarks>
+    /// <param name="jobs">The cron jobs from <c>GET /api/cron</c>, or <see langword="null"/> on a failed fetch.</param>
+    public static IReadOnlyDictionary<string, ActivityCronHealth> CronHealthById(
+        IEnumerable<CronJobDto>? jobs)
+    {
+        var map = new Dictionary<string, ActivityCronHealth>(StringComparer.Ordinal);
+
+        if (jobs is null)
+            return map;
+
+        foreach (var job in jobs)
+        {
+            if (job is null || string.IsNullOrWhiteSpace(job.Id))
+                continue;
+
+            var id = job.Id.Trim();
+            if (map.ContainsKey(id))
+                continue;
+
+            map[id] = new ActivityCronHealth(
+                id,
+                string.IsNullOrWhiteSpace(job.Name) ? null : job.Name.Trim(),
+                string.IsNullOrWhiteSpace(job.LastRunStatus) ? null : job.LastRunStatus.Trim(),
+                job.LastRunAt,
+                job.NextRunAt);
+        }
+
+        return map;
+    }
+
+    /// <summary>
+    /// Maximum rendered length of a cron job name before it is elided (#3421). Matches
+    /// <see cref="SourceIdDisplayLength"/>: the name occupies exactly the slot the raw id used to,
+    /// so it must obey the same bound or a verbosely-named job would reflow the row.
+    /// </summary>
+    public const int CronNameDisplayLength = SourceIdDisplayLength;
+
+    /// <summary>
+    /// Renders the name of the cron job that minted a row (#3421), replacing the opaque job id
+    /// <see cref="SourceLabel"/> shows. Returns <see langword="null"/> when the row resolved no job
+    /// health or the resolved job has no name, so the row falls back to the pre-#3421 id rendering
+    /// rather than emitting an empty element.
+    /// </summary>
+    /// <remarks>
+    /// Elides rather than hard-truncating, matching <see cref="SourceLabel"/> and
+    /// <see cref="PurposeLabel"/>, so a clipped name is visibly clipped. The full job id stays
+    /// reachable on the element's <c>title</c> - resolving the id to a name must not <em>lose</em>
+    /// the id, because the id is what a reader needs to search the cron store with.
+    /// </remarks>
+    /// <param name="row">A projected dashboard row.</param>
+    public static string? CronHealthLabel(ActivityRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+
+        var name = row.CronHealth?.Name;
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        var trimmed = name.Trim();
+        return trimmed.Length <= CronNameDisplayLength
+            ? trimmed
+            : string.Concat(trimmed.AsSpan(0, CronNameDisplayLength), "\u2026");
+    }
+
+    /// <summary>
+    /// CSS modifier suffix for a row's cron-health dot, splitting styling from display copy exactly
+    /// as <see cref="OriginModifier"/> and <see cref="RoleModifier"/> do.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Fails OPEN to <c>unknown</c>: a status string from a newer gateway that this client does not
+    /// recognise must not be rendered as healthy. Presenting an unclassifiable outcome as green is
+    /// the exact failure this slice exists to prevent - a job failing silently for days - so the
+    /// safe default is "we cannot tell", never "fine".
+    /// </para>
+    /// <para>
+    /// A row with no resolved health returns <see langword="null"/> rather than <c>unknown</c>: the
+    /// two are different claims. Null means "this row has nothing to say about cron health" and
+    /// renders no dot at all; <c>unknown</c> means "there is a job here and its state is unreadable",
+    /// which is a signal worth showing.
+    /// </para>
+    /// </remarks>
+    /// <param name="row">A projected dashboard row.</param>
+    public static string? CronHealthModifier(ActivityRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+
+        if (row.CronHealth is null)
+            return null;
+
+        return row.CronHealth.LastRunStatus?.Trim().ToLowerInvariant() switch
+        {
+            "ok" or "success" or "succeeded" or "completed" => "ok",
+            "error" or "failed" or "failure" or "timeout" or "aborted" or "no_tool_calls" => "failed",
+            _ => "unknown"
+        };
+    }
+
+    /// <summary>
     /// Projects and filters a set of conversation summaries into ordered dashboard rows. Applies the
     /// cron default-exclude, agent-involvement filter, status filter, and recency window, then orders
     /// by most-recent activity so the top of the dashboard is the freshest work.
@@ -444,10 +599,18 @@ public static class ActivityDashboardProjection
     /// The reference "now" for recency windows. Injected rather than read from the clock so the
     /// projection is deterministic and unit-testable.
     /// </param>
+    /// <param name="cronHealth">
+    /// Job-id to cron-health map from <see cref="CronHealthById"/> (#3421). A <see langword="null"/>
+    /// or empty map - which is what a failed <c>GET /api/cron</c> yields - leaves every row's
+    /// <see cref="ActivityRow.CronHealth"/> null, so the table renders exactly as it did before this
+    /// shipped. Passed in rather than fetched here to keep the projection pure, matching the
+    /// <c>PortalConversationGrouping</c> precedent.
+    /// </param>
     public static IReadOnlyList<ActivityRow> Project(
         IEnumerable<ConversationSummaryDto> conversations,
         ActivityDashboardFilter filter,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        IReadOnlyDictionary<string, ActivityCronHealth>? cronHealth = null)
     {
         ArgumentNullException.ThrowIfNull(conversations);
         ArgumentNullException.ThrowIfNull(filter);
@@ -498,8 +661,29 @@ public static class ActivityDashboardProjection
                 x.Dto.SourceId,
                 // Normalised at the projection boundary, not at render time, so every consumer of a
                 // row sees the same collapsed value and "present but empty" cannot reach the DOM.
-                NormalizePurpose(x.Dto.Purpose)))
+                NormalizePurpose(x.Dto.Purpose),
+                ResolveCronHealth(x.Source, x.Dto.SourceId, cronHealth)))
             .ToList();
+    }
+
+    /// <summary>
+    /// Resolves a row's cron job id to its health record (#3421). Gated on <c>Source == Cron</c>,
+    /// not merely on the presence of a <c>SourceId</c>: the id is documented as meaningful only
+    /// paired with the source, so a webhook registration id that happens to collide with a cron job
+    /// id must never attribute cron health to a webhook row.
+    /// </summary>
+    private static ActivityCronHealth? ResolveCronHealth(
+        ConversationSource source,
+        string? sourceId,
+        IReadOnlyDictionary<string, ActivityCronHealth>? cronHealth)
+    {
+        if (source != ConversationSource.Cron)
+            return null;
+
+        if (cronHealth is null || string.IsNullOrWhiteSpace(sourceId))
+            return null;
+
+        return cronHealth.TryGetValue(sourceId.Trim(), out var health) ? health : null;
     }
 
     /// <summary>
