@@ -88,7 +88,11 @@ public sealed class DefaultAgentToolFactory : IAgentToolFactory
             new ShellTool(workingDirectory: resolved, shellPreference: _shellPreference, shellCommand: effectiveShellCommand),
             new ListDirectoryTool(resolved, effectivePathValidator, fileSystem),
             new GrepTool(resolved, effectivePathValidator, fileSystem),
-            new GlobTool(resolved, effectivePathValidator, fileSystem)
+            new GlobTool(resolved, effectivePathValidator, fileSystem),
+
+            // Registered unconditionally so a truncated result is ALWAYS recoverable (#2760): a
+            // continuation handle that no tool can read would be worse than no handle at all.
+            new ToolOutputContinuationTool()
         ];
     }
 }
