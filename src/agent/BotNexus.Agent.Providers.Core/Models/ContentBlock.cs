@@ -57,6 +57,22 @@ public sealed record RefusalContent(
 /// <summary>
 /// Represents thinking content.
 /// </summary>
+/// <param name="Thinking">
+/// The reasoning text. For a redacted block this is a placeholder rather than model output — the
+/// real reasoning was withheld by the provider and is not recoverable.
+/// </param>
+/// <param name="ThinkingSignature">
+/// The provider's opaque verification payload. For a redacted block this carries the wire
+/// <c>data</c> field, which the request converter must replay verbatim.
+/// </param>
+/// <param name="Redacted">
+/// True when the provider withheld the reasoning (an Anthropic Messages <c>redacted_thinking</c>
+/// block); null or false for reasoning the model actually produced. This is not decoration:
+/// <c>AnthropicMessageConverter</c> branches on it to re-emit the block as a wire-level
+/// <c>redacted_thinking</c>, so losing the bit would replay a redacted block as ordinary visible
+/// reasoning whose text is only the placeholder. Pinned by <c>AnthropicRedactedThinkingTests</c>
+/// and <c>CopilotMessagesRedactedThinkingTests</c> (#3299) — do not collapse the two producer arms.
+/// </param>
 public sealed record ThinkingContent(
     string Thinking,
     string? ThinkingSignature = null,
