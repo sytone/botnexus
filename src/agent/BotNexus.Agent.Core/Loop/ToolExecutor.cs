@@ -92,7 +92,7 @@ internal static class ToolExecutor
                     .ConfigureAwait(false);
             }
 
-            result = ApplyOutputBudget(result, config);
+            result = ApplyOutputBudget(result, config, preparation.Prepared?.Tool);
 
             await emit(new ToolExecutionEndEvent(
                 toolCall.Id,
@@ -152,7 +152,7 @@ internal static class ToolExecutor
 
             if (preparation.Prepared is null)
             {
-                var immediateResult = ApplyOutputBudget(preparation.Result!, config);
+                var immediateResult = ApplyOutputBudget(preparation.Result!, config, tool: null);
                 await emit(new ToolExecutionEndEvent(
                     toolCall.Id,
                     toolCall.Name,
@@ -183,7 +183,8 @@ internal static class ToolExecutor
                 execution.Result,
                 execution.IsError,
                 item.Prepared.ValidatedArgs,
-                true);
+                true,
+                item.Prepared.Tool);
         });
 
         completedItems.AddRange(await Task.WhenAll(executionTasks).ConfigureAwait(false));
@@ -208,7 +209,7 @@ internal static class ToolExecutor
                     .ConfigureAwait(false);
             }
 
-            result = ApplyOutputBudget(result, config);
+            result = ApplyOutputBudget(result, config, outcome.Tool);
 
             await emit(new ToolExecutionEndEvent(
                 outcome.ToolCall.Id,
@@ -565,8 +566,11 @@ internal static class ToolExecutor
     /// already bounded its own output never reaches this budget.
     /// </para>
     /// </remarks>
-    private static AgentToolResult ApplyOutputBudget(AgentToolResult result, AgentLoopConfig config)
-        => ToolOutputBudget.Apply(result, config.EffectiveMaxToolOutputBytes);
+    private static AgentToolResult ApplyOutputBudget(
+        AgentToolResult result,
+        AgentLoopConfig config,
+        IAgentTool? tool)
+        => ToolOutputBudget.Apply(result, config.EffectiveMaxToolOutputBytes, tool);
 
     /// <summary>
     /// Records the content-source classification of a resolved tool into the ambient turn taint
@@ -839,5 +843,6 @@ internal static class ToolExecutor
         AgentToolResult Result,
         bool IsError,
         IReadOnlyDictionary<string, object?>? ValidatedArgs,
-        bool ApplyAfterHook);
+        bool ApplyAfterHook,
+        IAgentTool? Tool = null);
 }
