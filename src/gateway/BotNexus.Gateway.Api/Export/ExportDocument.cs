@@ -12,7 +12,19 @@ public enum ExportScope
     Conversation,
 
     /// <summary>The document covers exactly one session.</summary>
-    Session
+    Session,
+
+    /// <summary>
+    /// The document covers a contiguous partial range of a conversation or session (issue #3279).
+    /// </summary>
+    /// <remarks>
+    /// Reported whenever a range selector was supplied, including when that range happens to span
+    /// the whole transcript. A full-span excerpt is deliberately NOT reported back as
+    /// <see cref="Conversation"/>: the caller asked for a range, the endpoints are recorded in the
+    /// document, and a reader must be able to tell "this is everything" from "this is everything
+    /// that existed at the moment the range was pinned".
+    /// </remarks>
+    Excerpt
 }
 
 /// <summary>
@@ -112,4 +124,29 @@ public sealed record ExportDocument
 
     /// <summary>Gets the instant the export was generated, used for the download filename.</summary>
     public required DateTimeOffset GeneratedAt { get; init; }
+
+    /// <summary>
+    /// Gets the range selector this document was produced from, or <see langword="null"/> for a full
+    /// export (issue #3279).
+    /// </summary>
+    public ExportRangeSelector? Range { get; init; }
+
+    /// <summary>
+    /// Gets the number of transcript entries that exist outside the selected range and are therefore
+    /// absent from this document (issue #3279, acceptance criterion 3). Zero for a full export and
+    /// for a range that happens to span the whole transcript.
+    /// </summary>
+    public int OmittedEntryCount { get; init; }
+
+    /// <summary>
+    /// Gets the explicit "content was omitted" note every ranged export carries, or
+    /// <see langword="null"/> for a full export (issue #3279, acceptance criterion 3).
+    /// </summary>
+    /// <remarks>
+    /// Held on the document rather than composed inside each renderer so Markdown and HTML cannot
+    /// disagree about whether - or how loudly - a partial transcript declares itself partial. A
+    /// full-span range still carries the note: the reader is being told the document was produced
+    /// from a selection, which remains true and remains material even when nothing was dropped.
+    /// </remarks>
+    public string? OmissionNote { get; init; }
 }

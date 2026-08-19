@@ -104,6 +104,20 @@ public sealed class ConversationHistoryEntry
     /// <summary>Entry kind: "message" or "boundary".</summary>
     public required string Kind { get; init; }
 
+    /// <summary>
+    /// Stable identifier for this entry within the assembled transcript, in the form
+    /// <c>{sessionId}#{ordinal}</c> (issue #3279). This is the token a partial-range export uses to
+    /// name its first and last included entry.
+    /// </summary>
+    /// <remarks>
+    /// The ordinal counts the entries this projection actually emitted for the owning session, so
+    /// it is stable against anything that does not change the transcript itself and - unlike a
+    /// position in the flattened cross-session list - does not silently start naming a different
+    /// entry when an earlier session gains or loses turns. It is not a database key and carries no
+    /// meaning outside the projection.
+    /// </remarks>
+    public string? EntryId { get; init; }
+
     /// <summary>The session this entry belongs to.</summary>
     public required string SessionId { get; init; }
 

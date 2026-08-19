@@ -49,6 +49,8 @@ public static class ExportHtmlRenderer
               word-break: break-word; }
         .content { white-space: pre-wrap; word-break: break-word; }
         .empty { color: #8889; font-style: italic; }
+        .omission-note { border-left: 4px solid #f59e0b; background: #8881; padding: 0.6rem 0.9rem;
+                         border-radius: 4px; margin: 1rem 0; font-weight: 600; }
         """;
 
     /// <summary>
@@ -61,7 +63,7 @@ public static class ExportHtmlRenderer
     {
         ArgumentNullException.ThrowIfNull(document);
 
-        var heading = document.Scope == ExportScope.Conversation ? "Conversation Transcript" : "Session Transcript";
+        var heading = ExportHeading.For(document.Scope);
         var docTitle = string.IsNullOrWhiteSpace(document.Title)
             ? heading
             : $"{heading} — {Scrub(document.Title, redactSecrets)}";
@@ -119,7 +121,20 @@ public static class ExportHtmlRenderer
         AppendMeta(sb, "Tool calls", document.ToolCallCount.ToString());
         AppendMeta(sb, "Exported", $"{document.GeneratedAt:yyyy-MM-dd HH:mm:ss} UTC");
 
+        if (document.Range is { } range)
+        {
+            AppendMeta(sb, "Scope", "excerpt");
+            AppendMeta(sb, "Range", $"{range.FirstEntryId} to {range.LastEntryId}");
+            AppendMeta(sb, "Entries omitted", document.OmittedEntryCount.ToString());
+        }
+
         sb.AppendLine("</dl>");
+
+        // #3279 AC3. Rendered from ExportDocument.OmissionNote, the same string the markdown
+        // renderer emits, so the two projections cannot disagree about whether this transcript
+        // declares itself partial. Encoded like every other interpolated value.
+        if (document.Range is not null)
+            sb.AppendLine($"<p class=\"omission-note\">{Encode(document.OmissionNote)}</p>");
 
         if (!string.IsNullOrWhiteSpace(document.Instructions))
         {

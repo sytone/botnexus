@@ -677,8 +677,13 @@ public sealed class ConversationsController : ControllerBase
     /// </remarks>
     /// <param name="conversationId">The conversation identifier.</param>
     /// <param name="format">Export format: <c>markdown</c> or <c>html</c>.</param>
+    /// <param name="firstEntryId">
+    /// Optional partial-range start: the entry id of the first included entry (issue #3279). Supply
+    /// with <paramref name="lastEntryId"/>; supplying one without the other is a 400.
+    /// </param>
+    /// <param name="lastEntryId">Optional partial-range end: the entry id of the last included entry.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The rendered transcript as a UTF-8 file download, 400 for an unknown format, or 404.</returns>
+    /// <returns>The rendered transcript as a UTF-8 file download, 400 for an unknown format or an invalid range, or 404.</returns>
     [HttpGet("{conversationId}/export/{format}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -686,19 +691,22 @@ public sealed class ConversationsController : ControllerBase
     public async Task<ActionResult> ExportTranscript(
         string conversationId,
         string format,
+        [FromQuery] string? firstEntryId = null,
+        [FromQuery] string? lastEntryId = null,
         CancellationToken cancellationToken = default)
     {
         if (!ExportFormat.TryParse(format, out var exportFormat))
             return BadRequest(new { error = "format must be 'markdown' or 'html'." });
 
+        var (range, rangeError) = ExportRangeBinding.Bind(firstEntryId, lastEntryId);
+        if (rangeError is not null)
+            return BadRequest(rangeError);
+
         var assembler = new ExportDocumentAssembler(_conversations, _sessions);
-        var document = await assembler.AssembleConversationAsync(
-            ConversationId.From(conversationId), cancellationToken);
+        var result = await assembler.AssembleConversationRangeAsync(
+            ConversationId.From(conversationId), range, cancellationToken);
 
-        if (document is null)
-            return NotFound();
-
-        return ExportResponse.File(document, exportFormat, this);
+        return ExportRangeBinding.ToActionResult(result, exportFormat, this);
     }
 
     /// <summary>

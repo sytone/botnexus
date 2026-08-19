@@ -367,8 +367,13 @@ public sealed class SessionsController : ControllerBase
     /// </remarks>
     /// <param name="sessionId">Session identifier.</param>
     /// <param name="format">Export format: <c>markdown</c> or <c>html</c>.</param>
+    /// <param name="firstEntryId">
+    /// Optional partial-range start: the entry id of the first included entry (issue #3279). Supply
+    /// with <paramref name="lastEntryId"/>; supplying one without the other is a 400.
+    /// </param>
+    /// <param name="lastEntryId">Optional partial-range end: the entry id of the last included entry.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The rendered transcript as a UTF-8 file download, 400 for an unknown format, or 404.</returns>
+    /// <returns>The rendered transcript as a UTF-8 file download, 400 for an unknown format or an invalid range, or 404.</returns>
     [HttpGet("{sessionId}/export/{format}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -376,21 +381,25 @@ public sealed class SessionsController : ControllerBase
     public async Task<ActionResult> ExportTranscript(
         string sessionId,
         string format,
+        [FromQuery] string? firstEntryId = null,
+        [FromQuery] string? lastEntryId = null,
         CancellationToken cancellationToken = default)
     {
         if (!ExportFormat.TryParse(format, out var exportFormat))
             return BadRequest(new { error = "format must be 'markdown' or 'html'." });
 
+        var (range, rangeError) = ExportRangeBinding.Bind(firstEntryId, lastEntryId);
+        if (rangeError is not null)
+            return BadRequest(rangeError);
+
         if (_conversations is null)
             return NotFound();
 
         var assembler = new ExportDocumentAssembler(_conversations, _sessions);
-        var document = await assembler.AssembleSessionAsync(SessionId.From(sessionId), cancellationToken);
+        var result = await assembler.AssembleSessionRangeAsync(
+            SessionId.From(sessionId), range, cancellationToken);
 
-        if (document is null)
-            return NotFound();
-
-        return ExportResponse.File(document, exportFormat, this);
+        return ExportRangeBinding.ToActionResult(result, exportFormat, this);
     }
 
     /// <summary>
