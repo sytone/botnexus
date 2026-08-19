@@ -368,4 +368,126 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
             Send(cut, p);
         return cut;
     }
+
+    // ---------------------------------------------------------------------------------
+    // REGRESSION - the conversation's FIRST prompt was unreachable
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Found in manual testing of the reworked PR: send three prompts in a NEW conversation, press
+    /// Up three times, and the oldest prompt never appears.
+    ///
+    /// Root cause: <c>DispatchDraftAsync</c> is not the only path a prompt takes. The prompt that
+    /// CREATES a conversation is dispatched by <c>StartConversationService</c> from the landing
+    /// page - before this panel instance exists - so <c>RecordPromptHistory</c> never sees it. The
+    /// prompt is in the transcript but not in history, and recall can only reach entries recorded
+    /// by this panel. The same gap swallows all history on a page reload.
+    ///
+    /// This models it the way it actually happens: the transcript already contains the first
+    /// prompt, and the panel is rendered afterwards, having recorded nothing.
+    ///
+    /// Falsification: remove the SeedHistoryFromTranscript call from CurrentHistory and this fails
+    /// - the first Up surfaces "second-prompt" (or nothing) instead of "landing-prompt", because
+    /// the panel's own list never contained the landing prompt at all.
+    /// </summary>
+    [Fact]
+    public void First_prompt_of_a_conversation_is_recallable_even_though_another_path_sent_it()
+    {
+        SeedAgent("agent-1");
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = new ConversationState { ConversationId = "conv-a", Title = "conv-a" };
+        // The landing page created the conversation and dispatched the first prompt; by the time
+        // this panel renders, that prompt exists ONLY in the transcript.
+        conv.AppendMessage(new ChatMessage("User", "landing-prompt", DateTimeOffset.UtcNow));
+        conv.AppendMessage(new ChatMessage("Assistant", "some reply", DateTimeOffset.UtcNow));
+        agent.Conversations["conv-a"] = conv;
+        agent.ActiveConversationId = "conv-a";
+
+        var cut = Render("agent-1", conversationId: "conv-a");
+
+        // A prompt sent through the panel afterwards, exactly as in the manual repro.
+        Send(cut, "second-prompt");
+        conv.AppendMessage(new ChatMessage("User", "second-prompt", DateTimeOffset.UtcNow));
+
+        StubCaret(onFirstLine: true, onLastLine: true);
+
+        Key(cut, "ArrowUp");
+        Assert.Equal("second-prompt", InputValue(cut));
+
+        // The regression: this second Up must reach the landing prompt.
+        Key(cut, "ArrowUp");
+        Assert.Equal("landing-prompt", InputValue(cut));
+    }
+
+    /// <summary>
+    /// The seed must not resurrect an entry the citizen has navigated past, and must not fire twice.
+    /// Guards the "skip when a bucket already exists" branch: once history exists for a
+    /// conversation, the transcript is no longer consulted.
+    ///
+    /// Falsification: drop the ContainsKey early-return in SeedHistoryFromTranscript and this fails
+    /// - re-seeding on every read rebuilds the list from the transcript and the pointer no longer
+    /// addresses what the citizen was walking.
+    /// </summary>
+    [Fact]
+    public void Transcript_seed_does_not_overwrite_history_already_recorded_by_this_panel()
+    {
+        SeedAgent("agent-1");
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = new ConversationState { ConversationId = "conv-a", Title = "conv-a" };
+        agent.Conversations["conv-a"] = conv;
+        agent.ActiveConversationId = "conv-a";
+
+        var cut = Render("agent-1", conversationId: "conv-a");
+        Send(cut, "typed-one");
+        Send(cut, "typed-two");
+
+        // Transcript gains entries AFTER history was established (server echo, replay, etc.).
+        conv.AppendMessage(new ChatMessage("User", "typed-one", DateTimeOffset.UtcNow));
+        conv.AppendMessage(new ChatMessage("User", "typed-two", DateTimeOffset.UtcNow));
+        conv.AppendMessage(new ChatMessage("User", "never-typed-here", DateTimeOffset.UtcNow));
+
+        StubCaret(onFirstLine: true, onLastLine: true);
+
+        Key(cut, "ArrowUp");
+        Assert.Equal("typed-two", InputValue(cut));
+        Key(cut, "ArrowUp");
+        Assert.Equal("typed-one", InputValue(cut));
+
+        // Oldest reached: a further Up must not surface a transcript-only entry.
+        Key(cut, "ArrowUp");
+        Assert.Equal("typed-one", InputValue(cut));
+    }
+
+    /// <summary>
+    /// The seed is keyed by the route-owned conversation id, so it must not become a new vector for
+    /// the cross-conversation leak that blocked the first attempt.
+    ///
+    /// Falsification: key the seed by anything other than the rendered conversation (or seed from a
+    /// shared/ambient transcript) and conv-b's first Up surfaces conv-a's prompt.
+    /// </summary>
+    [Fact]
+    public void Transcript_seed_never_crosses_conversations()
+    {
+        SeedAgent("agent-1");
+        var agent = _store.GetAgent("agent-1")!;
+
+        var a = new ConversationState { ConversationId = "conv-a", Title = "conv-a" };
+        a.AppendMessage(new ChatMessage("User", "a-only-prompt", DateTimeOffset.UtcNow));
+        agent.Conversations["conv-a"] = a;
+
+        var b = new ConversationState { ConversationId = "conv-b", Title = "conv-b" };
+        agent.Conversations["conv-b"] = b;
+
+        agent.ActiveConversationId = "conv-a";
+
+        // Render the panel bound to conv-b; conv-a's transcript must be invisible to it.
+        var cut = Render("agent-1", conversationId: "conv-b");
+        StubCaret(onFirstLine: true, onLastLine: true);
+
+        Type(cut, "draft-in-b");
+        Key(cut, "ArrowUp");
+
+        // conv-b has no history of its own: the draft is untouched and nothing leaks in.
+        Assert.Equal("draft-in-b", InputValue(cut));
+    }
 }

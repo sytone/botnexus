@@ -1337,7 +1337,54 @@ private bool IsStreaming =>
         SyncHistoryConversation();
         if (_historyConversationId is not { } convId)
             return [];
+        SeedHistoryFromTranscript(convId);
         return _historyByConversation.TryGetValue(convId, out var list) ? list.ToArray() : [];
+    }
+
+    /// <summary>
+    /// #2918 follow-up: seeds this conversation's history from the rendered transcript, ONCE, the
+    /// first time recall asks for it.
+    ///
+    /// Why this exists: <c>DispatchDraftAsync</c> is not the only way a prompt reaches a
+    /// conversation. The prompt that CREATES a conversation is dispatched by
+    /// <c>StartConversationService</c> from the landing page, before this panel instance exists,
+    /// and a reload discards in-memory history for prompts that were genuinely sent. In both cases
+    /// the prompt is visible in the transcript but was never recorded here, so recall could not
+    /// reach the oldest entry - the conversation's first prompt was permanently unreachable.
+    ///
+    /// Deriving the seed from <c>Messages</c> rather than carrying state across navigation is what
+    /// keeps this free of the store that review rejected: no new service, no DI, no
+    /// cross-conversation carrier, and therefore no empty-key bucket for another conversation to
+    /// adopt from. The seed is keyed by the SAME route-owned conversation id the transcript is
+    /// rendered from, so an entry still cannot cross conversations.
+    ///
+    /// Seeding is skipped once a bucket exists, so a live send is never overwritten and the
+    /// transcript cannot re-add a prompt the citizen has already navigated past.
+    /// </summary>
+    private void SeedHistoryFromTranscript(string convId)
+    {
+        if (_historyByConversation.ContainsKey(convId))
+            return;
+
+        var seeded = new List<string>();
+        foreach (var msg in Messages)
+        {
+            // Folded (pre-compaction) messages are deliberately included: they are real prompts the
+            // citizen sent, and excluding them would reintroduce an unreachable-oldest-entry gap.
+            if (!string.Equals(msg.Role, "User", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var text = msg.Content?.Trim();
+            if (string.IsNullOrWhiteSpace(text))
+                continue;
+            if (seeded.Count > 0 && string.Equals(seeded[^1], text, StringComparison.Ordinal))
+                continue; // Same consecutive-duplicate rule RecordPromptHistory applies.
+            seeded.Add(text);
+        }
+
+        if (seeded.Count > MaxHistoryEntries)
+            seeded.RemoveRange(0, seeded.Count - MaxHistoryEntries);
+
+        _historyByConversation[convId] = seeded;
     }
 
     /// <summary>
@@ -1373,6 +1420,11 @@ private bool IsStreaming =>
             ResetHistoryNavigation();
             return;
         }
+
+        // Seed BEFORE appending. The first send in a conversation would otherwise create an empty
+        // bucket, and the seed - which skips conversations that already have one - would never run,
+        // permanently stranding the prompt that created the conversation.
+        SeedHistoryFromTranscript(convId);
 
         if (!_historyByConversation.TryGetValue(convId, out var list))
         {
