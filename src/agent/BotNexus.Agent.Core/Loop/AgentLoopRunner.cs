@@ -256,6 +256,13 @@ public static class AgentLoopRunner
                         newMessages[newMessages.Count - 1] = assistantMessage;
                     }
                 }
+                // #3296: StopReason.Sensitive is deliberately NOT part of this early-return.
+                // Content filtering is a safety outcome, not an infrastructure failure, so a
+                // filtered turn settles through the ordinary turn-completion path and its
+                // TurnEndEvent/AgentEndEvent carry the normal metrics and tool-result list. It
+                // still cannot continue the run: tool dispatch below is gated on ToolUse, so a
+                // filtered turn sets hasMoreToolCalls = false and the loop exits at the next
+                // boundary unless the caller has genuinely queued more work.
                 if (assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted)
                 {
                     metrics.IncrementTurns();
@@ -377,7 +384,16 @@ public static class AgentLoopRunner
 
         // Only audit a real, completed user-facing message. Error/abort placeholders are
         // surfaced through their own paths and are not narration to verify.
-        if (turnMessage.FinishReason is StopReason.Error or StopReason.Aborted)
+        //
+        // #3296: a content-filtered turn (StopReason.Sensitive) is excluded for the same reason.
+        // The provider truncated or suppressed the text as a safety decision, so whatever survived
+        // is a fragment of an intent the model never got to finish, not a claim it is asserting.
+        // Auditing it would generate unbacked-claim noise about text the model was prevented from
+        // completing. This exclusion is deliberate, not inherited: before #3296 the Completions
+        // content_filter arm mapped to StopReason.Error and was excluded by the Error clause below,
+        // so remapping it to Sensitive would otherwise have silently pulled filtered turns INTO the
+        // auditor as a side effect of a mapping fix.
+        if (turnMessage.FinishReason is StopReason.Error or StopReason.Aborted or StopReason.Sensitive)
         {
             return;
         }

@@ -204,7 +204,7 @@ TURN LOOP:
   │ 4. Call LLM via StreamSimple()                                 │
   │ 5. Accumulate stream → AssistantAgentMessage (StreamAccumulator)│
   │ 6. Add assistant message to timeline                           │
-  │ 7. If Error/Aborted/Refusal/Sensitive                          │
+  │ 7. If Error/Aborted                                            │
   │    → emit TurnEnd, AgentEnd, STOP                              │
   │ 8. If ToolCalls                                                │
   │    → execute tools, add results, emit TurnEnd,                 │
@@ -253,7 +253,7 @@ Before Phase 5, the transform ran once and wasn't re-triggered on overflow recov
 
 **Step 6 — Add to timeline:** The completed assistant message is appended to `AgentState.Messages`.
 
-**Step 7 — Terminal conditions:** If the assistant's `FinishReason` is `Error`, `Aborted`, `Refusal`, or `Sensitive`, the loop emits `TurnEndEvent` and `AgentEndEvent`, then stops. No further turns execute.
+**Step 7 - Terminal conditions:** If the assistant's `FinishReason` is `Error` or `Aborted`, the loop takes an early-return branch: it emits `TurnEndEvent` and `AgentEndEvent` and stops immediately, without dispatching tools or auditing claims. `Refusal` and `Sensitive` are **not** on this branch. A refused or content-filtered turn is a model/safety outcome rather than an infrastructure failure, so it settles through the ordinary turn-completion path (step 9) and is recorded with its own stop reason; it still cannot continue the run, because tool dispatch is gated on `ToolUse`. (#3296 - this doc previously described `Refusal` and `Sensitive` as terminal, which the runner has never implemented.)
 
 **Step 8 — Tool calls:** If the assistant message contains `ToolCalls`, the `ToolExecutor` runs them (see [Tool execution pipeline](#tool-execution-pipeline)). Results are appended to the timeline. Steering messages are drained again, and the loop repeats from step 1.
 

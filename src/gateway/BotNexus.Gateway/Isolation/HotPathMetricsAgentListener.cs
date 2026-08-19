@@ -138,6 +138,12 @@ internal sealed class HotPathMetricsAgentListener : IDisposable
         StopReason.Aborted => "aborted",
         StopReason.Error => "error",
         StopReason.Refusal => "refusal",
+        // #3296: a content-filtered turn is a safety outcome, not an infrastructure failure. It
+        // reached this switch as "error" only because the Completions engine used to map
+        // finish_reason "content_filter" to StopReason.Error; with that corrected to Sensitive the
+        // default arm would still have folded it into the error rate, which is exactly the
+        // misattribution #3296 exists to remove.
+        StopReason.Sensitive => "sensitive",
         _ => "error",
     };
 

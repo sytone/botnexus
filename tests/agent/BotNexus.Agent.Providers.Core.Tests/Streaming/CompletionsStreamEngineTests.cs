@@ -62,7 +62,7 @@ public class CompletionsStreamEngineTests
     [InlineData("function_call", StopReason.ToolUse, null)]
     [InlineData("tool_calls", StopReason.ToolUse, null)]
     [InlineData("refusal", StopReason.Refusal, null)]
-    [InlineData("content_filter", StopReason.Error, "Content filtered by provider")]
+    [InlineData("content_filter", StopReason.Sensitive, "Content filtered by provider")]
     [InlineData("network_error", StopReason.Error, "Provider finish_reason: network_error")]
     [InlineData(null, StopReason.Stop, null)]
     public void MapStopReason_MapsKnownReasons(string? reason, StopReason expected, string? expectedMessage)
