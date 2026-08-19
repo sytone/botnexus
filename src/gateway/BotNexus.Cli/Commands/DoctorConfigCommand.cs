@@ -13,29 +13,26 @@ namespace BotNexus.Cli.Commands;
 internal sealed class DoctorConfigCommand
 {
     /// <summary>All registered checks, evaluated in order. Internal so the aggregate doctor suite
-    /// (ConfigHealthCheck) can reuse the exact same set for its read-only assessment.</summary>
-    internal static readonly IReadOnlyList<IConfigCheck> Checks =
-    [
-        new ExtensionsBlockCheck(),
-        new SkillsWorldDefaultCheck(),
-        new CronCheck(),
-        new MemoryAgentDefaultCheck(),
-        new CompactionModelCheck(),
-        new CompactionModelMissingCheck(),
-        new DevOriginEnforcementCheck(),
-        new FeatureFlagSeedCheck(),
-    ];
+    /// (ConfigHealthCheck) can reuse the exact same set for its read-only assessment.
+    /// <para>
+    /// GENERATED from the <c>[DoctorCheck(Suite = DoctorSuite.Config)]</c> declarations (#3319), not
+    /// hand-written: a check class carrying the attribute is registered by construction, so the
+    /// "compiles, has tests, never runs" failure has no way to occur.
+    /// </para>
+    /// </summary>
+    internal static readonly IReadOnlyList<IConfigCheck> Checks = GeneratedDoctorChecks.CreateConfigChecks();
 
     /// <summary>
     /// Read-only findings the operator should see but which are NEVER auto-applied (issue #2798).
     /// Deliberately a separate list from <see cref="Checks"/>: <see cref="IConfigAdvisory"/> has no
     /// <c>Apply</c>, so nothing here can be wired into the <c>--yes</c> loop even by accident.
+    /// <para>
+    /// Generated separately for the same reason (#3319). The suite is a DECLARED attribute argument
+    /// rather than something inferred from the implemented interface, so the check/advisory split
+    /// survives the generator instead of depending on a heuristic getting it right.
+    /// </para>
     /// </summary>
-    internal static readonly IReadOnlyList<IConfigAdvisory> Advisories =
-    [
-        new WildcardListenUrlAdvisory(),
-        new UnknownFeatureFlagAdvisory(),
-    ];
+    internal static readonly IReadOnlyList<IConfigAdvisory> Advisories = GeneratedDoctorChecks.CreateAdvisories();
 
     /// <summary>
     /// Renders every applicable advisory. Emits nothing when none apply - an advisory that always

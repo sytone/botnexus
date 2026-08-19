@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Configuration;
+using BotNexus.Cli.Commands.Doctor.Generated;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -46,6 +47,7 @@ public interface IConfigAdvisory
 /// about what counts as a wildcard.
 /// </para>
 /// </summary>
+[DoctorCheck(Id = "gateway-wildcard-bind", Suite = DoctorSuite.Advisory, Order = 0)]
 public sealed class WildcardListenUrlAdvisory : IConfigAdvisory
 {
     /// <inheritdoc />

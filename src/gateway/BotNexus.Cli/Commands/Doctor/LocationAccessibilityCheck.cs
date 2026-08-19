@@ -1,5 +1,6 @@
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Cli.Commands.Doctor.Generated;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -9,6 +10,7 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// but folds the per-location results into a single section outcome for the aggregate report
 /// (issue #2041). A missing target is an error, an unreachable-but-optional endpoint is a warning.
 /// </summary>
+[DoctorCheck(Id = "locations", Suite = DoctorSuite.Aggregate, Order = 3)]
 internal sealed class LocationAccessibilityCheck : IDoctorCheck
 {
     public string Id => "locations";

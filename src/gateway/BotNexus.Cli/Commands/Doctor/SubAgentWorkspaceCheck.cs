@@ -1,5 +1,6 @@
 using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Cli.Commands.Doctor.Generated;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -11,6 +12,7 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// (issue #2041). It is read-only - pruning stays the job of <c>botnexus subagent workspace prune</c>;
 /// here we only surface the reclaimable count so an operator knows when to run it.
 /// </summary>
+[DoctorCheck(Id = "subagent-workspaces", Suite = DoctorSuite.Aggregate, Order = 5)]
 internal sealed class SubAgentWorkspaceCheck : IDoctorCheck
 {
     private readonly IFileSystem _fileSystem;

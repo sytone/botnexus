@@ -34,6 +34,27 @@
     <ProjectReference Include="..\BotNexus.Cron\BotNexus.Cron.csproj" />
   </ItemGroup>
 
+  <!--
+    The doctor check/advisory registries are GENERATED from the [DoctorCheck] declarations (#3319),
+    not hand-written. Referenced as an Analyzer (not as an assembly) so nothing the generator
+    produces is deployed, matching the #2769 posture. The namespace property must be marked
+    CompilerVisibleProperty - a property the compiler cannot see falls back to the generator's
+    default, which looks like the setting being ignored.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\tools\BotNexus.SourceGenerators\BotNexus.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <DoctorCheckSourceGenerator_Namespace>BotNexus.Cli.Commands.Doctor</DoctorCheckSourceGenerator_Namespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <CompilerVisibleProperty Include="DoctorCheckSourceGenerator_Namespace" />
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="Resources\Prompts\*.prompt.*">
       <LogicalName>PromptSamples/%(Filename)%(Extension)</LogicalName>

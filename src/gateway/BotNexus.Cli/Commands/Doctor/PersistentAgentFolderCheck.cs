@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Configuration;
+using BotNexus.Cli.Commands.Doctor.Generated;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -11,6 +12,7 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// (an orphan left behind by a removed agent - warning). It is read-only: it never creates or deletes
 /// folders, mirroring the safe-seam philosophy of the sub-agent reaper.
 /// </summary>
+[DoctorCheck(Id = "agent-folders", Suite = DoctorSuite.Aggregate, Order = 4)]
 internal sealed class PersistentAgentFolderCheck : IDoctorCheck
 {
     public string Id => "agent-folders";

@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Configuration;
+using BotNexus.Cli.Commands.Doctor.Generated;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -23,6 +24,7 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// automatically (AC7) - the inventory and the config cannot silently diverge.
 /// </para>
 /// </summary>
+[DoctorCheck(Id = "feature-flags-explicit", Suite = DoctorSuite.Config, Order = 7)]
 public sealed class FeatureFlagSeedCheck : IConfigCheck
 {
     public string Id => "feature-flags-explicit";
@@ -80,6 +82,7 @@ public sealed class FeatureFlagSeedCheck : IConfigCheck
 /// that guarantee structural rather than a matter of reviewer vigilance.
 /// </para>
 /// </summary>
+[DoctorCheck(Id = "feature-flags-unknown-key", Suite = DoctorSuite.Advisory, Order = 1)]
 public sealed class UnknownFeatureFlagAdvisory : IConfigAdvisory
 {
     /// <inheritdoc />

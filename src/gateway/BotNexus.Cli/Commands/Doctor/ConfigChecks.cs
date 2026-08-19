@@ -1,10 +1,12 @@
 using BotNexus.Gateway.Configuration;
+using BotNexus.Cli.Commands.Doctor.Generated;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
 /// <summary>
 /// Checks that <c>gateway.extensions</c> block exists and is enabled.
 /// </summary>
+[DoctorCheck(Id = "extensions-block", Suite = DoctorSuite.Config, Order = 0)]
 public sealed class ExtensionsBlockCheck : IConfigCheck
 {
     private const string ExtensionsPath = "gateway.extensions";
@@ -30,6 +32,7 @@ public sealed class ExtensionsBlockCheck : IConfigCheck
 /// <summary>
 /// Checks that <c>gateway.extensions.defaults["botnexus-skills"]</c> is present and enabled.
 /// </summary>
+[DoctorCheck(Id = "skills-world-default", Suite = DoctorSuite.Config, Order = 1)]
 public sealed class SkillsWorldDefaultCheck : IConfigCheck
 {
     private const string SkillsEntryPath = "gateway.extensions.defaults.botnexus-skills";
@@ -71,6 +74,7 @@ public sealed class SkillsWorldDefaultCheck : IConfigCheck
 /// <c>gateway.cors.allowedOrigins</c> before enabling, or they will be locked out.
 /// </para>
 /// </summary>
+[DoctorCheck(Id = "devmode-origin-enforcement", Suite = DoctorSuite.Config, Order = 6)]
 public sealed class DevOriginEnforcementCheck : IConfigCheck
 {
     /// <summary>Feature-flag name; the single declaration shared with ApiKeyGatewayAuthHandler (#2767).</summary>
@@ -125,6 +129,7 @@ public sealed class DevOriginEnforcementCheck : IConfigCheck
 /// <summary>
 /// Checks that the top-level <c>cron</c> block exists with scheduler enabled.
 /// </summary>
+[DoctorCheck(Id = "cron-enabled", Suite = DoctorSuite.Config, Order = 2)]
 public sealed class CronCheck : IConfigCheck
 {
     private const string CronPath = "cron";
@@ -151,6 +156,7 @@ public sealed class CronCheck : IConfigCheck
 /// model. Reasoning models (claude-opus-4.6, o3, gpt-5) are overkill for summarization and may
 /// return empty responses when the thinking parameter is misconfigured.
 /// </summary>
+[DoctorCheck(Id = "compaction-model", Suite = DoctorSuite.Config, Order = 4)]
 public sealed class CompactionModelCheck : IConfigCheck
 {
     public string Id => "compaction-model";
@@ -188,6 +194,7 @@ public sealed class CompactionModelCheck : IConfigCheck
 /// Without an explicit model, the compactor falls back to a default waterfall
 /// which may pick an expensive or unavailable model.
 /// </summary>
+[DoctorCheck(Id = "compaction-model-missing", Suite = DoctorSuite.Config, Order = 5)]
 public sealed class CompactionModelMissingCheck : IConfigCheck
 {
     public string Id => "compaction-model-missing";
@@ -208,6 +215,7 @@ public sealed class CompactionModelMissingCheck : IConfigCheck
 /// <summary>
 /// Checks that <c>agents.defaults.memory</c> block is present.
 /// </summary>
+[DoctorCheck(Id = "memory-agent-default", Suite = DoctorSuite.Config, Order = 3)]
 public sealed class MemoryAgentDefaultCheck : IConfigCheck
 {
     private const string AgentsPath = "agents";

@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Configuration;
+using BotNexus.Cli.Commands.Doctor.Generated;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -9,6 +10,7 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// migration (issue #2041: refactor existing DoctorConfig logic behind the check contract rather than
 /// duplicate it). Applying fixes stays the job of <c>doctor config</c>; here we only surface the gaps.
 /// </summary>
+[DoctorCheck(Id = "config", Suite = DoctorSuite.Aggregate, Order = 0)]
 internal sealed class ConfigHealthCheck : IDoctorCheck
 {
     public string Id => "config";

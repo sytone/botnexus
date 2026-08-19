@@ -1972,14 +1972,17 @@ reconciliation checks - so scripted output and the final summary are stable acro
 check to the registry automatically includes it in the bare `doctor` run, so a diagnostic can never
 be silently omitted by a hardcoded parent handler.
 
-| Check | Reports |
-|---|---|
-| Configuration health | Validity of `config.json` and the settings the migration checks cover. |
-| World identity | The resolved world ID alongside the resolved home path, so several gateways on one machine can be told apart. A home that has not started yet has no ID; that is reported as a warning, not an error, because one is generated on next start. This check never writes. |
-| Secret file permissions | Whether secret files are readable by more than their owner. |
-| Location accessibility | That every resolved location (config, logs, sessions, agents) is accessible. Also available on its own as [`doctor locations`](#locations). |
-| Persistent agent folders | That persistent agent workspaces match the configured agents. Also available on its own as [`doctor agents`](#doctor-agents). |
-| Sub-agent workspaces | Health of the sub-agent workspace root. |
+| Check | Id | Reports |
+|---|---|---|
+| Configuration health | `config` | Validity of `config.json` and the settings the migration checks cover. |
+| World identity | `world-identity` | The resolved world ID alongside the resolved home path, so several gateways on one machine can be told apart. A home that has not started yet has no ID; that is reported as a warning, not an error, because one is generated on next start. This check never writes. |
+| Secret file permissions | `secret-file-permissions` | Whether secret files are readable by more than their owner. |
+| Location accessibility | `locations` | That every resolved location (config, logs, sessions, agents) is accessible. Also available on its own as [`doctor locations`](#locations). |
+| Persistent agent folders | `agent-folders` | That persistent agent workspaces match the configured agents. Also available on its own as [`doctor agents`](#doctor-agents). |
+| Sub-agent workspaces | `subagent-workspaces` | Health of the sub-agent workspace root. |
+
+The id column is not decoration: it is the id the check reports, and a test fence diffs these ids
+against the generated registry, so a check added to the code without a row here fails the build.
 
 ---
 
@@ -1987,7 +1990,18 @@ be silently omitted by a hardcoded parent handler.
 
 Guided config migration. Compares your existing `config.json` against a set of built-in checks, reports any missing or outdated settings, and optionally applies the fixes in place. Operates offline — no running gateway required.
 
-Current checks include: the `extensions` block, the Skills world default, the dev-mode origin enforcement flag, cron configuration, the memory agent default, and the compaction model settings.
+Current checks are:
+
+| Check | Id | Reports |
+|---|---|---|
+| Extensions block | `extensions-block` | The `gateway.extensions` block is absent or has extensions disabled. |
+| Skills world default | `skills-world-default` | The Skills extension has no world-level default in `gateway.extensions.defaults`. |
+| Cron configuration | `cron-enabled` | The cron scheduler block is absent from config. |
+| Memory agent default | `memory-agent-default` | The `agents.defaults.memory` block is absent, so memory indexing is not enabled by default. |
+| Compaction model | `compaction-model` | `gateway.compaction.summarizationModel` names an expensive reasoning model, which may fail or waste tokens on a summarization call. |
+| Compaction model missing | `compaction-model-missing` | `gateway.compaction.summarizationModel` is not configured, so the compactor falls back to the default model waterfall. |
+| Dev-mode origin enforcement | `devmode-origin-enforcement` | The gateway runs keyless (dev mode) with the browser-Origin guard disabled, leaving the `gateway-dev` admin identity reachable from any web origin. |
+| Feature flag seeding | `feature-flags-explicit` | One or more declared feature flags are absent from config, so their state is an unstated decision that cannot be read back from the file. Seeding writes the documented default, so applying it changes no behaviour. |
 
 ### Advisories
 
@@ -1997,6 +2011,7 @@ which the tool must never rewrite. Advisories have no fix to apply and are unaff
 | Advisory | Reports |
 |---|---|
 | `gateway-wildcard-bind` | `gateway.listenUrl` binds a wildcard address (`0.0.0.0`, `*`, `+`, `::`), publishing the portal UI, the SignalR hub, the agent REST API and the gateway admin endpoints to every reachable network. A wildcard bind can be a deliberate choice for remote or mesh access, so it is reported and left unchanged. |
+| `feature-flags-unknown-key` | The `featureManagement` block contains a key that matches no declared feature flag - typically a misspelling or a flag that has since been retired. An unrecognised key evaluates as absent, so the setting reads as configured while doing nothing. Not removed automatically: the right correction is to fix the spelling or delete the key, and only its author knows which. |
 
 ### Usage
 

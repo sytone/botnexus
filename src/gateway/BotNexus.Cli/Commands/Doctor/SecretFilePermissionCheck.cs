@@ -1,5 +1,6 @@
 using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Cli.Commands.Doctor.Generated;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -17,6 +18,7 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// <c>auth.json</c> (OAuth refresh/access tokens), and every <c>config-*.json</c> under
 /// <c>backups/</c> (full copies of the same secrets).</para>
 /// </summary>
+[DoctorCheck(Id = "secret-file-permissions", Suite = DoctorSuite.Aggregate, Order = 2)]
 internal sealed class SecretFilePermissionCheck : IDoctorCheck
 {
     private readonly IFileSystem _fileSystem;

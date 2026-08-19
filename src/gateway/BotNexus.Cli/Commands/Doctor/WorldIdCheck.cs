@@ -1,5 +1,6 @@
 using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Cli.Commands.Doctor.Generated;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -17,6 +18,7 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// gateway injects - and this check <b>never writes</b>. A home that has not started yet legitimately
 /// has no ID, which is reported as a warning rather than an error: it is created on next start.</para>
 /// </remarks>
+[DoctorCheck(Id = "world-identity", Suite = DoctorSuite.Aggregate, Order = 1)]
 internal sealed class WorldIdCheck : IDoctorCheck
 {
     private readonly IFileSystem _fileSystem;

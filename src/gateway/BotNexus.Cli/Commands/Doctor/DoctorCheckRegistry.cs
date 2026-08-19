@@ -9,6 +9,13 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// Order is deterministic and meaningful - cheap configuration checks run first, then filesystem
 /// and reconciliation checks - so scripted output and the final summary are stable across runs.
 /// </para>
+/// <para>
+/// #3319 made that seam structural. The list is no longer written here: it is GENERATED from the
+/// <c>[DoctorCheck]</c> attribute each check class carries, so a check cannot be written and left
+/// unregistered. The order is still declared, on the attribute's <c>Order</c> argument, because it
+/// is operator-visible - it is the order the report's sections print in - and Roslyn promises no
+/// stable enumeration order across the syntax trees of a compilation.
+/// </para>
 /// </summary>
 internal static class DoctorCheckRegistry
 {
@@ -16,13 +23,5 @@ internal static class DoctorCheckRegistry
     /// Builds the ordered check list. A factory (not a static array) so each invocation gets fresh
     /// instances and tests can build an isolated suite without shared state.
     /// </summary>
-    public static IReadOnlyList<IDoctorCheck> CreateDefault() =>
-    [
-        new ConfigHealthCheck(),
-        new WorldIdCheck(),
-        new SecretFilePermissionCheck(),
-        new LocationAccessibilityCheck(),
-        new PersistentAgentFolderCheck(),
-        new SubAgentWorkspaceCheck(),
-    ];
+    public static IReadOnlyList<IDoctorCheck> CreateDefault() => GeneratedDoctorChecks.CreateAggregate();
 }
