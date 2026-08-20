@@ -81,6 +81,57 @@ public class TransientErrorClassifierTests
     public void IsTransient_NonTransientMessages_ReturnFalse(string message)
         => Assert.False(TransientErrorClassifier.IsTransient(message), message);
 
+    /// <summary>
+    /// Natural-language capacity prose (#3472): providers that surface capacity pressure as text in
+    /// an otherwise successful stream must enter the retry lane, not kill the turn.
+    /// </summary>
+    [Theory]
+    [InlineData("The model is currently at capacity. Please try again later.")]
+    [InlineData("Service is temporarily at capacity")]
+    [InlineData("Please try again in 30 seconds")]
+    public void IsTransient_CapacityProse_ReturnsTrue(string message)
+        => Assert.True(TransientErrorClassifier.IsTransient(message), message);
+
+    /// <summary>
+    /// Near-miss guard (#3472): the bare word "again" is not sufficient. "try again with a shorter
+    /// prompt" is a terminal instruction to the caller, not a capacity signal.
+    /// </summary>
+    [Theory]
+    [InlineData("Invalid request; try again with a shorter prompt")]
+    [InlineData("try again with a different model")]
+    [InlineData("the server is at capacity planning stage")]
+    public void IsTransient_CapacityProseNearMisses_ReturnFalse(string message)
+        => Assert.False(TransientErrorClassifier.IsTransient(message), message);
+
+    /// <summary>
+    /// Capacity prose lands in the transient lane, not the exhaustion lane -- the #3015 ordering
+    /// contract (transient table consulted before exhaustion) is what guarantees this.
+    /// </summary>
+    [Theory]
+    [InlineData("The model is currently at capacity. Please try again later.")]
+    [InlineData("Service is temporarily at capacity")]
+    [InlineData("Please try again in 30 seconds")]
+    public void Classify_CapacityProse_ReturnsTransient(string message)
+        => Assert.Equal(ProviderFailureClass.Transient, TransientErrorClassifier.Classify(message));
+
+    /// <summary>
+    /// Ordering regression (#3015 + #3472): a quota message that ALSO says "try again later" keeps
+    /// its historical transient lane, because the transient table is consulted first.
+    /// </summary>
+    [Fact]
+    public void Classify_QuotaTextWithCapacityProse_StaysTransient()
+        => Assert.Equal(
+            ProviderFailureClass.Transient,
+            TransientErrorClassifier.Classify("You exceeded your current quota. Please try again later."));
+
+    /// <summary>Exhaustion text without capacity prose is unaffected by the new patterns.</summary>
+    [Theory]
+    [InlineData("billing has been disabled")]
+    [InlineData("insufficient_quota")]
+    [InlineData("credit balance is too low")]
+    public void Classify_ExhaustionText_StillReturnsExhausted(string message)
+        => Assert.Equal(ProviderFailureClass.Exhausted, TransientErrorClassifier.Classify(message));
+
     /// <summary>A null message or exception is not transient.</summary>
     [Fact]
     public void IsTransient_Null_ReturnsFalse()

@@ -40,6 +40,13 @@ public static class TransientErrorClassifier
         new(@"server[_ ]error", RegexOptions.IgnoreCase | RegexOptions.Compiled),
         new("provider returned error", RegexOptions.IgnoreCase | RegexOptions.Compiled),
 
+        // Natural-language capacity prose some providers stream in an otherwise successful body
+        // (#3472; mirrors OpenCode 71d08e94). "later"/"in" are required so a terminal instruction
+        // such as "try again with a shorter prompt" is NOT retried -- the bare word "again" is not
+        // a capacity signal.
+        new(@"\btry again (?:later|in\b)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        new(@"\b(?:currently|temporarily) at capacity\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+
         // Transport / stream aborts (undici and friends).
         new("fetch failed", RegexOptions.IgnoreCase | RegexOptions.Compiled),
         new("failed to fetch", RegexOptions.IgnoreCase | RegexOptions.Compiled),
