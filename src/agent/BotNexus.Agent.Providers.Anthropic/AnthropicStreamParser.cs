@@ -1,8 +1,10 @@
 using System.Text;
 using System.Text.Json;
+using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Providers.Anthropic;
 
@@ -11,6 +13,16 @@ namespace BotNexus.Agent.Providers.Anthropic;
 /// </summary>
 internal static class AnthropicStreamParser
 {
+    /// <summary>
+    /// Logger category for the stream-assembly diagnostic. This parser is an <c>internal static</c>
+    /// helper with no injected logger, so it takes the ambient factory the composition root sets on
+    /// <see cref="ProviderDiagnostics"/> - the same seam #2485 introduced for the static converters.
+    /// Passing <c>null</c> here instead is what made the checksum unreportable (#3443):
+    /// <c>Reconcile</c> guards its whole diagnostic behind <c>logger?.</c>, so a null argument does
+    /// not degrade the warning, it deletes it.
+    /// </summary>
+    private const string LoggerCategory = "AnthropicStreamParser";
+
     internal static async Task<(Usage Usage, string? ResponseId, StopReason StopReason)> ProcessStreamAsync(
         StreamReader reader,
         LlmModel model,
@@ -27,6 +39,11 @@ internal static class AnthropicStreamParser
         var usage = initialUsage;
         var blockTypes = new Dictionary<int, string>();
         var textAccumulators = new Dictionary<int, StringBuilder>();
+        // Text deltas that actually contributed to each block, so the mismatch diagnostic reports
+        // the real fragment count instead of a constant 0 (#3443). Counted at the point of append
+        // so it can never drift from what was accumulated.
+        var textDeltaCounts = new Dictionary<int, int>();
+        var logger = ProviderDiagnostics.CreateLogger(LoggerCategory);
         var signatureAccumulators = new Dictionary<int, StringBuilder>();
         var toolCallIds = new Dictionary<int, string>();
         var toolCallNames = new Dictionary<int, string>();
@@ -77,6 +94,7 @@ internal static class AnthropicStreamParser
                     contentBlocks,
                     blockTypes,
                     textAccumulators,
+                    textDeltaCounts,
                     signatureAccumulators,
                     toolCallIds,
                     toolCallNames,
@@ -84,6 +102,7 @@ internal static class AnthropicStreamParser
                     usage,
                     tools,
                     isOAuthToken,
+                    logger,
                     buildMessage,
                     mapStopReason,
                     ref responseId,
@@ -105,6 +124,7 @@ internal static class AnthropicStreamParser
         List<ContentBlock> contentBlocks,
         Dictionary<int, string> blockTypes,
         Dictionary<int, StringBuilder> textAccumulators,
+        Dictionary<int, int> textDeltaCounts,
         Dictionary<int, StringBuilder> signatureAccumulators,
         Dictionary<int, string> toolCallIds,
         Dictionary<int, string> toolCallNames,
@@ -112,6 +132,7 @@ internal static class AnthropicStreamParser
         Usage usage,
         IReadOnlyList<Tool>? tools,
         bool isOAuthToken,
+        ILogger logger,
         Func<LlmModel, List<ContentBlock>, Usage, StopReason, string?, string?, AssistantMessage> buildMessage,
         Func<string?, StopReason> mapStopReason,
         ref string? responseId,
@@ -139,18 +160,18 @@ internal static class AnthropicStreamParser
 
             case "content_block_start":
                 HandleContentBlockStart(data, model, stream, contentBlocks, blockTypes,
-                    textAccumulators, signatureAccumulators, toolCallIds, toolCallNames, argumentBudgets, usage, responseId,
+                    textAccumulators, textDeltaCounts, signatureAccumulators, toolCallIds, toolCallNames, argumentBudgets, usage, responseId,
                     tools, isOAuthToken, buildMessage);
                 break;
 
             case "content_block_delta":
                 HandleContentBlockDelta(data, model, stream, contentBlocks, blockTypes,
-                    textAccumulators, signatureAccumulators, argumentBudgets, usage, responseId, buildMessage);
+                    textAccumulators, textDeltaCounts, signatureAccumulators, argumentBudgets, usage, responseId, buildMessage);
                 break;
 
             case "content_block_stop":
                 HandleContentBlockStop(data, model, stream, contentBlocks, blockTypes,
-                    textAccumulators, signatureAccumulators, toolCallIds, toolCallNames, usage, responseId, buildMessage);
+                    textAccumulators, textDeltaCounts, signatureAccumulators, toolCallIds, toolCallNames, usage, logger, responseId, buildMessage);
                 break;
 
             case "message_delta":
@@ -181,6 +202,7 @@ internal static class AnthropicStreamParser
         List<ContentBlock> contentBlocks,
         Dictionary<int, string> blockTypes,
         Dictionary<int, StringBuilder> textAccumulators,
+        Dictionary<int, int> textDeltaCounts,
         Dictionary<int, StringBuilder> signatureAccumulators,
         Dictionary<int, string> toolCallIds,
         Dictionary<int, string> toolCallNames,
@@ -197,6 +219,7 @@ internal static class AnthropicStreamParser
         var blockType = block.GetProperty("type").GetString() ?? "text";
         blockTypes[index] = blockType;
         textAccumulators[index] = new StringBuilder();
+        textDeltaCounts[index] = 0;
         signatureAccumulators[index] = new StringBuilder();
 
         var partial = buildMessage(model, contentBlocks, usage, StopReason.Stop, null, responseId);
@@ -239,6 +262,7 @@ internal static class AnthropicStreamParser
         List<ContentBlock> contentBlocks,
         Dictionary<int, string> blockTypes,
         Dictionary<int, StringBuilder> textAccumulators,
+        Dictionary<int, int> textDeltaCounts,
         Dictionary<int, StringBuilder> signatureAccumulators,
         Dictionary<int, StreamToolArgumentBudget> argumentBudgets,
         Usage usage,
@@ -256,6 +280,7 @@ internal static class AnthropicStreamParser
             case "text_delta":
                 var text = delta.GetProperty("text").GetString() ?? "";
                 textAccumulators[index].Append(text);
+                textDeltaCounts[index] = textDeltaCounts.GetValueOrDefault(index) + 1;
                 stream.Push(new TextDeltaEvent(index, text, partial));
                 break;
             case "thinking_delta":
@@ -288,10 +313,12 @@ internal static class AnthropicStreamParser
         List<ContentBlock> contentBlocks,
         Dictionary<int, string> blockTypes,
         Dictionary<int, StringBuilder> textAccumulators,
+        Dictionary<int, int> textDeltaCounts,
         Dictionary<int, StringBuilder> signatureAccumulators,
         Dictionary<int, string> toolCallIds,
         Dictionary<int, string> toolCallNames,
         Usage usage,
+        ILogger logger,
         string? responseId,
         Func<LlmModel, List<ContentBlock>, Usage, StopReason, string?, string?, AssistantMessage> buildMessage)
     {
@@ -316,8 +343,8 @@ internal static class AnthropicStreamParser
                     model.Id,
                     "anthropic-messages",
                     "sse",
-                    deltaCount: 0,
-                    logger: null);
+                    textDeltaCounts.GetValueOrDefault(index),
+                    logger);
                 contentBlocks.Add(new TextContent(accumulated, signature));
                 var textPartial = buildMessage(model, contentBlocks, usage, StopReason.Stop, null, responseId);
                 stream.Push(new TextEndEvent(index, accumulated, textPartial));
