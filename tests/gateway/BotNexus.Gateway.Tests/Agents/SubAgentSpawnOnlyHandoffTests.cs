@@ -305,7 +305,7 @@ public sealed class SubAgentSpawnOnlyHandoffTests
         public Task FollowUpAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public Task FollowUpAsync(
-            BotNexus.Agent.Core.Types.AgentMessage message,
+            AgentTranscriptMessage message,
             CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 

@@ -178,7 +178,7 @@ public sealed class DefaultSubAgentManagerActivityTests
             .ReturnsAsync(new AgentResponse { Content = "completed" });
         handle.Setup(h => h.FollowUpAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return handle;
     }
@@ -193,7 +193,7 @@ public sealed class DefaultSubAgentManagerActivityTests
             .ThrowsAsync(new InvalidOperationException("boom"));
         handle.Setup(h => h.FollowUpAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return handle;
     }
@@ -212,7 +212,7 @@ public sealed class DefaultSubAgentManagerActivityTests
             });
         handle.Setup(h => h.FollowUpAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return handle;
     }

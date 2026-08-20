@@ -1290,7 +1290,7 @@ public sealed class CronTriggerTests
         public Task AbortAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SteerAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task FollowUpAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task FollowUpAsync(BotNexus.Agent.Core.Types.AgentMessage message, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task FollowUpAsync(AgentTranscriptMessage message, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

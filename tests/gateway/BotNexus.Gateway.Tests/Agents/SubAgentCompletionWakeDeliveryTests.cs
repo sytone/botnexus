@@ -97,7 +97,7 @@ public sealed class SubAgentCompletionWakeDeliveryTests
         var parentHandle = new Mock<IAgentHandle>();
         parentHandle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
         parentHandle.SetupGet(h => h.SessionId).Returns(SessionId.From("parent-session"));
-        parentHandle.Setup(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()))
+        parentHandle.Setup(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var childHandle = CreateHangingHandle();
@@ -135,7 +135,7 @@ public sealed class SubAgentCompletionWakeDeliveryTests
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
         await manager.OnCompletedAsync(spawned.SubAgentId, "Done");
 
-        parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()), Times.Never);
         dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -149,7 +149,7 @@ public sealed class SubAgentCompletionWakeDeliveryTests
         parentHandle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
         parentHandle.SetupGet(h => h.SessionId).Returns(SessionId.From("parent-session"));
         parentHandle.SetupGet(h => h.IsRunning).Returns(parentIsRunning);
-        parentHandle.Setup(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()))
+        parentHandle.Setup(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var supervisor = new Mock<IAgentSupervisor>();

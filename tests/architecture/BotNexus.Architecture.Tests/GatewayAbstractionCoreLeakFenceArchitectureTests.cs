@@ -58,9 +58,9 @@ public sealed class GatewayAbstractionCoreLeakFenceArchitectureTests
     ///   its own model catalogue to be meaningful rather than a rename.</item>
     /// </list>
     /// <para>
-    /// <c>IAgentHandle.FollowUpAsync</c> is the one message-seam member still on core: it takes an
-    /// <c>AgentMessage</c> (an assistant-authored transcript entry), not a <c>UserMessage</c>, so it
-    /// belongs to the transcript cluster rather than the user-message cluster this slice retyped.
+    /// The transcript-message cluster is GONE as of #3251: <c>IAgentHandle.FollowUpAsync</c> now
+    /// takes the gateway's own <c>AgentTranscriptMessage</c>, mapped to core in
+    /// <c>BotNexus.Gateway.Isolation.AgentMessageMapping</c>. Do not re-add it.
     /// </para>
     /// </summary>
     private static readonly string[] AcceptedResidualLeaks =
@@ -78,10 +78,7 @@ public sealed class GatewayAbstractionCoreLeakFenceArchitectureTests
         "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.ContextWindowResolver.Resolve -> BotNexus.Agent.Providers.Core.Models.LlmModel",
         "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.EffectiveExecutionSettings..ctor -> BotNexus.Agent.Providers.Core.Models.ThinkingLevel",
         "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.EffectiveExecutionSettings.Deconstruct -> BotNexus.Agent.Providers.Core.Models.ThinkingLevel",
-        "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.EffectiveExecutionSettings.Thinking -> BotNexus.Agent.Providers.Core.Models.ThinkingLevel",
-
-        // Transcript-message cluster.
-        "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.IAgentHandle.FollowUpAsync -> BotNexus.Agent.Core.Types.AgentMessage"
+        "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.EffectiveExecutionSettings.Thinking -> BotNexus.Agent.Providers.Core.Models.ThinkingLevel"
     ];
 
     /// <summary>

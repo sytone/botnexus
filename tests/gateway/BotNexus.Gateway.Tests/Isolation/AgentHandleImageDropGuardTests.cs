@@ -254,7 +254,7 @@ public sealed class AgentHandleImageDropGuardTests : IDisposable
         public Task FollowUpAsync(string message, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
-        public Task FollowUpAsync(AgentMessage message, CancellationToken cancellationToken = default)
+        public Task FollowUpAsync(AgentTranscriptMessage message, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
         public Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default)
@@ -302,7 +302,7 @@ public sealed class AgentHandleImageDropGuardTests : IDisposable
         public Task FollowUpAsync(string message, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
-        public Task FollowUpAsync(AgentMessage message, CancellationToken cancellationToken = default)
+        public Task FollowUpAsync(AgentTranscriptMessage message, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
         public Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default)

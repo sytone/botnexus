@@ -1,5 +1,7 @@
 using BotNexus.Gateway.Abstractions.Models;
 using AgentCoreImageContent = BotNexus.Agent.Core.Types.AgentImageContent;
+using AgentCoreMessage = BotNexus.Agent.Core.Types.AgentMessage;
+using AgentCoreSubAgentCompletionMessage = BotNexus.Agent.Core.Types.SubAgentCompletionMessage;
 using AgentCoreUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 namespace BotNexus.Gateway.Isolation;
@@ -56,6 +58,48 @@ internal static class AgentMessageMapping
         return new AgentUserMessage(message.Content, images)
         {
             DeferWhileBusy = message.DeferWhileBusy
+        };
+    }
+
+    /// <summary>
+    /// Projects a gateway transcript message onto the agent-core message the follow-up queue holds.
+    /// </summary>
+    /// <param name="message">The gateway-owned transcript message.</param>
+    /// <returns>The equivalent agent-core message.</returns>
+    /// <remarks>
+    /// <para>
+    /// Total over the closed <see cref="AgentTranscriptMessage"/> union and lossless in both arms:
+    /// the user arm delegates to <see cref="ToCore(AgentUserMessage)"/> (text, images and the
+    /// <c>DeferWhileBusy</c> side-turn flag), and the completion arm carries all four structured
+    /// fields rather than a pre-rendered string, so no field is dropped.
+    /// </para>
+    /// <para>
+    /// <b>Identity hazard (#3040/#2438).</b> The follow-up enqueue/reclaim pair matches by reference
+    /// identity, so any call site spanning the boundary must map ONCE into a local and reuse that
+    /// same instance for both the enqueue and the reclaim. Never call this twice for one message.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The union gained a case with no mapping. Failing loudly is deliberate: silently degrading an
+    /// unmapped kind to text would drop data at exactly the seam this mapping exists to keep total.
+    /// </exception>
+    public static AgentCoreMessage ToCore(this AgentTranscriptMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        return message switch
+        {
+            AgentUserTranscriptMessage user => user.Message.ToCore(),
+            AgentSubAgentCompletionTranscriptMessage completion => new AgentCoreSubAgentCompletionMessage
+            {
+                SubAgentId = completion.SubAgentId,
+                Status = completion.Status,
+                Summary = completion.Summary,
+                CompletedAt = completion.CompletedAt
+            },
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(message),
+                message.GetType().FullName,
+                "Unmapped gateway transcript message kind; add its arm here rather than degrading it.")
         };
     }
 }

@@ -847,7 +847,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         public Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default) => throw new NotImplementedException();
         public Task SteerAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task FollowUpAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task FollowUpAsync(AgentMessage message, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task FollowUpAsync(AgentTranscriptMessage message, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

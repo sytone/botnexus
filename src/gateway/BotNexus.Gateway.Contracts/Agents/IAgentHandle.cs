@@ -145,7 +145,12 @@ public interface IAgentHandle : IAsyncDisposable
     /// <param name="message">The follow-up message to queue.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task that completes when the message is queued.</returns>
-    Task FollowUpAsync(BotNexus.Agent.Core.Types.AgentMessage message, CancellationToken cancellationToken = default);
+    /// <remarks>
+    /// Takes the gateway's own <see cref="AgentTranscriptMessage"/> rather than an agent-core
+    /// message type (#3251); the isolation strategy - the layer entitled to know about core - maps
+    /// it at the boundary.
+    /// </remarks>
+    Task FollowUpAsync(AgentTranscriptMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Queues <paramref name="message"/> as a follow-up <em>only</em> if a run is currently in

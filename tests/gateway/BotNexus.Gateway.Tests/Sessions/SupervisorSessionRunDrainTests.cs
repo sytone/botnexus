@@ -174,7 +174,7 @@ public sealed class SupervisorSessionRunDrainTests
         public Task FollowUpAsync(string message, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public Task FollowUpAsync(AgentMessage message, CancellationToken cancellationToken = default)
+        public Task FollowUpAsync(AgentTranscriptMessage message, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public Task InterruptAndSteerAsync(string message, CancellationToken cancellationToken = default)

@@ -23,7 +23,7 @@ public sealed class SubAgentCompletionWakeUpTests
 
         await manager.OnCompletedAsync(spawned.SubAgentId, summary);
 
-        parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()), Times.Never);
         dispatcher.Verify(d => d.DispatchAsync(
                 It.Is<InboundMessage>(message =>
                     message.ChannelType.Value == "internal" &&
@@ -47,7 +47,7 @@ public sealed class SubAgentCompletionWakeUpTests
         await manager.OnCompletedAsync(spawned.SubAgentId, "Done");
 
         parentHandle.Verify(h => h.FollowUpAsync(
-                It.IsAny<AgentMessage>(),
+                It.IsAny<AgentTranscriptMessage>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
         dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -155,7 +155,7 @@ public sealed class SubAgentCompletionWakeUpTests
         handle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
         handle.SetupGet(h => h.SessionId).Returns(SessionId.From("parent-session"));
         handle.SetupGet(h => h.IsRunning).Returns(isRunning);
-        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return handle;
     }

@@ -129,7 +129,7 @@ internal sealed class DockerSandboxAgentHandle : IAgentHandle
         => Task.CompletedTask;
 
     /// <inheritdoc />
-    public Task FollowUpAsync(AgentMessage message, CancellationToken cancellationToken = default)
+    public Task FollowUpAsync(AgentTranscriptMessage message, CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
     /// <inheritdoc />

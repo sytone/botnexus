@@ -210,7 +210,7 @@ public sealed class DefaultSubAgentManagerSecurityEventTests
             });
         handle.Setup(h => h.FollowUpAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return handle;
     }
