@@ -38,6 +38,9 @@ namespace BotNexus.Gateway.Isolation.ToolProviders;
 /// <param name="PathValidator">The resolved path validator for filesystem-scoped tools.</param>
 /// <param name="ResolveConversationId">Memoised bound-conversation resolver keyed on a conversation store.</param>
 /// <param name="Logger">The isolation-strategy logger, for provider-level diagnostics.</param>
+/// <param name="WorkspacePath">The resolved agent workspace directory, for tools that scan it.</param>
+/// <param name="ResolvedModelId">The model id this run actually uses, after override resolution (#2796).</param>
+/// <param name="Capabilities">The capabilities declared by the provider serving this run (#2432).</param>
 /// <param name="CancellationToken">Cancellation for async provider work.</param>
 internal sealed record ToolProviderContext(
     AgentDescriptor Descriptor,
@@ -48,6 +51,9 @@ internal sealed record ToolProviderContext(
     IPathValidator PathValidator,
     Func<IConversationStore, Task<ConversationId?>> ResolveConversationId,
     ILogger Logger,
+    string WorkspacePath,
+    string ResolvedModelId,
+    BotNexus.Agent.Providers.Core.Registry.ProviderCapabilities Capabilities,
     CancellationToken CancellationToken)
 {
     /// <summary>Session id for this materialisation (shortcut over <see cref="ExecutionContext"/>).</summary>
@@ -354,6 +360,31 @@ internal sealed class FileWatcherToolProvider(IOptions<FileWatcherToolOptions>? 
     {
         var options = fileWatcherToolOptions ?? Options.Create(new FileWatcherToolOptions());
         IReadOnlyList<IAgentTool> tools = [new FileWatcherTool(options, context.PathValidator)];
+        return Task.FromResult(tools);
+    }
+}
+
+/// <summary>
+/// Always-on model-profile discovery tool (<c>model_profile</c>). Never gated: an agent that cannot
+/// ask what model it is has no way to honour the <c>model-awareness</c> instruction that tells it to
+/// classify a base-instruction-file edit (#2436).
+/// </summary>
+internal sealed class ModelProfileToolProvider : IToolProvider
+{
+    /// <inheritdoc />
+    public bool ShouldInclude(ToolProviderContext context) => true;
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<IAgentTool>> CreateToolsAsync(ToolProviderContext context)
+    {
+        IReadOnlyList<IAgentTool> tools =
+        [
+            new ModelProfileTool(
+                context.ResolvedModelId,
+                context.Descriptor.ApiProvider,
+                context.Capabilities,
+                context.WorkspacePath)
+        ];
         return Task.FromResult(tools);
     }
 }

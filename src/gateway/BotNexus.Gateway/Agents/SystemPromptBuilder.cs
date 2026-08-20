@@ -193,6 +193,7 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(PromptOrder.ConversationTodo, BuildConversationTodoSection, HasConversationTodo, xmlTag: "conversation_todo"))
             .Add(new LambdaPromptSection(PromptOrder.WorkspaceFilesHeader, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
             .Add(ModelGuidanceSection.Create())
+            .Add(ModelAwarenessSection.Create())
             .Add(new LambdaPromptSection(PromptOrder.ReplyTags, BuildReplyTagsGuidanceSection, static _ => IncludeReplyTagsSectionByDefault))
             .Add(new LambdaPromptSection(PromptOrder.Conversations, BuildConversationsGuidanceSection, HasConversationTool, xmlTag: "conversations"))
             .Add(new LambdaPromptSection(PromptOrder.Messaging, BuildMessagingGuidanceSection, xmlTag: "messaging"))

@@ -51,6 +51,9 @@ public class ToolProviderTests
             new NoOpPathValidator(),
             resolveConversationId ?? (_ => Task.FromResult<ConversationId?>(null)),
             NullLogger.Instance,
+            "/ws",
+            descriptor.ModelId,
+            BotNexus.Agent.Providers.Core.Registry.ProviderCapabilities.Default,
             CancellationToken.None);
     }
 

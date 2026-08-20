@@ -286,6 +286,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             pathValidator,
             store => GetConversationIdAsync(store, sessionStore),
             _logger,
+            workspacePath,
+            resolvedModelId,
+            _llmClient.GetCapabilities(model),
             cancellationToken);
 
         // #1382 Finding 1: providers.Where(ShouldInclude).SelectMany(CreateTools). Kept as an
@@ -663,6 +666,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             new ToolProviders.DateTimeToolProvider(platformConfig),
             new ToolProviders.FileWatcherToolProvider(_serviceProvider.GetService<IOptions<FileWatcherToolOptions>>()),
             new ToolProviders.AgentFilesToolProvider(_serviceProvider.GetService<System.IO.Abstractions.IFileSystem>()),
+            new ToolProviders.ModelProfileToolProvider(),
             new ToolProviders.SubAgentToolProvider(
                 _serviceProvider.GetService<ISubAgentManager>(),
                 _serviceProvider.GetService<IOptions<GatewayOptions>>(),
