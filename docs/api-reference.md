@@ -1399,12 +1399,55 @@ X-Api-Key: your-api-key
 **Parameters:**
 - `sessionId` (string, path) — Session ID
 - `format` (string, path) — `markdown` or `html`
+- `firstEntryId` (string, query, optional) — Entry id of the first included entry (partial-range export)
+- `lastEntryId` (string, query, optional) — Entry id of the last included entry
 
 **Response:** 200 OK — `text/markdown` or `text/html` file attachment named `<slug>-<yyyy-MM-dd>.<ext>`.
 
 **Error Responses:**
-- `400 Bad Request` — Unrecognised format
+- `400 Bad Request` — Unrecognised format, or an invalid partial range (see [Partial-range export](#partial-range-export))
 - `404 Not Found` — Session does not exist
+
+---
+
+### Partial-range export
+
+Both format-parameterised export routes accept an optional `firstEntryId` / `lastEntryId` pair that
+exports a contiguous excerpt instead of the whole transcript. Supply **both or neither** — supplying
+only one is rejected rather than completed from the transcript bounds.
+
+Endpoints are `entryId` values: the stable `{sessionId}#{ordinal}` keys the history projection
+stamps onto every entry it emits. A caller can therefore only name entries that exist in the
+document being exported. Positional indices are deliberately not accepted, because an index means
+something different after any compaction or folding change and a saved range would silently start
+naming different entries.
+
+An excerpt is titled **Transcript Excerpt** rather than *Session Transcript* or *Conversation
+Transcript*, so a partial document never presents itself as a complete one.
+
+**Ranges are never clamped.** Each rejection carries its own machine-readable code, so a typo, a
+stale link and a cross-conversation paste are distinguishable:
+
+| `error` | Meaning |
+|---------|---------|
+| `range_incomplete` | Only one of `firstEntryId` / `lastEntryId` was supplied. |
+| `range_endpoint_malformed` | An endpoint is empty or is not a well-formed entry id. |
+| `range_endpoint_not_found` | An endpoint is well formed but names no entry in the assembled transcript. |
+| `range_endpoint_foreign_conversation` | An endpoint names a session belonging to a different conversation than the one being exported. |
+| `range_reversed` | Both endpoints exist but the last precedes the first in assembled order. They are not re-ordered. |
+
+All five are returned as `400 Bad Request` with `{ "error": ..., "message": ... }`. A missing
+conversation or session is still `404`, not a range error.
+
+**Request:**
+```http
+GET /api/sessions/session-abc123/export/html?firstEntryId=session-abc123%234&lastEntryId=session-abc123%2312
+X-Api-Key: your-api-key
+```
+
+> The legacy `GET /api/sessions/{sessionId}/export/markdown` route wins for the literal `markdown`
+> segment and does **not** accept range parameters — they are ignored there. Use `html`, or the
+> conversation route, for a ranged session export.
 
 ---
 
@@ -1421,6 +1464,8 @@ Secret redaction is always enabled on this route. The HTML output is self-contai
 **Parameters:**
 - `conversationId` (string, path) — Conversation ID
 - `format` (string, path) — `markdown` or `html`
+- `firstEntryId` (string, query, optional) — Entry id of the first included entry (see [Partial-range export](#partial-range-export))
+- `lastEntryId` (string, query, optional) — Entry id of the last included entry
 
 **Request:**
 ```http

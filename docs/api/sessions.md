@@ -168,8 +168,51 @@ through the shared export document model rather than `SessionTranscriptRenderer`
 | Status | Condition |
 |--------|-----------|
 | `200 OK` | `text/markdown` or `text/html` file download named `<slug>-<yyyy-MM-dd>.<ext>`. |
-| `400 Bad Request` | Unrecognised `format`. |
+| `400 Bad Request` | Unrecognised `format`, or an invalid partial range (see below). |
 | `404 Not Found` | No such session. |
+
+#### Partial-range export
+
+Two optional query parameters export a contiguous excerpt rather than the whole transcript:
+
+| Parameter | In | Type | Default | Notes |
+|-----------|----|------|---------|-------|
+| `firstEntryId` | query | string | _(none)_ | Entry id of the first included entry. |
+| `lastEntryId` | query | string | _(none)_ | Entry id of the last included entry. |
+
+Supply **both or neither**. Omitting both exports the full transcript; supplying only one is a
+`400` with `range_incomplete` - the missing endpoint is never inferred from the transcript bounds.
+
+Endpoints are `entryId` values, the stable `{sessionId}#{ordinal}` keys the history projection
+stamps onto every entry it emits, so a range can only name entries that exist in the document
+being exported. Positional indices are deliberately not accepted: an index means something
+different after any compaction or folding change, so a saved or shared range would silently start
+naming different entries.
+
+An excerpt is titled **Transcript Excerpt** rather than *Session Transcript*, so a partial document
+never presents itself as a complete one.
+
+**A rejected range is never clamped.** Every out-of-contract selector is refused with its own code
+and message rather than trimmed to the nearest valid entry, because a clamped export renders a
+summary header that misdescribes its own contents:
+
+| `error` code | Condition |
+|---|---|
+| `range_incomplete` | Only one of the two parameters was supplied. |
+| `range_endpoint_malformed` | An endpoint is empty or is not a well-formed entry id. |
+| `range_endpoint_not_found` | An endpoint is well-formed but names no entry in the assembled transcript. |
+| `range_endpoint_foreign_conversation` | An endpoint names a session belonging to a different conversation than the one being exported. |
+| `range_reversed` | Both endpoints exist, but the last precedes the first in assembled order. Endpoints are not re-ordered - supply them in transcript order. |
+
+The four reasons are kept distinct rather than collapsed into one generic "bad range", because a
+typo, a stale link and a cross-conversation paste each call for a different correction.
+
+The same range parameters and the same error codes apply to
+`GET /api/conversations/{conversationId}/export/{format}`.
+
+> The legacy `/export/markdown` route wins for the literal `markdown` segment and does **not**
+> accept the range parameters - they are ignored there. Use `html`, or the conversation route, for
+> a ranged session export.
 
 Because `markdown` is a literal segment on the legacy route, that route continues to win for
 `/export/markdown`; existing callers are unaffected. Secret redaction is **always on** for this

@@ -69,34 +69,36 @@ You should see the root command help listing all available subcommands.
 17. [config get](#config-get) — Read a config value
 18. [config set](#config-set) — Set a config value
 19. [config schema](#config-schema) — Generate JSON schema
-20. [gateway](#gateway) — Manage the gateway lifecycle
-21. [provider](#provider) — Show or set up providers
-22. [provider setup](#provider-setup) — Interactive provider setup wizard
-23. [provider list](#provider-list) — List configured providers
-24. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-25. [provider remove](#provider-remove) — Remove a provider non-interactively
-26. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
-27. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-28. [prompt](#prompt) — Manage prompt templates
-29. [prompt list](#prompt-list) — List available prompt templates
-30. [prompt render](#prompt-render) — Render a prompt template
-31. [prompt run](#prompt-run) — Render and execute a prompt template
-32. [satellite](#satellite) — Manage satellite nodes
-33. [doctor](#doctor) — Run the complete CLI diagnostic suite
-34. [doctor config](#doctor-config) — Guided config migration
-35. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
-36. [locations](#locations) — Manage configured locations
-37. [update](#update) — Pull, build, and restart the gateway
-38. [memory](#memory) — Backfill agent memory stores
-39. [cron](#cron-command) — Manage cron jobs from the CLI
-40. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
-41. [debug sessions](#debug-sessions) — Inspect session SQLite database
-42. [debug logs](#debug-logs) — Inspect log files
-43. [debug memory](#debug-memory) — Inspect agent memory directories
-44. [debug db](#debug-db) — Inspect raw databases
-45. [debug gateway](#debug-gateway) — Live gateway diagnostics
-46. [debug cron](#debug-cron) — Cron scheduler diagnostics
-47. [Examples](#examples)
+20. [config backups list](#config-backups-list) — List retained config.json backups
+21. [config restore](#config-restore) — Validate and restore a config.json backup
+22. [gateway](#gateway) — Manage the gateway lifecycle
+23. [provider](#provider) — Show or set up providers
+24. [provider setup](#provider-setup) — Interactive provider setup wizard
+25. [provider list](#provider-list) — List configured providers
+26. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+27. [provider remove](#provider-remove) — Remove a provider non-interactively
+28. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
+29. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+30. [prompt](#prompt) — Manage prompt templates
+31. [prompt list](#prompt-list) — List available prompt templates
+32. [prompt render](#prompt-render) — Render a prompt template
+33. [prompt run](#prompt-run) — Render and execute a prompt template
+34. [satellite](#satellite) — Manage satellite nodes
+35. [doctor](#doctor) — Run the complete CLI diagnostic suite
+36. [doctor config](#doctor-config) — Guided config migration
+37. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
+38. [locations](#locations) — Manage configured locations
+39. [update](#update) — Pull, build, and restart the gateway
+40. [memory](#memory) — Backfill agent memory stores
+41. [cron](#cron-command) — Manage cron jobs from the CLI
+42. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
+43. [debug sessions](#debug-sessions) — Inspect session SQLite database
+44. [debug logs](#debug-logs) — Inspect log files
+45. [debug memory](#debug-memory) — Inspect agent memory directories
+46. [debug db](#debug-db) — Inspect raw databases
+47. [debug gateway](#debug-gateway) — Live gateway diagnostics
+48. [debug cron](#debug-cron) — Cron scheduler diagnostics
+49. [Examples](#examples)
 
 ---
 
@@ -1104,6 +1106,112 @@ Output:
 ```text
 Set agents.reviewer.enabled = false
 ```
+
+---
+
+## config backups list
+
+List the retained `config.json` backups with a validity verdict. Every mutation of `config.json` -
+through the CLI, the portal, or the gateway - first copies the current document into
+`~/.botnexus/backups/`; the newest 50 are retained. Before this command those artefacts were
+write-only: visible on disk with no supported way to evaluate them.
+
+### Usage
+
+```powershell
+botnexus config backups list [OPTIONS]
+```
+
+### Options
+
+| Option | Default | Description |
+|---|---|---|
+| `--target` | - | Home directory to read the backups of, instead of the default `~/.botnexus`. |
+| `--verbose` | - | Verbose output. |
+
+Each row carries the backup id, its timestamp, the trigger reason, its size, and a verdict
+describing whether the snapshot still loads against the **current** schema:
+
+| Verdict | Meaning |
+|---|---|
+| `valid` | Parses and passes current-schema validation. Safe to restore. |
+| `needs-migration` | Parses, but only validates after the legacy-key migration pipeline runs. Still restorable - `config restore` migrates before it validates - so the bytes on disk are not what gets written. |
+| `unloadable` | Does not parse as JSON, or fails validation even after migration. **Cannot be restored**; the restore path refuses it rather than writing a file the gateway cannot load. |
+
+### Examples
+
+```powershell
+botnexus config backups list
+```
+
+An empty backups directory is a normal state, not a failure: the command prints
+`No config backups found.` and exits `0`.
+
+---
+
+## config restore
+
+Validate and restore a `config.json` backup produced by the automatic backup path.
+
+### Usage
+
+```powershell
+botnexus config restore <id> [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Description |
+|---|---|
+| `id` | Backup id as printed by `botnexus config backups list`. |
+
+### Options
+
+| Option | Default | Description |
+|---|---|---|
+| `--commit` | _(off)_ | Actually perform the restore. Without this the restore is previewed and nothing is written. |
+| `--target` | - | Home directory whose `config.json` is restored. |
+| `--verbose` | - | Print the resolved config path after a successful restore. |
+
+**Restore is a dry run unless you pass `--commit`.** The commit flag is opt-in rather than a
+`--dry-run` opt-out because this is the one config command whose stated purpose is to discard the
+current document: a mistyped id yields a preview, not an overwritten config.
+
+The restore is validated, not a file copy, and that difference is the point:
+
+- **A snapshot that fails validation is refused.** Nothing is written and `config.json` is left
+  byte-for-byte unchanged, so a bad backup cannot leave the gateway unable to start.
+- **Redacted secrets do not overwrite live ones.** A snapshot taken from a redacted view can contain
+  `***` placeholders; the restore resolves each back to the value currently on disk.
+- **The pre-restore document is backed up first**, so a restore is itself undoable.
+- The write goes through the normal config writer, so it is atomic and holds the cross-process
+  config lock. When another process holds that lock the command refuses rather than writing
+  without it.
+
+### Exit codes
+
+| Code | Condition |
+|---|---|
+| `0` | The restore succeeded, or the dry run completed and reported what would happen. |
+| `1` | The restore was refused - unknown id, an `unloadable` snapshot, or the config lock was held by another process. In every case the existing config is unmodified. |
+
+### Examples
+
+**Preview (default):**
+
+```powershell
+botnexus config restore config-20260101-101500-before-provider-update
+```
+
+**Perform the restore:**
+
+```powershell
+botnexus config restore config-20260101-101500-before-provider-update --commit
+```
+
+Only `config.json` is covered. Sessions, the cron store, and memory are separate stores with their
+own lifecycles and are not restored by this command. Copying a file out of `~/.botnexus/backups/`
+by hand skips every protection above - use this command instead.
 
 ---
 

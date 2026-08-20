@@ -988,6 +988,10 @@ Gateway HTTP server settings.
 | `Heartbeat.Enabled` | bool | true | Enable heartbeat/keepalive messages |
 | `Heartbeat.IntervalSeconds` | int | 1800 | Heartbeat interval (30 minutes) |
 | `WalCheckpointIntervalMinutes` | int | 30 | Minutes between periodic PASSIVE SQLite WAL checkpoints. A TRUNCATE checkpoint also runs on graceful shutdown. Keeps the write-ahead log from growing unbounded on long-lived stores. |
+| `SessionsDirectory` | string | null | Directory holding session transcripts and the session store database. Setting this and leaving `SessionStore.Type` unset selects the `File` store. |
+| `SessionStore.Type` | string | _(inferred)_ | Session store backend: `InMemory`, `File`, or `Sqlite`. When unset it resolves to `File` if `SessionsDirectory` is set, otherwise `Sqlite` - `InMemory` is never chosen implicitly because it loses all data on restart. Any other value fails startup validation. |
+| `SessionStore.FilePath` | string | null | Directory used by the `File` store. **Required** when `Type` is `File`; startup fails without it. A relative path resolves against the writable data directory (`BOTNEXUS_DATA_DIR` when set), so the store still lands on a writable volume when the config directory is mounted read-only. |
+| `SessionStore.ConnectionString` | string | null | SQLite connection string used by the `Sqlite` store. When unset, defaults to `sessions.sqlite` in the writable data directory. Treated as a secret: redacted in config reads and in the portal. |
 | `TranscriptExport.RedactSecrets` | bool | false | When true, exported session transcripts are passed through the transcript secret redactor so recognised credential shapes are replaced with a placeholder before the transcript leaves the process. Off by default so export output stays byte-identical to historical behaviour unless an operator opts in. Render-time only — never changes what is persisted to the session store. |
 | `RateLimit.RequestsPerMinute` | int | 60 | Maximum requests per client per window |
 | `RateLimit.WindowSeconds` | int | 60 | Window size in seconds for request counting |
@@ -1250,6 +1254,35 @@ An oversize result is returned as a **bounded successful projection**, never as 
 - when the oversized payload carries an OData/Graph `@odata.nextLink`, that value is surfaced in the marker too, even though the body containing it was cut away - it is the one field that makes the page recoverable at the source.
 
 Call `tool_output_continue` with the `handle` and `offset` from the marker to page through the remainder; each response reports the next offset and whether the payload is complete. A handle that has been evicted reports itself as unknown rather than returning empty content, so "re-run the tool" and "here is nothing" never share a symbol.
+
+#### The `tool_output_continue` tool
+
+| Parameter | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `handle` | string | yes | - | The continuation handle from the truncation marker. An empty value is rejected. |
+| `offset` | integer | no | `0` | Byte offset to resume from. Use the offset named in the marker, then the offset returned by the previous continuation call. |
+| `max_bytes` | integer | no | `32768` | Maximum bytes to return in this call. |
+
+Every response ends in a bracketed status line, so paging terminates on a stated signal rather than
+on a short read:
+
+- `[continuation: next offset N of TOTAL bytes]` followed by the guidance line - more remains, call
+  again with `offset=N`;
+- `[continuation complete: N of TOTAL bytes returned]` - the payload is exhausted.
+
+Two failure shapes are returned as ordinary text rather than as errors:
+
+- **Unknown handle** - never issued, or evicted from the bounded store. The remedy is to rerun the
+  original tool with a narrower scope, not to retry the continuation.
+- **Offset out of range** - the offset lies outside the stored payload; resume from an offset
+  within the reported total.
+
+The tool is a pure reader over an in-memory store. It never re-executes the original tool, so it
+cannot repeat a side effect, and it grants no filesystem or network access beyond what the original
+call already surfaced. Its content-source classification is deliberately `unknown` - the bytes are
+the same bytes some earlier tool produced, and the store does not carry that tool's classification
+forward, so claiming `local` would let an oversized foreign payload shed its taint simply by being
+large enough to be truncated.
 
 Image content blocks are passed through untouched - an encoded image cannot be truncated into a smaller valid image, only into a broken one.
 
