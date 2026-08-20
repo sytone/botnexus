@@ -17,32 +17,11 @@ public static class PortalText
     /// </summary>
     /// <param name="value">Raw text, possibly containing control characters.</param>
     /// <returns>A trimmed single-line rendering of <paramref name="value"/>.</returns>
-    public static string SingleLine(string? value)
-    {
-        if (string.IsNullOrEmpty(value))
-            return string.Empty;
-
-        var buffer = new System.Text.StringBuilder(value.Length);
-        var pendingSpace = false;
-        foreach (var ch in value)
-        {
-            // Control characters are treated as whitespace rather than dropped so that
-            // "a\tb" stays two readable words instead of collapsing into "ab".
-            if (char.IsControl(ch) || char.IsWhiteSpace(ch))
-            {
-                pendingSpace = buffer.Length > 0;
-                continue;
-            }
-
-            if (pendingSpace)
-            {
-                buffer.Append(' ');
-                pendingSpace = false;
-            }
-
-            buffer.Append(ch);
-        }
-
-        return buffer.ToString();
-    }
+    /// <remarks>
+    /// Documented forwarding shim (#2925). The implementation moved to
+    /// <see cref="PortalTextExtensions.ToSingleLine"/> so the operation is discoverable from any
+    /// string value; this entry point is retained verbatim so the existing razor call sites and the
+    /// public API surface are untouched. Prefer <c>value.ToSingleLine()</c> in new code.
+    /// </remarks>
+    public static string SingleLine(string? value) => value.ToSingleLine();
 }

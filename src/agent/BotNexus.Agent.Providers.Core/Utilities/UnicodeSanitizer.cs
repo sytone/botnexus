@@ -11,7 +11,15 @@ public static class UnicodeSanitizer
     /// <summary>
     /// Remove unpaired Unicode surrogates.
     /// </summary>
-    public static string SanitizeSurrogates(string text)
+    /// <remarks>
+    /// Documented forwarding shim (#2925). Callable as <c>text.SanitizeSurrogates()</c> via
+    /// <see cref="UnicodeStringExtensions.SanitizeSurrogates"/>; this entry point is retained
+    /// verbatim so the ~30 existing converter call sites and the public API surface are untouched.
+    /// </remarks>
+    public static string SanitizeSurrogates(string text) => SanitizeSurrogatesCore(text);
+
+    /// <summary>Single implementation shared by the static shim and the string extension.</summary>
+    internal static string SanitizeSurrogatesCore(string text)
     {
         if (string.IsNullOrEmpty(text))
             return text;

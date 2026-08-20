@@ -1,5 +1,3 @@
-using BotNexus.Gateway.Abstractions.Text;
-
 namespace BotNexus.Domain.Text;
 
 /// <summary>
@@ -47,23 +45,12 @@ public static class TextTruncation
     /// The original reference when no truncation is needed, otherwise a grapheme-safe prefix with
     /// <paramref name="suffix"/> appended.
     /// </returns>
+    /// <remarks>
+    /// Documented forwarding shim (#2925). The implementation moved to
+    /// <see cref="StringTextExtensions.SafeTruncate"/> so the operation is discoverable from any
+    /// string value; this entry point is retained verbatim so the ~30 existing call sites and the
+    /// public API surface are untouched. Prefer <c>value.SafeTruncate(max, suffix)</c> in new code.
+    /// </remarks>
     public static string? SafeTruncate(string? value, int maxLength, string suffix = "")
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        // Returning the original reference (not a copy) keeps the ASCII path allocation-free and
-        // byte-identical to the raw slicing it replaces - see acceptance criterion 4 on #2883.
-        // Delegation to the shared boundary policy (#2924) preserves this exactly: the shared
-        // helper applies the identical short-circuit, and this one is kept so the reference-return
-        // guarantee is pinned at the domain seam too rather than inherited silently.
-        if (value.Length <= maxLength)
-        {
-            return value;
-        }
-
-        return GraphemeSafeTruncation.Truncate(value, maxLength, suffix);
-    }
+        => value.SafeTruncate(maxLength, suffix);
 }

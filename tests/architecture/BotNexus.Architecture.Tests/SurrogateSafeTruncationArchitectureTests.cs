@@ -129,14 +129,21 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     /// The helper must remain the single implementation; a second private copy would recreate the
     /// drift that #2883 was filed to remove.
     /// </summary>
+    /// <remarks>
+    /// #2925 moved the body onto a <c>this string</c> extension and left
+    /// <c>TextTruncation.SafeTruncate</c> as a thin forwarder, so the declaration text now appears
+    /// twice while there is still exactly ONE implementation. A declaration carrying the documented
+    /// forwarding-shim marker is therefore not counted. This does not weaken the fence: a second
+    /// genuine body - which by definition carries no shim marker - still fails it, and a shim that
+    /// grows a real body loses its right to the marker.
+    /// </remarks>
     [Fact]
     public void SafeTruncate_HasExactlyOneImplementation()
     {
         var srcRoot = FindSourceRoot();
 
         var declaring = EnumerateAllCsFiles(srcRoot)
-            .Where(p => File.ReadAllText(p).Contains(
-                "public static string? SafeTruncate", StringComparison.Ordinal))
+            .Where(p => DeclaresNonShimSafeTruncate(File.ReadAllText(p)))
             .Select(p => ToRelative(srcRoot, p))
             .ToList();
 
@@ -144,6 +151,55 @@ public sealed class SurrogateSafeTruncationArchitectureTests
             1,
             "#2883: exactly one SafeTruncate implementation must exist. Found: "
             + string.Join(", ", declaring));
+    }
+
+    /// <summary>
+    /// True when the file declares a <c>SafeTruncate</c> whose doc comment does NOT mark it as a
+    /// #2925 forwarding shim - i.e. a real implementation.
+    /// </summary>
+    private static bool DeclaresNonShimSafeTruncate(string text)
+    {
+        const string Declaration = "public static string? SafeTruncate";
+        const string ShimMarker = "Documented forwarding shim (#2925)";
+
+        var index = text.IndexOf(Declaration, StringComparison.Ordinal);
+        var previousDeclarationEnd = 0;
+        while (index >= 0)
+        {
+            // The lookback is bounded by the PREVIOUS declaration as well as by a fixed window, so
+            // one marked shim cannot launder an unmarked real body that follows it.
+            var windowStart = Math.Max(previousDeclarationEnd, Math.Max(0, index - 900));
+            if (!text.AsSpan(windowStart, index - windowStart).Contains(ShimMarker, StringComparison.Ordinal))
+                return true;
+
+            previousDeclarationEnd = index + Declaration.Length;
+            index = text.IndexOf(Declaration, previousDeclarationEnd, StringComparison.Ordinal);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// #2925, pinned: the shim exclusion above must recognise a marked forwarder AND must still
+    /// count a real body, so the exclusion cannot be used to hide a second implementation.
+    /// </summary>
+    [Fact]
+    public void ShimExclusion_CountsRealBodies_AndSkipsMarkedForwarders()
+    {
+        const string shim = """
+            /// <remarks>
+            /// Documented forwarding shim (#2925). Implementation moved to the extension.
+            /// </remarks>
+            public static string? SafeTruncate(string? v, int max) => v.SafeTruncate(max);
+            """;
+        const string real = """
+            /// <summary>Truncates.</summary>
+            public static string? SafeTruncate(string? v, int max) { return v?[..max]; }
+            """;
+
+        DeclaresNonShimSafeTruncate(shim).ShouldBeFalse();
+        DeclaresNonShimSafeTruncate(real).ShouldBeTrue();
+        DeclaresNonShimSafeTruncate(shim + "\n" + real).ShouldBeTrue();
     }
 
     /// <summary>
