@@ -101,6 +101,84 @@ public class CompletionsStreamEngineTests
         usage.Input.ShouldBe(70);
         usage.Output.ShouldBe(45);
         usage.TotalTokens.ShouldBe(70 + 45 + 20 + 10);
+
+        // #3297 AC2: reasoning is additionally attributed, while Output keeps its inclusive meaning.
+        usage.Reasoning.ShouldBe(5);
+    }
+
+    /// <summary>
+    /// #3297 AC2/AC4. The distinction is load-bearing: <c>null</c> means the provider never reported
+    /// reasoning tokens, <c>0</c> means it reported zero. Coercing absent to zero would present a
+    /// missing measurement as a measured one and rank a thinking-heavy model as free.
+    /// </summary>
+    [Fact]
+    public void ParseUsage_ReasoningTokens_NullWhenAbsent_ZeroWhenReportedZero()
+    {
+        var absent = CompletionsStreamEngine.ParseUsage(
+            Json("""{ "prompt_tokens": 50, "completion_tokens": 12 }"""),
+            Usage.Empty(),
+            Model());
+
+        absent.Reasoning.ShouldBeNull();
+
+        // completion_tokens_details present but without reasoning_tokens is still "not reported".
+        var detailsWithoutReasoning = CompletionsStreamEngine.ParseUsage(
+            Json("""
+                {
+                  "prompt_tokens": 50,
+                  "completion_tokens": 12,
+                  "completion_tokens_details": { "audio_tokens": 3 }
+                }
+                """),
+            Usage.Empty(),
+            Model());
+
+        detailsWithoutReasoning.Reasoning.ShouldBeNull();
+
+        var reportedZero = CompletionsStreamEngine.ParseUsage(
+            Json("""
+                {
+                  "prompt_tokens": 50,
+                  "completion_tokens": 12,
+                  "completion_tokens_details": { "reasoning_tokens": 0 }
+                }
+                """),
+            Usage.Empty(),
+            Model());
+
+        reportedZero.Reasoning.ShouldBe(0);
+        reportedZero.Reasoning.ShouldNotBeNull();
+    }
+
+    /// <summary>
+    /// #3297 AC5. Reasoning is attribution only: adding the field must not perturb the computed cost
+    /// for any payload, whether reasoning is absent, zero, or non-zero.
+    /// </summary>
+    [Fact]
+    public void ParseUsage_ReasoningAttribution_DoesNotChangeComputedCost()
+    {
+        var withReasoning = CompletionsStreamEngine.ParseUsage(
+            Json("""
+                {
+                  "prompt_tokens": 100,
+                  "completion_tokens": 40,
+                  "completion_tokens_details": { "reasoning_tokens": 5 }
+                }
+                """),
+            Usage.Empty(),
+            Model());
+
+        // The same wire totals expressed without the reasoning breakdown must cost the same,
+        // because Output stays inclusive and CalculateCost is untouched.
+        var equivalent = CompletionsStreamEngine.ParseUsage(
+            Json("""{ "prompt_tokens": 100, "completion_tokens": 45 }"""),
+            Usage.Empty(),
+            Model());
+
+        withReasoning.Output.ShouldBe(equivalent.Output);
+        withReasoning.Cost.ShouldBe(equivalent.Cost);
+        withReasoning.Reasoning.ShouldBe(5);
+        equivalent.Reasoning.ShouldBeNull();
     }
 
     [Fact]

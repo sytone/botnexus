@@ -92,6 +92,75 @@ public class ResponsesStreamPrimitivesTests
         usage.TotalTokens.ShouldBe(140);
         usage.Cost.ShouldNotBeNull();
         usage.Cost.Total.ShouldBeGreaterThan(0m);
+
+        // #3297 AC3: this payload reports no reasoning breakdown, so the field stays "not reported".
+        usage.Reasoning.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// #3297 AC3/AC4. The Responses payload carries the breakdown under
+    /// <c>output_tokens_details.reasoning_tokens</c>. <c>null</c> means the provider did not report
+    /// it; <c>0</c> means it reported zero. The two must stay distinguishable, otherwise an
+    /// unreported measurement masquerades as a measured zero.
+    /// </summary>
+    [Fact]
+    public void ParseUsage_ReasoningTokens_NullWhenAbsent_ZeroWhenReportedZero()
+    {
+        using var absentDoc = JsonDocument.Parse(
+            """{ "input_tokens": 10, "output_tokens": 5 }""");
+        ResponsesStreamHelpers.ParseUsage(absentDoc.RootElement, Model()).Reasoning.ShouldBeNull();
+
+        // Details object present but without the reasoning key is still "not reported".
+        using var noKeyDoc = JsonDocument.Parse(
+            """
+            {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "output_tokens_details": { "audio_tokens": 2 }
+            }
+            """);
+        ResponsesStreamHelpers.ParseUsage(noKeyDoc.RootElement, Model()).Reasoning.ShouldBeNull();
+
+        using var zeroDoc = JsonDocument.Parse(
+            """
+            {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "output_tokens_details": { "reasoning_tokens": 0 }
+            }
+            """);
+        var zero = ResponsesStreamHelpers.ParseUsage(zeroDoc.RootElement, Model());
+        zero.Reasoning.ShouldBe(0);
+        zero.Reasoning.ShouldNotBeNull();
+    }
+
+    /// <summary>
+    /// #3297 AC3/AC5. A reported reasoning count is carried through, and because <c>Output</c> keeps
+    /// its inclusive meaning and <c>CalculateCost</c> is untouched, the computed cost is identical to
+    /// the same payload without the breakdown.
+    /// </summary>
+    [Fact]
+    public void ParseUsage_ReportedReasoning_IsCarried_AndCostIsUnchanged()
+    {
+        using var withDoc = JsonDocument.Parse(
+            """
+            {
+                "input_tokens": 100,
+                "output_tokens": 45,
+                "output_tokens_details": { "reasoning_tokens": 5 }
+            }
+            """);
+        using var withoutDoc = JsonDocument.Parse(
+            """{ "input_tokens": 100, "output_tokens": 45 }""");
+
+        var with = ResponsesStreamHelpers.ParseUsage(withDoc.RootElement, Model());
+        var without = ResponsesStreamHelpers.ParseUsage(withoutDoc.RootElement, Model());
+
+        with.Reasoning.ShouldBe(5);
+        with.Output.ShouldBe(45);
+        with.Output.ShouldBe(without.Output);
+        with.TotalTokens.ShouldBe(without.TotalTokens);
+        with.Cost.ShouldBe(without.Cost);
     }
 
     [Fact]

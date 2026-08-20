@@ -63,6 +63,14 @@ public static class ResponsesStreamHelpers
     /// Projects a Responses-API <c>usage</c> object into the core <see cref="Usage"/> model, folding
     /// cache read/write tokens out of the billed input count and attaching computed cost for the model.
     /// </summary>
+    /// <remarks>
+    /// Reported reasoning tokens (<c>output_tokens_details.reasoning_tokens</c>) are carried on
+    /// <see cref="Usage.Reasoning"/> for attribution only (#3297). <see cref="Usage.Output"/> keeps its
+    /// inclusive meaning — the Responses API already counts reasoning inside <c>output_tokens</c> — so
+    /// the cost arithmetic and every existing consumer are unaffected. The field stays
+    /// <see langword="null"/> when the provider reported no breakdown: absent is never coerced to a
+    /// measured zero, because that would rank a thinking-heavy model as free.
+    /// </remarks>
     public static Usage ParseUsage(JsonElement usageElement, LlmModel model)
     {
         var inputTokens = usageElement.TryGetProperty("input_tokens", out var input) ? input.GetInt32() : 0;
@@ -70,6 +78,13 @@ public static class ResponsesStreamHelpers
         var total = usageElement.TryGetProperty("total_tokens", out var totalEl) ? totalEl.GetInt32() : inputTokens + outputTokens;
         var cacheRead = 0;
         var cacheWrite = 0;
+        int? reasoning = null;
+        if (usageElement.TryGetProperty("output_tokens_details", out var outputDetails) &&
+            outputDetails.TryGetProperty("reasoning_tokens", out var reasoningEl))
+        {
+            reasoning = reasoningEl.GetInt32();
+        }
+
         if (usageElement.TryGetProperty("input_tokens_details", out var details))
         {
             if (details.TryGetProperty("cached_tokens", out var cached))
@@ -83,6 +98,7 @@ public static class ResponsesStreamHelpers
             Output = outputTokens,
             CacheRead = cacheRead,
             CacheWrite = cacheWrite,
+            Reasoning = reasoning,
             TotalTokens = total
         };
         return usage with { Cost = ModelRegistry.CalculateCost(model, usage) };
