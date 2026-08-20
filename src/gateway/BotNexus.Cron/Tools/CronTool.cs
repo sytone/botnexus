@@ -16,9 +16,16 @@ public sealed class CronTool(
     ModelRegistry? modelRegistry = null,
     ICommandCronAuthorizer? commandAuthorizer = null,
     ICronAlertTargetResolver? alertTargetResolver = null,
-    ConversationId? creatingConversationId = null) : IAgentTool
+    ConversationId? creatingConversationId = null,
+    CronOptions? cronOptions = null) : IAgentTool
 {
     private readonly AgentId _agentId = agentId;
+
+    /// <summary>
+    /// #3338 clause 6: the configured self-pacing bound. Null means "take the defaults", so a caller
+    /// that never configured cron still gets a bounded <c>next_check</c> rather than an unbounded one.
+    /// </summary>
+    private readonly CronOptions? _cronOptions = cronOptions;
 
     /// <summary>
     /// #2412: the DURABLE conversation the creating agent is speaking in, threaded in by the tool
@@ -67,7 +74,7 @@ public sealed class CronTool(
               "properties": {
                 "action": {
                   "type": "string",
-                  "enum": ["list", "create", "update", "delete", "run", "history", "costs"]
+                  "enum": ["list", "create", "update", "delete", "run", "history", "costs", "next_check"]
                 },
                 "jobId": { "type": "string", "description": "Optional - for update/delete/run. Also optional on 'history': omit it to get recent runs across every job you may manage instead of one job's history." },
                 "includeSystem": { "type": "boolean", "description": "When true, include system-provisioned jobs (e.g., heartbeat) in list output. Default: false." },
@@ -98,6 +105,7 @@ public sealed class CronTool(
                 "deleteAfterRun": { "type": "boolean", "description": "Ephemeral run-SESSION cleanup. When true, the run's cron-scoped session and transcript are deleted after each run. This does NOT delete the job - for that use 'deleteJobAfterRun', and see 'expiresAt' to stop a job from firing after a given instant. Default: false." },
                 "limit": { "type": "integer", "description": "Maximum number of history entries to return (for history action). Default: 20, max: 100." },
                 "failedOnly": { "type": "boolean", "description": "For the history action: return only runs that did not succeed (errors, timeouts, zero-tool execution-class runs, and missed occurrences). Default: false." },
+                "nextCheckSeconds": { "type": "integer", "description": "For the 'next_check' action: how many seconds from now this job proposes to be woken. The value is CLAMPED to the configured self-pacing floor and ceiling (default 60s to 3600s), and the response always reports both the requested and the effective delay - so a loop pinned at the floor is visible as such rather than looking like one pacing itself. Requires 'jobId', which must be a job you may manage." },
                 "windowDays": { "type": "integer", "description": "For the 'costs' action: how many days of run history to roll up. Default: 7. Clamped to the configured run retention; when clamped, each entry reports windowTruncatedByRetention: true so a bounded total is never mistaken for a complete one." }
               },
               "required": ["action"]
@@ -174,6 +182,12 @@ public sealed class CronTool(
         if (arguments.TryGetValue("windowDays", out var windowDaysVal) && windowDaysVal is not null)
             prepared["windowDays"] = windowDaysVal;
 
+        // #3338: same #2641 allow-list trap. If nextCheckSeconds is not copied through here the
+        // handler reads its default and every self-pacing proposal silently collapses to one value -
+        // a loop that looks like it is pacing itself while ignoring everything the agent asked for.
+        if (arguments.TryGetValue("nextCheckSeconds", out var nextCheckVal) && nextCheckVal is not null)
+            prepared["nextCheckSeconds"] = nextCheckVal;
+
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
@@ -193,6 +207,7 @@ public sealed class CronTool(
             "run" => await RunAsync(arguments, cancellationToken).ConfigureAwait(false),
             "history" => await HistoryAsync(arguments, cancellationToken).ConfigureAwait(false),
             "costs" => await CostsAsync(arguments, cancellationToken).ConfigureAwait(false),
+            "next_check" => await NextCheckAsync(arguments, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unsupported cron action '{action}'.")
         };
     }
@@ -531,6 +546,71 @@ public sealed class CronTool(
     }
 
     /// <summary>
+    /// #3338 clauses 6-8: a self-pacing loop proposes its own next wake, clamped to a configured
+    /// <c>[floor, ceiling]</c> and written through the job-authored backoff column.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The write goes to <see cref="ICronStore.SetBackoffUntilAsync"/>, NOT to <c>SetNextRunAtAsync</c>.
+    /// Per #3350 those are two different facts: <c>NextRunAt</c> is the scheduler's expression cache and
+    /// is corrected freely, whereas the job-authored floor is exactly "the time this job asked to be
+    /// woken". Writing a deliberate deferral into the cache is indistinguishable from a stale cache and
+    /// would be silently corrected away on the next tick.
+    /// </para>
+    /// <para>
+    /// The response reports the requested delay beside the effective one and the bounds in force
+    /// (clause 7). Reporting only the effective value would let a loop pinned at the floor look exactly
+    /// like one pacing itself - #3244's finding that an invisible bound cannot be reasoned about.
+    /// </para>
+    /// <para>
+    /// Scope is the SAME <c>CanManage</c> rule <c>history</c> and <c>costs</c> derive theirs from
+    /// (clause 8), so a job that is not the caller's own is refused rather than re-paced.
+    /// </para>
+    /// </remarks>
+    private async Task<AgentToolResult> NextCheckAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
+    {
+        var jobId = JobId.From(ReadRequired(arguments, "jobId"));
+        var existing = await cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
+
+        EnsureCanManage(existing);
+
+        // Absent rather than zero-defaulted: "the agent proposed 0 seconds" and "the agent proposed
+        // nothing" are different requests, and only the former should be reported as clamped.
+        if (!arguments.TryGetValue("nextCheckSeconds", out var raw) || raw is null)
+            throw new ArgumentException("Argument 'nextCheckSeconds' is required for the 'next_check' action.");
+
+        var requestedSeconds = ReadInt(arguments, "nextCheckSeconds", defaultValue: int.MinValue);
+        if (requestedSeconds == int.MinValue)
+            throw new ArgumentException("Argument 'nextCheckSeconds' must be an integer number of seconds.");
+
+        var decision = CronSelfPacingBound.Clamp(
+            TimeSpan.FromSeconds(requestedSeconds),
+            floor: SecondsOrNull(_cronOptions?.SelfPacingFloorSeconds),
+            ceiling: SecondsOrNull(_cronOptions?.SelfPacingCeilingSeconds));
+
+        var wakeAt = DateTimeOffset.UtcNow + decision.Effective;
+        await cronStore.SetBackoffUntilAsync(jobId, wakeAt, cancellationToken).ConfigureAwait(false);
+
+        return TextResult(JsonSerializer.Serialize(new
+        {
+            jobId = jobId.Value,
+            requestedSeconds,
+            effectiveSeconds = (int)decision.Effective.TotalSeconds,
+            floorSeconds = (int)decision.Floor.TotalSeconds,
+            ceilingSeconds = (int)decision.Ceiling.TotalSeconds,
+            wasClamped = decision.WasClamped,
+            clampReason = decision.Reason.ToString(),
+            nextCheckAt = wakeAt
+        }, JsonOptions));
+    }
+
+    // A non-positive configured bound is passed through as null so CronSelfPacingBound applies its
+    // own default. Misconfiguration must degrade to the default bound, never to no bound.
+    private static TimeSpan? SecondsOrNull(int? seconds)
+        => seconds is { } value && value > 0 ? TimeSpan.FromSeconds(value) : null;
+
+    /// <summary>
     /// The run statuses that mean 'this did not succeed' for the failed-only history view (#2838).
     /// Bound from the CronRunStatus constants so the filter cannot drift from the producers, and
     /// deliberately broader than Error alone: a timeout, an execution-class run that did nothing
@@ -647,7 +727,8 @@ public sealed class CronTool(
            || action.Equals("delete", StringComparison.OrdinalIgnoreCase)
            || action.Equals("run", StringComparison.OrdinalIgnoreCase)
            || action.Equals("history", StringComparison.OrdinalIgnoreCase)
-           || action.Equals("costs", StringComparison.OrdinalIgnoreCase);
+           || action.Equals("costs", StringComparison.OrdinalIgnoreCase)
+           || action.Equals("next_check", StringComparison.OrdinalIgnoreCase);
 
     private static void CopyString(IReadOnlyDictionary<string, object?> source, Dictionary<string, object?> destination, string key)
     {

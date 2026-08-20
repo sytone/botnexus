@@ -101,7 +101,8 @@ internal sealed class CronToolProvider(
     BotNexus.Agent.Providers.Core.Registry.ModelRegistry? modelRegistry = null,
     BotNexus.Cron.Actions.ICommandCronAuthorizer? commandAuthorizer = null,
     BotNexus.Cron.ICronAlertTargetResolver? alertTargetResolver = null,
-    IConversationStore? conversationStore = null) : IToolProvider
+    IConversationStore? conversationStore = null,
+    BotNexus.Cron.CronOptions? cronOptions = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context)
@@ -135,7 +136,10 @@ internal sealed class CronToolProvider(
             // #2838: the alert-target resolver is threaded in so the tool can validate a
             // failureAlertConversationId through the SAME CronAlertTarget seam the REST API uses.
             // A null resolver fails closed inside CronTool for any supplied target.
-            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer, alertTargetResolver, creatingConversationId)];
+            // #3338: the configured self-pacing bound is threaded in so the `next_check` clamp uses
+            // the operator's floor/ceiling. A null options object falls back to the built-in default
+            // bound inside CronSelfPacingBound - never to an unbounded self-pacing surface.
+            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer, alertTargetResolver, creatingConversationId, cronOptions)];
         return tools;
     }
 

@@ -81,8 +81,49 @@ The default is deliberately narrow. It applies **only** when all of the followin
 
 Any of those failing yields `null`, which is byte-identical to the pre-#2412 behaviour.
 
+## Self-pacing: the `next_check` bound
+
+A conversation-bound `agent-prompt` job may pace itself. Rather than carrying a hand-tuned cron
+expression, it calls the cron tool's `next_check` action with a proposed delay:
+
+```
+cron action=next_check jobId=<my job> nextCheckSeconds=900
+```
+
+The proposal is **clamped** to a configured `[floor, ceiling]` - by default 60s to 3600s, set via
+`cron:selfPacingFloorSeconds` and `cron:selfPacingCeilingSeconds`. Unbounded self-pacing is a
+runaway-cost surface in both directions: no floor lets a job re-fire continuously, and no ceiling
+lets a job park itself a month out and look scheduled while doing nothing. Misconfiguring either
+bound degrades to the built-in default, never to *no* bound.
+
+The clamp is **observable**. The response always reports the requested value beside the effective
+one, plus the bounds in force and which one was applied:
+
+```json
+{ "requestedSeconds": 1, "effectiveSeconds": 60, "floorSeconds": 60, "ceilingSeconds": 3600,
+  "wasClamped": true, "clampReason": "Floor" }
+```
+
+Reporting only the effective value would make a loop pinned at the floor indistinguishable from one
+genuinely pacing itself - the #3244 finding that a bound whose application is invisible cannot be
+reasoned about, and therefore cannot be fixed.
+
+Two further properties are load-bearing:
+
+- **The write targets `BackoffUntil`, not `NextRunAt`.** Per #3350 those are different facts:
+  `NextRunAt` is the scheduler's expression cache and is corrected freely, so a deliberate deferral
+  written there would be indistinguishable from a stale cache and silently corrected away.
+- **Scope follows the same `CanManage` rule as `history` and `costs`.** A `next_check` against
+  another agent's job is refused, not applied - otherwise any agent could stall every other agent's
+  loops.
+
+Self-paced jobs change nothing about session targeting: they remain agent-created `agent-prompt`
+jobs and follow row 1 of the table above.
+
+
 ## Related
 
+- [`CronSelfPacingBound`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Cron/CronSelfPacingBound.cs) — the clamp decision and its observability contract.
 - [`CronConversationDefault`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Cron/CronConversationDefault.cs) — the single decision.
 - `CronScheduler.TryPinConversationAsync` — the first-run CAS pin and its loser-reconciliation path.
 - `CronTrigger` — reuses a pinned conversation verbatim, or mints one when the job is unbound.

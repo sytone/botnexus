@@ -41,6 +41,22 @@ public sealed class CronOptions
     /// fails open and the delete proceeds when the grace elapses. Default: 30s.
     /// </remarks>
     public int ActiveRunCancellationGraceSeconds { get; set; } = 30;
+    /// <summary>
+    /// #3338 clause 6: floor for the self-pacing <c>next_check</c> action, in seconds. A job may never
+    /// ask to be woken sooner than this. A non-positive value degrades to
+    /// <see cref="CronSelfPacingBound.DefaultFloor"/> (1 minute) rather than to "no floor" - a bad
+    /// config value must not be able to disable the bound the clamp exists to enforce.
+    /// </summary>
+    public int SelfPacingFloorSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// #3338 clause 6: ceiling for the self-pacing <c>next_check</c> action, in seconds. A job asking
+    /// to sleep longer than this is pinned here and told so, because a loop parked far out looks
+    /// scheduled while doing nothing. A value at or below the floor degrades to the default ceiling
+    /// (1 hour).
+    /// </summary>
+    public int SelfPacingCeilingSeconds { get; set; } = 3600;
+
     public Dictionary<string, ConfiguredCronJob>? Jobs { get; set; }
     public Dictionary<string, ConfiguredPromptTemplate>? PromptTemplates { get; set; }
 }
