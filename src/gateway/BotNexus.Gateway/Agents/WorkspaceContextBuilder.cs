@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Gateway.Prompts;
 using System.IO.Abstractions;
@@ -39,6 +40,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     private readonly IConversationStore? _conversationStore;
     private readonly ISessionStore? _sessionStore;
     private readonly IAgentMemoryFactory? _agentMemoryFactory;
+    private readonly IToolPolicyProvider? _toolPolicyProvider;
     private readonly string? _homePath;
 
     public WorkspaceContextBuilder(IAgentWorkspaceManager workspaceManager, IFileSystem fileSystem)
@@ -112,6 +114,39 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         _conversationStore = conversationStore;
         _sessionStore = sessionStore;
         _agentMemoryFactory = agentMemoryFactory;
+        _hookDispatcher = hookDispatcher;
+    }
+
+    /// <summary>
+    /// Full composition, including the tool policy provider used to resolve the turn's memory
+    /// capability before always-on memory injection (#3468).
+    /// </summary>
+    /// <remarks>
+    /// The provider is optional and this is an additional constructor rather than a change to the
+    /// existing one, so every current caller - including the several tests that construct this
+    /// type directly - keeps compiling and keeps its present behaviour. A null provider means the
+    /// capability signal cannot be resolved, and the builder then falls back to "available",
+    /// which is exactly the pre-#3468 behaviour. Fail-open is deliberate here: this seam is a
+    /// scoping control, not the trust boundary, and a missing DI registration must not silently
+    /// blind every agent's memory.
+    /// </remarks>
+    public WorkspaceContextBuilder(
+        IAgentWorkspaceManager workspaceManager,
+        IFileSystem fileSystem,
+        BotNexusHome botNexusHome,
+        IConversationStore conversationStore,
+        ISessionStore sessionStore,
+        IAgentMemoryFactory agentMemoryFactory,
+        IToolPolicyProvider toolPolicyProvider,
+        IHookDispatcher? hookDispatcher = null)
+    {
+        _workspaceManager = workspaceManager;
+        _fileSystem = fileSystem;
+        _homePath = botNexusHome.RootPath;
+        _conversationStore = conversationStore;
+        _sessionStore = sessionStore;
+        _agentMemoryFactory = agentMemoryFactory;
+        _toolPolicyProvider = toolPolicyProvider;
         _hookDispatcher = hookDispatcher;
     }
 
@@ -664,12 +699,21 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             {
                 var agentMemory = _agentMemoryFactory.Create(descriptor.AgentId.Value);
 
+                // #3468: resolve the turn's memory capability HERE, in the gateway layer that is
+                // entitled to know about tool policy, and hand the memory provider a resolved
+                // answer. Passing the provider itself would invert the dependency and couple the
+                // memory assembly to gateway security.
+                var memoryToolsAvailable = IsAnyMemoryToolAvailable(descriptor);
+                var memorySearchAvailable = IsToolAvailable(descriptor, MemorySearchToolName);
+
                 // Pass the budget explicitly rather than leaning on the record default, so the
                 // cap that reaches the provider is visible at the call site and a change to the
                 // default cannot silently move it (#2871).
                 var request = new AgentMemoryPromptRequest(
                     descriptor.AgentId.Value,
-                    MaxTokenBudget: DailyMemoryTokenBudget);
+                    MaxTokenBudget: DailyMemoryTokenBudget,
+                    MemoryToolsAvailable: memoryToolsAvailable,
+                    MemorySearchAvailable: memorySearchAvailable);
                 var context = await agentMemory.GetPromptContextAsync(request, cancellationToken).ConfigureAwait(false);
                 return MapMemoryContextToFiles(context, descriptor.Memory?.Path);
             }
@@ -681,6 +725,34 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         return await LoadRecentDailyMemoryFilesAsync(_fileSystem, workspacePath, descriptor.Memory?.Path, cancellationToken);
     }
+
+    /// <summary>The retrieval tool the exclusion disclosure names (#3468 clause 3).</summary>
+    private const string MemorySearchToolName = "memory_search";
+
+    /// <summary>
+    /// The memory tools whose collective absence means the agent has no memory capability at all.
+    /// </summary>
+    /// <remarks>
+    /// <c>memory_save</c> is deliberately excluded: an agent that can write but not read still has
+    /// no way to act on injected content, and the clause-2 question is whether recall is available,
+    /// not whether capture is.
+    /// </remarks>
+    private static readonly string[] MemoryRecallTools = [MemorySearchToolName, "memory_get"];
+
+    /// <summary>
+    /// Resolves whether any memory recall tool survives the descriptor's effective policy.
+    /// </summary>
+    /// <remarks>
+    /// Falls back to <see langword="true"/> when no policy provider was composed, preserving the
+    /// pre-#3468 behaviour for the constructors that do not take one.
+    /// </remarks>
+    private bool IsAnyMemoryToolAvailable(AgentDescriptor descriptor)
+        => _toolPolicyProvider is null
+           || MemoryRecallTools.Any(tool => IsToolAvailable(descriptor, tool));
+
+    private bool IsToolAvailable(AgentDescriptor descriptor, string toolName)
+        => _toolPolicyProvider is null
+           || _toolPolicyProvider.IsToolAvailable(toolName, descriptor.AgentId, descriptor.ToolIds);
 
     /// <summary>
     /// Maps an <see cref="AgentMemoryContext"/> to context files compatible with the prompt pipeline.

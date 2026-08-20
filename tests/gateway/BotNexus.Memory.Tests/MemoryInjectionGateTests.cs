@@ -117,4 +117,87 @@ public sealed class MemoryInjectionGateTests
         Assert.Empty(kept);
         Assert.Equal(0, excluded);
     }
+
+    [Fact]
+    public void Apply_InjectsNothing_WhenTheTurnGrantsNoMemoryTools()
+    {
+        // #3468 clause 2 at the gate. An agent spawned without memory tools was scoped that way
+        // deliberately; pushing its notes into the prompt anyway is a scoping leak across the
+        // agent boundary, not a mere inefficiency. Note the content here is impeccably
+        // first-party, so provenance alone would admit all of it -- which is exactly the point:
+        // capability is a second, orthogonal axis.
+        var notes = new[]
+        {
+            Note("today I fixed the ranker", MemoryProvenance.Agent),
+            Note("jon asked for smaller PRs", MemoryProvenance.User)
+        };
+
+        var (kept, excluded) = MemoryInjectionGate.Apply(notes, memoryToolsAvailable: false);
+
+        Assert.Empty(kept);
+        Assert.Equal(0, excluded);
+    }
+
+    [Fact]
+    public void Apply_DisclosureDoesNotNameMemorySearch_WhenThatToolIsUnavailable()
+    {
+        // #3468 clause 3. Naming an unregistered tool induces a guaranteed-failing call and a
+        // `Tool 'memory_search' is not registered` error that misdirects diagnosis. The
+        // disclosure must still be emitted -- the omission stays visible, only the (false)
+        // recovery instruction is dropped.
+        var (kept, excluded) = MemoryInjectionGate.Apply(
+            [
+                Note("kept", MemoryProvenance.Agent),
+                Note("dropped", MemoryProvenance.ExternalUntrusted)
+            ],
+            memoryToolsAvailable: true,
+            memorySearchAvailable: false);
+
+        var rendered = string.Join("\n", kept.Select(note => note.Content));
+
+        Assert.Equal(1, excluded);
+        Assert.Contains(MemoryInjectionGate.DisclosureMarker, rendered, StringComparison.Ordinal);
+        Assert.Contains("1 note(s) withheld", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("memory_search", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Apply_StillNamesMemorySearch_WhenTheToolIsAvailable()
+    {
+        // The negative above could be satisfied by a gate that never names the tool at all,
+        // which would silently remove the recovery affordance for every agent that DOES have it.
+        // This pins that the wording is genuinely conditional rather than simply deleted.
+        var (kept, _) = MemoryInjectionGate.Apply(
+            [
+                Note("kept", MemoryProvenance.Agent),
+                Note("dropped", MemoryProvenance.ExternalUntrusted)
+            ],
+            memoryToolsAvailable: true,
+            memorySearchAvailable: true);
+
+        Assert.Contains(
+            "memory_search",
+            string.Join("\n", kept.Select(note => note.Content)),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Apply_WithoutTheCapabilityArguments_BehavesExactlyAsBefore()
+    {
+        // AC1: the provenance filter is unchanged when memory tools are available, and the
+        // pre-#3468 single-argument call site keeps its exact meaning.
+        var notes = new[]
+        {
+            Note("first-party", MemoryProvenance.Agent),
+            Note("quarantined", MemoryProvenance.ExternalUntrusted)
+        };
+
+        var (defaulted, defaultedExcluded) = MemoryInjectionGate.Apply(notes);
+        var (explicitCall, explicitExcluded) = MemoryInjectionGate.Apply(notes, true, true);
+
+        Assert.Equal(explicitExcluded, defaultedExcluded);
+        Assert.Equal(
+            explicitCall.Select(note => note.Content),
+            defaulted.Select(note => note.Content));
+    }
 }
