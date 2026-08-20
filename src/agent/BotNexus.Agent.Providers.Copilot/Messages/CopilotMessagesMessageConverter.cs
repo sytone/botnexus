@@ -105,7 +105,7 @@ internal static class CopilotMessagesMessageConverter
             if (string.IsNullOrWhiteSpace(msg.Content.Text))
                 return null;
 
-            content = UnicodeSanitizer.SanitizeSurrogates(msg.Content.Text);
+            content = msg.Content.Text.SanitizeSurrogates();
         }
         else
         {
@@ -126,7 +126,7 @@ internal static class CopilotMessagesMessageConverter
                         blocks.Add(new Dictionary<string, object?>
                         {
                             ["type"] = "text",
-                            ["text"] = UnicodeSanitizer.SanitizeSurrogates(text.Text)
+                            ["text"] = text.Text.SanitizeSurrogates()
                         });
                         break;
                     case ImageContent image:
@@ -183,7 +183,7 @@ internal static class CopilotMessagesMessageConverter
                     var textBlock = new Dictionary<string, object?>
                     {
                         ["type"] = "text",
-                        ["text"] = UnicodeSanitizer.SanitizeSurrogates(text.Text)
+                        ["text"] = text.Text.SanitizeSurrogates()
                     };
                     if (text.TextSignature is not null)
                         textBlock["signature"] = text.TextSignature;
@@ -212,7 +212,7 @@ internal static class CopilotMessagesMessageConverter
                             blocks.Add(new Dictionary<string, object?>
                             {
                                 ["type"] = "text",
-                                ["text"] = UnicodeSanitizer.SanitizeSurrogates(thinking.Thinking)
+                                ["text"] = thinking.Thinking.SanitizeSurrogates()
                             });
                             break;
                         }
@@ -220,7 +220,7 @@ internal static class CopilotMessagesMessageConverter
                         blocks.Add(new Dictionary<string, object?>
                         {
                             ["type"] = "thinking",
-                            ["thinking"] = UnicodeSanitizer.SanitizeSurrogates(thinking.Thinking),
+                            ["thinking"] = thinking.Thinking.SanitizeSurrogates(),
                             ["signature"] = thinking.ThinkingSignature
                         });
                     }
@@ -255,7 +255,7 @@ internal static class CopilotMessagesMessageConverter
     {
         object content;
         var textBlocks = toolResult.Content.OfType<TextContent>()
-            .Select(t => UnicodeSanitizer.SanitizeSurrogates(t.Text))
+            .Select(t => t.Text.SanitizeSurrogates())
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .ToList();
         var hasImages = toolResult.Content.Any(c => c is ImageContent);

@@ -495,7 +495,7 @@ public sealed class OpenAIStreamProcessor
                 var text = contentProp.GetString() ?? "";
                 if (text.Length > 0)
                 {
-                    var sanitized = UnicodeSanitizer.SanitizeSurrogates(text);
+                    var sanitized = text.SanitizeSurrogates();
 
                     if (contentBuilder.Length == 0)
                         stream.Push(new TextStartEvent(contentIndex, output));

@@ -84,7 +84,7 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     /// </summary>
     private static readonly Dictionary<string, string> s_allowedSurrogateInspection = new(StringComparer.OrdinalIgnoreCase)
     {
-        [Path.Combine("agent", "BotNexus.Agent.Providers.Core", "Utilities", "UnicodeSanitizer.cs")] =
+        [Path.Combine("agent", "BotNexus.Agent.Providers.Core", "Utilities", "UnicodeStringExtensions.cs")] =
             "Sanitisation, not truncation: walks pairs to copy or replace them, never picks a length.",
         [Path.Combine("gateway", "BotNexus.Tools", "EditTool.cs")] =
             "Normalisation index map: emits both halves of a pair together; no length limit involved.",

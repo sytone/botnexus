@@ -38,7 +38,7 @@ public static class CompletionsMessageConverter
         if (systemPrompt is not null)
         {
             var role = model.Reasoning && compat.SupportsDeveloperRole != false ? "developer" : "system";
-            result.Add(new JsonObject { ["role"] = role, ["content"] = UnicodeSanitizer.SanitizeSurrogates(systemPrompt) });
+            result.Add(new JsonObject { ["role"] = role, ["content"] = systemPrompt.SanitizeSurrogates() });
         }
 
         for (var i = 0; i < transformedMessages.Count; i++)
@@ -168,7 +168,7 @@ public static class CompletionsMessageConverter
             return new JsonObject
             {
                 ["role"] = "user",
-                ["content"] = UnicodeSanitizer.SanitizeSurrogates(user.Content.Text ?? string.Empty)
+                ["content"] = (user.Content.Text ?? string.Empty).SanitizeSurrogates()
             };
 
         var contentArray = new JsonArray();
@@ -180,7 +180,7 @@ public static class CompletionsMessageConverter
                     contentArray.Add(new JsonObject
                     {
                         ["type"] = "text",
-                        ["text"] = UnicodeSanitizer.SanitizeSurrogates(text.Text)
+                        ["text"] = text.Text.SanitizeSurrogates()
                     });
                     break;
 
@@ -227,7 +227,7 @@ public static class CompletionsMessageConverter
             {
                 case TextContent text:
                     if (!string.IsNullOrWhiteSpace(text.Text))
-                        textParts.Add(UnicodeSanitizer.SanitizeSurrogates(text.Text));
+                        textParts.Add(text.Text.SanitizeSurrogates());
                     break;
 
                 case ThinkingContent thinking:
@@ -236,14 +236,14 @@ public static class CompletionsMessageConverter
 
                     if (compat.RequiresThinkingAsText == true)
                     {
-                        thinkingParts.Add(UnicodeSanitizer.SanitizeSurrogates(thinking.Thinking));
+                        thinkingParts.Add(thinking.Thinking.SanitizeSurrogates());
                     }
                     else if (!string.IsNullOrWhiteSpace(thinking.ThinkingSignature))
                     {
                         var signature = thinking.ThinkingSignature;
                         msg[signature] = string.Join("\n", assistant.Content.OfType<ThinkingContent>()
                             .Where(t => !string.IsNullOrWhiteSpace(t.Thinking))
-                            .Select(t => UnicodeSanitizer.SanitizeSurrogates(t.Thinking)));
+                            .Select(t => t.Thinking.SanitizeSurrogates()));
                     }
                     break;
 
@@ -296,7 +296,7 @@ public static class CompletionsMessageConverter
     {
         var content = string.Join("\n", toolResult.Content
             .OfType<TextContent>()
-            .Select(t => UnicodeSanitizer.SanitizeSurrogates(t.Text)));
+            .Select(t => t.Text.SanitizeSurrogates()));
 
         var msg = new JsonObject
         {

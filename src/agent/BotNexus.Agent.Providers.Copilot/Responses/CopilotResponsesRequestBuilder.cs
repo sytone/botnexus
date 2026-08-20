@@ -29,7 +29,7 @@ internal static class CopilotResponsesRequestBuilder
             input.Insert(0, new JsonObject
             {
                 ["role"] = model.Reasoning ? "developer" : "system",
-                ["content"] = UnicodeSanitizer.SanitizeSurrogates(systemPrompt)
+                ["content"] = systemPrompt.SanitizeSurrogates()
             });
         }
         var payload = new JsonObject

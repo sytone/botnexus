@@ -105,7 +105,7 @@ public static class ResponsesMessageConverter
                     new JsonObject
                     {
                         ["type"] = "input_text",
-                        ["text"] = UnicodeSanitizer.SanitizeSurrogates(user.Content.Text ?? "")
+                        ["text"] = (user.Content.Text ?? "").SanitizeSurrogates()
                     }
                 }
             };
@@ -125,7 +125,7 @@ public static class ResponsesMessageConverter
                     contentArray.Add(new JsonObject
                     {
                         ["type"] = "input_text",
-                        ["text"] = UnicodeSanitizer.SanitizeSurrogates(text.Text)
+                        ["text"] = text.Text.SanitizeSurrogates()
                     });
                     break;
 
@@ -191,7 +191,7 @@ public static class ResponsesMessageConverter
                             new JsonObject
                             {
                                 ["type"] = "output_text",
-                                ["text"] = UnicodeSanitizer.SanitizeSurrogates(textBlock.Text),
+                                ["text"] = textBlock.Text.SanitizeSurrogates(),
                                 ["annotations"] = new JsonArray()
                             }
                         },
@@ -259,7 +259,7 @@ public static class ResponsesMessageConverter
                 outputParts.Add(new JsonObject
                 {
                     ["type"] = "input_text",
-                    ["text"] = UnicodeSanitizer.SanitizeSurrogates(textResult)
+                    ["text"] = textResult.SanitizeSurrogates()
                 });
             }
 
@@ -277,8 +277,7 @@ public static class ResponsesMessageConverter
         }
         else
         {
-            output = JsonValue.Create(UnicodeSanitizer.SanitizeSurrogates(
-                string.IsNullOrWhiteSpace(textResult) ? "(see attached image)" : textResult))!;
+            output = JsonValue.Create((string.IsNullOrWhiteSpace(textResult) ? "(see attached image)" : textResult).SanitizeSurrogates())!;
         }
 
         return new JsonObject
