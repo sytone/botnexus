@@ -13,6 +13,34 @@ namespace BotNexus.Gateway.Tests.Sessions;
 /// </summary>
 public sealed class SessionWriteLockTests
 {
+    /// <summary>
+    /// Deadlock backstop for the concurrency tests. This is deliberately generous: it is
+    /// NOT a performance assertion and must never be tight enough to double as one. A
+    /// saturated CI container can take seconds to schedule a continuation, which is what
+    /// made the previous 2 s deadlines flake (issue #3447). Any test that trips this
+    /// budget is genuinely deadlocked, not merely slow.
+    /// </summary>
+    private static readonly TimeSpan DeadlockBackstop = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Spins until <paramref name="sut"/> reports at least <paramref name="expected"/>
+    /// refcounts for <paramref name="sessionId"/>, proving a caller has entered the
+    /// dictionary gate and is parked in <c>WaitAsync</c>. This observes the primitive's
+    /// own state rather than guessing at the scheduler with a <c>Task.Delay</c>, which
+    /// can fire before the waiter has parked and silently make the test vacuous.
+    /// </summary>
+    private static async Task WaitForRefCountAsync(SessionWriteLock sut, SessionId sessionId, int expected)
+    {
+        var deadline = DateTime.UtcNow + DeadlockBackstop;
+        while (sut.RefCountFor(sessionId) < expected && DateTime.UtcNow < deadline)
+            await Task.Yield();
+
+        sut.RefCountFor(sessionId).ShouldBe(expected,
+            $"Expected {expected} callers to be holding or waiting on the lock for this session id, " +
+            "but the refcount never reached that value. The second caller never entered " +
+            "SessionWriteLock's gate, so the serialization property was never actually exercised.");
+    }
+
     [Fact]
     public async Task AcquireAsync_SameSessionId_SerializesConcurrentCallers()
     {
@@ -40,14 +68,19 @@ public sealed class SessionWriteLockTests
                 "SessionWriteLock did not serialize concurrent acquires on the same SessionId.");
         });
 
-        // Give B time to attempt and block in WaitAsync.
-        await Task.Delay(75);
+        // Deterministically establish that B has entered the gate and is parked in
+        // WaitAsync by observing the slot refcount reach 2 (A holds, B waits). The
+        // previous Task.Delay(75) was a scheduling guess: on a contended runner B may
+        // not be scheduled within 75 ms, and the subsequent 2 s handoff budget could
+        // be exceeded even though the lock behaved correctly (#3447).
+        await WaitForRefCountAsync(sut, sessionId, 2);
+
         b.IsCompleted.ShouldBeFalse(
             "Caller B completed before A released its lease — SessionWriteLock did not block B.");
 
         releaseA.SetResult();
         await leaseA.DisposeAsync();
-        await b.WaitAsync(TimeSpan.FromSeconds(2));
+        await b.WaitAsync(DeadlockBackstop);
 
         enteredOrder.ShouldBe(new[] { 1, 2 });
     }
@@ -69,14 +102,17 @@ public sealed class SessionWriteLockTests
             await using var lease = await sut.AcquireAsync(id);
             if (Interlocked.Increment(ref entries) == 2)
                 bothEntered.SetResult();
-            // Park until both callers are inside their critical sections.
-            await bothEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            // Park until both callers are inside their critical sections. No inner
+            // deadline: the rendezvous either completes because both locks were held
+            // simultaneously, or the outer backstop below reports the deadlock. An
+            // inner 2 s budget turned slow scheduling into a false failure (#3447).
+            await bothEntered.Task;
         }
 
         var taskA = AcquireAndWait(sessionA);
         var taskB = AcquireAndWait(sessionB);
 
-        await Task.WhenAll(taskA, taskB).WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.WhenAll(taskA, taskB).WaitAsync(DeadlockBackstop);
         // Reaching here without a TimeoutException is the proof; both callers
         // necessarily held their locks simultaneously.
         entries.ShouldBe(2);
@@ -102,11 +138,7 @@ public sealed class SessionWriteLockTests
         // a Task.Delay(50) heuristic could fire BEFORE the waiter parked, in which case
         // cancelling would short-circuit before the catch/decrement path runs — and the
         // refcount-leak regression we're trying to catch would survive.
-        var spinDeadline = DateTime.UtcNow.AddSeconds(5);
-        while (sut.RefCountFor(sessionId) < 2 && DateTime.UtcNow < spinDeadline)
-            await Task.Yield();
-        sut.RefCountFor(sessionId).ShouldBe(2,
-            "Waiter never entered WaitAsync — cancellation would not exercise the catch path.");
+        await WaitForRefCountAsync(sut, sessionId, 2);
 
         cts.Cancel();
 
