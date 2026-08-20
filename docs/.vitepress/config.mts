@@ -193,6 +193,7 @@ export default defineConfig({
           { text: 'PR and Commit Conventions', link: '/development/pr-and-commit-conventions' },
           { text: 'Source Generator Survey', link: '/development/source-generator-survey' },
           { text: 'Tool Schema Generator Spike', link: '/development/tool-schema-generator-spike' },
+          { text: 'Portal Surface Parity', link: '/development/portal-surface-parity' },
           { text: 'Seam-Test Reviewer Checklist', link: '/seam-test-reviewer-checklist' },
         ],
       },
