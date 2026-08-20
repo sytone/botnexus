@@ -82,4 +82,29 @@ public sealed class FixtureHealthTests
         File.Exists(Path.Combine(_fx.Home, "config.json"))
             .ShouldBeTrue($"provisioned config.json missing under '{_fx.Home}'");
     }
+
+    /// <summary>
+    /// The packed CLI must be internally consistent (issue #3388). The original failure was a
+    /// package whose CLI bound against the synthetic <c>99.99.99.0</c> pack stamp while its
+    /// dependencies carried the repo version, so <c>init</c> died with
+    /// <c>Could not load file or assembly 'BotNexus.Agent.Providers.Core, Version=99.99.99.0'</c>.
+    /// Name that cause explicitly rather than letting it present as a generic fixture failure.
+    /// </summary>
+    [Fact]
+    public void FixtureInstalledACliWhoseAssembliesBind()
+    {
+        FixtureInitializationSucceeded();
+
+        _fx.LayoutFaults.ShouldBeEmpty(
+            "the installed CLI layout has missing or version-skewed startup assemblies, so the " +
+            "binary would fail at assembly-load time during `init` (issue #3388)");
+
+        // The synthetic pack stamp must identify the PACKAGE only; passing it as MSBuild Version
+        // rebuilds the dependency closure at 99.99.99.0 and reintroduces the bind failure this
+        // issue fixed. Asserted via Assert because this project carries a local ShouldlyShim that
+        // shadows Shouldly's string extensions.
+        Assert.DoesNotContain("/p:Version=99.99.99", _fx.PackArguments);
+
+        _fx.AssemblyVersion.Major.ShouldNotBe(99, "the pack must use the repo's real version");
+    }
 }
