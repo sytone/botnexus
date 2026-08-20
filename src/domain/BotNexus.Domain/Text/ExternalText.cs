@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Text;
-
 namespace BotNexus.Domain.Text;
 
 /// <summary>
@@ -44,79 +41,12 @@ public static class ExternalText
     /// <paramref name="maxLength"/> is zero or negative.
     /// </exception>
     /// <remarks>
-    /// Enumeration is per Unicode scalar value, not per UTF-16 code unit (#2923). A per-<c>char</c>
-    /// loop cannot tell a well-formed surrogate pair from a lone surrogate - every half of every
-    /// pair reports <see cref="UnicodeCategory.Surrogate"/> - so the guard that was meant to drop
-    /// ill-formed text deleted every astral character instead. Decoding scalar by scalar makes the
-    /// distinction explicit: pairs survive, lone surrogates are dropped. The length bound remains
-    /// in UTF-16 code units, applied by <see cref="TextTruncation.SafeTruncate"/> so it can never
-    /// cut a pair back apart (#2883).
+    /// Documented forwarding shim (#2925). The implementation, and the Unicode-scalar rationale
+    /// that goes with it, moved to <see cref="StringTextExtensions.SanitizeExternalText"/> so the
+    /// operation is discoverable from any string value; this entry point is retained verbatim so
+    /// existing call sites and the public API surface are untouched. Prefer
+    /// <c>value.SanitizeExternalText(max)</c> in new code.
     /// </remarks>
     public static string Sanitize(string? value, int maxLength = DefaultDisplayLength)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLength);
-
-        if (string.IsNullOrEmpty(value))
-            return string.Empty;
-
-        var builder = new StringBuilder(Math.Min(value.Length, maxLength));
-        var pendingSpace = false;
-        var remaining = value.AsSpan();
-
-        while (!remaining.IsEmpty)
-        {
-            // DecodeFromUtf16 rather than EnumerateRunes: enumeration silently substitutes
-            // U+FFFD for an ill-formed sequence, which would make a lone surrogate
-            // indistinguishable from a replacement character the operator actually typed.
-            // The status code keeps that distinction, so only genuinely ill-formed input is
-            // dropped.
-            var status = Rune.DecodeFromUtf16(remaining, out var rune, out var consumed);
-            remaining = remaining[consumed..];
-
-            if (status != System.Buffers.OperationStatus.Done)
-            {
-                // Lone surrogate (high without low, or a stray low). Drop it - this is the
-                // original guard's intent, now applied only where it belongs.
-                continue;
-            }
-
-            if (Rune.IsWhiteSpace(rune))
-            {
-                // Collapse CR/LF/tab/space runs into one space. This is the newline-collapse
-                // that keeps a job name from forging a second line in a title or prompt.
-                pendingSpace = builder.Length > 0;
-                continue;
-            }
-
-            // UnicodeCategory.Surrogate is deliberately absent: a decoded Rune is a valid scalar
-            // value and can never be a surrogate, so listing it here would be an unreachable
-            // branch. Lone surrogates are rejected above, by decode status.
-            var category = Rune.GetUnicodeCategory(rune);
-            if (category is UnicodeCategory.Control or UnicodeCategory.Format
-                or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator)
-            {
-                continue;
-            }
-
-            if (pendingSpace)
-            {
-                builder.Append(' ');
-                pendingSpace = false;
-            }
-
-            builder.Append(rune);
-
-            // Bail out once the buffer can no longer contribute to a maxLength-bounded result.
-            // The final bound is applied below; this only keeps the buffer from growing without
-            // limit on a pathological input.
-            if (builder.Length >= maxLength)
-            {
-                break;
-            }
-        }
-
-        // SafeTruncate cuts on a grapheme-cluster boundary, so the bound can never split the very
-        // surrogate pairs this method now preserves.
-        return TextTruncation.SafeTruncate(builder.ToString(), maxLength)!.TrimEnd();
-    }
+        => value.SanitizeExternalText(maxLength);
 }

@@ -29,7 +29,7 @@ internal static class OpenAIResponsesRequestBuilder
             input.Insert(0, new JsonObject
             {
                 ["role"] = model.Reasoning ? "developer" : "system",
-                ["content"] = UnicodeSanitizer.SanitizeSurrogates(systemPrompt)
+                ["content"] = systemPrompt.SanitizeSurrogates()
             });
         }
 

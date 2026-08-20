@@ -49,7 +49,19 @@ public static class EscapedMarkupNormalizer
     /// applied to attacker-controlled input.
     /// </param>
     /// <returns>The original text with all matched spans (in original spelling) deleted.</returns>
+    /// <remarks>
+    /// Documented forwarding shim (#2925). Callable as
+    /// <c>text.RemoveEscapedMarkupMatches(pattern)</c> via
+    /// <see cref="StringTextExtensions.RemoveEscapedMarkupMatches"/>; this entry point is retained
+    /// verbatim so existing call sites and the public API surface are untouched. The body lives in
+    /// <see cref="ReplaceMatchesCore"/> because it needs the private decoder below, so there is
+    /// still exactly one implementation.
+    /// </remarks>
     public static string ReplaceMatches(string text, Regex pattern)
+        => ReplaceMatchesCore(text, pattern);
+
+    /// <summary>Single implementation shared by the static shim and the string extension.</summary>
+    internal static string ReplaceMatchesCore(string text, Regex pattern)
     {
         ArgumentNullException.ThrowIfNull(pattern);
 

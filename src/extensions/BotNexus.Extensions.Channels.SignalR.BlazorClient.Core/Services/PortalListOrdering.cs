@@ -90,7 +90,7 @@ public static class PortalListOrdering
     /// on the desktop shell pass <c>"desktop"</c>. Any unrecognised kind falls back to the desktop
     /// shape rather than throwing: a routing helper must never be the thing that breaks navigation.
     /// </remarks>
-    public static string BuildConversationRoute(string? clientKind, string agentId, string? conversationId)
+    public static string BuildConversationRoute(this string? clientKind, string agentId, string? conversationId)
     {
         var encodedAgentId = Uri.EscapeDataString(agentId);
         var relative = string.IsNullOrWhiteSpace(conversationId)

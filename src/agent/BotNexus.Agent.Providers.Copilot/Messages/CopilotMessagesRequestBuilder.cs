@@ -46,7 +46,7 @@ internal static class CopilotMessagesRequestBuilder
                 new Dictionary<string, object?>
                 {
                     ["type"] = "text",
-                    ["text"] = UnicodeSanitizer.SanitizeSurrogates(systemPrompt),
+                    ["text"] = systemPrompt.SanitizeSurrogates(),
                     ["cache_control"] = cacheControl
                 }
             });

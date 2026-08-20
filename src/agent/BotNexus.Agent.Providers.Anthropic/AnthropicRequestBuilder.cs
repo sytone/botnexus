@@ -155,7 +155,7 @@ internal static class AnthropicRequestBuilder
         string systemPrompt,
         Dictionary<string, object?>? cacheControl)
     {
-        var sanitized = UnicodeSanitizer.SanitizeSurrogates(systemPrompt);
+        var sanitized = systemPrompt.SanitizeSurrogates();
         var markerIndex = sanitized.IndexOf(CacheBoundaryMarker, StringComparison.Ordinal);
 
         if (markerIndex < 0)

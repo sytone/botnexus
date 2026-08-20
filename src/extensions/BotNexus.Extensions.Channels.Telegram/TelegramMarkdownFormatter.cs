@@ -34,7 +34,15 @@ internal static class TelegramMarkdownFormatter
     /// Recognized formatting is converted; all other special characters are escaped.
     /// Returns an empty string for null/empty input.
     /// </summary>
-    public static string Convert(string? markdown)
+    /// <remarks>
+    /// Documented forwarding shim (#2925). Callable as <c>markdown.ToTelegramMarkdownV2()</c> via
+    /// <see cref="TelegramTextExtensions"/>; this entry point is retained verbatim so the existing
+    /// adapter call sites and the test suite are untouched.
+    /// </remarks>
+    public static string Convert(string? markdown) => ConvertCore(markdown);
+
+    /// <summary>Single implementation shared by the static shim and the string extension.</summary>
+    internal static string ConvertCore(string? markdown)
     {
         if (string.IsNullOrEmpty(markdown)) return string.Empty;
 
@@ -122,7 +130,15 @@ internal static class TelegramMarkdownFormatter
     /// Use this for structural strings (display prefixes, tool names, labels) that
     /// must appear as literal text with no formatting applied.
     /// </summary>
-    public static string EscapeMarkdownV2(string? text)
+    /// <remarks>
+    /// Documented forwarding shim (#2925). Callable as <c>text.EscapeTelegramMarkdownV2()</c> via
+    /// <see cref="TelegramTextExtensions"/>; this entry point is retained verbatim so the existing
+    /// adapter call sites and the test suite are untouched.
+    /// </remarks>
+    public static string EscapeMarkdownV2(string? text) => EscapeMarkdownV2Core(text);
+
+    /// <summary>Single implementation shared by the static shim and the string extension.</summary>
+    internal static string EscapeMarkdownV2Core(string? text)
     {
         if (string.IsNullOrEmpty(text)) return string.Empty;
 

@@ -2,12 +2,12 @@ using BotNexus.Agent.Providers.Core.Utilities;
 
 namespace BotNexus.Agent.Providers.Core.Tests.Utilities;
 
-public class UnicodeSanitizerTests
+public class UnicodeStringExtensionsTests
 {
     [Fact]
     public void NormalText_PassesThrough()
     {
-        var result = UnicodeSanitizer.SanitizeSurrogates("Hello, world!");
+        var result = ("Hello, world!").SanitizeSurrogates();
 
         result.ShouldBe("Hello, world!");
     }
@@ -17,7 +17,7 @@ public class UnicodeSanitizerTests
     {
         // \uD800 is a high surrogate without a following low surrogate
         var input = "before\uD800after";
-        var result = UnicodeSanitizer.SanitizeSurrogates(input);
+        var result = input.SanitizeSurrogates();
 
         result.ShouldNotContain("\uFFFD");
         result.ShouldNotContain("\uD800");
@@ -29,7 +29,7 @@ public class UnicodeSanitizerTests
     {
         // \uDC00 is a low surrogate without a preceding high surrogate
         var input = "before\uDC00after";
-        var result = UnicodeSanitizer.SanitizeSurrogates(input);
+        var result = input.SanitizeSurrogates();
 
         result.ShouldNotContain("\uFFFD");
         result.ShouldBe("beforeafter");
@@ -40,7 +40,7 @@ public class UnicodeSanitizerTests
     {
         // \uD83D\uDE00 = 😀
         var input = "smile \uD83D\uDE00 emoji";
-        var result = UnicodeSanitizer.SanitizeSurrogates(input);
+        var result = input.SanitizeSurrogates();
 
         result.ShouldBe(input);
     }
@@ -48,12 +48,13 @@ public class UnicodeSanitizerTests
     [Fact]
     public void EmptyInput_ReturnsEmpty()
     {
-        UnicodeSanitizer.SanitizeSurrogates("").ShouldBe("");
+        ("").SanitizeSurrogates().ShouldBe("");
     }
 
     [Fact]
     public void NullInput_ReturnsNull()
     {
-        UnicodeSanitizer.SanitizeSurrogates(null!).ShouldBeNull();
+        ((string)null!).SanitizeSurrogates().ShouldBeNull();
     }
 }
+
