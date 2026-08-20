@@ -208,7 +208,15 @@ public sealed class CopilotResponsesProvider : IApiProvider
                     // The parse died before any terminal event, so there is no final message to
                     // report. Say that explicitly (#3293) rather than completing the channel with a
                     // pending result task, which would strand any awaiter of GetResultAsync.
-                    normalized.EndWithoutResult($"Copilot Responses stream parse failed: {ex.Message}");
+                    //
+                    // #3382: the overload keys off TOKEN STATE, not exception type. A cancelled turn
+                    // ends the result task as cancelled - nothing is left unobserved for the
+                    // finalizer thread to escalate into an [FTL] breadcrumb on a healthy gateway. A
+                    // parse fault with no cancellation requested still fails the stream exactly as
+                    // before, so this is a guard rather than a blanket swallow.
+                    normalized.EndWithoutResult(
+                        $"Copilot Responses stream parse failed: {ex.Message}",
+                        options?.CancellationToken ?? CancellationToken.None);
                 }
             });
 

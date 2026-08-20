@@ -36,7 +36,9 @@ public sealed class FaultBreadcrumb
 }
 
 /// <summary>
-/// Renders a <see cref="FaultBreadcrumb"/> into a single-line, grep-friendly <c>[FTL]</c> record.
+/// Renders a <see cref="FaultBreadcrumb"/> into a single-line, grep-friendly fault record.
+/// The literal <c>[FTL]</c> marker is prefixed only when the process is actually terminating
+/// (#3382), because monitoring keys on that text rather than on the log level.
 /// Kept as a pure function so the exact breadcrumb wording is unit-testable without provoking a
 /// real crash, and so the last-chance handler stays a thin adapter that only gathers values.
 /// </summary>
@@ -53,7 +55,15 @@ public static class FaultBreadcrumbFormatter
         ArgumentNullException.ThrowIfNull(breadcrumb);
 
         var sb = new StringBuilder();
-        sb.Append("[FTL] gateway fault breadcrumb");
+        // #3382: the [FTL] marker is a claim that the process is dying, and monitoring is keyed on
+        // the literal text - not on the log level. #2633 downgraded the level to Error for a
+        // non-terminating fault but left this token in place, so an unobserved task exception on a
+        // gateway that was still serving traffic kept paging as if it were fatal. The marker is now
+        // emitted only when the runtime actually reports the process is terminating; the
+        // non-terminating record keeps every other field so it stays greppable by reason=.
+        if (breadcrumb.IsTerminating)
+            sb.Append("[FTL] ");
+        sb.Append("gateway fault breadcrumb");
         sb.Append(" reason=").Append(breadcrumb.Reason);
         sb.Append(" exitCode=").Append(Render(breadcrumb.ExitCode));
         sb.Append(" agents=").Append(Render(breadcrumb.ActiveAgentCount));

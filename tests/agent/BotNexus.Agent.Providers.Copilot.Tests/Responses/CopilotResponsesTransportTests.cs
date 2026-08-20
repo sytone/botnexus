@@ -265,6 +265,108 @@ public sealed class CopilotResponsesTransportTests
         result.ErrorMessage!.ShouldContain("1011");
     }
 
+    /// <summary>
+    /// #3382 AC1, end-to-end through the real provider: a WebSocket Responses stream cancelled
+    /// mid-parse must not strand an <see cref="LlmStreamIncompleteException"/> on the internal
+    /// stream's result task. Nothing awaits that task once the turn unwinds, so a faulted one is
+    /// collected unobserved and re-raised by the finalizer thread as an
+    /// <c>UnobservedTaskException</c> - the live-site shape reported in the issue.
+    /// <para>
+    /// The assertion is made against the runtime's own escalation event after a forced finalization,
+    /// because that event <em>is</em> the defect; asserting only on the returned message would pass
+    /// even with the bug present. The filter is deliberately narrow - it matches the
+    /// cancellation-shaped message this scenario produces - because
+    /// <see cref="TaskScheduler.UnobservedTaskException"/> is process-wide and sibling tests in this
+    /// class exercise the AC2 fault path on purpose, whose faulted result tasks legitimately escalate.
+    /// </para>
+    /// <para>
+    /// Non-vacuity is pinned separately: the drained events must show the turn actually reached the
+    /// cancellation path (a terminal <see cref="StopReason.Aborted"/>), so an empty escape list cannot
+    /// be an artefact of the scenario never running.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task WebSocketStreamCancelledMidParse_LeavesNoUnobservedExceptionToEscalate()
+    {
+        const string CancellationShape = "Copilot Responses stream parse failed: The operation was canceled";
+
+        var escaped = new List<string>();
+        void OnUnobserved(object? _, UnobservedTaskExceptionEventArgs args)
+        {
+            var text = args.Exception?.ToString() ?? string.Empty;
+            if (text.Contains(CancellationShape, StringComparison.Ordinal))
+            {
+                lock (escaped) escaped.Add(text);
+            }
+
+            // Never observe: a sibling test's genuine fault escalation is not ours to swallow, and
+            // xunit's own handler already tolerates it.
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+        try
+        {
+            using var cts = new CancellationTokenSource();
+            var socket = new StubWebSocketTransport(
+                messages:
+                [
+                    "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}",
+                    "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"hello\"}"
+                ],
+                // The turn is cancelled while the parse is still running, then the transport reports
+                // the cancellation exactly as a real socket does under an aborted request.
+                receiveFailure: new OperationCanceledException(cts.Token),
+                onReceive: () => cts.Cancel());
+
+            var provider = new CopilotResponsesProvider(
+                new HttpClient(new RecordingHandler(_ =>
+                    throw new InvalidOperationException("SSE fallback must not run for a cancelled turn."))),
+                NullLogger<CopilotResponsesProvider>.Instance,
+                socket);
+
+            var options = new CopilotResponsesOptions { ApiKey = "test-token", CancellationToken = cts.Token };
+            var stream = provider.Stream(MapModel(["/responses", "ws:/responses"]), BuildContext(), options);
+
+            var events = new List<AssistantMessageEvent>();
+            try
+            {
+                // Enumerate with an uncancelled token: the consumer unwinds when the producer ends,
+                // without ever awaiting the internal result task - precisely the condition that leaves
+                // a faulted task unobserved.
+                await foreach (var evt in stream.WithCancellation(CancellationToken.None))
+                    events.Add(evt);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancellation is normal control flow for this scenario.
+            }
+
+            // Non-vacuity: the turn genuinely took the cancellation path.
+            events.OfType<ErrorEvent>().ShouldContain(
+                e => e.Reason == StopReason.Aborted,
+                "the scenario must actually cancel, or an empty escape list proves nothing");
+
+            // Force finalization so any unobserved faulted task escalates now rather than at some
+            // arbitrary later point in the suite.
+            for (var i = 0; i < 3; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+
+            lock (escaped)
+            {
+                escaped.ShouldBeEmpty(
+                    "a cancelled Copilot Responses stream must not leave an unobserved LlmStreamIncompleteException "
+                    + "for the finalizer thread to raise as an UnobservedTaskException");
+            }
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
+    }
+
     private static CopilotResponsesOptions Options() => new() { ApiKey = "test-token" };
 
     private static CopilotResponsesOptions SseOptions() => new()
@@ -375,7 +477,8 @@ public sealed class CopilotResponsesTransportTests
         IReadOnlyList<string>? messages = null,
         Exception? connectFailure = null,
         Exception? receiveFailure = null,
-        CopilotResponsesCloseFrame? close = null) : ICopilotResponsesWebSocketTransport
+        CopilotResponsesCloseFrame? close = null,
+        Action? onReceive = null) : ICopilotResponsesWebSocketTransport
     {
         private readonly Queue<string> _messages = new(messages ?? []);
         public int ConnectCount { get; private set; }
@@ -388,6 +491,7 @@ public sealed class CopilotResponsesTransportTests
         public ValueTask SendAsync(string payload, CancellationToken cancellationToken) => ValueTask.CompletedTask;
         public ValueTask<string?> ReceiveAsync(CancellationToken cancellationToken)
         {
+            onReceive?.Invoke();
             if (_messages.TryDequeue(out var message)) return ValueTask.FromResult<string?>(message);
             if (receiveFailure is not null) return ValueTask.FromException<string?>(receiveFailure);
             LastClose = close;

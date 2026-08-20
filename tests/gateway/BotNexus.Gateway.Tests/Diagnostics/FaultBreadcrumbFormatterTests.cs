@@ -64,6 +64,63 @@ public sealed class FaultBreadcrumbFormatterTests
         Should.Throw<ArgumentNullException>(() => FaultBreadcrumbFormatter.Format(null!));
     }
 
+    /// <summary>
+    /// #3382 AC3 (negative direction): monitoring is keyed on the literal <c>[FTL]</c> text, not on the
+    /// log level, so #2633's level downgrade alone left a non-terminating fault still paging as fatal.
+    /// A breadcrumb for a process that is not terminating must not carry the marker at all.
+    /// </summary>
+    [Fact]
+    public void Format_NonTerminating_OmitsFtlMarker()
+    {
+        var breadcrumb = new FaultBreadcrumb
+        {
+            Reason = "UnobservedTaskException",
+            Detail = "System.AggregateException: A Task's exception(s) were not observed",
+            ExitCode = 0,
+            ActiveAgentCount = 23,
+            ActiveSessionCount = null,
+            ThreadCount = 64,
+            WorkingSetBytes = 2_684_354_560,
+            IsTerminating = false
+        };
+
+        var line = FaultBreadcrumbFormatter.Format(breadcrumb);
+
+        line.ShouldNotContain("[FTL]");
+        line.ShouldStartWith("gateway fault breadcrumb");
+        // The record must stay fully greppable by every other field - dropping the marker must not
+        // cost the diagnostic its content.
+        line.ShouldContain("reason=UnobservedTaskException");
+        line.ShouldContain("terminating=false");
+        line.ShouldContain("agents=23");
+    }
+
+    /// <summary>
+    /// #3382 AC3 (positive direction): a genuinely terminating fault still emits the <c>[FTL]</c>
+    /// marker. Pinned by name alongside the negative case so the fix cannot degenerate into removing
+    /// the marker outright, which would blind the alerting it exists to drive.
+    /// </summary>
+    [Fact]
+    public void Format_Terminating_StillEmitsFtlMarker()
+    {
+        var breadcrumb = new FaultBreadcrumb
+        {
+            Reason = "UnhandledException",
+            Detail = "System.StackOverflowException: dead",
+            ExitCode = 134,
+            ActiveAgentCount = 1,
+            ActiveSessionCount = 1,
+            ThreadCount = 8,
+            WorkingSetBytes = 1024,
+            IsTerminating = true
+        };
+
+        var line = FaultBreadcrumbFormatter.Format(breadcrumb);
+
+        line.ShouldStartWith("[FTL] gateway fault breadcrumb");
+        line.ShouldContain("terminating=true");
+    }
+
     [Fact]
     public void Format_CollapsesNewlinesInDetail_ToKeepSingleLineRecord()
     {

@@ -92,6 +92,65 @@ public sealed class LlmStream : IAsyncEnumerable<AssistantMessageEvent>
     }
 
     /// <summary>
+    /// Cancellation-aware form of <see cref="EndWithoutResult(string)"/>: ends the stream as
+    /// <em>cancelled</em> when <paramref name="cancellationToken"/> is signalled, and as an
+    /// incomplete <em>fault</em> otherwise.
+    /// </summary>
+    /// <param name="reason">Why no result was produced; used only on the fault path.</param>
+    /// <param name="cancellationToken">The turn's token. Its state - not the exception type that
+    /// prompted the call - decides which path is taken.</param>
+    /// <remarks>
+    /// This is the single shared seam for the #3382 distinction, so no provider has to restate it.
+    /// A cancelled turn is normal control flow: the consumer has already unwound and nothing awaits
+    /// <see cref="GetResultAsync"/>, so faulting the result task left an
+    /// <see cref="LlmStreamIncompleteException"/> permanently unobserved. The finalizer thread then
+    /// raised it as a <c>TaskScheduler.UnobservedTaskException</c> and the last-chance handler wrote
+    /// a fatal-looking breadcrumb for a gateway that was serving normally.
+    /// <para>
+    /// Cancelling the result task rather than faulting it is what actually closes the hole: a task in
+    /// the <see cref="TaskStatus.Canceled"/> state is never reported as an unobserved exception,
+    /// whereas a faulted one is.
+    /// </para>
+    /// <para>
+    /// The guard keys off <b>token state, not exception type</b>. An
+    /// <see cref="OperationCanceledException"/> raised with no cancellation requested is a genuine
+    /// fault - a socket abort, or a library misreporting a failure - and keeps the incomplete-result
+    /// path unchanged, so this can never degenerate into a blanket swallow.
+    /// </para>
+    /// </remarks>
+    public void EndWithoutResult(string reason, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            EndCancelled(cancellationToken);
+            return;
+        }
+
+        EndWithoutResult(reason);
+    }
+
+    /// <summary>
+    /// Signal the stream was cancelled: completes the event channel and transitions the result task
+    /// to <see cref="TaskStatus.Canceled"/> rather than faulted, so an unobserved result cannot
+    /// escape to the finalizer thread as an unobserved exception (#3382).
+    /// </summary>
+    /// <param name="cancellationToken">The token that was signalled; recorded on the cancelled task.</param>
+    /// <remarks>
+    /// Uses <c>TrySetCanceled</c> for the same reason <see cref="EndWithoutResult(string)"/> uses
+    /// <c>TrySetException</c>: a result already captured from a terminal event wins, so a late
+    /// cancellation cannot retroactively cancel a turn that already produced a message.
+    /// </remarks>
+    public void EndCancelled(CancellationToken cancellationToken)
+    {
+        _done = true;
+        _resultTcs.TrySetCanceled(cancellationToken);
+
+        _channel.Writer.TryComplete();
+    }
+
+    /// <summary>
     /// Iterate over streaming events as they arrive.
     /// </summary>
     public async IAsyncEnumerator<AssistantMessageEvent> GetAsyncEnumerator(

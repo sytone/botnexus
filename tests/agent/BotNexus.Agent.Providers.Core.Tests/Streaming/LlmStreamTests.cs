@@ -254,6 +254,124 @@ public class LlmStreamTests
         Should.Throw<ArgumentException>(() => stream.EndWithoutResult(reason));
     }
 
+    /// <summary>
+    /// #3382 AC1: a stream ended while its token is signalled must NOT fault the result task with an
+    /// <see cref="LlmStreamIncompleteException"/>. Nothing awaits <c>GetResultAsync</c> on a cancelled
+    /// turn, so a faulted task is never observed and escapes from the finalizer thread as an
+    /// <c>UnobservedTaskException</c> - which the last-chance handler renders as a fatal breadcrumb on
+    /// a perfectly healthy gateway. A cancelled task is never reported as unobserved, which is the
+    /// property this pins.
+    /// </summary>
+    [Fact]
+    public async Task EndWithoutResult_WhenTokenSignalled_CancelsResultInsteadOfFaulting()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var stream = new LlmStream();
+
+        stream.EndWithoutResult("Copilot Responses stream parse failed: The operation was canceled.", cts.Token);
+
+        var resultTask = stream.GetResultAsync();
+        var completed = await Task.WhenAny(resultTask, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.ShouldBeSameAs(resultTask, "a cancelled stream must still complete its result task, not hang");
+
+        await Should.ThrowAsync<OperationCanceledException>(() => resultTask);
+        resultTask.Status.ShouldBe(
+            TaskStatus.Canceled,
+            "a Canceled task is exempt from unobserved-exception escalation; a Faulted one is not");
+        resultTask.IsFaulted.ShouldBeFalse();
+        resultTask.Exception.ShouldBeNull("no exception object may be left for the finalizer to escalate");
+    }
+
+    /// <summary>
+    /// #3382 AC2: the guard keys off TOKEN STATE, not exception type. A genuine parse fault - raised
+    /// with no cancellation requested - keeps the existing incomplete-result diagnostic path exactly
+    /// as #3293 defined it. This is what stops the AC1 fix degenerating into a blanket swallow, and it
+    /// covers the adversarial case of an <c>OperationCanceledException</c> thrown by a library while
+    /// the token is quiet.
+    /// </summary>
+    [Fact]
+    public async Task EndWithoutResult_WhenTokenNotSignalled_StillFaultsWithIncompleteException()
+    {
+        using var cts = new CancellationTokenSource();
+        var stream = new LlmStream();
+
+        stream.EndWithoutResult("Copilot Responses stream parse failed: malformed frame", cts.Token);
+
+        var resultTask = stream.GetResultAsync();
+        var completed = await Task.WhenAny(resultTask, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.ShouldBeSameAs(resultTask);
+
+        var ex = await Should.ThrowAsync<LlmStreamIncompleteException>(() => resultTask);
+        ex.Reason.ShouldBe("Copilot Responses stream parse failed: malformed frame");
+        resultTask.Status.ShouldBe(TaskStatus.Faulted, "a real fault must remain a fault");
+    }
+
+    /// <summary>
+    /// #3382: the cancelled path must still release a consumer that is mid-enumeration, exactly as the
+    /// fault path does. A guard that leaves the event channel open would trade a noisy breadcrumb for
+    /// a hung turn.
+    /// </summary>
+    [Fact]
+    public async Task EndWithoutResult_WhenTokenSignalled_CompletesEventEnumeration()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var stream = new LlmStream();
+        stream.Push(new TextDeltaEvent(0, "partial", MakeMessage()));
+
+        stream.EndWithoutResult("cancelled mid-parse", cts.Token);
+
+        var events = new List<AssistantMessageEvent>();
+        var drain = Task.Run(async () =>
+        {
+            await foreach (var evt in stream)
+                events.Add(evt);
+        });
+
+        var completed = await Task.WhenAny(drain, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.ShouldBeSameAs(drain, "enumeration must terminate when a cancelled stream ends");
+        await drain;
+        events.ShouldHaveSingleItem().ShouldBeOfType<TextDeltaEvent>();
+    }
+
+    /// <summary>
+    /// #3382: a late cancellation must not retroactively cancel a turn that already produced a result,
+    /// mirroring the <c>TrySet</c> guarantee the fault path already carries (#3293).
+    /// </summary>
+    [Fact]
+    public async Task EndCancelled_AfterDoneEvent_PreservesTerminalResult()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var stream = new LlmStream();
+        var final = MakeMessage(content: [new TextContent("complete")]);
+        stream.Push(new DoneEvent(StopReason.Stop, final));
+
+        stream.EndCancelled(cts.Token);
+
+        var result = await stream.GetResultAsync();
+        result.StopReason.ShouldBe(StopReason.Stop);
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("complete");
+    }
+
+    /// <summary>
+    /// #3382: the token-aware overload keeps the #3293 contract that a no-result termination must name
+    /// its own cause. Validation runs before the cancellation branch so a blank reason is refused even
+    /// on a cancelled token - the argument contract does not silently soften under cancellation.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void EndWithoutResult_WithBlankReason_AndSignalledToken_StillThrows(string reason)
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var stream = new LlmStream();
+
+        Should.Throw<ArgumentException>(() => stream.EndWithoutResult(reason, cts.Token));
+    }
+
     [Fact]
     public async Task Stream_WithToolCallEvents_AllConsumed()
     {

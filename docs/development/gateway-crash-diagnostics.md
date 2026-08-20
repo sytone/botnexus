@@ -55,6 +55,25 @@ message). The record is deliberately a single line so log parsers cannot split i
 > A clean `ProcessExit` (graceful shutdown) is logged at *information* level, not as a
 > fatal `[FTL]` — only genuine fault paths claim fatality.
 
+#### The `[FTL]` marker means *terminating*, not merely *faulty*
+
+The literal `[FTL]` token is emitted **only when `terminating=true`**. A non-terminating
+fault — most commonly a `reason=UnobservedTaskException` on a gateway that is still serving
+traffic — is logged at `Error` level and its breadcrumb starts directly with
+`gateway fault breadcrumb`, with no marker:
+
+```
+gateway fault breadcrumb reason=UnobservedTaskException exitCode=0 agents=23 sessions=unknown threads=64 ws=2.5 GB terminating=false detail=System.AggregateException: ...
+```
+
+Every other field is unchanged, so the record stays greppable by `reason=` and by
+`gateway fault breadcrumb`. Alerting should key on **`[FTL]`** for "the process is dying" and
+on `reason=` for everything else.
+
+#2633 downgraded the *level* for the non-terminating case but left the marker text in place,
+so `[FTL]`-keyed monitoring kept paging for a healthy process; #3382 completed that fix by
+making the marker follow the same `terminating` signal the level already followed.
+
 ### 3. Unclean-termination warning on next boot
 
 The gateway maintains a clean-shutdown marker file at
