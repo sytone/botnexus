@@ -53,6 +53,7 @@ public sealed record ConversationResponse(
     string? ModelOverride = null,
     string? ThinkingOverride = null,
     int? ContextWindowOverride = null,
+    string? ToolOverrideJson = null,
     string Kind = "HumanAgent",
     string Source = "Channel",
     string Visibility = "UserFacing");
@@ -66,10 +67,24 @@ public sealed record ConversationResponse(
 /// <param name="Model">Optional model-id override; <c>null</c> clears the model override.</param>
 /// <param name="Thinking">Optional thinking-level wire token (e.g. <c>high</c>, <c>max</c>); <c>null</c> clears the thinking override.</param>
 /// <param name="ContextWindow">Optional context-window override in tokens; <c>null</c> clears the context override.</param>
+/// <param name="ToolOverrideJson">
+/// Optional serialized per-session tool overlay (<c>SessionToolOverride</c>, issue #2523);
+/// <c>null</c> clears the overlay back to the agent's full configured tool set. IGNORED unless
+/// <paramref name="ApplyToolOverride"/> is <c>true</c> - see that parameter for why.
+/// </param>
+/// <param name="ApplyToolOverride">
+/// Opt-in flag gating the tool-overlay field (issue #3271). The other three fields on this request
+/// are applied unconditionally, so a caller that only meant to set a model would silently CLEAR an
+/// overlay it never mentioned. Rather than change the established semantics of the existing fields,
+/// the new field is written ONLY when this flag is set, which makes an existing caller's payload
+/// bit-for-bit non-destructive. Defaults to <c>false</c>.
+/// </param>
 public sealed record SetConversationOverrideRequest(
     string? Model = null,
     string? Thinking = null,
-    int? ContextWindow = null);
+    int? ContextWindow = null,
+    string? ToolOverrideJson = null,
+    bool ApplyToolOverride = false);
 
 /// <summary>Channel binding response.</summary>
 public sealed record BindingResponse(

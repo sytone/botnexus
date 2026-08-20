@@ -63,6 +63,7 @@ public sealed record ConversationResponseDto(
     [property: JsonPropertyName("modelOverride")] string? ModelOverride = null,
     [property: JsonPropertyName("thinkingOverride")] string? ThinkingOverride = null,
     [property: JsonPropertyName("contextWindowOverride")] int? ContextWindowOverride = null,
+    [property: JsonPropertyName("toolOverrideJson")] string? ToolOverrideJson = null,
     [property: JsonPropertyName("kind")] string Kind = "HumanAgent",
     [property: JsonPropertyName("source")] string Source = "Channel",
     [property: JsonPropertyName("visibility")] string Visibility = "UserFacing");
@@ -70,7 +71,9 @@ public sealed record ConversationResponseDto(
 public sealed record SetConversationOverrideRequestDto(
     [property: JsonPropertyName("model")] string? Model = null,
     [property: JsonPropertyName("thinking")] string? Thinking = null,
-    [property: JsonPropertyName("contextWindow")] int? ContextWindow = null);
+    [property: JsonPropertyName("contextWindow")] int? ContextWindow = null,
+    [property: JsonPropertyName("toolOverrideJson")] string? ToolOverrideJson = null,
+    [property: JsonPropertyName("applyToolOverride")] bool ApplyToolOverride = false);
 
 public sealed record ConversationBindingDto(
     [property: JsonPropertyName("bindingId")] string BindingId,

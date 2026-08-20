@@ -60,6 +60,20 @@
                     {
                         <div class="config-error">@_error</div>
                     }
+
+                    @* Per-session tool overlay (#3271). Sits alongside the model/thinking/context
+                       overrides because it is the same kind of per-conversation execution override,
+                       and it is only meaningful once a conversation is selected. *@
+                    @if (Agent?.ActiveConversationId is { } overlayConversationId)
+                    {
+                        <ConversationToolOverlayPanel ConversationId="@overlayConversationId"
+                                                      AgentTools="@(_descriptor?.ToolIds ?? [])"
+                                                      InitialToolOverrideJson="@_toolOverrideJson"
+                                                      InitialModel="@_conversation?.ModelOverride"
+                                                      InitialThinking="@_conversation?.ThinkingOverride"
+                                                      InitialContextWindow="@_conversation?.ContextWindowOverride"
+                                                      OnOverlayChanged="HandleOverlayChanged" />
+                    }
                 </div>
 
                 <div class="config-actions">
@@ -114,6 +128,20 @@
     private string _selectedModel = "";
     private Dictionary<string, bool> _inheritedFields = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The loaded conversation row, source of the persisted tool overlay (#3271).</summary>
+    private ConversationResponseDto? _conversation;
+    private string? _toolOverrideJson;
+
+    /// <summary>Re-reads the overlay from the server's response so the panel shows what persisted.</summary>
+    private void HandleOverlayChanged(ConversationResponseDto? updated)
+    {
+        if (updated is null)
+            return;
+        _conversation = updated;
+        _toolOverrideJson = updated.ToolOverrideJson;
+        StateHasChanged();
+    }
+
     /// <summary>Identifier-shaped fields get the monospace treatment (#2795 AC4).</summary>
     private static bool IsMono(string key) =>
         key is "agentId" or "conversationId" or "sessionId" or AgentConfigSnapshotBuilder.ModelKey;
@@ -156,6 +184,21 @@
             }
 
             await ComputeInheritanceBadgesAsync(apiBase);
+
+            // #3271: the conversation row carries the persisted tool overlay, so the control can
+            // render current state without the operator running /tools.
+            try
+            {
+                _conversation = Agent.ActiveConversationId is { } cid
+                    ? await RestClient.GetConversationAsync(cid)
+                    : null;
+                _toolOverrideJson = _conversation?.ToolOverrideJson;
+            }
+            catch
+            {
+                _conversation = null;
+                _toolOverrideJson = null;
+            }
 
             ContextInfoDto? context = null;
             string? contextUnavailable = null;

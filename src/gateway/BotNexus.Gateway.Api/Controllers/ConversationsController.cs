@@ -864,6 +864,7 @@ public sealed class ConversationsController : ControllerBase
         ModelOverride: c.ModelOverride,
         ThinkingOverride: c.ThinkingOverride,
         ContextWindowOverride: c.ContextWindowOverride,
+        ToolOverrideJson: c.ToolOverrideJson,
         Kind: c.Kind.ToString(),
         Source: c.Source.ToString(),
         Visibility: c.Visibility.ToString());
@@ -1002,6 +1003,17 @@ public sealed class ConversationsController : ControllerBase
         var prevModel = conversation.ModelOverride;
         var prevThinking = conversation.ThinkingOverride;
         var prevContext = conversation.ContextWindowOverride;
+        var prevTools = conversation.ToolOverrideJson;
+
+        // Tool overlay (#3271): validated before persistence so an unreadable overlay is rejected
+        // with 400 rather than silently stored and then failed OPEN by the resolver at session
+        // start - a restriction the operator believes is in force but is not.
+        if (request.ApplyToolOverride
+            && NormalizeOverrideString(request.ToolOverrideJson) is { } toolJson
+            && BotNexus.Gateway.Security.SessionToolOverride.FromJson(toolJson) is null)
+        {
+            return BadRequest(new { error = "Tool override is not a readable SessionToolOverride document." });
+        }
 
         // Narrow, transactional override patch (#2139): writes only the three override columns,
         // so a pin/metadata mutation committed concurrently between the read and the write is
@@ -1010,7 +1022,12 @@ public sealed class ConversationsController : ControllerBase
         {
             Model = FieldUpdate<string?>.Set(NormalizeOverrideString(request.Model)),
             Thinking = FieldUpdate<string?>.Set(NormalizeOverrideString(request.Thinking)),
-            ContextWindow = FieldUpdate<int?>.Set(request.ContextWindow)
+            ContextWindow = FieldUpdate<int?>.Set(request.ContextWindow),
+            // Written only on explicit opt-in, so an existing model-only caller cannot clear an
+            // overlay it never mentioned (#3271).
+            ToolOverrideJson = request.ApplyToolOverride
+                ? FieldUpdate<string?>.Set(NormalizeOverrideString(request.ToolOverrideJson))
+                : default
         };
         var updated = await _conversations.PatchOverrideAsync(ConversationId.From(conversationId), overridePatch, cancellationToken);
         if (updated is null)
@@ -1019,6 +1036,8 @@ public sealed class ConversationsController : ControllerBase
         await AuditAsync(conversationId, "model_override_set", "api", "rest-api", prevModel, updated.ModelOverride, cancellationToken);
         await AuditAsync(conversationId, "thinking_override_set", "api", "rest-api", prevThinking, updated.ThinkingOverride, cancellationToken);
         await AuditAsync(conversationId, "context_override_set", "api", "rest-api", prevContext?.ToString(), updated.ContextWindowOverride?.ToString(), cancellationToken);
+        if (request.ApplyToolOverride)
+            await AuditAsync(conversationId, "tool_override_set", "api", "rest-api", prevTools, updated.ToolOverrideJson, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
         return Ok(ToResponse(updated));
     }
@@ -1042,7 +1061,8 @@ public sealed class ConversationsController : ControllerBase
         {
             Model = FieldUpdate<string?>.Set(null),
             Thinking = FieldUpdate<string?>.Set(null),
-            ContextWindow = FieldUpdate<int?>.Set(null)
+            ContextWindow = FieldUpdate<int?>.Set(null),
+            ToolOverrideJson = FieldUpdate<string?>.Set(null)
         };
         var updated = await _conversations.PatchOverrideAsync(ConversationId.From(conversationId), clearPatch, cancellationToken);
         if (updated is null)

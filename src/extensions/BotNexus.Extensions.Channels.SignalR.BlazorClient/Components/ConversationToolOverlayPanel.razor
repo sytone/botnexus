@@ -1,0 +1,226 @@
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject IGatewayRestClient RestClient
+
+@*
+    Per-session tool overlay control (issue #3271) - the portal half of the gateway-side overlay
+    shipped with #2523.
+
+    Two properties govern everything below:
+
+    1. NARROWING ONLY. Checkboxes are emitted only for tools present in AgentTools, and the saved
+       payload is built by SessionToolOverlayDto.ForSelection, which intersects with AgentTools.
+       There is therefore no affordance - and no code path - by which this panel can name a tool the
+       agent does not have. Granting a tool remains an agent-configuration change (toolIds).
+    2. REFUSALS ARE VISIBLE. A persisted overlay naming a tool the agent lacks is reported in its own
+       "Refused" row rather than being folded into the narrowed-to list, where it would read as
+       granted. This mirrors SessionToolResolution.RefusedTools.
+
+    The write goes through the EXISTING PUT /api/conversations/{id}/override boundary; no new
+    endpoint and no new store method are introduced.
+*@
+<div class="tool-overlay-panel" data-testid="tool-overlay-panel">
+    <h4>Session tools</h4>
+
+    <p class="tool-overlay-state" data-testid="tool-overlay-state">
+        @if (_projection.IsRestricted)
+        {
+            <span class="tool-overlay-badge restricted">Narrowed</span>
+            <span>@_projection.ResolvedTools.Count of @AgentTools.Count tools available this session.</span>
+        }
+        else
+        {
+            <span class="tool-overlay-badge">Unrestricted</span>
+            <span>Using the agent's full configured tool set.</span>
+        }
+    </p>
+
+    @* AC2: the summary rows below exist only when there is something to say. An unrestricted
+       conversation renders the single status line above and nothing else. *@
+    @if (_projection.NarrowedTo.Count > 0)
+    {
+        <p class="tool-overlay-list" data-testid="tool-overlay-enabled-list">
+            <span class="tool-overlay-label">Narrowed to:</span> @string.Join(", ", _projection.NarrowedTo)
+        </p>
+    }
+
+    @if (_projection.DisabledTools.Count > 0)
+    {
+        <p class="tool-overlay-list" data-testid="tool-overlay-disabled-list">
+            <span class="tool-overlay-label">Disabled:</span> @string.Join(", ", _projection.DisabledTools)
+        </p>
+    }
+
+    @if (_projection.RefusedTools.Count > 0)
+    {
+        <p class="tool-overlay-list refused" data-testid="tool-overlay-refused">
+            <span class="tool-overlay-label">Refused</span>
+            (not in this agent's configured tool set, so never granted):
+            @string.Join(", ", _projection.RefusedTools)
+        </p>
+    }
+
+    <div class="tool-overlay-choices">
+        @foreach (var tool in AgentTools)
+        {
+            <label class="tool-overlay-choice">
+                <input type="checkbox"
+                       data-testid="@($"tool-overlay-check-{tool}")"
+                       checked="@_selected.Contains(tool)"
+                       @onchange="e => Toggle(tool, e.Value is true)" />
+                <span>@tool</span>
+            </label>
+        }
+    </div>
+
+    <div class="tool-overlay-actions">
+        @* Disabled on an empty selection: an overlay narrowing to no tools at all leaves the agent
+           unable to act. Refuse it at the affordance rather than persist a useless state. *@
+        <button type="button" data-testid="tool-overlay-save"
+                @onclick="SaveAsync" disabled="@(_busy || _selected.Count == 0)">Apply to this conversation</button>
+        <button type="button" data-testid="tool-overlay-clear"
+                @onclick="ClearAsync" disabled="@_busy">Clear overlay</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_status))
+    {
+        <p class="tool-overlay-status" data-testid="tool-overlay-status">@_status</p>
+    }
+</div>
+
+@code {
+    /// <summary>The conversation whose overlay this panel reads and writes.</summary>
+    [Parameter, EditorRequired]
+    public string ConversationId { get; set; } = default!;
+
+    /// <summary>
+    /// The agent's configured tool names. This is the CEILING: the panel offers no affordance for
+    /// anything outside this list, so it can never widen the agent's tool set.
+    /// </summary>
+    [Parameter]
+    public IReadOnlyList<string> AgentTools { get; set; } = [];
+
+    /// <summary>
+    /// The persisted overlay JSON from the conversation row, so the current state renders without
+    /// the operator running <c>/tools</c> (AC1).
+    /// </summary>
+    [Parameter]
+    public string? InitialToolOverrideJson { get; set; }
+
+    /// <summary>Existing model override, echoed back on save so a tools-only write cannot clear it.</summary>
+    [Parameter]
+    public string? InitialModel { get; set; }
+
+    /// <summary>Existing thinking override, echoed back on save.</summary>
+    [Parameter]
+    public string? InitialThinking { get; set; }
+
+    /// <summary>Existing context-window override, echoed back on save.</summary>
+    [Parameter]
+    public int? InitialContextWindow { get; set; }
+
+    /// <summary>Raised after the overlay is saved or cleared so a parent can refresh.</summary>
+    [Parameter]
+    public EventCallback<ConversationResponseDto?> OnOverlayChanged { get; set; }
+
+    private SessionToolOverlayProjection _projection;
+    private HashSet<string> _selected = new(StringComparer.OrdinalIgnoreCase);
+    private bool _busy;
+    private string? _status;
+
+    protected override void OnParametersSet()
+    {
+        var overlay = SessionToolOverlayDto.FromJson(InitialToolOverrideJson);
+        _projection = SessionToolOverlayDto.Project(AgentTools, overlay);
+        _selected = new HashSet<string>(_projection.ResolvedTools, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void Toggle(string tool, bool isChecked)
+    {
+        if (isChecked)
+            _selected.Add(tool);
+        else
+            _selected.Remove(tool);
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        _status = null;
+        try
+        {
+            // ForSelection intersects with AgentTools, so a refused name carried by the persisted
+            // overlay is not echoed back: the portal does not re-assert a widening attempt.
+            var overlay = SessionToolOverlayDto.ForSelection(AgentTools, _selected);
+            var updated = await WriteAsync(overlay?.ToJson());
+            _status = overlay is null
+                ? "Overlay cleared; using the agent's full tool set."
+                : "Tool overlay applied to this conversation.";
+            ApplyPersistedResponse(updated);
+            await OnOverlayChanged.InvokeAsync(updated);
+        }
+        catch (Exception ex)
+        {
+            _status = $"Failed to apply tool overlay: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ClearAsync()
+    {
+        _busy = true;
+        _status = null;
+        try
+        {
+            var updated = await WriteAsync(null);
+            _projection = SessionToolOverlayDto.Project(AgentTools, null);
+            _selected = new HashSet<string>(AgentTools, StringComparer.OrdinalIgnoreCase);
+            _status = "Overlay cleared; using the agent's full tool set.";
+            ApplyPersistedResponse(updated);
+            await OnOverlayChanged.InvokeAsync(updated);
+        }
+        catch (Exception ex)
+        {
+            // The restriction is still persisted server-side, so _projection is deliberately left
+            // showing it. Reporting success here would misrepresent what the gateway holds.
+            _status = $"Failed to clear tool overlay: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// Writes through the existing override endpoint. The sibling model / thinking / context values
+    /// are echoed back because that endpoint applies every one of them unconditionally - omitting
+    /// them would silently clear overrides this panel does not own.
+    /// </summary>
+    private Task<ConversationResponseDto?> WriteAsync(string? overlayJson)
+        => RestClient.SetConversationOverrideAsync(
+            ConversationId,
+            new SetConversationOverrideRequestDto(
+                Model: InitialModel,
+                Thinking: InitialThinking,
+                ContextWindow: InitialContextWindow,
+                ToolOverrideJson: overlayJson,
+                ApplyToolOverride: true),
+            CancellationToken.None);
+
+    /// <summary>
+    /// Re-projects from the SERVER's response rather than from local state, so what is displayed
+    /// after a save is what was actually persisted (AC3) - a reload renders the same thing.
+    /// </summary>
+    private void ApplyPersistedResponse(ConversationResponseDto? updated)
+    {
+        if (updated is null)
+            return;
+
+        _projection = SessionToolOverlayDto.Project(
+            AgentTools,
+            SessionToolOverlayDto.FromJson(updated.ToolOverrideJson));
+        _selected = new HashSet<string>(_projection.ResolvedTools, StringComparer.OrdinalIgnoreCase);
+    }
+}
