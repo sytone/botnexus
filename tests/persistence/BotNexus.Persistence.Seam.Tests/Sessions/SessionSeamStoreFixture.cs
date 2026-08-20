@@ -88,7 +88,10 @@ internal sealed class SessionSeamStoreFixture : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        // NOT ClearAllPools(): process-global, disposes sibling tests' live handles (#3324, #3392,
+        // #3475). This fixture opens with Pooling=False, so the scoped clear is a cheap no-op that
+        // still releases anything an ad-hoc connection pooled under the same string.
+        SqlitePoolCleanup.ClearPoolForConnectionString(ConnectionString);
         if (File.Exists(DatabasePath))
         {
             // SQLite file handles can linger briefly on Windows; cleanup is best effort and must
