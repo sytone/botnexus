@@ -75,7 +75,7 @@ public static class MessageRole
     /// <see cref="Tool"/>, <see cref="Error"/>; <see cref="Assistant"/> when <paramref name="role"/>
     /// is null, empty or whitespace; otherwise the trimmed input verbatim.
     /// </returns>
-    public static string Normalize(string? role)
+    public static string Normalize(this string? role)
     {
         var trimmed = role?.Trim();
         if (string.IsNullOrEmpty(trimmed))
@@ -120,5 +120,5 @@ public static class MessageRole
     /// </remarks>
     /// <param name="role">The stored role. Case-insensitive.</param>
     /// <returns><c>"user"</c> for a human message, otherwise <c>"assistant"</c>.</returns>
-    public static string CssRole(string? role) => IsUser(role) ? UserCss : AssistantCss;
+    public static string CssRole(this string? role) => IsUser(role) ? UserCss : AssistantCss;
 }
