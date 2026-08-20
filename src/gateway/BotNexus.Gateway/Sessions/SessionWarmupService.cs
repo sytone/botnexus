@@ -62,6 +62,31 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Rebuilds the warmed session cache after a configuration reload, but only when the reload's
+    /// changed paths can actually affect it (#2728).
+    /// </summary>
+    /// <remarks>
+    /// The gate fails open: a whole-document write, an absent plan, or any unrecognised path
+    /// performs the full rebuild. Skipping is therefore a performance optimisation that can never
+    /// leave the cache stale — see <see cref="SessionWarmupReloadScope"/>.
+    /// </remarks>
+    public async Task ReloadAsync(ConfigReloadPlan? plan, CancellationToken ct = default)
+    {
+        if (!IsEnabled())
+            return;
+
+        if (!SessionWarmupReloadScope.Affects(plan))
+        {
+            _logger.LogDebug(
+                "Skipping session-warmup rebuild: changed configuration paths [{ChangedPaths}] cannot affect warmed session state.",
+                string.Join(", ", plan?.ChangedPaths ?? (IReadOnlySet<string>)new HashSet<string>()));
+            return;
+        }
+
+        await RefreshAllInternalAsync(ct);
+    }
+
     public async Task<IReadOnlyList<SessionSummary>> GetAvailableSessionsAsync(CancellationToken ct = default)
     {
         if (!IsEnabled())
