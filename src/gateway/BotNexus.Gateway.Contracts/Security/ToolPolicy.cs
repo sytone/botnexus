@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Security;
 
 /// <summary>
@@ -77,4 +79,40 @@ public interface IToolPolicyProvider
 
     /// <summary>Returns tool names that are blocked from the HTTP API surface.</summary>
     IReadOnlyList<string> GetDeniedForHttp();
+
+    /// <summary>
+    /// Returns whether <paramref name="toolName"/> is actually callable by <paramref name="agentId"/>
+    /// this turn, given the descriptor's resolved tool allowlist (#3468).
+    /// </summary>
+    /// <param name="toolName">The tool being tested.</param>
+    /// <param name="agentId">The agent whose effective policy applies; <see langword="null"/> means unscoped.</param>
+    /// <param name="allowedToolIds">
+    /// The descriptor's resolved tool allowlist. <c>null</c>, empty, or the single wildcard entry
+    /// <c>*</c> all mean "no allowlist restriction", matching the isolation strategy's own reading
+    /// of <c>ToolIds</c> - so an archetype-restricted sub-agent and an unrestricted one are
+    /// distinguished here exactly as they are when the tool set is actually assembled.
+    /// </param>
+    /// <remarks>
+    /// The default implementation answers from the allowlist alone. It exists so that callers
+    /// outside gateway security - and the several test doubles that implement this interface -
+    /// need not know about deny-lists or runtime pinning; the production implementation overrides
+    /// it to consult both.
+    /// </remarks>
+    bool IsToolAvailable(string toolName, AgentId? agentId = null, IReadOnlyList<string>? allowedToolIds = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+        return IsUnrestrictedAllowList(allowedToolIds)
+               || allowedToolIds!.Contains(toolName, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// <c>null</c> / empty / <c>["*"]</c> all denote "every tool", mirroring
+    /// <c>InProcessIsolationStrategy.IsWildcardToolIds</c>. Kept on the interface so the
+    /// production implementation and the default implementation cannot drift apart on what an
+    /// unrestricted descriptor looks like.
+    /// </summary>
+    static bool IsUnrestrictedAllowList(IReadOnlyList<string>? allowedToolIds)
+        => allowedToolIds is null
+           || allowedToolIds.Count == 0
+           || (allowedToolIds.Count == 1 && allowedToolIds[0] == "*");
 }

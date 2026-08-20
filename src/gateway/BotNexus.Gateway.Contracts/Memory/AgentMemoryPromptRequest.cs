@@ -14,11 +14,26 @@ namespace BotNexus.Gateway.Contracts.Memory;
 /// A value of zero or below means explicitly unbounded, so "no cap" is a deliberate caller choice
 /// that is distinguishable from an ignored parameter.
 /// </param>
+/// <param name="MemoryToolsAvailable">
+/// The turn's resolved memory-capability signal (#3468): whether the agent's effective tool policy
+/// grants it any memory tool at all. When <see langword="false"/> the provider <b>must</b> return
+/// no memory content - an agent deliberately spawned without memory tools was scoped that way on
+/// purpose, so injecting its notes anyway leaks content across the agent boundary. A resolved
+/// boolean is passed rather than a policy provider so this contract - and the memory assembly that
+/// consumes it - stay free of any dependency on gateway security; the layer entitled to know about
+/// tool policy resolves the value and hands over the answer.
+/// </param>
+/// <param name="MemorySearchAvailable">
+/// Whether <c>memory_search</c> specifically is callable this turn. Governs only disclosure
+/// wording: an exclusion notice must not direct an agent to a tool it cannot call.
+/// </param>
 public sealed record AgentMemoryPromptRequest(
     string AgentId,
     string? SessionId = null,
     string? ConversationId = null,
-    int MaxTokenBudget = 4000);
+    int MaxTokenBudget = 4000,
+    bool MemoryToolsAvailable = true,
+    bool MemorySearchAvailable = true);
 
 /// <summary>
 /// Memory context assembled by the provider for prompt inclusion.

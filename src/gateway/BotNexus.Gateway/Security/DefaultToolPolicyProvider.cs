@@ -251,6 +251,25 @@ public sealed class DefaultToolPolicyProvider : IToolPolicyProvider
     /// <inheritdoc />
     public IReadOnlyList<string> GetDeniedForHttp() => HttpDeniedTools;
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Overrides the interface default so the answer accounts for every axis that governs
+    /// availability in production, in the same order the runtime applies them: the descriptor's
+    /// allowlist narrows the tool set (archetype / <c>toolIds</c>), then the effective deny-list
+    /// (static config unioned with any inherited sub-agent deny-list) removes more, with pinned
+    /// tools exempt. Answering from the allowlist alone would report an archetype-granted tool as
+    /// available while a deny-list was quietly removing it.
+    /// </remarks>
+    public bool IsToolAvailable(string toolName, AgentId? agentId = null, IReadOnlyList<string>? allowedToolIds = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+
+        var allowedByList = IToolPolicyProvider.IsUnrestrictedAllowList(allowedToolIds)
+                            || allowedToolIds!.Contains(toolName, StringComparer.OrdinalIgnoreCase);
+
+        return allowedByList && !IsDenied(toolName, agentId?.Value);
+    }
+
     /// <summary>
     /// Checks whether a tool is completely blocked for a specific agent.
     /// Checks both static config deny-lists and runtime dynamic deny-lists (for sub-agents).

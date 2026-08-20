@@ -49,7 +49,12 @@ public sealed class MarkdownAgentMemory : IAgentMemory
     {
         ct.ThrowIfCancellationRequested();
         var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(request.AgentId));
-        return LoadDailyMemoryContextAsync(workspacePath, request.MaxTokenBudget, ct);
+        return LoadDailyMemoryContextAsync(
+            workspacePath,
+            request.MaxTokenBudget,
+            request.MemoryToolsAvailable,
+            request.MemorySearchAvailable,
+            ct);
     }
 
     /// <inheritdoc />
@@ -228,8 +233,25 @@ public sealed class MarkdownAgentMemory : IAgentMemory
     /// caller cannot silently opt out of it by forgetting to trim. The trimming order and the
     /// disclosure rule are documented on <see cref="MemoryPromptBudget"/>.
     /// </remarks>
-    private async Task<AgentMemoryContext> LoadDailyMemoryContextAsync(string workspacePath, int maxTokenBudget, CancellationToken ct)
+    private async Task<AgentMemoryContext> LoadDailyMemoryContextAsync(
+        string workspacePath,
+        int maxTokenBudget,
+        bool memoryToolsAvailable,
+        bool memorySearchAvailable,
+        CancellationToken ct)
     {
+        // #3468: the capability decision is made before any file I/O. An agent with no memory
+        // tools should not have its notes read off disk at all, let alone assembled and then
+        // discarded -- "withheld" and "never loaded" must not be distinguishable by a timing or
+        // logging side channel.
+        if (!memoryToolsAvailable)
+        {
+            _logger.LogDebug(
+                "Skipped always-on memory injection for agent {AgentId}: the turn's effective tool policy grants it no memory tools.",
+                _agentId);
+            return AgentMemoryContext.Empty;
+        }
+
         var memoryRoot = ResolveMemoryRoot(workspacePath);
         if (!_fileSystem.Directory.Exists(memoryRoot))
             return AgentMemoryContext.Empty;
@@ -292,14 +314,18 @@ public sealed class MarkdownAgentMemory : IAgentMemory
         // Trust gate BEFORE budgeting (#3232 AC5). Order matters: budgeting after exclusion means
         // the surviving first-party notes get the whole budget rather than sharing it with content
         // that was about to be discarded, and the exclusion disclosure is itself subject to the cap.
-        var (eligible, excludedCount) = MemoryInjectionGate.Apply(dailyNotes);
+        var (eligible, excludedCount) = MemoryInjectionGate.Apply(
+            dailyNotes,
+            memoryToolsAvailable,
+            memorySearchAvailable);
 
         if (excludedCount > 0)
         {
             _logger.LogWarning(
-                "Withheld {ExcludedCount} non-first-party daily note(s) from always-on context for agent {AgentId}; they remain retrievable via memory_search.",
+                "Withheld {ExcludedCount} non-first-party daily note(s) from always-on context for agent {AgentId}; retrievable via memory_search: {Retrievable}.",
                 excludedCount,
-                _agentId);
+                _agentId,
+                memorySearchAvailable);
         }
 
         // Rough token estimate: ~4 chars per token, computed by the budget helper so the reported
