@@ -36,7 +36,24 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
     private static readonly TimeSpan SolutionBuildTimeout = TimeSpan.FromMinutes(10);
 
     // ─── pack/install artifacts ────────────────────────────────────────────
+    /// <summary>Per-run NuGet PACKAGE version. Never an assembly version (issue #3388).</summary>
     public string PackVersion { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Assembly version every assembly in the installed layout must carry - the repo's real
+    /// version, matching the Release output the runner already built.
+    /// </summary>
+    public Version AssemblyVersion { get; private set; } = new(0, 0, 0, 0);
+
+    /// <summary>The exact <c>dotnet pack</c> arguments used, captured so the contract is assertable.</summary>
+    public string PackArguments { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Missing or version-skewed startup assemblies in the installed tool layout. Non-empty means
+    /// the CLI would have failed at assembly-load time during <c>init</c> (issue #3388).
+    /// </summary>
+    public IReadOnlyList<string> LayoutFaults { get; private set; } = [];
+
     public string CliExecutablePath { get; private set; } = string.Empty;
 
     // ─── per-run sandbox ───────────────────────────────────────────────────
@@ -74,7 +91,7 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
         try
         {
             var runId = Guid.NewGuid().ToString("N");
-            PackVersion = $"99.99.99-e2e-{runId[..8]}";
+            PackVersion = E2ECliPack.BuildPackageVersion(runId);
             SandboxRoot = Path.Combine(Path.GetTempPath(), "botnexus-e2e", runId);
             Home = Path.Combine(SandboxRoot, "home");
             var packDir = Path.Combine(SandboxRoot, "pack");
@@ -90,19 +107,29 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             var cliProject = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Cli", "BotNexus.Cli.csproj");
 
             // 1 ─ pack -----------------------------------------------------
-            // /nodeReuse:false + UseSharedCompilation=false force MSBuild and the
-            // Roslyn compile-server to exit cleanly so `dotnet pack` returns control
-            // instead of leaving long-lived build nodes attached to our captured
-            // stdout (which manifests as a TimeoutException even though the pack
-            // itself finished).
-            Log.Add($"[pack] dotnet pack {cliProject} → {packDir} (Version={PackVersion})");
-            var pack = await ProcessRunner.RunAsync(
+            // The command line is built by E2ECliPack so the #3388 contract lives in one place
+            // and is unit-assertable: the synthetic 99.99.99 stamp identifies the PACKAGE only,
+            // while MSBuild `Version` stays at the repo's real assembly version. Stamping
+            // `Version` too propagated the synthetic value through every ProjectReference, which
+            // both rebuilt the CLI's entire dependency closure from inside this testhost (the
+            // startup cost #3314 attributed) and produced a package whose CLI bound against
+            // 99.99.99.0 while the dependencies copied out of the shared bin/Release tree carried
+            // the repo version - hence `Could not load file or assembly
+            // 'BotNexus.Agent.Providers.Core, Version=99.99.99.0'` during `init`.
+            //
+            // Serialised behind the SAME machine-wide mutex as the prebuild (#2739): a pack of
+            // src/**/bin/Release and a build of it are both writers of that tree, so overlapping
+            // them is the torn read #3255 documented.
+            AssemblyVersion = E2ECliPack.RepoAssemblyVersion;
+            PackArguments = E2ECliPack.BuildPackArguments(
+                cliProject, AssemblyVersion, PackVersion, packDir);
+            Log.Add($"[pack] dotnet pack {cliProject} → {packDir} " +
+                    $"(PackageVersion={PackVersion}, Version={AssemblyVersion.ToString(3)})");
+            var pack = await RunUnderPrebuildMutexAsync(() => ProcessRunner.RunAsync(
                 "dotnet",
-                $"pack \"{cliProject}\" --configuration Release --output \"{packDir}\" " +
-                $"/p:Version={PackVersion} /p:PackageVersion={PackVersion} " +
-                $"/nodeReuse:false /p:UseSharedCompilation=false --nologo",
+                PackArguments,
                 environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
-                timeout: PackTimeout);
+                timeout: PackTimeout));
             if (pack.ExitCode != 0)
             {
                 Error = $"dotnet pack exit {pack.ExitCode}.\n{pack.Combined}";
@@ -119,6 +146,26 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             if (install.ExitCode != 0 || !File.Exists(CliExecutablePath))
             {
                 Error = $"dotnet tool install exit {install.ExitCode}, exe-exists={File.Exists(CliExecutablePath)}.\n{install.Combined}";
+                return;
+            }
+
+            // 2b ─ verify the install layout BEFORE any CLI verb runs (#3388) --
+            // The packed CLI is about to be invoked for `init`. If a required assembly is absent
+            // or carries a version other than the one the CLI binds against, that invocation dies
+            // with `Could not load file or assembly` and the fixture reports only "exited 1" -
+            // the uninformative evidence #3388 was filed on. Check by name here so the failure
+            // states the assembly and both versions at the step that produced it.
+            LayoutFaults = E2ECliPack.FindLayoutFaults(
+                toolDir, E2ECliPack.ExpectedBoundVersion(AssemblyVersion));
+            if (LayoutFaults.Count > 0)
+            {
+                Error =
+                    "Packed CLI install layout will not bind (issue #3388). " +
+                    $"Expected assembly version {E2ECliPack.ExpectedBoundVersion(AssemblyVersion)}; faults: " +
+                    string.Join("; ", LayoutFaults) + ".\n" +
+                    "The binary would start and then fail at assembly-load time inside `init`, so " +
+                    "initialization fails here by name instead.\n" +
+                    $"Pack arguments were: {PackArguments}";
                 return;
             }
 
@@ -265,10 +312,35 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
     /// "Object synchronization method was called from an unsynchronized block of code",
     /// failing initialization outright. Do not re-inline this await.
     /// </summary>
-    private Task<ProcessRunner.ProcessResult> EnsureSolutionBuiltAsync(string repoRoot) => Task.Run(() =>
+    private Task<ProcessRunner.ProcessResult> EnsureSolutionBuiltAsync(string repoRoot) =>
+        RunUnderPrebuildMutexAsync(() => ProcessRunner.RunAsync(
+            "dotnet",
+            "build src/dirs.proj --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
+            workingDirectory: repoRoot,
+            environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
+            timeout: SolutionBuildTimeout),
+            description: "dotnet build src/dirs.proj -c Release (prebuild, deployment closure)");
+
+    /// <summary>
+    /// Runs <paramref name="work"/> while holding the machine-wide prebuild mutex.
+    ///
+    /// Both writers of the shared <c>src/**/bin/Release</c> tree go through here: the prebuild
+    /// (#2739) and, since #3388, the CLI pack. The pack READS that tree to assemble the package,
+    /// so overlapping it with a build yields an internally inconsistent nupkg whose CLI fails at
+    /// assembly-load time much later, in an unrelated test (#3255, #3237).
+    ///
+    /// The entire acquire/run/release cycle executes on ONE dedicated thread because a Win32
+    /// mutex has THREAD AFFINITY: only the thread that acquired it may release it. Awaiting the
+    /// work inline resumed the continuation on a different thread-pool thread and ReleaseMutex
+    /// threw "Object synchronization method was called from an unsynchronized block of code",
+    /// failing initialization outright. Do not re-inline this await.
+    /// </summary>
+    private Task<ProcessRunner.ProcessResult> RunUnderPrebuildMutexAsync(
+        Func<Task<ProcessRunner.ProcessResult>> work,
+        string description = "dotnet pack (CLI, shared Release tree)") => Task.Run(() =>
     {
         // "Global\" so the mutex is visible across sessions, not just the current one.
-        using var mutex = new Mutex(initiallyOwned: false, name: @"Global\botnexus-e2e-prebuild");
+        using var mutex = new Mutex(initiallyOwned: false, name: E2ECliPack.PrebuildMutexName);
         var held = false;
         try
         {
@@ -278,7 +350,7 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             }
             catch (AbandonedMutexException)
             {
-                // A previous holder died mid-build. We now own the mutex; the build
+                // A previous holder died mid-build. We now own the mutex; the work
                 // below re-derives whatever that process left half-written.
                 held = true;
             }
@@ -292,13 +364,8 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
                     StdErr: $"Solution prebuild mutex not acquired within {SolutionBuildTimeout}.");
             }
 
-            Log.Add("[build] dotnet build src/dirs.proj -c Release (prebuild, deployment closure, mutex held)");
-            return ProcessRunner.RunAsync(
-                "dotnet",
-                "build src/dirs.proj --configuration Release --nologo --tl:off /nodeReuse:false /p:UseSharedCompilation=false",
-                workingDirectory: repoRoot,
-                environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
-                timeout: SolutionBuildTimeout).GetAwaiter().GetResult();
+            Log.Add($"[build] {description} (mutex held)");
+            return work().GetAwaiter().GetResult();
         }
         finally
         {

@@ -14,8 +14,23 @@ then drives the Blazor portal with Playwright.
 
 Per test-run sandbox under `Path.GetTempPath()/botnexus-e2e/<runId>/`:
 
-1. `dotnet pack` the in-tree `BotNexus.Cli` as `99.99.99-e2e-<hash>` and
+1. `dotnet pack` the in-tree `BotNexus.Cli` into a per-run `pack/` directory and
    `dotnet tool install` it into a per-run `tool/` directory.
+
+   The pack stamps **`PackageVersion` only** - `99.99.99-e2e-<hash>`, which gives
+   `dotnet tool install --version` a unique per-run identity. MSBuild `Version` stays at
+   the repo's real assembly version. Setting `Version` to the synthetic stamp as well
+   (the pre-#3388 behaviour) propagated it through every `ProjectReference`, so the CLI
+   was compiled against `99.99.99.0` while its dependencies - copied from the shared
+   `src/**/bin/Release` tree that the runner and the fixture prebuild both write - carried
+   the repo version. The installed tool then died during `init` with
+   `Could not load file or assembly 'BotNexus.Agent.Providers.Core, Version=99.99.99.0'`.
+   It also forced a cold rebuild of the whole closure from inside a testhost, which was the
+   bulk of the fixture-startup cost attributed in #3314.
+
+   The pack now also runs under the same machine-wide mutex as the solution prebuild, and
+   the install layout is verified by name before any CLI verb runs, so a bind fault fails at
+   the step that produced it rather than as an opaque `exited 1` later.
 2. `botnexus init --target <home>` — fresh `BOTNEXUS_HOME`.
 3. `botnexus provider add --name integration-mock --api integration-mock
    --default-model integration-mock-echo --base-url <e2e-catalog.json>`.
