@@ -1,7 +1,9 @@
 using System.Text;
 using System.Text.Json;
+using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Utilities;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Providers.Core.Streaming;
 
@@ -391,8 +393,23 @@ public sealed class OpenAIStreamProcessor
         if (currentTextIndex >= 0)
             stream.Push(new TextEndEvent(currentTextIndex, textAccumulator.ToString(), BuildPartial()));
 
-        foreach (var (_, state) in toolCallState)
+        // Tool-call accumulators whose function name never arrived are malformed provider frames,
+        // not tool calls. Emitting them substitutes an empty name for "the provider never sent one",
+        // which dispatches and fails downstream as the misleading `Tool '' is not registered.` They
+        // are dropped here, at the boundary where the defect is actually visible (#3467).
+        var droppedContentIndices = new List<int>();
+        var survivingToolCalls = 0;
+        foreach (var (tcIndex, state) in toolCallState)
         {
+            if (string.IsNullOrWhiteSpace(state.Name))
+            {
+                LogDroppedToolCall(model, tcIndex, state.Id);
+                droppedContentIndices.Add(state.ContentIndex);
+                continue;
+            }
+
+            survivingToolCalls++;
+
             // Reuse the args parsed on the final delta when the buffer has not grown since
             // (the common case — a tool call's last delta parses the complete buffer). Only
             // re-parse if no cached parse covers the current buffer length, e.g. a tool call
@@ -404,6 +421,15 @@ public sealed class OpenAIStreamProcessor
             contentBlocks[state.ContentIndex] = toolCall;
             stream.Push(new ToolCallEndEvent(state.ContentIndex, toolCall, BuildPartial()));
         }
+
+        // Descending order so each removal leaves the lower indices valid.
+        foreach (var contentIndex in droppedContentIndices.OrderByDescending(i => i))
+            contentBlocks.RemoveAt(contentIndex);
+
+        // A turn whose only tool calls were malformed has nothing to execute, so reporting ToolUse
+        // would send the loop back for a dispatch round trip with an empty tool set (#3467).
+        if (droppedContentIndices.Count > 0 && survivingToolCalls == 0 && stopReason == StopReason.ToolUse)
+            stopReason = StopReason.Stop;
 
         var finalMessage = BuildPartial() with
         {
@@ -563,6 +589,17 @@ public sealed class OpenAIStreamProcessor
         if (contentBuilder.Length > 0 && toolCallBuilders.Count == 0)
             stream.Push(new TextEndEvent(contentIndex, contentBuilder.ToString(), output));
 
+        // Drop malformed accumulators (no function name) before anything is emitted, so neither the
+        // live events, the final content, nor the stop-reason decision below sees them (#3467).
+        foreach (var tcIndex in toolCallBuilders
+                     .Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.Name))
+                     .Select(kvp => kvp.Key)
+                     .ToList())
+        {
+            LogDroppedToolCall(model, tcIndex, toolCallBuilders[tcIndex].Id);
+            toolCallBuilders.Remove(tcIndex);
+        }
+
         foreach (var (tcIndex, builder) in toolCallBuilders)
         {
             var args = StreamingJsonParser.Parse(builder.ArgumentsJson.ToString());
@@ -601,6 +638,19 @@ public sealed class OpenAIStreamProcessor
             blocks.Add(new ToolCallContent(builder.Id, builder.Name ?? "", args));
         }
         return blocks;
+    }
+
+    /// <summary>
+    /// Reports a streamed tool call discarded because the provider never delivered a function name,
+    /// naming the tool-call index and id so the malformed frame is identifiable in the log. Mirrors
+    /// the existing <c>Skipping malformed SSE chunk</c> treatment of a bad frame (#3467).
+    /// </summary>
+    private static void LogDroppedToolCall(LlmModel model, int toolCallIndex, string toolCallId)
+    {
+        ProviderDiagnostics.CreateLogger(nameof(OpenAIStreamProcessor)).LogWarning(
+            "Dropping malformed streamed tool call with no function name from {Provider}/{Model}: " +
+            "tool-call index {ToolCallIndex}, id '{ToolCallId}'.",
+            model.Provider, model.Id, toolCallIndex, string.IsNullOrEmpty(toolCallId) ? "(none)" : toolCallId);
     }
 
     private static AssistantMessage CreatePartialMessage(LlmModel model, string api)
@@ -678,6 +728,17 @@ public sealed class OpenAIStreamProcessor
         public void Add(ContentBlock block)
         {
             _blocks.Add(block);
+            _snapshot = null;
+        }
+
+        /// <summary>
+        /// Removes the block at <paramref name="index"/> and invalidates the cached snapshot. Used
+        /// only to withdraw a malformed streamed tool call from the final content (#3467); callers
+        /// must remove in descending index order because removal shifts the blocks above it.
+        /// </summary>
+        public void RemoveAt(int index)
+        {
+            _blocks.RemoveAt(index);
             _snapshot = null;
         }
 
