@@ -267,15 +267,8 @@ public sealed class PortalLoadService : IPortalLoadService
         }
     }
 
-    private static string MapRole(string role) => role.ToLowerInvariant() switch
-    {
-        "user" => "User",
-        "assistant" => "Assistant",
-        "tool" => "Tool",
-        "error" => "Error",
-        "system" => "System",
-        _ => role
-    };
+    // #3456: role normalisation is owned by MessageRole. Do not reintroduce a local switch here.
+    private static string MapRole(string role) => MessageRole.Normalize(role);
 
     /// <inheritdoc />
     public async Task RefreshAsync(CancellationToken cancellationToken = default)

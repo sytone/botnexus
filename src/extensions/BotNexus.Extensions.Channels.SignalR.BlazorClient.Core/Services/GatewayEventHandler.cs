@@ -337,19 +337,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     // #1651: maps a pending stream role (carried on the ContentDelta.role field) to the
     // ChatMessage.Role string ChatPanel keys assistant-vs-user rendering off. A null/blank
     // pending role -- the default for every ordinary streamed reply -- resolves to "Assistant",
-    // preserving the pre-post-as-assistant behaviour. Mirrors AgentInteractionService.MapRole so
-    // the live-fan-out path and the history-replay path agree on the displayed role.
-    private static string ResolveFlushRole(string? pendingRole) =>
-        (pendingRole ?? string.Empty).Trim().ToLowerInvariant() switch
-        {
-            "" => "Assistant",
-            "user" => "User",
-            "assistant" => "Assistant",
-            "tool" => "Tool",
-            "error" => "Error",
-            "system" => "System",
-            var other => other,
-        };
+    // preserving the pre-post-as-assistant behaviour.
+    // #3456: role normalisation is owned by MessageRole. Do not reintroduce a local switch here.
+    private static string ResolveFlushRole(string? pendingRole) => MessageRole.Normalize(pendingRole);
 
     public void HandleMessageEnd(AgentStreamEvent evt)
     {

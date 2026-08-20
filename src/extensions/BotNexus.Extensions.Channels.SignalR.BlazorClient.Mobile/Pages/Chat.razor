@@ -348,9 +348,10 @@ else
 
     // #1475: user and assistant messages both render through the Markdown pipeline.
     // Platform-generated roles (System, Tool, Error, Notification) stay on raw text rendering.
+    // #3456: the assistant/user predicates are owned by MessageRole -- do not hand-roll an
+    // OrdinalIgnoreCase comparison here.
     private static bool ShouldRenderAsMarkdown(string? role) =>
-        string.Equals(role, "assistant", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(role, "user", StringComparison.OrdinalIgnoreCase);
+        MessageRole.IsAssistant(role) || MessageRole.IsUser(role);
     private ChatMessage? _modalToolMessage;
     private DotNetObjectReference<Chat>? _dotNetRef;
     private bool _appResumeListenerRegistered;
@@ -1015,7 +1016,9 @@ else
     private static string GetMessageClass(ChatMessage msg)
     {
         if (msg.Role.Equals("thinking", StringComparison.OrdinalIgnoreCase)) return "thinking";
-        return msg.Role.Equals("user", StringComparison.OrdinalIgnoreCase) ? "user" : "assistant";
+        // #3456: the lower-case CSS bubble-side token is owned by MessageRole, so this
+        // down-mapping is not a second private convention.
+        return MessageRole.CssRole(msg.Role);
     }
 
     // #1690: mirror desktop ChatPanel.FormatTimestamp so older messages show a date,

@@ -428,13 +428,9 @@ public sealed class ClientStateStore : IClientStateStore
             // #1651: honour a role carried on the buffered content (PendingRole) so a
             // user-stamped agent-post commits as a user bubble. Null defaults to Assistant,
             // matching the pre-post-as-assistant behaviour of this flush.
-            var role = (conv.StreamState.PendingRole ?? string.Empty).Trim().ToLowerInvariant() switch
-            {
-                "" => "Assistant",
-                "user" => "User",
-                "assistant" => "Assistant",
-                var other => other,
-            };
+            // #3456: role normalisation is owned by MessageRole. Do not reintroduce a local
+            // switch here.
+            var role = MessageRole.Normalize(conv.StreamState.PendingRole);
             conv.AppendMessage(new ChatMessage(role, buffer ?? "", DateTimeOffset.UtcNow)
             {
                 ThinkingContent = thinking

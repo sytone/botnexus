@@ -1272,15 +1272,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
         _store.NotifyChanged();
     }
 
-    private static string MapRole(string role) => role.ToLowerInvariant() switch
-    {
-        "user" => "User",
-        "assistant" => "Assistant",
-        "tool" => "Tool",
-        "error" => "Error",
-        "system" => "System",
-        _ => role
-    };
+    // #3456: role normalisation is owned by MessageRole. Do not reintroduce a local switch here.
+    private static string MapRole(string role) => MessageRole.Normalize(role);
 
     /// <summary>
     /// Single source of truth for projecting a session-history transcript entry into a
