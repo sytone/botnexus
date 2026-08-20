@@ -89,6 +89,63 @@ public sealed class TodoPanelTests : IDisposable
         items[3].GetAttribute("data-status").ShouldBe("cancelled");
     }
 
+    /// <summary>
+    /// Rendering assertion (#3455): the panel actually surfaces the projected glyph and label for
+    /// each status, and degrades an unrecognised wire value to the pending projection. The
+    /// glyph/label TABLE itself is pinned once in <c>TodoItemStatusProjectionTests</c>; this test
+    /// asserts only that the component is wired to it.
+    /// </summary>
+    [Fact]
+    public void Renders_projected_glyph_and_label_for_each_status()
+    {
+        SeedConversation("conv-glyph",
+            "{\"items\":["
+            + "{\"id\":\"a\",\"text\":\"D\",\"status\":\"done\"},"
+            + "{\"id\":\"b\",\"text\":\"P\",\"status\":\"in_progress\"},"
+            + "{\"id\":\"c\",\"text\":\"N\",\"status\":\"pending\"},"
+            + "{\"id\":\"d\",\"text\":\"C\",\"status\":\"cancelled\"},"
+            + "{\"id\":\"e\",\"text\":\"U\",\"status\":\"deferred\"}"
+            + "]}");
+
+        var cut = _ctx.Render<TodoPanel>(parameters => parameters
+            .Add(x => x.AgentId, "agent-1")
+            .Add(x => x.ConversationId, "conv-glyph"));
+
+        var boxes = cut.FindAll(".todo-item-box");
+        var labels = cut.FindAll(".todo-item-status-label");
+        boxes.Count.ShouldBe(5);
+
+        boxes[0].TextContent.ShouldBe("\u2611");
+        boxes[1].TextContent.ShouldBe("\u25D0");
+        boxes[2].TextContent.ShouldBe("\u2610");
+        boxes[3].TextContent.ShouldBe("\u2612");
+        boxes[4].TextContent.ShouldBe("\u2610"); // unknown -> pending glyph
+
+        labels[0].TextContent.ShouldBe("Done");
+        labels[1].TextContent.ShouldBe("In progress");
+        labels[2].TextContent.ShouldBe("Pending");
+        labels[3].TextContent.ShouldBe("Cancelled");
+        labels[4].TextContent.ShouldBe("Pending"); // unknown -> pending label
+    }
+
+    /// <summary>
+    /// #3455: the one intentional delta, observed through the component. A mixed-case wire value
+    /// previously fell through to the pending branch; it now renders as Done.
+    /// </summary>
+    [Fact]
+    public void Mixed_case_wire_status_renders_as_its_canonical_status()
+    {
+        SeedConversation("conv-case",
+            "{\"items\":[{\"id\":\"a\",\"text\":\"Shouty\",\"status\":\"DONE\"}]}");
+
+        var cut = _ctx.Render<TodoPanel>(parameters => parameters
+            .Add(x => x.AgentId, "agent-1")
+            .Add(x => x.ConversationId, "conv-case"));
+
+        cut.Find("[data-testid='todo-item']").GetAttribute("data-status").ShouldBe("done");
+        cut.Find("[data-testid='todo-progress']").TextContent.ShouldContain("1 / 1");
+    }
+
     [Fact]
     public void Renders_done_progress_count()
     {

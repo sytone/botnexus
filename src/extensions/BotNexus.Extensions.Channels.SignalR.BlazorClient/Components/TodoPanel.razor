@@ -38,10 +38,10 @@
         <ul class="todo-list" data-testid="todo-list">
             @foreach (var item in items)
             {
-                <li class="todo-item todo-status-@(item.Status)" data-testid="todo-item" data-status="@item.Status">
-                    <span class="todo-item-box" aria-hidden="true">@StatusBox(item.Status)</span>
+                <li class="todo-item todo-status-@(TodoItemStatusProjection.Wire(item.Status))" data-testid="todo-item" data-status="@TodoItemStatusProjection.Wire(item.Status)">
+                    <span class="todo-item-box" aria-hidden="true">@TodoItemStatusProjection.Glyph(item.Status)</span>
                     <span class="todo-item-text">@item.Text</span>
-                    <span class="todo-item-status-label">@StatusLabel(item.Status)</span>
+                    <span class="todo-item-status-label">@TodoItemStatusProjection.Label(item.Status)</span>
                 </li>
             }
         </ul>
@@ -108,7 +108,7 @@
                 result.Add(new TodoItemView
                 {
                     Text = item.Text!,
-                    Status = NormalizeStatus(item.Status),
+                    Status = TodoItemStatusProjection.Parse(item.Status),
                 });
             }
             return result;
@@ -120,21 +120,12 @@
         }
     }
 
-    private static string NormalizeStatus(string? status)
-        => (status?.Trim().ToLowerInvariant()) switch
-        {
-            "in_progress" => "in_progress",
-            "done" => "done",
-            "cancelled" => "cancelled",
-            _ => "pending",
-        };
-
     private static int DoneCount(IReadOnlyList<TodoItemView> items)
     {
         var count = 0;
         foreach (var item in items)
         {
-            if (item.Status == "done")
+            if (item.Status == TodoItemStatus.Done)
                 count++;
         }
         return count;
@@ -145,7 +136,7 @@
         var count = 0;
         foreach (var item in items)
         {
-            if (item.Status == "in_progress")
+            if (item.Status == TodoItemStatus.InProgress)
                 count++;
         }
         return count;
@@ -158,22 +149,6 @@
     /// </summary>
     private bool ShowCloseoutWarning(IReadOnlyList<TodoItemView> items)
         => IsRunIdle && InProgressCount(items) > 0;
-
-    private static string StatusBox(string status) => status switch
-    {
-        "done" => "\u2611",        // ballot box with check
-        "in_progress" => "\u25D0", // half-filled circle
-        "cancelled" => "\u2612",   // ballot box with X
-        _ => "\u2610",             // empty ballot box
-    };
-
-    private static string StatusLabel(string status) => status switch
-    {
-        "in_progress" => "In progress",
-        "done" => "Done",
-        "cancelled" => "Cancelled",
-        _ => "Pending",
-    };
 
     protected override void OnInitialized()
     {
@@ -202,6 +177,11 @@
     private sealed class TodoItemView
     {
         public string Text { get; set; } = string.Empty;
-        public string Status { get; set; } = "pending";
+
+        /// <summary>
+        /// The parsed status. <see cref="TodoItemStatus.Pending"/> is the enum's default, matching
+        /// the server's own <c>_ =&gt; "pending"</c> fallback (#3455).
+        /// </summary>
+        public TodoItemStatus Status { get; set; } = TodoItemStatus.Pending;
     }
 }
