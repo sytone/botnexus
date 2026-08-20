@@ -54,6 +54,16 @@ public sealed class PlatformConfigWriter
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
     private static readonly JsonSerializerOptions PlatformPersistOptions = new() { WriteIndented = true };
+
+    /// <summary>
+    /// Process-lifetime key that makes the compare-and-swap revision token opaque (#3469).
+    /// </summary>
+    /// <remarks>
+    /// Generated once, in memory; never written to disk and never exposed through any API. See
+    /// <see cref="ComputeRevision"/> for the full rationale, including why a per-process key is the
+    /// correct trade and why a disk-derived key would defeat the purpose.
+    /// </remarks>
+    private static readonly byte[] RevisionKey = RandomNumberGenerator.GetBytes(32);
     private readonly string _configPath;
     private readonly IFileSystem _fileSystem;
     private readonly ConfigBackupService? _backup;
@@ -468,13 +478,42 @@ public sealed class PlatformConfigWriter
     }
 
     /// <summary>
-    /// Computes the revision token for a configuration document: a stable content digest of its
-    /// canonical serialization, used as the compare-and-swap token for whole-document replaces.
+    /// Computes the compare-and-swap revision token for a configuration document: an <em>opaque</em>
+    /// keyed digest of its canonical serialization.
     /// </summary>
+    /// <remarks>
+    /// <para><b>Why keyed, not a bare digest (#3469).</b> Until this fix the revision was a raw
+    /// SHA-256 of the exact bytes on disk, and <c>GET /api/config/snapshot</c> hands it to every
+    /// caller authorised for the <em>redacted</em> settings view. That made it an offline
+    /// confirmation oracle: the redacted document already discloses the full structure, every
+    /// non-secret value and the exact set of configured providers, so an attacker with a candidate
+    /// for the one remaining unknown - a provider API key or a channel bot token - could confirm or
+    /// refute it in a single hash, with no rate limit and no audit trail. The digest is stable, so
+    /// it doubles as a fingerprint for detecting whether a credential has been rotated.</para>
+    /// <para><b>Why not hash a redacted canonicalisation instead.</b> That variant was considered
+    /// and rejected: two documents differing only in a secret value redact to the same bytes, so a
+    /// concurrent secret-only write would produce an <em>identical</em> revision and become
+    /// undetectable. That trades a confidentiality defect for a lost-update defect - precisely the
+    /// class of bug the revision exists to prevent (#2059/#2134). The opaque route keeps the token a
+    /// total function of the full document, so every write still moves it.</para>
+    /// <para><b>Shape.</b> <c>HMAC-SHA256(K, canonical)</c> where <c>K</c> is
+    /// <see cref="RevisionKey"/>: 32 cryptographically random bytes generated once per process and
+    /// never persisted or exposed. Possession of a token therefore reveals nothing about the
+    /// document to anyone who does not hold <c>K</c>, while within the process the token remains a
+    /// deterministic function of content - which is exactly what compare-and-swap needs, including
+    /// for edits made out of band by another process or by hand.</para>
+    /// <para><b>Consequence of a per-process key.</b> A token minted before a gateway restart no
+    /// longer matches after it, so a patch quoting it is rejected with <c>409 Conflict</c> and the
+    /// settings UI reloads and re-applies. This is deliberate and is the safe direction to fail: a
+    /// snapshot read in a previous process lifetime cannot prove anything about what committed
+    /// across the restart, so accepting it would be the unsound choice. It is also why the key is
+    /// not derived from anything on disk - a disk-derived key would be recoverable by exactly the
+    /// reader this fix exists to defend against.</para>
+    /// </remarks>
     private static string ComputeRevision(JsonObject root)
     {
         var canonical = root.ToJsonString(PlatformPersistOptions);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+        return Convert.ToHexString(HMACSHA256.HashData(RevisionKey, Encoding.UTF8.GetBytes(canonical)));
     }
 
     /// <summary>
