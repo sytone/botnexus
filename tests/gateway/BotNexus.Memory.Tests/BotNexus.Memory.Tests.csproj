@@ -27,4 +27,8 @@
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\BotNexus.Testing\SqlitePoolCleanup.cs" Link="Shared\SqlitePoolCleanup.cs" />
+    <Using Include="BotNexus.Testing" />
+  </ItemGroup>
 </Project>

@@ -42,7 +42,9 @@ re-filing ([#2764](https://github.com/Sytone/botnexus/issues/2764),
 ## Candidate 1 — SignalR hub event inventory (**attribute/interface-driven**)
 
 **Rank: 1. Divergence is total and currently live.** Filed as
-[#3318](https://github.com/Sytone/botnexus/issues/3318).
+[#3318](https://github.com/Sytone/botnexus/issues/3318). **Shipped** — the harness half is done; see
+[Hub event inventory generator](./hub-event-inventory-generator.md). The measurements below describe
+the state of `main` *before* that change.
 
 **Hand-maintained today.** The server→client event contract is declared once as a typed interface,
 `src/extensions/BotNexus.Extensions.Channels.SignalR/IGatewayHubClient.cs` — **24 members**. It is

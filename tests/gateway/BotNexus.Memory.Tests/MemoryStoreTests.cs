@@ -196,6 +196,8 @@ public sealed class MemoryStoreTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        // No pool cleanup is needed here: every test in this class owns a MemoryStoreTestContext,
+        // which clears the pool for its own database in DisposeAsync. A class-level clear would be
+        // redundant, and the process-global form would break siblings (#3392).
     }
 }

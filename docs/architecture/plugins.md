@@ -153,6 +153,52 @@ the user placed alongside a plugin survives an update just as it survives a remo
 `.git` metadata is never promoted - it is an artefact of the transport, not plugin content, and
 copying it would make every plugin directory a nested repository.
 
+## The update trigger is a cron job, not a startup check
+
+Claude Code and Copilot check their plugins when the framework starts, because their host is a
+short-lived CLI process that starts many times a day. **BotNexus is an always-up gateway.** On a
+box that stays up for weeks, "check on start" means "never check" - and it would pass every test,
+because the test harness restarts the process on every run. Copying that trigger would ship a
+plugin system that silently stops updating and looks healthy while doing it.
+
+The extension therefore contributes an agentless **`plugin-update` cron action** and provisions one
+platform-wide job for it (#2683). The relevant properties:
+
+| Property | Value | Why |
+|---|---|---|
+| Action type | `plugin-update` | Dispatched by `CronScheduler` through the same `ICronAction` enumerable as every built-in action. There is no second dispatch path. |
+| `agentId` | `null` | Plugins are installed into the gateway, not an agent. `CronJob.AgentId` is already nullable and the scheduler's session-rebonding pass skips agentless jobs, so no "system job" concept was needed. |
+| Cost | none | No session is bonded and no model is resolved. Cost and tool-count fields stay `null` - the platform's "not measured" reading - never zero. |
+| Job id | `plugin-update` | A fixed constant, not derived from an agent: the id *is* the guarantee that exactly one such job exists. |
+| Default schedule | `0 3 * * *` | Off-hours, staggered before the 04:00 skill-review pass. |
+
+### Provisioned on install, and then left alone
+
+The job is created by the act of installing a plugin - the moment it first becomes meaningful -
+and only when the install fully succeeded. A failed install materialised nothing, so a job
+provisioned for it would run forever over content that does not exist.
+
+Once the job exists it is **never modified**. The provisioner reads the store and returns early;
+it does not upsert a canonical definition. A schedule the user edits, or a job the user disables,
+survives every subsequent install. This mirrors `SkillReviewCronProvisioner` and is the opposite
+of the heartbeat provisioner, which deliberately force-resyncs. To turn the loop off, **disable**
+the job rather than delete it: a deleted job is recreated by the next install.
+
+Provisioning failure is logged, not propagated. The plugin is already on disk with its record
+written, and reporting that as a failed install would be a lie the caller could act on
+destructively.
+
+### One plugin's failure is not the run's failure
+
+Each plugin is updated inside its own error boundary and the run continues past a fault. Aborting
+on the first failure would let a single unreachable source silently freeze every other plugin on
+the gateway at its installed revision - visible for the broken plugin, invisible for all the
+healthy ones. The run is recorded as an error only when *every* enabled plugin failed, because at
+that point there is no partial success left to protect.
+
+The update preference is read before any work, so a pinned plugin's source is never fetched. A
+filter applied after the fetch would cost a clone per run to reach a foregone conclusion, and would
+make "pinned" observationally identical to "already current".
 
 ## MCP servers
 

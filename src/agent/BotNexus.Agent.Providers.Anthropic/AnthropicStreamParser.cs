@@ -166,7 +166,8 @@ internal static class AnthropicStreamParser
 
             case "content_block_delta":
                 HandleContentBlockDelta(data, model, stream, contentBlocks, blockTypes,
-                    textAccumulators, textDeltaCounts, signatureAccumulators, argumentBudgets, usage, responseId, buildMessage);
+                    textAccumulators, textDeltaCounts, signatureAccumulators, argumentBudgets,
+                    toolCallIds, toolCallNames, usage, responseId, buildMessage);
                 break;
 
             case "content_block_stop":
@@ -250,7 +251,11 @@ internal static class AnthropicStreamParser
                 argumentBudgets[index] = StreamToolArgumentBudget.ForToolCall(
                     model.Provider, model.Id,
                     $"tool '{toolCallNames.GetValueOrDefault(index, "")}' (block {index})");
-                stream.Push(new ToolCallStartEvent(index, partial));
+                stream.Push(new ToolCallStartEvent(
+                    index,
+                    partial,
+                    toolCallIds.GetValueOrDefault(index),
+                    toolCallNames.GetValueOrDefault(index)));
                 break;
         }
     }
@@ -265,6 +270,8 @@ internal static class AnthropicStreamParser
         Dictionary<int, int> textDeltaCounts,
         Dictionary<int, StringBuilder> signatureAccumulators,
         Dictionary<int, StreamToolArgumentBudget> argumentBudgets,
+        Dictionary<int, string> toolCallIds,
+        Dictionary<int, string> toolCallNames,
         Usage usage,
         string? responseId,
         Func<LlmModel, List<ContentBlock>, Usage, StopReason, string?, string?, AssistantMessage> buildMessage)
@@ -297,7 +304,12 @@ internal static class AnthropicStreamParser
                     budget.Append(textAccumulators[index], jsonFrag);
                 else
                     textAccumulators[index].Append(jsonFrag);
-                stream.Push(new ToolCallDeltaEvent(index, jsonFrag, partial));
+                stream.Push(new ToolCallDeltaEvent(
+                    index,
+                    jsonFrag,
+                    partial,
+                    toolCallIds.GetValueOrDefault(index),
+                    toolCallNames.GetValueOrDefault(index)));
                 break;
             case "signature_delta":
                 var sig = delta.GetProperty("signature").GetString() ?? "";

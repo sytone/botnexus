@@ -98,12 +98,18 @@ public class OpenAICompletionsProviderTests
     }
 
     [Fact]
-    public void MapStopReason_ContentFilter_MapsToErrorWithMessage()
+    public void MapStopReason_ContentFilter_MapsToSensitiveWithMessage()
     {
         // #1408: MapStopReason moved to the shared CompletionsStreamEngine in Providers.Core.
+        // #3296: the expected StopReason changed from Error to Sensitive. This test previously
+        // pinned the divergence itself -- Completions said Error for the same upstream condition
+        // the Responses parser normalized to Sensitive -- so correcting the mapping necessarily
+        // corrects the assertion. The message half is unchanged and still asserted, because it is
+        // the only place a filtered turn states why it stopped. Cross-API parity is covered by
+        // ContentFilterStopReasonParityTests in Providers.Core.Tests.
         var mapped = CompletionsStreamEngine.MapStopReason("content_filter");
 
-        mapped.StopReason.ShouldBe(StopReason.Error);
+        mapped.StopReason.ShouldBe(StopReason.Sensitive);
         mapped.ErrorMessage.ShouldBe("Content filtered by provider");
     }
 

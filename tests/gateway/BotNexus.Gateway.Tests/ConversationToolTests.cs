@@ -558,7 +558,7 @@ public sealed class ConversationToolTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqlitePoolCleanup.ClearPoolFor(databasePath);
             if (File.Exists(databasePath)) File.Delete(databasePath);
         }
     }

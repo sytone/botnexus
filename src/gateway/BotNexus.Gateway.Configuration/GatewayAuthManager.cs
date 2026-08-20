@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using System.IO.Abstractions;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Core;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Providers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -213,6 +214,20 @@ public sealed class GatewayAuthManager
     /// <param name="baseOptions">Optional caller-supplied options to preserve (timeouts, cancellation,
     /// stream-setup watchdog). A copy is returned with <see cref="SimpleStreamOptions.ApiKey"/> set;
     /// the caller's instance is not mutated. When null a fresh options instance is created.</param>
+    /// <param name="sessionId">
+    /// #3417: the identity of the session this background call is acting on. Threading it HERE - at
+    /// the shared seam - rather than at each call site is deliberate: <c>SessionId</c> is what drives
+    /// the Copilot Responses <c>prompt_cache_key</c>, and the two existing background callers
+    /// (compaction, auto-title) had each independently omitted it, leaving that branch dead for the
+    /// largest prompt the gateway ever sends. A third background caller now inherits the behaviour by
+    /// construction instead of having to remember.
+    /// <para>
+    /// Typed as <see cref="SessionId"/> rather than a raw string (#3099 primitive-ID fence): the value
+    /// object cannot hold a blank, so "no session identity" is representable only as <c>null</c> and
+    /// an empty cache key cannot be constructed at this seam at all. A null value is inert - the
+    /// caller's <paramref name="baseOptions"/> value, if any, survives untouched.
+    /// </para>
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>
     /// Options with the resolved key applied. A null/blank resolved key leaves <c>ApiKey</c> null so
@@ -222,11 +237,27 @@ public sealed class GatewayAuthManager
     public async Task<SimpleStreamOptions> CreateAuthenticatedOptionsAsync(
         string provider,
         SimpleStreamOptions? baseOptions = null,
+        SessionId? sessionId = null,
         CancellationToken cancellationToken = default)
     {
         var apiKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
         var options = baseOptions ?? new SimpleStreamOptions();
-        return string.IsNullOrWhiteSpace(apiKey) ? options : options with { ApiKey = apiKey };
+
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            options = options with { ApiKey = apiKey };
+        }
+
+        // A null id must leave SessionId exactly as the caller left it. Writing null through would
+        // erase a value the caller had already set, and an empty string would become an empty
+        // prompt_cache_key on the wire - a different (and worse) failure than the absent key this
+        // fix removes.
+        if (sessionId is { } resolvedSessionId)
+        {
+            options = options with { SessionId = resolvedSessionId.Value };
+        }
+
+        return options;
     }
 
     /// <summary>

@@ -934,9 +934,11 @@ public enum StopReason
 | `Error` | Provider or API failure | Log, retry, or surface the error. | Internal error condition |
 | `Aborted` | `CancellationToken` fired | Clean up gracefully. | Cancellation signal |
 | `Refusal` | Safety filter triggered | Inform the user the request was declined. | Anthropic/OpenAI: `"refusal"` (new in Phase 4) |
-| `Sensitive` | Content flagged as sensitive | Handle per your application's policy. | Anthropic: `"content_policy"`, `"safety"`, `"sensitive"` (new in Phase 4) |
+| `Sensitive` | Content filtering blocked or truncated the response | Handle per your application's policy. Do **not** count it as a provider error. | Anthropic: `"content_policy"`, `"safety"`, `"sensitive"`; OpenAI Chat Completions: `finish_reason: "content_filter"`; OpenAI Responses: `incomplete_details.reason == "content_filter"` and the `content_filter` status |
 
 > **Note (Phase 4):** `Refusal` and `Sensitive` are now properly mapped by providers. Previously, refusals and content flags were treated as generic stop reasons. Now they're explicitly distinguished so applications can provide context-specific handling.
+
+> **Note (#3296):** Content filtering normalizes to `Sensitive` on **both** OpenAI APIs. The Chat Completions engine used to map `finish_reason: "content_filter"` to `Error` while the Responses parser used `Sensitive` for the same upstream condition, so one provider decision produced two different normalized outcomes. `Error` is reserved for infrastructure and transport failures; a safety decision is not one, and folding it into `Error` inflated every error-rate signal derived from that value.
 
 > **Key takeaway:** Always check `StopReason` before assuming the response is complete. `ToolUse` is not an error — it is a control flow signal for the [agent core](02-agent-core.md).
 

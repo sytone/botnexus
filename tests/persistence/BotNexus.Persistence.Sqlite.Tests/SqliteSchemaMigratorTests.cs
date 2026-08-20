@@ -18,7 +18,7 @@ public sealed class SqliteSchemaMigratorTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolsUnder(_directory);
         try
         {
             Directory.Delete(_directory, recursive: true);

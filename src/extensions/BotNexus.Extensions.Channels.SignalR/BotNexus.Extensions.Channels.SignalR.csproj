@@ -12,6 +12,17 @@
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
   </ItemGroup>
+  <!--
+    The hub event inventory (HubEvents.All) is GENERATED from IGatewayHubClient (#3318), not
+    hand-written. The generator is referenced as an Analyzer rather than as an assembly so this
+    project takes no runtime dependency on it; ReferenceOutputAssembly="false" is what keeps the
+    netstandard2.0 analyzer out of the net10.0 reference closure.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\tools\BotNexus.SourceGenerators\BotNexus.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />

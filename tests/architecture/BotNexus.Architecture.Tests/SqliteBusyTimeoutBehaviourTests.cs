@@ -57,7 +57,7 @@ public sealed class SqliteBusyTimeoutBehaviourTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePoolCleanup.ClearPoolForConnectionString(cs);
             TryDelete(dbPath);
         }
     }
@@ -89,7 +89,7 @@ public sealed class SqliteBusyTimeoutBehaviourTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePoolCleanup.ClearPoolForConnectionString(cs);
             TryDelete(dbPath);
         }
     }
@@ -111,7 +111,7 @@ public sealed class SqliteBusyTimeoutBehaviourTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePoolCleanup.ClearPoolForConnectionString(cs);
             TryDelete(dbPath);
         }
     }

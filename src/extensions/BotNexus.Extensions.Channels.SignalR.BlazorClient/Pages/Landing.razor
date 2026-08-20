@@ -150,6 +150,14 @@ else
                     <div class="home-error" data-testid="home-error" role="alert">@_error</div>
                 }
             </section>
+
+            <section class="home-agent-roster" data-testid="home-agent-roster" aria-labelledby="home-agent-roster-title">
+                <div class="home-agent-roster-heading">
+                    <h2 id="home-agent-roster-title">Meet your agents</h2>
+                    <p>Choose an agent to continue its most recent conversation and see what each one is built to do.</p>
+                </div>
+                <AgentDashboard />
+            </section>
         }
     </div>
 }

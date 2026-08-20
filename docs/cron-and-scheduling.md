@@ -74,10 +74,12 @@ separate agent/system/maintenance job taxonomy - every job is dispatched to the 
 | `skill-review` | LLM skill-review pass (see [8.7](#_8-7-skill-review)) | `agentId` | One model turn per fire |
 | `agent-converse` | Scheduled agent-to-agent conversation (see [8.6](#_8-6-agent-converse)) | `agentId` + metadata | One or more model turns |
 | `heartbeat` | System-provisioned agent heartbeat | `agentId` | One model turn per fire |
+| `plugin-update` | Updates every installed plugin whose update preference is enabled (see [8.9](#_8-9-plugin-update)) | none - platform-wide, `agentId` is `null` | None |
 
 `heartbeat` and `skill-review` jobs are **auto-provisioned** by the gateway per user-defined agent
 and are marked `system` - they are hidden from `cron` tool `list` output unless `includeSystem` is
-set.
+set. The single `plugin-update` job is auto-provisioned the first time a plugin is installed and is
+marked `system` for the same reason.
 
 ### 2.1 Agent prompt jobs (`actionType: "agent-prompt"`)
 
@@ -595,6 +597,33 @@ For jobs with `catchUp: true` in their metadata, BotNexus will execute the misse
 ```
 
 Missed runs appear in `cron history` output and via `GET /api/cron/{jobId}/runs`.
+
+### 8.9 `plugin-update`
+
+Updates every installed plugin whose per-plugin update preference is enabled. Introduced by #2683
+as slice 4 of the plugin epic #2623.
+
+**Agentless.** Like `command`, it carries no `agentId`, bonds no session, and resolves no model, so
+it costs nothing and records no token usage. Cost fields stay `null` ("not measured") rather than
+zero - a zero would rank a job with no model concept as the cheapest agent job on the platform.
+
+**One job for the whole gateway.** Plugins are installed into the gateway, not into an agent, so a
+per-agent job would run the same update N times over one plugin root and race itself. The job id is
+the fixed constant `plugin-update`.
+
+**Provisioned on first install, never overwritten.** The job is created the first time a plugin is
+installed successfully - not at startup, because an always-up gateway that never restarts would
+never provision, and every test restarts the process so the defect would pass CI. Once the job
+exists it is never modified: a schedule you edit, or a job you disable, survives every subsequent
+install. To turn the loop off, **disable** the job rather than delete it - a deleted job is
+recreated by the next install, matching `heartbeat` and `skill-review` semantics.
+
+**Default schedule:** `0 3 * * *` (daily at 03:00).
+
+**Partial failure is not a failed run.** Each plugin is updated independently; one plugin whose
+source is unreachable does not stop the others. The run is recorded as an error only when *every*
+enabled plugin failed, because at that point there is no partial success left to protect. A pinned
+plugin (update preference disabled) is never even fetched.
 
 ---
 

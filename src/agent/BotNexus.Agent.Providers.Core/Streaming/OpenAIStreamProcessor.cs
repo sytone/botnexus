@@ -327,7 +327,7 @@ public sealed class OpenAIStreamProcessor
                                 argumentBudgets[tcIndex] = StreamToolArgumentBudget.ForToolCall(
                                     model.Provider, model.Id, $"tool '{fnName}' (index {tcIndex})");
 
-                                stream.Push(new ToolCallStartEvent(contentIndex, BuildPartial()));
+                                stream.Push(new ToolCallStartEvent(contentIndex, BuildPartial(), tcId, fnName));
                             }
 
                             if (tc.TryGetProperty("function", out var fnDeltaProp) &&
@@ -373,7 +373,7 @@ public sealed class OpenAIStreamProcessor
                                         new ToolCallContent(state.Id, state.Name, parsedArgs, state.ThoughtSignature);
 
                                     stream.Push(new ToolCallDeltaEvent(
-                                        state.ContentIndex, argsChunk, BuildPartial()));
+                                        state.ContentIndex, argsChunk, BuildPartial(), state.Id, state.Name));
                                 }
                             }
                         }
@@ -533,7 +533,8 @@ public sealed class OpenAIStreamProcessor
                         argumentBudgets[tcIndex] = StreamToolArgumentBudget.ForToolCall(
                             model.Provider, model.Id, $"tool '{builder.Name ?? ""}' (index {tcIndex})");
 
-                        stream.Push(new ToolCallStartEvent(contentIndex + tcIndex, output));
+                        stream.Push(new ToolCallStartEvent(
+                            contentIndex + tcIndex, output, builder.Id, builder.Name));
                     }
 
                     if (tc.TryGetProperty("function", out var fnDelta))
@@ -551,7 +552,8 @@ public sealed class OpenAIStreamProcessor
                                 budget.Append(builder.ArgumentsJson, argChunk);
                             else
                                 builder.ArgumentsJson.Append(argChunk);
-                            stream.Push(new ToolCallDeltaEvent(contentIndex + tcIndex, argChunk, output));
+                            stream.Push(new ToolCallDeltaEvent(
+                                contentIndex + tcIndex, argChunk, output, builder.Id, builder.Name));
                         }
                     }
                 }

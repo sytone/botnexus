@@ -153,6 +153,23 @@ jobs:
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Run inside the official Playwright image, which ships every browser system
+    # library preinstalled (#3401). The previous approach installed them with
+    # apt-get at job time; azure.archive.ubuntu.com answers `Ign:` for every
+    # index, apt falls through to archive.ubuntu.com and stalls with no output,
+    # and #3377's `timeout 5m` bound turned that indefinite hang into a reliable
+    # exit-code-124 failure on every PR instead of a green job. Bounding a stall
+    # is not fixing it. Using the image removes the apt step -- and therefore the
+    # whole mirror-availability failure class -- rather than time-boxing it again.
+    # The tag is pinned to the Microsoft.Playwright package version in
+    # Directory.Packages.props (1.44.0); bump both together. 1.44 has no `noble`
+    # variant published on mcr, so `jammy` is the current floor.
+    container:
+      image: mcr.microsoft.com/playwright:v1.44.0-jammy
+    env:
+      # The image stores its preinstalled browser builds here; without this the
+      # driver looks under ~/.cache/ms-playwright and finds nothing.
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET
@@ -165,46 +182,13 @@ jobs:
         run: |
           dotnet build tests/e2e/BotNexus.E2E.PortalDesktop.Tests/BotNexus.E2E.PortalDesktop.Tests.csproj --no-restore
           dotnet build tests/e2e/BotNexus.E2E.PortalMobile.Tests/BotNexus.E2E.PortalMobile.Tests.csproj --no-restore
-      # Install browser system libraries explicitly. Playwright's `--with-deps`
-      # apt list still references `libasound2`, which on Ubuntu 24.04 (noble) is a
-      # virtual package renamed to `libasound2t64` by the 64-bit time_t transition,
-      # so `--with-deps` fails with "Package 'libasound2' has no installation
-      # candidate" (exit 100). We install the deps ourselves against the renamed
-      # package and then install the chromium binary without `--with-deps`.
-      - name: Install Playwright system dependencies
-        shell: bash
-        # BOUNDED BY DESIGN (#3365). This step used to hang ~29 minutes inside apt and was then
-        # killed by the job's own 30-minute ceiling, so no Playwright test ran at all and the job
-        # reported a permanent red X on unrelated PRs. Observed on #3322/#3323/#3325/#3368/#3371/
-        # #3374, every one at ~30m; the same step succeeds in about a minute when the mirror is
-        # healthy, which is what makes it an availability problem rather than a package problem.
-        #
-        # The Azure mirror answers `Ign:` for every index and apt silently falls through to
-        # archive.ubuntu.com, which is where it stalls with no output. Retries plus explicit
-        # network timeouts turn that indefinite stall into a bounded, diagnosable failure, and
-        # timeout(1) caps the whole step well under the job ceiling so a hang can never again
-        # consume the entire slot. A red check that is always red is one nobody reads -- which is
-        # the actual damage, because it sits directly beside core-tests.
-        timeout-minutes: 8
-        run: |
-          set -euo pipefail
-          apt_opts=(
-            -o Acquire::Retries=3
-            -o Acquire::http::Timeout=20
-            -o Acquire::https::Timeout=20
-          )
-          timeout 5m sudo apt-get "${apt_opts[@]}" update
-          timeout 5m sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends \
-            libasound2t64 libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 \
-            libcups2t64 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 \
-            libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 libatspi2.0-0t64
-      - name: Install Playwright browsers (chromium)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ps1 = Get-ChildItem -Recurse -Filter playwright.ps1 -Path tests/e2e | Select-Object -First 1
-          if ($null -eq $ps1) { throw 'playwright.ps1 not found after build' }
-          & $ps1.FullName install chromium
+      # No apt-get step and no browser-download step: the container image already
+      # carries both the browser system libraries and the chromium build matching
+      # Microsoft.Playwright 1.44.0, located via PLAYWRIGHT_BROWSERS_PATH above.
+      # The historical hazard the apt step existed for -- Playwright's
+      # `--with-deps` apt list still naming `libasound2`, renamed to
+      # `libasound2t64` by noble's 64-bit time_t transition -- is likewise moot
+      # here, because we never ask apt for anything.
       - name: Run e2e portal Playwright suites
         # Target the two e2e project files explicitly. A bare `dotnet test --filter`
         # resolves the whole solution and attempts to run every test DLL in the repo;

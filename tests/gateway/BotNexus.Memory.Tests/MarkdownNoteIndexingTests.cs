@@ -217,7 +217,7 @@ public sealed class MarkdownNoteIndexingTests
         public async ValueTask DisposeAsync()
         {
             await Store.DisposeAsync();
-            SqliteConnection.ClearAllPools();
+            SqlitePoolCleanup.ClearPoolFor(Path.Combine(_root, "memory.db"));
             for (var attempt = 0; attempt < 5 && Directory.Exists(_root); attempt++)
             {
                 try

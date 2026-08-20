@@ -139,7 +139,7 @@ public sealed class SqliteToolStoreTests : IAsyncDisposable
         // store over the same database file and confirm the tool is still there.
         var first = NewStore();
         await first.CreateAsync(CreateTool("persisted", "Persisted Tool", order: 5));
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(_dbPath);
 
         var second = NewStore();
         var loaded = await second.GetAsync(ToolId.From("persisted"));
@@ -154,7 +154,7 @@ public sealed class SqliteToolStoreTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(_dbPath);
         await Task.Yield();
         if (!Directory.Exists(_tempDir))
             return;

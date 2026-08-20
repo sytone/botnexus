@@ -207,8 +207,12 @@ public static class ResponsesStreamParser
                             var arguments = GetString(item, "arguments") ?? "";
                             var index = contentBlocks.Count;
                             var parsed = StreamingJsonParser.Parse(arguments);
-                            contentBlocks.Add(new ToolCallContent(ResponsesStreamHelpers.ComposeToolCallId(callId, itemId), name, parsed));
-                            stream.Push(new ToolCallStartEvent(index, BuildPartial()));
+                            // The id carried on the event is the same composed id the end event and the
+                            // content block use, so a consumer can correlate start -> delta -> end with a
+                            // single key rather than re-deriving it (#3290).
+                            var composedId = ResponsesStreamHelpers.ComposeToolCallId(callId, itemId);
+                            contentBlocks.Add(new ToolCallContent(composedId, name, parsed));
+                            stream.Push(new ToolCallStartEvent(index, BuildPartial(), composedId, name));
 
                             var state = new ToolState(callId, itemId, name, index);
                             state.Arguments.Append(arguments);
@@ -217,7 +221,7 @@ public static class ResponsesStreamParser
                                 toolStates[itemId] = state;
 
                             if (arguments.Length > 0)
-                                stream.Push(new ToolCallDeltaEvent(index, arguments, BuildPartial()));
+                                stream.Push(new ToolCallDeltaEvent(index, arguments, BuildPartial(), composedId, name));
                             break;
                         }
                     }
@@ -303,11 +307,13 @@ public static class ResponsesStreamParser
                     if (stateKey is null || delta.Length == 0 || !toolStates.TryGetValue(stateKey, out var state)) continue;
 
                     state.Arguments.Append(delta);
+                    var deltaToolId = ResponsesStreamHelpers.ComposeToolCallId(state.CallId, state.ItemId);
                     contentBlocks[state.ContentIndex] = new ToolCallContent(
-                        ResponsesStreamHelpers.ComposeToolCallId(state.CallId, state.ItemId),
+                        deltaToolId,
                         state.Name,
                         StreamingJsonParser.Parse(state.Arguments.ToString()));
-                    stream.Push(new ToolCallDeltaEvent(state.ContentIndex, delta, BuildPartial()));
+                    stream.Push(new ToolCallDeltaEvent(
+                        state.ContentIndex, delta, BuildPartial(), deltaToolId, state.Name));
                     continue;
                 }
 
@@ -319,15 +325,17 @@ public static class ResponsesStreamParser
                     var before = state.Arguments.ToString();
                     state.Arguments.Clear();
                     state.Arguments.Append(finalArgs);
+                    var doneToolId = ResponsesStreamHelpers.ComposeToolCallId(state.CallId, state.ItemId);
                     contentBlocks[state.ContentIndex] = new ToolCallContent(
-                        ResponsesStreamHelpers.ComposeToolCallId(state.CallId, state.ItemId),
+                        doneToolId,
                         state.Name,
                         StreamingJsonParser.Parse(finalArgs));
                     if (finalArgs.StartsWith(before, StringComparison.Ordinal))
                     {
                         var delta = finalArgs[before.Length..];
                         if (delta.Length > 0)
-                            stream.Push(new ToolCallDeltaEvent(state.ContentIndex, delta, BuildPartial()));
+                            stream.Push(new ToolCallDeltaEvent(
+                                state.ContentIndex, delta, BuildPartial(), doneToolId, state.Name));
                     }
                     continue;
                 }

@@ -154,8 +154,12 @@ internal static class StreamAccumulator
                 case ToolCallStartEvent toolStart:
                     current = MessageConverter.ToAgentMessage(toolStart.Partial);
                     UpdateContextPartial(contextMessages, current, partialAddedToContext);
-                    toolCallState[toolStart.ContentIndex] = ResolveToolCallIdentity(current, toolStart.ContentIndex);
-                    var startedTool = toolCallState[toolStart.ContentIndex];
+                    // Identity comes off the event, not from indexing the partial message (#3290).
+                    // ContentIndex counts every content block, including text and thinking, so it is
+                    // not a position in ToolCalls; resolving by index attributed fragments to the
+                    // wrong call whenever more than one call streamed concurrently.
+                    var startedTool = (Id: toolStart.ToolCallId, Name: toolStart.ToolName);
+                    toolCallState[toolStart.ContentIndex] = startedTool;
 
                     await emit(new MessageUpdateEvent(
                         Message: current,
@@ -173,9 +177,10 @@ internal static class StreamAccumulator
                 case ToolCallDeltaEvent toolDelta:
                     current = MessageConverter.ToAgentMessage(toolDelta.Partial);
                     UpdateContextPartial(contextMessages, current, partialAddedToContext);
-                    if (!toolCallState.TryGetValue(toolDelta.ContentIndex, out var deltaTool))
+                    if (!toolCallState.TryGetValue(toolDelta.ContentIndex, out var deltaTool) ||
+                        deltaTool.Id is null)
                     {
-                        deltaTool = ResolveToolCallIdentity(current, toolDelta.ContentIndex);
+                        deltaTool = (Id: toolDelta.ToolCallId, Name: toolDelta.ToolName);
                         toolCallState[toolDelta.ContentIndex] = deltaTool;
                     }
 
@@ -324,24 +329,5 @@ internal static class StreamAccumulator
         }
 
         contextMessages.Add(final);
-    }
-
-    private static (string? Id, string? Name) ResolveToolCallIdentity(
-        AssistantAgentMessage message,
-        int contentIndex)
-    {
-        if (message.ToolCalls is null || message.ToolCalls.Count == 0)
-        {
-            return (null, null);
-        }
-
-        if (contentIndex >= 0 && contentIndex < message.ToolCalls.Count)
-        {
-            var directMatch = message.ToolCalls[contentIndex];
-            return (directMatch.Id, directMatch.Name);
-        }
-
-        var latest = message.ToolCalls[^1];
-        return (latest.Id, latest.Name);
     }
 }

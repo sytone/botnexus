@@ -276,6 +276,17 @@ public static class CompletionsStreamEngine
     /// Maps a Chat Completions <c>finish_reason</c> to the core <see cref="StopReason"/> plus an
     /// optional human-readable error message for the failure-style reasons.
     /// </summary>
+    /// <remarks>
+    /// <c>content_filter</c> maps to <see cref="StopReason.Sensitive"/>, NOT
+    /// <see cref="StopReason.Error"/> (#3296). The Responses parser already normalized the
+    /// equivalent upstream condition (<c>incomplete_details.reason == "content_filter"</c>, and the
+    /// <c>content_filter</c> response status) to <c>Sensitive</c>, so the two APIs disagreed about
+    /// what the SAME provider decision means. Content filtering is a safety outcome, not an
+    /// infrastructure failure: reporting it as <c>Error</c> misattributed a policy decision in
+    /// persisted history and inflated any error-rate signal derived from <c>StopReason.Error</c>.
+    /// The human-readable message is deliberately retained -- it is the only place the reason for an
+    /// otherwise empty turn is stated.
+    /// </remarks>
     public static (StopReason StopReason, string? ErrorMessage) MapStopReason(string? reason) => reason switch
     {
         "stop" => (StopReason.Stop, null),
@@ -283,7 +294,7 @@ public static class CompletionsStreamEngine
         "length" => (StopReason.Length, null),
         "function_call" => (StopReason.ToolUse, null),
         "tool_calls" => (StopReason.ToolUse, null),
-        "content_filter" => (StopReason.Error, "Content filtered by provider"),
+        "content_filter" => (StopReason.Sensitive, "Content filtered by provider"),
         "refusal" => (StopReason.Refusal, null),
         "network_error" => (StopReason.Error, "Provider finish_reason: network_error"),
         null => (StopReason.Stop, null),

@@ -34,7 +34,8 @@ public sealed class SqliteSessionStoreOrphanedConversationTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(_sessionDbPath);
+        SqlitePoolCleanup.ClearPoolFor(_conversationDbPath);
         if (Directory.Exists(_directoryPath))
         {
             try { Directory.Delete(_directoryPath, recursive: true); }

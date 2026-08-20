@@ -31,7 +31,7 @@ public sealed class SqliteSessionStoreConversationIdTests : IDisposable
     {
         try
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePoolCleanup.ClearPoolForConnectionString(_connectionString);
             if (File.Exists(_dbPath))
             {
                 for (var attempt = 0; attempt < 5; attempt++)

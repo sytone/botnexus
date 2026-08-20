@@ -239,6 +239,24 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
       // 2026-08-06 parallel test wedged 3 of 5 lanes past 34 min) instead of quietly
       // burning two hours before anyone notices. Raise it deliberately if honest run time
       // grows - Invoke-AzureBuildTest reports the margin so the breach is visible.
+      //
+      // MEASURED AND DELIBERATELY NOT RAISED (#3314). Two `-Mode full` runs against the #3305
+      // runner, on the same tree, disagree - and that variance IS the finding:
+      //   20260819033413-38a9b933  completed in 13.7 min, timeout: null, 6.3 min margin
+      //   20260819040357-0c2043a6  hit the runner deadline at 827s, timeout.unfinishedProjects
+      //                            = [BotNexus.Integration.E2E.Tests]
+      // `full` is therefore not uniformly over budget; it sits close enough to the ceiling that
+      // one project decides the outcome, and the attribution names that project in both
+      // directions. On the completing run E2E cost 325.8s of a 472.7s test phase for 283 tests;
+      // on the timing-out run it was the ONLY project still outstanding after 827s while all
+      // 60 others had reported. The measured driver is E2E fixture startup, not suite size:
+      // botnexus.gateway.tests runs 5,587 tests in 199.6s.
+      //
+      // Raising this number would buy time for a project that is ALSO failing on results (2 E2E
+      // fixture-init assertions on the completing run), converting a visible red gate into a
+      // slower red gate. The budget stands at 1200 and the cost is now attributed on every run
+      // via runner-cost.log, so the next change here can be argued from a table rather than a
+      // hypothesis.
       replicaTimeout: 1200
       replicaRetryLimit: 0
       manualTriggerConfig: {

@@ -534,6 +534,27 @@ at freeze time. This is what removes the previous fail-open: `ModelGuidanceSecti
 on the detected family with `_ => []`, so any model the switch had never heard of silently received
 **zero** behavioural guidance. An unrecognised model now gets the conservative default.
 
+**What each rung currently carries.** The rungs are not symmetric, and deliberately so - a family
+rung exists to correct an observed behaviour of that family, not to give every family an equal share
+of the instruction text.
+
+| Rung | Rules |
+|---|---|
+| default (mandatory) | verify with a tool rather than recall; read a file before describing it; state uncertainty; check tool output before assuming success |
+| `claude` | prefer targeted edits over whole-file writes; keep edit match windows small; use extended thinking |
+| `gpt` | tool-schema fidelity; retry circuit breaker; narration threshold |
+| `gemini` | absolute paths; workspace-root-relative references |
+
+The GPT rung was empty until #3375, on the reasoning that the verification rules it once carried had
+become the shared default. A controlled A/B evaluation of a GPT model against a Claude model - same
+task, same system prompt, equivalent engineering output - showed three operational divergences that
+the default does not address: a parameter transferred from a similar tool's schema, the same edit
+retried three times because a changing match count made each attempt look locally different, and one
+assistant message across 163 tool calls. The three GPT rules name those loopholes directly, because
+the generic phrasing demonstrably failed to fire against them: the retry rule states that a changed
+match count, whitespace, or anchor is the same strategy retried, and the narration rule carries a
+count rather than "when it helps", which evaluates to false for every individually-routine call.
+
 `Family` and `Version` use the same lowercase token grammar as the override file suffixes
 (alphanumerics, `-` between tokens), and `Version` is parsed by `ModelFamilyVersion` - the one
 sanctioned family/version parser in the tree (#2374). Malformed declarations - a duplicate

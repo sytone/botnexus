@@ -4858,7 +4858,35 @@ h3.conversation-title.editable:hover {
     cursor: default;
 }
 
-/* ── Agent Dashboard ────────────────────────────────────────────────── */
+/* ── Home agent roster / Agent Dashboard ───────────────────────────── */
+
+.home-agent-roster {
+    width: min(100%, 72rem);
+    margin: 1rem auto 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border, #333);
+}
+
+.home-agent-roster-heading {
+    padding: 0 1.5rem;
+}
+
+.home-agent-roster-heading h2 {
+    margin: 0;
+    font-size: 1.2rem;
+}
+
+.home-agent-roster-heading p {
+    margin: 0.35rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.home-agent-roster .agent-dashboard {
+    height: auto;
+    overflow: visible;
+    padding-top: 1rem;
+}
 
 .agent-dashboard {
     padding: 1.5rem;

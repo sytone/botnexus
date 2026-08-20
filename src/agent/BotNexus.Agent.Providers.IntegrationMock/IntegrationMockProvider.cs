@@ -163,7 +163,8 @@ public sealed class IntegrationMockProvider : IApiProvider
                         var toolCall = new ToolCallContent(toolCallId, toolName, args);
                         contentBlocks.Add(toolCall);
                         var index = contentBlocks.Count - 1;
-                        stream.Push(new ToolCallStartEvent(index, Snapshot(StopReason.ToolUse)));
+                        stream.Push(new ToolCallStartEvent(
+                            index, Snapshot(StopReason.ToolUse), toolCallId, toolName));
                         stream.Push(new ToolCallEndEvent(index, toolCall, Snapshot(StopReason.ToolUse)));
                         currentIndex = -1;
                         break;

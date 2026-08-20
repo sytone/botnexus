@@ -151,6 +151,92 @@ public abstract class StreamingProviderConformanceTests
     }
 
     /// <summary>
+    /// Every <c>toolcall_start</c> and <c>toolcall_delta</c> must carry the id and name of the call it
+    /// belongs to, and each argument fragment must be attributed to the call that actually sent it
+    /// (#3290).
+    /// <para>
+    /// This is the assertion the ordering invariants cannot make. A producer that emits perfectly
+    /// well-ordered events while labelling <c>call_b</c>'s fragment with <c>call_a</c>'s id passes
+    /// every #3300 rule, because ordering says nothing about identity. Before #3290 the consumer
+    /// resolved identity by indexing the partial message and fell back to "the most recent tool
+    /// call", so a mislabelled fragment was not merely possible, it was the designed behaviour
+    /// whenever <c>ContentIndex</c> - which counts text and thinking blocks too - ran past the end
+    /// of the <c>ToolCalls</c> list.
+    /// </para>
+    /// <para>
+    /// The fragment-content check is what makes this non-vacuous in the interesting direction: it is
+    /// not enough that both ids appear somewhere, each id must appear on the deltas whose payload is
+    /// that call's own arguments. Nulling either field on any producer reddens this test.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Stream_InterleavedToolCalls_StartAndDeltaEventsCarryTheirOwnIdentity()
+    {
+        var payload = BuildInterleavedToolCallPayload(
+            "call_a", "search", "{\"query\":\"weather\"}",
+            "call_b", "lookup", "{\"id\":\"42\"}",
+            MapCanonicalStopReason("tool_use"));
+
+        var (_, events) = await ExecuteAsync(payload);
+
+        var starts = events.OfType<ToolCallStartEvent>().ToList();
+        starts.Count.ShouldBe(2, $"{GetType().Name} must open both interleaved tool calls");
+
+        foreach (var start in starts)
+        {
+            start.ToolCallId.ShouldNotBeNullOrWhiteSpace(
+                $"{GetType().Name} knows the tool call id when it opens the block and must carry it " +
+                "on toolcall_start (#3290); emitting null forces the consumer back to the index guess");
+            start.ToolName.ShouldNotBeNullOrWhiteSpace(
+                $"{GetType().Name} must carry the tool name on toolcall_start (#3290)");
+        }
+
+        starts.Select(s => s.ToolCallId!).ShouldContain(id => id.Contains("call_a"));
+        starts.Select(s => s.ToolCallId!).ShouldContain(id => id.Contains("call_b"));
+        starts.Select(s => s.ToolName).ShouldContain("search");
+        starts.Select(s => s.ToolName).ShouldContain("lookup");
+
+        var deltas = events.OfType<ToolCallDeltaEvent>().ToList();
+        deltas.ShouldNotBeEmpty($"{GetType().Name} must emit argument deltas for the interleaved calls");
+
+        foreach (var delta in deltas)
+        {
+            delta.ToolCallId.ShouldNotBeNullOrWhiteSpace(
+                $"{GetType().Name} must carry the tool call id on every toolcall_delta (#3290); a " +
+                "null id is worse than no field at all, because a consumer then cannot rely on it");
+            delta.ToolName.ShouldNotBeNullOrWhiteSpace(
+                $"{GetType().Name} must carry the tool name on every toolcall_delta (#3290)");
+        }
+
+        // Attribution, not mere presence: a fragment containing "weather" belongs to call_a and a
+        // fragment containing "42" belongs to call_b. Swapping the labels satisfies every check
+        // above and fails here.
+        foreach (var delta in deltas.Where(d => d.Delta.Contains("weather")))
+        {
+            delta.ToolCallId!.Contains("call_a", StringComparison.Ordinal).ShouldBeTrue(
+                $"{GetType().Name} attributed the 'weather' argument fragment to the wrong tool call " +
+                $"(reported '{delta.ToolCallId}') - this is the #3290 misattribution");
+            delta.ToolName.ShouldBe("search");
+        }
+
+        foreach (var delta in deltas.Where(d => d.Delta.Contains("42")))
+        {
+            delta.ToolCallId!.Contains("call_b", StringComparison.Ordinal).ShouldBeTrue(
+                $"{GetType().Name} attributed the 'id: 42' argument fragment to the wrong tool call " +
+                $"(reported '{delta.ToolCallId}') - this is the #3290 misattribution");
+            delta.ToolName.ShouldBe("lookup");
+        }
+
+        // Guards the loops above against vacuity: if no delta carried either payload the two foreach
+        // bodies would never execute and the test would pass having asserted nothing about
+        // attribution.
+        deltas.ShouldContain(d => d.Delta.Contains("weather"),
+            "no delta carried call_a's arguments, so the attribution assertions never ran");
+        deltas.ShouldContain(d => d.Delta.Contains("42"),
+            "no delta carried call_b's arguments, so the attribution assertions never ran");
+    }
+
+    /// <summary>
     /// Ordering rules this provider is excused from, keyed by the rule id on
     /// <see cref="AssistantMessageEventOrdering"/> with the reason as the value.
     /// <para>

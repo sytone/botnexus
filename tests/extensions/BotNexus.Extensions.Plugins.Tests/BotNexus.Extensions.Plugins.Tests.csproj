@@ -13,5 +13,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Plugins\BotNexus.Extensions.Plugins.csproj" />
+    <!-- #2683: the cron action tests construct a real CronExecutionContext and a real CronJob. -->
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Cron\BotNexus.Cron.csproj" />
+    <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
   </ItemGroup>
 </Project>

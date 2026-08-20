@@ -21,4 +21,8 @@
     <ProjectReference Include="..\..\..\src\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\BotNexus.Testing\SqlitePoolCleanup.cs" Link="Shared\SqlitePoolCleanup.cs" />
+    <Using Include="BotNexus.Testing" />
+  </ItemGroup>
 </Project>

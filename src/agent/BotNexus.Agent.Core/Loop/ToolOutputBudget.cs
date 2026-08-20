@@ -1,3 +1,4 @@
+using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using System.Text;
 
@@ -101,6 +102,20 @@ public static class ToolOutputBudget
         => Apply(result, maxBytes, ToolOutputContinuationStore.Shared);
 
     /// <summary>
+    /// Applies the budget knowing which tool produced the result, so the remedy sentence can name
+    /// dials that tool actually declares (issue #3404).
+    /// </summary>
+    /// <param name="result">The result produced by the tool (or by the after-tool-call hook).</param>
+    /// <param name="maxBytes">The UTF-8 byte budget. Zero or negative disables the cap.</param>
+    /// <param name="tool">
+    /// The resolved tool, or <c>null</c> when none was resolved. A null tool - or one whose schema
+    /// cannot be read - falls open to <see cref="NarrowingGuidance"/>.
+    /// </param>
+    [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(result))]
+    public static AgentToolResult? Apply(AgentToolResult? result, int maxBytes, IAgentTool? tool)
+        => Apply(result, maxBytes, ToolOutputContinuationStore.Shared, tool);
+
+    /// <summary>
     /// Applies the budget using an explicit continuation store (issue #2760).
     /// </summary>
     /// <param name="result">The result produced by the tool (or by the after-tool-call hook).</param>
@@ -115,6 +130,21 @@ public static class ToolOutputBudget
         AgentToolResult? result,
         int maxBytes,
         ToolOutputContinuationStore? continuationStore)
+        => Apply(result, maxBytes, continuationStore, tool: null);
+
+    /// <summary>
+    /// Applies the budget using an explicit continuation store and the invoked tool.
+    /// </summary>
+    /// <param name="result">The result produced by the tool (or by the after-tool-call hook).</param>
+    /// <param name="maxBytes">The UTF-8 byte budget. Zero or negative disables the cap.</param>
+    /// <param name="continuationStore">Where the full payload is retained for the handle.</param>
+    /// <param name="tool">The resolved tool whose declared parameters shape the remedy (#3404).</param>
+    [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(result))]
+    public static AgentToolResult? Apply(
+        AgentToolResult? result,
+        int maxBytes,
+        ToolOutputContinuationStore? continuationStore,
+        IAgentTool? tool)
     {
         if (result is null || maxBytes <= 0 || result.Content.Count == 0)
         {
@@ -173,7 +203,7 @@ public static class ToolOutputBudget
 
         var marker = new StringBuilder()
             .Append($"[tool output truncated: {omittedBytes} bytes omitted of {totalTextBytes} total] ")
-            .Append(NarrowingGuidance);
+            .Append(ToolOutputRemedy.ForTool(tool));
 
         // The nextLink is the one field that makes an oversized upstream page recoverable at the
         // SOURCE rather than merely re-readable from our buffer, so it is surfaced even though the

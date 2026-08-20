@@ -1322,7 +1322,7 @@ public sealed class SqliteSessionStoreTests
             seed.Parameters.AddWithValue("$badJson", "[ this is not valid json ");
             await seed.ExecuteNonQueryAsync();
         }
-        SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolForConnectionString(fixture.ConnectionString);
 
         // A fresh store re-runs EnsureCreatedAsync -> BackfillParticipantsToConversationsAsync.
         // Must NOT throw despite the corrupt row.

@@ -264,16 +264,13 @@ public sealed partial class CronControllerTests
         }
         finally
         {
-            SqliteConnectionClearHelper();
+            SqlitePoolCleanup.ClearPoolFor(dbPath);
             if (Directory.Exists(tempDir))
             {
                 try { Directory.Delete(tempDir, recursive: true); } catch (IOException) { }
             }
         }
     }
-
-    private static void SqliteConnectionClearHelper()
-        => Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
 
     // #2389: creating a resource must not force the caller to invent the server's identifier.
     [Fact]

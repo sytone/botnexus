@@ -1,11 +1,18 @@
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.SourceGenerators.Generated;
 
 namespace BotNexus.Extensions.Channels.SignalR;
 
 /// <summary>
 /// Typed hub client interface defining the server→client event contract.
 /// Every method maps to a client-side event handler registered by the WebUI.
+/// <para>
+/// This interface is the SINGLE declaration of the contract. <c>HubEvents.All</c> is generated
+/// from its members (#3318) and consumed by the integration harnesses, so adding a method here
+/// automatically makes the new event observable to them. Do not restate the event names anywhere.
+/// </para>
 /// </summary>
+[HubEventInventory]
 public interface IGatewayHubClient
 {
     Task Connected(ConnectedPayload payload);

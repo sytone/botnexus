@@ -63,4 +63,9 @@
     <Content Include="Fixtures\Configs\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\Auth\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\BotNexus.Testing\SqlitePoolCleanup.cs" Link="Shared\SqlitePoolCleanup.cs" />
+    <Using Include="BotNexus.Testing" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
 </Project>

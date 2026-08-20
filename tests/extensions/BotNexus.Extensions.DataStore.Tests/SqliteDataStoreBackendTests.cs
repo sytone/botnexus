@@ -12,17 +12,20 @@ public sealed class SqliteDataStoreBackendTests : IDisposable
     private readonly string _dbDir = Path.Combine(Path.GetTempPath(), $"ds-test-{Guid.NewGuid():N}");
     private SqliteDataStoreBackend? _backend;
 
+    /// <summary>The single database file every backend in this class is created over.</summary>
+    private string DbPath => Path.Combine(_dbDir, ".store", "agent-data.db");
+
     public void Dispose()
     {
         _backend?.Dispose();
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePoolCleanup.ClearPoolFor(DbPath);
         if (Directory.Exists(_dbDir)) Directory.Delete(_dbDir, recursive: true);
     }
 
     private SqliteDataStoreBackend CreateBackend(long maxBytes = 50 * 1024 * 1024)
     {
         _backend?.Dispose();
-        var dbPath = Path.Combine(_dbDir, ".store", "agent-data.db");
+        var dbPath = DbPath;
         _backend = new SqliteDataStoreBackend(dbPath, maxBytes);
         return _backend;
     }
