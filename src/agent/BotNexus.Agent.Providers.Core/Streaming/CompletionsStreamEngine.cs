@@ -221,6 +221,12 @@ public static class CompletionsStreamEngine
     /// folding reported cached/cache-write tokens out of the billed input count, adding reasoning
     /// tokens into output, and attaching computed cost.
     /// </summary>
+    /// <remarks>
+    /// Reasoning tokens are BOTH summed into <see cref="Usage.Output"/> (preserving the inclusive
+    /// meaning every existing consumer and the cost arithmetic depend on) and carried separately on
+    /// <see cref="Usage.Reasoning"/> for attribution (#3297). The separate field stays <c>null</c>
+    /// when the provider reported no breakdown — absent is never coerced to a measured zero.
+    /// </remarks>
     public static Usage ParseUsage(JsonElement usageElement, Usage usage, LlmModel model)
     {
         var promptTokens = usage.Input + usage.CacheRead + usage.CacheWrite;
@@ -228,6 +234,10 @@ public static class CompletionsStreamEngine
         var reportedCachedTokens = usage.CacheRead;
         var cacheWriteTokens = usage.CacheWrite;
         var reasoningTokens = 0;
+
+        // Carried forward across chunks: a later usage element that omits the breakdown must not
+        // erase a reasoning count an earlier one reported. Stays null until something reports it.
+        var reportedReasoning = usage.Reasoning;
 
         if (usageElement.TryGetProperty("prompt_tokens", out var pt))
             promptTokens = pt.GetInt32();
@@ -251,6 +261,10 @@ public static class CompletionsStreamEngine
             completionDetails.TryGetProperty("reasoning_tokens", out var reasoning))
         {
             reasoningTokens = reasoning.GetInt32();
+
+            // #3297: attribute the reported count separately. Only assigned when the wire actually
+            // carried the field, so absent stays null rather than becoming a measured zero.
+            reportedReasoning = reasoningTokens;
         }
 
         var cacheReadTokens = cacheWriteTokens > 0
@@ -266,6 +280,7 @@ public static class CompletionsStreamEngine
             Output = outputTokens,
             CacheRead = cacheReadTokens,
             CacheWrite = cacheWriteTokens,
+            Reasoning = reportedReasoning,
             TotalTokens = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens
         };
         updated = updated with { Cost = ModelRegistry.CalculateCost(model, updated) };
