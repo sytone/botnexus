@@ -26,11 +26,10 @@ namespace BotNexus.Architecture.Tests;
 /// <see cref="ToolTimeoutArgumentDeclaration"/> declaration, so the fence cannot pass by scanning
 /// an empty candidate set.</para>
 /// </summary>
-public sealed class ToolTimeoutUnitDeclarationArchitectureTests
+public sealed class ToolTimeoutUnitDeclarationArchitectureTests : ArchitectureTest
 {
     private const string ToolTimeoutArgumentDeclaration = "TimeoutArgument";
 
-    private static string RepoRoot => FindRepoRoot();
 
     /// <summary>
     /// AC4 - enumerate every tool schema and fail if a bare <c>timeout</c> argument claims
@@ -85,7 +84,7 @@ public sealed class ToolTimeoutUnitDeclarationArchitectureTests
     public void ToolExecutor_does_not_infer_a_unit_from_an_argument_name()
     {
         var executor = Path.Combine(
-            RepoRoot, "src", "agent", "BotNexus.Agent.Core", "Loop", "ToolExecutor.cs");
+            Repository.Root, "src", "agent", "BotNexus.Agent.Core", "Loop", "ToolExecutor.cs");
 
         File.Exists(executor).ShouldBeTrue($"expected ToolExecutor at {executor}");
 
@@ -119,13 +118,13 @@ public sealed class ToolTimeoutUnitDeclarationArchitectureTests
             + "declare their unit. Found: " + string.Join(", ", declaring));
     }
 
-    private static IEnumerable<string> EnumerateToolSources()
+    private IEnumerable<string> EnumerateToolSources()
     {
         var roots = new[]
         {
-            Path.Combine(RepoRoot, "src", "gateway"),
-            Path.Combine(RepoRoot, "src", "extensions"),
-            Path.Combine(RepoRoot, "src", "agent")
+            Path.Combine(Repository.Root, "src", "gateway"),
+            Path.Combine(Repository.Root, "src", "extensions"),
+            Path.Combine(Repository.Root, "src", "agent")
         };
 
         foreach (var root in roots.Where(Directory.Exists))
@@ -154,20 +153,4 @@ public sealed class ToolTimeoutUnitDeclarationArchitectureTests
         return code;
     }
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git")) ||
-                File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate the repository root from the test output directory.");
-    }
 }

@@ -29,7 +29,7 @@ namespace BotNexus.Architecture.Tests;
 ///   <item><description><c>/home/&lt;name&gt;/…</c> Linux user-home paths, except common CI accounts (<c>runner</c>, <c>vscode</c>, <c>codespace</c>, <c>circleci</c>)</description></item>
 /// </list>
 /// </remarks>
-public sealed class PersonalPathLeakArchitectureTests
+public sealed class PersonalPathLeakArchitectureTests : ArchitectureTest
 {
     // The test file itself contains the patterns it scans for. Allowlist it
     // by basename so the fence doesn't trip on its own documentation.
@@ -140,9 +140,9 @@ public sealed class PersonalPathLeakArchitectureTests
             "Offenders:\n  " + string.Join("\n  ", offenders));
     }
 
-    private static List<string> ScanTrackedFiles(Func<string, string, string?> inspect)
+    private List<string> ScanTrackedFiles(Func<string, string, string?> inspect)
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var offenders = new List<string>();
 
         foreach (var relative in EnumerateTrackedFiles(repoRoot))
@@ -223,16 +223,6 @@ public sealed class PersonalPathLeakArchitectureTests
     private static bool IsTextFile(string relativePath)
         => !BinaryExtensions.Contains(Path.GetExtension(relativePath));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current.FullName;
-    }
 
     private static string Truncate(string value)
         => value.Length <= 80 ? value : value[..80] + "...";

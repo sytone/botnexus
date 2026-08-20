@@ -28,9 +28,8 @@ namespace BotNexus.Architecture.Tests;
 ///   <c>ISecretRedactor</c> (the <c>Redact(...)</c> path wired in #1494).</item>
 /// </list>
 /// </summary>
-public sealed class SecretRedactionFenceArchitectureTests
+public sealed class SecretRedactionFenceArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
     private const string ConfigController =
         "src/gateway/BotNexus.Gateway.Api/Controllers/ConfigController.cs";
@@ -201,18 +200,7 @@ public sealed class SecretRedactionFenceArchitectureTests
             "If this fails, the Redact-call detector is over-tight.");
     }
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

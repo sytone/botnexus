@@ -32,7 +32,7 @@ namespace BotNexus.Architecture.Tests;
 /// actually exist and are non-trivial, so it cannot pass by reading nothing.
 /// </para>
 /// </remarks>
-public sealed class FirewallLeaseDerivationArchitectureTests
+public sealed class FirewallLeaseDerivationArchitectureTests : ArchitectureTest
 {
     private const string LeaseScript = "scripts/repo/Ensure-TesthostFirewallRules.ps1";
     private const string DerivationScript = "scripts/repo/FirewallLeaseProgram.ps1";
@@ -116,7 +116,7 @@ public sealed class FirewallLeaseDerivationArchitectureTests
     [InlineData(ReclaimScript, 1000)]
     public void RequiredFirewallScript_ExistsAndIsNonTrivial(string relativePath, int minimumLength)
     {
-        var absolute = Path.Combine(FindRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var absolute = Path.Combine(Repository.Root, relativePath.Replace('/', Path.DirectorySeparatorChar));
 
         File.Exists(absolute).ShouldBeTrue(
             $"{relativePath} is missing. Issue #2774's fix depends on it; deleting it would make " +
@@ -162,22 +162,11 @@ public sealed class FirewallLeaseDerivationArchitectureTests
             "BotNexus.Cli.Tests - issue #2774 clause 2 names that binary explicitly.");
     }
 
-    private static string ReadRepoFile(string relativePath)
+    private string ReadRepoFile(string relativePath)
     {
-        var absolute = Path.Combine(FindRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var absolute = Path.Combine(Repository.Root, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(absolute).ShouldBeTrue($"Expected {relativePath} to exist at {absolute}.");
         return File.ReadAllText(absolute);
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current.FullName;
-    }
 }

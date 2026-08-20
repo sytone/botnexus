@@ -46,11 +46,10 @@ namespace BotNexus.Architecture.Tests;
 ///   </description></item>
 /// </list>
 /// </summary>
-public sealed class ContainerExtensionPackagingArchitectureTests
+public sealed class ContainerExtensionPackagingArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string DockerfilePath => Path.Combine(RepoRoot, "Dockerfile");
+    private string DockerfilePath => Path.Combine(Repository.Root, "Dockerfile");
 
     /// <summary>The runtime probe-root environment variable honoured by the extension loader.</summary>
     private const string ExtensionsPathEnvVar = "BOTNEXUS_EXTENSIONS_PATH";
@@ -223,7 +222,7 @@ public sealed class ContainerExtensionPackagingArchitectureTests
     public void SignalRExtension_BundlesBlazorClientsIntoPublishOutput()
     {
         var csproj = Path.Combine(
-            RepoRoot, "src", "extensions", "BotNexus.Extensions.Channels.SignalR",
+            Repository.Root, "src", "extensions", "BotNexus.Extensions.Channels.SignalR",
             "BotNexus.Extensions.Channels.SignalR.csproj");
 
         File.Exists(csproj).ShouldBeTrue($"SignalR extension project not found at {csproj}");
@@ -242,9 +241,9 @@ public sealed class ContainerExtensionPackagingArchitectureTests
             + "See issue #2376.\nFile: " + csproj);
     }
 
-    private static string[] EnumerateManifestedExtensionDirectories()
+    private string[] EnumerateManifestedExtensionDirectories()
     {
-        var extensionsRoot = Path.Combine(RepoRoot, "src", "extensions");
+        var extensionsRoot = Path.Combine(Repository.Root, "src", "extensions");
         if (!Directory.Exists(extensionsRoot))
             return [];
 
@@ -316,19 +315,4 @@ public sealed class ContainerExtensionPackagingArchitectureTests
         return trimmed.Length > 1 ? trimmed.TrimEnd('/') : trimmed;
     }
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git")) ||
-                File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
-            {
-                return directory.FullName;
-            }
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate the repository root from the test output directory.");
-    }
 }

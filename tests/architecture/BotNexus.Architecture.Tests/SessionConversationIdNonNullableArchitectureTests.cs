@@ -51,7 +51,7 @@ namespace BotNexus.Architecture.Tests;
 /// <c>ConversationId</c> in adjacent but distinct contexts.
 /// </para>
 /// </remarks>
-public sealed class SessionConversationIdNonNullableArchitectureTests
+public sealed class SessionConversationIdNonNullableArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void Session_ConversationId_IsNonNullable_ConversationId_NotNullable()
@@ -87,7 +87,7 @@ public sealed class SessionConversationIdNonNullableArchitectureTests
     [Fact]
     public void NoProductionSourceFile_TreatsConversationId_AsNullable_OnSession()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var violations = new List<string>();
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -169,7 +169,7 @@ public sealed class SessionConversationIdNonNullableArchitectureTests
         // the entry is stale and must be removed (otherwise it permanently exempts a real
         // future regression in the same file). If a file no longer exists, the path is
         // wrong.
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var stale = new List<string>();
 
         foreach (var relative in s_allowlist)
@@ -315,18 +315,6 @@ public sealed class SessionConversationIdNonNullableArchitectureTests
     private static string NormalizePath(string path)
         => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 
     /// <summary>
     /// Removes single-line (<c>//</c>, <c>///</c>) and block (<c>/* … */</c>) C# comments

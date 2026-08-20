@@ -44,7 +44,7 @@ namespace BotNexus.Architecture.Tests;
 /// the URL string to end-of-line, hiding the violation.
 /// </para>
 /// </remarks>
-public sealed class SessionStreamReplayArchitectureTests
+public sealed class SessionStreamReplayArchitectureTests : ArchitectureTest
 {
     // Negative lookbehind on `\.StreamReplay` distinguishes new facade access
     // (`session.StreamReplay.NextSequenceId` — allowed) from legacy direct access
@@ -68,7 +68,7 @@ public sealed class SessionStreamReplayArchitectureTests
     [Fact]
     public void NoProductionSourceFile_ReferencesLegacyStreamReplayMembersByAccess()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var violations = new List<string>();
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -422,16 +422,4 @@ public sealed class SessionStreamReplayArchitectureTests
     private static string NormalizePath(string path)
         => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

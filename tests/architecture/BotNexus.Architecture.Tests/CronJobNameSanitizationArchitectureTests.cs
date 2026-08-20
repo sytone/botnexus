@@ -8,7 +8,7 @@ namespace BotNexus.Architecture.Tests;
 /// conversation title, must route through <c>ExternalText.Sanitize</c> so the newline /
 /// control-character / length policy cannot drift per call site.
 /// </summary>
-public sealed class CronJobNameSanitizationArchitectureTests
+public sealed class CronJobNameSanitizationArchitectureTests : ArchitectureTest
 {
     private static readonly string[] s_producers =
     [
@@ -30,7 +30,7 @@ public sealed class CronJobNameSanitizationArchitectureTests
     [Fact]
     public void EveryKnownProducer_Exists_And_RoutesJobNameThroughExternalTextSanitize()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var problems = new List<string>();
 
         foreach (var relative in s_producers)
@@ -55,7 +55,7 @@ public sealed class CronJobNameSanitizationArchitectureTests
     [Fact]
     public void NoProductionSourceFile_Assigns_JobName_FromRawJobName()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -108,14 +108,4 @@ public sealed class CronJobNameSanitizationArchitectureTests
         return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full[root.Length..] : full;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return Path.Combine(current!.FullName, "src");
-    }
 }

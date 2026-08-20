@@ -28,7 +28,7 @@ namespace BotNexus.Architecture.Tests;
 /// positive and negative samples so a regex that matches nothing cannot masquerade as coverage.
 /// </para>
 /// </summary>
-public sealed class SubAgentTerminalStatusFenceArchitectureTests
+public sealed class SubAgentTerminalStatusFenceArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The one file permitted to enumerate terminal sub-agent statuses: the shared predicate.
@@ -264,26 +264,17 @@ public sealed class SubAgentTerminalStatusFenceArchitectureTests
         return found;
     }
 
-    private static IReadOnlyList<string> EnumerateSourceFiles() =>
-        Directory.EnumerateFiles(Path.Combine(FindRepoRoot(), "src"), "*.cs", SearchOption.AllDirectories)
+    private IReadOnlyList<string> EnumerateSourceFiles() =>
+        Directory.EnumerateFiles(Path.Combine(Repository.Root, "src"), "*.cs", SearchOption.AllDirectories)
             .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .OrderBy(p => p, StringComparer.Ordinal)
             .ToArray();
 
-    private static string Relative(string absolute) =>
-        Path.GetRelativePath(FindRepoRoot(), absolute).Replace('\\', '/');
+    private string Relative(string absolute) =>
+        Path.GetRelativePath(Repository.Root, absolute).Replace('\\', '/');
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(FindRepoRoot(), relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-            current = current.Parent;
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

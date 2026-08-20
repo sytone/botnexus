@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace BotNexus.Architecture.Tests;
 
-public sealed class CopilotProviderTransportArchitectureTests
+public sealed class CopilotProviderTransportArchitectureTests : ArchitectureTest
 {
     private static readonly Regex s_wireTransport = new(
         @"\b(CopilotResponsesWireTransport|CopilotResponsesTransportPreference|ICopilotResponsesWebSocketTransport)\b",
@@ -11,7 +11,7 @@ public sealed class CopilotProviderTransportArchitectureTests
     [Fact]
     public void AgentLoopAndGateway_DoNotSelectCopilotWireTransport()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var roots = new[]
         {
             Path.Combine(repoRoot, "src", "agent", "BotNexus.Agent.Core"),
@@ -34,10 +34,4 @@ public sealed class CopilotProviderTransportArchitectureTests
         s_wireTransport.IsMatch("await foreach (var evt in provider.Stream(model, context)) { }").ShouldBeFalse();
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props"))) current = current.Parent;
-        return current?.FullName ?? throw new DirectoryNotFoundException("Could not locate repository root.");
-    }
 }

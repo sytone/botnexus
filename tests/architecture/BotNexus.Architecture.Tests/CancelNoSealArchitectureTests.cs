@@ -31,7 +31,7 @@ namespace BotNexus.Architecture.Tests;
 /// <c>AgentExchangeServiceCancelNoSealTests</c>. The two layers complement; neither
 /// alone is sufficient.
 /// </remarks>
-public sealed class CancelNoSealArchitectureTests
+public sealed class CancelNoSealArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void CrossWorldFederationController_SealOnErrorCatch_PrecededByCallerCancellationRethrow()
@@ -379,24 +379,12 @@ public sealed class CancelNoSealArchitectureTests
         "Violations:\n" + string.Join("\n", violations) + "\n" +
         "File: " + path;
 
-    private static string LocateFile(params string[] relativeParts)
+    private string LocateFile(params string[] relativeParts)
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var path = Path.Combine(new[] { srcRoot }.Concat(relativeParts).ToArray());
         File.Exists(path).ShouldBeTrue("Expected " + Path.GetFileName(path) + " at " + path);
         return path;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current!.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

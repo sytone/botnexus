@@ -37,7 +37,7 @@ namespace BotNexus.Architecture.Tests;
 /// call site wrap its argument" is a property of the source, and the compiled assembly retains
 /// no trace of it - both spellings end up as a string argument.</para>
 /// </remarks>
-public sealed class GatewayRequestLogSanitisationFenceArchitectureTests
+public sealed class GatewayRequestLogSanitisationFenceArchitectureTests : ArchitectureTest
 {
     /// <summary>Root of the gateway API project this fence governs.</summary>
     private const string ApiRoot = "src/gateway/BotNexus.Gateway.Api";
@@ -68,7 +68,6 @@ public sealed class GatewayRequestLogSanitisationFenceArchitectureTests
         @"\bRequestLogText\s*\.\s*Safe(?:Path)?\s*\(",
         RegexOptions.Compiled);
 
-    private static string RepoRoot => FindRepoRoot();
 
     [Fact]
     public void Helper_Exists()
@@ -262,30 +261,19 @@ public sealed class GatewayRequestLogSanitisationFenceArchitectureTests
         return single.Length <= 160 ? single : single[..160] + "...";
     }
 
-    private static IEnumerable<string> EnumerateApiSources()
+    private IEnumerable<string> EnumerateApiSources()
     {
-        var apiRoot = Path.Combine(RepoRoot, ApiRoot.Replace('/', Path.DirectorySeparatorChar));
+        var apiRoot = Path.Combine(Repository.Root, ApiRoot.Replace('/', Path.DirectorySeparatorChar));
         Directory.Exists(apiRoot).ShouldBeTrue($"Gateway API source root not found: {apiRoot}");
         return Directory.EnumerateFiles(apiRoot, "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
     }
 
-    private static string ToRepoRelative(string absolutePath) =>
-        Path.GetRelativePath(RepoRoot, absolutePath).Replace('\\', '/');
+    private string ToRepoRelative(string absolutePath) =>
+        Path.GetRelativePath(Repository.Root, absolutePath).Replace('\\', '/');
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

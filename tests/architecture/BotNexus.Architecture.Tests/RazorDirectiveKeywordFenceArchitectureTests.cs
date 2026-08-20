@@ -22,7 +22,7 @@ namespace BotNexus.Architecture.Tests;
 /// time this fence lands; a baseline entry here would mean the predicate is wrong, not that an
 /// exemption is warranted.</para>
 /// </summary>
-public sealed class RazorDirectiveKeywordFenceArchitectureTests
+public sealed class RazorDirectiveKeywordFenceArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The Razor reserved directive keywords. This is the set of tokens the Razor parser treats
@@ -83,7 +83,7 @@ public sealed class RazorDirectiveKeywordFenceArchitectureTests
 
         files.Count.ShouldBeGreaterThanOrEqualTo(
             MinimumRazorFileCount,
-            $"Only {files.Count} .razor file(s) were discovered under {SourceRoot()}. The fence in "
+            $"Only {files.Count} .razor file(s) were discovered under {Repository.SourceRoot}. The fence in "
             + $"{nameof(RazorDirectiveKeywordFence_HasNoViolations)} is vacuous unless discovery works. "
             + "If .razor files genuinely moved, update the discovery root - do not lower the floor.");
     }
@@ -94,7 +94,7 @@ public sealed class RazorDirectiveKeywordFenceArchitectureTests
     [Fact]
     public void RazorDirectiveKeywordFence_HasNoViolations()
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
         var offenders = new List<Offender>();
 
         foreach (var file in RazorFiles())
@@ -231,9 +231,9 @@ public sealed class RazorDirectiveKeywordFenceArchitectureTests
     private static IReadOnlyList<string> FindAmbiguousForms(string line) =>
         s_ambiguousForm.Matches(line).Select(m => m.Groups[1].Value).ToList();
 
-    private static IEnumerable<string> RazorFiles()
+    private IEnumerable<string> RazorFiles()
     {
-        var root = SourceRoot();
+        var root = Repository.SourceRoot;
         if (!Directory.Exists(root)) return [];
         return Directory.EnumerateFiles(root, "*.razor", SearchOption.AllDirectories)
             .Where(p =>
@@ -249,12 +249,4 @@ public sealed class RazorDirectiveKeywordFenceArchitectureTests
         return f.StartsWith(r, StringComparison.OrdinalIgnoreCase) ? f[r.Length..] : f;
     }
 
-    private static string SourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-            current = current.Parent;
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return Path.Combine(current!.FullName, "src");
-    }
 }

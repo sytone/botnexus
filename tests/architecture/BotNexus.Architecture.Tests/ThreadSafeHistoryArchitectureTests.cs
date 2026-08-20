@@ -12,7 +12,7 @@ namespace BotNexus.Architecture.Tests;
 /// <c>TryReplaceHistoryFromSnapshot</c>) and silently re-opens the race the
 /// compactor fix was meant to close.
 /// </summary>
-public sealed class ThreadSafeHistoryArchitectureTests
+public sealed class ThreadSafeHistoryArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// No file in <c>src/</c> outside the allowlist may call a mutating method
@@ -33,7 +33,7 @@ public sealed class ThreadSafeHistoryArchitectureTests
     [Fact]
     public void NoDirectHistoryMutation_OutsideGatewaySessionRuntime()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var allowlist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "GatewaySessionRuntime.cs",
@@ -63,17 +63,4 @@ public sealed class ThreadSafeHistoryArchitectureTests
             "Offenders:\n  " + string.Join("\n  ", offenders));
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

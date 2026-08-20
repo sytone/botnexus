@@ -21,7 +21,7 @@ namespace BotNexus.Architecture.Tests;
 /// removed it.
 /// </para>
 /// </remarks>
-public sealed class SystemPromptInitMetadataArchitectureTests
+public sealed class SystemPromptInitMetadataArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// No file under <c>src/</c> may contain the literal <c>"systemPromptInitialized"</c>.
@@ -31,7 +31,7 @@ public sealed class SystemPromptInitMetadataArchitectureTests
     [Fact]
     public void NoCode_References_systemPromptInitialized_Literal()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var offenders = Directory
             .EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
@@ -55,17 +55,4 @@ public sealed class SystemPromptInitMetadataArchitectureTests
             "Offenders:\n  " + string.Join("\n  ", offenders));
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

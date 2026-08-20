@@ -14,7 +14,7 @@ namespace BotNexus.Architecture.Tests;
 /// <c>CrossWorldFederationController.cs</c> but never read by any code — the typed
 /// <c>Status</c> field is the canonical state. Removed in #1019 (Part of #612 CC-2).
 /// </remarks>
-public sealed class ConversationStatusMetadataRemovedTests
+public sealed class ConversationStatusMetadataRemovedTests : ArchitectureTest
 {
     /// <summary>
     /// No production file under <c>src/</c> may write or read the dead
@@ -25,7 +25,7 @@ public sealed class ConversationStatusMetadataRemovedTests
     [Fact]
     public void NoCode_References_ConversationStatus_Metadata_Key()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var pattern = new Regex(
             @"Metadata\s*\[\s*""conversationStatus""\s*\]",
             RegexOptions.Compiled);
@@ -46,16 +46,6 @@ public sealed class ConversationStatusMetadataRemovedTests
             "Offenders:\n  " + string.Join("\n  ", offenders));
     }
 
-    private static string FindSourceRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
-            dir = dir.Parent;
-
-        return dir is not null
-            ? Path.Combine(dir.FullName, "src")
-            : throw new InvalidOperationException("Cannot locate repo root (Directory.Packages.props not found).");
-    }
 
     private static bool IsProductionSource(string path) =>
         !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&

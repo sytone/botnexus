@@ -30,19 +30,18 @@ namespace BotNexus.Architecture.Tests;
 /// is asserted first: a scanner that cannot find the file must fail loudly rather than pass by
 /// finding nothing.
 /// </remarks>
-public sealed class BaseFreshnessGateArchitectureTests
+public sealed class BaseFreshnessGateArchitectureTests : ArchitectureTest
 {
     private const string WorkflowFileName = "ci-base-freshness.yml";
 
     private const string DocFileName = "stale-base-merges.md";
 
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string WorkflowPath =>
-        Path.Combine(RepoRoot, ".github", "workflows", WorkflowFileName);
+    private string WorkflowPath =>
+        Path.Combine(Repository.Root, ".github", "workflows", WorkflowFileName);
 
-    private static string DocPath =>
-        Path.Combine(RepoRoot, "docs", "development", DocFileName);
+    private string DocPath =>
+        Path.Combine(Repository.Root, "docs", "development", DocFileName);
 
     [Fact]
     public void BaseFreshnessWorkflow_Exists()
@@ -216,7 +215,7 @@ public sealed class BaseFreshnessGateArchitectureTests
 
     // ---- helpers ----
 
-    private static string ReadWorkflow()
+    private string ReadWorkflow()
     {
         File.Exists(WorkflowPath).ShouldBeTrue(
             $"Anti-vacuity: {WorkflowPath} not found, so every content assertion below would be " +
@@ -224,15 +223,4 @@ public sealed class BaseFreshnessGateArchitectureTests
         return File.ReadAllText(WorkflowPath);
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

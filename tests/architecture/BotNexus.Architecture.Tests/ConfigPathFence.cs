@@ -430,15 +430,4 @@ internal static class ConfigPathFence
         return previous[b.Length];
     }
 
-    /// <summary>Locates the repository root by walking up to the solution file.</summary>
-    internal static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-            current = current.Parent;
-
-        return current?.FullName
-               ?? throw new DirectoryNotFoundException(
-                   "Could not locate the repository root from " + AppContext.BaseDirectory);
-    }
 }

@@ -10,9 +10,8 @@ namespace BotNexus.Architecture.Tests;
 /// repairs the two known sites would silently rot the moment a third spawn seam is added or one of
 /// these two is reverted, so the constraint is enforced structurally rather than by review.
 /// </summary>
-public sealed class ProcessEnvironmentMergeCentralizationArchitectureTests
+public sealed class ProcessEnvironmentMergeCentralizationArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
     /// <summary>The one file allowed to own the platform casing rule for environment merging.</summary>
     private const string CanonicalHelper = "src/agent/BotNexus.Agent.Core/Tools/ProcessEnvironment.cs";
@@ -99,18 +98,7 @@ public sealed class ProcessEnvironmentMergeCentralizationArchitectureTests
         DirectEnvironmentWrite.IsMatch("        ProcessEnvironment.Merge(startInfo.Environment, env);").ShouldBeFalse();
     }
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current.FullName;
-    }
 }

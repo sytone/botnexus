@@ -33,18 +33,16 @@ namespace BotNexus.Architecture.Tests;
 /// matching the existing repo-config fences (e.g. <see cref="SqliteBusyTimeoutArchitectureTests"/>,
 /// DockerHealthcheckArchitectureTests).
 /// </summary>
-public sealed class SecurityWorkflowAndAuditSuppressionArchitectureTests
+public sealed class SecurityWorkflowAndAuditSuppressionArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
     private const string AdvisoryId = "GHSA-2m69-gcr7-jv3q";
     private const string AdvisoryUrl = "https://github.com/advisories/" + AdvisoryId;
 
-    private static readonly string PackagesPropsPath =
-        Path.Combine(RepoRoot, "Directory.Packages.props");
+    private string PackagesPropsPath => Repository.Path("Directory.Packages.props");
 
-    private static readonly string SecurityWorkflowPath = Path.Combine(
-        RepoRoot, ".github", "workflows", "security-secrets-deps.yml");
+    private string SecurityWorkflowPath =>
+        Repository.Path(".github", "workflows", "security-secrets-deps.yml");
 
     // Matches a NuGetAuditSuppress item for the specific advisory (URL or bare GHSA id).
     private static readonly Regex AdvisorySuppress = new(
@@ -176,15 +174,4 @@ public sealed class SecurityWorkflowAndAuditSuppressionArchitectureTests
             "Vacuity guard: detector must accept the fixed process.env shape.");
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

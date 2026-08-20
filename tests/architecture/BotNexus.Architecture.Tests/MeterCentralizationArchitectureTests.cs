@@ -20,7 +20,7 @@ namespace BotNexus.Architecture.Tests;
 /// Test code is out of scope - tests legitimately create private meters plus
 /// <c>MeterListener</c>s to observe instruments in isolation.
 /// </remarks>
-public sealed class MeterCentralizationArchitectureTests
+public sealed class MeterCentralizationArchitectureTests : ArchitectureTest
 {
     // Sanctioned meter construction sites, all inside BotNexus.Gateway.Telemetry.
     private static readonly HashSet<string> AllowedFiles = new(StringComparer.OrdinalIgnoreCase)
@@ -37,7 +37,7 @@ public sealed class MeterCentralizationArchitectureTests
     [Fact]
     public void NoPlatformSource_ConstructsAdHocMeter()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var offenders = new List<string>();
 
         foreach (var relative in EnumerateTrackedFiles(repoRoot))
@@ -114,14 +114,4 @@ public sealed class MeterCentralizationArchitectureTests
         process.ExitCode.ShouldBe(0, "git ls-files failed: " + process.StandardError.ReadToEnd());
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current.FullName;
-    }
 }

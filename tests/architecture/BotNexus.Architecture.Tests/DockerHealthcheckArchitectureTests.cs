@@ -23,13 +23,12 @@ namespace BotNexus.Architecture.Tests;
 /// HEALTHCHECK actually depends on <c>curl</c> or <c>wget</c>. A future switch to a
 /// dotnet-native probe (no external binary) would satisfy the fence without an apt layer.
 /// </remarks>
-public sealed class DockerHealthcheckArchitectureTests
+public sealed class DockerHealthcheckArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string DockerfilePath => Path.Combine(RepoRoot, "Dockerfile");
+    private string DockerfilePath => Path.Combine(Repository.Root, "Dockerfile");
 
-    private static string DockerComposePath => Path.Combine(RepoRoot, "docker-compose.yml");
+    private string DockerComposePath => Path.Combine(Repository.Root, "docker-compose.yml");
 
     // Binaries that are NOT present in the aspnet:10.0 base image and must be
     // explicitly installed before a HEALTHCHECK can depend on them.
@@ -266,15 +265,4 @@ public sealed class DockerHealthcheckArchitectureTests
         return result;
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

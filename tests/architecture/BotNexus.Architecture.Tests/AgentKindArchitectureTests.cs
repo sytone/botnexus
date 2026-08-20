@@ -41,7 +41,7 @@ namespace BotNexus.Architecture.Tests;
 /// typed <c>ParentSessionId</c> chain on <c>Session</c>.
 /// </para>
 /// </remarks>
-public sealed class AgentKindArchitectureTests
+public sealed class AgentKindArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// Files allowed to reference <c>SessionId.IsSubAgent</c>. Every entry here must
@@ -85,7 +85,7 @@ public sealed class AgentKindArchitectureTests
     [Fact]
     public void NoNewProductionCodeUsesSessionIdSubstringForSubAgentDetection()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var allowlistFullPaths = s_substringAllowlist
             .Select(entry => NormalizePath(Path.Combine(srcRoot, entry.RepoRelativePath)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -215,16 +215,4 @@ public sealed class AgentKindArchitectureTests
     private static string NormalizePath(string path)
         => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

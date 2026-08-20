@@ -24,7 +24,7 @@ namespace BotNexus.Architecture.Tests;
 /// is trivially green: the discovery count, the job count, and both detector polarities are all
 /// asserted.
 /// </remarks>
-public sealed class WorkflowJobTimeoutArchitectureTests
+public sealed class WorkflowJobTimeoutArchitectureTests : ArchitectureTest
 {
     /// <summary>Workflow files committed at the time this fence landed (#2513).</summary>
     private const int ExpectedWorkflowFileCount = 9;
@@ -32,9 +32,8 @@ public sealed class WorkflowJobTimeoutArchitectureTests
     /// <summary>Jobs across those workflows at the time this fence landed (#2513).</summary>
     private const int ExpectedMinimumJobCount = 16;
 
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string WorkflowsDir => Path.Combine(RepoRoot, ".github", "workflows");
+    private string WorkflowsDir => Path.Combine(Repository.Root, ".github", "workflows");
 
     [Fact]
     public void Scan_DiscoversAllCommittedWorkflowFiles()
@@ -186,7 +185,7 @@ public sealed class WorkflowJobTimeoutArchitectureTests
 
     private sealed record WorkflowJob(string Key, string Body);
 
-    private static List<FileInfo> WorkflowFiles()
+    private List<FileInfo> WorkflowFiles()
     {
         var dir = new DirectoryInfo(WorkflowsDir);
         dir.Exists.ShouldBeTrue($"Workflows directory not found: {WorkflowsDir}");
@@ -197,7 +196,7 @@ public sealed class WorkflowJobTimeoutArchitectureTests
             .ToList();
     }
 
-    private static List<WorkflowJob> AllJobs()
+    private List<WorkflowJob> AllJobs()
     {
         return WorkflowFiles()
             .SelectMany(f => ParseJobs(File.ReadAllText(f.FullName), f.Name))
@@ -311,15 +310,4 @@ public sealed class WorkflowJobTimeoutArchitectureTests
         return null;
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

@@ -32,7 +32,7 @@ namespace BotNexus.Architecture.Tests;
 ///    non-nullable so callers cannot construct a "pinless" request that
 ///    would degrade silently at runtime.
 /// </remarks>
-public sealed class SubAgentEagerPinArchitectureTests
+public sealed class SubAgentEagerPinArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// In <c>DefaultSubAgentManager.cs</c>, every <c>.ConversationId =</c>
@@ -120,17 +120,17 @@ public sealed class SubAgentEagerPinArchitectureTests
             "File: " + requestPath);
     }
 
-    private static string LocateManagerFile()
+    private string LocateManagerFile()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var path = Path.Combine(srcRoot, "gateway", "BotNexus.Gateway", "Agents", "DefaultSubAgentManager.cs");
         File.Exists(path).ShouldBeTrue("Expected DefaultSubAgentManager.cs at " + path);
         return path;
     }
 
-    private static string LocateSpawnRequestFile()
+    private string LocateSpawnRequestFile()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var path = Path.Combine(srcRoot, "domain", "BotNexus.Domain", "Gateway", "Models", "SubAgentSpawnRequest.cs");
         File.Exists(path).ShouldBeTrue("Expected SubAgentSpawnRequest.cs at " + path);
         return path;
@@ -147,17 +147,4 @@ public sealed class SubAgentEagerPinArchitectureTests
         return line;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

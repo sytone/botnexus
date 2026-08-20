@@ -32,12 +32,11 @@ namespace BotNexus.Architecture.Tests;
 /// Two trust vocabularies is how the enforced set and the reported set drift apart (#2682).
 /// </para>
 /// </remarks>
-public sealed class PluginMcpRegistrationFenceArchitectureTests
+public sealed class PluginMcpRegistrationFenceArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string PluginSeamDirectory =>
-        Path.Combine(RepoRoot, "src", "extensions", "BotNexus.Extensions.Mcp", "Plugins");
+    private string PluginSeamDirectory =>
+        Path.Combine(Repository.Root, "src", "extensions", "BotNexus.Extensions.Mcp", "Plugins");
 
     /// <summary>Constructs that would constitute a second MCP lifecycle.</summary>
     private static readonly (string Name, Regex Pattern)[] ParallelRegistryPatterns =
@@ -75,7 +74,7 @@ public sealed class PluginMcpRegistrationFenceArchitectureTests
             let code = File.ReadAllText(file)
             from pattern in ParallelRegistryPatterns
             where pattern.Pattern.IsMatch(code)
-            select $"{Path.GetRelativePath(RepoRoot, file)}: {pattern.Name}").ToList();
+            select $"{Path.GetRelativePath(Repository.Root, file)}: {pattern.Name}").ToList();
 
         violations.ShouldBeEmpty(
             "The plugin registration seam must not own MCP connection lifecycle. Starting a client " +
@@ -92,7 +91,7 @@ public sealed class PluginMcpRegistrationFenceArchitectureTests
             "PluginTrustMode");
 
         var skillMembers = EnumMembers(
-            Path.Combine(RepoRoot, "src", "extensions", "BotNexus.Extensions.Skills", "Security", "SkillTrustVerifier.cs"),
+            Path.Combine(Repository.Root, "src", "extensions", "BotNexus.Extensions.Skills", "Security", "SkillTrustVerifier.cs"),
             "SkillTrustMode");
 
         skillMembers.ShouldNotBeEmpty("the fence is vacuous if the skills enum could not be parsed");
@@ -128,24 +127,9 @@ public sealed class PluginMcpRegistrationFenceArchitectureTests
             .ToArray();
     }
 
-    private static IEnumerable<string> EnumerateSeamFiles()
+    private IEnumerable<string> EnumerateSeamFiles()
         => Directory.Exists(PluginSeamDirectory)
             ? Directory.EnumerateFiles(PluginSeamDirectory, "*.cs", SearchOption.AllDirectories)
             : [];
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git")) ||
-                File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
-            {
-                return directory.FullName;
-            }
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate the repository root from the test output directory.");
-    }
 }

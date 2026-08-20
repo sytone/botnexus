@@ -27,7 +27,7 @@ namespace BotNexus.Architecture.Tests;
 /// doc comments that legitimately name the rule (the #2813 / #2955 lesson).
 /// </para>
 /// </remarks>
-public sealed class CronClassificationSingleSiteArchitectureTests
+public sealed class CronClassificationSingleSiteArchitectureTests : ArchitectureTest
 {
     private const string GroupingFile =
         "src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/Services/PortalConversationGrouping.cs";
@@ -112,7 +112,7 @@ public sealed class CronClassificationSingleSiteArchitectureTests
 
         // And the one legitimate site really is the helper, so the expected-single-site assertions
         // above cannot be satisfied by a scan that matches nothing at all.
-        var helper = StripComments(File.ReadAllText(Path.Combine(RepoRoot(), GroupingFile)));
+        var helper = StripComments(File.ReadAllText(Path.Combine(Repository.Root, GroupingFile)));
         ScheduledProjectionProbe().IsMatch(helper).ShouldBeTrue(
             "PortalConversationGrouping must itself contain the projection comparison.");
         CronIdMembershipProbe().IsMatch(helper).ShouldBeTrue(
@@ -132,9 +132,9 @@ public sealed class CronClassificationSingleSiteArchitectureTests
         @"\bcronConversationIds\b\s*(?:is\s+\{[^}]*\}\s*\w+\s*)?\.\s*Contains\s*\(",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    private static IReadOnlyList<string> ClientSourceFiles()
+    private IReadOnlyList<string> ClientSourceFiles()
     {
-        var extensions = Path.Combine(RepoRoot(), "src", "extensions");
+        var extensions = Path.Combine(Repository.Root, "src", "extensions");
         return Directory
             .EnumerateDirectories(extensions, "BotNexus.Extensions.Channels.SignalR.BlazorClient*")
             .SelectMany(d => Directory.EnumerateFiles(d, "*.*", SearchOption.AllDirectories))
@@ -145,8 +145,8 @@ public sealed class CronClassificationSingleSiteArchitectureTests
             .ToList();
     }
 
-    private static string Rel(string file) =>
-        Path.GetRelativePath(RepoRoot(), file).Replace('\\', '/');
+    private string Rel(string file) =>
+        Path.GetRelativePath(Repository.Root, file).Replace('\\', '/');
 
     private static string StripComments(string source)
     {
@@ -155,13 +155,4 @@ public sealed class CronClassificationSingleSiteArchitectureTests
         return Regex.Replace(noBlock, @"//[^\r\n]*", string.Empty);
     }
 
-    private static string RepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-            current = current.Parent;
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

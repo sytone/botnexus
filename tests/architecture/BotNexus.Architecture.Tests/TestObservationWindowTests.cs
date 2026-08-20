@@ -23,7 +23,7 @@ namespace BotNexus.Architecture.Tests;
 /// there a short value is the point.
 /// </para>
 /// </remarks>
-public class TestObservationWindowTests
+public class TestObservationWindowTests : ArchitectureTest
 {
     private static readonly string[] WaitHelpers =
     [
@@ -36,7 +36,7 @@ public class TestObservationWindowTests
     [Fact]
     public void ObservationWindows_AreGenerousEnoughForALoadedHost()
     {
-        var testsRoot = FindTestsRoot();
+        var testsRoot = Repository.TestsRoot;
         var pattern = new Regex(
             $@"({string.Join('|', WaitHelpers)})\s*\([^;]*?TimeSpan\.From(?<unit>Seconds|Milliseconds)\(\s*(?<value>\d+(?:\.\d+)?)\s*\)",
             RegexOptions.Singleline);
@@ -90,17 +90,4 @@ public class TestObservationWindowTests
             $"be met.{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
     }
 
-    private static string FindTestsRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            if (File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-                return Path.Combine(current.FullName, "tests");
-
-            current = current.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate repository root from test base directory.");
-    }
 }

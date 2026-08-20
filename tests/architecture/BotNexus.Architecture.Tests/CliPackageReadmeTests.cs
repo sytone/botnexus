@@ -7,13 +7,11 @@ namespace BotNexus.Architecture.Tests;
 /// Architecture fitness function: the CLI NuGet package must include a readme that
 /// documents the .NET 10 SDK requirement so users see it before install.
 /// </summary>
-public sealed class CliPackageReadmeTests
+public sealed class CliPackageReadmeTests : ArchitectureTest
 {
-    private static string RepoRoot => Path.GetFullPath(Path.Combine(
-        AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
 
-    private static string CliCsproj => Path.Combine(
-        RepoRoot, "src", "gateway", "BotNexus.Cli", "BotNexus.Cli.csproj");
+    private string CliCsproj => Path.Combine(
+        Repository.Root, "src", "gateway", "BotNexus.Cli", "BotNexus.Cli.csproj");
 
     [Fact]
     public void Cli_Csproj_Has_PackageReadmeFile_Property()

@@ -26,12 +26,11 @@ namespace BotNexus.Architecture.Tests;
 /// literals or address arithmetic of its own.
 /// </para>
 /// </remarks>
-public sealed class BrowserToolsSsrfReuseArchitectureTests
+public sealed class BrowserToolsSsrfReuseArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string GuardProjectDirectory =>
-        Path.Combine(RepoRoot, "src", "extensions", "BotNexus.Extensions.BrowserTools");
+    private string GuardProjectDirectory =>
+        Path.Combine(Repository.Root, "src", "extensions", "BotNexus.Extensions.BrowserTools");
 
     /// <summary>
     /// Address literals and range tests that constitute "reimplementing SsrfValidator". Assembled
@@ -93,7 +92,7 @@ public sealed class BrowserToolsSsrfReuseArchitectureTests
     public void BrowserToolsTests_LaunchNoProcessAndOpenNoSocket()
     {
         var testDirectory = Path.Combine(
-            RepoRoot, "tests", "extensions", "BotNexus.Extensions.BrowserTools.Tests");
+            Repository.Root, "tests", "extensions", "BotNexus.Extensions.BrowserTools.Tests");
         Directory.Exists(testDirectory).ShouldBeTrue($"expected the guard test project at {testDirectory}.");
 
         var files = Directory.GetFiles(testDirectory, "*.cs", SearchOption.AllDirectories)
@@ -116,7 +115,7 @@ public sealed class BrowserToolsSsrfReuseArchitectureTests
             + string.Join("; ", violations));
     }
 
-    private static string[] SourceFiles() =>
+    private string[] SourceFiles() =>
         Directory.Exists(GuardProjectDirectory)
             ? Directory.GetFiles(GuardProjectDirectory, "*.cs", SearchOption.AllDirectories)
                 .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
@@ -137,19 +136,4 @@ public sealed class BrowserToolsSsrfReuseArchitectureTests
         return source;
     }
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git")) ||
-                File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
-            {
-                return directory.FullName;
-            }
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate the repository root from the test output directory.");
-    }
 }

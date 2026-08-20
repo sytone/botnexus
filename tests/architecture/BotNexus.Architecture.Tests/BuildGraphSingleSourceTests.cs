@@ -18,12 +18,12 @@ namespace BotNexus.Architecture.Tests;
 /// solution file. A project added to one graph was not necessarily built or tested by the other.
 /// </para>
 /// </remarks>
-public class BuildGraphSingleSourceTests
+public class BuildGraphSingleSourceTests : ArchitectureTest
 {
     [Fact]
     public void RootSolutionFiles_DoNotExist()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
 
         Directory.GetFiles(repoRoot, "*.slnx", SearchOption.TopDirectoryOnly).ShouldBeEmpty(
             "dirs.proj is the single definition of the repository build graph");
@@ -32,7 +32,7 @@ public class BuildGraphSingleSourceTests
     [Fact]
     public void BuildAndTestInvocations_DoNotNameTheSolutionFile()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         // .cs is included because the ONE call site this fence originally missed was a C# test
         // fixture, not a script: ExtensionBootFixture shelled out to a solution build
         // -c Release` from inside the test phase (#2910). It cost 319.3s of a 443s test phase -
@@ -118,21 +118,4 @@ public class BuildGraphSingleSourceTests
         }
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            // NOT dirs.proj: tests/dirs.proj and src/dirs.proj exist too, so a walk-up keyed on
-            // that name stops at tests/ and silently scans a subtree containing no invocations -
-            // which made the first version of this fence pass while a violation was present.
-            // Directory.Packages.props exists only at the repository root.
-            if (File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-                return current.FullName;
-
-            current = current.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate repository root from test base directory.");
-    }
 }

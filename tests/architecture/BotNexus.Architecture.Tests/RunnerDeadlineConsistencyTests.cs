@@ -15,21 +15,10 @@ namespace BotNexus.Architecture.Tests;
 /// A comment asking future editors to keep the numbers aligned is a wish; these tests fail the
 /// build instead.
 /// </summary>
-public class RunnerDeadlineConsistencyTests
+public class RunnerDeadlineConsistencyTests : ArchitectureTest
 {
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
-        {
-            dir = dir.Parent;
-        }
 
-        Assert.NotNull(dir);
-        return dir!.FullName;
-    }
-
-    private static string Read(params string[] parts) => File.ReadAllText(Path.Combine(RepoRoot(), Path.Combine(parts)));
+    private string Read(params string[] parts) => File.ReadAllText(Path.Combine(Repository.Root, Path.Combine(parts)));
 
     [Fact]
     public void ClientPassesTheReplicaBudgetToTheRunner()

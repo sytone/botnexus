@@ -28,7 +28,7 @@ namespace BotNexus.Architecture.Tests;
 /// ever police the assembly that hosted it.
 /// </para>
 /// </remarks>
-public sealed class SqlitePoolCleanupFenceTests
+public sealed class SqlitePoolCleanupFenceTests : ArchitectureTest
 {
     /// <summary>
     /// Files exempt from the ban, with the reason each is allowed to name the API.
@@ -59,7 +59,7 @@ public sealed class SqlitePoolCleanupFenceTests
     [Fact]
     public void NoTestProject_CallsTheProcessGlobalClearAllPools()
     {
-        var testsRoot = FindTestsRoot();
+        var testsRoot = Repository.TestsRoot;
         var offenders = new List<string>();
         var scanned = 0;
 
@@ -146,24 +146,4 @@ public sealed class SqlitePoolCleanupFenceTests
             || file.Contains($"{sep}bin{sep}", StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// Walks up from the test binary to the repository root (identified by the solution file), then
-    /// resolves the tests directory.
-    /// </summary>
-    /// <remarks>
-    /// Anchoring on the solution file rather than a fixed number of <c>..</c> segments keeps this
-    /// working under any output-path layout, including the remote container gate.
-    /// </remarks>
-    private static string FindTestsRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
-            directory = directory.Parent;
-
-        directory.ShouldNotBeNull("Could not locate the repository root (Directory.Packages.props) from the test binary.");
-
-        var testsRoot = Path.Combine(directory!.FullName, "tests");
-        Directory.Exists(testsRoot).ShouldBeTrue($"Expected the test sources at '{testsRoot}'.");
-        return testsRoot;
-    }
 }

@@ -39,7 +39,7 @@ namespace BotNexus.Architecture.Tests;
 /// nothing.
 /// </para>
 /// </remarks>
-public sealed class WorktreeBranchDeletionArchitectureTests
+public sealed class WorktreeBranchDeletionArchitectureTests : ArchitectureTest
 {
     // The fence file itself documents the forbidden pattern. Allowlist by
     // basename so it does not trip on its own documentation.
@@ -195,9 +195,9 @@ public sealed class WorktreeBranchDeletionArchitectureTests
         return hits;
     }
 
-    private static List<string> ScanTrackedFiles(Func<string, string, string?> inspect, ref int scanned)
+    private List<string> ScanTrackedFiles(Func<string, string, string?> inspect, ref int scanned)
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var offenders = new List<string>();
         var count = 0;
 
@@ -279,16 +279,6 @@ public sealed class WorktreeBranchDeletionArchitectureTests
     private static bool IsTextFile(string relativePath)
         => !BinaryExtensions.Contains(Path.GetExtension(relativePath));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current.FullName;
-    }
 
     private static string Truncate(string value)
         => value.Length <= 100 ? value : value[..100] + "...";

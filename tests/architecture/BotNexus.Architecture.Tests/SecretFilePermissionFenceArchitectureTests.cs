@@ -24,9 +24,8 @@ namespace BotNexus.Architecture.Tests;
 /// <para>Source-text based, like <see cref="SecretRedactionFenceArchitectureTests"/>: "this write
 /// path narrows its permissions" is not reliably observable by reflection.</para>
 /// </summary>
-public sealed class SecretFilePermissionFenceArchitectureTests
+public sealed class SecretFilePermissionFenceArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
     private const string SecureFilePermissionsSource =
         "src/gateway/BotNexus.Gateway.Configuration/SecureFilePermissions.cs";
@@ -101,13 +100,13 @@ public sealed class SecretFilePermissionFenceArchitectureTests
     public void OnlyCentralHelper_UsesRawPlatformPermissionApis()
     {
         var helperPath = Path.GetFullPath(ResolvePath(SecureFilePermissionsSource));
-        var srcRoot = Path.Combine(RepoRoot, "src");
+        var srcRoot = Path.Combine(Repository.Root, "src");
 
         var offenders = Directory
             .EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
             .Where(file => !string.Equals(Path.GetFullPath(file), helperPath, StringComparison.OrdinalIgnoreCase))
             .Where(file => RawPermissionApi.IsMatch(File.ReadAllText(file)))
-            .Select(file => Path.GetRelativePath(RepoRoot, file).Replace('\\', '/'))
+            .Select(file => Path.GetRelativePath(Repository.Root, file).Replace('\\', '/'))
             .OrderBy(p => p, StringComparer.Ordinal)
             .ToList();
 
@@ -173,18 +172,7 @@ public sealed class SecretFilePermissionFenceArchitectureTests
             "Positive pin: routing through the central helper must NOT be flagged as raw-API use.");
     }
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

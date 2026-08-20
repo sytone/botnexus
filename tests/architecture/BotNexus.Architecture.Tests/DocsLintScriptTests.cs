@@ -22,7 +22,7 @@ namespace BotNexus.Architecture.Tests;
 /// fixture or it is not reproducible at all.
 /// </para>
 /// </remarks>
-public sealed class DocsLintScriptTests : IDisposable
+public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "docs-lint-tests-" + Guid.NewGuid().ToString("N"));
@@ -280,7 +280,7 @@ public sealed class DocsLintScriptTests : IDisposable
     public void Lint_IsCleanAgainstTheRealDocset()
     {
         // The gate is only wireable into CI if the tree it guards currently passes.
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var result = RunLintAt(repoRoot, Path.Combine(repoRoot, "scripts", "repo", "docs-lint.ps1"),
             "literal-drift,intra-page-contradiction,legacy-marker", asJson: false);
 
@@ -309,7 +309,7 @@ public sealed class DocsLintScriptTests : IDisposable
             "public static class GatewayBindAddress\n{\n"
             + "    public const string LoopbackListenUrl = \"http://localhost:5005\";\n}\n");
 
-        var realRoot = FindRepoRoot();
+        var realRoot = Repository.Root;
         foreach (var name in new[] { "docs-lint.ps1", "docs-lint-facts.json", "docs-lint-allow.json" })
         {
             File.Copy(
@@ -373,17 +373,6 @@ public sealed class DocsLintScriptTests : IDisposable
     private static string PwshExecutable()
         => OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current.FullName;
-    }
 
     private sealed record LintRun(int ExitCode, string StdOut, string StdErr)
     {

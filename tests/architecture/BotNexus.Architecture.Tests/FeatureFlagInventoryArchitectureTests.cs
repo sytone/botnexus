@@ -19,11 +19,10 @@ using Shouldly;
 /// comment asking reviewers to watch for it would not.
 /// </para>
 /// </summary>
-public sealed class FeatureFlagInventoryArchitectureTests
+public sealed class FeatureFlagInventoryArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string FlagsFile => Path.Combine(RepoRoot, "feature-flags.json");
+    private string FlagsFile => Path.Combine(Repository.Root, "feature-flags.json");
 
     /// <summary>
     /// Files permitted to contain a flag name as a literal, each with the reason. The generator
@@ -89,7 +88,7 @@ public sealed class FeatureFlagInventoryArchitectureTests
 
         var violations = new List<string>();
 
-        foreach (var file in EnumerateSourceFiles(Path.Combine(RepoRoot, "src")))
+        foreach (var file in EnumerateSourceFiles(Path.Combine(Repository.Root, "src")))
         {
             var relative = ToRepoRelative(file);
             if (LiteralExemptions.ContainsKey(Path.GetFileName(file)))
@@ -127,7 +126,7 @@ public sealed class FeatureFlagInventoryArchitectureTests
         // src/gateway/BotNexus.Gateway.Configuration. If it (or a rival inventory) comes back, the
         // generated type and the hand-written one silently disagree - two sources of truth is the
         // exact defect, whether the duplicate is a constant or a whole class.
-        var violations = EnumerateSourceFiles(Path.Combine(RepoRoot, "src"))
+        var violations = EnumerateSourceFiles(Path.Combine(Repository.Root, "src"))
             .Where(file => Regex.IsMatch(
                 File.ReadAllText(file),
                 @"\b(class|record|enum)\s+FeatureFlags\b"))
@@ -144,14 +143,14 @@ public sealed class FeatureFlagInventoryArchitectureTests
     {
         // It runs inside the compiler and ships nothing. Living under src/ would add it to every
         // `botnexus build` (src/dirs.proj is the deployment closure) for no deployed benefit.
-        Directory.Exists(Path.Combine(RepoRoot, "tools", "BotNexus.SourceGenerators"))
+        Directory.Exists(Path.Combine(Repository.Root, "tools", "BotNexus.SourceGenerators"))
             .ShouldBeTrue("the generator must live under tools/, not src/");
 
-        Directory.Exists(Path.Combine(RepoRoot, "src", "BotNexus.SourceGenerators"))
+        Directory.Exists(Path.Combine(Repository.Root, "src", "BotNexus.SourceGenerators"))
             .ShouldBeFalse("the generator must not be in the src deployment closure");
     }
 
-    private static IReadOnlyList<string> ReadDeclaredFlagNames()
+    private IReadOnlyList<string> ReadDeclaredFlagNames()
     {
         using var document = JsonDocument.Parse(File.ReadAllText(FlagsFile));
 
@@ -168,18 +167,7 @@ public sealed class FeatureFlagInventoryArchitectureTests
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                         && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
 
-    private static string ToRepoRelative(string absolutePath)
-        => absolutePath.Substring(RepoRoot.Length).TrimStart(Path.DirectorySeparatorChar).Replace('\\', '/');
+    private string ToRepoRelative(string absolutePath)
+        => absolutePath.Substring(Repository.Root.Length).TrimStart(Path.DirectorySeparatorChar).Replace('\\', '/');
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

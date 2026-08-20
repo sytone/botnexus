@@ -19,7 +19,7 @@ namespace BotNexus.Architecture.Tests;
 /// impression of a control.</item>
 /// </list>
 /// </summary>
-public sealed class SatelliteCapabilityEnforcementFenceTests
+public sealed class SatelliteCapabilityEnforcementFenceTests : ArchitectureTest
 {
     /// <summary>
     /// Known, reviewed satellite-type <c>.Capabilities</c> consumers, each classified. All are
@@ -59,7 +59,7 @@ public sealed class SatelliteCapabilityEnforcementFenceTests
     [Fact]
     public void Rule1_NoSatelliteCapabilityConsumerOutsideTheReviewedAllowlist()
     {
-        var srcRoot = FindSrcRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         foreach (var file in Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories))
@@ -89,7 +89,7 @@ public sealed class SatelliteCapabilityEnforcementFenceTests
     [Fact]
     public void Rule2_DeclarationsRetainTheDisplayOnlyDisclaimer()
     {
-        var srcRoot = FindSrcRoot();
+        var srcRoot = Repository.SourceRoot;
         var missing = new List<string>();
 
         foreach (var declaration in s_declarations)
@@ -113,17 +113,4 @@ public sealed class SatelliteCapabilityEnforcementFenceTests
             + "reasonably concludes the list constrains what the satellite may be asked to do. It does not.");
     }
 
-    private static string FindSrcRoot()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir is not null)
-        {
-            var candidate = Path.Combine(dir, "src");
-            if (Directory.Exists(candidate) && Directory.Exists(Path.Combine(dir, "tests")))
-                return candidate;
-            dir = Path.GetDirectoryName(dir);
-        }
-
-        throw new InvalidOperationException("Could not locate the repository 'src' directory.");
-    }
 }

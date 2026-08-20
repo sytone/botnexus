@@ -25,7 +25,7 @@ namespace BotNexus.Architecture.Tests;
 /// for it.
 /// </para>
 /// </remarks>
-public sealed class ExportTranscriptAssemblyArchitectureTests
+public sealed class ExportTranscriptAssemblyArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The projection is the single home of the transcript state machine, so the marker strings and
@@ -34,7 +34,7 @@ public sealed class ExportTranscriptAssemblyArchitectureTests
     [Fact]
     public void TranscriptAssemblyStateMachine_LivesInExactlyOneProductionFile()
     {
-        var gatewayRoot = FindGatewaySourceRoot();
+        var gatewayRoot = Repository.Path("src", "gateway");
 
         // The conjunction is the signal: any file that both inserts session boundary markers AND
         // filters NO_REPLY is, by definition, assembling a transcript.
@@ -144,17 +144,4 @@ public sealed class ExportTranscriptAssemblyArchitectureTests
         return false;
     }
 
-    private static string FindGatewaySourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var gatewayRoot = Path.Combine(current.FullName, "src", "gateway");
-        Directory.Exists(gatewayRoot).ShouldBeTrue("Expected src/gateway under " + current.FullName);
-        return gatewayRoot;
-    }
 }

@@ -49,7 +49,7 @@ namespace BotNexus.Architecture.Tests;
 /// "probe an id string, then decide how to render/gate a conversation".
 /// </para>
 /// </summary>
-public sealed class ConversationSourceArchitectureTests
+public sealed class ConversationSourceArchitectureTests : ArchitectureTest
 {
     // ── Rule 1: write-once origin ────────────────────────────────────────────────
 
@@ -98,7 +98,7 @@ public sealed class ConversationSourceArchitectureTests
     public void ClientConversationState_SourceAndKind_AreInitOnly()
     {
         var file = Path.Combine(
-            RepoRoot(),
+            Repository.Root,
             "src",
             "extensions",
             "BotNexus.Extensions.Channels.SignalR.BlazorClient.Core",
@@ -346,9 +346,9 @@ public sealed class ConversationSourceArchitectureTests
             $"{type.Name}.{propertyName} must be `init`-only, not `set`. {because}");
     }
 
-    private static IReadOnlyList<string> ClientSourceFiles()
+    private IReadOnlyList<string> ClientSourceFiles()
     {
-        var extensions = Path.Combine(RepoRoot(), "src", "extensions");
+        var extensions = Path.Combine(Repository.Root, "src", "extensions");
         return Directory
             .EnumerateDirectories(extensions, "BotNexus.Extensions.Channels.SignalR.BlazorClient*")
             .SelectMany(d => Directory.EnumerateFiles(d, "*.*", SearchOption.AllDirectories))
@@ -359,9 +359,9 @@ public sealed class ConversationSourceArchitectureTests
             .ToList();
     }
 
-    private static IReadOnlyList<string> AllProductionAndTestSourceFiles()
+    private IReadOnlyList<string> AllProductionAndTestSourceFiles()
     {
-        var root = RepoRoot();
+        var root = Repository.Root;
         return new[] { Path.Combine(root, "src"), Path.Combine(root, "tests") }
             .SelectMany(d => Directory.EnumerateFiles(d, "*.*", SearchOption.AllDirectories))
             .Where(f => f.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
@@ -374,8 +374,8 @@ public sealed class ConversationSourceArchitectureTests
             .ToList();
     }
 
-    private static string Rel(string file) =>
-        Path.GetRelativePath(RepoRoot(), file).Replace('\\', '/');
+    private string Rel(string file) =>
+        Path.GetRelativePath(Repository.Root, file).Replace('\\', '/');
 
     private static string StripComments(string source)
     {
@@ -383,13 +383,4 @@ public sealed class ConversationSourceArchitectureTests
         return Regex.Replace(noBlock, @"//[^\r\n]*", string.Empty);
     }
 
-    private static string RepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-            current = current.Parent;
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

@@ -18,12 +18,11 @@ namespace BotNexus.Architecture.Tests;
 /// <c>ProcessStartInfo</c>/<c>StartInfo</c> environment dictionary, which are the two ways managed
 /// code exports a value into an environment block.</para>
 /// </remarks>
-public sealed class GitHubCredentialEnvironmentFenceArchitectureTests
+public sealed class GitHubCredentialEnvironmentFenceArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string ExtensionRoot =>
-        Path.Combine(RepoRoot, "src", "extensions", "BotNexus.Extensions.GitHub");
+    private string ExtensionRoot =>
+        Path.Combine(Repository.Root, "src", "extensions", "BotNexus.Extensions.GitHub");
 
     [Fact]
     public void GitHubExtension_ProjectExists()
@@ -45,7 +44,7 @@ public sealed class GitHubCredentialEnvironmentFenceArchitectureTests
         foreach (var file in EnumerateSources())
         {
             var text = File.ReadAllText(file);
-            var relative = Path.GetRelativePath(RepoRoot, file).Replace('\\', '/');
+            var relative = Path.GetRelativePath(Repository.Root, file).Replace('\\', '/');
 
             if (Regex.IsMatch(text, @"Environment\s*\.\s*SetEnvironmentVariable"))
                 offenders.Add($"{relative}: calls Environment.SetEnvironmentVariable.");
@@ -91,7 +90,7 @@ public sealed class GitHubCredentialEnvironmentFenceArchitectureTests
             // this fence fail on its own documentation - and the incentive to delete the
             // explanation is worse than no fence at all.
             var text = StripComments(File.ReadAllText(file));
-            var relative = Path.GetRelativePath(RepoRoot, file).Replace('\\', '/');
+            var relative = Path.GetRelativePath(Repository.Root, file).Replace('\\', '/');
 
             if (Regex.IsMatch(text, @"auth\s+switch", RegexOptions.IgnoreCase))
                 offenders.Add($"{relative}: references a `gh auth switch` invocation.");
@@ -134,7 +133,7 @@ public sealed class GitHubCredentialEnvironmentFenceArchitectureTests
         return Regex.Replace(withoutBlocks, @"^\s*//.*$", string.Empty, RegexOptions.Multiline);
     }
 
-    private static string[] EnumerateSources()
+    private string[] EnumerateSources()
     {
         if (!Directory.Exists(ExtensionRoot))
             return [];
@@ -150,15 +149,4 @@ public sealed class GitHubCredentialEnvironmentFenceArchitectureTests
             .ToArray();
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

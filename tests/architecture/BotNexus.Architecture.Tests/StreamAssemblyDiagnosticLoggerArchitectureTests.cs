@@ -28,7 +28,7 @@ namespace BotNexus.Architecture.Tests;
 /// documented optional-logger contract of the helper itself.
 /// </para>
 /// </remarks>
-public class StreamAssemblyDiagnosticLoggerArchitectureTests
+public class StreamAssemblyDiagnosticLoggerArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// A <c>Reconcile(...)</c> invocation together with its argument list, up to the closing
@@ -144,7 +144,7 @@ public class StreamAssemblyDiagnosticLoggerArchitectureTests
     public void SharedConformanceSeam_StillGuardsItsDiagnosticBehindTheOptionalLogger()
     {
         var path = Path.Combine(
-            RepoRoot,
+            Repository.Root,
             "src/agent/BotNexus.Agent.Providers.Core/Streaming/StreamAssemblyConformance.cs"
                 .Replace('/', Path.DirectorySeparatorChar));
 
@@ -168,17 +168,17 @@ public class StreamAssemblyDiagnosticLoggerArchitectureTests
         return match.Groups[1].Value;
     }
 
-    private static string Collapse(string value)
+    private string Collapse(string value)
         => Regex.Replace(value, @"\s+", " ").Trim();
 
-    private static IEnumerable<string> ProductionSourceFiles()
+    private IEnumerable<string> ProductionSourceFiles()
         => Directory
-            .EnumerateFiles(Path.Combine(RepoRoot, "src"), "*.cs", SearchOption.AllDirectories)
+            .EnumerateFiles(Path.Combine(Repository.Root, "src"), "*.cs", SearchOption.AllDirectories)
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
 
-    private static string Relative(string path)
-        => Path.GetRelativePath(RepoRoot, path).Replace(Path.DirectorySeparatorChar, '/');
+    private string Relative(string path)
+        => Path.GetRelativePath(Repository.Root, path).Replace(Path.DirectorySeparatorChar, '/');
 
     /// <summary>
     /// Comments in the parsers legitimately discuss the muted call site and quote its old shape.
@@ -190,17 +190,5 @@ public class StreamAssemblyDiagnosticLoggerArchitectureTests
         return Regex.Replace(withoutBlocks, @"//[^\n]*", "");
     }
 
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

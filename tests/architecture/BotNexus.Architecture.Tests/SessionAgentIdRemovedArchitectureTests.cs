@@ -35,7 +35,7 @@ namespace BotNexus.Architecture.Tests;
 /// regex-based architecture fence must include a self-test" memory.
 /// </para>
 /// </remarks>
-public sealed class SessionAgentIdRemovedArchitectureTests
+public sealed class SessionAgentIdRemovedArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void Session_HasNoAgentIdProperty()
@@ -105,7 +105,7 @@ public sealed class SessionAgentIdRemovedArchitectureTests
     [Fact]
     public void NoProductionSourceFile_AssignsAgentIdAfterConstruction_OutsideAllowlist()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -129,7 +129,7 @@ public sealed class SessionAgentIdRemovedArchitectureTests
     [Fact]
     public void AssignAllowlist_OnlyContains_FilesThat_StillExist_AndStill_TripTheFence()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var stale = new List<string>();
 
         foreach (var relative in s_assignAllowlist)
@@ -237,18 +237,6 @@ public sealed class SessionAgentIdRemovedArchitectureTests
             : full;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 
     /// <summary>
     /// Removes single-line (<c>//</c>, <c>///</c>) and block (<c>/* … */</c>) C# comments

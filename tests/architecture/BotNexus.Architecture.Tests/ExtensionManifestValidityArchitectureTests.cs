@@ -14,7 +14,7 @@ namespace BotNexus.Architecture.Tests;
 /// logs a warning and skips them, so the failure was silent and the tools were never available to
 /// any agent. These tests fail the build instead of failing quietly at runtime.
 /// </remarks>
-public sealed class ExtensionManifestValidityArchitectureTests
+public sealed class ExtensionManifestValidityArchitectureTests : ArchitectureTest
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -82,7 +82,7 @@ public sealed class ExtensionManifestValidityArchitectureTests
 
         foreach (var manifestPath in manifests)
         {
-            var relative = Path.GetRelativePath(RepoRoot, manifestPath);
+            var relative = Path.GetRelativePath(Repository.Root, manifestPath);
             ManifestRecord? manifest;
             try
             {
@@ -194,7 +194,7 @@ public sealed class ExtensionManifestValidityArchitectureTests
                 .ToArray();
 
             if (unknown.Length > 0)
-                offenders.Add($"{Path.GetRelativePath(RepoRoot, manifestPath)}: {string.Join(", ", unknown)}");
+                offenders.Add($"{Path.GetRelativePath(Repository.Root, manifestPath)}: {string.Join(", ", unknown)}");
         }
 
         offenders.ShouldBeEmpty(
@@ -202,17 +202,17 @@ public sealed class ExtensionManifestValidityArchitectureTests
             + Environment.NewLine + string.Join(Environment.NewLine, offenders));
     }
 
-    private static IEnumerable<string> EnumerateManifests() =>
+    private IEnumerable<string> EnumerateManifests() =>
         Directory.EnumerateFiles(ExtensionsRoot, "botnexus-extension.json", SearchOption.AllDirectories)
             .Where(path => !IsBuildOutput(path))
             .OrderBy(path => path, StringComparer.Ordinal);
 
-    private static IEnumerable<string> EnumerateExtensionProjects() =>
+    private IEnumerable<string> EnumerateExtensionProjects() =>
         Directory.EnumerateDirectories(ExtensionsRoot)
             .SelectMany(directory => Directory.EnumerateFiles(directory, "*.csproj", SearchOption.TopDirectoryOnly))
             .OrderBy(path => path, StringComparer.Ordinal);
 
-    private static bool IsBuildOutput(string path)
+    private bool IsBuildOutput(string path)
     {
         var relative = Path.GetRelativePath(ExtensionsRoot, path);
         var segments = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -241,21 +241,9 @@ public sealed class ExtensionManifestValidityArchitectureTests
         return assemblyName + ".dll";
     }
 
-    private static string ExtensionsRoot => Path.Combine(RepoRoot, "src", "extensions");
+    private string ExtensionsRoot => Path.Combine(Repository.Root, "src", "extensions");
 
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 
     private sealed record ManifestRecord
     {

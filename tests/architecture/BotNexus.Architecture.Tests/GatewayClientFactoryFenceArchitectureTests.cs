@@ -31,9 +31,8 @@ namespace BotNexus.Architecture.Tests;
 /// "this call site consulted the credential policy" is a property of how the client was
 /// constructed, which reflection over the compiled assembly cannot observe.</para>
 /// </summary>
-public sealed class GatewayClientFactoryFenceArchitectureTests
+public sealed class GatewayClientFactoryFenceArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
     /// <summary>Root of the CLI project this fence governs.</summary>
     private const string CliRoot = "src/gateway/BotNexus.Cli";
@@ -101,7 +100,7 @@ public sealed class GatewayClientFactoryFenceArchitectureTests
     [Fact]
     public void NoGatewayApiHttpClient_IsConstructedOutsideTheFactory()
     {
-        var cliRoot = Path.Combine(RepoRoot, CliRoot.Replace('/', Path.DirectorySeparatorChar));
+        var cliRoot = Path.Combine(Repository.Root, CliRoot.Replace('/', Path.DirectorySeparatorChar));
         Directory.Exists(cliRoot).ShouldBeTrue($"CLI source root not found: {cliRoot}");
 
         var offenders = Directory
@@ -249,21 +248,10 @@ public sealed class GatewayClientFactoryFenceArchitectureTests
             "Positive pin: consuming the factory's client must NOT be flagged as a bare construction.");
     }
 
-    private static string ToRepoRelative(string absolutePath) =>
-        Path.GetRelativePath(RepoRoot, absolutePath).Replace('\\', '/');
+    private string ToRepoRelative(string absolutePath) =>
+        Path.GetRelativePath(Repository.Root, absolutePath).Replace('\\', '/');
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

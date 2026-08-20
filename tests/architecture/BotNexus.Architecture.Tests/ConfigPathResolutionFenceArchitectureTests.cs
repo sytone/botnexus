@@ -41,7 +41,7 @@ namespace BotNexus.Architecture.Tests;
 /// clean pass.
 /// </para>
 /// </summary>
-public sealed class ConfigPathResolutionFenceArchitectureTests
+public sealed class ConfigPathResolutionFenceArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// Pre-existing unresolvable literals, one entry per <c>file|literal</c>.
@@ -61,7 +61,7 @@ public sealed class ConfigPathResolutionFenceArchitectureTests
     [Fact]
     public void EveryConfigPathUsedOutsideTheConfigurationProject_Resolves()
     {
-        var usages = ConfigPathFence.ExtractUsages(ConfigPathFence.FindRepoRoot());
+        var usages = ConfigPathFence.ExtractUsages(Repository.Root);
 
         // Non-vacuity guard: an empty candidate set means the extraction silently found nothing and
         // the assertion below is over air. The repository demonstrably contains raw-document reads
@@ -102,7 +102,7 @@ public sealed class ConfigPathResolutionFenceArchitectureTests
     public void Baseline_ContainsNoStaleEntries()
     {
         var live = ConfigPathFence
-            .FindViolations(ConfigPathFence.ExtractUsages(ConfigPathFence.FindRepoRoot()))
+            .FindViolations(ConfigPathFence.ExtractUsages(Repository.Root))
             .Select(v => v.Key)
             .ToHashSet(StringComparer.Ordinal);
 

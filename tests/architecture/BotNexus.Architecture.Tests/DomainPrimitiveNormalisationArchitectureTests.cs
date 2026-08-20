@@ -11,7 +11,7 @@ namespace BotNexus.Architecture.Tests;
 /// <c>.Trim()</c> before <c>From()</c> — it's redundant and masks the primitive's contract.
 /// </para>
 /// </summary>
-public sealed partial class DomainPrimitiveNormalisationArchitectureTests
+public sealed partial class DomainPrimitiveNormalisationArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// Patterns that represent a redundant <c>.Trim()</c> immediately before a domain primitive
@@ -39,7 +39,7 @@ public sealed partial class DomainPrimitiveNormalisationArchitectureTests
     [Fact]
     public void No_Redundant_Trim_Before_DomainPrimitive_From()
     {
-        var srcRoot = FindSrcRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         var csFiles = Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
@@ -72,7 +72,7 @@ public sealed partial class DomainPrimitiveNormalisationArchitectureTests
     [Fact]
     public void No_ToLower_On_DomainPrimitive_Value()
     {
-        var srcRoot = FindSrcRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
         var pattern = ToLowerOnPrimitiveValue();
 
@@ -99,20 +99,6 @@ public sealed partial class DomainPrimitiveNormalisationArchitectureTests
             string.Join("\n", violations));
     }
 
-    private static string FindSrcRoot()
-    {
-        // Walk up from the test assembly location to find the repo src/ directory.
-        var dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
-        while (dir is not null)
-        {
-            var srcCandidate = Path.Combine(dir, "src");
-            if (Directory.Exists(srcCandidate) && File.Exists(Path.Combine(dir, "Directory.Packages.props")))
-                return srcCandidate;
-            dir = Path.GetDirectoryName(dir);
-        }
-
-        throw new InvalidOperationException("Could not locate repository src/ root from test assembly location.");
-    }
 
     // Matches: .Trim()) where .From( precedes it on the same line, covering patterns like:
     //   AgentId.From(value.Trim())

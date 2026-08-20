@@ -18,7 +18,7 @@ namespace BotNexus.Architecture.Tests;
 /// <c>From(...)</c>); only public method parameters and field declarations are
 /// fenced here.
 /// </remarks>
-public sealed class JobIdRunIdArchitectureTests
+public sealed class JobIdRunIdArchitectureTests : ArchitectureTest
 {
     // Cron-domain files that own the wire ↔ typed boundary. They take strings from
     // REST/CLI inputs and convert via JobId.From / RunId.From; the fence would
@@ -48,7 +48,7 @@ public sealed class JobIdRunIdArchitectureTests
     [Fact]
     public void NoStringJobIdOrRunId_InCronModule()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         // Matches `string jobId`, `string? jobId`, `string  runId`, etc. — but not
         // `JobId jobId` or `RunId runId` (typed parameters).
         var pattern = new Regex(@"\bstring\??\s+(jobId|runId)\b", RegexOptions.Compiled);
@@ -77,17 +77,4 @@ public sealed class JobIdRunIdArchitectureTests
         => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
         && !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal);
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

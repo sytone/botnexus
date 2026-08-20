@@ -46,7 +46,7 @@ namespace BotNexus.Architecture.Tests;
 /// masquerade as coverage.
 /// </para>
 /// </summary>
-public sealed class AgentDescriptorFingerprintFenceArchitectureTests
+public sealed class AgentDescriptorFingerprintFenceArchitectureTests : ArchitectureTest
 {
     private const string FingerprintSource =
         "src/gateway/BotNexus.Gateway.Configuration/AgentDescriptorFingerprint.cs";
@@ -272,7 +272,7 @@ public sealed class AgentDescriptorFingerprintFenceArchitectureTests
     /// <c>ComputeEffective</c>'s <c>OrderBy(d =&gt; d.AgentId.Value, ...)</c> satisfy the fence
     /// for a member the fingerprint never actually appends.
     /// </summary>
-    private static string ReadAppendDescriptorBody()
+    private string ReadAppendDescriptorBody()
     {
         var text = File.ReadAllText(ResolvePath(FingerprintSource));
 
@@ -305,16 +305,7 @@ public sealed class AgentDescriptorFingerprintFenceArchitectureTests
             $"Unbalanced braces while extracting AppendDescriptor from {FingerprintSource}.");
     }
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(FindRepoRoot(), relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-            current = current.Parent;
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

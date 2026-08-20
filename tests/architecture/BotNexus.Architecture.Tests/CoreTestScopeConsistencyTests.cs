@@ -12,27 +12,16 @@ namespace BotNexus.Architecture.Tests;
 /// BotNexus.Conversation.*, so those projects never ran in CI at all while the job reported green.
 /// A comment asking future editors to keep them in sync is a wish; this fails the build instead.
 /// </summary>
-public class CoreTestScopeConsistencyTests
+public class CoreTestScopeConsistencyTests : ArchitectureTest
 {
     private const string CoreFilter =
         "FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E";
 
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
-        {
-            dir = dir.Parent;
-        }
-
-        Assert.NotNull(dir);
-        return dir!.FullName;
-    }
 
     [Fact]
     public void CoreScope_IsSpelledIdentically_InCiAndTheRemoteRunner()
     {
-        var root = RepoRoot();
+        var root = Repository.Root;
         var sources = new Dictionary<string, string>
         {
             [".github/workflows/ci-build-test.yml"] = Path.Combine(root, ".github", "workflows", "ci-build-test.yml"),
@@ -54,7 +43,7 @@ public class CoreTestScopeConsistencyTests
     [Fact]
     public void CiWorkflow_DoesNotExcludeProjectsBeyondTheCoreScope()
     {
-        var workflow = Path.Combine(RepoRoot(), ".github", "workflows", "ci-build-test.yml");
+        var workflow = Path.Combine(Repository.Root, ".github", "workflows", "ci-build-test.yml");
         var text = File.ReadAllText(workflow);
 
         // Any FullyQualifiedName!~ exclusion must name an E2E project. Excluding anything else

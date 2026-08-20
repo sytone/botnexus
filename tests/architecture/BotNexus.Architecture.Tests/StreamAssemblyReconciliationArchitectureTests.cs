@@ -21,7 +21,7 @@ namespace BotNexus.Architecture.Tests;
 /// pass. This fence fails the build instead.
 /// </para>
 /// </remarks>
-public class StreamAssemblyReconciliationArchitectureTests
+public class StreamAssemblyReconciliationArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The stream parsers required to reconcile. Named explicitly rather than discovered by
@@ -49,7 +49,6 @@ public class StreamAssemblyReconciliationArchitectureTests
         @"StreamAssemblyConformance\s*\.\s*Reconcile\s*\(",
         RegexOptions.Compiled);
 
-    private static string RepoRoot => FindRepoRoot();
 
     /// <summary>
     /// AC5: a stream parser that observes a terminal block text value must reconcile against it.
@@ -161,18 +160,7 @@ public class StreamAssemblyReconciliationArchitectureTests
         return Regex.Replace(withoutBlock, @"//[^\n]*", "");
     }
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (Directory.Packages.props) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

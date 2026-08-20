@@ -41,7 +41,7 @@ namespace BotNexus.Architecture.Tests;
 /// silently matching nothing.
 /// </para>
 /// </remarks>
-public sealed class TestGitInvocationScopeArchitectureTests
+public sealed class TestGitInvocationScopeArchitectureTests : ArchitectureTest
 {
     // The fence file itself documents both the forbidden and the permitted forms, so it
     // would match its own detector. Allowlist by basename, exactly as the sibling fences do.
@@ -223,9 +223,9 @@ public sealed class TestGitInvocationScopeArchitectureTests
         return null;
     }
 
-    private static IEnumerable<(string Relative, string Content)> EnumerateTrackedTestSources()
+    private IEnumerable<(string Relative, string Content)> EnumerateTrackedTestSources()
     {
-        var repoRoot = FindSweepRepoRoot();
+        var repoRoot = Repository.Root;
 
         foreach (var relative in EnumerateTrackedFiles(repoRoot))
         {
@@ -291,16 +291,6 @@ public sealed class TestGitInvocationScopeArchitectureTests
         process.ExitCode.ShouldBe(0, "git ls-files failed: " + process.StandardError.ReadToEnd());
     }
 
-    private static string FindSweepRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current.FullName;
-    }
 
     private static string Truncate(string value)
         => value.Length <= 100 ? value : value[..100] + "...";
