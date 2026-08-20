@@ -252,7 +252,7 @@ public sealed class RazorDirectiveKeywordFenceArchitectureTests
     private static string SourceRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
             current = current.Parent;
         current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
         return Path.Combine(current!.FullName, "src");

@@ -37,7 +37,7 @@ public sealed class CopilotProviderTransportArchitectureTests
     private static string FindRepoRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx"))) current = current.Parent;
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props"))) current = current.Parent;
         return current?.FullName ?? throw new DirectoryNotFoundException("Could not locate repository root.");
     }
 }

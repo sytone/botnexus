@@ -166,7 +166,7 @@ public sealed class ConversationCreationSeamArchitectureTests
     private static string SrcDir()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
             current = current.Parent;
         current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
 

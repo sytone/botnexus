@@ -76,7 +76,7 @@ public sealed class GatewayProjectDependencyBoundaryTests
 
         while (current is not null)
         {
-            if (File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+            if (File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
                 return current.FullName;
 
             current = current.Parent;

@@ -137,7 +137,7 @@ All tests run with `BOTNEXUS_HOME` set to a temp directory via `test.runsettings
 
 ```powershell
 # Skip test compilation for faster production builds
-dotnet build BotNexus.slnx /p:SkipTests=true
+dotnet build dirs.proj /p:SkipTests=true
 
 # Run only tests affected by your current changes (uses project dependency graph)
 scripts/repo/test-impacted.ps1

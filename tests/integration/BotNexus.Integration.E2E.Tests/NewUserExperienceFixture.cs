@@ -178,7 +178,7 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             //     + UseSharedCompilation=false force MSBuild and the Roslyn server
             //     to exit cleanly so this subprocess returns.
             //
-            //     SCOPE (#2910): src/dirs.proj, NOT BotNexus.slnx. The solution carries 112
+            //     SCOPE (#2910): src/dirs.proj, NOT Directory.Packages.props. The solution carries 112
             //     projects, 57 of them test projects that this fixture never deploys or loads;
             //     building them in Release from inside the test phase is pure waste. Release
             //     itself is load-bearing and must stay - GatewayCommand resolves the host from

@@ -181,7 +181,7 @@ public sealed class AskUserChannelSeamArchitectureTests
         while (directory is not null)
         {
             if (Directory.Exists(Path.Combine(directory.FullName, ".git")) ||
-                File.Exists(Path.Combine(directory.FullName, "BotNexus.slnx")))
+                File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
             {
                 return directory.FullName;
             }

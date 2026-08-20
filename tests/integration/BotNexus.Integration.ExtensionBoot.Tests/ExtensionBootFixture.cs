@@ -61,7 +61,7 @@ public sealed class ExtensionBootFixture : IAsyncLifetime
             //     UseSharedCompilation=false force MSBuild + Roslyn to exit cleanly so this
             //     subprocess returns control instead of leaving build nodes attached.
             //
-            //     SCOPE (#2910): src/dirs.proj, NOT BotNexus.slnx. The solution carries 112
+            //     SCOPE (#2910): src/dirs.proj, NOT Directory.Packages.props. The solution carries 112
             //     projects, 57 of them under tests/, and this fixture used to build every one
             //     of them in Release *after* the remote runner had already built the tree in
             //     Debug - 319.3s of a 443s test phase (72%) for three tests that execute in

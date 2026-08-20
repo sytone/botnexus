@@ -186,10 +186,10 @@ public sealed class ConfigurationSurfaceClosureArchitectureTests
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
 
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "BotNexus.slnx")))
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
             directory = directory.Parent;
 
-        directory.ShouldNotBeNull("could not locate the repository root (no BotNexus.slnx found above the test binary)");
+        directory.ShouldNotBeNull("could not locate the repository root (no Directory.Packages.props found above the test binary)");
 
         return Path.Combine([directory.FullName, .. segments]);
     }

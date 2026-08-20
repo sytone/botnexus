@@ -8,7 +8,7 @@ namespace BotNexus.Architecture.Tests;
 /// <remarks>
 /// <para>
 /// The traversal projects (<c>dirs.proj</c>, <c>src/dirs.proj</c>, <c>tests/dirs.proj</c>) are the
-/// single definition of the build graph. <c>BotNexus.slnx</c> is a second spelling of the same
+/// single definition of the build graph. The legacy solution file was a second spelling of the same
 /// set, and two spellings of one value is the defect family behind #2793 and #2796: whichever is
 /// edited second drifts silently.
 /// </para>
@@ -17,30 +17,34 @@ namespace BotNexus.Architecture.Tests;
 /// and 17 call sites across CI, the Dockerfile, the remote runner and six scripts still drove the
 /// solution file. A project added to one graph was not necessarily built or tested by the other.
 /// </para>
-/// <para>
-/// Repo-root MARKER usages are deliberately NOT fenced. A marker only needs a file that reliably
-/// exists at the repository root, so <c>File.Exists(Path.Combine(dir, "BotNexus.slnx"))</c> stays
-/// correct regardless of which project drives the build.
-/// </para>
 /// </remarks>
 public class BuildGraphSingleSourceTests
 {
+    [Fact]
+    public void RootSolutionFiles_DoNotExist()
+    {
+        var repoRoot = FindRepoRoot();
+
+        Directory.GetFiles(repoRoot, "*.slnx", SearchOption.TopDirectoryOnly).ShouldBeEmpty(
+            "dirs.proj is the single definition of the repository build graph");
+    }
+
     [Fact]
     public void BuildAndTestInvocations_DoNotNameTheSolutionFile()
     {
         var repoRoot = FindRepoRoot();
         // .cs is included because the ONE call site this fence originally missed was a C# test
-        // fixture, not a script: ExtensionBootFixture shelled out to `dotnet build BotNexus.slnx
+        // fixture, not a script: ExtensionBootFixture shelled out to a solution build
         // -c Release` from inside the test phase (#2910). It cost 319.3s of a 443s test phase -
         // 72% - rebuilding 57 test projects in Release that nothing deploys or loads. A fence
         // that scans only scripts cannot see a build invoked from compiled code, and this is
         // exactly where the expensive drift hid.
         var extensions = new[] { ".ps1", ".sh", ".yml", ".yaml", ".proj", ".props", ".cs" };
 
-        // Pattern 1: 'dotnet build|test|... <something> BotNexus.slnx' on ONE line. Covers every
+        // Pattern 1: 'dotnet build|test|... <something>.slnx' on ONE line. Covers every
         // script, workflow and Dockerfile call site.
         var invocation = new Regex(
-            @"dotnet\s+(build|test|restore|list|publish|pack)\b[^\r\n]*BotNexus\.slnx",
+            @"dotnet\s+(build|test|restore|list|publish|pack)\b[^\r\n]*\.slnx",
             RegexOptions.IgnoreCase);
 
         // Pattern 2: the SPLIT-ARGUMENT form, which pattern 1 structurally cannot see and which is
@@ -49,14 +53,14 @@ public class BuildGraphSingleSourceTests
         //
         //     await ProcessRunner.RunAsync(
         //         "dotnet",
-        //         "build BotNexus.slnx --configuration Release ...",
+        //         "build Legacy.slnx --configuration Release ...",
         //
         // The verb and the solution name share a line, but the word 'dotnet' does not, so a regex
         // anchored on 'dotnet' matches nothing. This was mutation-proven: reverting the fixture to
         // the solution build left pattern 1 GREEN. A fence that cannot fail on the very defect it
         // was written for is decoration, so match the verb+solution pair without requiring 'dotnet'.
         var splitArgInvocation = new Regex(
-            @"^\s*""(build|test|restore|list|publish|pack)\s[^\r\n]*BotNexus\.slnx",
+            @"^\s*""(build|test|restore|list|publish|pack)\s[^\r\n]*\.slnx",
             RegexOptions.IgnoreCase);
 
         var violations = new List<string>();
@@ -88,7 +92,7 @@ public class BuildGraphSingleSourceTests
 
         violations.ShouldBeEmpty(
             "Build and test invocations must target a traversal project (dirs.proj, src/dirs.proj, " +
-            "tests/dirs.proj), not BotNexus.slnx. The traversals are the single definition of the " +
+            "tests/dirs.proj), not a solution file. The traversals are the single definition of the " +
             "build graph; naming the solution file reintroduces a second spelling that drifts." +
             $"{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
     }

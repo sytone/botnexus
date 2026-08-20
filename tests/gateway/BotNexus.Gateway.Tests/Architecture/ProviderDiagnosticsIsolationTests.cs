@@ -121,7 +121,7 @@ public sealed class ProviderDiagnosticsIsolationTests
 
         while (current is not null)
         {
-            if (File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+            if (File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
                 return Path.Combine(current.FullName, "tests", "gateway", "BotNexus.Gateway.Tests");
 
             current = current.Parent;

@@ -19,7 +19,7 @@ public sealed class TraversalProjectSetTests
     private static string FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, BuildCommand.SolutionFileName)))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
             dir = dir.Parent;
 
         dir.ShouldNotBeNull("could not locate the repository root from the test output directory");

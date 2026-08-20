@@ -59,7 +59,7 @@ cd botnexus
 Build the solution:
 
 ```bash
-dotnet build BotNexus.slnx
+dotnet build dirs.proj
 ```
 
 You should see output ending with something like:

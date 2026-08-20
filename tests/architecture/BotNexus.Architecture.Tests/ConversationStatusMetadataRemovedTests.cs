@@ -49,12 +49,12 @@ public sealed class ConversationStatusMetadataRemovedTests
     private static string FindSourceRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "BotNexus.slnx")))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
             dir = dir.Parent;
 
         return dir is not null
             ? Path.Combine(dir.FullName, "src")
-            : throw new InvalidOperationException("Cannot locate repo root (BotNexus.slnx not found).");
+            : throw new InvalidOperationException("Cannot locate repo root (Directory.Packages.props not found).");
     }
 
     private static bool IsProductionSource(string path) =>

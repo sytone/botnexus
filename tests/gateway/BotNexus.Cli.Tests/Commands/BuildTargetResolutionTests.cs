@@ -21,7 +21,7 @@ public sealed class BuildTargetResolutionTests
     }
 
     [Fact]
-    public void ResolveBuildTarget_PrefersDeploymentProject_WhenBothExist()
+    public void ResolveBuildTarget_ReturnsDeploymentProject_WhenItExists()
     {
         var root = NewTempDir();
         try
@@ -29,7 +29,6 @@ public sealed class BuildTargetResolutionTests
             var deploy = Path.Combine(root, BuildCommand.DeployProjectFileName);
             Directory.CreateDirectory(Path.GetDirectoryName(deploy)!);
             File.WriteAllText(deploy, "<Project />");
-            File.WriteAllText(Path.Combine(root, BuildCommand.SolutionFileName), "<Solution />");
 
             BuildCommand.ResolveBuildTarget(root).ShouldBe(deploy);
         }
@@ -40,26 +39,7 @@ public sealed class BuildTargetResolutionTests
     }
 
     [Fact]
-    public void ResolveBuildTarget_FallsBackToSolution_WhenDeploymentProjectIsMissing()
-    {
-        // Safe direction: an older deployment repo without the traversal project must still build
-        // EVERYTHING rather than build nothing.
-        var root = NewTempDir();
-        try
-        {
-            var solution = Path.Combine(root, BuildCommand.SolutionFileName);
-            File.WriteAllText(solution, "<Solution />");
-
-            BuildCommand.ResolveBuildTarget(root).ShouldBe(solution);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void ResolveBuildTarget_ReturnsNull_WhenNeitherFileExists()
+    public void ResolveBuildTarget_ReturnsNull_WhenDeploymentProjectIsMissing()
     {
         var root = NewTempDir();
         try
@@ -73,10 +53,9 @@ public sealed class BuildTargetResolutionTests
     }
 
     [Fact]
-    public void DeployProject_NameAndSolutionName_AreTheExpectedFiles()
+    public void DeployProject_NameIsTheExpectedFile()
     {
         BuildCommand.DeployProjectFileName.ShouldBe("src/dirs.proj");
-        BuildCommand.SolutionFileName.ShouldBe("BotNexus.slnx");
     }
 
     [Fact]
@@ -166,20 +145,19 @@ public sealed class BuildTargetResolutionTests
 
     /// <summary>
     /// The traversal project narrows the set to <c>src/</c>. Prove that nothing the deployment
-    /// needs lives outside it: every project the solution lists is either under <c>src/</c>,
+    /// needs lives outside it: every project on disk is either under <c>src/</c>,
     /// under <c>tests/</c> (never deployed), under <c>examples/</c> (never deployed), or under
     /// <c>tools/</c> (compile-time-only analyzers and source generators, referenced as Analyzer
     /// rather than as an assembly, so nothing they produce is shipped either).
     /// </summary>
     [Fact]
-    public void SolutionProjectsOutsideSrc_AreOnlyTestsAndExamples()
+    public void ProjectsOutsideSrc_AreOnlyTestsExamplesAndTools()
     {
         var repoRoot = FindRepoRoot();
-        var slnx = File.ReadAllText(Path.Combine(repoRoot, BuildCommand.SolutionFileName));
-
-        var paths = System.Text.RegularExpressions.Regex
-            .Matches(slnx, "Path=\"([^\"]+\\.csproj)\"")
-            .Select(m => m.Groups[1].Value.Replace('\\', '/'))
+        var paths = Directory.GetFiles(repoRoot, "*.csproj", SearchOption.AllDirectories)
+            .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+            .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+            .Select(p => Path.GetRelativePath(repoRoot, p).Replace('\\', '/'))
             .ToList();
 
         paths.Count.ShouldBeGreaterThan(50);
@@ -192,7 +170,7 @@ public sealed class BuildTargetResolutionTests
             // netstandard2.0, loads into the Roslyn compiler host, and is consumed with
             // ReferenceOutputAssembly="false". It emits source into its consumer rather than an
             // artefact of its own, so its absence from src/dirs.proj is correct, not a gap.
-            // ToolsProjects: SolutionListedToolsProjects_AreCompileTimeOnly_AndShipNothing keeps
+            // ToolsProjects: ToolsProjects_AreCompileTimeOnly_AndShipNothing keeps
             // this exclusion narrow.
             .Where(p => !p.StartsWith("tools/", StringComparison.Ordinal))
             .ToList();
@@ -203,26 +181,21 @@ public sealed class BuildTargetResolutionTests
     }
 
     /// <summary>
-    /// The <c>tools/</c> exclusion above must stay narrow. A SOLUTION-LISTED project there that is
+    /// The <c>tools/</c> exclusion above must stay narrow. A project there that is
     /// NOT a compile-time-only analyzer would be silently dropped from the deployment closure - the
     /// exact failure the fence exists to catch - so each one has to prove it ships nothing.
     /// <para>
-    /// Scoped to solution-listed projects deliberately. <c>tools/</c> also holds standalone
-    /// utilities such as <c>BotNexus.Probe</c> that the solution does not reference at all; those
-    /// are never handed to the deployment traversal in the first place, so the exclusion above does
-    /// not apply to them and neither does this rule.
+    /// Scoped to source generators deliberately. <c>tools/</c> also holds standalone utilities
+    /// such as <c>BotNexus.Probe</c> that are deployed independently.
     /// </para>
     /// </summary>
     [Fact]
-    public void SolutionListedToolsProjects_AreCompileTimeOnly_AndShipNothing()
+    public void SourceGeneratorProjects_AreCompileTimeOnly_AndShipNothing()
     {
         var repoRoot = FindRepoRoot();
-        var slnx = File.ReadAllText(Path.Combine(repoRoot, BuildCommand.SolutionFileName));
-
-        var toolsProjects = System.Text.RegularExpressions.Regex
-            .Matches(slnx, "Path=\"([^\"]+\\.csproj)\"")
-            .Select(m => m.Groups[1].Value.Replace('\\', '/'))
-            .Where(p => p.StartsWith("tools/", StringComparison.Ordinal))
+        var toolsProjects = Directory.GetFiles(Path.Combine(repoRoot, "tools"), "*.csproj", SearchOption.AllDirectories)
+            .Where(p => Path.GetFileNameWithoutExtension(p).Contains("SourceGenerator", StringComparison.Ordinal))
+            .Select(p => Path.GetRelativePath(repoRoot, p).Replace('\\', '/'))
             .ToList();
 
         var violations = new List<string>();
@@ -230,7 +203,7 @@ public sealed class BuildTargetResolutionTests
         foreach (var relative in toolsProjects)
         {
             var absolute = Path.Combine(repoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
-            File.Exists(absolute).ShouldBeTrue($"{relative} is listed in the solution but does not exist");
+            File.Exists(absolute).ShouldBeTrue($"{relative} does not exist");
 
             var text = File.ReadAllText(absolute);
 
@@ -242,14 +215,14 @@ public sealed class BuildTargetResolutionTests
         }
 
         violations.ShouldBeEmpty(
-            "solution-listed tools/ projects are excluded from the deployment closure, so each must "
+            "source-generator projects are excluded from the deployment closure, so each must "
             + "be compile-time-only:\n" + string.Join("\n", violations));
     }
 
     private static string FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, BuildCommand.SolutionFileName)))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
             dir = dir.Parent;
 
         dir.ShouldNotBeNull("could not locate the repository root from the test output directory");

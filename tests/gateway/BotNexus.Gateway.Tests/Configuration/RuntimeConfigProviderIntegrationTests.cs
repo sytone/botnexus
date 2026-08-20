@@ -242,7 +242,7 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
         var current = new DirectoryInfo(AppContext.BaseDirectory);
         while (current is not null)
         {
-            if (File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+            if (File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
                 return current.FullName;
 
             current = current.Parent;

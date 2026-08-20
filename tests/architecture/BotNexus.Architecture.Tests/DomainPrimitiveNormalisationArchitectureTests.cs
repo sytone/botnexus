@@ -106,7 +106,7 @@ public sealed partial class DomainPrimitiveNormalisationArchitectureTests
         while (dir is not null)
         {
             var srcCandidate = Path.Combine(dir, "src");
-            if (Directory.Exists(srcCandidate) && File.Exists(Path.Combine(dir, "BotNexus.slnx")))
+            if (Directory.Exists(srcCandidate) && File.Exists(Path.Combine(dir, "Directory.Packages.props")))
                 return srcCandidate;
             dir = Path.GetDirectoryName(dir);
         }

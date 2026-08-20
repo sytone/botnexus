@@ -216,7 +216,7 @@ public sealed class CronConversationOwnershipArchitectureTests
     private static string FindSourceRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
         {
             current = current.Parent;
         }

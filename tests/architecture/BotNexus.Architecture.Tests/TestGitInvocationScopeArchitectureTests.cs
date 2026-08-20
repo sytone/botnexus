@@ -23,7 +23,7 @@ namespace BotNexus.Architecture.Tests;
 /// created by the test itself under <see cref="Path.GetTempPath"/>. It must never derive
 /// its working directory from a repo-root locator - <c>RepoLocator</c>,
 /// <c>Directory.GetCurrentDirectory()</c>, <c>Environment.CurrentDirectory</c>,
-/// <c>AppContext.BaseDirectory</c> walked up to <c>BotNexus.slnx</c>, <c>git rev-parse
+/// <c>AppContext.BaseDirectory</c> walked up to <c>Directory.Packages.props</c>, <c>git rev-parse
 /// --show-toplevel</c>, or a local <c>FindRepoRoot</c>-style helper.
 /// </para>
 /// <para>
@@ -294,7 +294,7 @@ public sealed class TestGitInvocationScopeArchitectureTests
     private static string FindSweepRepoRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
         {
             current = current.Parent;
         }

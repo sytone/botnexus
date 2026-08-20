@@ -157,10 +157,10 @@ public sealed class SqlitePoolCleanupFenceTests
     private static string FindTestsRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "BotNexus.slnx")))
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
             directory = directory.Parent;
 
-        directory.ShouldNotBeNull("Could not locate the repository root (BotNexus.slnx) from the test binary.");
+        directory.ShouldNotBeNull("Could not locate the repository root (Directory.Packages.props) from the test binary.");
 
         var testsRoot = Path.Combine(directory!.FullName, "tests");
         Directory.Exists(testsRoot).ShouldBeTrue($"Expected the test sources at '{testsRoot}'.");
