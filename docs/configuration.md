@@ -375,15 +375,25 @@ faithful arrives only once the platform already depends on it.
 | Flag | Default | Effect |
 |------|---------|--------|
 | `ConfigStoreShadowMigration` | off | On start, migrate `config.json` into the store and diff the round-trip against the source. **Report only** - this flag can never change which configuration the gateway serves. |
-| `ConfigStoreAuthoritative` | off | Read configuration from the store instead of JSON. The shadow diff continues to run as a regression guard. |
 
-There are three valid states, in order:
+> **`ConfigStoreAuthoritative` no longer exists (#3485).** Which source wins is now decided by
+> **configuration provider order**, not by a feature flag. The store is registered as an ordinary
+> `IConfigurationProvider` after the JSON file, so any key the store holds wins, and every consumer -
+> `IOptions`, `IOptionsMonitor`, the startup read alike - sees the same answer. The flag it replaces
+> only ever affected the single read that consulted it, which is why the UI could show one value while
+> the platform ran another.
+>
+> The store participates only when `config.db` exists beside `config.json`. Delete that file and the
+> gateway is back to file-only configuration on the next start - the rollback is still "delete the
+> store", with no flag to unset.
 
-1. **Both off** - today's behaviour, zero new code paths active. This is the default.
-2. **Shadow on, authoritative off** - the migration runs and is verified on every start; JSON remains authoritative.
-3. **Both on** - the store is authoritative.
+There are two valid states:
 
-The flags bind through `Microsoft.FeatureManagement` on the same `IConfiguration` that loads
+1. **No store file** - today's behaviour, file-only configuration. This is the default.
+2. **Shadow on** - the migration runs and is verified on every start; once `config.db` exists it also
+   participates in the read pipeline, with its values winning over the file.
+
+The flag binds through `Microsoft.FeatureManagement` on the same `IConfiguration` that loads
 `config.json`, so they are set in the `FeatureManagement` section described
 [above](#feature-flags-featuremanagement) - the same mechanism as the
 [Dev-Mode Origin Guard](./features/dev-origin-guard.md). Mind the PascalCase section name and the
@@ -393,10 +403,9 @@ verbatim flag names; `botnexus config set FeatureManagement.ConfigStoreShadowMig
 ```jsonc
 {
   "FeatureManagement": {
-    // Verify the migration first. Leave authoritative off until diffs are clean
-    // across restarts, config edits, agent additions and extension installs.
-    "ConfigStoreShadowMigration": true,
-    "ConfigStoreAuthoritative": false
+    // Verify the migration first. The store only joins the read pipeline once
+    // config.db exists, and its values then win over the file.
+    "ConfigStoreShadowMigration": true
   }
 }
 ```

@@ -106,18 +106,43 @@ else if (File.Exists(resolvedConfigPath))
     Log.Warning("{ConfigPath} is not valid JSON — using defaults. Fix the JSON and restart to apply it.", resolvedConfigPath);
 }
 
+// #3485 D1: the SQLite store joins the SAME pipeline as the JSON file rather than sitting behind a
+// bespoke seam. Registered AFTER the JSON source, so when the store holds a key it wins - that
+// ordering is the entire precedence rule, replacing the ConfigStoreAuthoritative flag that only ever
+// affected the single read that consulted it. An absent or empty store contributes no keys, so the
+// file continues to serve every value and startup is unchanged for an installation that has never
+// enabled the store.
+try
+{
+    var configStoreDirectory = Path.GetDirectoryName(resolvedConfigPath);
+    if (!string.IsNullOrEmpty(configStoreDirectory))
+    {
+        var configStorePath = Path.Combine(configStoreDirectory, "config.db");
+        if (File.Exists(configStorePath))
+        {
+            builder.Configuration.AddSqliteConfigStore(
+                new BotNexus.Gateway.Configuration.Store.SqliteConfigStore($"Data Source={configStorePath}"),
+                onLoadFailure: (message, ex) => Log.Error(ex, "{Message}", message));
+        }
+    }
+}
+catch (Exception ex)
+{
+    // Never let the store stop the host starting: the file has already been added above, so a store
+    // failure degrades to file-only configuration rather than to no configuration.
+    Log.Warning(ex, "Failed to add the configuration store to the pipeline - continuing with file configuration.");
+}
+
 PlatformConfig startupPlatformConfig;
 try
 {
-    // #3180: read through the cutover seam rather than straight off disk, so
-    // ConfigStoreAuthoritative actually changes what the gateway loads. The source is composed by
-    // hand because this runs BEFORE the service provider is built - the DI registration in
-    // GatewayServiceCollectionExtensions covers every later resolve of IConfigDocumentSource.
-    //
-    // With the flag off (the default) the source reads the file and never opens the store, so this
-    // stays byte-identical to the previous PlatformConfigLoader.Load call. With it on, any store
-    // failure falls back to the file rather than failing startup.
-    startupPlatformConfig = BotNexus.Gateway.Configuration.Store.ConfigStoreStartupLoader.Load(
+    // #3485 D1: the startup read comes from the same JSON file the configuration builder already
+    // added above, with no bespoke store seam in front of it. The store participates as an ordinary
+    // configuration provider (SqliteConfigurationSource), so it needs no special handling here and no
+    // ConfigStoreAuthoritative branch: whichever provider is registered last wins, for this read and
+    // for every IOptions consumer alike. Previously this call went through ConfigStoreStartupLoader,
+    // which was the ONLY read in the process that honoured the authoritative flag.
+    startupPlatformConfig = PlatformConfigLoader.Load(
         resolvedConfigPath,
         validateOnLoad: false);
 }

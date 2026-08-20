@@ -590,21 +590,14 @@ public static class GatewayServiceCollectionExtensions
         });
         services.TryAddSingleton<IConfigStoreEntryRoundTrip>(sp =>
             new ConfigStoreRoundTrip(sp.GetRequiredService<IConfigStore>()));
-        // The document-shaped seam is unused once the entry-shaped one is registered, but the hosted
-        // service takes it as a required constructor argument, so a no-op keeps the graph resolvable
-        // without inventing a second real implementation.
         services.TryAddSingleton<IConfigStoreRoundTrip, NoOpConfigStoreRoundTrip>();
         services.AddHostedService<ConfigShadowMigrationHostedService>();
 
-        // #2646 PBI 3: the store-backed read path. Registered but NOT yet consumed by
-        // PlatformConfigLoader - this PBI builds and proves the seam; replacing the loader's own read
-        // is a separate change with a far larger blast radius, and doing both at once would make a
-        // regression impossible to attribute to either.
-        //
-        // ConfigStoreAuthoritative gates it and defaults off, so with the flag unset this resolves to a
-        // source that reads the file and never opens the store.
-        services.TryAddSingleton<IConfigStoreAuthoritativeGate, FeatureManagerConfigStoreAuthoritativeGate>();
-        services.TryAddSingleton<IConfigDocumentSource, StoreBackedConfigDocumentSource>();
+        // #3485 D1: the document-shaped READ seam is gone. The store reaches consumers as an ordinary
+        // configuration provider (SqliteConfigurationSource), so there is no IConfigDocumentSource and
+        // no ConfigStoreAuthoritative gate - precedence is provider registration order. The shadow
+        // migration above is untouched here; it is demolished by D3, which is where the harness it
+        // belongs to is removed as a whole.
 
         // #2635: additively reconcile the bundled agent catalog into config.json. Registered
         // HERE, ahead of AgentConfigurationHostedService below, so an entry inserted on this
