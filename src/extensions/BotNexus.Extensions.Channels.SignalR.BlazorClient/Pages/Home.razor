@@ -147,6 +147,35 @@ else
             StateHasChanged();
         });
 
+    /// <summary>
+    /// #3064 + #3218: resolve which conversation an agent-only route should land on, or <c>null</c>
+    /// when it must stay put. Warm circuits answer from this circuit's per-agent MRU; a COLD circuit
+    /// (hard refresh, empty MRU) falls back to server state via
+    /// <see cref="PortalListOrdering.ResolveColdStartConversation"/> instead of leaving every
+    /// component below to consult the ambient <c>AgentState.ActiveConversationId</c> that #3064 exists
+    /// to stop consulting.
+    /// </summary>
+    /// <remarks>
+    /// A stale MRU entry (archived/deleted conversation) is not a dead end: rather than sending the
+    /// user to a route the agent no longer holds, it falls through to cold-start resolution, which
+    /// only ever proposes a conversation the agent currently has. When the agent has no eligible
+    /// conversation at all the answer is <c>null</c> and the caller performs NO navigation - the
+    /// agent-only route stays a valid, benign, non-looping state (#3218 AC5).
+    /// </remarks>
+    private string? ResolveAgentOnlyRouteTarget(string routeAgentId)
+    {
+        if (Store.GetAgent(routeAgentId) is not { } agent)
+            return null;
+
+        if (Mru.GetMostRecent(routeAgentId) is { Length: > 0 } mruConversationId &&
+            agent.Conversations.ContainsKey(mruConversationId))
+        {
+            return mruConversationId;
+        }
+
+        return PortalListOrdering.ResolveColdStartConversation(agent.Conversations.Values)?.ConversationId;
+    }
+
     private async Task ApplyRouteSelectionAsync()
     {
         if (!PortalLoad.IsReady || string.IsNullOrWhiteSpace(AgentId))
@@ -207,15 +236,16 @@ else
                 // does not loop).
                 _appliedRouteKey = routeKey;
 
-                if (Mru.GetMostRecent(routeAgentId) is { Length: > 0 } mruConversationId &&
-                    Store.GetAgent(routeAgentId) is { } mruAgent &&
-                    mruAgent.Conversations.ContainsKey(mruConversationId))
+                var resolvedConversationId = ResolveAgentOnlyRouteTarget(routeAgentId);
+                if (resolvedConversationId is not null)
                 {
-                    // A stale MRU entry (archived/deleted conversation) deliberately falls through to
-                    // no redirect rather than sending the user to a dead route; the list converges
-                    // lazily and the agent-only route remains a valid, benign state.
+                    // #3218: ONE redirect, ONE history policy, ONE loop guard, whether the id came
+                    // from the warm MRU or from cold-start resolution. The client kind is a declared
+                    // input rather than an ambient viewport probe, so each shell resolves its own
+                    // path shape from the same seam.
                     Nav.NavigateTo(
-                        $"agent/{Uri.EscapeDataString(routeAgentId)}/conversation/{Uri.EscapeDataString(mruConversationId)}",
+                        PortalListOrdering.BuildConversationRoute(
+                            PortalLoad.ClientKind, routeAgentId, resolvedConversationId),
                         replace: true);
                 }
 

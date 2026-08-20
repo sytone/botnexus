@@ -969,16 +969,21 @@
 
     private static bool IsUserFacingConversation(ConversationState conversation)
     {
-        // #2340: hiding runtime-internal bookkeeping threads now reads the first-class, server-
-        // stamped, write-once ConversationVisibility instead of probing the conversation id for an
-        // "internal:" prefix. That probe was the LAST id-substring test in client rendering code and
-        // the sole allowlisted exception to the origin-inference fence, which is now absolute.
+        // #2340: hiding runtime-internal bookkeeping threads reads the first-class, server-stamped,
+        // write-once ConversationVisibility instead of probing the conversation id for an "internal:"
+        // prefix. That probe was the LAST id-substring test in client rendering code and the sole
+        // allowlisted exception to the origin-inference fence, which is now absolute.
         //
         // Visibility is a genuinely separate axis from origin - "who may see it" vs "why it exists"
         // - so it is its own field rather than an overload of Source. InspectableReadOnly rows are
         // deliberately still listed: they are visible-but-not-writable, and write gating is the
         // independent job of ConversationRenderProjection.
-        return conversation.Visibility != ConversationVisibility.InternalHidden;
+        //
+        // #3218: the predicate itself now lives in PortalListOrdering so the sidebar list and the
+        // cold-start route resolver in Home.razor share ONE definition of "user conversation" and
+        // cannot drift into disagreeing about which conversations exist for the user. This is a CALL
+        // of that single predicate, not a copy of it.
+        return PortalListOrdering.IsUserFacingConversation(conversation);
     }
 
     // #2305 (epic #2300): grouping derives ONLY from the immutable server-supplied origin signal via
