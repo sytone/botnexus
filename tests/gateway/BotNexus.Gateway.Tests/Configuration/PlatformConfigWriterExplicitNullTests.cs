@@ -117,13 +117,13 @@ public sealed class PlatformConfigWriterExplicitNullTests : IDisposable
         reloaded.AgentDefaults!.Memory.ShouldNotBeNull("World defaults must still carry a memory section.");
 
         JsonElement? alphaRaw = reloaded.AgentRawElements!["alpha"];
-        var merged = AgentConfigMerger.Merge(reloaded.AgentDefaults, reloaded.Agents!["alpha"], alphaRaw);
+        var merged = MergeVia.Engine(reloaded.AgentDefaults, reloaded.Agents!["alpha"], alphaRaw);
         merged.Memory.ShouldBeNull(
             "#2705: 'memory': null means suppress inheritance; after a rewrite the agent must not inherit defaults.");
 
         // Control: the agent that never mentioned memory must still inherit.
         JsonElement? betaRaw = reloaded.AgentRawElements!["beta"];
-        var mergedBeta = AgentConfigMerger.Merge(reloaded.AgentDefaults, reloaded.Agents!["beta"], betaRaw);
+        var mergedBeta = MergeVia.Engine(reloaded.AgentDefaults, reloaded.Agents!["beta"], betaRaw);
         mergedBeta.Memory.ShouldNotBeNull("An absent key must still inherit the world default.");
     }
 
@@ -140,3 +140,4 @@ public sealed class PlatformConfigWriterExplicitNullTests : IDisposable
         }
     }
 }
+

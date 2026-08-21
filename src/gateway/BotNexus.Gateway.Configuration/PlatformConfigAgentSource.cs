@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Agents;
+using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Configuration;
@@ -167,11 +168,18 @@ public sealed class PlatformConfigAgentSource(
 
             try
             {
-                // Merge world-level agent defaults into this agent's config
+                // #3485 D2: overlay agents.defaults and the agent block through the shared
+                // inheritance engine, driven by the [ConfigInheritance] policy each property
+                // declares. The raw element is the AUTHORITATIVE input rather than a presence hint
+                // threaded alongside a bound object: absent and explicit-null are different
+                // instructions (inherit vs suppress) and binding collapses them into one null field.
                 JsonElement? rawElement = null;
                 if (agentRawElements is not null && agentRawElements.TryGetValue(agentId, out var rawEl))
                     rawElement = rawEl;
-                var effectiveConfig = AgentConfigMerger.Merge(agentDefaults, agentConfig, rawElement);
+
+                var effectiveConfig = AgentConfigInheritance.Overlay(
+                    AgentConfigInheritance.ToDocument(agentDefaults),
+                    ToAgentDocument(rawElement, agentConfig)).Effective;
                 var metadata = new Dictionary<string, object?>(ConvertObject(effectiveConfig.Metadata), StringComparer.OrdinalIgnoreCase);
                 metadata["toolTimeoutSeconds"] = effectiveConfig.ToolTimeoutSeconds
                     ?? AgentDefaultsConfig.DefaultToolTimeoutSeconds;
@@ -351,8 +359,12 @@ public sealed class PlatformConfigAgentSource(
 
     private FileAccessPolicy? MapFileAccessPolicy(FileAccessPolicyConfig? agentLevel, FileAccessPolicyConfig? worldLevel)
     {
-        // Field-level merge: agent-level fields win over world-level where explicitly set
-        var effective = AgentConfigMerger.MergeFileAccess(worldLevel, agentLevel, null);
+        // #3485 D2: routed through the shared engine. Note this call site never had a raw element to
+        // pass, so it could not distinguish absent from explicit-null even before the change - the
+        // bound objects are all that exist here. Overlaying their serialised forms is therefore no
+        // less faithful than the previous call, and it removes the last production dependency on the
+        // hand-written merger.
+        var effective = AgentConfigInheritance.OverlayFileAccess(worldLevel, agentLevel);
         if (effective is null)
             return null;
 
@@ -435,6 +447,24 @@ public sealed class PlatformConfigAgentSource(
     /// </summary>
     private static string ComputeEffectiveFingerprint(IReadOnlyList<AgentDescriptor> descriptors)
         => AgentDescriptorFingerprint.ComputeEffective(descriptors);
+
+    /// <summary>
+    /// Produces the agent's document for the inheritance overlay, preferring the raw JSON element.
+    /// </summary>
+    /// <remarks>
+    /// The raw element is used whenever it is available because it is the only form that still
+    /// distinguishes "key absent" (inherit) from "key present and null" (suppress). Serialising the
+    /// bound <paramref name="agentConfig"/> is the fallback for the case where no raw element was
+    /// captured; it necessarily cannot recover a distinction the binder already discarded, so it is
+    /// second choice rather than the default path.
+    /// </remarks>
+    private static JsonObject? ToAgentDocument(JsonElement? rawElement, AgentDefinitionConfig agentConfig)
+    {
+        if (rawElement is { ValueKind: JsonValueKind.Object } element)
+            return JsonNode.Parse(element.GetRawText())?.AsObject();
+
+        return AgentConfigInheritance.ToDocument(agentConfig);
+    }
     private static IReadOnlyDictionary<string, object?> ConvertObject(JsonElement? element)
     {
         if (element is null || element.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)

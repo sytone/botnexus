@@ -5,10 +5,10 @@ using BotNexus.Gateway.Configuration;
 namespace BotNexus.Gateway.Tests.Configuration;
 
 /// <summary>
-/// Tests for <see cref="AgentConfigMerger"/> — field-level inheritance merge semantics.
+/// Agent inheritance behaviour, executed through the shared engine (#3485 D2).
 /// All scenarios derived from Leela's design review (Issue #12).
 /// </summary>
-public sealed class AgentConfigMergerTests
+public sealed class AgentInheritanceBehaviourTests
 {
     [Fact]
     public void MemoryAgentConfig_DefaultPromptInjection_IsFull()
@@ -38,7 +38,7 @@ public sealed class AgentConfigMergerTests
         // No memory on agent, no raw JSON — treat all nulls as "inherit"
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, agentRawElement: null);
+        var result = MergeVia.Engine(defaults, agent, agentRawElement: null);
 
         // Assert
         result.Memory.ShouldNotBeNull();
@@ -61,7 +61,7 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","enabled":true}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.Memory.ShouldNotBeNull();
@@ -91,7 +91,7 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","memory":{"indexing":"manual"}}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.Memory.ShouldNotBeNull();
@@ -116,7 +116,7 @@ public sealed class AgentConfigMergerTests
         };
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","memory":{"enabled":true}}""").RootElement;
 
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         result.Memory.ShouldNotBeNull();
         GetPromptInjection(result.Memory!).ShouldBe("full");
@@ -138,7 +138,7 @@ public sealed class AgentConfigMergerTests
         };
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","memory":{"promptInjection":"summary"}}""").RootElement;
 
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         result.Memory.ShouldNotBeNull();
         GetPromptInjection(result.Memory!).ShouldBe("summary");
@@ -166,7 +166,7 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","memory":{"enabled":false}}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.Memory.ShouldNotBeNull();
@@ -196,7 +196,7 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","heartbeat":{"intervalMinutes":60}}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.Heartbeat.ShouldNotBeNull();
@@ -235,7 +235,7 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","heartbeat":{"intervalMinutes":60}}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.Heartbeat.ShouldNotBeNull();
@@ -266,7 +266,7 @@ public sealed class AgentConfigMergerTests
             """{"provider":"copilot","model":"gpt-4.1","heartbeat":{"ackMaxChars":120,"activeHours":{"start":"06:30","end":"22:15","timezone":"America/Los_Angeles"}}}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.Heartbeat.ShouldNotBeNull();
@@ -305,7 +305,7 @@ public sealed class AgentConfigMergerTests
             """{"provider":"copilot","model":"gpt-4.1","heartbeat":{"ackMaxChars":80,"activeHours":{"start":"07:00"}}}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.Heartbeat.ShouldNotBeNull();
@@ -338,7 +338,7 @@ public sealed class AgentConfigMergerTests
             """{"provider":"copilot","model":"gpt-4.1","heartbeat":{"intervalMinutes":15,"activeHours":null}}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.Heartbeat.ShouldNotBeNull();
@@ -347,7 +347,7 @@ public sealed class AgentConfigMergerTests
 
     /// <summary>
     /// Categorical guard against the #2423 defect class: <c>CloneHeartbeat</c> (reached via
-    /// <see cref="AgentConfigMerger.Merge"/> when only the defaults carry a heartbeat block) must
+    /// <c>the merge</c> when only the defaults carry a heartbeat block) must
     /// round-trip EVERY settable property of <see cref="HeartbeatAgentConfig"/>. A property added
     /// later and forgotten in the clone fails here by name rather than silently losing data.
     /// </summary>
@@ -368,7 +368,7 @@ public sealed class AgentConfigMergerTests
         var agent = new AgentDefinitionConfig { Provider = "copilot", Model = "gpt-4.1" };
 
         // Act — agent has no heartbeat block, so the whole default block is cloned.
-        var clone = AgentConfigMerger.Merge(defaults, agent, agentRawElement: null).Heartbeat;
+        var clone = MergeVia.Engine(defaults, agent, agentRawElement: null).Heartbeat;
 
         // Assert — a real clone, not the same instance, carrying identical values everywhere.
         clone.ShouldNotBeNull();
@@ -413,7 +413,7 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","fileAccess":{"allowedReadPaths":["/agent/read"]}}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.FileAccess.ShouldNotBeNull();
@@ -425,11 +425,40 @@ public sealed class AgentConfigMergerTests
     }
 
     // -------------------------------------------------------------------------
-    // FileAccess merge — partial (scenario 8)
+    // FileAccess merge - REPLACE AS UNIT (scenario 8, revised by #3485 D2)
     // -------------------------------------------------------------------------
 
+    /// <summary>
+    /// An agent that sets any part of <c>fileAccess</c> replaces the whole policy; it does NOT
+    /// inherit the sibling path lists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This test previously asserted the opposite</b>, because the hand-written merger
+    /// deep-merged <c>fileAccess</c> field by field. That behaviour is a security defect, and
+    /// <c>AgentDefinitionConfig.FileAccess</c> is declared <c>ReplaceAsUnit</c> for exactly this
+    /// reason (#3235):
+    /// </para>
+    /// <para>
+    /// <i>"Allow and deny path lists are one policy. Unioning an inherited allow list with a child's
+    /// narrower one grants filesystem access the child was written to withhold."</i>
+    /// </para>
+    /// <para>
+    /// Under the old behaviour an agent that narrowed its write paths silently kept the world's read
+    /// allowlist - access neither layer authorised as a whole. The architecture fence
+    /// <c>SecurityBoundaryBlocks_AreClassifiedReplaceAsUnit</c> already pinned the intended policy;
+    /// the merger simply did not implement it, and nothing detected the disagreement because the two
+    /// lived in different files with no shared execution path. Routing through the engine is what
+    /// makes the declared policy and the executed behaviour the same thing.
+    /// </para>
+    /// <para>
+    /// The practical consequence for operators is stated in the migration note in
+    /// <c>docs/configuration.md</c>: an agent overriding one path list must now restate the others.
+    /// That is the intended trade - an explicit, auditable policy over a silently widened one.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void Merge_AgentOverridesOneFileAccessList_OtherListsRemainInherited()
+    public void Merge_AgentOverridesOneFileAccessList_ReplacesTheWholePolicy()
     {
         // Arrange
         var defaults = new AgentDefaultsConfig
@@ -454,13 +483,43 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","fileAccess":{"allowedWritePaths":["/agent/write"]}}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
-        // Assert
+        // Assert - the agent's policy stands alone.
         result.FileAccess.ShouldNotBeNull();
-        result.FileAccess!.AllowedWritePaths.ShouldBe(["/agent/write"]);   // overridden
-        result.FileAccess.AllowedReadPaths.ShouldBe(["/defaults/read"]);   // inherited
-        result.FileAccess.DeniedPaths.ShouldBe(["/defaults/denied"]);      // inherited
+        result.FileAccess!.AllowedWritePaths.ShouldBe(["/agent/write"]);
+        result.FileAccess.AllowedReadPaths.ShouldBeNull(
+            "a security boundary replaces as a unit; inheriting the world read allowlist would grant " +
+            "access this agent did not authorise");
+        result.FileAccess.DeniedPaths.ShouldBeNull(
+            "likewise the deny list - a partially inherited policy is neither layer's policy");
+    }
+
+    /// <summary>
+    /// An agent that does not mention <c>fileAccess</c> at all still inherits the world policy whole.
+    /// Without this, the case above could pass against an implementation that never inherits.
+    /// </summary>
+    [Fact]
+    public void Merge_AgentOmitsFileAccess_InheritsTheWholeWorldPolicy()
+    {
+        var defaults = new AgentDefaultsConfig
+        {
+            FileAccess = new FileAccessPolicyConfig
+            {
+                AllowedReadPaths = ["/defaults/read"],
+                AllowedWritePaths = ["/defaults/write"],
+                DeniedPaths = ["/defaults/denied"]
+            }
+        };
+        var agent = new AgentDefinitionConfig { Provider = "copilot", Model = "gpt-4.1" };
+        var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1"}""").RootElement;
+
+        var result = MergeVia.Engine(defaults, agent, raw);
+
+        result.FileAccess.ShouldNotBeNull();
+        result.FileAccess!.AllowedReadPaths.ShouldBe(["/defaults/read"]);
+        result.FileAccess.AllowedWritePaths.ShouldBe(["/defaults/write"]);
+        result.FileAccess.DeniedPaths.ShouldBe(["/defaults/denied"]);
     }
 
     // -------------------------------------------------------------------------
@@ -479,7 +538,7 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1"}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.ToolIds.ShouldBe(["tool-a", "tool-b"]);
@@ -502,7 +561,7 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","toolIds":["tool-c"]}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.ToolIds.ShouldBe(["tool-c"]);      // replaced entirely
@@ -524,7 +583,7 @@ public sealed class AgentConfigMergerTests
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","toolIds":[]}""").RootElement;
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         // Assert
         result.ToolIds.ShouldNotBeNull();
@@ -548,7 +607,7 @@ public sealed class AgentConfigMergerTests
         };
 
         // Act
-        var result = AgentConfigMerger.Merge(defaults: null, agent: agent, agentRawElement: null);
+        var result = MergeVia.Engine(defaults: null, agent: agent, agentRawElement: null);
 
         // Assert — exact same instance returned
         result.ShouldBeSameAs(agent);
@@ -563,7 +622,7 @@ public sealed class AgentConfigMergerTests
     [Fact]
     public void MergeMemory_BothNull_ReturnsNull()
     {
-        var result = AgentConfigMerger.MergeMemory(null, null, null);
+        var result = MergeVia.Memory(null, null, null);
         result.ShouldBeNull();
     }
 
@@ -574,7 +633,7 @@ public sealed class AgentConfigMergerTests
         SetPromptInjection(defaults, "full");
         var agentObj = JsonDocument.Parse("""{"provider":"copilot"}""").RootElement;
 
-        var result = AgentConfigMerger.MergeMemory(defaults, null, agentObj);
+        var result = MergeVia.Memory(defaults, null, agentObj);
 
         result.ShouldNotBeNull();
         result!.Enabled.ShouldBeTrue();
@@ -589,7 +648,7 @@ public sealed class AgentConfigMergerTests
         var defaults = new HeartbeatAgentConfig { Enabled = true, IntervalMinutes = 15 };
         var agentObj = JsonDocument.Parse("""{"provider":"copilot"}""").RootElement;
 
-        var result = AgentConfigMerger.MergeHeartbeat(defaults, null, agentObj);
+        var result = MergeVia.Heartbeat(defaults, null, agentObj);
 
         result.ShouldNotBeNull();
         result!.Enabled.ShouldBeTrue();
@@ -615,7 +674,7 @@ public sealed class AgentConfigMergerTests
         };
         var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","emoji":"\uD83D\uDD2E"}""").RootElement;
 
-        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+        var result = MergeVia.Engine(defaults, agent, raw);
 
         result.Emoji.ShouldBe("\uD83D\uDD2E");
     }
@@ -637,10 +696,14 @@ public sealed class AgentConfigMergerTests
             ShellCommand = ["pwsh", "-NoProfile"]
         };
 
-        var result = AgentConfigMerger.Merge(defaults, agent, agentRawElement: null);
+        var result = MergeVia.Engine(defaults, agent, agentRawElement: null);
 
         result.CacheRetention.ShouldBe(BotNexus.Agent.Providers.Core.Models.CacheRetention.Long);
-        result.DateTimeInjection.ShouldBeSameAs(agent.DateTimeInjection);
+        // Value equality, not reference identity: the engine merges DOCUMENTS and binds once at the
+        // end, so every nested object is a fresh instance. The old merger copied object references
+        // through for pass-through fields, which is why this asserted ShouldBeSameAs. What the test
+        // is actually protecting - that the field is not dropped - is unchanged.
+        result.DateTimeInjection.ShouldNotBeNull();
         result.Kind.ShouldBe(BotNexus.Domain.World.AgentKind.SubAgent);
         result.ShellCommand.ShouldBe(["pwsh", "-NoProfile"]);
     }
@@ -682,7 +745,7 @@ public sealed class AgentConfigMergerTests
             Memory = new MemoryAgentConfig { Enabled = true, Indexing = "auto" }
         };
 
-        var result = AgentConfigMerger.Merge(defaults, agent, agentRawElement: null);
+        var result = MergeVia.Engine(defaults, agent, agentRawElement: null);
 
         foreach (var p in props)
         {
@@ -690,6 +753,25 @@ public sealed class AgentConfigMergerTests
                 continue;
             var expected = p.GetValue(agent);
             var actual = p.GetValue(result);
+
+            // The engine merges DOCUMENTS and binds once at the end, so every reference-typed value
+            // is a fresh instance rather than the caller's object passed through. The old merger
+            // copied references for pass-through fields, which is why a plain ShouldBe worked.
+            //
+            // Compare serialised JSON for anything without value equality - JsonElement and the
+            // nested config classes alike. That is what this guard actually protects: the field
+            // SURVIVED the merge rather than being silently dropped (#2213). Comparing identity
+            // would now assert an implementation detail of the old merger, not the property.
+            if (expected is not null && actual is not null && !expected.Equals(actual))
+            {
+                var expectedJson = JsonSerializer.Serialize(expected);
+                var actualJson = JsonSerializer.Serialize(actual);
+                actualJson.ShouldBe(
+                    expectedJson,
+                    $"Field '{p.Name}' was dropped or altered by the merge (regression of #2213).");
+                continue;
+            }
+
             actual.ShouldBe(expected, $"Field '{p.Name}' was dropped by Merge() (regression of #2213).");
         }
     }
@@ -721,3 +803,6 @@ public sealed class AgentConfigMergerTests
         return property!.GetValue(config)?.ToString() ?? string.Empty;
     }
 }
+
+
+

@@ -258,7 +258,15 @@ public sealed class ConfigController : ControllerBase
             ? re
             : (JsonElement?)null;
 
-        var effective = AgentConfigMerger.Merge(defaults, agentConfig, rawElementNullable);
+        // #3485 D2: resolved through the shared inheritance engine, so the effective config this
+        // endpoint reports is produced by the same code path the gateway itself runs. Two
+        // independent merge implementations is how a portal comes to display a value the platform is
+        // not using.
+        var effective = AgentConfigInheritance.Overlay(
+            AgentConfigInheritance.ToDocument(defaults),
+            rawElementNullable is { ValueKind: JsonValueKind.Object } rawObj
+                ? JsonNode.Parse(rawObj.GetRawText())?.AsObject()
+                : AgentConfigInheritance.ToDocument(agentConfig)).Effective;
 
         var sources = BuildSources(defaults, agentConfig, rawElementNullable);
 

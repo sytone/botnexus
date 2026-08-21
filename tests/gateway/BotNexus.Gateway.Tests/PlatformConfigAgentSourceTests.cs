@@ -1049,6 +1049,118 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         descriptor.ToolIds.ShouldBe(["read", "write"]);
     }
 
+    /// <summary>
+    /// An explicit <c>null</c> in the agent's raw JSON SUPPRESSES the inherited value rather than
+    /// inheriting it (#3485 D2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This asserts the presence distinction survives the whole path - raw element to overlay to
+    /// descriptor - not merely inside the inheritance engine's own unit tests.
+    /// </para>
+    /// <para>
+    /// It exists because a mutation proved the gap: replacing the raw-document lookup in
+    /// <c>ToAgentDocument</c> with the bound object (discarding presence entirely) passed all 17,169
+    /// tests. Binding collapses "absent" and "explicit null" into the same null field, so with that
+    /// mutation an agent that deliberately declined a world default would silently receive it. Every
+    /// other case in this file supplies no <c>AgentRawElements</c>, so none of them exercise the raw
+    /// path at all.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task LoadAsync_WithExplicitNullInRawJson_SuppressesTheInheritedValue()
+    {
+        var config = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                ToolIds = ["read", "write"],
+            },
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    Enabled = true,
+                    ToolIds = null,
+                },
+            },
+            // The raw element is what carries the distinction: "toolIds": null is PRESENT-and-null,
+            // which the bound object above cannot express.
+            AgentRawElements = new Dictionary<string, JsonElement>
+            {
+                ["assistant"] = JsonDocument.Parse(
+                    """
+                    {
+                      "provider": "copilot",
+                      "model": "gpt-4.1",
+                      "enabled": true,
+                      "toolIds": null
+                    }
+                    """).RootElement,
+            },
+        };
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        // The descriptor coerces a null tool list to empty (`effectiveConfig.ToolIds?.ToArray() ?? []`),
+        // so "suppressed" surfaces here as an EMPTY list rather than null. What matters is that the
+        // world default did not leak through: inheriting would give ["read", "write"].
+        descriptor.ToolIds.ShouldBeEmpty(
+            "an explicit null suppresses the inherited default rather than inheriting it");
+    }
+
+    /// <summary>
+    /// The inverse of the case above: an ABSENT key inherits. Without this, the suppression test
+    /// could pass against an implementation that simply never inherits anything.
+    /// </summary>
+    [Fact]
+    public async Task LoadAsync_WithKeyAbsentFromRawJson_InheritsTheDefault()
+    {
+        var config = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                ToolIds = ["read", "write"],
+            },
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    Enabled = true,
+                },
+            },
+            AgentRawElements = new Dictionary<string, JsonElement>
+            {
+                ["assistant"] = JsonDocument.Parse(
+                    """
+                    {
+                      "provider": "copilot",
+                      "model": "gpt-4.1",
+                      "enabled": true
+                    }
+                    """).RootElement,
+            },
+        };
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.ToolIds.ShouldBe(["read", "write"]);
+    }
+
     [Fact]
     public async Task LoadAsync_WithoutConfiguredToolTimeout_UsesGlobalFiveMinuteDefault()
     {

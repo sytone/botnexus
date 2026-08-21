@@ -498,6 +498,44 @@ A policy states what *should* happen. The merge engine reads it to decide what *
 Where the two disagree, that is a defect in the engine, not a reason to relabel the property.
 :::
 
+#### Behaviour change: `fileAccess` now replaces as a unit
+
+The policies above are executed by a single shared engine. Until that engine was wired in, agent
+inheritance ran through a hand-written merger that deep-merged `fileAccess` field by field - the
+exact behaviour the `ReplaceAsUnit` declaration exists to prevent. The declaration and the
+implementation disagreed, and nothing detected it because they lived in different files with no
+shared execution path.
+
+**What changes for you.** An agent that sets *any* part of `fileAccess` now supplies the *whole*
+policy. Previously it inherited the sibling path lists it did not mention.
+
+```jsonc
+{
+  "agents": {
+    "defaults": {
+      "fileAccess": {
+        "allowedReadPaths": ["/data"],
+        "allowedWritePaths": ["/data/out"],
+        "deniedPaths": ["/secrets"]
+      }
+    },
+    "restricted": {
+      // BEFORE: also inherited allowedReadPaths /data AND deniedPaths /secrets.
+      // NOW:    this IS the policy - no read paths, no denied paths.
+      "fileAccess": { "allowedWritePaths": ["/tmp/scratch"] }
+    }
+  }
+}
+```
+
+To keep the previous effective policy, restate the lists explicitly on the agent. The same applies
+to `toolPolicy`, `sessionAccess` and `conversationAccess`.
+
+This is deliberately the stricter direction. A partially-inherited security boundary is neither
+layer's policy: an agent written to narrow its own access would silently retain a broader inherited
+allowlist, granting reach nobody authorised. An explicit policy you can audit in one place is worth
+more than a convenient one you cannot.
+
 #### How the layers resolve
 
 The shared inheritance engine executes the declared policies against a stack of layers, lowest
