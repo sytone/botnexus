@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 
-namespace BotNexus.Gateway.Configuration.Shadow;
+namespace BotNexus.Gateway.Configuration.Store;
 
 /// <summary>
 /// Rebuilds a configuration document from flattened entries - the inverse of
@@ -116,3 +116,4 @@ public static class ConfigDocumentRehydrator
         };
     }
 }
+

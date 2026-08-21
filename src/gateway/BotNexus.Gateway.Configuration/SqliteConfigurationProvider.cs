@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json.Nodes;
-using BotNexus.Gateway.Configuration.Shadow;
 using BotNexus.Gateway.Configuration.Store;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.Json;
@@ -102,7 +101,7 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider
 
         try
         {
-            var document = Shadow.ConfigDocumentRehydrator.Rehydrate(entries);
+            var document = ConfigDocumentRehydrator.Rehydrate(entries);
             Data = Parse(document);
         }
         catch (Exception ex)
@@ -167,3 +166,4 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider
         OnReload();
     }
 }
+

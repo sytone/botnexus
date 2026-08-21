@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace BotNexus.Gateway.Configuration.Shadow;
+namespace BotNexus.Gateway.Configuration.Store;
 
 /// <summary>
 /// The four states a configuration key can be in (#2766 AC4).
@@ -147,3 +147,4 @@ public static class ConfigDocumentFlattener
     /// </summary>
     private static string Canonicalise(JsonNode node) => node.ToJsonString(CanonicalValueOptions);
 }
+

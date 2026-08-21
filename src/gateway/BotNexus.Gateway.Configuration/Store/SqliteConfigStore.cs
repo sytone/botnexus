@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using BotNexus.Gateway.Configuration.Shadow;
 using BotNexus.Persistence.Sqlite;
 using Microsoft.Data.Sqlite;
 
@@ -231,3 +230,4 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
         }
     }
 }
+

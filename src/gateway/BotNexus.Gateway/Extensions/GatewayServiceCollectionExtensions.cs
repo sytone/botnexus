@@ -49,7 +49,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using BotNexus.Gateway.Configuration.Shadow;
 using BotNexus.Gateway.Configuration.Store;
 using Microsoft.FeatureManagement;
 using System.Globalization;
@@ -562,20 +561,11 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IConfigSchemaContributor, RateLimitSchemaContributor>();
         services.AddHostedService<ConfigHydrationService>();
 
-        // #2646 PBI 2 / #2766: the configuration shadow migration. Placed AFTER
-        // ConfigHydrationService because hydration writes defaults into config.json, and a shadow pass
-        // that ran first would be comparing against a document the platform is about to modify.
-        //
-        // The whole path is inert until ConfigStoreShadowMigration is enabled, and the flag defaults
-        // off: with it off the service returns before it reads anything at all.
-        //
-        // Nothing here can change which configuration the gateway serves. The store is written to and
-        // read back purely to be diffed; ConfigStoreAuthoritative - the flag that would put it in the
-        // read path - is not consumed by any of these registrations.
-        services.TryAddSingleton<IConfigShadowReportSink, ConfigShadowReportSink>();
-        services.TryAddSingleton<IConfigShadowGate, FeatureManagerConfigShadowGate>();
-        services.TryAddSingleton<IConfigShadowSource>(sp =>
-            new FileConfigShadowSource(sp.GetRequiredService<IFileSystem>()));
+        // #3509: the shadow verification harness is gone. It migrated config.json into the store and
+        // diffed the round-trip to prove the copy was faithful - which mattered when the store was
+        // being introduced behind a flag. It writes a report nothing reads, and the store is now an
+        // ordinary configuration provider whose values are simply served, so there is no separate
+        // copy left to verify.
         services.TryAddSingleton<IConfigStore>(sp =>
         {
             // Sits beside config.json rather than in a separate location, so "delete the store to roll
@@ -584,16 +574,6 @@ public static class GatewayServiceCollectionExtensions
             var directory = PlatformConfigLoader.GetDefaultConfigDirectory(fs);
             return new SqliteConfigStore($"Data Source={Path.Combine(directory, "config.db")}");
         });
-        services.TryAddSingleton<IConfigStoreEntryRoundTrip>(sp =>
-            new ConfigStoreRoundTrip(sp.GetRequiredService<IConfigStore>()));
-        services.TryAddSingleton<IConfigStoreRoundTrip, NoOpConfigStoreRoundTrip>();
-        services.AddHostedService<ConfigShadowMigrationHostedService>();
-
-        // #3485 D1: the document-shaped READ seam is gone. The store reaches consumers as an ordinary
-        // configuration provider (SqliteConfigurationSource), so there is no IConfigDocumentSource and
-        // no ConfigStoreAuthoritative gate - precedence is provider registration order. The shadow
-        // migration above is untouched here; it is demolished by D3, which is where the harness it
-        // belongs to is removed as a whole.
 
         // #2635: additively reconcile the bundled agent catalog into config.json. Registered
         // HERE, ahead of AgentConfigurationHostedService below, so an entry inserted on this
@@ -917,3 +897,4 @@ public static class GatewayServiceCollectionExtensions
     }
 
 }
+

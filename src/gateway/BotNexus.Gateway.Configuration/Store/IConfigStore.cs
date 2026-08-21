@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using BotNexus.Gateway.Configuration.Shadow;
 
 namespace BotNexus.Gateway.Configuration.Store;
 
@@ -30,3 +29,4 @@ public interface IConfigStore
     /// </summary>
     Task WriteDocumentAsync(JsonObject document, CancellationToken cancellationToken = default);
 }
+
