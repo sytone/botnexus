@@ -159,18 +159,14 @@ public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(predicate);
-        var deadline = DateTimeOffset.UtcNow + timeout;
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var match = _outbound.FirstOrDefault(predicate);
-            if (match is not null)
-                return match;
-            await Task.Delay(TimeSpan.FromMilliseconds(20), cancellationToken);
-        }
+        OutboundMessage? match = null;
+        await TestAwait.EventuallyAsync(
+            () => (match = _outbound.FirstOrDefault(predicate)) is not null,
+            $"an outbound message matching the predicate (observed {_outbound.Count} before waiting)",
+            timeout,
+            cancellationToken: cancellationToken);
 
-        throw new TimeoutException(
-            $"No outbound message matching predicate observed within {timeout.TotalMilliseconds:F0}ms (observed {_outbound.Count}).");
+        return match ?? throw new InvalidOperationException("The outbound predicate completed without a matching message.");
     }
 
     /// <summary>Clears every captured outbound, inbound, stream-delta, stream-event log, and stream-target list.</summary>
