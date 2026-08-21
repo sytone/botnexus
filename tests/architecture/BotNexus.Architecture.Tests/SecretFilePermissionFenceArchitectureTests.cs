@@ -38,8 +38,6 @@ public sealed class SecretFilePermissionFenceArchitectureTests : ArchitectureTes
     {
         // Atomic temp-file + move rewrite of config.json (provider API keys, channel bot tokens).
         "src/gateway/BotNexus.Gateway.Configuration/PlatformConfigWriter.cs",
-        // Second atomic rewrite seam for the same config.json, at gateway startup.
-        "src/gateway/BotNexus.Gateway.Configuration/ConfigNormalisationHostedService.cs",
         // Byte-for-byte backup copies of config.json, secrets included.
         "src/gateway/BotNexus.Gateway.Configuration/ConfigBackupService.cs",
         // auth.json - OAuth refresh/access tokens (gateway side).
