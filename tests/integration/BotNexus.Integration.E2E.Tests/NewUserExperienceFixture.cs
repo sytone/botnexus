@@ -78,9 +78,11 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             SandboxRoot = Path.Combine(Path.GetTempPath(), "botnexus-e2e", runId);
             Home = Path.Combine(SandboxRoot, "home");
             var packDir = Path.Combine(SandboxRoot, "pack");
+            var packArtifactsDir = Path.Combine(SandboxRoot, "build");
             var toolDir = Path.Combine(SandboxRoot, "tool");
             Directory.CreateDirectory(Home);
             Directory.CreateDirectory(packDir);
+            Directory.CreateDirectory(packArtifactsDir);
             Directory.CreateDirectory(toolDir);
 
             var exeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "botnexus.exe" : "botnexus";
@@ -90,16 +92,15 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             var cliProject = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Cli", "BotNexus.Cli.csproj");
 
             // 1 ─ pack -----------------------------------------------------
-            // /nodeReuse:false + UseSharedCompilation=false force MSBuild and the
-            // Roslyn compile-server to exit cleanly so `dotnet pack` returns control
-            // instead of leaving long-lived build nodes attached to our captured
-            // stdout (which manifests as a TimeoutException even though the pack
-            // itself finished).
+            // ArtifactsPath isolates this pack from concurrent Release builds and the CLI
+            // integration fixture. Without it, shared bin/obj writes can produce a torn tool
+            // package that fails later while loading Providers.Core (issue #3255).
             Log.Add($"[pack] dotnet pack {cliProject} → {packDir} (Version={PackVersion})");
             var pack = await ProcessRunner.RunAsync(
                 "dotnet",
                 $"pack \"{cliProject}\" --configuration Release --output \"{packDir}\" " +
                 $"/p:Version={PackVersion} /p:PackageVersion={PackVersion} " +
+                $"/p:ArtifactsPath=\"{packArtifactsDir}\" " +
                 $"/nodeReuse:false /p:UseSharedCompilation=false --nologo",
                 environment: new Dictionary<string, string?> { ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0" },
                 timeout: PackTimeout);

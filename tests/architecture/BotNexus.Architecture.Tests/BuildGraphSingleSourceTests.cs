@@ -21,6 +21,15 @@ namespace BotNexus.Architecture.Tests;
 public class BuildGraphSingleSourceTests : ArchitectureTest
 {
     [Fact]
+    public void E2eCliPack_UsesAnIsolatedArtifactsPath()
+    {
+        var fixture = File.ReadAllText(Repository.Path(
+            "tests", "integration", "BotNexus.Integration.E2E.Tests", "NewUserExperienceFixture.cs"));
+
+        fixture.ShouldContain("/p:ArtifactsPath=");
+    }
+
+    [Fact]
     public void RootSolutionFiles_DoNotExist()
     {
         var repoRoot = Repository.Root;
