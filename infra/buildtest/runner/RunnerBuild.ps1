@@ -24,6 +24,8 @@ function Invoke-ParallelRunnerProcesses {
 
             $stdout = "$($spec.LogPath).stdout"
             $stderr = "$($spec.LogPath).stderr"
+            $startedAt = [DateTimeOffset]::UtcNow
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             $process = Start-Process `
                 -FilePath $spec.FilePath `
                 -ArgumentList @($spec.ArgumentList) `
@@ -38,11 +40,14 @@ function Invoke-ParallelRunnerProcesses {
                 StandardOutputPath = $stdout
                 StandardErrorPath = $stderr
                 Process = $process
+                StartedAt = $startedAt
+                Stopwatch = $stopwatch
             }
         }
 
         $results = foreach ($child in $running) {
             $child.Process.WaitForExit()
+            $child.Stopwatch.Stop()
 
             $parts = foreach ($path in @($child.StandardOutputPath, $child.StandardErrorPath)) {
                 if (Test-Path -LiteralPath $path) {
@@ -55,8 +60,8 @@ function Invoke-ParallelRunnerProcesses {
             [pscustomobject]@{
                 Name = $child.Name
                 ExitCode = $child.Process.ExitCode
-                StartedAt = [DateTimeOffset]$child.Process.StartTime
-                ElapsedSeconds = ($child.Process.ExitTime - $child.Process.StartTime).TotalSeconds
+                StartedAt = $child.StartedAt
+                ElapsedSeconds = $child.Stopwatch.Elapsed.TotalSeconds
                 LogPath = $child.LogPath
             }
         }
