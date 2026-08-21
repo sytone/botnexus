@@ -113,7 +113,7 @@ public sealed class WorktreeBranchDeletionArchitectureTests
     // adjacent lines in a fenced block, no exit-code check
     [InlineData("git worktree remove ../wt-1\ngit branch -d fix/1-slug")]
     // adjacent lines with an intervening prune step
-    [InlineData("git worktree remove ../squad-195\ngit worktree prune\ngit branch -d squad/195-x")]
+    [InlineData("git worktree remove ../wt-195\ngit worktree prune\ngit branch -d fix/195-x")]
     public void Detector_FlagsUnconditionalChain(string sample)
     {
         FindOffendingLines(sample).ShouldNotBeEmpty(

@@ -51,7 +51,6 @@ public sealed class PersonalPathLeakArchitectureTests
         "agent",      // generic test fixture (tests/extensions/BotNexus.Extensions.Skills.Tests/SkillManagerToolTests.cs)
         "user",       // generic test fixture (tests/gateway/BotNexus.Gateway.Tests/PlatformConfigurationTests.cs)
         "you",        // generic docs placeholder for the reader (docs/guides/watchdog-setup.md)
-        "larry",      // documented workflow persona, see fork: larry-fox-lobster/botnexus (.squad/skills/botnexus-issue-workflow/SKILL.md)
     };
 
     // Generic placeholder account names that appear in committed docs and
