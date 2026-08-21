@@ -63,18 +63,21 @@ internal sealed class MemoryStoreTestContext : IAsyncDisposable
         SqlitePoolCleanup.ClearPoolFor(DbPath);
         if (Directory.Exists(TempDirectory))
         {
-            for (var attempt = 0; attempt < 5; attempt++)
-            {
-                try
+            await TestAwait.EventuallyAsync(
+                () =>
                 {
-                    Directory.Delete(TempDirectory, true);
-                    break;
-                }
-                catch (IOException) when (attempt < 4)
-                {
-                    await Task.Delay(50);
-                }
-            }
+                    try
+                    {
+                        Directory.Delete(TempDirectory, recursive: true);
+                        return true;
+                    }
+                    catch (IOException)
+                    {
+                        return false;
+                    }
+                },
+                $"temporary memory store directory '{TempDirectory}' to be deletable",
+                timeout: TimeSpan.FromSeconds(2));
         }
     }
 }
