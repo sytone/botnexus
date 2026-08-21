@@ -211,7 +211,6 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<ISessionWarmupService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
         services.AddSingleton<IMessageRouter, DefaultMessageRouter>();
-        services.AddSingleton<IConfigPathResolver, ConfigPathResolver>();
         services.TryAddSingleton<IChannelManager, ChannelManager>();
         // Channel-neutral conversation event seam (#2085). Registered here so gateway code can
         // publish conversation facts today; sinks are supplied by channel extensions as the
