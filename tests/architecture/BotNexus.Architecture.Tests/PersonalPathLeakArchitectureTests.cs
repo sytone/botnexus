@@ -6,11 +6,9 @@ namespace BotNexus.Architecture.Tests;
 
 /// <summary>
 /// Architecture fitness function: no tracked file in the repository may
-/// contain a developer-specific absolute path. Personal paths (Windows
-/// user-home directories, OneDrive segments, Linux user-home directories)
-/// are private context that should never reach a PR. Use generic
-/// placeholders instead — <c>$HOME</c>, <c>~</c>, <c>%USERPROFILE%</c>,
-/// <c>Path.GetTempPath()</c>, or <c>Environment.GetFolderPath(...)</c>.
+/// contain personal paths, non-example email addresses, tenant-specific Azure
+/// subscription IDs, or live public endpoint addresses. Private and operational
+/// context must use generic placeholders or runtime configuration instead.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,6 +25,9 @@ namespace BotNexus.Architecture.Tests;
 ///   <item><description><c>C:\Users\&lt;name&gt;\…</c> or <c>C:/Users/&lt;name&gt;/…</c> (any drive letter, any user name)</description></item>
 ///   <item><description>A path segment named <c>OneDrive</c> (e.g. <c>…/OneDrive/projects/…</c>)</description></item>
 ///   <item><description><c>/home/&lt;name&gt;/…</c> Linux user-home paths, except common CI accounts (<c>runner</c>, <c>vscode</c>, <c>codespace</c>, <c>circleci</c>)</description></item>
+///   <item><description>Email addresses outside the approved <c>@domain.com</c>, <c>@example.com</c>, <c>@botnexus.invalid</c>, and <c>@invalid.local</c> domains</description></item>
+///   <item><description>Concrete Azure subscription IDs in configuration or command contexts</description></item>
+///   <item><description>Public IP addresses documented as current endpoints</description></item>
 /// </list>
 /// </remarks>
 public sealed class PersonalPathLeakArchitectureTests : ArchitectureTest
@@ -78,6 +79,18 @@ public sealed class PersonalPathLeakArchitectureTests : ArchitectureTest
     private static readonly Regex LinuxUserHome = new(
         "/home/" + "([a-z][a-z0-9_-]*)/",
         RegexOptions.Compiled);
+
+    private static readonly Regex EmailAddress = new(
+        @"\b[A-Z0-9._%+\-]*[A-Z0-9_%+]@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex ConcreteAzureSubscription = new(
+        @"(?:\|\s*Subscription\s*\||[\""']?subscriptionId[\""']?\s*[:=]|\$(?:sub|subscriptionId)\s*=)[^\r\n]{0,160}\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex CurrentPublicIpAddress = new(
+        @"Current\s+(?:static\s+)?IP[^\r\n]{0,80}\b(?:\d{1,3}\.){3}\d{1,3}\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     [Fact]
     public void NoTrackedFile_ContainsWindowsUserHomePath()
@@ -138,6 +151,71 @@ public sealed class PersonalPathLeakArchitectureTests : ArchitectureTest
             "Tracked files contain personal Linux user-home paths (/home/<name>/...). " +
             "Replace with $HOME or ~. The allowlist covers common CI accounts only.\n" +
             "Offenders:\n  " + string.Join("\n  ", offenders));
+    }
+
+    [Fact]
+    public void NoTrackedFile_ContainsNonExampleEmailAddress()
+    {
+        var offenders = ScanTrackedFiles((path, content) =>
+            FindForbiddenEmail(content) is { } email
+                ? $"{path}: contains email '{Truncate(email)}' — use an approved example domain"
+                : null);
+
+        offenders.ShouldBeEmpty(
+            "Tracked files contain email addresses outside the approved @domain.com, @example.com, @botnexus.invalid, and @invalid.local domains. " +
+            "Replace personal and organization-specific addresses with an approved example.\n" +
+            "Offenders:\n  " + string.Join("\n  ", offenders));
+    }
+
+    [Fact]
+    public void EmailFence_RecognizesOnlyActualNonExampleAddresses()
+    {
+        FindForbiddenEmail("Contact alice@domain.com").ShouldBeNull();
+
+        var publicExample = "alice" + "@" + "example.com";
+        FindForbiddenEmail("Contact " + publicExample).ShouldBeNull();
+
+        FindForbiddenEmail("build-runner@botnexus.invalid").ShouldBeNull();
+        FindForbiddenEmail("botnexus-test@invalid.local").ShouldBeNull();
+
+        var corporateAddress = "alice" + "@" + "microsoft.com";
+        FindForbiddenEmail("Contact " + corporateAddress).ShouldBe(corporateAddress);
+
+        FindForbiddenEmail("git@github.com:owner/repository.git").ShouldBeNull();
+        FindForbiddenEmail("https://user@example.com/path").ShouldBeNull();
+    }
+
+    [Fact]
+    public void NoTrackedFile_ContainsConcreteAzureSubscriptionId()
+    {
+        var offenders = ScanTrackedFiles((path, content) =>
+        {
+            var match = ConcreteAzureSubscription.Match(content);
+            return match.Success
+                ? $"{path}: contains a concrete Azure subscription reference '{Truncate(match.Value)}' — use an environment variable"
+                : null;
+        });
+
+        offenders.ShouldBeEmpty(
+            "Tracked files contain concrete Azure subscription IDs in configuration or commands. " +
+            "Use environment variables so tenant-specific identifiers cannot enter the repository.\n" +
+            "Offenders:\n  " + string.Join("\n  ", offenders));
+    }
+
+    [Fact]
+    public void NoTrackedFile_ContainsCurrentPublicIpAddress()
+    {
+        var offenders = ScanTrackedFiles((path, content) =>
+        {
+            var match = CurrentPublicIpAddress.Match(content);
+            return match.Success
+                ? $"{path}: contains current public endpoint '{Truncate(match.Value)}' — show a lookup command instead"
+                : null;
+        });
+
+        offenders.ShouldBeEmpty(
+            "Tracked files contain current public IP addresses. Live endpoint metadata must be " +
+            "queried at runtime rather than committed.\nOffenders:\n  " + string.Join("\n  ", offenders));
     }
 
     private List<string> ScanTrackedFiles(Func<string, string, string?> inspect)
@@ -223,6 +301,37 @@ public sealed class PersonalPathLeakArchitectureTests : ArchitectureTest
     private static bool IsTextFile(string relativePath)
         => !BinaryExtensions.Contains(Path.GetExtension(relativePath));
 
+    private static string? FindForbiddenEmail(string content)
+    {
+        foreach (Match match in EmailAddress.Matches(content))
+        {
+            if (!IsExampleEmail(match.Value)
+                && !IsUriAuthority(content, match)
+                && !IsSshRemote(content, match))
+            {
+                return match.Value;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsExampleEmail(string value)
+        => value.EndsWith("@domain.com", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith("@example.com", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith("@botnexus.invalid", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith("@invalid.local", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsUriAuthority(string content, Match match)
+    {
+        var lineStart = content.LastIndexOf('\n', Math.Max(0, match.Index - 1)) + 1;
+        var prefix = content[lineStart..match.Index];
+        var schemeIndex = prefix.LastIndexOf("://", StringComparison.Ordinal);
+        return schemeIndex >= 0 && !prefix[(schemeIndex + 3)..].Contains('/');
+    }
+
+    private static bool IsSshRemote(string content, Match match)
+        => match.Index + match.Length < content.Length && content[match.Index + match.Length] == ':';
 
     private static string Truncate(string value)
         => value.Length <= 80 ? value : value[..80] + "...";

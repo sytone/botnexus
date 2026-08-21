@@ -182,7 +182,7 @@ public sealed class RazorDirectiveKeywordFenceArchitectureTests : ArchitectureTe
     [InlineData("@sections.Count")]
     [InlineData("@codeName.Value")]
     [InlineData("@@section.Name")]
-    [InlineData("<a href=\"mailto:someone@code.example\">x</a>")]
+    [InlineData("<a href=\"mailto:someone@domain.com\">x</a>")]
     [InlineData("@_editJob.Model")]
     [InlineData("@foreach (var model in _models)")]
     [InlineData("@if (section.IsCollapsed) { }")]
