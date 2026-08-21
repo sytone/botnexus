@@ -25,6 +25,8 @@
     <None Include="PrimitiveIdParameterBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
     <!-- The #2888 config-path resolution fence reads its baseline at runtime from the output dir. -->
     <None Include="ConfigPathResolutionBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Finite waits are frozen so new timing-based synchronization cannot enter the test suite. -->
+    <None Include="TestDelayFlakeBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

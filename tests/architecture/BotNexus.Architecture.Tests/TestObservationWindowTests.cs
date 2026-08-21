@@ -58,7 +58,9 @@ public class TestObservationWindowTests : ArchitectureTest
                 var seconds = match.Groups["unit"].Value == "Seconds" ? value : value / 1000d;
 
                 // A test that asserts a timeout is THROWN needs a short window by design.
-                var context = text[Math.Max(0, match.Index - 200)..match.Index];
+                var context = text[
+                    Math.Max(0, match.Index - 200)..
+                    Math.Min(text.Length, match.Index + match.Length + 300)];
                 if (context.Contains("ThrowAsync<TimeoutException>", StringComparison.Ordinal))
                     continue;
 
