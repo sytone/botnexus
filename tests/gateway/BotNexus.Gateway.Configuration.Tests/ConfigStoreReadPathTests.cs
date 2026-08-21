@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using BotNexus.Gateway.Configuration.Shadow;
 using BotNexus.Gateway.Configuration.Store;
 using Shouldly;
 
@@ -160,3 +159,4 @@ public sealed class ConfigStoreReadPathTests : IDisposable
         Should.Throw<InvalidOperationException>(() => ConfigDocumentRehydrator.Rehydrate(entries));
     }
 }
+

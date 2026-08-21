@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Gateway.Configuration;
-using BotNexus.Gateway.Configuration.Shadow;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Options;
 
@@ -267,8 +266,8 @@ public sealed class SchemaValidationTests
         {
             FeatureManagement = new Dictionary<string, JsonElement>
             {
-                [ConfigStoreFeatures.ShadowMigration] = JsonSerializer.SerializeToElement(true),
-                [ConfigStoreFeatures.Authoritative] = JsonSerializer.SerializeToElement(false)
+                ["GatewayDevOriginEnforcement"] = JsonSerializer.SerializeToElement(true),
+                ["ExampleDisabledFlag"] = JsonSerializer.SerializeToElement(false)
             }
         };
 
@@ -297,7 +296,7 @@ public sealed class SchemaValidationTests
         {
             FeatureManagement = new Dictionary<string, JsonElement>
             {
-                [ConfigStoreFeatures.ShadowMigration] = JsonSerializer.SerializeToElement(true)
+                ["GatewayDevOriginEnforcement"] = JsonSerializer.SerializeToElement(true)
             }
         };
 
@@ -308,7 +307,7 @@ public sealed class SchemaValidationTests
         });
 
         json.ShouldContain($"\"{FeatureFlags.SectionName}\"");
-        json.ShouldContain($"\"{ConfigStoreFeatures.ShadowMigration}\"");
+        json.ShouldContain("\"GatewayDevOriginEnforcement\"");
         PlatformConfigSchema.ValidateJson(json).ShouldBeEmpty();
     }
 
@@ -331,4 +330,6 @@ public sealed class SchemaValidationTests
             .ShouldNotBeEmpty();
     }
 }
+
+
 

@@ -362,62 +362,33 @@ source.
 
 ---
 
-### Configuration store (shadow migration)
+### Configuration store (SQLite)
 
-A SQLite-backed configuration store is being introduced alongside `config.json` (issues #2646, #2766).
-It is **off by default and inert**: with both flags below unset, no new code path runs, nothing is
-written, and the gateway serves configuration exactly as it does today.
+A SQLite-backed configuration store can sit alongside `config.json` at `config.db` in the same
+directory.
 
-The rollout is deliberately split across **two independent flags** so that verifying the migration and
-depending on it are separate decisions. A single flag would mean the first evidence the migration is
-faithful arrives only once the platform already depends on it.
+**It is an ordinary .NET configuration provider.** There is no feature flag, no migration service,
+and no verification harness. The store is registered after the JSON file, so any key it holds wins;
+absent a `config.db` the file serves everything and behaviour is exactly as it always was.
 
-| Flag | Default | Effect |
-|------|---------|--------|
-| `ConfigStoreShadowMigration` | off | On start, migrate `config.json` into the store and diff the round-trip against the source. **Report only** - this flag can never change which configuration the gateway serves. |
+| State | Behaviour |
+|-------|-----------|
+| No `config.db` | File-only configuration. This is the default. |
+| `config.db` present | Store values win over the file, for every consumer alike. |
 
-> **`ConfigStoreAuthoritative` no longer exists (#3485).** Which source wins is now decided by
-> **configuration provider order**, not by a feature flag. The store is registered as an ordinary
-> `IConfigurationProvider` after the JSON file, so any key the store holds wins, and every consumer -
-> `IOptions`, `IOptionsMonitor`, the startup read alike - sees the same answer. The flag it replaces
-> only ever affected the single read that consulted it, which is why the UI could show one value while
-> the platform ran another.
->
-> The store participates only when `config.db` exists beside `config.json`. Delete that file and the
-> gateway is back to file-only configuration on the next start - the rollback is still "delete the
-> store", with no flag to unset.
+Because precedence is provider registration order, every read resolves the same way - `IOptions`,
+`IOptionsMonitor`, the startup read, the CLI. That is the property the earlier flag-based design
+could not deliver: `ConfigStoreAuthoritative` only affected the single read that consulted it, which
+is how the portal could display one value while the gateway ran another.
 
-There are two valid states:
+**Rollback is deleting the file.** No flag to unset, no state to unwind.
 
-1. **No store file** - today's behaviour, file-only configuration. This is the default.
-2. **Shadow on** - the migration runs and is verified on every start; once `config.db` exists it also
-   participates in the read pipeline, with its values winning over the file.
-
-The flag binds through `Microsoft.FeatureManagement` on the same `IConfiguration` that loads
-`config.json`, so they are set in the `FeatureManagement` section described
-[above](#feature-flags-featuremanagement) - the same mechanism as the
-[Dev-Mode Origin Guard](./features/dev-origin-guard.md). Mind the PascalCase section name and the
-verbatim flag names; `botnexus config set FeatureManagement.ConfigStoreShadowMigration true` or
-`FeatureManagement__ConfigStoreShadowMigration=true` avoid both hazards:
-
-```jsonc
-{
-  "FeatureManagement": {
-    // Verify the migration first. The store only joins the read pipeline once
-    // config.db exists, and its values then win over the file.
-    "ConfigStoreShadowMigration": true
-  }
-}
-```
-
-**Authoritative-without-shadow is refused at startup**, loudly, rather than being silently upgraded:
-enabling the store as the read path without the verification path having run would put a migration
-nothing has ever checked in front of every configuration read. Note this is deliberately stricter than
-the shadow path's own failure policy - a shadow migration that throws must *never* fail startup,
-because it is diagnostic; an operator asking for an unverified authoritative store is a configuration
-error, which is exactly what startup validation exists to catch.
-
-The store lives at `config.db` in the same directory as `config.json`.
+> **Removed flags.** `ConfigStoreAuthoritative` was replaced by provider order (#3485), and
+> `ConfigStoreShadowMigration` was removed with the verification harness (#3509). The harness
+> migrated `config.json` into the store and diffed the round-trip to prove the copy was faithful,
+> which mattered while the store was being introduced behind a flag. It wrote a report nothing read,
+> and once the store became an ordinary provider there was no separate copy left to verify. Both
+> flags are inert if present in an existing `config.json` and can be deleted.
 
 ---
 

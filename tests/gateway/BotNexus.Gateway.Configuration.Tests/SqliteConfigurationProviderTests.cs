@@ -1,6 +1,5 @@
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
-using BotNexus.Gateway.Configuration.Shadow;
 using BotNexus.Gateway.Configuration.Store;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -241,3 +240,4 @@ public sealed class SqliteConfigurationProviderTests
         value.ShouldBeNull();
     }
 }
+
