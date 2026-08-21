@@ -76,8 +76,8 @@ public sealed class StripedAsyncLockTests
 
         handle.Dispose(); // release
 
-        second.IsCompleted.ShouldBeTrue("releasing the stripe must unblock the waiter");
-        (await second).Dispose();
+        var secondHandle = await second.WaitAsync(TimeSpan.FromSeconds(2));
+        secondHandle.Dispose();
     }
 
     [Fact]

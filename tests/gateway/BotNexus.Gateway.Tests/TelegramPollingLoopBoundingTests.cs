@@ -60,6 +60,7 @@ public sealed class TelegramPollingLoopBoundingTests
     {
         var handler = new CountingTelegramHandler();
         handler.FailGetUpdatesWith(HttpStatusCode.BadGateway);
+        handler.ParkAfterGetUpdatesCall = 2;
         var retryDelayStarted = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseRetryDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -75,9 +76,7 @@ public sealed class TelegramPollingLoopBoundingTests
         handler.GetUpdatesCalls.ShouldBe(1);
 
         releaseRetryDelay.TrySetResult();
-        await TestAwait.EventuallyAsync(
-            () => handler.GetUpdatesCalls == 2,
-            "the transient Telegram polling loop to retry after its backoff is released");
+        await handler.Parked.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         handler.GetUpdatesCalls.ShouldBe(2);
 
