@@ -3,6 +3,7 @@ using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Data.Sqlite;
 using Spectre.Console;
+using BotNexus.Cli.Services;
 
 namespace BotNexus.Cli.Commands;
 
@@ -108,7 +109,11 @@ internal sealed class SubAgentCommand
             if (!_fileSystem.File.Exists(configPath))
                 return null;
 
-            var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
+            // Reads through the injected IFileSystem, NOT the provider pipeline (#3504). The framework's
+        // file provider is backed by the physical filesystem and cannot serve an injected
+        // abstraction, so routing this through IOptions would silently read the real disk while the
+        // caller supplied a mock. Exempted in ConfigurationReadPathFenceTests with this reason.
+        var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
             return config.Gateway?.SubAgents?.WorkspaceRoot;
         }
         catch
@@ -251,3 +256,5 @@ internal sealed class SubAgentCommand
         return map;
     }
 }
+
+

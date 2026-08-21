@@ -136,15 +136,13 @@ catch (Exception ex)
 PlatformConfig startupPlatformConfig;
 try
 {
-    // #3485 D1: the startup read comes from the same JSON file the configuration builder already
-    // added above, with no bespoke store seam in front of it. The store participates as an ordinary
-    // configuration provider (SqliteConfigurationSource), so it needs no special handling here and no
-    // ConfigStoreAuthoritative branch: whichever provider is registered last wins, for this read and
-    // for every IOptions consumer alike. Previously this call went through ConfigStoreStartupLoader,
-    // which was the ONLY read in the process that honoured the authoritative flag.
-    startupPlatformConfig = PlatformConfigLoader.Load(
-        resolvedConfigPath,
-        validateOnLoad: false);
+    // #3504: bind from the configuration pipeline that was just built, rather than re-reading the
+    // file. `builder.Configuration` already carries the resilient JSON provider and, when a store
+    // exists, the SQLite provider - so this read sees exactly what every IOptions consumer will see,
+    // including store values and last-known-good on a malformed file. Re-loading here was the last
+    // place in the gateway where the startup value could differ from the served value.
+    startupPlatformConfig = new PlatformConfig();
+    builder.Configuration.Bind(startupPlatformConfig);
 }
 catch (Exception ex) when (ex is Microsoft.Extensions.Options.OptionsValidationException or System.Text.Json.JsonException)
 {

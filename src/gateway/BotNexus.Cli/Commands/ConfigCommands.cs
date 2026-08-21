@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
+using BotNexus.Cli.Services;
 
 namespace BotNexus.Cli.Commands;
 
@@ -306,7 +307,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
 
         try
         {
-            return await PlatformConfigLoader.LoadAsync(configPath, cancellationToken, validateOnLoad: false);
+            return PlatformConfigAccessor.Shared.Get(configPath);
         }
         catch (Exception ex)
         {
@@ -339,3 +340,4 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 }
+

@@ -444,31 +444,27 @@ public static class GatewayServiceCollectionExtensions
         PlatformConfigLoader.EnsureConfigDirectory(configDirectory, fileSystem);
         var config = LoadConfigForRegistration(configuration, resolvedConfigPath, fileSystem);
 
-        if (configuration is not null)
-        {
-            // Bind PlatformConfig from the host IConfiguration root (config.json is already in the pipeline).
-            // IOptionsMonitor hot-reload comes free from reloadOnChange: true in Program.cs.
-            services.AddOptions<PlatformConfig>().Bind(configuration);
-            services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
-                new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
-            // Explicit factory: the validator has a second, internal constructor used only by
-            // tests, so resolve the logger deliberately rather than relying on constructor
-            // selection. Without the logger the #3037 unknown-property warning would be silent.
-            services.AddSingleton<IValidateOptions<PlatformConfig>>(sp =>
-                new PlatformConfigOptionsValidator(
-                    sp.GetService<ILogger<PlatformConfigOptionsValidator>>()));
-        }
-        else
-        {
-            // Fallback when IConfiguration is not threaded in (e.g. tests or CLI-only usage).
-            // Use a manual load + PostConfigure without hot reload.
-            services.AddOptions<PlatformConfig>()
-                .Configure(options =>
-                {
-                    var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
-                    ApplyPlatformConfig(options, freshConfig);
-                });
-        }
+        // #3504: ONE registration path. Previously an `IConfiguration`-present branch bound from the
+        // pipeline while an else-branch hand-loaded the file on every options access - two ways to
+        // populate the same type, with only the first getting hot reload, store values, and
+        // last-known-good. When no configuration was threaded in we now build the same pipeline
+        // instead of reading the file, so every host binds identically.
+        configuration ??= new ConfigurationBuilder()
+            .AddPlatformConfiguration(resolvedConfigPath)
+            .Build();
+
+        // Bind PlatformConfig from the IConfiguration root. IOptionsMonitor hot-reload comes free
+        // from reloadOnChange on the file provider and the store's reload token.
+        services.AddOptions<PlatformConfig>().Bind(configuration);
+        services.TryAddSingleton(configuration);
+        services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
+            new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
+        // Explicit factory: the validator has a second, internal constructor used only by
+        // tests, so resolve the logger deliberately rather than relying on constructor
+        // selection. Without the logger the #3037 unknown-property warning would be silent.
+        services.AddSingleton<IValidateOptions<PlatformConfig>>(sp =>
+            new PlatformConfigOptionsValidator(
+                sp.GetService<ILogger<PlatformConfigOptionsValidator>>()));
 
         // #3281: the world event bus and the provider-health observer are registered together
         // because neither is useful alone. The bus had no publisher and no registration at all -
@@ -634,8 +630,12 @@ public static class GatewayServiceCollectionExtensions
 
     private static PlatformConfig LoadConfigForRegistration(IConfiguration? configuration, string resolvedConfigPath, IFileSystem fileSystem)
     {
-        if (configuration is null)
-            return PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
+        // #3504: no hand-rolled load. When no IConfiguration was threaded in (tests, CLI-only
+        // usage) build the same provider pipeline the gateway uses rather than reading the file
+        // directly - so the store is visible and last-known-good applies in every host.
+        configuration ??= new ConfigurationBuilder()
+            .AddPlatformConfiguration(resolvedConfigPath)
+            .Build();
 
         var config = new PlatformConfig();
         configuration.Bind(config);

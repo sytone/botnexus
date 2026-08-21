@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Configuration;
 using BotNexus.Cli.Commands.Doctor.Generated;
+using BotNexus.Cli.Services;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -30,7 +31,7 @@ internal sealed class PersistentAgentFolderCheck : IDoctorCheck
         PlatformConfig config;
         try
         {
-            config = await PlatformConfigLoader.LoadAsync(context.ConfigPath, cancellationToken, validateOnLoad: false);
+            config = PlatformConfigAccessor.Shared.Get(context.ConfigPath);
         }
         catch (Exception ex)
         {
@@ -84,3 +85,4 @@ internal sealed class PersistentAgentFolderCheck : IDoctorCheck
         return new DoctorCheckResult(DoctorOutcome.Warning, summary, details);
     }
 }
+

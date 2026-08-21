@@ -151,8 +151,25 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
         descriptor.ExtensionConfig.ShouldContainKey("ext");
     }
 
+    /// <summary>
+    /// No runtime or API code loads platform configuration directly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This previously allowlisted two bootstrap sites - <c>GatewayServiceCollectionExtensions</c>
+    /// and <c>Program.cs</c> - and asserted they were still present, because at the time the host
+    /// genuinely needed a config value before the pipeline existed.
+    /// </para>
+    /// <para>
+    /// #3504 removed that need: <c>Program.cs</c> binds from <c>builder.Configuration</c>, which is
+    /// already built, and the registration path constructs the same provider pipeline when no
+    /// <c>IConfiguration</c> was threaded in. The allowlist is therefore empty, and the assertion
+    /// flips from "these two still load" to "nothing loads". Keeping the old positive assertion
+    /// would have required re-introducing a hand-rolled load to satisfy it.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void RuntimeApiPaths_DoNotAddNewPlatformConfigLoaderLoadUsage_OutsideAllowlist()
+    public void RuntimeApiPaths_DoNotLoadPlatformConfigDirectly()
     {
         var repoRoot = FindRepositoryRoot();
         var runtimeRoots = new[]
@@ -161,20 +178,17 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
             Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api")
         };
 
-        var allowedRuntimeLoadSites = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            Path.Combine("src", "gateway", "BotNexus.Gateway", "Extensions", "GatewayServiceCollectionExtensions.cs"),
-            Path.Combine("src", "gateway", "BotNexus.Gateway.Api", "Program.cs")
-        };
-
         List<string> unexpected = [];
-        HashSet<string> observedAllowed = new(StringComparer.OrdinalIgnoreCase);
 
         foreach (var root in runtimeRoots)
         {
             foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
             {
                 var relativePath = Path.GetRelativePath(repoRoot, file);
+                if (relativePath.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+                    relativePath.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                    continue;
+
                 var lines = File.ReadAllLines(file);
                 for (var index = 0; index < lines.Length; index++)
                 {
@@ -182,21 +196,15 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
                     if (!line.Contains("PlatformConfigLoader.Load", StringComparison.Ordinal))
                         continue;
 
-                    if (allowedRuntimeLoadSites.Contains(relativePath))
-                    {
-                        observedAllowed.Add(relativePath);
-                        continue;
-                    }
-
                     unexpected.Add($"{relativePath}:{index + 1} => {line.Trim()}");
                 }
             }
         }
 
         unexpected.ShouldBeEmpty(
-            "Runtime/API config loads must use IConfiguration + IOptionsMonitor provider reload. " +
-            "Only explicitly documented bootstrap files are allowlisted.");
-        observedAllowed.ShouldBe(allowedRuntimeLoadSites);
+            "Runtime/API config reads must go through IConfiguration + IOptionsMonitor (#3504). " +
+            "Program.cs binds from builder.Configuration; the registration path builds the same " +
+            "pipeline when no IConfiguration is supplied. There are no remaining bootstrap loads.");
     }
 
     public void Dispose()
