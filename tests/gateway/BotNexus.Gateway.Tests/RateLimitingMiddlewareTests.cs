@@ -223,9 +223,13 @@ public sealed class RateLimitingMiddlewareTests
     [Fact]
     public async Task InvokeAsync_AfterWindowExpires_ResetsRateLimit()
     {
+        var timeProvider = new ManualTimeProvider(DateTimeOffset.Parse(
+            "2026-08-21T12:00:00Z",
+            System.Globalization.CultureInfo.InvariantCulture));
         var middleware = new RateLimitingMiddleware(
             _ => Task.CompletedTask,
-            CreateConfig(requestsPerMinute: 1, windowSeconds: 1));
+            CreateConfig(requestsPerMinute: 1, windowSeconds: 1),
+            timeProvider);
 
         var firstContext = CreateContext("127.0.0.1");
         await middleware.InvokeAsync(firstContext);
@@ -234,7 +238,7 @@ public sealed class RateLimitingMiddlewareTests
         await middleware.InvokeAsync(secondContext);
         secondContext.Response.StatusCode.ShouldBe(StatusCodes.Status429TooManyRequests);
 
-        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
 
         var thirdContext = CreateContext("127.0.0.1");
         await middleware.InvokeAsync(thirdContext);
