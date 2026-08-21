@@ -61,7 +61,9 @@ public sealed class GatewayEventHandlerConcurrencyTests
         act.ShouldNotThrow();
 
         // (2) the failure is observed and logged at Error within a bounded wait
-        await WaitForAsync(() => _logger.Entries.Any(e => e.Level == LogLevel.Error));
+        await TestAwait.EventuallyAsync(
+            () => _logger.Entries.Any(e => e.Level == LogLevel.Error),
+            "the fire-and-forget refresh failure to be logged");
         var error = _logger.Entries.FirstOrDefault(e => e.Level == LogLevel.Error);
         error.ShouldNotBeNull("A failed fire-and-forget refresh must be logged at Error, not vanish.");
         error!.Exception.ShouldBeOfType<InvalidOperationException>();
@@ -77,7 +79,9 @@ public sealed class GatewayEventHandlerConcurrencyTests
         _handler.HandleConversationChanged(
             new ConversationChangedPayload("updated", "agent-1", "conv-1"));
 
-        await WaitForAsync(() => _logger.Entries.Any(e => e.Level == LogLevel.Error));
+        await TestAwait.EventuallyAsync(
+            () => _logger.Entries.Any(e => e.Level == LogLevel.Error),
+            "the faulted refresh task to be logged");
         var error = _logger.Entries.FirstOrDefault(e => e.Level == LogLevel.Error);
         error.ShouldNotBeNull("A faulted fire-and-forget refresh task must be observed and logged.");
         error!.Exception.ShouldBeOfType<TimeoutException>();
@@ -287,14 +291,4 @@ public sealed class GatewayEventHandlerConcurrencyTests
         return File.ReadAllText(path);
     }
 
-    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 5_000)
-    {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (DateTime.UtcNow < deadline)
-        {
-            if (condition())
-                return;
-            await Task.Delay(15);
-        }
-    }
 }
