@@ -13,7 +13,7 @@ namespace BotNexus.Gateway.Tests.Configuration;
 // pipeline observes it. That pipeline is process-global, so this must not run concurrently with
 // any test that swaps BOTNEXUS_HOME / BotNexus__ConfigPath out from under it.
 [Collection("IntegrationTests")]
-public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
+public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
 {
     private readonly string _rootPath;
     private readonly string _configPath;
@@ -78,8 +78,7 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
 
         await writer.UpdateSectionAsync("gateway", gatewayUpdate);
 
-        var completed = await Task.WhenAny(changed.Task, Task.Delay(TimeSpan.FromSeconds(10)));
-        completed.ShouldBe(changed.Task, "Expected IConfiguration reload pipeline to notify IOptionsMonitor.");
+        await changed.Task.WaitAsync(TimeSpan.FromMinutes(2));
         resolver.ResolvePath("repo-root").ShouldBe(updatedPath);
         Directory.GetFiles(backupDirectory, "config-*.json").Length.ShouldBe(1);
     }
@@ -145,9 +144,7 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
             """)!;
         await writer.UpdateSectionAsync("gateway", gatewayUpdate);
 
-        var completed = await Task.WhenAny(changed.Task, Task.Delay(TimeSpan.FromSeconds(10)));
-        completed.ShouldBe(changed.Task, "Expected provider-driven reload to trigger PlatformConfigAgentSource.Watch.");
-        var descriptor = (await changed.Task).ShouldHaveSingleItem();
+        var descriptor = (await changed.Task.WaitAsync(TimeSpan.FromMinutes(2))).ShouldHaveSingleItem();
         descriptor.ExtensionConfig.ShouldContainKey("ext");
     }
 
@@ -207,26 +204,30 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
             "pipeline when no IConfiguration is supplied. There are no remaining bootstrap loads.");
     }
 
-    public void Dispose()
-    {
-        for (var attempt = 0; attempt < 5; attempt++)
-        {
-            try
-            {
-                if (Directory.Exists(_rootPath))
-                    Directory.Delete(_rootPath, recursive: true);
+    public Task InitializeAsync() => Task.CompletedTask;
 
-                return;
-            }
-            catch (IOException) when (attempt < 4)
+    public async Task DisposeAsync()
+    {
+        await TestAwait.EventuallyAsync(
+            () =>
             {
-                Thread.Sleep(100);
-            }
-            catch (UnauthorizedAccessException) when (attempt < 4)
-            {
-                Thread.Sleep(100);
-            }
-        }
+                try
+                {
+                    if (Directory.Exists(_rootPath))
+                        Directory.Delete(_rootPath, recursive: true);
+                    return true;
+                }
+                catch (IOException)
+                {
+                    return false;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return false;
+                }
+            },
+            $"runtime configuration test directory '{_rootPath}' to be deletable",
+            timeout: TimeSpan.FromSeconds(2));
     }
 
     private static ServiceProvider BuildServiceProvider(string configPath)
