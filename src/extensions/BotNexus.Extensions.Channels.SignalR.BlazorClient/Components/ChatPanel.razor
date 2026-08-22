@@ -685,6 +685,23 @@ private bool IsStreaming =>
     private string ExpandingInputClass => Prefs?.Current?.ExpandingInput == true ? "expanding" : string.Empty;
 
     private string _inputText = "";
+    // ── #2918 prompt-history recall ─────────────────────────────────────
+    // Session-scoped, in-memory, component-local, and keyed by the conversation this panel is
+    // rendering. It is deliberately NOT a shared DI service: #3062 made the conversation id a
+    // route-owned parameter (see ActiveConversationId), so identity is known at send time and
+    // there is nothing to reconcile later. That removes the empty-key bucket and the adoption
+    // heuristic that leaked one conversation's prompts into another.
+    private readonly Dictionary<string, List<string>> _historyByConversation = new(StringComparer.Ordinal);
+    private const int MaxHistoryEntries = 50;
+    // -1 means "not currently navigating history"; otherwise an index into the current list.
+    private int _historyIndex = -1;
+    // The draft stashed when history navigation began, restored on Esc or Down-past-newest.
+    private string? _historyDraftStash;
+    // The conversation the pointer/stash belong to; a change resets them (see OnParametersSet).
+    private string? _historyConversationId;
+    // Set when a recall changed _inputText so OnAfterRenderAsync moves the caret to the end AFTER
+    // the bound value reaches the DOM, and re-runs the expanding-textarea resize.
+    private bool _pendingCaretToEnd;
     private readonly List<DraftAttachment> _attachments = [];
     private string? _attachmentError;
     private DotNetObjectReference<ChatPanel>? _attachmentPasteRef;
@@ -698,6 +715,9 @@ private bool IsStreaming =>
 
     private async Task HandleInputChanged()
     {
+        // #2918: real user typing ends history navigation - the recalled text has become the
+        // user's own draft, so there is no longer a stash to restore.
+        ResetHistoryNavigation();
         UpdateCommandPalette();
         if (Prefs?.Current?.ExpandingInput == true)
             await JS.InvokeVoidAsync("chatScroll.autoResizeTextarea", _inputElement, Prefs.Current.ExpandingInputMaxLines);
@@ -1191,6 +1211,21 @@ private bool IsStreaming =>
     {
         try
         {
+            // #2918: a recall changed _inputText; now that the bound value is in the DOM, move the
+            // caret to the end and re-run the expanding-textarea resize. Guarded so a detached
+            // element (view switched mid-flight) cannot throw.
+            if (_pendingCaretToEnd)
+            {
+                _pendingCaretToEnd = false;
+                try
+                {
+                    await JS.InvokeVoidAsync("chatScroll.moveCaretToEnd", _inputElement);
+                    if (Prefs?.Current?.ExpandingInput == true)
+                        await JS.InvokeVoidAsync("chatScroll.autoResizeTextarea", _inputElement, Prefs.Current.ExpandingInputMaxLines);
+                }
+                catch { /* textarea detached before the caret could be placed */ }
+            }
+
             // Focus-trap entry: when the tool pop-out modal opens, move focus into the
             // dialog so Esc / Tab are captured and screen readers land inside it.
             if (_toolModalOpen && !_toolModalFocused)
@@ -1289,6 +1324,200 @@ private bool IsStreaming =>
         }
     }
 
+    // ── #2918 prompt-history recall ─────────────────────────────────────
+
+    /// <summary>
+    /// Returns a SNAPSHOT of the prompt history for the conversation this panel renders, oldest
+    /// first. Never returns the live backing list, and never creates a bucket: reading history
+    /// must not mutate it. When there is no conversation id there is no history — by construction
+    /// nothing is ever recorded without one, so recall has nothing to surface.
+    /// </summary>
+    private IReadOnlyList<string> CurrentHistory()
+    {
+        SyncHistoryConversation();
+        if (_historyConversationId is not { } convId)
+            return [];
+        SeedHistoryFromTranscript(convId);
+        return _historyByConversation.TryGetValue(convId, out var list) ? list.ToArray() : [];
+    }
+
+    /// <summary>
+    /// #2918 follow-up: seeds this conversation's history from the rendered transcript, ONCE, the
+    /// first time recall asks for it.
+    ///
+    /// Why this exists: <c>DispatchDraftAsync</c> is not the only way a prompt reaches a
+    /// conversation. The prompt that CREATES a conversation is dispatched by
+    /// <c>StartConversationService</c> from the landing page, before this panel instance exists,
+    /// and a reload discards in-memory history for prompts that were genuinely sent. In both cases
+    /// the prompt is visible in the transcript but was never recorded here, so recall could not
+    /// reach the oldest entry - the conversation's first prompt was permanently unreachable.
+    ///
+    /// Deriving the seed from <c>Messages</c> rather than carrying state across navigation is what
+    /// keeps this free of the store that review rejected: no new service, no DI, no
+    /// cross-conversation carrier, and therefore no empty-key bucket for another conversation to
+    /// adopt from. The seed is keyed by the SAME route-owned conversation id the transcript is
+    /// rendered from, so an entry still cannot cross conversations.
+    ///
+    /// Seeding is skipped once a bucket exists, so a live send is never overwritten and the
+    /// transcript cannot re-add a prompt the citizen has already navigated past.
+    /// </summary>
+    private void SeedHistoryFromTranscript(string convId)
+    {
+        if (_historyByConversation.ContainsKey(convId))
+            return;
+
+        var seeded = new List<string>();
+        foreach (var msg in Messages)
+        {
+            // Folded (pre-compaction) messages are deliberately included: they are real prompts the
+            // citizen sent, and excluding them would reintroduce an unreachable-oldest-entry gap.
+            if (!string.Equals(msg.Role, "User", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var text = msg.Content?.Trim();
+            if (string.IsNullOrWhiteSpace(text))
+                continue;
+            if (seeded.Count > 0 && string.Equals(seeded[^1], text, StringComparison.Ordinal))
+                continue; // Same consecutive-duplicate rule RecordPromptHistory applies.
+            seeded.Add(text);
+        }
+
+        if (seeded.Count > MaxHistoryEntries)
+            seeded.RemoveRange(0, seeded.Count - MaxHistoryEntries);
+
+        _historyByConversation[convId] = seeded;
+    }
+
+    /// <summary>
+    /// Re-points the navigation pointer and draft stash at the conversation currently being
+    /// rendered, clearing both when it changes, so a stash can never be restored into a different
+    /// conversation. Called from every history entry point rather than from a render-loop poller.
+    /// </summary>
+    private void SyncHistoryConversation()
+    {
+        var current = ActiveConversationId;
+        if (string.Equals(current, _historyConversationId, StringComparison.Ordinal))
+            return;
+        _historyConversationId = current;
+        _historyIndex = -1;
+        _historyDraftStash = null;
+    }
+
+    /// <summary>
+    /// Records a submitted prompt against the supplied conversation and leaves navigation mode.
+    /// <paramref name="convId"/> is the route-owned id the send was actually dispatched to.
+    ///
+    /// The empty/null conversation id is NOT a bucket. There is no empty key, no later migration,
+    /// and no adoption of stranded entries — a prompt that cannot be attributed to a conversation
+    /// is simply not recorded. That is what makes the cross-conversation leak structurally
+    /// impossible rather than merely unlikely: an unrelated conversation cannot inherit an entry
+    /// that was never stored. Whitespace-only prompts and consecutive duplicates are not stored;
+    /// each conversation's list is bounded, dropping oldest first.
+    /// </summary>
+    private void RecordPromptHistory(string? convId, string text)
+    {
+        if (string.IsNullOrWhiteSpace(convId) || string.IsNullOrWhiteSpace(text))
+        {
+            ResetHistoryNavigation();
+            return;
+        }
+
+        // Seed BEFORE appending. The first send in a conversation would otherwise create an empty
+        // bucket, and the seed - which skips conversations that already have one - would never run,
+        // permanently stranding the prompt that created the conversation.
+        SeedHistoryFromTranscript(convId);
+
+        if (!_historyByConversation.TryGetValue(convId, out var list))
+        {
+            list = [];
+            _historyByConversation[convId] = list;
+        }
+
+        if (list.Count == 0 || !string.Equals(list[^1], text, StringComparison.Ordinal))
+        {
+            list.Add(text);
+            if (list.Count > MaxHistoryEntries)
+                list.RemoveRange(0, list.Count - MaxHistoryEntries);
+        }
+
+        ResetHistoryNavigation();
+    }
+
+    /// <summary>Leaves history-navigation mode and drops the stashed draft.</summary>
+    private void ResetHistoryNavigation()
+    {
+        _historyIndex = -1;
+        _historyDraftStash = null;
+    }
+
+    /// <summary>
+    /// Restores the draft stashed when navigation began and leaves navigation mode. Safe to call
+    /// when not navigating (it is then a no-op on the draft).
+    /// </summary>
+    private void RestoreStashedDraft()
+    {
+        if (_historyIndex == -1)
+            return;
+        _inputText = _historyDraftStash ?? string.Empty;
+        ResetHistoryNavigation();
+        _pendingCaretToEnd = true;
+    }
+
+    /// <summary>
+    /// Moves through this conversation's prompt history. <paramref name="direction"/> below zero
+    /// recalls older prompts, above zero newer. When <paramref name="requireEdge"/> is true (bare
+    /// arrows) the move only happens if the caret is on the first line (Up) or last line (Down),
+    /// so caret navigation inside a multi-line draft is never hijacked; Alt+arrow passes false as
+    /// an unconditional fallback. Entering navigation stashes the current draft; moving newer than
+    /// the most recent entry restores it and exits.
+    /// </summary>
+    private async Task NavigateHistoryAsync(int direction, bool requireEdge)
+    {
+        var history = CurrentHistory();
+        if (history.Count == 0)
+            return;
+
+        if (requireEdge)
+        {
+            CaretLinePosition pos;
+            try
+            {
+                pos = await JS.InvokeAsync<CaretLinePosition>("chatScroll.caretLinePosition", _inputElement);
+            }
+            catch
+            {
+                return; // Textarea detached mid-flight (view switched) - abort safely.
+            }
+
+            if (direction < 0 && !pos.OnFirstLine)
+                return;
+            if (direction > 0 && !pos.OnLastLine)
+                return;
+        }
+
+        if (_historyIndex == -1)
+        {
+            if (direction > 0)
+                return; // Down does nothing when not already navigating.
+            _historyDraftStash = _inputText;
+            _historyIndex = history.Count - 1;
+        }
+        else
+        {
+            var next = _historyIndex + direction;
+            if (next < 0)
+                return; // Already at the oldest entry.
+            if (next >= history.Count)
+            {
+                RestoreStashedDraft();
+                return;
+            }
+            _historyIndex = next;
+        }
+
+        _inputText = history[_historyIndex];
+        _pendingCaretToEnd = true;
+    }
+
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {
         UpdateCommandPalette();
@@ -1309,15 +1538,39 @@ private bool IsStreaming =>
         }
         else if (e is { Key: "Escape" })
         {
+            // Precedence is deliberate and ordered by consequence, not by convenience.
+            // ABORT WINS over draft restoration (#2918 review blocker): stopping a running agent is
+            // a safety control, and it must not be shadowed by a text-recall convenience. Pressing
+            // Up mid-stream and then Esc previously restored the draft and left the agent running.
+            // The draft is still restored here — it just does not consume the keystroke.
             if (_showCommandPalette)
+            {
                 _showCommandPalette = false;
-            else if (IsStreaming)
-                await AbortAgent();
+            }
+            else
+            {
+                RestoreStashedDraft();
+                if (IsStreaming)
+                    await AbortAgent();
+            }
         }
         else if (e is { Key: "Tab" } && _showCommandPalette && _filteredCommands.Count > 0)
         {
             _inputText = _filteredCommands[0].Name + " ";
             _showCommandPalette = false;
+        }
+        // #2918: bare arrows recall history only at the caret's edge line (the JS probe decides);
+        // Alt+arrow is the unconditional fallback. The palette check is the ONLY disambiguation
+        // this feature needs: while the slash-command palette is open the arrows belong to it, so
+        // recall stands down. Making the palette itself keyboard-navigable is a separate feature
+        // and is deliberately not included here.
+        else if (e is { Key: "ArrowUp" } && !_showCommandPalette)
+        {
+            await NavigateHistoryAsync(-1, requireEdge: !e.AltKey);
+        }
+        else if (e is { Key: "ArrowDown" } && !_showCommandPalette)
+        {
+            await NavigateHistoryAsync(1, requireEdge: !e.AltKey);
         }
     }
 
@@ -1333,6 +1586,8 @@ private bool IsStreaming =>
         var text = _inputText?.Trim() ?? string.Empty;
         if ((string.IsNullOrEmpty(text) && _attachments.Count == 0) || !IsConnected) return;
         var attachments = _attachments.ToArray();
+        // #2918: record against the SAME route-owned conversation this send is dispatched to.
+        RecordPromptHistory(convId, text);
         _inputText = ""; _attachments.Clear(); _attachmentError = null; _showCommandPalette = false; _forceScrollNext = true;
         await dispatch(convId, text, attachments);
     }
