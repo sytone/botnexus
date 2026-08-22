@@ -36,7 +36,7 @@ try {
         @{
             Name = 'release'
             FilePath = $pwshPath
-            ArgumentList = @('-NoProfile', '-Command', '[Threading.Thread]::Sleep(1500); Write-Output release-complete; exit 0')
+            ArgumentList = @('-NoProfile', '-Command', '[Threading.Thread]::Sleep(300); Write-Output release-complete; exit 0')
             LogPath = (Join-Path $root 'release.log')
         }
     ))
@@ -49,6 +49,8 @@ try {
         ($parallel | Sort-Object StartedAt | Select-Object -First 1).StartedAt).TotalSeconds
     Assert-True ($startSpread -lt 0.5) `
         "1: child starts did not overlap (start spread $($startSpread.ToString('N2'))s)."
+    Assert-True (($parallel | Where-Object Name -eq 'release').ElapsedSeconds -lt 1.0) `
+        '1: child duration was inflated by the order in which processes were reaped.'
     Assert-True (@($parallel | Where-Object Name -eq 'debug' | Where-Object ExitCode -eq 0).Count -eq 1) `
         '2: Debug child did not report success.'
     Assert-True (@($parallel | Where-Object Name -eq 'release' | Where-Object ExitCode -eq 0).Count -eq 1) `

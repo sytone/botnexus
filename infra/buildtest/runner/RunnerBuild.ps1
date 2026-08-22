@@ -45,9 +45,17 @@ function Invoke-ParallelRunnerProcesses {
             }
         }
 
+        $pending = @($running)
+        while ($pending.Count -gt 0) {
+            Wait-Process -InputObject @($pending.Process) -Any
+            foreach ($child in @($pending | Where-Object { $_.Process.HasExited })) {
+                $child.Stopwatch.Stop()
+            }
+            $pending = @($pending | Where-Object { -not $_.Process.HasExited })
+        }
+
         $results = foreach ($child in $running) {
             $child.Process.WaitForExit()
-            $child.Stopwatch.Stop()
 
             $parts = foreach ($path in @($child.StandardOutputPath, $child.StandardErrorPath)) {
                 if (Test-Path -LiteralPath $path) {
