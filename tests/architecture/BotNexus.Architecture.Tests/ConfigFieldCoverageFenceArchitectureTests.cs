@@ -1,6 +1,7 @@
 using System.Collections;
 using System.ComponentModel.DataAnnotations;
 using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
@@ -320,6 +321,218 @@ public sealed class ConfigFieldCoverageFenceArchitectureTests
             v => v.Key == $"{nameof(DisplayFixture)}.{nameof(DisplayFixture.FullyDescribed)}",
             "Positive pin: a property with both Name and Description must be accepted.");
     }
+
+    [Fact]
+    public void EveryAnnotatedConfigProperty_SitsAtAResolvablePath()
+    {
+        // Clause 3: presentation metadata is only half of it - a field the UI can render but whose
+        // path the resolver cannot address is still not editable. #2764 is the canonical failure:
+        // a wrong traversal returns null, which is indistinguishable from "not configured".
+        //
+        // Resolution is DELEGATED to the production ConfigPathResolver, never restated here.
+        // ConfigPathResolutionFenceArchitectureTests already probes path literals appearing in
+        // consumer code; this asserts the complementary direction - that every property in the
+        // annotated graph is addressable - which is what reflection-derived write keys require (#3532).
+        //
+        // GetAvailablePaths walks a live INSTANCE and stops at a null child, so a default-constructed
+        // PlatformConfig would enumerate only its shallow paths and this fence would pass vacuously
+        // over air. The graph is materialised first so the walk actually descends.
+        var graph = Materialise(typeof(PlatformConfig), new HashSet<Type>());
+        graph.ShouldNotBeNull();
+
+        var resolver = new ConfigPathResolver();
+        var available = resolver.GetAvailablePaths(graph!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        available.Count.ShouldBeGreaterThan(
+            100,
+            "Non-vacuity: the resolver must enumerate the materialised config graph. A small set " +
+            $"means the walk stopped early and the assertion below proves nothing; got {available.Count}.");
+
+        var unreachable = new List<string>();
+        CollectAnnotatedPaths(typeof(PlatformConfig), string.Empty, new HashSet<Type>(), available, unreachable);
+
+        unreachable.ShouldBeEmpty(
+            "Every annotated configuration property must sit at a path IConfigPathResolver can " +
+            "address. An unreachable property cannot be read or written by path, so the settings UI " +
+            "and the reflection-derived write keys in #3532 cannot target it (#2764, #3533).\n" +
+            "Unreachable:\n  " + string.Join("\n  ", unreachable));
+    }
+
+    [Fact]
+    public void MaterialisedConfigGraph_SurvivesASerializerRoundTrip_ByteIdentically()
+    {
+        // Clause 4: the writer persists a document; if serialising the DTO graph is not stable then a
+        // no-op save rewrites the file with different bytes, defeating the writer's own no-op
+        // detection and producing spurious backups on every write.
+        //
+        // PersistOptions is deliberately mirrored from JsonConfigurationWriter rather than referenced,
+        // because the writer's copy is private. If they diverge this test still asserts a real
+        // property (round-trip stability); it simply stops speaking for the writer.
+        var options = new JsonSerializerOptions { WriteIndented = true };
+
+        var graph = Materialise(typeof(PlatformConfig), new HashSet<Type>());
+        graph.ShouldNotBeNull();
+
+        var first = JsonSerializer.Serialize(graph, typeof(PlatformConfig), options);
+        var rehydrated = JsonSerializer.Deserialize(first, typeof(PlatformConfig), options);
+        rehydrated.ShouldNotBeNull();
+        var second = JsonSerializer.Serialize(rehydrated, typeof(PlatformConfig), options);
+
+        first.Length.ShouldBeGreaterThan(
+            500,
+            "Non-vacuity: an empty or near-empty document would make the equality below trivially " +
+            $"true; got {first.Length} chars.");
+
+        second.ShouldBe(
+            first,
+            "Serialising the configuration graph must be stable: serialize -> deserialize -> " +
+            "serialize has to produce identical bytes. If it does not, every save rewrites the file " +
+            "even when nothing changed, so the writer's no-op check never fires and each write " +
+            "generates a backup of an unchanged document.");
+    }
+
+    [Fact]
+    public void UnmodelledKeys_AreLostByATypedRoundTrip_WhichIsWhyTheWriterCannotBeTyped()
+    {
+        // This is the gating precondition for the DTO-diff writer (#3532), pinned as an executable
+        // fact rather than a comment.
+        //
+        // #2816: a whole-document write collapsed the channels section to {"enabled": true},
+        // destroying Service Bus settings and two Telegram bot tokens. Teams was silently dead for
+        // four days and the credentials were unrecoverable. ChannelConfig.AdditionalSettings
+        // ([JsonExtensionData]) was the fix - for that ONE type.
+        //
+        // Every other config class still drops keys it does not model. So a writer that round-trips
+        // through the typed graph cannot be safe until either every class carries [JsonExtensionData]
+        // or the writer diffs and applies only changed keys, leaving unknown ones untouched. This
+        // test fails the day that stops being true, which is exactly when #3532 can relax.
+        const string withUnknownKey = """
+            {
+              "gateway": {
+                "listenUrl": "http://localhost:5000",
+                "aKeyNoDtoModels": "must-not-vanish"
+              }
+            }
+            """;
+
+        var typed = JsonSerializer.Deserialize<PlatformConfig>(
+            withUnknownKey,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        typed.ShouldNotBeNull();
+
+        var reserialised = JsonSerializer.Serialize(typed, new JsonSerializerOptions { WriteIndented = true });
+
+        reserialised.Contains("aKeyNoDtoModels", StringComparison.OrdinalIgnoreCase).ShouldBeFalse(
+            "If an unmodelled key now SURVIVES a typed round-trip, the config DTOs gained " +
+            "[JsonExtensionData] coverage and this pin is obsolete - delete it and revisit #3532, " +
+            "because a typed whole-document write may finally be safe.");
+
+        // The modelled sibling must survive, or the test proves nothing about key loss specifically.
+        // Compared case-insensitively on purpose: these DTOs carry no [JsonPropertyName] and the
+        // options here set no naming policy, so the emitted casing is an implementation detail. What
+        // is being asserted is that the KEY survived, not how it was cased.
+        reserialised.Contains("listenUrl", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(
+            "Discrimination guard: a modelled key must survive the same round-trip, otherwise the " +
+            "assertion above would pass simply because serialisation produced nothing useful.");
+    }
+
+    /// <summary>
+    /// Builds a fully-populated instance of a config type so the resolver's instance walk descends
+    /// the whole graph. Dictionaries and collections are left empty - their paths are addressed by
+    /// key at runtime, not by a fixed segment, so seeding fake keys would assert a fiction.
+    /// </summary>
+    private static object? Materialise(Type type, HashSet<Type> ancestry)
+    {
+        if (!ancestry.Add(type))
+            return null;
+
+        try
+        {
+            if (type.GetConstructor(Type.EmptyTypes) is null)
+                return null;
+
+            var instance = Activator.CreateInstance(type);
+            if (instance is null)
+                return null;
+
+            foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (property.GetIndexParameters().Length > 0 || !IsSettable(property))
+                    continue;
+
+                var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+
+                if (!IsConfigPoco(propertyType) ||
+                    TryGetDictionaryValueType(propertyType, out _) ||
+                    TryGetEnumerableElementType(propertyType, out _))
+                {
+                    continue;
+                }
+
+                if (property.GetValue(instance) is not null)
+                    continue;
+
+                var child = Materialise(propertyType, ancestry);
+                if (child is not null)
+                    property.SetValue(instance, child);
+            }
+
+            return instance;
+        }
+        finally
+        {
+            ancestry.Remove(type);
+        }
+    }
+
+    /// <summary>
+    /// Derives the dotted path of each annotated leaf top-down, mirroring how the binder addresses
+    /// configuration. Dictionary and collection members are recorded at their own path but not
+    /// descended, because their children are addressed by runtime key or index.
+    /// </summary>
+    private static void CollectAnnotatedPaths(
+        Type type,
+        string prefix,
+        HashSet<Type> ancestry,
+        HashSet<string> available,
+        List<string> unreachable)
+    {
+        if (!ancestry.Add(type))
+            return;
+
+        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.GetIndexParameters().Length > 0)
+                continue;
+
+            if (property.GetCustomAttribute<JsonIgnoreAttribute>() is not null)
+                continue;
+
+            var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+            var segment = ToCamelCase(property.Name);
+            var path = string.IsNullOrEmpty(prefix) ? segment : $"{prefix}.{segment}";
+
+            if (IsSettable(property) && property.GetCustomAttribute<ConfigFieldAttribute>() is not null)
+            {
+                if (!available.Contains(path))
+                    unreachable.Add($"{type.Name}.{property.Name} -> '{path}'");
+            }
+
+            var isDictionary = TryGetDictionaryValueType(propertyType, out _);
+            var isCollection = TryGetEnumerableElementType(propertyType, out _);
+
+            if (!isDictionary && !isCollection && IsConfigPoco(propertyType))
+                CollectAnnotatedPaths(propertyType, path, ancestry, available, unreachable);
+        }
+
+        ancestry.Remove(type);
+    }
+
+    private static string ToCamelCase(string name)
+        => string.IsNullOrEmpty(name) || char.IsLower(name[0])
+            ? name
+            : char.ToLowerInvariant(name[0]) + name[1..];
 
     // ── Fixtures ──────────────────────────────────────────────────────────────
 
