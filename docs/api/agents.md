@@ -97,6 +97,12 @@ Deletes the persisted config **before** dropping the registry entry, so a disk f
 leaves the agent both registered and persisted (consistent) rather than
 live-in-registry-only.
 
+After the registry entry is dropped, the platform-provisioned per-agent cron jobs
+(`heartbeat:<agentId>` and `skill-review:<agentId>`) are removed. This step is deliberately
+**best-effort and after** the registry commit: the agent is already gone, so a cron-store
+outage is logged as a warning rather than reported as a failed delete. A cron job that exists
+but is not marked `System` is left alone — the platform only reclaims jobs it provisioned.
+
 Returns `204 No Content`, or `500` when config deletion fails.
 
 > Successful create, update, and delete each publish an `AgentsChanged` notification

@@ -292,9 +292,49 @@ public sealed class AgentsController : ControllerBase
         // 2) Drop the registry entry.
         _registry.Unregister(typedAgentId);
 
+        // 3) #3524: reclaim the system cron jobs the platform provisioned for this agent. Best-effort
+        // and AFTER the registry commit: the agent is already gone, so a cron-store failure must not
+        // turn a successful delete into a 500 and leave the caller believing the agent survived. The
+        // worst case of a swallowed failure is the orphaned job we had before this fix, logged loudly.
+        await DeprovisionBestEffortAsync(typedAgentId, cancellationToken);
+
         if (existingDescriptor is not null)
             await NotifyAgentsChangedBestEffortAsync("removed", agentId, cancellationToken);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Removes platform-provisioned per-agent cron jobs, never failing the delete.
+    /// </summary>
+    private async Task DeprovisionBestEffortAsync(AgentId agentId, CancellationToken cancellationToken)
+    {
+        if (_heartbeatProvisioner is not null)
+        {
+            try
+            {
+                await _heartbeatProvisioner.DeprovisionAsync(agentId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to deprovision heartbeat cron job for deleted agent {AgentId}; the job may be orphaned.",
+                    agentId);
+            }
+        }
+
+        if (_skillReviewProvisioner is not null)
+        {
+            try
+            {
+                await _skillReviewProvisioner.DeprovisionAsync(agentId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to deprovision skill-review cron job for deleted agent {AgentId}; the job may be orphaned.",
+                    agentId);
+            }
+        }
     }
 
     /// <summary>Gets the status of a running agent instance.</summary>

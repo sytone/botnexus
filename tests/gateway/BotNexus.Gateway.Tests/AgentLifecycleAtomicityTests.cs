@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -178,5 +179,134 @@ public sealed class AgentLifecycleAtomicityTests
         registry.Get(AgentId.From("agent-a")).ShouldBeNull();
         writer.Verify(w => w.DeleteAsync("agent-a", It.IsAny<CancellationToken>()), Times.Once);
         result.ShouldBeOfType<NoContentResult>();
+    }
+
+    // ── Unregister: deprovision the platform-owned cron jobs (#3524) ──────────
+
+    [Fact]
+    public async Task Unregister_WhenSuccessful_DeprovisionsHeartbeatAndSkillReviewJobs()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(Descriptor("agent-a"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var heartbeat = new Mock<IHeartbeatProvisioner>();
+        heartbeat.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var skillReview = new Mock<ISkillReviewProvisioner>();
+        skillReview.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var controller = new AgentsController(
+            registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object],
+            heartbeat.Object, skillReview.Object);
+
+        var result = await controller.Unregister("agent-a", CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        heartbeat.Verify(
+            p => p.DeprovisionAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once,
+            "Deleting an agent must reclaim its heartbeat job, otherwise it fires forever against an " +
+            "unregistered agent (#3517).");
+        skillReview.Verify(
+            p => p.DeprovisionAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once,
+            "Deleting an agent must reclaim its skill-review job for the same reason.");
+    }
+
+    [Fact]
+    public async Task Unregister_WhenDeprovisionThrows_StillReturnsNoContentAndRemovesAgent()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(Descriptor("agent-a"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var heartbeat = new Mock<IHeartbeatProvisioner>();
+        heartbeat.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("cron store offline"));
+        var skillReview = new Mock<ISkillReviewProvisioner>();
+        skillReview.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("cron store offline"));
+
+        var controller = new AgentsController(
+            registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object],
+            heartbeat.Object, skillReview.Object);
+
+        var result = await controller.Unregister("agent-a", CancellationToken.None);
+
+        // Deprovisioning runs AFTER the registry commit and is deliberately best-effort: the agent
+        // is already gone, so a cron-store outage must not report a failed delete to the caller.
+        result.ShouldBeOfType<NoContentResult>();
+        registry.Get(AgentId.From("agent-a")).ShouldBeNull();
+        skillReview.Verify(
+            p => p.DeprovisionAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once,
+            "A throwing heartbeat provisioner must not prevent the skill-review job being reclaimed.");
+    }
+
+    [Fact]
+    public async Task Unregister_ForNeverRegisteredAgent_IsNoOpAndDoesNotThrow()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var heartbeat = new Mock<IHeartbeatProvisioner>();
+        heartbeat.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var controller = new AgentsController(
+            registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object], heartbeat.Object);
+
+        var result = await controller.Unregister("never-existed", CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+    }
+
+    [Fact]
+    public async Task RegisterThenUnregister_WithRealProvisioners_LeavesNoCronJobBehind()
+    {
+        // End-to-end over the REAL SQLite cron store: the mock-based tests above prove the call
+        // site exists; this proves the store is actually empty afterwards, which is the defect
+        // the issue reports.
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "botnexus-3524", Guid.NewGuid().ToString("N"));
+        var dbPath = Path.Combine(tempDirectory, "cron.db");
+        var store = new SqliteCronStore(dbPath, new FileSystem());
+        await store.InitializeAsync();
+
+        try
+        {
+            var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+            var heartbeat = new HeartbeatCronProvisioner(registry, store, NullLogger<HeartbeatCronProvisioner>.Instance);
+            var skillReview = new SkillReviewCronProvisioner(registry, store, NullLogger<SkillReviewCronProvisioner>.Instance);
+            var writer = new Mock<IAgentConfigurationWriter>();
+            writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+            writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+            var controller = new AgentsController(
+                registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object], heartbeat, skillReview);
+
+            var descriptor = Descriptor("agent-e2e") with
+            {
+                Heartbeat = new HeartbeatAgentConfig { Enabled = true, IntervalMinutes = 30 }
+            };
+            (await controller.Register(descriptor, CancellationToken.None)).ShouldBeOfType<CreatedAtActionResult>();
+            (await store.GetAsync(JobId.From("heartbeat:agent-e2e"))).ShouldNotBeNull(
+                "Registering must provision the heartbeat job, otherwise the delete assertion is vacuous.");
+            (await store.GetAsync(JobId.From("skill-review:agent-e2e"))).ShouldNotBeNull(
+                "Registering must provision the skill-review job, otherwise the delete assertion is vacuous.");
+
+            (await controller.Unregister("agent-e2e", CancellationToken.None)).ShouldBeOfType<NoContentResult>();
+
+            (await store.GetAsync(JobId.From("heartbeat:agent-e2e"))).ShouldBeNull(
+                "Orphaned heartbeat job survived agent deletion - this is the #3524 defect.");
+            (await store.GetAsync(JobId.From("skill-review:agent-e2e"))).ShouldBeNull(
+                "Orphaned skill-review job survived agent deletion - this is the #3524 defect.");
+        }
+        finally
+        {
+            SqlitePoolCleanup.ClearPoolFor(dbPath);
+            if (Directory.Exists(tempDirectory))
+            {
+                try { Directory.Delete(tempDirectory, recursive: true); }
+                catch (IOException) { /* best-effort temp cleanup */ }
+            }
+        }
     }
 }
