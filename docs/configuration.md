@@ -376,6 +376,29 @@ absent a `config.db` the file serves everything and behaviour is exactly as it a
 | No `config.db` | File-only configuration. This is the default. |
 | `config.db` present | Store values win over the file, for every consumer alike. |
 
+#### Enabling and disabling the store
+
+The store is created by an explicit command, never as a startup side effect - enabling a different
+configuration backend is a decision, so it takes an action:
+
+```bash
+# Create config.db and import the current config.json.
+botnexus config store enable
+
+# Report whether the store exists and how many entries it holds.
+botnexus config store status
+
+# Delete config.db. Configuration returns to the file on the next start.
+botnexus config store disable
+```
+
+`enable` imports the **raw** document rather than a bound object, so an explicit `null` - which means
+"suppress", as distinct from an absent key meaning "inherit" - survives the import. Restart the
+gateway for a newly created store to take effect.
+
+`status` distinguishes three states that are easy to confuse: not enabled, enabled but empty, and
+enabled with entries. An empty store contributes no keys, so the file continues to serve every value.
+
 Because precedence is provider registration order, every read resolves the same way - `IOptions`,
 `IOptionsMonitor`, the startup read, the CLI. That is the property the earlier flag-based design
 could not deliver: `ConfigStoreAuthoritative` only affected the single read that consulted it, which

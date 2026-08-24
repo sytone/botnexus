@@ -63,6 +63,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         command.AddCommand(schemaCommand);
         command.AddCommand(BuildBackupsCommand(verboseOption, targetOption));
         command.AddCommand(BuildRestoreCommand(verboseOption, targetOption));
+        command.AddCommand(BuildStoreCommand(targetOption));
         return command;
     }
 
@@ -84,6 +85,162 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
 
         backupsCommand.AddCommand(listCommand);
         return backupsCommand;
+    }
+
+    /// <summary>
+    /// <c>botnexus config store</c> (#3514): create, inspect and remove the SQLite configuration
+    /// store.
+    /// </summary>
+    /// <remarks>
+    /// The store had no writer at all - <c>SqliteConfigStore.WriteDocumentAsync</c> was called only
+    /// by the shadow migration deleted in #3510 - so <c>config.db</c> never appeared, and the
+    /// provider registration is gated on it existing. The store was unreachable by any supported
+    /// action. This command is that action.
+    /// </remarks>
+    private static Command BuildStoreCommand(Option<string?> targetOption)
+    {
+        var storeCommand = new Command("store", "Manage the SQLite configuration store.");
+
+        var enableCommand = new Command(
+            "enable",
+            "Create config.db from the current config.json. The store then serves configuration, with its values winning over the file.");
+        enableCommand.SetHandler(async context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var configPath = Path.Combine(CliPaths.ResolveTarget(target), "config.json");
+            context.ExitCode = await ExecuteStoreEnableAsync(configPath, CancellationToken.None);
+        });
+
+        var statusCommand = new Command("status", "Report whether the configuration store exists and how many entries it holds.");
+        statusCommand.SetHandler(async context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var configPath = Path.Combine(CliPaths.ResolveTarget(target), "config.json");
+            context.ExitCode = await ExecuteStoreStatusAsync(configPath, CancellationToken.None);
+        });
+
+        var disableCommand = new Command(
+            "disable",
+            "Delete config.db. The gateway returns to file-only configuration on the next start.");
+        disableCommand.SetHandler(context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var configPath = Path.Combine(CliPaths.ResolveTarget(target), "config.json");
+            context.ExitCode = ExecuteStoreDisable(configPath);
+        });
+
+        storeCommand.AddCommand(enableCommand);
+        storeCommand.AddCommand(statusCommand);
+        storeCommand.AddCommand(disableCommand);
+        return storeCommand;
+    }
+
+    /// <summary>
+    /// Creates <c>config.db</c> and populates it from the current <c>config.json</c>.
+    /// </summary>
+    /// <remarks>
+    /// Reads the RAW document rather than a bound <see cref="PlatformConfig"/>: binding collapses
+    /// "key absent" and "key present and null" into the same null field, and the store records those
+    /// distinctly by design. Populating from a bound object would silently rewrite every deliberate
+    /// null as an absence.
+    /// </remarks>
+    public static async Task<int> ExecuteStoreEnableAsync(string configPath, CancellationToken cancellationToken)
+    {
+        var fileSystem = new System.IO.Abstractions.FileSystem();
+
+        if (!fileSystem.File.Exists(configPath))
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/]. Run [green]botnexus init[/] first.");
+            return 1;
+        }
+
+        var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, fileSystem);
+
+        try
+        {
+            var raw = await fileSystem.File.ReadAllTextAsync(configPath, cancellationToken);
+            var document = System.Text.Json.Nodes.JsonNode.Parse(raw)?.AsObject();
+            if (document is null)
+            {
+                AnsiConsole.MarkupLine("[red]Error:[/] config.json is not a JSON object.");
+                return 1;
+            }
+
+            await ConfigStoreBootstrap.PopulateAsync(storePath, document, cancellationToken);
+
+            var count = await ConfigStoreBootstrap.CountEntriesAsync(storePath, fileSystem, cancellationToken);
+            AnsiConsole.MarkupLine($"[green]Configuration store enabled.[/] [dim]{CliText.SafeDisplay(storePath)}[/]");
+            AnsiConsole.MarkupLine($"  {count ?? 0} entries imported from config.json.");
+            AnsiConsole.MarkupLine("  Restart the gateway for the store to take effect.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to create the configuration store: {CliText.SafeDisplay(ex.Message)}");
+            return 1;
+        }
+    }
+
+    /// <summary>Reports whether the store exists and how many entries it holds.</summary>
+    public static async Task<int> ExecuteStoreStatusAsync(string configPath, CancellationToken cancellationToken)
+    {
+        var fileSystem = new System.IO.Abstractions.FileSystem();
+        var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, fileSystem);
+
+        try
+        {
+            var count = await ConfigStoreBootstrap.CountEntriesAsync(storePath, fileSystem, cancellationToken);
+
+            if (count is null)
+            {
+                AnsiConsole.MarkupLine("[yellow]Configuration store not enabled.[/] Configuration comes from config.json only.");
+                AnsiConsole.MarkupLine("  Enable it with [green]botnexus config store enable[/].");
+                return 0;
+            }
+
+            AnsiConsole.MarkupLine($"[green]Configuration store enabled.[/] [dim]{CliText.SafeDisplay(storePath)}[/]");
+            AnsiConsole.MarkupLine($"  {count} entries. Store values win over config.json.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to read the configuration store: {CliText.SafeDisplay(ex.Message)}");
+            return 1;
+        }
+    }
+
+    /// <summary>Deletes the store, returning the gateway to file-only configuration.</summary>
+    /// <remarks>
+    /// No confirmation prompt: the store is a derived copy of <c>config.json</c>, which is untouched,
+    /// so this discards nothing that cannot be regenerated by <c>config store enable</c>. That is
+    /// deliberately unlike <c>config restore</c>, which overwrites the source document and therefore
+    /// requires <c>--commit</c>.
+    /// </remarks>
+    public static int ExecuteStoreDisable(string configPath)
+    {
+        var fileSystem = new System.IO.Abstractions.FileSystem();
+        var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, fileSystem);
+
+        if (!fileSystem.File.Exists(storePath))
+        {
+            AnsiConsole.MarkupLine("[yellow]Configuration store is not enabled.[/] Nothing to do.");
+            return 0;
+        }
+
+        try
+        {
+            // Release pooled handles before deleting: a connection pooled from an earlier read keeps
+            // the file open, and the delete would fail with "used by another process".
+            ConfigStoreBootstrap.ReleaseConnections(storePath);
+            fileSystem.File.Delete(storePath);
+            AnsiConsole.MarkupLine("[green]Configuration store disabled.[/] config.json serves configuration from the next start.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to delete the configuration store: {CliText.SafeDisplay(ex.Message)}");
+            return 1;
+        }
     }
 
     /// <summary>

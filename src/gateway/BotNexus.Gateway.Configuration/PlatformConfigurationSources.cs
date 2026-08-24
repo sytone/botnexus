@@ -65,12 +65,17 @@ public static class PlatformConfigurationSources
             reloadOnChange: true,
             onLoadFailure: onLoadFailure);
 
-        // Registered AFTER the file so store values win. Absent store means no keys contributed, so
-        // the file continues to serve everything.
+        // #3514: registered whenever the store FILE exists, and the file is created by an explicit
+        // operator action (`botnexus config store enable`) rather than by a startup side effect.
+        //
+        // The existence check is a genuine signal, not a guard against cost: the store file existing
+        // IS the opt-in. What was broken was that nothing could ever create it - the only writer was
+        // the shadow migration deleted in #3510 - so this branch was unreachable by any supported
+        // action. Providing the writer is what makes the check meaningful.
         var directory = fs.Path.GetDirectoryName(configPath);
         if (!string.IsNullOrEmpty(directory))
         {
-            var storePath = fs.Path.Combine(directory, "config.db");
+            var storePath = fs.Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
             if (fs.File.Exists(storePath))
             {
                 builder.AddSqliteConfigStore(
