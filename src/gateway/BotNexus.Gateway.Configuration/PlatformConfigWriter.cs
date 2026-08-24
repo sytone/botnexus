@@ -58,11 +58,39 @@ public sealed class PlatformConfigWriter
     private readonly IFileSystem _fileSystem;
     private readonly ConfigBackupService? _backup;
 
+    /// <summary>
+    /// The backends this writer persists to (#3527).
+    /// </summary>
+    /// <remarks>
+    /// Defaults to JSON-only, which is byte-identical to the behaviour before the writer seam
+    /// existed. A host that has a configuration store registers both, and then every write reaches
+    /// both - which is what stops a store-backed installation reading one document while the file
+    /// holds another.
+    /// </remarks>
+    private readonly Writers.IConfigurationWriter _writer;
+
     public PlatformConfigWriter(string configPath, IFileSystem fileSystem, ConfigBackupService? backup = null)
+        : this(configPath, fileSystem, backup, writer: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a writer that persists through <paramref name="writer"/>.
+    /// </summary>
+    /// <param name="writer">
+    /// The persistence backend. <see langword="null"/> builds the JSON-only writer, preserving the
+    /// existing behaviour for every caller that has not been given a store.
+    /// </param>
+    public PlatformConfigWriter(
+        string configPath,
+        IFileSystem fileSystem,
+        ConfigBackupService? backup,
+        Writers.IConfigurationWriter? writer)
     {
         _configPath = configPath;
         _fileSystem = fileSystem;
         _backup = backup;
+        _writer = writer ?? new Writers.JsonConfigurationWriter(configPath, fileSystem, backup);
     }
 
     /// <summary>
@@ -713,52 +741,25 @@ public sealed class PlatformConfigWriter
         return JsonNode.Parse(json)?.AsObject() ?? new JsonObject();
     }
 
-    private async Task WriteRootAsync(JsonObject root, string reason, CancellationToken ct)
-    {
-        var json = root.ToJsonString(PlatformPersistOptions);
-
-        // Issue #2114: no-op detection. If the resulting canonical JSON is byte-for-byte
-        // identical to what is already on disk, do not back up, replace, or otherwise touch
-        // the file. This prevents startup and redundant-mutation reload storms (an atomic
-        // File.Move rewrites the inode/timestamp and re-triggers the IConfiguration reload
-        // pipeline even when nothing effectively changed).
-        if (_fileSystem.File.Exists(_configPath))
-        {
-            var existing = await _fileSystem.File.ReadAllTextAsync(_configPath, ct);
-            if (JsonCanonicalEquals(existing, json))
-                return;
-        }
-
-        _backup?.Backup(_configPath, reason);
-
-        var directory = _fileSystem.Path.GetDirectoryName(_configPath);
-        if (!string.IsNullOrWhiteSpace(directory))
-            _fileSystem.Directory.CreateDirectory(directory);
-
-        var tempPath = _configPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            await _fileSystem.File.WriteAllTextAsync(tempPath, json, ct);
-
-            // #2392: config.json carries provider API keys and channel bot tokens, so it must not
-            // inherit a default umask/parent-ACL that leaves it group- or world-readable.
-            //
-            // Restrict TWICE, deliberately:
-            //  - before the move, so the file is never owner-readable-only *after* it is already
-            //    visible at its final path (no window where a broad-permission config.json exists);
-            //  - after the move, because the semantics of replacing an existing destination differ
-            //    per platform, and this is a REWRITE path, not a first-create path - a fix applied
-            //    only when the file is first created would leave every subsequent save wrong.
-            SecureFilePermissions.RestrictToOwner(_fileSystem, tempPath);
-            await ReplaceWithRetryAsync(tempPath, ct);
-            SecureFilePermissions.RestrictToOwner(_fileSystem, _configPath);
-        }
-        finally
-        {
-            if (_fileSystem.File.Exists(tempPath))
-                _fileSystem.File.Delete(tempPath);
-        }
-    }
+    /// <summary>
+    /// Persists the complete document through the configured backend(s).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// #3527: all seventeen public mutation methods funnel here, so this is the single point where a
+    /// document becomes durable - and therefore the only place the backend set has to be honoured.
+    /// The file-specific behaviour that used to live inline (no-op detection, backup, atomic replace
+    /// with retry, owner-only permissions applied twice, directory creation) moved verbatim into
+    /// <see cref="Writers.JsonConfigurationWriter"/>.
+    /// </para>
+    /// <para>
+    /// Nothing is lost by delegating: with only the JSON backend registered this is the same code
+    /// reached through one interface call. With a store also registered, every write now lands in
+    /// both - which is what the read path has assumed since the store became reachable (#3514).
+    /// </para>
+    /// </remarks>
+    private Task WriteRootAsync(JsonObject root, string reason, CancellationToken ct)
+        => _writer.WriteAsync(root, reason, ct);
 
     // #2357: Windows fails File.Move(..., overwrite: true) with UnauthorizedAccessException when
     // ANY other handle is open on the destination - even one opened with the maximal

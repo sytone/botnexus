@@ -236,7 +236,10 @@ public sealed class ConfigController : ControllerBase
         if (config.Agents is null || !config.Agents.TryGetValue(agentId, out var agentConfig))
         {
             var fallbackPath = ResolveConfiguredPath(configuration);
-            var fallbackConfig = await new PlatformConfigWriter(
+            // Read-only use, so the backend set does not affect the result - routed through the
+            // factory anyway so "never construct PlatformConfigWriter directly" stays a rule with no
+            // exceptions to remember (#3527).
+            var fallbackConfig = await BotNexus.Gateway.Configuration.Writers.ConfigWriterFactory.Create(
                 fallbackPath,
                 new System.IO.Abstractions.FileSystem()).ReadPlatformConfigAsync(ct);
             if (System.IO.File.Exists(fallbackPath))

@@ -37,7 +37,11 @@ public sealed class SecretFilePermissionFenceArchitectureTests : ArchitectureTes
     private static readonly string[] SecretWritingSurfaces =
     {
         // Atomic temp-file + move rewrite of config.json (provider API keys, channel bot tokens).
-        "src/gateway/BotNexus.Gateway.Configuration/PlatformConfigWriter.cs",
+        //
+        // #3527: the write moved out of PlatformConfigWriter into the JSON writer backend. The file
+        // that PERFORMS the write is what this fence must track - naming the caller would leave the
+        // permission call unguarded the moment it moved again.
+        "src/gateway/BotNexus.Gateway.Configuration/Writers/JsonConfigurationWriter.cs",
         // Byte-for-byte backup copies of config.json, secrets included.
         "src/gateway/BotNexus.Gateway.Configuration/ConfigBackupService.cs",
         // auth.json - OAuth refresh/access tokens (gateway side).

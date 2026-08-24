@@ -653,11 +653,20 @@ public static class GatewayServiceCollectionExtensions
         }
     }
 
+    /// <summary>
+    /// Builds the platform config writer, fanning writes out to every backing store (#3527).
+    /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="BotNexus.Gateway.Configuration.Writers.ConfigWriterFactory"/> so the DI
+    /// path and the seven direct call sites in the CLI and API assemble the same backend set. Two
+    /// copies of "which writers does this path need" is precisely how the gateway and the CLI would
+    /// drift into disagreeing about where a write lands.
+    /// </remarks>
     private static PlatformConfigWriter CreatePlatformConfigWriter(string configPath, IFileSystem fileSystem)
     {
         var directory = Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.GetDefaultConfigDirectory(fileSystem);
         var backup = new ConfigBackupService(Path.Combine(directory, "backups"), fileSystem);
-        return new PlatformConfigWriter(configPath, fileSystem, backup);
+        return BotNexus.Gateway.Configuration.Writers.ConfigWriterFactory.Create(configPath, fileSystem, backup);
     }
 
     /// <summary>
