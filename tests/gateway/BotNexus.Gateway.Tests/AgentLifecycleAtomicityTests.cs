@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Cron;
+using BotNexus.Gateway.Webhooks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -308,5 +309,104 @@ public sealed class AgentLifecycleAtomicityTests
                 catch (IOException) { /* best-effort temp cleanup */ }
             }
         }
+    }
+
+    // ── Webhook provisioner call sites (#3523) ────────────────────────────────
+
+    [Fact]
+    public async Task Register_InvokesWebhookProvisioner()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var webhooks = new Mock<IAgentWebhookProvisioner>();
+        webhooks.Setup(p => p.ProvisionAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var controller = new AgentsController(
+            registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object],
+            webhookProvisioner: webhooks.Object);
+
+        (await controller.Register(Descriptor("agent-a"), CancellationToken.None))
+            .ShouldBeOfType<CreatedAtActionResult>();
+
+        webhooks.Verify(
+            p => p.ProvisionAsync(It.Is<AgentDescriptor>(d => d.AgentId == AgentId.From("agent-a")), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "An agent created through the API must get its outbound webhook binding automatically; " +
+            "that absence is the #3523 defect.");
+    }
+
+    [Fact]
+    public async Task Register_WhenWebhookProvisionFails_RollsBackRegistryAndConfig()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var webhooks = new Mock<IAgentWebhookProvisioner>();
+        webhooks.Setup(p => p.ProvisionAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("registration store offline"));
+
+        var controller = new AgentsController(
+            registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object],
+            webhookProvisioner: webhooks.Object);
+
+        var result = await controller.Register(Descriptor("agent-a"), CancellationToken.None);
+
+        // The create path is deliberately failure-atomic: a half-provisioned agent is worse than
+        // no agent, because the caller believes the webhook binding exists. Same contract the
+        // heartbeat provisioner already gets.
+        result.ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(500);
+        registry.Get(AgentId.From("agent-a")).ShouldBeNull();
+        writer.Verify(w => w.DeleteAsync("agent-a", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Update_InvokesWebhookProvisionerSoDisplayNameChangesReachTheTarget()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(Descriptor("agent-a", "Original"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var webhooks = new Mock<IAgentWebhookProvisioner>();
+        webhooks.Setup(p => p.ProvisionAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var controller = new AgentsController(
+            registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object],
+            webhookProvisioner: webhooks.Object);
+
+        await controller.Update("agent-a", Descriptor("agent-a", "Renamed"), CancellationToken.None);
+
+        webhooks.Verify(
+            p => p.ProvisionAsync(It.Is<AgentDescriptor>(d => d.DisplayName == "Renamed"), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "Without this the downstream target shows the stale display name indefinitely.");
+    }
+
+    [Fact]
+    public async Task Unregister_WhenWebhookDeprovisionThrows_StillReturnsNoContentAndRemovesAgent()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(Descriptor("agent-a"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var webhooks = new Mock<IAgentWebhookProvisioner>();
+        webhooks.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("downstream offline"));
+
+        var controller = new AgentsController(
+            registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object],
+            webhookProvisioner: webhooks.Object);
+
+        var result = await controller.Unregister("agent-a", CancellationToken.None);
+
+        // Deliberately weaker than the create path: the agent is already gone, so a downstream
+        // outage must never block the delete.
+        result.ShouldBeOfType<NoContentResult>();
+        registry.Get(AgentId.From("agent-a")).ShouldBeNull();
+        webhooks.Verify(
+            p => p.DeprovisionAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
     }
 }

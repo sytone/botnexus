@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      Extension assemblies load into an isolated AssemblyLoadContext, so their managed dependency
+      closure must ship in the extension output directory. See ExtensionManagedDependencyClosure
+      architecture fence and issue #2184.
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <PropertyGroup>
+    <RootNamespace>BotNexus.Extensions.TaskNexus</RootNamespace>
+    <Description>Delivers per-agent BotNexus webhook bindings to a TaskNexus instance. Inert when no target URL is configured.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Extensions.TaskNexus.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- IServiceContributor lives here; TaskNexusServiceContributor registers through that seam. -->
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
+    <!-- IAgentWebhookTargetNotifier / AgentWebhookBinding: the product-agnostic delivery contract. -->
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+  <!-- Copy extension output + manifest to artifacts/extensions/ for dev-time discovery -->
+  <Target Name="CopyExtensionToArtifacts" AfterTargets="Build">
+    <PropertyGroup>
+      <ExtensionArtifactDir>$(MSBuildThisFileDirectory)..\..\..\artifacts\extensions\botnexus-tasknexus\</ExtensionArtifactDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(ExtensionArtifactDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)botnexus-extension.json" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

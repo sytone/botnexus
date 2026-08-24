@@ -38,9 +38,54 @@ endpoint `POST /api/webhooks/{agentId}/{webhookId}`.
 
 ---
 
+## Automatic per-agent provisioning
+
+Everything below describes registering a webhook **by hand**, which is still the right
+path for an arbitrary external caller. Separately, BotNexus reconciles one
+**platform-owned registration per agent** automatically from agent lifecycle, so a
+downstream system that needs a callback for every agent does not have to be wired up
+by a setup script that nobody remembers to re-run.
+
+How it behaves:
+
+- **On agent create and on agent update**, the gateway ensures a registration exists
+  for that agent and pushes the binding (agent id, current display name, webhook id,
+  inbound path, secret) to every configured delivery target.
+- **On agent delete**, the registration is removed and the target is told the agent is
+  gone. This step is best-effort: a downstream outage never blocks deleting an agent.
+- **At startup**, every registered agent is reconciled again. That pass is deliberately
+  the only recovery path — there is no retry queue or outbox for a failed push.
+
+Provisioner-owned registrations carry the deterministic label
+`agent-webhook:<agentId>`. Two consequences worth knowing:
+
+- **Provisioning never rotates a secret.** When a labelled registration already exists
+  the store is not written to at all and the existing secret is re-sent. A display-name
+  change therefore cannot break a binding the downstream system already holds. (An
+  agent id itself is immutable in BotNexus, so the label is stable by construction.)
+- **A registration you created by hand is never touched**, because it does not carry
+  that label. It survives agent deletion.
+
+### Configuring a delivery target
+
+Delivery targets ship as extensions; the gateway core names no downstream product. The
+bundled TaskNexus target is inert until you configure a base URL:
+
+| Key | Meaning |
+|---|---|
+| `extensions:tasknexus:baseUrl` | Base URL of the TaskNexus instance to notify. **Absent means disabled** — no outbound call is attempted at all. |
+| `extensions:tasknexus:callbackOrigin` | Externally reachable gateway origin, prepended to the relative inbound path. The gateway does not reliably know its own public origin, so a target that needs an absolute URL composes one from this. |
+
+With no target configured, startup completes normally and the provisioner still keeps
+the registrations themselves in sync — there is simply nothing to push them to.
+
 ## Quick start
 
 ### 1. Register a webhook
+
+This is the manual path, for an external caller that is not tied to an agent's
+lifecycle. For the automatic per-agent binding, see
+[Automatic per-agent provisioning](#automatic-per-agent-provisioning) above.
 
 ```bash
 curl -X POST https://your-host/api/webhooks/registrations \

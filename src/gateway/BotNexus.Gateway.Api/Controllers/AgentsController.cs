@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Webhooks;
 using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -26,6 +27,7 @@ public sealed class AgentsController : ControllerBase
     private readonly IReadOnlyList<IAgentChangeNotifier> _agentChangeNotifiers;
     private readonly IHeartbeatProvisioner? _heartbeatProvisioner;
     private readonly ISkillReviewProvisioner? _skillReviewProvisioner;
+    private readonly IAgentWebhookProvisioner? _webhookProvisioner;
     private readonly ModelRegistry? _modelRegistry;
     private readonly ILogger<AgentsController> _logger;
 
@@ -40,7 +42,8 @@ public sealed class AgentsController : ControllerBase
         IHeartbeatProvisioner? heartbeatProvisioner = null,
         ISkillReviewProvisioner? skillReviewProvisioner = null,
         ModelRegistry? modelRegistry = null,
-        ILogger<AgentsController>? logger = null)
+        ILogger<AgentsController>? logger = null,
+        IAgentWebhookProvisioner? webhookProvisioner = null)
     {
         _registry = registry;
         _supervisor = supervisor;
@@ -48,6 +51,7 @@ public sealed class AgentsController : ControllerBase
         _agentChangeNotifiers = agentChangeNotifiers?.ToArray() ?? [];
         _heartbeatProvisioner = heartbeatProvisioner;
         _skillReviewProvisioner = skillReviewProvisioner;
+        _webhookProvisioner = webhookProvisioner;
         _modelRegistry = modelRegistry;
         _logger = logger ?? NullLogger<AgentsController>.Instance;
     }
@@ -161,6 +165,10 @@ public sealed class AgentsController : ControllerBase
                 await _heartbeatProvisioner.ProvisionAsync(descriptor, cancellationToken);
             if (_skillReviewProvisioner is not null)
                 await _skillReviewProvisioner.ProvisionAsync(descriptor, cancellationToken);
+            // #3523: the webhook binding is part of what makes a newly created agent usable, so it
+            // shares the create path's rollback semantics rather than being best-effort.
+            if (_webhookProvisioner is not null)
+                await _webhookProvisioner.ProvisionAsync(descriptor, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -247,6 +255,11 @@ public sealed class AgentsController : ControllerBase
                 await _heartbeatProvisioner.ProvisionAsync(descriptor, cancellationToken);
             if (_skillReviewProvisioner is not null)
                 await _skillReviewProvisioner.ProvisionAsync(descriptor, cancellationToken);
+            // #3523: a display-name change must reach the downstream target, otherwise it shows a
+            // stale name indefinitely. ProvisionAsync is create-or-leave-alone, so this re-sends
+            // the existing binding rather than re-keying it.
+            if (_webhookProvisioner is not null)
+                await _webhookProvisioner.ProvisionAsync(descriptor, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -332,6 +345,23 @@ public sealed class AgentsController : ControllerBase
             {
                 _logger.LogWarning(ex,
                     "Failed to deprovision skill-review cron job for deleted agent {AgentId}; the job may be orphaned.",
+                    agentId);
+            }
+        }
+
+        // #3523: deliberately weaker than the create path. A downstream outage must never block
+        // deleting an agent, so the registration removal and the target notification are
+        // best-effort; the next startup reconciliation is the recovery path.
+        if (_webhookProvisioner is not null)
+        {
+            try
+            {
+                await _webhookProvisioner.DeprovisionAsync(agentId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to deprovision outbound webhook registration for deleted agent {AgentId}.",
                     agentId);
             }
         }
