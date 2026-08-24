@@ -409,4 +409,78 @@ public sealed class AgentLifecycleAtomicityTests
         webhooks.Verify(
             p => p.DeprovisionAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // ── Route agent-id edge validation (#3523) ────────────────────────────────
+    // AgentId.From trims and rejects whitespace, so a route segment of "%20" is non-empty on the
+    // wire but blank after normalization. Unguarded that throws out of the action and surfaces as
+    // an unhandled 500 - a validation failure reported as a server fault.
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public async Task Unregister_WithBlankAfterNormalizationRouteId_ReturnsBadRequestNotServerError(string agentId)
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object]);
+
+        var result = await controller.Unregister(agentId, CancellationToken.None);
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+        // Nothing may be attempted on disk for an id that never parsed.
+        writer.Verify(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("   ")]
+    public void Get_WithBlankAfterNormalizationRouteId_ReturnsBadRequestNotServerError(string agentId)
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var controller = new AgentsController(
+            registry, Mock.Of<IAgentSupervisor>(), Mock.Of<IAgentConfigurationWriter>(), [Notifier().Object]);
+
+        controller.Get(agentId).Result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Update_WithBlankAfterNormalizationRouteId_ReturnsBadRequestAndPersistsNothing()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object]);
+
+        var result = await controller.Update("   ", Descriptor("agent-a"), CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        writer.Verify(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Unregister_WithOverlongRouteId_ReturnsBadRequest()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object]);
+
+        var overlong = new string('a', AgentDescriptorValidator.MaxAgentIdLength + 1);
+        var result = await controller.Unregister(overlong, CancellationToken.None);
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+        writer.Verify(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Unregister_WithIdAtTheLengthBound_IsAccepted()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object]);
+
+        // Boundary asserted explicitly so the guard cannot drift into rejecting valid ids.
+        var atBound = new string('a', AgentDescriptorValidator.MaxAgentIdLength);
+        (await controller.Unregister(atBound, CancellationToken.None)).ShouldBeOfType<NoContentResult>();
+    }
 }

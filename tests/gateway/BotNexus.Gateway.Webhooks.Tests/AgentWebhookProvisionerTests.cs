@@ -146,17 +146,94 @@ public sealed class AgentWebhookProvisionerTests
         var target = new RecordingTarget();
         var provisioner = new AgentWebhookProvisioner(RegistryWith(), store, [target]);
         await provisioner.ProvisionAsync(Descriptor("agent-a"), CancellationToken.None);
+        var provisionedWebhookId = store.Registrations.Single().Id.Value;
 
         await provisioner.DeprovisionAsync(AgentId.From("agent-a"), CancellationToken.None);
 
         store.Registrations.ShouldBeEmpty();
-        target.Removed.ShouldBe([AgentId.From("agent-a")]);
+        target.Removed.ShouldBe([(AgentId.From("agent-a"), provisionedWebhookId)]);
+    }
+
+    [Fact]
+    public async Task DeprovisionAsync_NotificationCarriesTheExactRemovedRegistrationId()
+    {
+        var store = new FakeWebhookRegistrationStore();
+        var target = new RecordingTarget();
+        var provisioner = new AgentWebhookProvisioner(RegistryWith(), store, [target]);
+        await provisioner.ProvisionAsync(Descriptor("agent-a"), CancellationToken.None);
+
+        // The id the target was TOLD about on create is the id it must be told about on delete.
+        var notifiedOnCreate = target.Notified.Single().WebhookId;
+
+        await provisioner.DeprovisionAsync(AgentId.From("agent-a"), CancellationToken.None);
+
+        var (removedAgentId, removedWebhookId) = target.Removed.ShouldHaveSingleItem();
+        removedAgentId.ShouldBe(AgentId.From("agent-a"));
+        // Agent id alone is NOT a safe delete key: ids are immutable and therefore reusable, so a
+        // delayed or retried delete would otherwise erase a recreated agent's newer binding. The
+        // webhook id is the generation token that lets the target delete conditionally.
+        removedWebhookId.ShouldBe(notifiedOnCreate);
+        removedWebhookId.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task DeprovisionAsync_AfterRecreate_CarriesTheNewGenerationIdNotTheOld()
+    {
+        var store = new FakeWebhookRegistrationStore();
+        var target = new RecordingTarget();
+        var provisioner = new AgentWebhookProvisioner(RegistryWith(), store, [target]);
+
+        // Generation 1: provision, then delete the agent.
+        await provisioner.ProvisionAsync(Descriptor("agent-a"), CancellationToken.None);
+        var firstGeneration = store.Registrations.Single().Id.Value;
+        await provisioner.DeprovisionAsync(AgentId.From("agent-a"), CancellationToken.None);
+
+        // Generation 2: an agent with the SAME id is recreated and gets a fresh registration.
+        await provisioner.ProvisionAsync(Descriptor("agent-a"), CancellationToken.None);
+        var secondGeneration = store.Registrations.Single().Id.Value;
+        secondGeneration.ShouldNotBe(firstGeneration);
+
+        await provisioner.DeprovisionAsync(AgentId.From("agent-a"), CancellationToken.None);
+
+        target.Removed.Count.ShouldBe(2);
+        target.Removed[0].WebhookId.ShouldBe(firstGeneration);
+        // This is the whole safety contract: the second delete names the SECOND generation. A
+        // downstream target deleting WHERE agent = ? AND webhook_id = ? can therefore replay the
+        // stale first delete after the recreate and correctly match nothing.
+        target.Removed[1].WebhookId.ShouldBe(secondGeneration);
+    }
+
+    [Fact]
+    public async Task DeprovisionAsync_WithMultipleOwnedRegistrations_NotifiesOncePerRegistration()
+    {
+        var store = new FakeWebhookRegistrationStore();
+        var target = new RecordingTarget();
+        // A store that somehow holds two labelled registrations (e.g. a historical duplicate)
+        // must produce one identified removal per registration, not one blanket per-agent delete.
+        foreach (var _ in Enumerable.Range(0, 2))
+        {
+            await store.CreateAsync(new WebhookRegistration
+            {
+                Id = WebhookId.Create(),
+                Label = "agent-webhook:agent-a",
+                AgentId = AgentId.From("agent-a"),
+                Secret = "whsec_x",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
+        var ids = store.Registrations.Select(r => r.Id.Value).ToList();
+
+        await new AgentWebhookProvisioner(RegistryWith(), store, [target])
+            .DeprovisionAsync(AgentId.From("agent-a"), CancellationToken.None);
+
+        target.Removed.Select(r => r.WebhookId).OrderBy(v => v).ShouldBe(ids.OrderBy(v => v));
     }
 
     [Fact]
     public async Task DeprovisionAsync_LeavesRegistrationsItDoesNotOwn()
     {
         var store = new FakeWebhookRegistrationStore();
+        var target = new RecordingTarget();
         await store.CreateAsync(new WebhookRegistration
         {
             Id = WebhookId.Create(),
@@ -166,20 +243,27 @@ public sealed class AgentWebhookProvisionerTests
             CreatedAt = DateTimeOffset.UtcNow
         });
 
-        await Provisioner(store).DeprovisionAsync(AgentId.From("agent-a"), CancellationToken.None);
+        await new AgentWebhookProvisioner(RegistryWith(), store, [target])
+            .DeprovisionAsync(AgentId.From("agent-a"), CancellationToken.None);
 
         // Same ownership guard the cron provisioners apply to a non-system job (#3524).
         store.Registrations.Count.ShouldBe(1);
+        // And with nothing of ours removed there is no registration id to name, so the target is
+        // not told anything - a bare per-agent delete here would destroy the operator's binding.
+        target.Removed.ShouldBeEmpty();
     }
 
     [Fact]
     public async Task DeprovisionAsync_WhenNothingProvisioned_IsNoOp()
     {
         var store = new FakeWebhookRegistrationStore();
+        var target = new RecordingTarget();
 
-        await Provisioner(store).DeprovisionAsync(AgentId.From("never-existed"), CancellationToken.None);
+        await new AgentWebhookProvisioner(RegistryWith(), store, [target])
+            .DeprovisionAsync(AgentId.From("never-existed"), CancellationToken.None);
 
         store.DeleteCalls.ShouldBe(0);
+        target.Removed.ShouldBeEmpty();
     }
 
     // ── Unconfigured host (AC8) ───────────────────────────────────────────────
@@ -219,7 +303,12 @@ public sealed class AgentWebhookProvisionerTests
     private sealed class RecordingTarget : IAgentWebhookTargetNotifier
     {
         public List<AgentWebhookBinding> Notified { get; } = [];
-        public List<AgentId> Removed { get; } = [];
+
+        /// <summary>
+        /// Removals are recorded as (agent, webhook) PAIRS. Recording the agent id alone would
+        /// make every stale-generation assertion in this file vacuous.
+        /// </summary>
+        public List<(AgentId AgentId, string WebhookId)> Removed { get; } = [];
 
         public Task NotifyAsync(AgentWebhookBinding binding, CancellationToken cancellationToken)
         {
@@ -227,9 +316,9 @@ public sealed class AgentWebhookProvisionerTests
             return Task.CompletedTask;
         }
 
-        public Task NotifyRemovedAsync(AgentId agentId, CancellationToken cancellationToken)
+        public Task NotifyRemovedAsync(AgentId agentId, string webhookId, CancellationToken cancellationToken)
         {
-            Removed.Add(agentId);
+            Removed.Add((agentId, webhookId));
             return Task.CompletedTask;
         }
     }

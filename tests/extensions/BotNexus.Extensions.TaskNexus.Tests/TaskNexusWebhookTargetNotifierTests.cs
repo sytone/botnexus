@@ -43,7 +43,7 @@ public sealed class TaskNexusWebhookTargetNotifierTests
         var handler = new RecordingHandler();
         var notifier = new TaskNexusWebhookTargetNotifier(new HttpClient(handler), Config());
 
-        await notifier.NotifyRemovedAsync(AgentId.From("agent-a"), CancellationToken.None);
+        await notifier.NotifyRemovedAsync(AgentId.From("agent-a"), "wh_abc", CancellationToken.None);
 
         handler.Requests.ShouldBeEmpty();
     }
@@ -146,18 +146,54 @@ public sealed class TaskNexusWebhookTargetNotifierTests
     }
 
     [Fact]
-    public async Task NotifyRemovedAsync_WhenConfigured_DeletesTheAgent()
+    public async Task NotifyRemovedAsync_WhenConfigured_DeletesTheExactRegistration()
     {
         var handler = new RecordingHandler();
         var notifier = new TaskNexusWebhookTargetNotifier(
             new HttpClient(handler),
             Config((TaskNexusWebhookTargetNotifier.BaseUrlKey, "https://tasknexus.example.com")));
 
-        await notifier.NotifyRemovedAsync(AgentId.From("agent-a"), CancellationToken.None);
+        await notifier.NotifyRemovedAsync(AgentId.From("agent-a"), "wh_abc", CancellationToken.None);
 
         var request = handler.Requests.ShouldHaveSingleItem();
         request.Method.ShouldBe(HttpMethod.Delete);
-        request.Uri.ShouldBe("https://tasknexus.example.com/api/botnexus/agents/agent-a");
+        // The webhook id MUST be on the wire. TaskNexus deletes WHERE agent = ? AND webhook_id = ?
+        // and treats a mismatch as an idempotent false; without the id a delayed or retried DELETE
+        // for a since-deleted agent erases the NEWER binding of a recreated agent with the same id.
+        request.Uri.ShouldBe("https://tasknexus.example.com/api/botnexus/agents/agent-a/wh_abc");
+    }
+
+    [Fact]
+    public async Task NotifyRemovedAsync_EscapesTheIdentifiersItPutsInTheUri()
+    {
+        var handler = new RecordingHandler();
+        var notifier = new TaskNexusWebhookTargetNotifier(
+            new HttpClient(handler),
+            Config((TaskNexusWebhookTargetNotifier.BaseUrlKey, "https://tasknexus.example.com")));
+
+        await notifier.NotifyRemovedAsync(AgentId.From("agent a"), "wh/ab c", CancellationToken.None);
+
+        // An unescaped id would silently change the path shape TaskNexus matches on, which
+        // for a conditional delete means matching the wrong row or none at all.
+        handler.Requests.ShouldHaveSingleItem().Uri
+            .ShouldBe("https://tasknexus.example.com/api/botnexus/agents/agent%20a/wh%2Fab%20c");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task NotifyRemovedAsync_WithBlankWebhookId_ThrowsAndMakesNoOutboundCall(string webhookId)
+    {
+        var handler = new RecordingHandler();
+        var notifier = new TaskNexusWebhookTargetNotifier(
+            new HttpClient(handler),
+            Config((TaskNexusWebhookTargetNotifier.BaseUrlKey, "https://tasknexus.example.com")));
+
+        // Fail closed: a blank id would degrade the conditional delete back into the unsafe
+        // agent-id-only delete this contract exists to prevent.
+        await Should.ThrowAsync<ArgumentException>(
+            () => notifier.NotifyRemovedAsync(AgentId.From("agent-a"), webhookId, CancellationToken.None));
+        handler.Requests.ShouldBeEmpty();
     }
 
     // ── Failure absorption ────────────────────────────────────────────────────
@@ -197,7 +233,7 @@ public sealed class TaskNexusWebhookTargetNotifierTests
         // Especially important on the delete path, which the controller already treats as
         // best-effort: a TaskNexus outage must never block deleting an agent.
         await Should.NotThrowAsync(
-            () => notifier.NotifyRemovedAsync(AgentId.From("agent-a"), CancellationToken.None));
+            () => notifier.NotifyRemovedAsync(AgentId.From("agent-a"), "wh_abc", CancellationToken.None));
     }
 
     private sealed record CapturedRequest(HttpMethod Method, string Uri, string? Body);
@@ -214,7 +250,10 @@ public sealed class TaskNexusWebhookTargetNotifierTests
             var body = request.Content is null
                 ? null
                 : await request.Content.ReadAsStringAsync(cancellationToken);
-            Requests.Add(new CapturedRequest(request.Method, request.RequestUri!.ToString(), body));
+            // GetComponents with UriEscaped preserves every escaped path segment. AbsoluteUri
+            // normalises spaces back to literal spaces, which makes a correct %20 look broken.
+            var uri = request.RequestUri!.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped);
+            Requests.Add(new CapturedRequest(request.Method, uri, body));
 
             if (Throw is not null)
                 throw Throw;

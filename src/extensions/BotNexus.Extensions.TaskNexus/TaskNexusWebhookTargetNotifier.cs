@@ -96,27 +96,38 @@ public sealed class TaskNexusWebhookTargetNotifier : IAgentWebhookTargetNotifier
     }
 
     /// <inheritdoc/>
-    public async Task NotifyRemovedAsync(AgentId agentId, CancellationToken cancellationToken)
+    public async Task NotifyRemovedAsync(AgentId agentId, string webhookId, CancellationToken cancellationToken)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(webhookId);
         if (_baseUrl is null)
             return;
+
+        // The webhook id is addressed as its own path segment so TaskNexus can delete
+        // conditionally (WHERE agent = ? AND webhook_id = ?) and treat a mismatch or a missing row
+        // as an idempotent false. A DELETE keyed on agent id alone is unsafe to replay: agent ids
+        // are immutable and therefore reusable, so a delayed or retried delete for a since-deleted
+        // agent would erase the NEWER binding of a recreated agent with the same id.
+        var uri = $"{_baseUrl}/api/botnexus/agents/{Uri.EscapeDataString(agentId.Value)}"
+            + $"/{Uri.EscapeDataString(webhookId)}";
 
         try
         {
             using var response = await _httpClient
-                .DeleteAsync($"{_baseUrl}/api/botnexus/agents/{agentId.Value}", cancellationToken)
+                .DeleteAsync(uri, cancellationToken)
                 .ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
-                    "TaskNexus rejected the removal of agent '{AgentId}' with status {StatusCode}.",
-                    agentId, (int)response.StatusCode);
+                    "TaskNexus rejected the removal of webhook '{WebhookId}' for agent '{AgentId}' with status {StatusCode}.",
+                    webhookId, agentId, (int)response.StatusCode);
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            _logger.LogWarning(ex, "Failed to notify TaskNexus that agent '{AgentId}' was removed.", agentId);
+            _logger.LogWarning(ex,
+                "Failed to notify TaskNexus that webhook '{WebhookId}' for agent '{AgentId}' was removed.",
+                webhookId, agentId);
         }
     }
 

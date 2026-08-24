@@ -144,11 +144,18 @@ public sealed class AgentWebhookProvisioner : IHostedService, IAgentWebhookProvi
             _logger.LogInformation(
                 "Deprovisioned outbound webhook registration '{WebhookId}' for deleted agent '{AgentId}'.",
                 registration.Id, agentId);
-        }
 
-        foreach (var target in _targets)
-        {
-            await target.NotifyRemovedAsync(agentId, cancellationToken).ConfigureAwait(false);
+            // Notify per REMOVED REGISTRATION, not per agent. The webhook id is the generation
+            // token that lets a downstream target delete conditionally (agent AND webhook id) and
+            // no-op on mismatch. Keyed on agent id alone, a delayed or retried delete for a
+            // since-recreated agent would erase the new agent's newer binding - agent ids are
+            // immutable and therefore reusable, so they are not a safe delete key on their own.
+            foreach (var target in _targets)
+            {
+                await target
+                    .NotifyRemovedAsync(agentId, registration.Id.Value, cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
     }
 }

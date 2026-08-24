@@ -51,8 +51,9 @@ How it behaves:
 - **On agent create and on agent update**, the gateway ensures a registration exists
   for that agent and pushes the binding (agent id, current display name, webhook id,
   inbound path, secret) to every configured delivery target.
-- **On agent delete**, the registration is removed and the target is told the agent is
-  gone. This step is best-effort: a downstream outage never blocks deleting an agent.
+- **On agent delete**, the registration is removed and the target is told **which exact
+  registration** was removed (agent id *and* webhook id), once per owned registration.
+  This step is best-effort: a downstream outage never blocks deleting an agent.
 - **At startup**, every registered agent is reconciled again. That pass is deliberately
   the only recovery path — there is no retry queue or outbox for a failed push.
 
@@ -78,6 +79,25 @@ bundled TaskNexus target is inert until you configure a base URL:
 
 With no target configured, startup completes normally and the provisioner still keeps
 the registrations themselves in sync — there is simply nothing to push them to.
+
+### Delete notifications carry the webhook id — and why that matters
+
+A removal notification names the **exact registration** being removed, not just the
+agent. The bundled TaskNexus target sends:
+
+```
+DELETE {baseUrl}/api/botnexus/agents/{agentId}/{webhookId}
+```
+
+A delivery target **must** condition its delete on both values
+(`WHERE agent = ? AND webhook_id = ?`) and treat a mismatch or a missing row as an
+idempotent no-op rather than an error.
+
+The reason is that agent ids are immutable, and therefore **reusable**: an agent can be
+deleted and a new one created with the same id, which gets a fresh registration. If the
+delete were keyed on agent id alone, a delayed or retried DELETE belonging to the *old*
+agent would arrive after the recreate and silently erase the *new* agent's binding. The
+webhook id acts as a generation token so that stale delete simply matches nothing.
 
 ## Quick start
 

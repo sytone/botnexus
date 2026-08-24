@@ -46,6 +46,22 @@ public interface IAgentWebhookTargetNotifier
     /// <summary>Pushes the current binding for one agent to the downstream target.</summary>
     Task NotifyAsync(AgentWebhookBinding binding, CancellationToken cancellationToken);
 
-    /// <summary>Tells the downstream target that <paramref name="agentId"/> no longer exists.</summary>
-    Task NotifyRemovedAsync(AgentId agentId, CancellationToken cancellationToken);
+    /// <summary>
+    /// Tells the downstream target that one specific provisioner-owned binding has been removed.
+    /// </summary>
+    /// <param name="agentId">The agent whose binding was removed.</param>
+    /// <param name="webhookId">
+    /// The exact registration being removed. This is the generation token that makes the delete
+    /// safe to replay: a downstream target MUST condition its delete on
+    /// <c>agent = agentId AND webhookId = webhookId</c> and treat a mismatch as an idempotent
+    /// no-op. Without it, a delayed or retried DELETE for a since-deleted agent erases the NEWER
+    /// binding of a recreated agent with the same id - agent ids are immutable and therefore
+    /// reusable, so agent id alone is not a safe delete key.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <remarks>
+    /// Invoked once per owned registration. An agent with no provisioner-owned registration
+    /// produces no call at all, because there is no binding whose removal could be described.
+    /// </remarks>
+    Task NotifyRemovedAsync(AgentId agentId, string webhookId, CancellationToken cancellationToken);
 }

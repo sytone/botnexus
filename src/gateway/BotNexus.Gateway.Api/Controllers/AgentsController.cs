@@ -97,9 +97,43 @@ public sealed class AgentsController : ControllerBase
     [HttpGet("{agentId}")]
     public ActionResult<AgentDescriptor> Get(string agentId)
     {
-        var typedAgentId = AgentId.From(agentId);
-        var descriptor = _registry.Get(typedAgentId);
+        if (!TryParseAgentId(agentId, out var typedAgentId, out var error))
+            return BadRequest(new { error });
+        var descriptor = _registry.Get(typedAgentId!.Value);
         return descriptor is not null ? Ok(descriptor) : NotFound();
+    }
+
+    /// <summary>
+    /// Parses a route-supplied agent id, turning a blank-after-normalization or over-long value
+    /// into a 400 rather than the 500 that <see cref="AgentId.From(string)"/> would produce.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="AgentId"/> trims its input and rejects whitespace, so a route segment of
+    /// <c>"%20"</c> is non-empty on the wire but blank after normalization. Left unguarded that
+    /// throws out of the action and surfaces as an unhandled 500 - a validation failure reported
+    /// as a server fault. Length is bounded here for the same reason
+    /// <c>AgentDescriptorValidator</c> bounds it on the body: the id becomes a URL path segment
+    /// and a downstream key.
+    /// </remarks>
+    private static bool TryParseAgentId(string? agentId, out AgentId? typedAgentId, out string? error)
+    {
+        typedAgentId = null;
+
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            error = "Agent id is required and must not be blank after trimming.";
+            return false;
+        }
+
+        if (agentId.Trim().Length > BotNexus.Gateway.Agents.AgentDescriptorValidator.MaxAgentIdLength)
+        {
+            error = $"Agent id must be {BotNexus.Gateway.Agents.AgentDescriptorValidator.MaxAgentIdLength} characters or fewer.";
+            return false;
+        }
+
+        typedAgentId = AgentId.From(agentId);
+        error = null;
+        return true;
     }
 
     /// <summary>
@@ -199,6 +233,9 @@ public sealed class AgentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<AgentDescriptor>> Update(string agentId, [FromBody] AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
+        if (!TryParseAgentId(agentId, out _, out var routeError))
+            return BadRequest(new { error = routeError });
+
         if (!string.Equals(agentId, descriptor.AgentId.Value, StringComparison.OrdinalIgnoreCase))
         {
             return BadRequest(new
@@ -286,7 +323,10 @@ public sealed class AgentsController : ControllerBase
     [HttpDelete("{agentId}")]
     public async Task<ActionResult> Unregister(string agentId, CancellationToken cancellationToken)
     {
-        var typedAgentId = AgentId.From(agentId);
+        if (!TryParseAgentId(agentId, out var parsedAgentId, out var routeError))
+            return BadRequest(new { error = routeError });
+
+        var typedAgentId = parsedAgentId!.Value;
         var existingDescriptor = _registry.Get(typedAgentId);
 
         // 1) Delete config first. If this fails the registry still holds the agent (no divergence).

@@ -7,6 +7,22 @@ namespace BotNexus.Gateway.Agents;
 
 public static class AgentDescriptorValidator
 {
+    /// <summary>
+    /// Upper bound applied to short free-text descriptor fields that are persisted to
+    /// <c>config.json</c> and echoed into downstream systems (display name, model id, provider,
+    /// isolation strategy, emoji).
+    /// </summary>
+    /// <remarks>
+    /// These fields have no natural length limit in the type system, so without a bound a REST
+    /// caller can persist a megabyte of text into config and push it to every registered
+    /// <c>IAgentWebhookTargetNotifier</c> target. 256 is far above any legitimate value and far
+    /// below anything that stresses a store or a downstream column.
+    /// </remarks>
+    public const int MaxShortFieldLength = 256;
+
+    /// <summary>Upper bound on the immutable agent id, which is also a URL path segment.</summary>
+    public const int MaxAgentIdLength = 128;
+
     public static IReadOnlyList<string> Validate(
         AgentDescriptor descriptor,
         IEnumerable<string>? availableIsolationStrategies = null,
@@ -14,14 +30,25 @@ public static class AgentDescriptorValidator
     {
         List<string> errors = [];
 
+        // AgentId is a value object and cannot be blank by construction, but it IS an unbounded
+        // string that becomes a URL path segment and a downstream key - so it still needs a bound.
+        if (descriptor.AgentId.Value.Length > MaxAgentIdLength)
+            errors.Add($"AgentId must be {MaxAgentIdLength} characters or fewer.");
+
         if (string.IsNullOrWhiteSpace(descriptor.DisplayName))
             errors.Add("DisplayName is required.");
+        else if (descriptor.DisplayName.Length > MaxShortFieldLength)
+            errors.Add($"DisplayName must be {MaxShortFieldLength} characters or fewer.");
 
         if (string.IsNullOrWhiteSpace(descriptor.ModelId))
             errors.Add("ModelId is required.");
+        else if (descriptor.ModelId.Length > MaxShortFieldLength)
+            errors.Add($"ModelId must be {MaxShortFieldLength} characters or fewer.");
 
         if (string.IsNullOrWhiteSpace(descriptor.ApiProvider))
             errors.Add("ApiProvider is required.");
+        else if (descriptor.ApiProvider.Length > MaxShortFieldLength)
+            errors.Add($"ApiProvider must be {MaxShortFieldLength} characters or fewer.");
 
         if (descriptor.MaxConcurrentSessions < 0)
             errors.Add("MaxConcurrentSessions must be >= 0.");
@@ -29,6 +56,10 @@ public static class AgentDescriptorValidator
         if (string.IsNullOrWhiteSpace(descriptor.IsolationStrategy))
         {
             errors.Add("IsolationStrategy is required.");
+        }
+        else if (descriptor.IsolationStrategy.Length > MaxShortFieldLength)
+        {
+            errors.Add($"IsolationStrategy must be {MaxShortFieldLength} characters or fewer.");
         }
         else if (availableIsolationStrategies is not null)
         {
