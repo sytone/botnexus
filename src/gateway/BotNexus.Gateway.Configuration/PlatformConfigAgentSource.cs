@@ -167,11 +167,15 @@ public sealed class PlatformConfigAgentSource(
 
             try
             {
-                // Merge world-level agent defaults into this agent's config
-                JsonElement? rawElement = null;
-                if (agentRawElements is not null && agentRawElements.TryGetValue(agentId, out var rawEl))
-                    rawElement = rawEl;
-                var effectiveConfig = AgentConfigMerger.Merge(agentDefaults, agentConfig, rawElement);
+                // #3515: no merge. The agent block is used exactly as authored, so `agents.defaults`
+                // supplies nothing today. Defaults and override resolution are being redesigned
+                // (#3503) and will be reintroduced at the point of use, where a service reads its own
+                // setting and falls back to a code default.
+                //
+                // The raw element is no longer consulted here: it existed solely to let the merger
+                // distinguish "key absent" from "key explicitly null", and with nothing merging there
+                // is no inheritance for that distinction to affect.
+                var effectiveConfig = agentConfig;
                 var metadata = new Dictionary<string, object?>(ConvertObject(effectiveConfig.Metadata), StringComparer.OrdinalIgnoreCase);
                 metadata["toolTimeoutSeconds"] = effectiveConfig.ToolTimeoutSeconds
                     ?? AgentDefaultsConfig.DefaultToolTimeoutSeconds;
@@ -212,9 +216,13 @@ public sealed class PlatformConfigAgentSource(
                     ?? effectiveConfig.SessionAccess?.AllowedAgents?.ToArray()
                     ?? [],
                     FileAccess = MapFileAccessPolicy(effectiveConfig.FileAccess, platformConfig.Gateway?.FileAccess),
-                    ExtensionConfig = ExtensionConfigMerger.Merge(
-                    platformConfig.Gateway?.Extensions?.Defaults,
-                    effectiveConfig.Extensions),
+                    // #3515: the agent's own extension config, unmerged with world defaults.
+                    //
+                    // Nulls are stripped rather than passed through. `"someExtension": null` means
+                    // "do not inherit this", so with nothing to inherit it means nothing at all - and
+                    // a null JsonElement reaching an extension's own binder is not an absent key, it
+                    // is a malformed value. Passing them through 500s agent registration.
+                    ExtensionConfig = StripNullExtensionEntries(effectiveConfig.Extensions),
                     Kind = effectiveConfig.Kind ?? AgentKind.Named,
                     ShellCommand = effectiveConfig.ShellCommand
                 };
@@ -349,10 +357,39 @@ public sealed class PlatformConfigAgentSource(
         };
     }
 
+    /// <summary>
+    /// Returns the agent's extension configuration with explicitly-null entries removed.
+    /// </summary>
+    /// <remarks>
+    /// A bare <c>null</c> in an extension block has always meant "do not inherit this" rather than
+    /// "set this to null" - it was suppression, and the merger dropped such keys from its result.
+    /// With no merge there is nothing to suppress, so the key is simply meaningless; but leaving it
+    /// in hands each extension a <c>JsonValueKind.Null</c> where it expects an object, which fails
+    /// agent registration outright rather than degrading.
+    /// </remarks>
+    private static IReadOnlyDictionary<string, JsonElement> StripNullExtensionEntries(
+        Dictionary<string, JsonElement>? extensions)
+    {
+        if (extensions is null || extensions.Count == 0)
+            return new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+
+        var result = new Dictionary<string, JsonElement>(extensions.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in extensions)
+        {
+            if (value.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+                result[key] = value;
+        }
+
+        return result;
+    }
+
     private FileAccessPolicy? MapFileAccessPolicy(FileAccessPolicyConfig? agentLevel, FileAccessPolicyConfig? worldLevel)
     {
-        // Field-level merge: agent-level fields win over world-level where explicitly set
-        var effective = AgentConfigMerger.MergeFileAccess(worldLevel, agentLevel, null);
+        // #3515: no merge. The agent's own policy stands alone when present; otherwise the
+        // world-level policy applies whole. A file-access policy is only coherent as a complete unit -
+        // a half-inherited allowlist grants access neither layer authorised - so "one or the other"
+        // is the correct shape for this property even once defaults return (#3503).
+        var effective = agentLevel ?? worldLevel;
         if (effective is null)
             return null;
 

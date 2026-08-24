@@ -285,76 +285,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task LoadAsync_WithWorldDefaults_MergesIntoAgentExtensionConfig()
-    {
-        var config = JsonSerializer.Deserialize<PlatformConfig>(
-            """
-            {
-              "Gateway": {
-                "Extensions": {
-                  "Defaults": {
-                    "ext": { "a": 1 }
-                  }
-                }
-              },
-              "Agents": {
-                "assistant": {
-                  "Provider": "copilot",
-                  "Model": "gpt-4.1",
-                  "Enabled": true
-                }
-              }
-            }
-            """)!;
 
-        var source = new PlatformConfigAgentSource(
-            new TestOptionsMonitor<PlatformConfig>(config),
-            _configDirectory,
-            new ListLogger<PlatformConfigAgentSource>());
-
-        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
-
-        descriptor.ExtensionConfig.ShouldContainKey("ext");
-        AssertJsonEquals(descriptor.ExtensionConfig["ext"], """{"a":1}""");
-    }
-
-    [Fact]
-    public async Task LoadAsync_WithWorldDefaultsAndAgentOverrides_DeepMerges()
-    {
-        var config = JsonSerializer.Deserialize<PlatformConfig>(
-            """
-            {
-              "Gateway": {
-                "Extensions": {
-                  "Defaults": {
-                    "ext": { "a": 1, "b": 2 }
-                  }
-                }
-              },
-              "Agents": {
-                "assistant": {
-                  "Provider": "copilot",
-                  "Model": "gpt-4.1",
-                  "Enabled": true,
-                  "Extensions": {
-                    "ext": { "b": 3, "c": 4 }
-                  }
-                }
-              }
-            }
-            """)!;
-
-        var source = new PlatformConfigAgentSource(
-            new TestOptionsMonitor<PlatformConfig>(config),
-            _configDirectory,
-            new ListLogger<PlatformConfigAgentSource>());
-
-        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
-
-        descriptor.ExtensionConfig.ShouldContainKey("ext");
-        AssertJsonEquals(descriptor.ExtensionConfig["ext"], """{"a":1,"b":3,"c":4}""");
-    }
 
     [Fact]
     public async Task LoadAsync_WithFileAccessPolicy_MapsFileAccess()
@@ -917,39 +848,6 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         descriptors.ShouldNotContain(d => d.AgentId.Value.Equals("defaults", StringComparison.OrdinalIgnoreCase));
     }
 
-    [Fact]
-    public async Task LoadAsync_WithAgentsDefaults_MemoryInheritedIntoAgentDescriptor()
-    {
-        // Arrange — agent omits memory; defaults provide it
-        var config = new PlatformConfig
-        {
-            AgentDefaults = new AgentDefaultsConfig
-            {
-                Memory = new MemoryAgentConfig { Enabled = true, Indexing = "semantic" }
-            },
-            Agents = new Dictionary<string, AgentDefinitionConfig>
-            {
-                ["assistant"] = new()
-                {
-                    Provider = "copilot",
-                    Model = "gpt-4.1",
-                    Enabled = true
-                }
-            }
-        };
-        var source = new PlatformConfigAgentSource(
-            new TestOptionsMonitor<PlatformConfig>(config),
-            _configDirectory,
-            new ListLogger<PlatformConfigAgentSource>());
-
-        // Act
-        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
-
-        // Assert
-        descriptor.Memory.ShouldNotBeNull();
-        descriptor.Memory!.Enabled.ShouldBeTrue();
-        descriptor.Memory.Indexing.ShouldBe("semantic");
-    }
 
     [Fact]
     public async Task LoadAsync_WithMemoryEnabledAndPromptInjectionOmitted_DefaultsPromptInjectionToFull()
@@ -1016,38 +914,6 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         pathProperty!.GetValue(descriptor.Memory)?.ToString().ShouldBe("memory/custom-notes.md");
     }
 
-    [Fact]
-    public async Task LoadAsync_WithAgentsDefaults_ToolIdsInheritedWhenAgentOmitsThem()
-    {
-        // Arrange
-        var config = new PlatformConfig
-        {
-            AgentDefaults = new AgentDefaultsConfig
-            {
-                ToolIds = ["read", "write"]
-            },
-            Agents = new Dictionary<string, AgentDefinitionConfig>
-            {
-                ["assistant"] = new()
-                {
-                    Provider = "copilot",
-                    Model = "gpt-4.1",
-                    Enabled = true
-                    // No toolIds
-                }
-            }
-        };
-        var source = new PlatformConfigAgentSource(
-            new TestOptionsMonitor<PlatformConfig>(config),
-            _configDirectory,
-            new ListLogger<PlatformConfigAgentSource>());
-
-        // Act
-        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
-
-        // Assert — inherited from defaults since no AgentRawElements present (no raw JSON path)
-        descriptor.ToolIds.ShouldBe(["read", "write"]);
-    }
 
     [Fact]
     public async Task LoadAsync_WithoutConfiguredToolTimeout_UsesGlobalFiveMinuteDefault()
@@ -1109,34 +975,6 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         return property!.GetValue(config)?.ToString() ?? string.Empty;
     }
 
-    [Fact]
-    public async Task LoadAsync_WithDefaultsToolTimeoutSeconds_InheritsTimeoutWhenAgentOmitsOverride()
-    {
-        var config = JsonSerializer.Deserialize<PlatformConfig>(
-            """
-            {
-              "Agents": {
-                "defaults": {
-                  "ToolTimeoutSeconds": 11
-                },
-                "assistant": {
-                  "Provider": "copilot",
-                  "Model": "gpt-4.1",
-                  "Enabled": true
-                }
-              }
-            }
-            """)!;
-
-        var source = new PlatformConfigAgentSource(
-            new TestOptionsMonitor<PlatformConfig>(config),
-            _configDirectory,
-            new ListLogger<PlatformConfigAgentSource>());
-
-        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
-
-        ReadToolTimeoutSeconds(descriptor).ShouldBe(11);
-    }
 
     private static int? ReadToolTimeoutSeconds(AgentDescriptor descriptor)
     {

@@ -83,8 +83,28 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
         Directory.GetFiles(backupDirectory, "config-*.json").Length.ShouldBe(1);
     }
 
+    /// <summary>
+    /// A config write reaches <c>PlatformConfigAgentSource</c> through the provider and re-materialises
+    /// the agent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// #3515: this previously changed <c>gateway.extensions.defaults</c> and asserted the reloaded
+    /// descriptor carried them. That no longer notifies at all, and correctly so: #2114 suppresses an
+    /// <c>IOptionsMonitor</c> callback whose effective descriptors are unchanged, and with world
+    /// defaults no longer merging into an agent (inheritance is being redesigned - #3503), editing
+    /// <c>defaults</c> changes no descriptor. The old test would now hang for two minutes and time
+    /// out, which is what it did.
+    /// </para>
+    /// <para>
+    /// The subject under test is reload PROPAGATION, so the edit moved to the agent block - a change
+    /// that genuinely alters the descriptor. That is a stronger test of the same property: it proves
+    /// the provider-to-source path works AND that the #2114 suppression is not swallowing real
+    /// changes.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public async Task PlatformConfigAgentSource_WhenGatewayExtensionDefaultsChange_ReceivesProviderReload()
+    public async Task PlatformConfigAgentSource_WhenAgentConfigChanges_ReceivesProviderReload()
     {
         await File.WriteAllTextAsync(_configPath, """
             {
@@ -122,30 +142,30 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
             if (descriptors.Count != 1)
                 return;
 
-            if (!descriptors[0].ExtensionConfig.TryGetValue("ext", out var extensionJson))
-                return;
-
-            using var jsonDocument = JsonDocument.Parse(extensionJson.GetRawText());
-            if (jsonDocument.RootElement.TryGetProperty("b", out var value) && value.GetInt32() == 2)
+            // #3515: the gate is the agent's own value. This previously waited for the world-level
+            // extension defaults to appear in ExtensionConfig, which no longer happens because
+            // nothing merges them in.
+            if (descriptors[0].DisplayName == "Assistant Renamed")
                 changed.TrySetResult(descriptors);
         });
 
-        var gatewayUpdate = JsonNode.Parse("""
+        // #3515: edit the AGENT, not gateway.extensions.defaults. A defaults-only edit changes no
+        // descriptor now that nothing merges, so #2114's unchanged-fingerprint suppression correctly
+        // withholds the callback and this would time out.
+        var agentsUpdate = JsonNode.Parse("""
             {
-              "extensions": {
-                "defaults": {
-                  "ext": {
-                    "a": 1,
-                    "b": 2
-                  }
-                }
+              "assistant": {
+                "provider": "copilot",
+                "model": "gpt-4.1",
+                "enabled": true,
+                "displayName": "Assistant Renamed"
               }
             }
             """)!;
-        await writer.UpdateSectionAsync("gateway", gatewayUpdate);
+        await writer.UpdateSectionAsync("agents", agentsUpdate);
 
         var descriptor = (await changed.Task.WaitAsync(TimeSpan.FromMinutes(2))).ShouldHaveSingleItem();
-        descriptor.ExtensionConfig.ShouldContainKey("ext");
+        descriptor.DisplayName.ShouldBe("Assistant Renamed", "the reload must carry the new value");
     }
 
     /// <summary>
