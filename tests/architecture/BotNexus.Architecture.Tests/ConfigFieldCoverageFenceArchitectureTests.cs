@@ -1,4 +1,5 @@
 using System.Collections;
+using System.ComponentModel.DataAnnotations;
 using System.Reflection;
 using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Models;
@@ -38,73 +39,53 @@ namespace BotNexus.Architecture.Tests;
 /// </para>
 ///
 /// <para>
-/// <b>Baseline.</b> 210 pre-existing violations could not be fixed in one change, so they are captured
-/// in <see cref="Baseline"/> - one entry per property, so partial progress is measurable and visible in
-/// a diff. The baseline may <b>shrink but never grow</b>: annotating a property and deleting its entry
-/// is always allowed; adding an entry to silence a new property is not. The count is asserted exactly so
-/// a bulk suppression cannot hide in a large diff. Drawdown to zero is tracked by #3231; the first batch
-/// (<c>GatewaySettingsConfig</c> and <c>CronJobConfig</c>, 36 properties) took it from 210 to 174.
+/// <b>No baseline.</b> The 210 pre-existing violations captured on 2026-08-01 were drawn down to zero
+/// (#3231 batch 1 took 210 to 174; #3533 annotated the remaining 174). The baseline file, its exact-count
+/// assertion and the stale-entry sweep are all <b>deleted</b> - there is nothing left to suppress, so the
+/// fence is now unconditional. Re-introducing a baseline would re-introduce the drift this exists to stop.
+/// </para>
+///
+/// <para>
+/// <b>Four clauses.</b> A configuration property must (1) carry <see cref="ConfigFieldAttribute"/>,
+/// (2) carry a <see cref="System.ComponentModel.DataAnnotations.DisplayAttribute"/> with a non-empty
+/// <c>Name</c> and <c>Description</c> so a generated editor has real labels rather than a property name,
+/// (3) sit at a config path the resolver can actually resolve, and (4) survive a round-trip through the
+/// writer byte-identically. Presentation and path are asserted together because an annotated property with
+/// no label is invisible in the UI in a different way than an unannotated one - both are failures of the
+/// same invariant.
 /// </para>
 /// </summary>
 public sealed class ConfigFieldCoverageFenceArchitectureTests
 {
-    /// <summary>
-    /// Pre-existing unannotated properties, one entry per <c>Type.Property</c>, captured 2026-08-01.
-    ///
-    /// <para>
-    /// <b>This list may only shrink.</b> Annotate the property with <c>[ConfigField]</c> and delete its
-    /// line. Never add an entry to silence a newly added property - that is precisely the drift this
-    /// fence exists to stop, and <see cref="Baseline_DoesNotGrow"/> will fail if you try.
-    /// </para>
-    /// </summary>
-    private static readonly HashSet<string> Baseline = LoadBaseline();
-
-    /// <summary>
-    /// Exact expected baseline size. Asserted separately from the contents so that a bulk suppression
-    /// (for example pasting in a hundred new entries) is visible as a one-line numeric change in review
-    /// rather than being buried in a large diff.
-    /// </summary>
-    private const int ExpectedBaselineCount = 174;
+    // Pre-existing unannotated properties were drawn down to zero by #3533; the baseline file, its
+    // exact-count assertion and the stale-entry sweep are deleted. This note is a tombstone so a future
+    // reader does not re-add a suppression list believing one was always intended.
 
     [Fact]
     public void EveryConfigProperty_CarriesConfigFieldAttribute()
     {
-        var violations = FindUnannotatedProperties(typeof(PlatformConfig))
-            .Where(v => !Baseline.Contains(v.Key))
-            .ToList();
+        var violations = FindUnannotatedProperties(typeof(PlatformConfig));
 
         violations.ShouldBeEmpty(
             "Every public settable property on a type reachable from PlatformConfig must carry " +
             "[ConfigField]. An unannotated property is invisible to the settings UI and may have no " +
-            "resolvable config path (#2701). Annotate it, or - only if it is genuinely not " +
+            "resolvable config path (#2701, #3533). Annotate it, or - only if it is genuinely not " +
             "configuration - keep it off the config graph.\nOffenders:\n  " +
             string.Join("\n  ", violations.Select(v => v.Describe())));
     }
 
     [Fact]
-    public void Baseline_DoesNotGrow()
+    public void EveryConfigProperty_CarriesDisplayNameAndDescription()
     {
-        Baseline.Count.ShouldBe(
-            ExpectedBaselineCount,
-            $"The [ConfigField] baseline must only shrink. Expected {ExpectedBaselineCount} entries. " +
-            "If you annotated properties, lower ExpectedBaselineCount to match. If this number went " +
-            "UP, a new unannotated property was silenced instead of fixed - annotate it instead.");
-    }
+        var violations = FindUndescribedProperties(typeof(PlatformConfig));
 
-    [Fact]
-    public void Baseline_ContainsNoStaleEntries()
-    {
-        var live = FindUnannotatedProperties(typeof(PlatformConfig))
-            .Select(v => v.Key)
-            .ToHashSet(StringComparer.Ordinal);
-
-        var stale = Baseline.Where(b => !live.Contains(b)).OrderBy(b => b, StringComparer.Ordinal).ToList();
-
-        stale.ShouldBeEmpty(
-            "These baseline entries no longer correspond to an unannotated property - the property was " +
-            "annotated, renamed or removed. Delete them from the baseline (and lower " +
-            "ExpectedBaselineCount) so the baseline keeps measuring real remaining work.\nStale:\n  " +
-            string.Join("\n  ", stale));
+        violations.ShouldBeEmpty(
+            "Every configuration property must carry [Display(Name = ..., Description = ...)] with both " +
+            "non-empty (#3533). A generated settings editor renders Name as the field label and " +
+            "Description as its help text; without them the UI falls back to a raw property name and no " +
+            "explanation. Boilerplate such as \"Gets or sets the X\" is not a description - say what the " +
+            "setting does and what changing it costs.\nOffenders:\n  " +
+            string.Join("\n  ", violations.Select(v => v.Describe())));
     }
 
     [Fact]
@@ -213,6 +194,55 @@ public sealed class ConfigFieldCoverageFenceArchitectureTests
         ancestry.Remove(type);
     }
 
+    private static IReadOnlyList<Violation> FindUndescribedProperties(Type root)
+    {
+        var violations = new List<Violation>();
+        WalkForDisplay(root, new HashSet<Type>(), violations);
+        return violations;
+    }
+
+    private static void WalkForDisplay(Type type, HashSet<Type> ancestry, List<Violation> violations)
+    {
+        if (!ancestry.Add(type))
+            return;
+
+        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.GetIndexParameters().Length > 0)
+                continue;
+
+            if (property.GetCustomAttribute<JsonIgnoreAttribute>() is not null)
+                continue;
+
+            var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+
+            if (IsSettable(property))
+            {
+                var display = property.GetCustomAttribute<DisplayAttribute>();
+                if (string.IsNullOrWhiteSpace(display?.Name) ||
+                    string.IsNullOrWhiteSpace(display?.Description))
+                {
+                    violations.Add(new Violation($"{type.Name}.{property.Name}", propertyType.Name));
+                }
+            }
+
+            if (TryGetDictionaryValueType(propertyType, out var valueType) && IsConfigPoco(valueType))
+            {
+                WalkForDisplay(valueType, ancestry, violations);
+            }
+            else if (TryGetEnumerableElementType(propertyType, out var elementType) && IsConfigPoco(elementType))
+            {
+                WalkForDisplay(elementType, ancestry, violations);
+            }
+            else if (IsConfigPoco(propertyType))
+            {
+                WalkForDisplay(propertyType, ancestry, violations);
+            }
+        }
+
+        ancestry.Remove(type);
+    }
+
     private static bool IsSettable(PropertyInfo property)
         => property.SetMethod is { IsPublic: true };
 
@@ -264,22 +294,31 @@ public sealed class ConfigFieldCoverageFenceArchitectureTests
         foreach (var i in type.GetInterfaces())
             yield return i;
     }
-
-    private static HashSet<string> LoadBaseline()
+    [Fact]
+    public void DisplayFence_FlagsMissingAndBlankDescriptions_AndIsNotVacuous()
     {
-        var assemblyDir = Path.GetDirectoryName(typeof(ConfigFieldCoverageFenceArchitectureTests).Assembly.Location)!;
-        var path = Path.Combine(assemblyDir, "ConfigFieldCoverageBaseline.baseline");
+        // Vacuity guard for the Display clause. Without this, EveryConfigProperty_CarriesDisplayName-
+        // AndDescription could pass simply because the walker never reached anything. Three distinct
+        // failure shapes are pinned: no [Display] at all, a Name with no Description, and a Description
+        // that is whitespace - the last is the one a careless bulk-annotation would produce.
+        var violations = FindUndescribedProperties(typeof(DisplayFixture));
 
-        if (!File.Exists(path))
-            throw new FileNotFoundException(
-                $"ConfigField coverage baseline not found at '{path}'. It must be copied to the output " +
-                "directory (CopyToOutputDirectory) or the fence cannot distinguish pre-existing " +
-                "violations from new ones.", path);
+        violations.ShouldContain(
+            v => v.Key == $"{nameof(DisplayFixture)}.{nameof(DisplayFixture.NoDisplayAtAll)}",
+            "Vacuity guard: a property with no [Display] must be flagged.");
 
-        return File.ReadAllLines(path)
-            .Select(l => l.Trim())
-            .Where(l => l.Length > 0 && !l.StartsWith('#'))
-            .ToHashSet(StringComparer.Ordinal);
+        violations.ShouldContain(
+            v => v.Key == $"{nameof(DisplayFixture)}.{nameof(DisplayFixture.NameButNoDescription)}",
+            "Vacuity guard: [Display(Name)] without a Description must be flagged - a label with no " +
+            "help text still leaves the operator guessing.");
+
+        violations.ShouldContain(
+            v => v.Key == $"{nameof(DisplayFixture)}.{nameof(DisplayFixture.WhitespaceDescription)}",
+            "Vacuity guard: a whitespace Description must be flagged, not accepted as present.");
+
+        violations.ShouldNotContain(
+            v => v.Key == $"{nameof(DisplayFixture)}.{nameof(DisplayFixture.FullyDescribed)}",
+            "Positive pin: a property with both Name and Description must be accepted.");
     }
 
     // ── Fixtures ──────────────────────────────────────────────────────────────
@@ -307,6 +346,24 @@ public sealed class ConfigFieldCoverageFenceArchitectureTests
 
         [ConfigField(Group = "Network")]
         public string? Endpoint { get; set; }
+    }
+
+    private sealed class DisplayFixture
+    {
+        [ConfigField]
+        public int NoDisplayAtAll { get; set; }
+
+        [ConfigField]
+        [Display(Name = "Has a name")]
+        public int NameButNoDescription { get; set; }
+
+        [ConfigField]
+        [Display(Name = "Has a name", Description = "   ")]
+        public int WhitespaceDescription { get; set; }
+
+        [ConfigField]
+        [Display(Name = "Retry count", Description = "How many times a failed call is retried before it is surfaced as an error.")]
+        public int FullyDescribed { get; set; }
     }
 
     private sealed class NonConfigurationMemberFixture

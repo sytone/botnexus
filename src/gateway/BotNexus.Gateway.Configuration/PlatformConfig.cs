@@ -16,6 +16,12 @@ public sealed class PlatformConfig : IValidatableObject
 {
     /// <summary>Optional JSON schema reference for editor IntelliSense/validation.</summary>
     [JsonPropertyName("$schema")]
+    [Display(
+        Name = "Schema",
+        Description = "Optional JSON schema reference for editor IntelliSense/validation.",
+        GroupName = "General",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 4)]
     public string? Schema { get; set; }
 
     /// <summary>Configuration schema version for forward compatibility.</summary>
@@ -53,30 +59,75 @@ public sealed class PlatformConfig : IValidatableObject
     public string? WorldId { get; set; }
 
     /// <summary>Gateway-specific settings.</summary>
+    [Display(
+        Name = "Gateway",
+        Description = "Gateway-specific settings.",
+        GroupName = "General",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "general", Order = 5)]
     public GatewaySettingsConfig? Gateway { get; set; }
 
     /// <summary>Agent definitions keyed by agent ID.</summary>
+    [Display(
+        Name = "Agents",
+        Description = "Agent definitions keyed by agent ID.",
+        GroupName = "General",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 6)]
     public Dictionary<string, AgentDefinitionConfig>? Agents { get; set; }
 
     /// <summary>Provider configurations keyed by provider name.</summary>
+    [Display(
+        Name = "Providers",
+        Description = "Provider configurations keyed by provider name.",
+        GroupName = "General",
+        Order = 7)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 7)]
     public Dictionary<string, ProviderConfig>? Providers { get; set; }
 
     /// <summary>Channel settings keyed by channel name.</summary>
+    [Display(
+        Name = "Channels",
+        Description = "Channel settings keyed by channel name.",
+        GroupName = "General",
+        Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 8)]
     public Dictionary<string, ChannelConfig>? Channels { get; set; }
 
     /// <summary>API key for Gateway authentication (null = dev mode, no auth).</summary>
+    [Display(
+        Name = "API key",
+        Description = "API key for gateway authentication. Null runs the gateway in dev mode with no auth. Sensitive: stored and shown masked.")]
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "general", Order = 1, Secret = true)]
     public string? ApiKey { get; set; }
 
     /// <summary>Cron scheduler settings and optional seed jobs.</summary>
+    [Display(
+        Name = "Cron",
+        Description = "Cron scheduler settings and optional seed jobs.",
+        GroupName = "General",
+        Order = 9)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "general", Order = 9)]
     public CronConfig? Cron { get; set; }
 
     /// <summary>Named prompt templates for CLI rendering and cron template resolution.</summary>
+    [Display(
+        Name = "Prompt templates",
+        Description = "Named prompt templates for CLI rendering and cron template resolution.",
+        GroupName = "General",
+        Order = 10)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 10)]
     public Dictionary<string, PromptTemplateConfig>? PromptTemplates { get; set; }
 
     /// <summary>
     /// Workspace and portal display settings (reports, file viewer limits).
     /// </summary>
+    [Display(
+        Name = "Workspace",
+        Description = "Workspace and portal display settings (reports, file viewer limits).",
+        GroupName = "General",
+        Order = 11)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "general", Order = 11)]
     public WorkspacePortalConfig? Workspace { get; set; }
 
     /// <summary>
@@ -186,6 +237,12 @@ public sealed class ProviderConfig
     public string? DefaultModel { get; set; }
 
     /// <summary>Allowed model IDs for this provider. Null means all models, empty means none.</summary>
+    [Display(
+        Name = "Models",
+        Description = "Allowed model IDs for this provider. Null means all models, empty means none.",
+        GroupName = "Provider",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 4)]
     public List<string>? Models { get; set; }
 
     /// <summary>
@@ -195,6 +252,12 @@ public sealed class ProviderConfig
     /// hardcoded to text-only, so a vision-capable local model silently discarded every image it
     /// was handed (#2485).
     /// </summary>
+    [Display(
+        Name = "Input",
+        Description = "Explicit input modalities (for example [\"text\",\"image\"]) for models registered from this provider's Models list. When null or empty the modalities are inferred from each model's family; an explicit declaration always wins. Previously these models were hardcoded to text-only, so a vision-capable local model silently discarded every image it was handed (#2485).",
+        GroupName = "Provider",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 5)]
     public List<string>? Input { get; set; }
 
     /// <summary>
@@ -204,6 +267,12 @@ public sealed class ProviderConfig
     /// another registered provider's API name to register models against a different
     /// <see cref="BotNexus.Agent.Providers.Core.Registry.IApiProvider"/>.
     /// </summary>
+    [Display(
+        Name = "API",
+        Description = "Optional API identifier used when registering models from this provider's Models list. Defaults to \"openai-completions\" for backward compatibility with config-driven OpenAI-compatible endpoints (Ollama, LM Studio, etc.). Set to \"integration-mock\" or another registered provider's API name to register models against a different IApiProvider.",
+        GroupName = "Provider",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 6)]
     public string? Api { get; set; }
 
     /// <summary>
@@ -213,6 +282,12 @@ public sealed class ProviderConfig
     /// Grok-code) is picked up automatically; set it explicitly for a local model whose id the
     /// family heuristic does not recognise.
     /// </summary>
+    [Display(
+        Name = "Reasoning",
+        Description = "PBI6 (#1707): explicit reasoning/thinking capability for models registered from this provider's Models list. When null (the default) the capability is inferred from each model's family so a known reasoning family (Claude 4+, GPT-5+, o3/o4, Gemini 3+, Grok-code) is picked up automatically; set it explicitly for a local model whose id the family heuristic does not recognise.",
+        GroupName = "Provider",
+        Order = 7)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "provider", Order = 7)]
     public bool? Reasoning { get; set; }
 
     /// <summary>
@@ -220,6 +295,12 @@ public sealed class ProviderConfig
     /// provider's dynamic models. When null the value is inferred from the model family. Ignored
     /// (clamped off) for a model that does not support reasoning.
     /// </summary>
+    [Display(
+        Name = "Supports extra high thinking",
+        Description = "PBI6 (#1707): explicit extra-high (ExtraHigh / Max) thinking-tier capability for this provider's dynamic models. When null the value is inferred from the model family. Ignored (clamped off) for a model that does not support reasoning.",
+        GroupName = "Provider",
+        Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "provider", Order = 8)]
     public bool? SupportsExtraHighThinking { get; set; }
 
     /// <summary>
@@ -227,6 +308,12 @@ public sealed class ProviderConfig
     /// models. When null the value is inferred from the model family (Anthropic-direct Claude
     /// Sonnet 4/4.5 and Opus 4.5). Drives the context-size picker's second (1M) tier.
     /// </summary>
+    [Display(
+        Name = "Supports extended context window",
+        Description = "PBI6 (#1707): explicit extended (1M) context-window capability for this provider's dynamic models. When null the value is inferred from the model family (Anthropic-direct Claude Sonnet 4/4.5 and Opus 4.5). Drives the context-size picker's second (1M) tier.",
+        GroupName = "Provider",
+        Order = 9)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "provider", Order = 9)]
     public bool? SupportsExtendedContextWindow { get; set; }
 
     /// <summary>
@@ -234,6 +321,12 @@ public sealed class ProviderConfig
     /// When null a conservative 128000-token default is used. Sets the standard tier the
     /// context-size picker offers for a config-declared model.
     /// </summary>
+    [Display(
+        Name = "Context window",
+        Description = "PBI6 (#1707): default context-window size (in tokens) for this provider's dynamic models. When null a conservative 128000-token default is used. Sets the standard tier the context-size picker offers for a config-declared model.",
+        GroupName = "Provider",
+        Order = 10)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "provider", Order = 10)]
     public int? ContextWindow { get; set; }
 }
 
@@ -333,9 +426,15 @@ public sealed class GatewaySettingsConfig
     [ConfigField(Group = "tool-result-persistence", Order = 0)]
     public ToolResultPersistenceConfig? ToolResultPersistence { get; set; }
     /// <summary>Central backstop budget on tool-result size returned to the model (#3162).</summary>
+    [Display(
+        Name = "Tool output budget",
+        Description = "Limits on how much output a single tool result may contribute before it is truncated.")]
     [ConfigField(Group = "tool-output-budget", Order = 0)]
     public ToolOutputBudgetConfig? ToolOutputBudget { get; set; }
     /// <summary>Size guardrails for the <c>read</c> tool (#2689).</summary>
+    [Display(
+        Name = "Read tool",
+        Description = "Settings governing the built-in file read tool, including paging limits.")]
     [ConfigField(Group = "read-tool", Order = 0)]
     public ReadToolConfig? ReadTool { get; set; }
     /// <summary>Post-turn claim auditor (anti-fabrication) settings (#1600).</summary>
@@ -382,6 +481,9 @@ public sealed class GatewaySettingsConfig
     [ConfigField(Group = "network", Order = 2)]
     public SignalRConfig? SignalR { get; set; }
     /// <summary>Operator-supplied additional secret redaction patterns (#2727).</summary>
+    [Display(
+        Name = "Secret redaction",
+        Description = "Settings controlling how secrets are detected and masked in logs and tool output.")]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "gateway", Order = 10)]
     public SecretRedactionConfig? SecretRedaction { get; set; }
 
@@ -565,6 +667,12 @@ public sealed class ToolResultPersistenceConfig
     /// <summary>
     /// Whether the write-time tool-result cap is enabled. Defaults to <see langword="true"/>.
     /// </summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Whether the write-time tool-result cap is enabled. Defaults to .",
+        GroupName = "Tool result persistence",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "tool-result-persistence", Order = 0)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>
@@ -572,6 +680,12 @@ public sealed class ToolResultPersistenceConfig
     /// truncated at write time with a <c>[truncated N bytes]</c> marker. Defaults to 16384 (16 KiB).
     /// A value of 0 or less disables truncation even when <see cref="Enabled"/> is true.
     /// </summary>
+    [Display(
+        Name = "Max bytes",
+        Description = "Maximum UTF-8 byte size of a single persisted tool result. Results larger than this are truncated at write time with a [truncated N bytes] marker. Defaults to 16384 (16 KiB). A value of 0 or less disables truncation even when Enabled is true.",
+        GroupName = "Tool result persistence",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "tool-result-persistence", Order = 1)]
     public int MaxBytes { get; set; } = 16_384;
 }
 
@@ -688,6 +802,12 @@ public sealed class ClaimAuditConfig
     /// <summary>
     /// Whether the post-turn claim auditor runs. Defaults to <see langword="true"/>.
     /// </summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Whether the post-turn claim auditor runs. Defaults to .",
+        GroupName = "Claim audit",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "claim-audit", Order = 0)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>
@@ -695,6 +815,12 @@ public sealed class ClaimAuditConfig
     /// the safe default) or <c>"block"</c> (also mark the turn as one that should be blocked).
     /// Unrecognised values fall back to <c>"warn"</c>.
     /// </summary>
+    [Display(
+        Name = "Mode",
+        Description = "Reaction on detecting an unbacked claim: \"warn\" (emit an observable signal only, the safe default) or \"block\" (also mark the turn as one that should be blocked). Unrecognised values fall back to \"warn\".",
+        GroupName = "Claim audit",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "claim-audit", Order = 1)]
     public string Mode { get; set; } = "warn";
 }
 
@@ -727,12 +853,30 @@ public sealed class AutoUpdateConfig
     public int CheckIntervalMinutes { get; set; } = 60;
 
     /// <summary>GitHub repository owner. Defaults to <c>sytone</c>.</summary>
+    [Display(
+        Name = "Repository owner",
+        Description = "GitHub repository owner. Defaults to sytone.",
+        GroupName = "Auto-update",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "auto-update", Order = 2)]
     public string RepositoryOwner { get; set; } = "sytone";
 
     /// <summary>GitHub repository name. Defaults to <c>botnexus</c>.</summary>
+    [Display(
+        Name = "Repository name",
+        Description = "GitHub repository name. Defaults to botnexus.",
+        GroupName = "Auto-update",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "auto-update", Order = 3)]
     public string RepositoryName { get; set; } = "botnexus";
 
     /// <summary>Branch to track. Defaults to <c>main</c>.</summary>
+    [Display(
+        Name = "Branch",
+        Description = "Branch to track. Defaults to main.",
+        GroupName = "Auto-update",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "auto-update", Order = 4)]
     public string Branch { get; set; } = "main";
 
     /// <summary>
@@ -740,21 +884,45 @@ public sealed class AutoUpdateConfig
     /// Required when <see cref="Enabled"/> is true.
     /// If the path ends with <c>.dll</c> it is launched via <c>dotnet</c>; otherwise it is run directly.
     /// </summary>
+    [Display(
+        Name = "Cli path",
+        Description = "Absolute path to the BotNexus CLI entry point used to run the update. Required when Enabled is true. If the path ends with .dll it is launched via dotnet; otherwise it is run directly.",
+        GroupName = "Auto-update",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "auto-update", Order = 5)]
     public string? CliPath { get; set; }
 
     /// <summary>
     /// Absolute path to the BotNexus source tree. Passed to the CLI update command as <c>--source</c>.
     /// Required when <see cref="Enabled"/> is true.
     /// </summary>
+    [Display(
+        Name = "Source path",
+        Description = "Absolute path to the BotNexus source tree. Passed to the CLI update command as --source. Required when Enabled is true.",
+        GroupName = "Auto-update",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "auto-update", Order = 6)]
     public string? SourcePath { get; set; }
 
     /// <summary>
     /// Update channel to forward to the CLI update command. Typical values: <c>stable</c>, <c>beta</c>, <c>dev</c>.
     /// When null or empty the CLI default channel is used.
     /// </summary>
+    [Display(
+        Name = "Channel",
+        Description = "Update channel to forward to the CLI update command. Typical values: stable, beta, dev. When null or empty the CLI default channel is used.",
+        GroupName = "Auto-update",
+        Order = 7)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "auto-update", Order = 7)]
     public string? Channel { get; set; }
 
     /// <summary>Seconds to wait after returning 202 before calling StopApplication(). Minimum 1. Defaults to 2.</summary>
+    [Display(
+        Name = "Shutdown delay seconds",
+        Description = "Seconds to wait after returning 202 before calling StopApplication(). Minimum 1. Defaults to 2.",
+        GroupName = "Auto-update",
+        Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "auto-update", Order = 8)]
     public int ShutdownDelaySeconds { get; set; } = 2;
 }
 
@@ -762,22 +930,55 @@ public sealed class AutoUpdateConfig
 public sealed class LocationConfig
 {
     /// <summary>Location type: filesystem, api, mcp-server, database, remote-node.</summary>
+    [Display(
+        Name = "Type",
+        Description = "Location type: filesystem, api, mcp-server, database, remote-node.",
+        GroupName = "Location",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "location", Order = 4)]
     public string Type { get; set; } = "filesystem";
 
     /// <summary>Path for filesystem locations.</summary>
+    [Display(
+        Name = "Path",
+        Description = "Path for filesystem locations.",
+        GroupName = "Location",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "location", Order = 5)]
     public string? Path { get; set; }
 
     /// <summary>Endpoint URL for api/mcp-server/remote-node locations.</summary>
+    [Display(
+        Name = "Endpoint",
+        Description = "Endpoint URL for api/mcp-server/remote-node locations.",
+        GroupName = "Location",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "location", Order = 6)]
     public string? Endpoint { get; set; }
 
     /// <summary>Connection string for database locations.</summary>
+    [Display(
+        Name = "Connection string",
+        Description = "Connection string for this location's backing store. Sensitive: contains credentials and is stored and shown masked.")]
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "location", Order = 3, Secret = true)]
     public string? ConnectionString { get; set; }
 
     /// <summary>Human-readable description.</summary>
+    [Display(
+        Name = "Description",
+        Description = "Human-readable description.",
+        GroupName = "Location",
+        Order = 7)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "location", Order = 7)]
     public string? Description { get; set; }
 
     /// <summary>Extensible properties.</summary>
+    [Display(
+        Name = "Properties",
+        Description = "Extensible properties.",
+        GroupName = "Location",
+        Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "location", Order = 8)]
     public Dictionary<string, string>? Properties { get; set; }
 }
 
@@ -785,15 +986,39 @@ public sealed class LocationConfig
 public sealed class CrossWorldPermissionConfig
 {
     /// <summary>Identifier of the target world this permission applies to.</summary>
+    [Display(
+        Name = "Target world ID",
+        Description = "Identifier of the target world this permission applies to.",
+        GroupName = "Cross world permission",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world-permission", Order = 0)]
     public string? TargetWorldId { get; set; }
 
     /// <summary>Specific agents allowed to communicate. Null means all hosted agents.</summary>
+    [Display(
+        Name = "Allowed agents",
+        Description = "Specific agents allowed to communicate. Null means all hosted agents.",
+        GroupName = "Cross world permission",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world-permission", Order = 1)]
     public List<string>? AllowedAgents { get; set; }
 
     /// <summary>Whether inbound communication from the target world is allowed.</summary>
+    [Display(
+        Name = "Allow inbound",
+        Description = "Whether inbound communication from the target world is allowed.",
+        GroupName = "Cross world permission",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "cross-world-permission", Order = 2)]
     public bool AllowInbound { get; set; } = true;
 
     /// <summary>Whether outbound communication to the target world is allowed.</summary>
+    [Display(
+        Name = "Allow outbound",
+        Description = "Whether outbound communication to the target world is allowed.",
+        GroupName = "Cross world permission",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "cross-world-permission", Order = 3)]
     public bool AllowOutbound { get; set; } = true;
 }
 
@@ -801,12 +1026,30 @@ public sealed class CrossWorldPermissionConfig
 public sealed class CrossWorldFederationConfig
 {
     /// <summary>Known peer gateways keyed by world ID or alias.</summary>
+    [Display(
+        Name = "Peers",
+        Description = "Known peer gateways keyed by world ID or alias.",
+        GroupName = "Cross world federation",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world-federation", Order = 0)]
     public Dictionary<string, CrossWorldPeerConfig>? Peers { get; set; }
 
     /// <summary>Inbound cross-world relay policy.</summary>
+    [Display(
+        Name = "Inbound",
+        Description = "Inbound cross-world relay policy.",
+        GroupName = "Cross world federation",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "cross-world-federation", Order = 1)]
     public CrossWorldInboundConfig? Inbound { get; set; }
 
     /// <summary>Optional explicit cross-world agent discovery map.</summary>
+    [Display(
+        Name = "Agents",
+        Description = "Optional explicit cross-world agent discovery map.",
+        GroupName = "Cross world federation",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world-federation", Order = 2)]
     public Dictionary<string, CrossWorldAgentConfig>? Agents { get; set; }
 }
 
@@ -814,16 +1057,37 @@ public sealed class CrossWorldFederationConfig
 public sealed class CrossWorldPeerConfig
 {
     /// <summary>Canonical world ID for this peer (defaults to dictionary key).</summary>
+    [Display(
+        Name = "World ID",
+        Description = "Canonical world ID for this peer (defaults to dictionary key).",
+        GroupName = "Cross world peer",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world-peer", Order = 3)]
     public string? WorldId { get; set; }
 
     /// <summary>Peer gateway endpoint URL.</summary>
+    [Display(
+        Name = "Endpoint",
+        Description = "Peer gateway endpoint URL.",
+        GroupName = "Cross world peer",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world-peer", Order = 4)]
     public string? Endpoint { get; set; }
 
     /// <summary>Shared API key used for gateway-to-gateway relay authentication.</summary>
+    [Display(
+        Name = "API key",
+        Description = "API key used to authenticate to this peer world. Sensitive: stored and shown masked.")]
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "cross-world-peer", Order = 2, Secret = true)]
     public string? ApiKey { get; set; }
 
     /// <summary>Whether this peer is enabled for outbound calls.</summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Whether this peer is enabled for outbound calls.",
+        GroupName = "Cross world peer",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "cross-world-peer", Order = 5)]
     public bool Enabled { get; set; } = true;
 }
 
@@ -831,12 +1095,27 @@ public sealed class CrossWorldPeerConfig
 public sealed class CrossWorldInboundConfig
 {
     /// <summary>Whether inbound relay endpoint is enabled.</summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Whether inbound relay endpoint is enabled.",
+        GroupName = "Cross world inbound",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "cross-world-inbound", Order = 3)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>Allowed source world IDs. Empty means no source worlds are allowed.</summary>
+    [Display(
+        Name = "Allowed worlds",
+        Description = "Allowed source world IDs. Empty means no source worlds are allowed.",
+        GroupName = "Cross world inbound",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world-inbound", Order = 4)]
     public List<string>? AllowedWorlds { get; set; }
 
     /// <summary>Shared API keys keyed by source world ID.</summary>
+    [Display(
+        Name = "Inbound API keys",
+        Description = "API keys accepted from peer worlds, keyed by peer name. Sensitive: stored and shown masked.")]
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "cross-world-inbound", Order = 2, Secret = true)]
     public Dictionary<string, string>? ApiKeys { get; set; }
 }
@@ -845,12 +1124,30 @@ public sealed class CrossWorldInboundConfig
 public sealed class CrossWorldAgentConfig
 {
     /// <summary>Target world hosting the agent.</summary>
+    [Display(
+        Name = "World ID",
+        Description = "Target world hosting the agent.",
+        GroupName = "Cross world",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world", Order = 0)]
     public string? WorldId { get; set; }
 
     /// <summary>Remote agent ID within the target world.</summary>
+    [Display(
+        Name = "Agent ID",
+        Description = "Remote agent ID within the target world.",
+        GroupName = "Cross world",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world", Order = 1)]
     public string? AgentId { get; set; }
 
     /// <summary>Optional operator-facing description.</summary>
+    [Display(
+        Name = "Description",
+        Description = "Optional operator-facing description.",
+        GroupName = "Cross world",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cross-world", Order = 2)]
     public string? Description { get; set; }
 }
 
@@ -858,6 +1155,12 @@ public sealed class CrossWorldAgentConfig
 public sealed class CorsConfig
 {
     /// <summary>Explicit origins allowed to access the gateway from browsers.</summary>
+    [Display(
+        Name = "Allowed origins",
+        Description = "Explicit origins allowed to access the gateway from browsers.",
+        GroupName = "CORS",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cors", Order = 0)]
     public List<string>? AllowedOrigins { get; set; }
 }
 
@@ -886,6 +1189,12 @@ public sealed class RateLimitConfig
     public int RequestsPerMinute { get; set; } = 300;
 
     /// <summary>Window size in seconds used for request counting.</summary>
+    [Display(
+        Name = "Window seconds",
+        Description = "Window size in seconds used for request counting.",
+        GroupName = "Rate limit",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "rate-limit", Order = 2)]
     public int WindowSeconds { get; set; } = 60;
 
     /// <summary>
@@ -897,6 +1206,12 @@ public sealed class RateLimitConfig
     /// than inserting. Windows actively counting toward a 429 are never evicted, so a flood
     /// cannot clear an attacker's own throttle. A non-positive value disables the cap.
     /// </summary>
+    [Display(
+        Name = "Max entries",
+        Description = "Maximum number of distinct client windows retained in memory. Bounds the per-client tracking dictionary so a flood of distinct client keys cannot drive the gateway to memory exhaustion (a DoS against the DoS-protection itself). When the cap is reached, stale entries are pruned first, then a window that is not actively rate-limiting a client is evicted; if none can be freed, the new request is rejected with 429 rather than inserting. Windows actively counting toward a 429 are never evicted, so a flood cannot clear an attacker's own throttle. A non-positive value disables the cap.",
+        GroupName = "Rate limit",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "rate-limit", Order = 3)]
     public int MaxEntries { get; set; } = 10_000;
 }
 
@@ -912,6 +1227,12 @@ public sealed class SignalRConfig
     /// inline media (which exceeds the framework's 32 KB default) while bounding runaway frames.
     /// Non-positive values fall back to the secure default.
     /// </summary>
+    [Display(
+        Name = "Maximum receive message size bytes",
+        Description = "Maximum size, in bytes, of a single inbound hub message. Must accommodate base64-encoded inline media (which exceeds the framework's 32 KB default) while bounding runaway frames. Non-positive values fall back to the secure default.",
+        GroupName = "Signal r",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "signal-r", Order = 0)]
     public long? MaximumReceiveMessageSizeBytes { get; set; }
 
     /// <summary>
@@ -919,12 +1240,24 @@ public sealed class SignalRConfig
     /// Bounds concurrent work a client can force on the server. Non-positive values fall back to
     /// the secure default.
     /// </summary>
+    [Display(
+        Name = "Maximum parallel invocations per client",
+        Description = "Maximum number of hub method invocations a single connection may run in parallel. Bounds concurrent work a client can force on the server. Non-positive values fall back to the secure default.",
+        GroupName = "Signal r",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "signal-r", Order = 1)]
     public int? MaximumParallelInvocationsPerClient { get; set; }
 
     /// <summary>
     /// Maximum number of items buffered for client upload streams before processing blocks.
     /// Non-positive values fall back to the secure default.
     /// </summary>
+    [Display(
+        Name = "Stream buffer capacity",
+        Description = "Maximum number of items buffered for client upload streams before processing blocks. Non-positive values fall back to the secure default.",
+        GroupName = "Signal r",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "signal-r", Order = 2)]
     public int? StreamBufferCapacity { get; set; }
 
     /// <summary>
@@ -934,6 +1267,12 @@ public sealed class SignalRConfig
     /// default. The server timeout (<see cref="ClientTimeoutIntervalSeconds"/>) is always coerced
     /// to at least twice this value so a single dropped ping cannot terminate the connection.
     /// </summary>
+    [Display(
+        Name = "Keep alive interval seconds",
+        Description = "Interval, in seconds, at which the server sends keep-alive pings to idle clients (#1840). Chosen to sit comfortably under the netbird tunnel idle-cutoff so a quiet mobile connection never idles the tunnel out mid-session. Non-positive values fall back to the mobile-tuned default. The server timeout (ClientTimeoutIntervalSeconds) is always coerced to at least twice this value so a single dropped ping cannot terminate the connection.",
+        GroupName = "Signal r",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "signal-r", Order = 3)]
     public int? KeepAliveIntervalSeconds { get; set; }
 
     /// <summary>
@@ -943,6 +1282,12 @@ public sealed class SignalRConfig
     /// <see cref="KeepAliveIntervalSeconds"/>; smaller (or non-positive) values are coerced up to
     /// the mobile-tuned default so a misconfig cannot make the server hang up prematurely.
     /// </summary>
+    [Display(
+        Name = "Client timeout interval seconds",
+        Description = "Interval, in seconds, after which the server considers a client dead if no message or ping has arrived (#1840). Widened over the framework's 30s default to tolerate the jitter and brief stalls of a mobile link tunnelled through netbird. Must be at least twice KeepAliveIntervalSeconds; smaller (or non-positive) values are coerced up to the mobile-tuned default so a misconfig cannot make the server hang up prematurely.",
+        GroupName = "Signal r",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "signal-r", Order = 4)]
     public int? ClientTimeoutIntervalSeconds { get; set; }
 }
 
@@ -1009,6 +1354,12 @@ public sealed class CronConfig
     public int TickIntervalSeconds { get; set; } = 60;
 
     /// <summary>Optional job definitions keyed by stable job ID.</summary>
+    [Display(
+        Name = "Jobs",
+        Description = "Optional job definitions keyed by stable job ID.",
+        GroupName = "Cron",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron", Order = 2)]
     public Dictionary<string, CronJobConfig>? Jobs { get; set; }
 }
 
@@ -1142,15 +1493,39 @@ public sealed class CronJobConfig
 public sealed class PromptTemplateConfig
 {
     /// <summary>Template body with <c>{{parameter}}</c> placeholders.</summary>
+    [Display(
+        Name = "Prompt",
+        Description = "Template body with {{parameter}} placeholders.",
+        GroupName = "Prompt template",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "prompt-template", Order = 0)]
     public string? Prompt { get; set; }
 
     /// <summary>Optional human-friendly description.</summary>
+    [Display(
+        Name = "Description",
+        Description = "Optional human-friendly description.",
+        GroupName = "Prompt template",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "prompt-template", Order = 1)]
     public string? Description { get; set; }
 
     /// <summary>Default values for template parameters.</summary>
+    [Display(
+        Name = "Defaults",
+        Description = "Default values for template parameters.",
+        GroupName = "Prompt template",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "prompt-template", Order = 2)]
     public Dictionary<string, string>? Defaults { get; set; }
 
     /// <summary>Optional per-parameter metadata and defaults.</summary>
+    [Display(
+        Name = "Parameters",
+        Description = "Optional per-parameter metadata and defaults.",
+        GroupName = "Prompt template",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "prompt-template", Order = 3)]
     public Dictionary<string, PromptTemplateParameterConfig>? Parameters { get; set; }
 }
 
@@ -1158,12 +1533,30 @@ public sealed class PromptTemplateConfig
 public sealed class PromptTemplateParameterConfig
 {
     /// <summary>Optional parameter description.</summary>
+    [Display(
+        Name = "Description",
+        Description = "Optional parameter description.",
+        GroupName = "Prompt template parameter",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "prompt-template-parameter", Order = 0)]
     public string? Description { get; set; }
 
     /// <summary>Optional default value.</summary>
+    [Display(
+        Name = "Default",
+        Description = "Optional default value.",
+        GroupName = "Prompt template parameter",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "prompt-template-parameter", Order = 1)]
     public string? Default { get; set; }
 
     /// <summary>Whether the parameter must be supplied if no default exists.</summary>
+    [Display(
+        Name = "Required",
+        Description = "Whether the parameter must be supplied if no default exists.",
+        GroupName = "Prompt template parameter",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "prompt-template-parameter", Order = 2)]
     public bool Required { get; set; }
 }
 
@@ -1173,17 +1566,35 @@ public sealed class ExtensionsConfig
     /// <summary>
     /// Root directory containing extension folders with botnexus-extension.json manifests.
     /// </summary>
+    [Display(
+        Name = "Path",
+        Description = "Root directory containing extension folders with botnexus-extension.json manifests.",
+        GroupName = "Extensions",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 0)]
     public string? Path { get; set; }
 
     /// <summary>
     /// Enables or disables dynamic extension loading.
     /// </summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Enables or disables dynamic extension loading.",
+        GroupName = "Extensions",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "extensions", Order = 1)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>
     /// World-level default extension configuration, keyed by extension ID.
     /// Deep-merged with agent-level overrides to produce effective config per agent.
     /// </summary>
+    [Display(
+        Name = "Defaults",
+        Description = "World-level default extension configuration, keyed by extension ID. Deep-merged with agent-level overrides to produce effective config per agent.",
+        GroupName = "Extensions",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 2)]
     public Dictionary<string, JsonElement>? Defaults { get; set; }
 }
 
@@ -1191,6 +1602,12 @@ public sealed class ExtensionsConfig
 public sealed class AgentDefinitionConfig
 {
     /// <summary>Provider name (e.g. 'copilot').</summary>
+    [Display(
+        Name = "Provider",
+        Description = "Provider name (e.g. 'copilot').",
+        GroupName = "Agent",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 6)]
     public string? Provider { get; set; }
     /// <summary>Human-readable display name.</summary>
     [Display(
@@ -1201,8 +1618,20 @@ public sealed class AgentDefinitionConfig
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 1)]
     public string? DisplayName { get; set; }
     /// <summary>Optional emoji shown alongside the agent name in clients.</summary>
+    [Display(
+        Name = "Emoji",
+        Description = "Optional emoji shown alongside the agent name in clients.",
+        GroupName = "Agent",
+        Order = 7)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 7)]
     public string? Emoji { get; set; }
     /// <summary>Description of the agent's purpose.</summary>
+    [Display(
+        Name = "Description",
+        Description = "Description of the agent's purpose.",
+        GroupName = "Agent",
+        Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 8)]
     public string? Description { get; set; }
     /// <summary>Model identifier (e.g. 'gpt-4.1').</summary>
     [Display(
@@ -1213,23 +1642,77 @@ public sealed class AgentDefinitionConfig
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 2)]
     public string? Model { get; set; }
     /// <summary>Model IDs this agent is allowed to use. Null means unrestricted within provider allowlist.</summary>
+    [Display(
+        Name = "Allowed models",
+        Description = "Model IDs this agent is allowed to use. Null means unrestricted within provider allowlist.",
+        GroupName = "Agent",
+        Order = 9)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 9)]
     public List<string>? AllowedModels { get; set; }
     /// <summary>Ordered list of files to load as the system prompt. Empty = default order.</summary>
+    [Display(
+        Name = "System prompt files",
+        Description = "Ordered list of files to load as the system prompt. Empty = default order.",
+        GroupName = "Agent",
+        Order = 10)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 10)]
     public List<string>? SystemPromptFiles { get; set; }
     /// <summary>Path to a single system prompt file (legacy, prefer SystemPromptFiles).</summary>
+    [Display(
+        Name = "System prompt file",
+        Description = "Path to a single system prompt file (legacy, prefer SystemPromptFiles).",
+        GroupName = "Agent",
+        Order = 11)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 11)]
     public string? SystemPromptFile { get; set; }
     /// <summary>Tool identifiers this agent has access to.</summary>
+    [Display(
+        Name = "Tool ids",
+        Description = "Tool identifiers this agent has access to.",
+        GroupName = "Agent",
+        Order = 12)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 12)]
     public List<string>? ToolIds { get; set; }
     /// <summary>Per-tool timeout in seconds for runtime tool execution safety caps.</summary>
+    [Display(
+        Name = "Tool timeout seconds",
+        Description = "Per-tool timeout in seconds for runtime tool execution safety caps.",
+        GroupName = "Agent",
+        Order = 13)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "agent", Order = 13)]
     public int? ToolTimeoutSeconds { get; set; }
     /// <summary>Agent IDs this agent can call as sub-agents.</summary>
+    [Display(
+        Name = "Sub agents",
+        Description = "Agent IDs this agent can call as sub-agents.",
+        GroupName = "Agent",
+        Order = 14)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 14)]
     public List<string>? SubAgents { get; set; }
     /// <summary>Role names this agent can converse with (role-based grants for agent_converse).</summary>
+    [Display(
+        Name = "Sub agent roles",
+        Description = "Role names this agent can converse with (role-based grants for agent_converse).",
+        GroupName = "Agent",
+        Order = 15)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 15)]
     public List<string>? SubAgentRoles { get; set; }
     /// <summary>Isolation strategy name (e.g. 'in-process').</summary>
+    [Display(
+        Name = "Isolation strategy",
+        Description = "Isolation strategy name (e.g. 'in-process').",
+        GroupName = "Agent",
+        Order = 16)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 16)]
     public string? IsolationStrategy { get; set; }
     /// <summary>Prompt caching retention policy for this agent. Null means provider default (short) is used.</summary>
     [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<BotNexus.Agent.Providers.Core.Models.CacheRetention>))]
+    [Display(
+        Name = "Cache retention",
+        Description = "Prompt caching retention policy for this agent. Null means provider default (short) is used.",
+        GroupName = "Agent",
+        Order = 17)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 17)]
     public BotNexus.Agent.Providers.Core.Models.CacheRetention? CacheRetention { get; set; }
     /// <summary>
     /// Agent-level default thinking (reasoning) level. Agent layer of the three-layer
@@ -1259,10 +1742,28 @@ public sealed class AgentDefinitionConfig
     [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 5)]
     public int? ContextWindow { get; set; }
     /// <summary>Maximum concurrent sessions for this agent.</summary>
+    [Display(
+        Name = "Max concurrent sessions",
+        Description = "Maximum concurrent sessions for this agent.",
+        GroupName = "Agent",
+        Order = 18)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "agent", Order = 18)]
     public int? MaxConcurrentSessions { get; set; }
     /// <summary>Agent-level metadata.</summary>
+    [Display(
+        Name = "Metadata",
+        Description = "Agent-level metadata.",
+        GroupName = "Agent",
+        Order = 19)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 19)]
     public JsonElement? Metadata { get; set; }
     /// <summary>Strategy-specific isolation options.</summary>
+    [Display(
+        Name = "Isolation options",
+        Description = "Strategy-specific isolation options.",
+        GroupName = "Agent",
+        Order = 20)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 20)]
     public JsonElement? IsolationOptions { get; set; }
     /// <summary>Whether this agent is enabled.</summary>
     [Display(
@@ -1274,18 +1775,60 @@ public sealed class AgentDefinitionConfig
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "agent", Order = 3)]
     public bool Enabled { get; set; } = true;
     /// <summary>Memory system configuration for this agent.</summary>
+    [Display(
+        Name = "Memory",
+        Description = "Memory system configuration for this agent.",
+        GroupName = "Agent",
+        Order = 21)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 21)]
     public MemoryAgentConfig? Memory { get; set; }
     /// <summary>Soul session lifecycle configuration for this agent.</summary>
+    [Display(
+        Name = "Soul",
+        Description = "Soul session lifecycle configuration for this agent.",
+        GroupName = "Agent",
+        Order = 22)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 22)]
     public SoulAgentConfig? Soul { get; set; }
     /// <summary>Heartbeat polling configuration.</summary>
+    [Display(
+        Name = "Heartbeat",
+        Description = "Heartbeat polling configuration.",
+        GroupName = "Agent",
+        Order = 23)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 23)]
     public HeartbeatAgentConfig? Heartbeat { get; set; }
     /// <summary>Datetime injection configuration override for this agent. Overrides world default when set.</summary>
+    [Display(
+        Name = "Date time injection",
+        Description = "Datetime injection configuration override for this agent. Overrides world default when set.",
+        GroupName = "Agent",
+        Order = 24)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 24)]
     public DateTimeInjectionConfig? DateTimeInjection { get; set; }
     /// <summary>Session access configuration for this agent's session tool.</summary>
+    [Display(
+        Name = "Session access",
+        Description = "Session access configuration for this agent's session tool.",
+        GroupName = "Agent",
+        Order = 25)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 25)]
     public SessionAccessConfig? SessionAccess { get; set; }
     /// <summary>Conversation access configuration for this agent's conversation tool.</summary>
+    [Display(
+        Name = "Conversation access",
+        Description = "Conversation access configuration for this agent's conversation tool.",
+        GroupName = "Agent",
+        Order = 26)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 26)]
     public ConversationAccessConfig? ConversationAccess { get; set; }
     /// <summary>File access policy for this agent's file tools.</summary>
+    [Display(
+        Name = "File access",
+        Description = "File access policy for this agent's file tools.",
+        GroupName = "Agent",
+        Order = 27)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 27)]
     public FileAccessPolicyConfig? FileAccess { get; set; }
 
     /// <summary>
@@ -1293,15 +1836,33 @@ public sealed class AgentDefinitionConfig
     /// Element [0] is the executable, remaining elements are base arguments.
     /// The agent's command string is appended as the final argument.
     /// </summary>
+    [Display(
+        Name = "Shell command",
+        Description = "Custom shell command array for this agent. Overrides the gateway-level ShellCommand. Element [0] is the executable, remaining elements are base arguments. The agent's command string is appended as the final argument.",
+        GroupName = "Agent",
+        Order = 28)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 28)]
     public string[]? ShellCommand { get; set; }
 
     /// <summary>
     /// Extension-specific configuration keyed by extension ID.
     /// Each extension reads its own section (e.g., "botnexus-skills", "botnexus-exec").
     /// </summary>
+    [Display(
+        Name = "Extensions",
+        Description = "Extension-specific configuration keyed by extension ID. Each extension reads its own section (e.g., \"botnexus-skills\", \"botnexus-exec\").",
+        GroupName = "Agent",
+        Order = 29)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 29)]
     public Dictionary<string, JsonElement>? Extensions { get; set; }
 
     /// <summary>Tool policy overrides for this agent.</summary>
+    [Display(
+        Name = "Tool policy",
+        Description = "Tool policy overrides for this agent.",
+        GroupName = "Agent",
+        Order = 30)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 30)]
     public ToolPolicyConfig? ToolPolicy { get; set; }
 
     /// <summary>
@@ -1311,6 +1872,12 @@ public sealed class AgentDefinitionConfig
     /// <c>DefaultSubAgentManager.SpawnAsync</c>. Omit the field entirely on existing
     /// configs; the default is <c>Named</c>.
     /// </summary>
+    [Display(
+        Name = "Kind",
+        Description = "Optional. Kind of agent — currently only Named is accepted from config. SubAgent is rejected by AgentDescriptorValidator.ValidateForConfig; sub-agents are runtime-only and produced exclusively by DefaultSubAgentManager.SpawnAsync. Omit the field entirely on existing configs; the default is Named.",
+        GroupName = "Agent",
+        Order = 31)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 31)]
     public AgentKind? Kind { get; set; }
 }
 
@@ -1318,12 +1885,30 @@ public sealed class AgentDefinitionConfig
 public sealed class FileAccessPolicyConfig
 {
     /// <summary>Paths the agent can read (exact paths or glob patterns).</summary>
+    [Display(
+        Name = "Allowed read paths",
+        Description = "Paths the agent can read (exact paths or glob patterns).",
+        GroupName = "File access policy",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "file-access-policy", Order = 0)]
     public List<string>? AllowedReadPaths { get; set; }
 
     /// <summary>Paths the agent can write (exact paths or glob patterns).</summary>
+    [Display(
+        Name = "Allowed write paths",
+        Description = "Paths the agent can write (exact paths or glob patterns).",
+        GroupName = "File access policy",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "file-access-policy", Order = 1)]
     public List<string>? AllowedWritePaths { get; set; }
 
     /// <summary>Paths explicitly denied even if otherwise allowed.</summary>
+    [Display(
+        Name = "Denied paths",
+        Description = "Paths explicitly denied even if otherwise allowed.",
+        GroupName = "File access policy",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "file-access-policy", Order = 2)]
     public List<string>? DeniedPaths { get; set; }
 }
 
@@ -1331,12 +1916,30 @@ public sealed class FileAccessPolicyConfig
 public sealed class ToolPolicyConfig
 {
     /// <summary>Tools that always require approval regardless of default classification.</summary>
+    [Display(
+        Name = "Always approve",
+        Description = "Tools that always require approval regardless of default classification.",
+        GroupName = "Tool policy",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "tool-policy", Order = 0)]
     public List<string>? AlwaysApprove { get; set; }
 
     /// <summary>Tools that skip approval even if classified as dangerous (trusted).</summary>
+    [Display(
+        Name = "Never approve",
+        Description = "Tools that skip approval even if classified as dangerous (trusted).",
+        GroupName = "Tool policy",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "tool-policy", Order = 1)]
     public List<string>? NeverApprove { get; set; }
 
     /// <summary>Tools completely blocked for this agent.</summary>
+    [Display(
+        Name = "Denied",
+        Description = "Tools completely blocked for this agent.",
+        GroupName = "Tool policy",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "tool-policy", Order = 2)]
     public List<string>? Denied { get; set; }
 
     /// <summary>
@@ -1351,6 +1954,12 @@ public sealed class ToolPolicyConfig
     /// approval-required tool unusable for that agent. Set it deliberately for agents whose
     /// dangerous tools should never run without a human in the loop.
     /// </remarks>
+    [Display(
+        Name = "Ask fallback",
+        Description = "Posture applied when a tool requires approval but no approval workflow can service the request (issue #2391). Accepted values are allow (default, historical behaviour -- execution proceeds with an audit record) and deny (fail closed -- the call is refused with an ask-fallback-deny reason).",
+        GroupName = "Tool policy",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "tool-policy", Order = 3)]
     public string? AskFallback { get; set; }
 
     /// <summary>
@@ -1358,6 +1967,12 @@ public sealed class ToolPolicyConfig
     /// tool named here falls back to <c>allow</c> instead of being refused, so a fail-closed agent
     /// can still keep a narrow set of tools working.
     /// </summary>
+    [Display(
+        Name = "Ask fallback allow",
+        Description = "Tools exempted from AskFallback when it is deny. An approval-required tool named here falls back to allow instead of being refused, so a fail-closed agent can still keep a narrow set of tools working.",
+        GroupName = "Tool policy",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "tool-policy", Order = 4)]
     public List<string>? AskFallbackAllow { get; set; }
 }
 
@@ -1365,8 +1980,20 @@ public sealed class ToolPolicyConfig
 public sealed class SessionAccessConfig
 {
     /// <summary>Access level: "own" (default), "allowlist", or "all".</summary>
+    [Display(
+        Name = "Level",
+        Description = "Access level: \"own\" (default), \"allowlist\", or \"all\".",
+        GroupName = "Session access",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "session-access", Order = 0)]
     public string Level { get; set; } = "own";
     /// <summary>Agent IDs this agent can view sessions for (when level is "allowlist").</summary>
+    [Display(
+        Name = "Allowed agents",
+        Description = "Agent IDs this agent can view sessions for (when level is \"allowlist\").",
+        GroupName = "Session access",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "session-access", Order = 1)]
     public List<string>? AllowedAgents { get; set; }
 }
 
@@ -1374,8 +2001,20 @@ public sealed class SessionAccessConfig
 public sealed class ConversationAccessConfig
 {
     /// <summary>Access level: "own" (default), "allowlist", or "all".</summary>
+    [Display(
+        Name = "Level",
+        Description = "Access level: \"own\" (default), \"allowlist\", or \"all\".",
+        GroupName = "Conversation access",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "conversation-access", Order = 0)]
     public string Level { get; set; } = "own";
     /// <summary>Agent IDs this agent can view conversations for (when level is "allowlist").</summary>
+    [Display(
+        Name = "Allowed agents",
+        Description = "Agent IDs this agent can view conversations for (when level is \"allowlist\").",
+        GroupName = "Conversation access",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "conversation-access", Order = 1)]
     public List<string>? AllowedAgents { get; set; }
 }
 
@@ -1403,6 +2042,12 @@ public sealed class ConversationAccessConfig
 public sealed class ChannelConfig
 {
     /// <summary>Channel type (e.g. 'signalr', 'slack').</summary>
+    [Display(
+        Name = "Type",
+        Description = "Channel type (e.g. 'signalr', 'slack').",
+        GroupName = "Channel",
+        Order = 100)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "channel", Order = 100)]
     public string? Type { get; set; }
     /// <summary>Whether this channel is enabled.</summary>
     [Display(
@@ -1420,6 +2065,12 @@ public sealed class ChannelConfig
     /// <c>Dictionary&lt;string,string&gt;</c> such a value could not even be represented, so it was
     /// lost on the way through the typed graph.
     /// </remarks>
+    [Display(
+        Name = "Settings",
+        Description = "Adapter-specific settings.",
+        GroupName = "Channel",
+        Order = 101)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "channel", Order = 101)]
     public Dictionary<string, JsonElement>? Settings { get; set; }
 
     /// <summary>
@@ -1438,6 +2089,9 @@ public sealed class ChannelConfig
     /// the fence baseline was not an option - the baseline may only shrink, and rightly so.</para>
     /// </remarks>
     [JsonExtensionData]
+    [Display(
+        Name = "Additional settings",
+        Description = "Channel-specific settings not modelled elsewhere. Preserved verbatim on write so unknown keys are never dropped (#2816).")]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "channel", Order = 99)]
     public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
 }
@@ -1446,10 +2100,25 @@ public sealed class ChannelConfig
 public sealed class SessionStoreConfig
 {
     /// <summary>Store type. Supported values: InMemory, File, or Sqlite.</summary>
+    [Display(
+        Name = "Type",
+        Description = "Store type. Supported values: InMemory, File, or Sqlite.",
+        GroupName = "Session store",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "session-store", Order = 3)]
     public string? Type { get; set; }
     /// <summary>Path used by file-based session store implementation.</summary>
+    [Display(
+        Name = "File path",
+        Description = "Path used by file-based session store implementation.",
+        GroupName = "Session store",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "session-store", Order = 4)]
     public string? FilePath { get; set; }
     /// <summary>Connection string used by SQLite session store implementation.</summary>
+    [Display(
+        Name = "Connection string",
+        Description = "Connection string for the session store. Sensitive: contains credentials and is stored and shown masked.")]
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "session-store", Order = 2, Secret = true)]
     public string? ConnectionString { get; set; }
 }
@@ -1466,16 +2135,52 @@ public sealed class ApiKeyConfig
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "api-key", Order = 0, Secret = true)]
     public string? ApiKey { get; set; }
     /// <summary>Tenant identifier for multi-tenant isolation.</summary>
+    [Display(
+        Name = "Tenant ID",
+        Description = "Tenant identifier for multi-tenant isolation.",
+        GroupName = "API key",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "api-key", Order = 1)]
     public string? TenantId { get; set; }
     /// <summary>Caller identifier used in audit logs.</summary>
+    [Display(
+        Name = "Caller ID",
+        Description = "Caller identifier used in audit logs.",
+        GroupName = "API key",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "api-key", Order = 2)]
     public string? CallerId { get; set; }
     /// <summary>Human-readable name for this key.</summary>
+    [Display(
+        Name = "Display name",
+        Description = "Human-readable name for this key.",
+        GroupName = "API key",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "api-key", Order = 3)]
     public string? DisplayName { get; set; }
     /// <summary>Agent IDs this key is allowed to access. Empty means all.</summary>
+    [Display(
+        Name = "Allowed agents",
+        Description = "Agent IDs this key is allowed to access. Empty means all.",
+        GroupName = "API key",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "api-key", Order = 4)]
     public List<string>? AllowedAgents { get; set; }
     /// <summary>Permissions granted to this key (e.g. 'chat:send', 'sessions:read').</summary>
+    [Display(
+        Name = "Permissions",
+        Description = "Permissions granted to this key (e.g. 'chat:send', 'sessions:read').",
+        GroupName = "API key",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "api-key", Order = 5)]
     public List<string>? Permissions { get; set; }
     /// <summary>Whether this key has administrative privileges.</summary>
+    [Display(
+        Name = "Is admin",
+        Description = "Whether this key has administrative privileges.",
+        GroupName = "API key",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "api-key", Order = 6)]
     public bool IsAdmin { get; set; }
 }
 
@@ -1490,6 +2195,12 @@ public sealed class WorkspacePortalConfig
     /// Files larger than this are truncated server-side and flagged in the UI.
     /// Defaults to 524288 (512 KB). Set to 0 for no server-side limit.
     /// </summary>
+    [Display(
+        Name = "Max report file size bytes",
+        Description = "Maximum number of bytes read from a report file for portal preview. Files larger than this are truncated server-side and flagged in the UI. Defaults to 524288 (512 KB). Set to 0 for no server-side limit.",
+        GroupName = "Workspace portal",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "workspace-portal", Order = 0)]
     public int MaxReportFileSizeBytes { get; set; } = 512 * 1024;
 }
 
@@ -1504,6 +2215,12 @@ public sealed class AuxiliaryConfig
     /// this property must remain an object so the bound config matches the on-disk shape.
     /// </summary>
     [System.Text.Json.Serialization.JsonConverter(typeof(TitlingConfigJsonConverter))]
+    [Display(
+        Name = "Titling",
+        Description = "Conversation title generation settings. Hydrated by AuxiliarySchemaContributor as a nested object ({ model, timeoutSeconds }); this property must remain an object so the bound config matches the on-disk shape.",
+        GroupName = "Auxiliary",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "auxiliary", Order = 0)]
     public TitlingConfig? Titling { get; set; }
 
     /// <summary>
@@ -1514,6 +2231,12 @@ public sealed class AuxiliaryConfig
     /// If the resolved auxiliary model has a smaller context window than the compaction
     /// threshold, a startup warning is emitted but the gateway continues to run.
     /// </summary>
+    [Display(
+        Name = "Compression",
+        Description = "Model ID to use for session compaction summarisation (cheap/fast auxiliary model). Supports any registered provider model ID (e.g. \"gpt-4o-mini\", \"claude-haiku-3-5\"). When null or empty the primary SummarizationModel or the compactor's default waterfall is used. If the resolved auxiliary model has a smaller context window than the compaction threshold, a startup warning is emitted but the gateway continues to run.",
+        GroupName = "Auxiliary",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "auxiliary", Order = 1)]
     public string? Compression { get; set; }
 }
 
@@ -1528,6 +2251,12 @@ public sealed class TitlingConfig
     /// renames them. Defaults to true. Surfaced as config because the only prior way to disable
     /// auto-titling was to leave no models registered, which is a poor proxy for intent.
     /// </summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Master switch for conversation auto-titling. When false the gateway never schedules a title-generation call and conversations keep their default title until a user or agent renames them. Defaults to true. Surfaced as config because the only prior way to disable auto-titling was to leave no models registered, which is a poor proxy for intent.",
+        GroupName = "Titling",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "titling", Order = 0)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>
@@ -1536,6 +2265,12 @@ public sealed class TitlingConfig
     /// "claude-haiku-3-5", "gemini-2.0-flash-lite").
     /// When null or empty the primary session model is used as fallback.
     /// </summary>
+    [Display(
+        Name = "Model",
+        Description = "Model ID to use for auto-generating conversation titles after the first user+assistant exchange. Supports any registered provider model ID (e.g. \"gpt-4o-mini\", \"claude-haiku-3-5\", \"gemini-2.0-flash-lite\"). When null or empty the primary session model is used as fallback.",
+        GroupName = "Titling",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "titling", Order = 1)]
     public string? Model { get; set; }
 
     /// <summary>
@@ -1543,5 +2278,11 @@ public sealed class TitlingConfig
     /// abandoned. Defaults to 30 seconds. A non-positive value falls back to the 30s default so a
     /// mis-set zero never produces a zero-timeout that cancels every call instantly.
     /// </summary>
+    [Display(
+        Name = "Timeout seconds",
+        Description = "Maximum time in seconds allowed for the best-effort title generation call before it is abandoned. Defaults to 30 seconds. A non-positive value falls back to the 30s default so a mis-set zero never produces a zero-timeout that cancels every call instantly.",
+        GroupName = "Titling",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "titling", Order = 2)]
     public int TimeoutSeconds { get; set; } = 30;
 }
