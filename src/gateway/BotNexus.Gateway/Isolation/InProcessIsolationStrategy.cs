@@ -1567,6 +1567,47 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// Extracted as an internal static so both branches are pinned independently by test.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// Projects a turn that ended in a provider error onto an <see cref="AgentStreamEventType.Error"/>
+    /// stream event, or <see langword="null"/> when the turn ended normally.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="MapAgentEvent"/> maps <c>TurnEndEvent</c> onto a bare <c>TurnEnd</c> that carries
+    /// neither <c>FinishReason</c> nor <c>ErrorMessage</c>, and the agent loop settles an errored turn
+    /// through that same <c>TurnEndEvent</c> rather than through a distinct error event. Nothing else
+    /// produced <c>AgentStreamEventType.Error</c> except the stall watchdog and the two internal
+    /// exception paths, so a genuine provider failure — a 404 for a retired model id, a rejected
+    /// credential — reached every consumer keyed on that type as silence. The run was then reported
+    /// as "terminated on an empty assistant completion", a symptom that names neither the fault nor
+    /// the provider and sends the reader looking for a bug in the agent instead of the request.
+    /// </para>
+    /// <para>
+    /// Gated strictly on <see cref="StopReason.Error"/>. A cancelled turn also carries an
+    /// <c>ErrorMessage</c> ("Operation aborted"), so keying on a non-empty message alone would
+    /// promote every ordinary abort into a client-visible error.
+    /// </para>
+    /// </remarks>
+    /// <param name="agentEvent">The agent event being written.</param>
+    /// <param name="messageId">The stream message id to stamp onto the event.</param>
+    /// <returns>An error stream event, or null when this is not an errored turn end.</returns>
+    internal static AgentStreamEvent? MapTurnError(AgentEvent agentEvent, string messageId)
+    {
+        if (agentEvent is not TurnEndEvent { Message.FinishReason: StopReason.Error } turnEnd)
+            return null;
+
+        return new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.Error,
+            // A provider that errors without detail is rare but must still be distinguishable from
+            // a turn that simply produced nothing, so the event is emitted either way.
+            ErrorMessage = string.IsNullOrWhiteSpace(turnEnd.Message.ErrorMessage)
+                ? "The provider ended the turn with an error but supplied no detail."
+                : turnEnd.Message.ErrorMessage,
+            MessageId = messageId
+        };
+    }
+
     internal static async Task WriteAgentEventAsync(
         AgentEvent agentEvent,
         string messageId,
@@ -1584,6 +1625,14 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
             if (streamEvent is not null)
                 await writer.WriteAsync(streamEvent, cancellationToken);
+
+            // Written AFTER the mapped event on purpose: a turn that produced partial output before
+            // failing still flushes that content on TurnEnd, and the error then explains why the
+            // turn stopped rather than displacing what the model did manage to say.
+            var turnError = MapTurnError(agentEvent, messageId);
+
+            if (turnError is not null)
+                await writer.WriteAsync(turnError, cancellationToken);
         }
         catch (OperationCanceledException) when (isCallerCancellation())
         {
