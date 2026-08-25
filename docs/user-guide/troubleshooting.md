@@ -787,7 +787,7 @@ tail -f ~/.botnexus/logs/gateway.log | grep -i mcp
 **Use faster model:**
 ```json
 {
-  "model": "gpt-4o-mini"  // or "claude-haiku-4.5"
+  "model": "gpt-4o-mini"  // or "claude-haiku-4-5-20251001"
 }
 ```
 

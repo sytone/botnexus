@@ -33,8 +33,32 @@ public sealed class InterruptSteerButtonCssTests
         var ruleEnd = content.IndexOf('}', ruleStart);
         var ruleBlock = content.Substring(ruleStart, ruleEnd - ruleStart + 1);
 
-        // Must match steer-btn and abort-btn font-size of 0.85rem
-        Assert.Contains("font-size: 0.85rem", ruleBlock, StringComparison.OrdinalIgnoreCase);
+        // The point is that the three related buttons agree, not what they agree on: the
+        // design system replaced the former 0.85rem literal with a shared type-role token, and
+        // pinning the literal here would redden on every future rename of a value that is
+        // deliberately defined in one place.
+        var fontSize = FontSizeOf(content, ".interrupt-steer-btn {");
+        Assert.False(string.IsNullOrWhiteSpace(fontSize), ".interrupt-steer-btn declares no font-size");
+        Assert.Equal(FontSizeOf(content, ".steer-btn {"), fontSize);
+        Assert.Equal(FontSizeOf(content, ".abort-btn {"), fontSize);
+    }
+
+    /// <summary>Returns the font-size declared by the first rule with this selector, or null.</summary>
+    private static string? FontSizeOf(string css, string selector)
+    {
+        var start = css.IndexOf(selector, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+
+        var end = css.IndexOf('}', start);
+        foreach (var line in css[start..end].Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("font-size:", StringComparison.OrdinalIgnoreCase))
+                return trimmed.TrimEnd(';').Trim();
+        }
+
+        return null;
     }
 
     [Fact]

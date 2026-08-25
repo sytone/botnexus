@@ -41,6 +41,21 @@
                     When enabled, shows a confirmation prompt before archiving or closing a conversation.
                 </div>
                 <div class="portal-settings-row">
+                    <label class="portal-settings-label" for="portal-theme-select">Colour theme</label>
+                    <select id="portal-theme-select"
+                            class="portal-settings-select"
+                            data-testid="theme-select"
+                            value="@Prefs.Current.Theme"
+                            @onchange="ChangeTheme">
+                        <option value="dark">Dark</option>
+                        <option value="light">Light</option>
+                    </select>
+                </div>
+                <div class="portal-settings-hint">
+                    Dark is the default. The choice is stored in this browser and applied before the
+                    page paints, so it does not flash on reload.
+                </div>
+                <div class="portal-settings-row">
                     <label class="portal-settings-label" for="portal-density-select">Interface density</label>
                     <select id="portal-density-select"
                             class="portal-settings-select"
@@ -96,6 +111,11 @@
     {
         var enabled = e.Value is bool b ? b : bool.Parse(e.Value?.ToString() ?? "false");
         await Prefs.SetDebugModeAsync(enabled);
+    }
+
+    private async Task ChangeTheme(ChangeEventArgs e)
+    {
+        await Prefs.SetThemeAsync(e.Value?.ToString() ?? PortalTheme.Dark);
     }
 
     private async Task ChangeDensity(ChangeEventArgs e)

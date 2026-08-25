@@ -1,23 +1,472 @@
 /* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
 
-:root {
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16213e;
-    --bg-surface: #0f3460;
-    --bg-input: #1a1a2e;
-    --text-primary: #e0e0e0;
-    --text-secondary: #a0a0b0;
-    --text-muted: #6c6c80;
-    --accent: #00b4d8;
-    --accent-hover: #0096c7;
-    --border: #2a2a4a;
-    --error: #e74c3c;
-    --success: #2ecc71;
-    --warning: #f39c12;
-    --radius: 8px;
-    --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+/* ── Inter ────────────────────────────────────────────────────────────────
+   Self-hosted rather than loaded from the Google Fonts CDN: the portal is
+   reachable on a LAN (and offline via the service worker), so text must not
+   depend on an internet round-trip to render.
+
+   One variable file per subset covers weights 400-700, so the four weights the
+   type scale uses cost a single download rather than four. The unicode-range
+   split means latin-ext (85 KB) is fetched only if a page actually renders a
+   glyph from it; the common path is the 48 KB latin file alone.
+
+   font-display: swap - text paints immediately in the fallback and reflows to
+   Inter when it arrives. The alternative (block) hides text for up to 3s, which
+   is a worse failure than a brief metric shift.
+
+   Inter is licensed under the SIL Open Font License 1.1.
+   ──────────────────────────────────────────────────────────────────────── */
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('../fonts/inter-latin-ext.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+                   U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF,
+                   U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
+
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('../fonts/inter-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+                   U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+                   U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── Design tokens ────────────────────────────────────────────────────────
+   The single source of truth for colour, type, radius, elevation, material,
+   motion and focus. Nothing below this block should contain a raw hex value,
+   a bare pixel radius, or an ad-hoc shadow — add a token here instead.
+
+   Informed by Apple's Human Interface Guidelines and Microsoft's Fluent 2,
+   taking what the two agree on rather than blending their surfaces:
+
+     - HIG "deference": chrome recedes so content leads. Depth comes from the
+       surface ladder, not from decorating every card with a shadow.
+     - HIG hit targets: 44px for touch. Fluent's desktop minimum is 32px.
+       Both are encoded below; the portal's compact density previously used
+       28px controls, under both.
+     - Fluent elevation: a small ramp of named tiers, not one shadow and not
+       a shadow per component.
+     - Fluent/HIG materials: floating chrome is translucent and blurred so the
+       layer beneath stays legible as context (acrylic / vibrancy).
+     - Fluent motion: named durations with distinct easing for entering vs.
+       exiting. Motion explains a change; it is never decorative.
+     - Both are emphatic about a visible keyboard focus indicator. One is
+       defined here and applied globally, rather than left to each control.
+
+   Themes: dark is the default and lives on :root, because dark was the only
+   theme this portal ever had and an existing user must not be repainted by
+   upgrading. Light is opt-in via [data-theme="light"] on <html>.
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root {
+    /* ── 1. Colour ─────────────────────────────────────────────────────── */
+
+    /* Surface ladder. Each step is a lightness increment on a near-neutral
+       slate, NOT a different hue. The previous palette used a saturated blue
+       (#0f3460) as its surface, which competed with the accent for attention
+       and is the main reason the shell read as dated. Per HIG deference,
+       surfaces recede and content carries the colour. */
+    --color-canvas: #0e1116;
+    --color-surface: #151a21;
+    --color-surface-2: #1c232c;
+    --color-hairline: #273039;
+
+    /* Text roles. Named "ink" rather than "text" so utility-style class names
+       never read as text-text-*. */
+    --color-ink: #e6edf3;
+    --color-ink-muted: #9aa7b4;
+    /* Lightened from #6b7885: that failed WCAG AA on all three dark surfaces (3.51-4.19).
+       Verified >= 4.6:1 against canvas, surface and surface-2. */
+    --color-ink-faint: #818c97;
+
+    /* ONE saturated colour. Primary actions, focus rings and the active nav
+       item only — never decoration, never a section heading. BotNexus's
+       established cyan is kept as the brand accent; the neutrals around it
+       are what changed. */
+    --color-accent: #00b4d8;
+    --color-accent-hover: #2bc9e8;
+    /* Text sitting directly ON a filled accent or danger surface. Never
+       --color-ink here: it flips between themes and will not reliably
+       contrast against a mid-tone fill. Cyan is light, so this is dark. */
+    --color-on-accent: #04222a;
+    --color-accent-ring: rgba(0, 180, 216, 0.45);
+    --color-accent-wash: rgba(0, 180, 216, 0.10);
+
+    /* Status. Three tokens per status, not one: a solid value for dot
+       indicators, plus a background/foreground pair for pills. Pills use the
+       pair rather than opacity tinting so they stay legible on any surface. */
+    --color-success: #3fb950;
+    --color-success-bg: #10261a;
+    --color-success-text: #56d364;
+
+    --color-warning: #d29922;
+    --color-warning-bg: #2a2009;
+    --color-warning-text: #e3b341;
+
+    --color-danger: #f85149;
+    /* A SOLID danger button carrying --color-on-solid needs a darker red than the dot/border
+       value: white on #f85149 is only 3.35:1. This clears 4.6:1 while staying recognisably the
+       same red. --color-danger stays bright where it is a 1px border or an 8px dot and
+       contrast against text does not apply. */
+    --color-danger-fill: #ce433d;
+    --color-danger-bg: #2c1315;
+    --color-danger-text: #ff7b72;
+
+    --color-info: #58a6ff;
+    --color-info-bg: #0d2136;
+    --color-info-text: #79c0ff;
+
+    /* ── 2. Typography ─────────────────────────────────────────────────── */
+    /* Seven roles. Components reference these, never a raw font-size.
+       Line-heights sit on the 4px grid so vertical rhythm survives mixing.
+       Sizes are in rem so an OS text-size preference still scales them —
+       the practical web equivalent of HIG's Dynamic Type. */
+    --text-display: 1.75rem;      /* 28px */
+    --text-display-lh: 2.25rem;   /* 36px */
+    --text-title: 1.25rem;        /* 20px */
+    --text-title-lh: 1.75rem;     /* 28px */
+    --text-heading: 1rem;         /* 16px */
+    --text-heading-lh: 1.5rem;    /* 24px */
+    --text-body: 0.875rem;        /* 14px */
+    --text-body-lh: 1.25rem;      /* 20px */
+    --text-label: 0.8125rem;      /* 13px */
+    --text-label-lh: 1.25rem;     /* 20px */
+    --text-caption: 0.75rem;      /* 12px */
+    --text-caption-lh: 1rem;      /* 16px */
+    --text-mono: 0.8125rem;       /* 13px */
+    --text-mono-lh: 1.25rem;      /* 20px */
+
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+
+    /* ── 3. Shape ──────────────────────────────────────────────────────── */
+    /* Two radii. Small controls take -sm; containers take -lg. The pill radius
+       is a shape, not a third size — status pills and avatars need it.
+       (HIG's continuous "squircle" curvature has no portable CSS equivalent
+       yet; plain border-radius is the honest approximation.) */
+    --radius-sm: 6px;
+    --radius-lg: 12px;
+    --radius-pill: 999px;
+
+    /* ── 4. Hit targets ────────────────────────────────────────────────── */
+    /* HIG asks for 44px on touch; Fluent's desktop pointer minimum is 32px.
+       Both are provided so a control can pick the one matching its input
+       modality rather than splitting the difference and satisfying neither. */
+    --hit-touch: 44px;
+
+    /* Glyph sizes for icon controls. Separate from the type roles on purpose: those describe
+       running text, and an emoji rendered at body size is not legible as a symbol. An icon has to
+       be recognised by SHAPE at a glance, which needs more size than a letterform does to be read
+       in a word. */
+    --icon-sm: 1rem;      /* 16px - secondary glyphs that sit inside dense rows */
+    --icon-md: 1.125rem;  /* 18px - primary action glyphs */
+    --hit-pointer: 32px;
+
+    /* ── 5. Elevation ──────────────────────────────────────────────────── */
+    /* Flat content — cards, tables, lists — carries NO shadow and is
+       separated by the surface ladder alone. Only floating chrome may use
+       these, and only the tier matching how far it sits from the page:
+         -raised  popovers, dropdowns, menus, tooltips
+         -overlay dialogs, command palette, toasts
+       Two tiers, not Fluent's full ramp: this portal has exactly two classes
+       of floating thing, and unused tiers invite arbitrary picking. */
+    --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.32);
+    --shadow-overlay: 0 16px 40px rgba(0, 0, 0, 0.48);
+
+    /* ── 6. Material ───────────────────────────────────────────────────── */
+    /* Fluent acrylic / HIG vibrancy: floating chrome is translucent and
+       blurred so the layer beneath reads as context rather than being
+       replaced. Applied via .material-* below, never ad-hoc, because blur is
+       expensive and must stay confined to chrome. */
+    --material-tint: rgba(21, 26, 33, 0.82);
+    --material-blur: 20px;
+    /* The opaque stand-in for browsers without backdrop-filter, and for the
+       reduced-transparency preference. */
+    --material-fallback: #171d25;
+
+    /* ── 7. Motion ─────────────────────────────────────────────────────── */
+    /* Fluent's insight worth keeping: entering and exiting are not the same
+       gesture. Entering decelerates (arrives and settles); exiting
+       accelerates (leaves decisively). Durations stay short — anything past
+       ~200ms on UI chrome reads as sluggish rather than smooth. */
+    --motion-fast: 100ms;    /* hover / press feedback */
+    --motion-base: 160ms;    /* open / close */
+    --motion-slow: 240ms;    /* larger surfaces: drawers, panels */
+    --ease-enter: cubic-bezier(0.1, 0.9, 0.2, 1);
+    --ease-exit: cubic-bezier(0.7, 0, 0.84, 0);
+    --ease-standard: cubic-bezier(0.33, 0, 0.67, 1);
+
+    /* ── 8. Focus ──────────────────────────────────────────────────────── */
+    /* One focus treatment, defined once and applied globally below. Both HIG
+       and Fluent treat a visible keyboard focus indicator as non-negotiable;
+       leaving it to each control is how portals end up with controls that
+       cannot be reached by keyboard at all. The offset keeps the ring clear
+       of the control's own border so it stays visible on any surface. */
+    --focus-ring-width: 2px;
+    --focus-ring-offset: 2px;
+    --focus-ring-color: var(--color-accent);
+
+    /* ── 10. Compatibility aliases for previously-undeclared tokens ────── */
+    /* 34 names the stylesheet referenced with an inline hex fallback but never
+       declared. The fallbacks were hardcoded, so these could not theme.
+       Declaring them maps 74 call sites onto the semantic roles at once. */
+    --text: var(--color-ink);
+    --surface: var(--color-surface);
+    --surface-2: var(--color-surface-2);
+    --surface-3: var(--color-surface-2);
+    --surface-hover: var(--color-surface-2);
+    --surface-raised: var(--color-surface);
+    --surface-sunken: var(--color-canvas);
+    --panel-bg: var(--color-surface);
+    --input-bg: var(--color-surface);
+    --bg-tertiary: var(--color-surface-2);
+    --bg-elevated: var(--color-surface-2);
+    --bg-hover: var(--color-surface-2);
+    --hover-bg: var(--color-surface-2);
+    --border-color: var(--color-hairline);
+    --border-color-subtle: var(--color-hairline);
+    --border-subtle: var(--color-hairline);
+    --sidebar-border: var(--color-hairline);
+    --border-focus: var(--color-accent);
+    --accent-fg: var(--color-on-accent);
+    --danger: var(--color-danger);
+    --color-error: var(--color-danger);
+    --error-color: var(--color-danger);
+    --status-green: var(--color-success);
+
+    /* ── 11. Category palette ──────────────────────────────────────────── */
+    /* Distinct hues that identify a KIND of thing (a live run, a pinned item,
+       a webhook) rather than signalling status or inviting an action. They are
+       deliberately not the UI accent: the accent means "act here", and reusing
+       it for classification would dilute that. Kept desaturated so a screen
+       showing several at once stays calm. */
+    --cat-live: #2ea36a;
+    --cat-pinned: #a3823c;
+    --cat-agent: #6c6c80;
+    --cat-subagent: #4f8570;
+    --cat-a2a: #96714a;
+    --cat-webhook: #8272a8;
+    --cat-blue: #60a5fa;
+    --cat-blue-bg: #16304f;
+    --cat-purple: #a78bfa;
+    --cat-purple-bg: #281a45;
+    --cat-muted: #5b6b80;
+
+    /* Legacy names for the category palette. */
+    --accent-live: var(--cat-live);
+    --accent-pinned: var(--cat-pinned);
+    --accent-agent: var(--cat-agent);
+    --accent-subagent: var(--cat-subagent);
+    --accent-a2a: var(--cat-a2a);
+    --accent-webhook: var(--cat-webhook);
+    --accent-blue: var(--cat-blue);
+    --accent-blue-bg: var(--cat-blue-bg);
+    --accent-purple: var(--cat-purple);
+    --accent-purple-bg: var(--cat-purple-bg);
+    --accent-muted: var(--cat-muted);
+
+    /* ── 12. Fills, washes and scrims ──────────────────────────────────── */
+    /* Text or a knob sitting on a SATURATED fill — status pills, category
+       badges. Distinct from --color-on-accent because the accent is a light
+       cyan needing dark text, while status and category fills are mid-to-dark
+       and need light text. One token cannot serve both. */
+    --color-on-solid: #ffffff;
+
+    /* Iframe canvases hosting third-party HTML (tool output, embedded docs).
+       Deliberately NOT themed: the content inside assumes a white page, and
+       darkening the frame would leave black-on-black text. */
+    --color-embed-surface: #ffffff;
+
+    /* Scrims sit BEHIND floating chrome and dim the page. */
+    --color-scrim: rgba(0, 0, 0, 0.60);
+    --color-scrim-soft: rgba(0, 0, 0, 0.30);
+
+    /* Neutral washes: hover and selected states that must not read as status.
+       Expressed as translucent white on dark so they compose over any surface
+       step; the light theme flips them to translucent black. */
+    --color-wash: rgba(255, 255, 255, 0.06);
+    --color-wash-soft: rgba(255, 255, 255, 0.03);
+
+    /* Tinted washes, for a row or panel that carries a meaning. */
+    --color-accent-wash-soft: rgba(0, 180, 216, 0.06);
+    --color-accent-wash-strong: rgba(0, 180, 216, 0.22);
+    --color-success-wash: rgba(63, 185, 80, 0.14);
+    --color-warning-wash: rgba(210, 153, 34, 0.14);
+    --color-danger-wash: rgba(248, 81, 73, 0.14);
+    --color-info-wash: rgba(88, 166, 255, 0.14);
+
+    /* ── 9. Back-compatibility aliases ─────────────────────────────────── */
+    /* The pre-token names, remapped onto the semantic roles above, so the
+       rest of this stylesheet keeps working while component families migrate
+       one at a time. Prefer the --color-* names in new code; these retire
+       once no rule references them. */
+    --bg-primary: var(--color-canvas);
+    --bg-secondary: var(--color-surface);
+    --bg-surface: var(--color-surface-2);
+    --bg-input: var(--color-surface);
+    --text-primary: var(--color-ink);
+    --text-secondary: var(--color-ink-muted);
+    --text-muted: var(--color-ink-faint);
+    --accent: var(--color-accent);
+    --accent-hover: var(--color-accent-hover);
+    --border: var(--color-hairline);
+    --error: var(--color-danger);
+    --success: var(--color-success);
+    --warning: var(--color-warning);
+    /* Most of the 75 existing var(--radius) uses are small controls, so the
+       legacy alias resolves to the small token; containers move to
+       --radius-lg explicitly as each family migrates. */
+    --radius: var(--radius-sm);
+
+    --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    /* Inter first, with the platform stack behind it so text is legible during the swap
+       and if the woff2 fails to load entirely. */
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ── Light theme ──────────────────────────────────────────────────────────
+   Only tokens change; no component rule is duplicated. Contrast is tuned
+   rather than inverted — the accent darkens so it still passes against white,
+   and --color-on-accent flips to suit it. */
+[data-theme="light"] {
+    --color-canvas: #f6f8fa;
+    --color-surface: #ffffff;
+    --color-surface-2: #eef2f6;
+    --color-hairline: #d5dde5;
+
+    --color-ink: #10161d;
+    --color-ink-muted: #4d5a67;
+    /* Darkened from #6e7c8a: that failed AA on all three light surfaces (3.80-4.27). */
+    --color-ink-faint: #626e7b;
+
+    /* Darkened from #0b7f99: failed AA as text on canvas (4.37) and surface-2 (4.14).
+       Also improves white-on-accent for filled buttons, 4.66 -> 5.18. */
+    --color-accent: #0a7790;
+    --color-accent-hover: #086274;
+    --color-on-accent: #ffffff;
+    --color-accent-ring: rgba(10, 119, 144, 0.40);
+    --color-accent-wash: rgba(10, 119, 144, 0.08);
+
+    --color-success: #1a7f37;
+    --color-success-bg: #dcfce7;
+    --color-success-text: #14632c;
+
+    --color-warning: #9a6700;
+    --color-warning-bg: #fdf1d4;
+    --color-warning-text: #7d5300;
+
+    --color-danger: #cf222e;
+    --color-danger-fill: #cf222e;
+    --color-danger-bg: #fbe3e4;
+    --color-danger-text: #a40e26;
+
+    --color-info: #0969da;
+    --color-info-bg: #ddf0ff;
+    --color-info-text: #0a4f9e;
+
+    --color-on-solid: #ffffff;
+    --color-embed-surface: #ffffff;
+    --color-scrim: rgba(16, 22, 29, 0.45);
+    --color-scrim-soft: rgba(16, 22, 29, 0.22);
+    --color-wash: rgba(16, 22, 29, 0.05);
+    --color-wash-soft: rgba(16, 22, 29, 0.03);
+    --color-accent-wash-soft: rgba(10, 119, 144, 0.05);
+    --color-accent-wash-strong: rgba(10, 119, 144, 0.18);
+    --color-success-wash: rgba(26, 127, 55, 0.12);
+    --color-warning-wash: rgba(154, 103, 0, 0.12);
+    --color-danger-wash: rgba(207, 34, 46, 0.12);
+    --color-info-wash: rgba(9, 105, 218, 0.12);
+
+    /* Category palette, darkened so each still reads against a white surface. */
+    --cat-live: #1a7f52;
+    --cat-pinned: #8a6a24;
+    --cat-agent: #5b6472;
+    --cat-subagent: #3d6b58;
+    --cat-a2a: #7a5a34;
+    --cat-webhook: #6a5a90;
+    --cat-blue: #1f6feb;
+    --cat-blue-bg: #ddeaff;
+    --cat-purple: #7c4ddc;
+    --cat-purple-bg: #ede4ff;
+    --cat-muted: #64748b;
+
+    --shadow-raised: 0 4px 12px rgba(16, 22, 29, 0.10);
+    --shadow-overlay: 0 16px 40px rgba(16, 22, 29, 0.18);
+
+    --material-tint: rgba(255, 255, 255, 0.80);
+    --material-fallback: #ffffff;
+}
+
+/* ── Global focus indicator ───────────────────────────────────────────────
+   :focus-visible rather than :focus, so a pointer click does not leave a ring
+   behind while keyboard traversal always shows one. */
+:focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+    border-radius: var(--radius-sm);
+}
+
+/* ── Material (floating chrome only) ──────────────────────────────────── */
+.material-raised,
+.material-overlay {
+    background-color: var(--material-fallback);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .material-raised,
+    .material-overlay {
+        background-color: var(--material-tint);
+        -webkit-backdrop-filter: blur(var(--material-blur)) saturate(140%);
+        backdrop-filter: blur(var(--material-blur)) saturate(140%);
+    }
+}
+
+.material-raised { box-shadow: var(--shadow-raised); }
+.material-overlay { box-shadow: var(--shadow-overlay); }
+
+/* Translucency is an aesthetic, legibility is not. Honour the OS preference
+   by dropping to the opaque fallback. */
+@media (prefers-reduced-transparency: reduce) {
+    .material-raised,
+    .material-overlay {
+        background-color: var(--material-fallback);
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
+}
+
+/* Motion is an explanation, so removing it must never remove meaning — only
+   the movement. Anything conveyed by animation alone is a bug. */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ── Typography roles ─────────────────────────────────────────────────────
+   Applied as classes so markup states intent ("this is a title") rather than
+   a size. Weight is declared inside each role so a role can be reused at a
+   different weight without redefining the size. */
+.t-display { font-size: var(--text-display); line-height: var(--text-display-lh); font-weight: var(--weight-semibold); }
+.t-title   { font-size: var(--text-title);   line-height: var(--text-title-lh);   font-weight: var(--weight-semibold); }
+.t-heading { font-size: var(--text-heading); line-height: var(--text-heading-lh); font-weight: var(--weight-semibold); }
+.t-body    { font-size: var(--text-body);    line-height: var(--text-body-lh);    font-weight: var(--weight-regular); }
+.t-label   { font-size: var(--text-label);   line-height: var(--text-label-lh);   font-weight: var(--weight-medium); }
+.t-caption { font-size: var(--text-caption); line-height: var(--text-caption-lh); font-weight: var(--weight-regular); }
+.t-mono    { font-size: var(--text-mono);    line-height: var(--text-mono-lh);    font-weight: var(--weight-regular); font-family: var(--font-mono); }
 
 /* ── Density tokens (#2441) ──────────────────────────────────────────────
    Every piece of portal chrome spacing is expressed through these custom
@@ -41,7 +490,7 @@
     --density-row-pad-y: 0.2rem;
     --density-row-pad-x: 0.7rem;
     --density-gap: 0.4rem;
-    --density-control-h: 28px;
+    --density-control-h: var(--hit-pointer);
     --density-bar-h: 32px;
     --density-font-sm: 0.8rem;
     --density-font-xs: 0.68rem;
@@ -55,7 +504,7 @@
     --density-row-pad-y: 0.5rem;
     --density-row-pad-x: 1rem;
     --density-gap: 0.7rem;
-    --density-control-h: 40px;
+    --density-control-h: var(--hit-touch);
     --density-bar-h: 46px;
     --density-font-sm: 0.88rem;
     --density-font-xs: 0.75rem;
@@ -164,7 +613,7 @@ html, body, #app {
 }
 
 .banner-logo {
-    font-size: 1.2rem;
+    font-size: var(--text-title);
     line-height: 1;
     flex-shrink: 0;
 }
@@ -225,9 +674,9 @@ html, body, #app {
     align-items: center;
     gap: 12px;
     padding: 8px 20px;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--color-wash-soft);
     border-left: 3px solid var(--accent);
-    font-size: 0.82rem;
+    font-size: var(--text-label);
 }
 
 .announcement-item.warning {
@@ -249,12 +698,12 @@ html, body, #app {
     color: var(--text-muted);
     cursor: pointer;
     padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 0.9rem;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-body);
 }
 
 .announcement-dismiss:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--color-wash);
     color: var(--text-primary);
 }
 
@@ -270,8 +719,11 @@ html, body, #app {
 /* ── Main sidebar ───────────────────────────────────────────────────── */
 
 .main-sidebar {
+    /* flex-basis carries the default width and the splitter overrides it inline. min-width must be
+       0 or the 240px floor would fight the drag and the pane would refuse to narrow. */
+    flex: 0 0 240px;
     width: 240px;
-    min-width: 240px;
+    min-width: 0;
     background: var(--bg-secondary);
     border-right: 1px solid var(--border);
     display: flex;
@@ -285,7 +737,7 @@ html, body, #app {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--color-scrim);
     z-index: 99;
 }
 
@@ -317,6 +769,17 @@ html, body, #app {
 /* Desktop: sidebar always visible, burger is just for toggling preference */
 @media (min-width: 769px) {
     .main-sidebar.sidebar-closed {
+        display: none;
+    }
+
+    /* The drag handle exists only where there is a boundary to drag. */
+    .app-body > .sidebar-splitter {
+        display: flex;
+    }
+
+    /* A collapsed sidebar has no edge, so the handle must go with it - otherwise it floats
+       against the canvas offering to resize something that is not there. */
+    .main-sidebar.sidebar-closed + .sidebar-splitter {
         display: none;
     }
 
@@ -354,7 +817,7 @@ html, body, #app {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-primary);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     cursor: pointer;
 }
 
@@ -378,7 +841,7 @@ html, body, #app {
     padding: 5px 8px;
     border-radius: var(--radius);
     cursor: default;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     color: var(--text-secondary);
     transition: background 0.15s ease, color 0.15s ease;
 }
@@ -391,7 +854,7 @@ html, body, #app {
 
 /* Hover state for clickable sub-agent items */
 .agent-session-item[style*="cursor: pointer"]:hover:not(.active) {
-    background: rgba(15, 52, 96, 0.3);
+    background: var(--color-surface-2);
     color: var(--text-primary);
 }
 
@@ -417,7 +880,7 @@ html, body, #app {
 }
 
 .agent-list h3 {
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--text-muted);
@@ -425,7 +888,7 @@ html, body, #app {
 }
 
 .connection-status {
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     padding: 0.25rem 0.5rem;
     border-radius: var(--radius);
     margin-bottom: 0.5rem;
@@ -461,19 +924,19 @@ html, body, #app {
 }
 
 .agent-name {
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     font-weight: 500;
 }
 
 .agent-id {
-    font-size: 0.7rem;
+    font-size: var(--text-mono);
     color: var(--text-muted);
     font-family: var(--font-mono);
 }
 
 .text-muted {
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
 }
 
 /* ── Agent tabs (Phase 3 multi-session) ────────────────────────────── */
@@ -505,7 +968,7 @@ html, body, #app {
 }
 
 .agent-expand {
-    font-size: 0.65rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     width: 0.8rem;
     flex-shrink: 0;
@@ -513,7 +976,7 @@ html, body, #app {
 
 .agent-node-header .agent-name {
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -547,7 +1010,7 @@ html, body, #app {
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
-    font-size: 0.78rem;
+    font-size: var(--text-label);
     text-align: left;
     transition: background 0.15s;
 }
@@ -564,17 +1027,17 @@ html, body, #app {
 
 .channel-item.sub-agent {
     color: var(--text-muted);
-    font-size: 0.73rem;
+    font-size: var(--text-caption);
 }
 
 .channel-icon {
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     flex-shrink: 0;
 }
 
 .session-id-mini {
     font-family: var(--font-mono);
-    font-size: 0.6rem;
+    font-size: var(--text-mono);
     color: var(--text-muted);
     opacity: 0.6;
     margin-left: auto;
@@ -587,10 +1050,10 @@ html, body, #app {
     min-width: 20px;
     height: 20px;
     padding: 0 5px;
-    border-radius: 10px;
+    border-radius: var(--radius-pill);
     background: var(--accent);
-    color: #fff;
-    font-size: 0.7rem;
+    color: var(--color-on-accent);
+    font-size: var(--text-caption);
     font-weight: 700;
     line-height: 1;
 }
@@ -608,15 +1071,15 @@ html, body, #app {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-muted);
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     cursor: pointer;
     transition: all 0.15s;
 }
 
 .restart-btn:hover:not(:disabled) {
-    background: rgba(255, 80, 80, 0.1);
-    border-color: #f55;
-    color: #f88;
+    background: var(--color-danger-wash);
+    border-color: var(--color-danger);
+    color: var(--color-danger-text);
 }
 
 .restart-btn:disabled {
@@ -626,7 +1089,7 @@ html, body, #app {
 
 .agent-streaming-dot {
     color: var(--accent);
-    font-size: 0.65rem;
+    font-size: var(--text-caption);
     animation: pulse 1s ease-in-out infinite;
 }
 
@@ -642,7 +1105,7 @@ html, body, #app {
 }
 
 .connection-dot {
-    font-size: 0.6rem;
+    font-size: var(--text-caption);
     line-height: 1;
 }
 
@@ -672,7 +1135,7 @@ html, body, #app {
 }
 
 .connection-indicator-dot .connection-dot {
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
 }
 
 .connection-indicator.status-connected .connection-dot { color: var(--success); }
@@ -723,12 +1186,12 @@ html, body, #app {
 .agent-panel-avatar {
     width: 1.4rem;
     height: 1.4rem;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--bg-surface);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     line-height: 1;
     flex-shrink: 0;
     /* Multi-codepoint ZWJ emoji and combining marks must not push the circle out of
@@ -800,7 +1263,7 @@ html, body, #app {
     margin-left: auto;
     font-size: var(--density-font-xs);
     font-weight: 600;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     padding: 0.1rem 0.45rem;
     border: 1px solid var(--border);
     white-space: nowrap;
@@ -814,17 +1277,17 @@ html, body, #app {
 
 .agent-panel-status.idle {
     color: var(--text-secondary);
-    background: rgba(108, 108, 128, 0.12);
+    background: var(--color-wash);
 }
 
 .agent-panel-status.running {
     color: var(--accent);
-    background: rgba(0, 180, 216, 0.12);
+    background: var(--color-accent-wash);
 }
 
 .agent-panel-status.offline {
     color: var(--error);
-    background: rgba(231, 76, 60, 0.12);
+    background: var(--color-danger-wash);
 }
 
 .agent-tab-bar,
@@ -874,7 +1337,7 @@ html, body, #app {
 }
 
 .agent-tab-icon {
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     line-height: 1;
 }
 
@@ -911,7 +1374,7 @@ html, body, #app {
     border: 1px dashed var(--border);
     border-radius: var(--radius);
     color: var(--text-secondary);
-    font-size: 0.83rem;
+    font-size: var(--text-label);
 }
 
 .canvas-frame {
@@ -920,7 +1383,7 @@ html, body, #app {
     width: 100%;
     height: 100%;
     border: 0;
-    background: #fff;
+    background: var(--color-embed-surface);
 }
 
 /* Per-conversation Todo panel (#1464 step 5) */
@@ -942,11 +1405,11 @@ html, body, #app {
     border: 1px dashed var(--border);
     border-radius: var(--radius);
     color: var(--text-secondary);
-    font-size: 0.83rem;
+    font-size: var(--text-label);
 }
 
 .todo-progress {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     color: var(--text-secondary);
 }
 
@@ -960,17 +1423,17 @@ html, body, #app {
     align-items: baseline;
     gap: 0.45rem;
     padding: 0.5rem 0.6rem;
-    border: 1px solid #d97706;
+    border: 1px solid var(--color-warning);
     border-radius: var(--radius);
-    background: rgba(217, 119, 6, 0.08);
+    background: var(--color-warning-wash);
     color: var(--text-primary);
-    font-size: 0.8rem;
+    font-size: var(--text-label);
 }
 
 .todo-closeout-icon {
     flex: 0 0 auto;
-    color: #d97706;
-    font-size: 0.95rem;
+    color: var(--color-warning);
+    font-size: var(--text-body);
     line-height: 1;
 }
 
@@ -996,12 +1459,12 @@ html, body, #app {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--bg-secondary, var(--bg-primary));
-    font-size: 0.85rem;
+    font-size: var(--text-body);
 }
 
 .todo-item-box {
     flex: 0 0 auto;
-    font-size: 1rem;
+    font-size: var(--text-heading);
     line-height: 1;
 }
 
@@ -1014,7 +1477,7 @@ html, body, #app {
 
 .todo-item-status-label {
     flex: 0 0 auto;
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     text-transform: uppercase;
     letter-spacing: 0.02em;
     color: var(--text-secondary);
@@ -1026,11 +1489,11 @@ html, body, #app {
 }
 
 .todo-item.todo-status-done .todo-item-box {
-    color: #16a34a;
+    color: var(--color-success);
 }
 
 .todo-item.todo-status-in_progress .todo-item-box {
-    color: #d97706;
+    color: var(--color-warning);
 }
 
 .todo-item.todo-status-cancelled .todo-item-text {
@@ -1068,13 +1531,13 @@ html, body, #app {
     padding: 0.75rem;
     border: 1px dashed var(--border);
     border-radius: var(--radius);
-    font-size: 0.83rem;
+    font-size: var(--text-label);
     color: var(--text-secondary);
 }
 
 .workspace-state.workspace-state-error {
-    border-color: rgba(231, 76, 60, 0.5);
-    color: #f3b3ad;
+    border-color: var(--color-danger);
+    color: var(--color-danger-text);
 }
 
 .workspace-tree-list {
@@ -1112,7 +1575,7 @@ html, body, #app {
 }
 
 .workspace-tree-row:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--color-wash-soft);
 }
 
 .workspace-tree-row:focus-visible {
@@ -1121,8 +1584,8 @@ html, body, #app {
 }
 
 .workspace-tree-file.selected {
-    background: rgba(0, 180, 216, 0.15);
-    color: #8fe8ff;
+    background: var(--color-accent-wash);
+    color: var(--color-accent-hover);
 }
 
 .workspace-tree-chevron {
@@ -1153,7 +1616,7 @@ html, body, #app {
     height: 1.6rem;
     margin-right: 0.45rem;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
@@ -1161,8 +1624,8 @@ html, body, #app {
 }
 
 .workspace-tree-delete:hover {
-    background: rgba(255, 90, 90, 0.12);
-    color: #ff8e8e;
+    background: var(--color-danger-wash);
+    color: var(--color-danger-text);
 }
 
 .workspace-tree-delete:focus-visible {
@@ -1183,7 +1646,7 @@ html, body, #app {
     margin: 0.6rem 0.75rem 0;
     min-height: 36px;
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     background: transparent;
     color: var(--text-secondary);
     padding: 0.3rem 0.8rem;
@@ -1197,7 +1660,7 @@ html, body, #app {
 }
 
 .workspace-file-header h3 {
-    font-size: 0.84rem;
+    font-size: var(--text-mono);
     font-family: var(--font-mono);
     color: var(--text-secondary);
     white-space: nowrap;
@@ -1208,7 +1671,7 @@ html, body, #app {
 .workspace-file-truncation {
     margin-top: 0.45rem;
     color: var(--warning);
-    font-size: 0.78rem;
+    font-size: var(--text-label);
 }
 
 .workspace-file-content {
@@ -1218,7 +1681,7 @@ html, body, #app {
     padding: 0.85rem;
     overflow: auto;
     font-family: var(--font-mono);
-    font-size: 0.82rem;
+    font-size: var(--text-mono);
     line-height: 1.45;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -1237,7 +1700,7 @@ html, body, #app {
     background: var(--bg-primary);
     color: var(--text-primary);
     font-family: var(--font-mono);
-    font-size: 0.82rem;
+    font-size: var(--text-mono);
     line-height: 1.45;
     tab-size: 4;
     white-space: pre;
@@ -1304,7 +1767,7 @@ html, body, #app {
 }
 
 .panel-splitter.dragging {
-    background: rgba(0, 180, 216, 0.06);
+    background: var(--color-accent-wash-soft);
 }
 
 .reports-list {
@@ -1332,7 +1795,7 @@ html, body, #app {
 }
 
 .reports-list-row:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--color-wash-soft);
 }
 
 .reports-list-row:focus-visible {
@@ -1341,7 +1804,7 @@ html, body, #app {
 }
 
 .reports-list-row.selected {
-    background: rgba(0, 180, 216, 0.15);
+    background: var(--color-accent-wash);
 }
 
 .reports-list-name {
@@ -1354,13 +1817,13 @@ html, body, #app {
 
 .reports-list-meta {
     color: var(--text-muted);
-    font-size: 0.76rem;
+    font-size: var(--text-label);
 }
 
 .report-render-notice {
     margin-top: 0.45rem;
     color: var(--warning);
-    font-size: 0.78rem;
+    font-size: var(--text-label);
 }
 
 .report-content {
@@ -1369,7 +1832,7 @@ html, body, #app {
     margin: 0;
     padding: 0.85rem;
     overflow: auto;
-    font-size: 0.86rem;
+    font-size: var(--text-body);
     line-height: 1.5;
     overflow-wrap: anywhere;
     word-break: break-word;
@@ -1383,7 +1846,7 @@ html, body, #app {
     justify-content: center;
     height: 100%;
     color: var(--text-muted);
-    font-size: 0.95rem;
+    font-size: var(--text-body);
 }
 
 /* ── Chat panel ─────────────────────────────────────────────────────── */
@@ -1420,9 +1883,9 @@ html, body, #app {
 
 
 .streaming-badge {
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     color: var(--accent);
-    background: rgba(0, 180, 216, 0.12);
+    background: var(--color-accent-wash);
     padding: 0.15rem 0.5rem;
     border-radius: var(--radius);
     animation: pulse 1s ease-in-out infinite;
@@ -1462,12 +1925,12 @@ html, body, #app {
     background: transparent;
     align-self: flex-start;
     border: 1px dashed var(--border);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     color: var(--text-secondary);
 }
 
 .message.error {
-    background: rgba(231, 76, 60, 0.15);
+    background: var(--color-danger-wash);
     align-self: flex-start;
     border: 1px solid var(--error);
     color: var(--error);
@@ -1493,14 +1956,14 @@ html, body, #app {
 }
 
 .message-role {
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--text-muted);
 }
 
 .message-time {
-    font-size: 0.65rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     opacity: 0.7;
 }
@@ -1510,7 +1973,7 @@ html, body, #app {
     align-items: center;
     gap: 0.4rem;
     padding: 0.15rem 0;
-    font-size: 0.65rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     opacity: 0.7;
     flex-wrap: wrap;
@@ -1522,10 +1985,10 @@ html, body, #app {
 }
 .msg-copy-btn {
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: var(--bg-secondary);
     color: var(--text-secondary);
-    font-size: 0.72rem;
+    font-size: var(--text-caption);
     line-height: 1;
     padding: 0.15rem 0.3rem;
     cursor: pointer;
@@ -1548,7 +2011,7 @@ html, body, #app {
 
 .message-tool {
     margin-top: 0.35rem;
-    font-size: 0.8rem;
+    font-size: var(--text-mono);
     color: var(--text-muted);
     font-family: var(--font-mono);
 }
@@ -1596,13 +2059,13 @@ html, body, #app {
 }
 
 .ask-user-title {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     font-weight: 600;
     color: var(--text-primary);
 }
 
 .ask-user-timeout {
-    font-size: 0.75rem;
+    font-size: var(--text-mono);
     color: var(--text-muted);
     font-family: var(--font-mono);
 }
@@ -1625,7 +2088,7 @@ html, body, #app {
     align-items: flex-start;
     gap: 0.45rem;
     color: var(--text-secondary);
-    font-size: 0.9rem;
+    font-size: var(--text-body);
 }
 
 .ask-user-choice input {
@@ -1645,13 +2108,13 @@ html, body, #app {
     color: var(--text-primary);
     padding: 0.6rem 0.75rem;
     font-family: var(--font-sans);
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     resize: vertical;
 }
 
 .ask-user-error {
     color: var(--error);
-    font-size: 0.8rem;
+    font-size: var(--text-label);
 }
 
 .ask-user-actions {
@@ -1668,7 +2131,7 @@ html, body, #app {
     background: var(--bg-input);
     color: var(--text-primary);
     font-family: var(--font-sans);
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     resize: none;
     min-height: 40px;
     max-height: 120px;
@@ -1679,7 +2142,7 @@ html, body, #app {
 /* Prevent iOS Safari auto-zoom on input focus — must be >= 16px */
 @media (max-width: 768px) {
     .chat-input {
-        font-size: 16px;
+        font-size: var(--text-heading);
     }
 }
 
@@ -1697,9 +2160,9 @@ html, body, #app {
     border: none;
     border-radius: var(--radius);
     background: var(--accent);
-    color: #fff;
+    color: var(--color-on-accent);
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     cursor: pointer;
     transition: background 0.15s;
     align-self: flex-end;
@@ -1723,9 +2186,9 @@ html, body, #app {
     left: 0;
     right: 0;
     padding: 0.6rem 1.25rem;
-    background: var(--error);
-    color: white;
-    font-size: 0.85rem;
+    background: var(--color-danger-fill);
+    color: var(--color-on-solid);
+    font-size: var(--text-body);
     z-index: 1000;
 }
 
@@ -1798,7 +2261,7 @@ html, body, #app {
 }
 
 .session-id {
-    font-size: 0.7rem;
+    font-size: var(--text-mono);
     color: var(--text-muted);
     font-family: var(--font-mono);
     user-select: all;
@@ -1811,13 +2274,13 @@ html, body, #app {
     border-radius: var(--radius);
     background: transparent;
     color: var(--text-secondary);
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .reset-btn:hover {
-    background: rgba(231, 76, 60, 0.15);
+    background: var(--color-danger-wash);
     border-color: var(--error);
     color: var(--error);
 }
@@ -1827,7 +2290,7 @@ html, body, #app {
 .reset-confirm-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--color-scrim);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1873,15 +2336,15 @@ html, body, #app {
     padding: 0.4rem 1rem;
     border: none;
     border-radius: var(--radius);
-    background: var(--error);
-    color: #fff;
+    background: var(--color-danger-fill);
+    color: var(--color-on-solid);
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s;
 }
 
 .confirm-btn:hover {
-    background: #c0392b;
+    background: var(--color-danger);
 }
 
 /* ── Tool call display ──────────────────────────────────────────────── */
@@ -1890,7 +2353,7 @@ html, body, #app {
     max-width: 95%;
     padding: 0.2rem 0.6rem;
     margin-bottom: 0.1rem;
-    border-radius: calc(var(--radius) / 2);
+    border-radius: var(--radius-sm);
     line-height: 1;
 }
 
@@ -1913,25 +2376,25 @@ html, body, #app {
 }
 
 .tool-icon {
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     flex-shrink: 0;
 }
 
 .tool-name {
     font-family: var(--font-mono);
     font-weight: 500;
-    font-size: 0.85rem;
+    font-size: var(--text-mono);
 }
 
 .tool-duration {
-    font-size: 0.7rem;
+    font-size: var(--text-mono);
     color: var(--text-muted);
     font-family: var(--font-mono);
     margin-left: auto;
 }
 
 .tool-expand {
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     flex-shrink: 0;
     width: 1rem;
@@ -1948,7 +2411,7 @@ html, body, #app {
 }
 
 .tool-section-label {
-    font-size: 0.65rem;
+    font-size: var(--text-caption);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--text-muted);
@@ -1969,10 +2432,10 @@ html, body, #app {
 
 .tool-copy-btn {
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-muted);
-    font-size: 0.6rem;
+    font-size: var(--text-caption);
     line-height: 1;
     padding: 0.1rem 0.25rem;
     cursor: pointer;
@@ -1994,10 +2457,10 @@ html, body, #app {
 
 .tool-content {
     font-family: var(--font-mono);
-    font-size: 0.8rem;
-    background: rgba(0, 0, 0, 0.25);
+    font-size: var(--text-mono);
+    background: var(--color-scrim-soft);
     padding: 0.5rem 0.75rem;
-    border-radius: calc(var(--radius) / 2);
+    border-radius: var(--radius-sm);
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-all;
@@ -2015,10 +2478,10 @@ html, body, #app {
 
 .tool-popout-btn {
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-muted);
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     line-height: 1;
     padding: 0.1rem 0.25rem;
     cursor: pointer;
@@ -2040,7 +2503,7 @@ html, body, #app {
 .tool-modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--color-scrim);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2057,7 +2520,7 @@ html, body, #app {
     display: flex;
     flex-direction: column;
     outline: none;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    box-shadow: var(--shadow-overlay);
 }
 
 .tool-modal-header {
@@ -2077,11 +2540,11 @@ html, body, #app {
     border: none;
     background: transparent;
     color: var(--text-muted);
-    font-size: 1rem;
+    font-size: var(--text-heading);
     line-height: 1;
     cursor: pointer;
     padding: 0.2rem 0.4rem;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 .tool-modal-close:hover {
@@ -2091,10 +2554,10 @@ html, body, #app {
 
 .tool-modal-content {
     font-family: var(--font-mono);
-    font-size: 0.85rem;
+    font-size: var(--text-mono);
     line-height: 1.45;
     color: var(--text-secondary);
-    background: rgba(0, 0, 0, 0.25);
+    background: var(--color-scrim-soft);
     margin: 0;
     padding: 1rem;
     overflow: auto;
@@ -2109,10 +2572,10 @@ html, body, #app {
     padding: 0.6rem 1rem;
     border: 1px solid var(--accent);
     border-radius: var(--radius);
-    background: rgba(0, 180, 216, 0.12);
+    background: var(--color-accent-wash);
     color: var(--accent);
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     cursor: pointer;
     transition: background 0.15s;
     align-self: flex-end;
@@ -2120,7 +2583,7 @@ html, body, #app {
 }
 
 .steer-btn:hover:not(:disabled) {
-    background: rgba(0, 180, 216, 0.25);
+    background: var(--color-accent-wash-strong);
 }
 
 .steer-btn:disabled {
@@ -2130,12 +2593,12 @@ html, body, #app {
 
 .interrupt-steer-btn {
     padding: 0.6rem 0.85rem;
-    border: 1px solid var(--warning, #e67e22);
+    border: 1px solid var(--warning);
     border-radius: var(--radius);
-    background: rgba(230, 126, 34, 0.12);
-    color: var(--warning, #e67e22);
+    background: var(--color-warning-wash);
+    color: var(--warning);
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     cursor: pointer;
     transition: background 0.15s;
     align-self: flex-end;
@@ -2143,7 +2606,7 @@ html, body, #app {
 }
 
 .interrupt-steer-btn:hover:not(:disabled) {
-    background: rgba(230, 126, 34, 0.25);
+    background: var(--color-warning-wash);
 }
 
 .interrupt-steer-btn:disabled {
@@ -2152,12 +2615,12 @@ html, body, #app {
 }
 .followup-btn {
     padding: 0.6rem 0.85rem;
-    border: 1px solid var(--success, #2e9e5b);
+    border: 1px solid var(--success);
     border-radius: var(--radius);
-    background: rgba(46, 158, 91, 0.12);
-    color: var(--success, #2e9e5b);
+    background: var(--color-success-wash);
+    color: var(--success);
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     cursor: pointer;
     transition: background 0.15s;
     align-self: flex-end;
@@ -2165,7 +2628,7 @@ html, body, #app {
 }
 
 .followup-btn:hover:not(:disabled) {
-    background: rgba(46, 158, 91, 0.25);
+    background: var(--color-success-wash);
 }
 
 .followup-btn:disabled {
@@ -2176,10 +2639,10 @@ html, body, #app {
     padding: 0.6rem 0.85rem;
     border: 1px solid var(--error);
     border-radius: var(--radius);
-    background: rgba(231, 76, 60, 0.12);
+    background: var(--color-danger-wash);
     color: var(--error);
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     cursor: pointer;
     transition: background 0.15s;
     align-self: flex-end;
@@ -2187,7 +2650,7 @@ html, body, #app {
 }
 
 .abort-btn:hover {
-    background: rgba(231, 76, 60, 0.25);
+    background: var(--color-danger-wash);
 }
 
 /* ── History loading spinner ────────────────────────────────────────── */
@@ -2199,7 +2662,7 @@ html, body, #app {
     gap: 0.5rem;
     padding: 1rem;
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
 }
 
 /* #1691: scroll-up load-more affordance pinned above the message list. */
@@ -2210,16 +2673,16 @@ html, body, #app {
     gap: 0.5rem;
     padding: 0.5rem 1rem;
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
 }
 
 .history-load-more .load-more-btn {
     background: transparent;
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     color: var(--text-muted);
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     padding: 0.25rem 0.75rem;
 }
 
@@ -2241,10 +2704,10 @@ html, body, #app {
 .folded-history-toggle .load-more-btn {
     background: transparent;
     border: 1px dashed var(--border);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     color: var(--text-muted);
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     padding: 0.25rem 0.75rem;
 }
 
@@ -2270,7 +2733,7 @@ html, body, #app {
     justify-content: center;
     padding: 2rem 1rem;
     color: var(--text-muted);
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     text-align: center;
 }
 
@@ -2320,16 +2783,16 @@ html, body, #app {
 
 .msg-content code {
     font-family: var(--font-mono);
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--color-scrim-soft);
     padding: 0.15em 0.4em;
     border-radius: 3px;
     font-size: 0.9em;
 }
 
 .msg-content pre {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--color-scrim-soft);
     padding: 0.75rem 1rem;
-    border-radius: calc(var(--radius) / 2);
+    border-radius: var(--radius-sm);
     overflow-x: auto;
     margin: 0.5em 0;
     position: relative;
@@ -2347,10 +2810,10 @@ html, body, #app {
     top: 0.35rem;
     right: 0.35rem;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: var(--bg-secondary);
     color: var(--text-secondary);
-    font-size: 0.72rem;
+    font-size: var(--text-caption);
     line-height: 1;
     padding: 0.2rem 0.35rem;
     cursor: pointer;
@@ -2394,7 +2857,7 @@ html, body, #app {
 }
 
 .msg-content th {
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--color-scrim-soft);
     font-weight: 600;
 }
 
@@ -2410,7 +2873,7 @@ html, body, #app {
 
 .msg-content img {
     max-width: 100%;
-    border-radius: calc(var(--radius) / 2);
+    border-radius: var(--radius-sm);
 }
 
 /* ── Responsive adjustments ─────────────────────────────────────────── */
@@ -2602,21 +3065,21 @@ html, body, #app {
 .thinking-block {
     align-self: flex-start;
     max-width: 85%;
-    background: rgba(108, 108, 128, 0.08);
-    border: 1px solid rgba(108, 108, 128, 0.2);
+    background: var(--color-wash);
+    border: 1px solid var(--color-hairline);
     border-radius: var(--radius);
     padding: 0.5rem 0.75rem;
     margin-bottom: -0.25rem;
 }
 
 .thinking-block.live {
-    border-color: rgba(0, 180, 216, 0.3);
+    border-color: var(--color-accent-ring);
     animation: pulse 1.5s ease-in-out infinite;
 }
 
 .thinking-summary {
     cursor: pointer;
-    font-size: 0.78rem;
+    font-size: var(--text-label);
     color: var(--text-muted);
     font-style: italic;
     user-select: none;
@@ -2632,7 +3095,7 @@ html, body, #app {
 
 .thinking-summary::before {
     content: "▸";
-    font-size: 0.6rem;
+    font-size: var(--text-caption);
     transition: transform 0.15s;
 }
 
@@ -2642,7 +3105,7 @@ details[open] > .thinking-summary::before {
 
 .thinking-content {
     margin-top: 0.4rem;
-    font-size: 0.82rem;
+    font-size: var(--text-label);
     color: var(--text-muted);
     font-style: italic;
     line-height: 1.5;
@@ -2658,10 +3121,10 @@ details[open] > .thinking-summary::before {
 .system-message {
     align-self: center;
     text-align: center;
-    font-size: 0.78rem;
+    font-size: var(--text-label);
     color: var(--text-muted);
     padding: 0.3rem 0.75rem;
-    background: rgba(108, 108, 128, 0.08);
+    background: var(--color-wash);
     border-radius: var(--radius);
     max-width: 80%;
 }
@@ -2691,7 +3154,7 @@ details[open] > .thinking-summary::before {
     height: 32px;
     cursor: pointer;
     line-height: 1;
-    font-size: 1rem;
+    font-size: var(--text-heading);
 }
 
 .chat-header-overflow-trigger:hover {
@@ -2711,7 +3174,7 @@ details[open] > .thinking-summary::before {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 0.25rem;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-raised);
 }
 
 @media (max-width: 480px) {
@@ -2729,7 +3192,7 @@ details[open] > .thinking-summary::before {
     border-radius: var(--radius);
     background: transparent;
     color: var(--text-secondary);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     cursor: pointer;
     transition: all 0.15s;
     line-height: 1;
@@ -2753,7 +3216,7 @@ details[open] > .thinking-summary::before {
 }
 
 .conversation-header-action.archive:hover {
-    color: var(--error, #e55);
+    color: var(--error);
 }
 
 .new-chat-btn {
@@ -2783,7 +3246,7 @@ details[open] > .thinking-summary::before {
     color: var(--text-primary);
     cursor: pointer;
     text-align: left;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     transition: background 0.1s;
 }
 
@@ -2801,7 +3264,7 @@ details[open] > .thinking-summary::before {
 
 .command-desc {
     color: var(--text-muted);
-    font-size: 0.78rem;
+    font-size: var(--text-label);
 }
 
 
@@ -2810,7 +3273,7 @@ details[open] > .thinking-summary::before {
 .config-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--color-scrim);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2838,7 +3301,7 @@ details[open] > .thinking-summary::before {
 
 .config-header h3 {
     margin: 0;
-    font-size: 1rem;
+    font-size: var(--text-heading);
     font-weight: 600;
 }
 
@@ -2846,7 +3309,7 @@ details[open] > .thinking-summary::before {
     background: transparent;
     border: none;
     color: var(--text-muted);
-    font-size: 1.1rem;
+    font-size: var(--text-title);
     cursor: pointer;
     padding: 0.2rem 0.4rem;
     border-radius: var(--radius);
@@ -2865,7 +3328,7 @@ details[open] > .thinking-summary::before {
     gap: 0.5rem;
     padding: 2rem;
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
 }
 
 .config-body {
@@ -2882,20 +3345,20 @@ details[open] > .thinking-summary::before {
 }
 
 .config-field label {
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--text-muted);
 }
 
 .config-value {
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     color: var(--text-primary);
 }
 
 .config-value.mono {
     font-family: var(--font-mono);
-    font-size: 0.8rem;
+    font-size: var(--text-mono);
     word-break: break-all;
 }
 
@@ -2905,7 +3368,7 @@ details[open] > .thinking-summary::before {
     border-radius: var(--radius);
     background: var(--bg-input);
     color: var(--text-primary);
-    font-size: 0.85rem;
+    font-size: var(--text-mono);
     font-family: var(--font-mono);
     cursor: pointer;
 }
@@ -2917,11 +3380,11 @@ details[open] > .thinking-summary::before {
 
 .config-error {
     padding: 0.5rem 0.75rem;
-    background: rgba(231, 76, 60, 0.15);
+    background: var(--color-danger-wash);
     border: 1px solid var(--error);
     border-radius: var(--radius);
     color: var(--error);
-    font-size: 0.8rem;
+    font-size: var(--text-label);
 }
 
 .config-actions {
@@ -2937,7 +3400,7 @@ details[open] > .thinking-summary::before {
     border: none;
     border-radius: var(--radius);
     background: var(--accent);
-    color: #fff;
+    color: var(--color-on-accent);
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s;
@@ -2966,7 +3429,7 @@ details[open] > .thinking-summary::before {
 }
 
 .config-copy-btn:hover {
-    background: var(--bg-hover, rgba(127, 127, 127, 0.15));
+    background: var(--bg-hover);
 }
 
 /* ── Copy toast ─────────────────────────────────────────────────────── */
@@ -2978,9 +3441,9 @@ details[open] > .thinking-summary::before {
     transform: translateX(-50%);
     padding: 0.4rem 1rem;
     background: var(--success);
-    color: #fff;
+    color: var(--color-on-solid);
     border-radius: var(--radius);
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     font-weight: 600;
     z-index: 200;
     animation: fadeInOut 1.5s ease-in-out;
@@ -3017,7 +3480,7 @@ details[open] > .thinking-summary::before {
 /* ── Sub-agent items in sidebar ─────────────────────────────────────── */
 
 .sub-agent-name {
-    font-size: 0.73rem;
+    font-size: var(--text-caption);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3026,7 +3489,7 @@ details[open] > .thinking-summary::before {
 }
 
 .sub-agent-archetype {
-    font-size: 0.6rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     opacity: 0.6;
     margin-left: auto;
@@ -3163,7 +3626,7 @@ details[open] > .thinking-summary::before {
 
 .platform-config-toolbar h2 {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: var(--text-title);
     font-weight: 600;
 }
 
@@ -3174,7 +3637,7 @@ details[open] > .thinking-summary::before {
 }
 
 .platform-config-status {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     margin-right: 0.25rem;
 }
 
@@ -3187,7 +3650,7 @@ details[open] > .thinking-summary::before {
     border-radius: var(--radius);
     background: transparent;
     color: var(--text-primary);
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
 }
@@ -3205,7 +3668,7 @@ details[open] > .thinking-summary::before {
 .toolbar-btn.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--color-on-accent);
     font-weight: 600;
 }
 
@@ -3235,7 +3698,7 @@ details[open] > .thinking-summary::before {
 }
 
 .pcfg-top-field label {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     color: var(--text-muted);
     min-width: 120px;
     flex-shrink: 0;
@@ -3260,25 +3723,25 @@ details[open] > .thinking-summary::before {
     gap: 0.5rem;
     padding: 0.75rem 1rem;
     cursor: pointer;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--color-wash-soft);
     border-bottom: 1px solid var(--border);
     user-select: none;
     transition: background 0.15s;
 }
 
 .pcfg-section-header:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--color-wash-soft);
 }
 
 .pcfg-section-header h3 {
     margin: 0;
-    font-size: 0.95rem;
+    font-size: var(--text-body);
     font-weight: 600;
     white-space: nowrap;
 }
 
 .pcfg-section-desc {
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     flex: 1;
     overflow: hidden;
@@ -3287,7 +3750,7 @@ details[open] > .thinking-summary::before {
 }
 
 .pcfg-collapse-icon {
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     color: var(--text-secondary);
     width: 14px;
     text-align: center;
@@ -3310,7 +3773,7 @@ details[open] > .thinking-summary::before {
 
 .pcfg-field > label {
     min-width: 160px;
-    font-size: 0.78rem;
+    font-size: var(--text-label);
     color: var(--text-muted);
     flex-shrink: 0;
     text-transform: uppercase;
@@ -3328,7 +3791,7 @@ details[open] > .thinking-summary::before {
     border-radius: var(--radius);
     background: var(--bg-input);
     color: var(--text-primary);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     font-family: var(--font-sans);
     transition: border-color 0.15s;
 }
@@ -3360,7 +3823,7 @@ details[open] > .thinking-summary::before {
     cursor: pointer;
     inset: 0;
     background: var(--bg-surface);
-    border-radius: 10px;
+    border-radius: var(--radius-pill);
     transition: background 0.2s;
 }
 
@@ -3382,7 +3845,7 @@ details[open] > .thinking-summary::before {
 
 .pcfg-toggle input:checked + .pcfg-toggle-slider::before {
     transform: translateX(16px);
-    background: #fff;
+    background: var(--color-on-solid);
 }
 
 /* Nested sub-section */
@@ -3396,7 +3859,7 @@ details[open] > .thinking-summary::before {
 }
 
 .pcfg-nested h4 {
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     color: var(--text-primary);
     margin: 0;
     font-weight: 600;
@@ -3428,7 +3891,7 @@ details[open] > .thinking-summary::before {
     border-radius: var(--radius);
     background: var(--bg-input);
     color: var(--text-primary);
-    font-size: 0.82rem;
+    font-size: var(--text-label);
 }
 
 .pcfg-list-item input:focus {
@@ -3441,14 +3904,14 @@ details[open] > .thinking-summary::before {
     border: none;
     color: var(--error);
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     padding: 0.2rem 0.4rem;
     border-radius: var(--radius);
     transition: background 0.15s;
 }
 
 .pcfg-list-remove:hover {
-    background: rgba(231, 76, 60, 0.15);
+    background: var(--color-danger-wash);
 }
 
 .pcfg-list-add,
@@ -3457,7 +3920,7 @@ details[open] > .thinking-summary::before {
     border: 1px dashed var(--border);
     border-radius: var(--radius);
     color: var(--text-muted);
-    font-size: 0.78rem;
+    font-size: var(--text-label);
     padding: 0.25rem 0.6rem;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s;
@@ -3480,7 +3943,7 @@ details[open] > .thinking-summary::before {
 
 .pcfg-dict-header h4 {
     margin: 0;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     font-weight: 600;
 }
 
@@ -3490,7 +3953,7 @@ details[open] > .thinking-summary::before {
 
 /* Dictionary entry */
 .pcfg-entry {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--color-wash-soft);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
@@ -3502,41 +3965,41 @@ details[open] > .thinking-summary::before {
     justify-content: space-between;
     align-items: center;
     padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--color-wash-soft);
     border-bottom: 1px solid var(--border);
 }
 
 .pcfg-entry-name {
     font-weight: 600;
-    font-size: 0.88rem;
+    font-size: var(--text-body);
     color: var(--accent);
 }
 
 .pcfg-entry-id {
     font-weight: 400;
-    font-size: 0.75rem;
-    color: var(--text-muted, #888);
+    font-size: var(--text-caption);
+    color: var(--text-muted);
     margin-left: 0.35rem;
     user-select: all;
 }
 
 .pcfg-entry-id code {
-    font-family: var(--font-mono, monospace);
-    font-size: 0.72rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono);
 }
 
 .pcfg-entry-delete {
     background: transparent;
     border: none;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     padding: 0.15rem 0.3rem;
     border-radius: var(--radius);
     transition: background 0.15s;
 }
 
 .pcfg-entry-delete:hover {
-    background: rgba(231, 76, 60, 0.15);
+    background: var(--color-danger-wash);
 }
 
 .pcfg-entry-fields {
@@ -3555,7 +4018,7 @@ details[open] > .thinking-summary::before {
 .validation-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--color-scrim);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3575,7 +4038,7 @@ details[open] > .thinking-summary::before {
 
 .validation-dialog h3 {
     margin: 0 0 0.75rem 0;
-    font-size: 1rem;
+    font-size: var(--text-heading);
 }
 
 .validation-list {
@@ -3586,18 +4049,18 @@ details[open] > .thinking-summary::before {
 }
 
 .validation-item {
-    font-size: 0.82rem;
+    font-size: var(--text-label);
     padding: 0.3rem 0.5rem;
     border-radius: var(--radius);
 }
 
 .validation-item.error {
-    background: rgba(231, 76, 60, 0.1);
+    background: var(--color-danger-wash);
     color: var(--error);
 }
 
 .validation-item.warning {
-    background: rgba(243, 156, 18, 0.1);
+    background: var(--color-warning-wash);
     color: var(--warning);
 }
 
@@ -3655,7 +4118,7 @@ details[open] > .thinking-summary::before {
 
 .agents-toolbar h2 {
     margin: 0;
-    font-size: 1.25rem;
+    font-size: var(--text-title);
 }
 
 .agents-toolbar-actions {
@@ -3665,13 +4128,13 @@ details[open] > .thinking-summary::before {
 }
 
 .agents-status {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     padding: 0.25rem 0.6rem;
     border-radius: var(--radius);
 }
 
-.agents-status.success { background: rgba(57, 197, 114, 0.15); color: var(--accent); }
-.agents-status.error   { background: rgba(255, 90, 90, 0.15);  color: #ff5a5a; }
+.agents-status.success { background: var(--color-success-wash); color: var(--accent); }
+.agents-status.error   { background: var(--color-danger-wash);  color: var(--color-danger-text); }
 
 .agents-error,
 .agents-empty {
@@ -3691,7 +4154,7 @@ details[open] > .thinking-summary::before {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
-    font-size: 0.875rem;
+    font-size: var(--text-body);
 }
 
 .agents-table th,
@@ -3702,29 +4165,29 @@ details[open] > .thinking-summary::before {
 }
 
 .agents-table th {
-    background: var(--bg-tertiary, #1e2027);
+    background: var(--bg-tertiary);
     font-weight: 600;
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
 }
 
 .agents-table tbody tr:last-child td { border-bottom: none; }
-.agents-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+.agents-table tbody tr:hover { background: var(--color-wash-soft); }
 
-.agents-id { font-family: monospace; font-size: 0.8rem; color: var(--text-muted); }
+.agents-id { font-family: monospace; font-size: var(--text-mono); color: var(--text-muted); }
 
 .agents-badge {
     display: inline-block;
     padding: 0.15rem 0.55rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
+    border-radius: var(--radius-pill);
+    font-size: var(--text-caption);
     font-weight: 600;
 }
 
-.badge-enabled  { background: rgba(57, 197, 114, 0.15); color: var(--accent); }
-.badge-disabled { background: rgba(120,120,120,0.15);   color: var(--text-muted); }
+.badge-enabled  { background: var(--color-success-wash); color: var(--accent); }
+.badge-disabled { background: var(--color-wash);   color: var(--text-muted); }
 
 .agents-actions { text-align: right; white-space: nowrap; }
 .agents-btn-edit,
@@ -3735,12 +4198,12 @@ details[open] > .thinking-summary::before {
     cursor: pointer;
     padding: 0.25rem 0.4rem;
     border-radius: var(--radius);
-    font-size: 1rem;
+    font-size: var(--text-heading);
     transition: background 0.15s;
 }
-.agents-btn-edit:hover   { background: rgba(255,255,255,0.08); }
-.agents-btn-clone:hover  { background: rgba(255,255,255,0.08); }
-.agents-btn-delete:hover { background: rgba(255, 90, 90, 0.15); }
+.agents-btn-edit:hover   { background: var(--color-wash); }
+.agents-btn-clone:hover  { background: var(--color-wash); }
+.agents-btn-delete:hover { background: var(--color-danger-wash); }
 
 /* Cron job modals (Cron Jobs page) — larger modal shell shared by detail + edit */
 .cron-modal {
@@ -3752,7 +4215,7 @@ details[open] > .thinking-summary::before {
     display: flex;
     flex-direction: column;
     max-height: 88vh;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-overlay);
 }
 .cron-detail-modal { max-width: 60rem; }
 .cron-edit-modal { max-width: 46rem; }
@@ -3766,7 +4229,7 @@ details[open] > .thinking-summary::before {
 }
 .cron-modal-header h3 {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: var(--text-title);
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -3781,12 +4244,12 @@ details[open] > .thinking-summary::before {
     background: none;
     border: none;
     color: var(--text-muted);
-    font-size: 1.1rem;
+    font-size: var(--text-title);
     cursor: pointer;
     padding: 0.25rem 0.5rem;
     border-radius: var(--radius);
 }
-.cron-modal-close:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+.cron-modal-close:hover { background: var(--color-wash); color: var(--text-primary); }
 .cron-modal-body {
     padding: 1.25rem;
     overflow-y: auto;
@@ -3803,7 +4266,7 @@ details[open] > .thinking-summary::before {
 .cron-detail-section:last-child { margin-bottom: 0; }
 .cron-detail-section h4 {
     margin: 0 0 0.75rem;
-    font-size: 0.95rem;
+    font-size: var(--text-body);
     color: var(--text-primary);
 }
 .cron-detail-section-head {
@@ -3821,32 +4284,32 @@ details[open] > .thinking-summary::before {
     margin: 0;
 }
 .cron-detail-props dt {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     font-weight: 600;
     color: var(--text-muted);
 }
 .cron-detail-props dd {
     margin: 0;
-    font-size: 0.88rem;
+    font-size: var(--text-body);
     color: var(--text-primary);
     word-break: break-word;
 }
 .cron-detail-pre {
     white-space: pre-wrap;
-    font-family: var(--font-mono, monospace);
-    font-size: 0.82rem;
-    background: var(--bg-tertiary, #1e2027);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono);
+    background: var(--bg-tertiary);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 0.5rem 0.6rem;
 }
 .cron-detail-error {
-    color: #ff8080;
-    font-size: 0.82rem;
+    color: var(--color-danger-text);
+    font-size: var(--text-label);
     word-break: break-word;
 }
 .cron-detail-empty {
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     color: var(--text-muted);
     font-style: italic;
     padding: 0.5rem 0;
@@ -3857,21 +4320,21 @@ details[open] > .thinking-summary::before {
 .cron-run-status {
     display: inline-block;
     padding: 0.05rem 0.45rem;
-    border-radius: 999px;
-    font-size: 0.72rem;
+    border-radius: var(--radius-pill);
+    font-size: var(--text-caption);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.02em;
 }
-.cron-run-status-ok { background: rgba(90, 200, 120, 0.18); color: #5ac878; }
-.cron-run-status-error { background: rgba(255, 90, 90, 0.18); color: #ff5a5a; }
-.cron-run-status-warn { background: rgba(230, 180, 60, 0.18); color: #e6b43c; }
-.cron-run-status-running { background: rgba(90, 150, 230, 0.18); color: #5a96e6; }
-.cron-run-status-neutral { background: rgba(255,255,255,0.08); color: var(--text-muted); }
-.badge-system { background: rgba(150, 120, 230, 0.18); color: #9678e6; }
+.cron-run-status-ok { background: var(--color-success-wash); color: var(--color-success-text); }
+.cron-run-status-error { background: var(--color-danger-wash); color: var(--color-danger-text); }
+.cron-run-status-warn { background: var(--color-warning-wash); color: var(--color-warning-text); }
+.cron-run-status-running { background: var(--color-info-wash); color: var(--color-info-text); }
+.cron-run-status-neutral { background: var(--color-wash); color: var(--text-muted); }
+.badge-system { background: var(--cat-purple-bg); color: var(--cat-purple); }
 
 .cron-job-row-clickable { cursor: pointer; }
-.cron-job-row-clickable:hover { background: rgba(255,255,255,0.04); }
+.cron-job-row-clickable:hover { background: var(--color-wash-soft); }
 
 /* Cron edit fields (grid + single-column) */
 .cron-edit-grid {
@@ -3886,7 +4349,7 @@ details[open] > .thinking-summary::before {
     margin-bottom: 0.85rem;
 }
 .cron-edit-field > label {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     font-weight: 600;
     color: var(--text-muted);
 }
@@ -3895,12 +4358,12 @@ details[open] > .thinking-summary::before {
 .cron-edit-field textarea {
     width: 100%;
     box-sizing: border-box;
-    background: var(--bg-tertiary, #1e2027);
+    background: var(--bg-tertiary);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-primary);
     padding: 0.45rem 0.6rem;
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     font-family: inherit;
 }
 .cron-edit-field textarea { resize: vertical; }
@@ -3939,7 +4402,7 @@ details[open] > .thinking-summary::before {
 
 .agents-form-card h3 {
     margin: 0 0 1rem;
-    font-size: 1rem;
+    font-size: var(--text-heading);
 }
 
 .agents-form-grid {
@@ -3951,11 +4414,11 @@ details[open] > .thinking-summary::before {
 }
 
 .agents-form-grid label {
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     color: var(--text-muted);
 }
 
-.required { color: #ff5a5a; }
+.required { color: var(--color-danger-text); }
 
 .agents-form-grid .cfg-input,
 .agents-form-grid .cfg-textarea {
@@ -3963,8 +4426,8 @@ details[open] > .thinking-summary::before {
 }
 
 .agents-form-error {
-    color: #ff5a5a;
-    font-size: 0.85rem;
+    color: var(--color-danger-text);
+    font-size: var(--text-body);
     margin-bottom: 0.75rem;
 }
 
@@ -3974,7 +4437,7 @@ details[open] > .thinking-summary::before {
 }
 
 .agents-field-loading {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     color: var(--text-muted);
     font-style: italic;
     align-self: center;
@@ -3982,18 +4445,18 @@ details[open] > .thinking-summary::before {
 
 .agents-field-error {
     display: block;
-    font-size: 0.75rem;
-    color: #ff5a5a;
+    font-size: var(--text-caption);
+    color: var(--color-danger-text);
     margin-top: 0.2rem;
 }
 
 .cfg-input.field-error,
 .cfg-textarea.field-error {
-    border-color: #ff5a5a;
+    border-color: var(--color-danger-text);
 }
 
 .agents-dirty-indicator {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     color: var(--accent);
     margin-left: auto;
     font-style: italic;
@@ -4002,7 +4465,7 @@ details[open] > .thinking-summary::before {
 .agents-confirm-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--color-scrim);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -4020,11 +4483,11 @@ details[open] > .thinking-summary::before {
 
 .agents-confirm-dialog h4 {
     margin: 0 0 0.75rem;
-    font-size: 1rem;
+    font-size: var(--text-heading);
 }
 
 .agents-confirm-dialog p {
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     color: var(--text-muted);
     margin-bottom: 1rem;
 }
@@ -4035,13 +4498,13 @@ details[open] > .thinking-summary::before {
 }
 
 .toolbar-btn.danger {
-    background: rgba(255, 90, 90, 0.15);
-    color: #ff5a5a;
-    border-color: rgba(255, 90, 90, 0.3);
+    background: var(--color-danger-wash);
+    color: var(--color-danger-text);
+    border-color: var(--color-danger);
 }
 
 .toolbar-btn.danger:hover {
-    background: rgba(255, 90, 90, 0.25);
+    background: var(--color-danger-wash);
 }
 
 .sr-only {
@@ -4062,17 +4525,17 @@ details[open] > .thinking-summary::before {
     align-items: center;
     gap: 0.75rem;
     padding: 0.625rem 1rem;
-    background: rgba(15, 52, 96, 0.4); /* Muted --bg-surface with transparency */
+    background: var(--color-surface-2); /* Muted --bg-surface with transparency */
     border-bottom: 1px solid var(--border);
     border-left: 3px solid var(--warning); /* Visual accent to reinforce read-only */
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     color: var(--text-secondary);
 }
 
 .read-only-badge {
     font-weight: 600;
     color: var(--text-primary);
-    font-size: 0.85rem;
+    font-size: var(--text-body);
 }
 
 .read-only-status {
@@ -4080,16 +4543,16 @@ details[open] > .thinking-summary::before {
     align-items: center;
     gap: 0.35rem;
     padding: 0.2rem 0.5rem;
-    border-radius: calc(var(--radius) / 2);
-    font-size: 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-caption);
     font-weight: 500;
-    background: rgba(0, 180, 216, 0.12); /* Same pattern as streaming-badge */
+    background: var(--color-accent-wash); /* Same pattern as streaming-badge */
     color: var(--accent);
 }
 
 /* Status variants for visual distinction */
 .read-only-status.completed {
-    background: rgba(46, 204, 113, 0.12);
+    background: var(--color-success-wash);
     color: var(--success);
 }
 
@@ -4097,7 +4560,7 @@ details[open] > .thinking-summary::before {
     margin-left: auto;
     font-style: italic;
     color: var(--text-secondary); /* Better contrast than text-muted */
-    font-size: 0.8rem;
+    font-size: var(--text-label);
 }
 
 /* ── World Default Inheritance Badge ─────────────────────────────────────── */
@@ -4105,12 +4568,12 @@ details[open] > .thinking-summary::before {
 .world-default-badge {
     display: inline-block;
     padding: 0.1rem 0.45rem;
-    border-radius: 9999px;
-    font-size: 0.68rem;
+    border-radius: var(--radius-pill);
+    font-size: var(--text-caption);
     font-weight: 500;
-    background: rgba(120, 120, 180, 0.12);
+    background: var(--color-wash);
     color: var(--text-secondary);
-    border: 1px solid rgba(120, 120, 180, 0.2);
+    border: 1px solid var(--color-hairline);
     margin-left: 0.4rem;
     vertical-align: middle;
     white-space: nowrap;
@@ -4127,18 +4590,12 @@ details[open] > .thinking-summary::before {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     padding-top: 0.4rem;
 }
 
-.gateway-commit {
-    font-family: monospace;
-    color: var(--text-muted);
-    text-decoration: none;
-}
 
-.gateway-commit:hover { color: var(--accent); }
 
 /* ── Conversation UI — Wave 2 ─────────────────────────────────────────────── */
 
@@ -4184,9 +4641,9 @@ details[open] > .thinking-summary::before {
     padding: 0.2rem 0.5rem;
     background: transparent;
     border: 1px solid var(--border);
-    border-radius: calc(var(--radius) / 2);
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     cursor: pointer;
     transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
@@ -4194,11 +4651,11 @@ details[open] > .thinking-summary::before {
 .conversation-new-btn:hover {
     color: var(--accent);
     border-color: var(--accent);
-    background: rgba(0, 180, 216, 0.08);
+    background: var(--color-accent-wash-soft);
 }
 
 .conversation-new-btn-icon {
-    font-size: 1rem;
+    font-size: var(--text-heading);
     line-height: 1;
     font-weight: 400;
 }
@@ -4211,7 +4668,7 @@ details[open] > .thinking-summary::before {
 .conversation-list-loading,
 .conversation-list-empty {
     padding: 0.5rem 0.75rem;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     font-style: italic;
     color: var(--text-muted);
 }
@@ -4228,28 +4685,31 @@ details[open] > .thinking-summary::before {
     flex-direction: column;
     flex: 1;
     min-width: 0;
-    padding: 0.45rem 0.75rem;
+    /* Was 0.45rem/0.2rem: at 13px the title and its timestamp collided, and the rows ran
+       together into a block of text with no clear item boundary. */
+    padding: 0.6rem 0.75rem;
     background: transparent;
     border: none;
     border-left: 3px solid transparent;
     border-radius: 0;
     color: var(--text-secondary);
-    font-size: 0.82rem;
+    font-size: var(--text-label);
     text-align: left;
     text-decoration: none; /* suppress anchor underline when rendered as <a> (#935) */
     cursor: pointer;
     transition: background 0.12s, color 0.12s, border-color 0.12s;
-    gap: 0.2rem;
+    gap: 0.3rem;
+    line-height: 1.35;
 }
 
 .conversation-list-item:hover .conversation-list-item-btn {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--color-wash-soft);
     color: var(--text-primary);
 }
 
 .conversation-list-item-btn.active {
     border-left-color: var(--accent);
-    background: rgba(0, 180, 216, 0.07);
+    background: var(--color-accent-wash-soft);
     color: var(--text-primary);
 }
 
@@ -4273,11 +4733,11 @@ details[open] > .thinking-summary::before {
 /* "Default" pill badge */
 .conversation-default-badge {
     flex-shrink: 0;
-    font-size: 0.65rem;
+    font-size: var(--text-caption);
     font-weight: 500;
     color: var(--text-muted);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 0 4px;
     white-space: nowrap;
     line-height: 1.4;
@@ -4301,7 +4761,7 @@ details[open] > .thinking-summary::before {
 }
 
 .conversation-updated-at {
-    font-size: 0.68rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     white-space: nowrap;
 }
@@ -4317,7 +4777,7 @@ details[open] > .thinking-summary::before {
     border: none;
     cursor: pointer;
     color: var(--text-muted);
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     padding: 0.1rem 0.25rem;
 }
 
@@ -4326,7 +4786,7 @@ details[open] > .thinking-summary::before {
 }
 
 .conversation-archive-btn:hover {
-    color: var(--error, #e55);
+    color: var(--error);
 }
 
 .conversation-pin-btn {
@@ -4339,7 +4799,7 @@ details[open] > .thinking-summary::before {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     padding: 0.1rem 0.25rem;
     /* Dim the pushpin glyph so it reads as an inactive action until pinned. */
     filter: grayscale(1) opacity(0.6);
@@ -4374,7 +4834,7 @@ details[open] > .thinking-summary::before {
     border: none;
     cursor: pointer;
     color: var(--text-muted);
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     padding: 0.1rem 0.25rem;
     filter: grayscale(1) opacity(0.6);
 }
@@ -4396,11 +4856,11 @@ details[open] > .thinking-summary::before {
     min-width: 10rem;
     display: flex;
     flex-direction: column;
-    background: var(--bg-elevated, var(--bg-secondary, #222));
-    border: 1px solid var(--border, #444);
-    border-radius: 4px;
+    background: var(--bg-elevated, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     padding: 0.2rem;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-raised);
 }
 
 .conversation-section-menu-item {
@@ -4408,14 +4868,14 @@ details[open] > .thinking-summary::before {
     border: none;
     cursor: pointer;
     text-align: left;
-    color: var(--text, #ddd);
-    font-size: 0.75rem;
+    color: var(--text);
+    font-size: var(--text-caption);
     padding: 0.25rem 0.4rem;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
 }
 
 .conversation-section-menu-item:hover {
-    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+    background: var(--bg-hover, var(--color-wash));
 }
 
 .conversation-section-menu-item.active {
@@ -4424,7 +4884,7 @@ details[open] > .thinking-summary::before {
 
 .conversation-section-menu-empty {
     color: var(--text-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     padding: 0.25rem 0.4rem;
 }
 
@@ -4441,7 +4901,7 @@ details[open] > .thinking-summary::before {
     padding: var(--density-group-pad-y) var(--density-nav-pad-x);
     font-size: var(--density-font-xs);
     font-weight: 600;
-    color: var(--text-muted, #888);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     border: none;
@@ -4455,12 +4915,12 @@ details[open] > .thinking-summary::before {
 }
 
 .conversation-group-header-toggle:hover {
-    color: var(--text, #ccc);
+    color: var(--text);
 }
 
 .group-chevron {
     display: inline-block;
-    font-size: 0.55rem;
+    font-size: var(--text-caption);
     transition: transform 0.2s ease;
 }
 
@@ -4475,10 +4935,10 @@ details[open] > .thinking-summary::before {
     min-width: 1.1rem;
     height: 1.1rem;
     padding: 0 0.3rem;
-    border-radius: 0.55rem;
-    background: var(--surface-hover, #333);
-    color: var(--text-muted, #888);
-    font-size: 0.6rem;
+    border-radius: var(--radius-pill);
+    background: var(--surface-hover);
+    color: var(--text-muted);
+    font-size: var(--text-caption);
     font-weight: 600;
 }
 
@@ -4501,14 +4961,15 @@ details[open] > .thinking-summary::before {
 
 .conversation-filter-btn {
     flex: 1;
-    padding: 0.15rem 0.4rem;
-    font-size: 0.65rem;
+    /* Was 0.15rem/0.4rem, which left the pill hugging its own label. */
+    padding: 0.3rem 0.5rem;
+    font-size: var(--text-caption);
     font-weight: 600;
     line-height: 1.2;
-    color: var(--text-muted, #888);
+    color: var(--text-muted);
     background: none;
-    border: 1px solid var(--border, #333);
-    border-radius: 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
     cursor: pointer;
     text-transform: uppercase;
     letter-spacing: 0.03em;
@@ -4517,14 +4978,14 @@ details[open] > .thinking-summary::before {
 }
 
 .conversation-filter-btn:hover {
-    color: var(--text, #ccc);
-    border-color: var(--accent, #00b4d8);
+    color: var(--text);
+    border-color: var(--accent);
 }
 
 .conversation-filter-btn.active {
-    color: var(--accent, #00b4d8);
-    border-color: var(--accent, #00b4d8);
-    background: rgba(0, 180, 216, 0.08);
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--color-accent-wash-soft);
 }
 
 /* ── Session Boundary Divider ─────────────────────────────────────────────── */
@@ -4546,7 +5007,7 @@ details[open] > .thinking-summary::before {
 
 .session-boundary-label {
     padding: 0 0.5rem;
-    font-size: 0.7rem;
+    font-size: var(--text-mono);
     color: var(--text-muted);
     font-family: var(--font-mono);
     white-space: nowrap;
@@ -4572,7 +5033,7 @@ details[open] > .thinking-summary::before {
 
 .compaction-boundary-label {
     padding: 0 0.75rem;
-    font-size: 0.75rem;
+    font-size: var(--text-mono);
     color: var(--accent);
     font-family: var(--font-mono);
     white-space: nowrap;
@@ -4616,11 +5077,11 @@ h3.conversation-title.editable:hover {
 }
 
 .conversation-title-input {
-    font-size: 1rem;
+    font-size: var(--text-heading);
     font-weight: 600;
     background: var(--bg-input, var(--bg-secondary));
     border: 1px solid var(--border-focus, var(--accent));
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: inherit;
     padding: 0.1rem 0.3rem;
     margin: 0;
@@ -4659,8 +5120,8 @@ h3.conversation-title.editable:hover {
     gap: 0.125rem;
     padding: 0.75rem 0.5rem;
     overflow-y: auto;
-    border-right: 1px solid var(--border, #333);
-    background: var(--bg-secondary, transparent);
+    border-right: 1px solid var(--border);
+    background: var(--bg-secondary);
 }
 
 .config-sidebar-item {
@@ -4669,10 +5130,10 @@ h3.conversation-title.editable:hover {
     text-align: left;
     padding: 0.4rem 0.6rem;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--text, inherit);
-    font-size: 0.875rem;
+    color: var(--text);
+    font-size: var(--text-body);
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
@@ -4680,12 +5141,12 @@ h3.conversation-title.editable:hover {
 }
 
 .config-sidebar-item:hover {
-    background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+    background: var(--bg-hover);
 }
 
 .config-sidebar-item.active {
-    background: var(--accent, #3b82f6);
-    color: var(--accent-fg, #fff);
+    background: var(--accent);
+    color: var(--accent-fg);
     font-weight: 600;
 }
 
@@ -4695,38 +5156,38 @@ h3.conversation-title.editable:hover {
     flex-direction: row;
     gap: 0.25rem;
     padding: 0.5rem 0.75rem 0;
-    border-bottom: 1px solid var(--border, #333);
+    border-bottom: 1px solid var(--border);
 }
 
 .activity-subnav-item {
     padding: 0.35rem 0.7rem;
-    border-radius: 4px 4px 0 0;
-    color: var(--text, inherit);
-    font-size: 0.875rem;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    color: var(--text);
+    font-size: var(--text-body);
     text-decoration: none;
     white-space: nowrap;
 }
 
 .activity-subnav-item:hover {
-    background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+    background: var(--bg-hover);
 }
 
 .activity-subnav-item.active {
-    background: var(--accent, #3b82f6);
-    color: var(--accent-fg, #fff);
+    background: var(--accent);
+    color: var(--accent-fg);
     font-weight: 600;
 }
 
 .activity-subnav-notice {
     padding: 0.4rem 0.75rem;
-    font-size: 0.8125rem;
-    color: var(--text-muted, #999);
+    font-size: var(--text-label);
+    color: var(--text-muted);
 }
 
 /* #2898: an unmeasured cost value. Muted and italic so "not measured" is visibly a STATEMENT
    ABOUT THE MEASUREMENT rather than a value - it must never be mistaken for a small number. */
 .activity-cost-unmeasured {
-    color: var(--text-muted, #999);
+    color: var(--text-muted);
     font-style: italic;
 }
 
@@ -4764,8 +5225,8 @@ h3.conversation-title.editable:hover {
     justify-content: center;
     height: 100%;
     min-height: 200px;
-    font-size: 1rem;
-    color: var(--text-muted, #888);
+    font-size: var(--text-heading);
+    color: var(--text-muted);
 }
 
 .portal-load-spinner {
@@ -4790,31 +5251,31 @@ h3.conversation-title.editable:hover {
 }
 
 .portal-load-error {
-    color: var(--color-error, #e55);
+    color: var(--color-error);
     font-weight: 500;
 }
 
 /* ── Auto-update badge ─────────────────────────────────────────── */
 .update-badge {
     padding: 0.25rem 0.5rem;
-    background: var(--accent, #4a9eff);
-    color: white;
-    border-radius: 4px;
+    background: var(--accent);
+    color: var(--color-on-accent);
+    border-radius: var(--radius-sm);
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     margin-top: 0.25rem;
     display: inline-block;
 }
 
 .update-badge.update-badge-in-progress {
-    background: var(--text-muted, #888);
+    background: var(--text-muted);
     cursor: default;
 }
 
 .update-confirm-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--color-scrim);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -4846,15 +5307,15 @@ h3.conversation-title.editable:hover {
     padding: 0.4rem 1rem;
     border: none;
     border-radius: var(--radius);
-    background: var(--accent, #4a9eff);
-    color: white;
+    background: var(--accent);
+    color: var(--color-on-accent);
     cursor: pointer;
     font-weight: 500;
     transition: background 0.15s;
 }
 
 .update-confirm-btn:disabled {
-    background: var(--text-muted, #888);
+    background: var(--text-muted);
     cursor: default;
 }
 
@@ -4864,7 +5325,7 @@ h3.conversation-title.editable:hover {
     width: min(100%, 72rem);
     margin: 1rem auto 3rem;
     padding-top: 1.5rem;
-    border-top: 1px solid var(--border, #333);
+    border-top: 1px solid var(--border);
 }
 
 .home-agent-roster-heading {
@@ -4873,13 +5334,13 @@ h3.conversation-title.editable:hover {
 
 .home-agent-roster-heading h2 {
     margin: 0;
-    font-size: 1.2rem;
+    font-size: var(--text-title);
 }
 
 .home-agent-roster-heading p {
     margin: 0.35rem 0 0;
     color: var(--text-muted);
-    font-size: 0.9rem;
+    font-size: var(--text-body);
 }
 
 .home-agent-roster .agent-dashboard {
@@ -4900,7 +5361,7 @@ h3.conversation-title.editable:hover {
     justify-content: center;
     height: 100%;
     color: var(--text-muted);
-    font-size: 0.95rem;
+    font-size: var(--text-body);
 }
 
 .agent-card-grid {
@@ -4922,9 +5383,9 @@ h3.conversation-title.editable:hover {
 }
 
 .agent-card {
-    background: var(--surface, #1e1e1e);
-    border: 1px solid var(--border, #333);
-    border-radius: 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 1rem 1.25rem;
     cursor: pointer;
     transition: border-color 0.15s, box-shadow 0.15s;
@@ -4932,12 +5393,11 @@ h3.conversation-title.editable:hover {
 }
 
 .agent-card:hover {
-    border-color: var(--accent, #4a90d9);
-    box-shadow: 0 2px 12px rgba(74, 144, 217, 0.15);
+    border-color: var(--accent);
 }
 
 .agent-card--active {
-    border-color: var(--accent, #4a90d9);
+    border-color: var(--accent);
 }
 
 .agent-card-header {
@@ -4948,7 +5408,7 @@ h3.conversation-title.editable:hover {
 }
 
 .agent-card-emoji {
-    font-size: 2rem;
+    font-size: var(--text-display);
     line-height: 1;
     flex-shrink: 0;
 }
@@ -4962,19 +5422,19 @@ h3.conversation-title.editable:hover {
 
 .agent-card-name {
     font-weight: 600;
-    font-size: 1rem;
+    font-size: var(--text-heading);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
 .agent-card-status {
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     margin-top: 0.1rem;
 }
 
 .agent-card-status.status-active {
-    color: var(--status-green, #4caf50);
+    color: var(--status-green);
 }
 
 .agent-card-status.status-idle {
@@ -4982,10 +5442,10 @@ h3.conversation-title.editable:hover {
 }
 
 .agent-card-unread-badge {
-    background: var(--accent, #4a90d9);
-    color: #fff;
-    border-radius: 9999px;
-    font-size: 0.7rem;
+    background: var(--accent);
+    color: var(--color-on-accent);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-caption);
     font-weight: 700;
     padding: 0.1rem 0.45rem;
     min-width: 1.4rem;
@@ -4994,7 +5454,7 @@ h3.conversation-title.editable:hover {
 }
 
 .agent-card-description {
-    font-size: 0.82rem;
+    font-size: var(--text-label);
     color: var(--text-muted);
     margin: 0 0 0.5rem;
     overflow: hidden;
@@ -5006,7 +5466,7 @@ h3.conversation-title.editable:hover {
 .agent-card-stats {
     display: flex;
     gap: 0.75rem;
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     margin-top: 0.25rem;
 }
@@ -5031,24 +5491,53 @@ h3.conversation-title.editable:hover {
     margin-left: auto;
     background: none;
     border: none;
-    color: var(--text-muted, #999);
-    font-size: 1rem;
+    color: var(--text-muted);
+    font-size: var(--text-heading);
     cursor: pointer;
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     /* Force text-style (monochrome) rendering so the gear glyph stays transparent
        and inherits `color` instead of rendering as a boxed color emoji. */
     font-variant-emoji: text;
     -webkit-font-feature-settings: normal;
 }
-.banner-settings-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.08)); }
+.banner-settings-btn:hover { background: var(--hover-bg, var(--color-wash)); }
+
+/* Theme toggle. Mirrors .banner-settings-btn. The auto margin that groups the trailing controls
+   now sits on .banner-usage-btn, the first of them - two auto margins in one flex row each absorb
+   half the free space and would leave a gap between the buttons. */
+.banner-theme-btn {
+    background: none;
+    border: none;
+    color: var(--color-ink-muted);
+    font-size: var(--text-heading);
+    cursor: pointer;
+    padding: 4px 8px;
+    /* Fluent's 32px pointer minimum - the glyph alone gave a ~24px target. */
+    min-width: var(--hit-pointer);
+    min-height: var(--hit-pointer);
+    border-radius: var(--radius-sm);
+    /* Force text-style (monochrome) rendering so the sun/moon glyph inherits `color`
+       instead of rendering as a boxed colour emoji. */
+    font-variant-emoji: text;
+    -webkit-font-feature-settings: normal;
+    transition: background var(--motion-fast) var(--ease-standard),
+                color var(--motion-fast) var(--ease-standard);
+}
+
+.banner-theme-btn:hover {
+    background: var(--color-wash);
+    color: var(--color-ink);
+}
+
+.banner-theme-btn + .banner-settings-btn { margin-left: 0; }
 
 /* ── Modal Panel Shared ────────────────────────────────────────── */
 .portal-settings-overlay,
 .session-debug-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--color-scrim);
     z-index: 2000;
     display: flex;
     align-items: center;
@@ -5057,15 +5546,14 @@ h3.conversation-title.editable:hover {
 }
 .portal-settings-panel,
 .session-debug-panel {
-    background: var(--panel-bg, #1e1e2e);
-    border: 1px solid var(--border, #333);
-    border-radius: 12px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     width: 90vw;
     max-width: 720px;
     max-height: 85vh;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     overflow: hidden;
 }
 
@@ -5079,17 +5567,17 @@ h3.conversation-title.editable:hover {
     align-items: center;
     justify-content: space-between;
     padding: 1rem 1.5rem;
-    border-bottom: 1px solid var(--border, #333);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
 .portal-settings-close {
     background: none;
     border: none;
-    color: var(--text-muted, #999);
-    font-size: 1.2rem;
+    color: var(--text-muted);
+    font-size: var(--text-title);
     cursor: pointer;
 }
-.portal-settings-close:hover { color: var(--text, #eee); }
+.portal-settings-close:hover { color: var(--text); }
 .portal-settings-body {
     padding: 1.5rem;
     overflow-y: auto;
@@ -5102,8 +5590,8 @@ h3.conversation-title.editable:hover {
     padding: 0.5rem 0;
 }
 .portal-settings-hint {
-    font-size: 0.8rem;
-    color: var(--text-muted, #999);
+    font-size: var(--text-label);
+    color: var(--text-muted);
     padding-bottom: 0.75rem;
 }
 
@@ -5117,27 +5605,27 @@ h3.conversation-title.editable:hover {
     align-items: center;
     justify-content: space-between;
     padding: 1rem 1.5rem;
-    border-bottom: 1px solid var(--border, #333);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
 .session-debug-title {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: var(--text-title);
     font-weight: 600;
 }
 .session-debug-close {
     background: none;
     border: none;
-    color: var(--text-muted, #999);
-    font-size: 1.2rem;
+    color: var(--text-muted);
+    font-size: var(--text-title);
     cursor: pointer;
 }
-.session-debug-close:hover { color: var(--text, #eee); }
+.session-debug-close:hover { color: var(--text); }
 .session-debug-tabs {
     display: flex;
     gap: 0;
     padding: 0 1.5rem;
-    border-bottom: 1px solid var(--border, #333);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     overflow-x: auto;
 }
@@ -5145,39 +5633,39 @@ h3.conversation-title.editable:hover {
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
-    color: var(--text-muted, #999);
+    color: var(--text-muted);
     padding: 0.6rem 1rem;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     white-space: nowrap;
     transition: color 0.15s, border-color 0.15s;
 }
-.session-debug-tab:hover { color: var(--text, #eee); }
+.session-debug-tab:hover { color: var(--text); }
 .session-debug-tab.active {
-    color: var(--accent, #7c5cff);
-    border-bottom-color: var(--accent, #7c5cff);
+    color: var(--accent);
+    border-bottom-color: var(--accent);
 }
 .session-debug-loading,
 .session-debug-empty,
 .session-debug-error {
     padding: 1.5rem;
-    color: var(--text-muted, #999);
+    color: var(--text-muted);
     text-align: center;
 }
-.session-debug-error { color: var(--danger, #f66); }
+.session-debug-error { color: var(--danger); }
 .session-debug-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
 }
 .session-debug-table th,
 .session-debug-table td {
     padding: 0.4rem 0.75rem;
     text-align: left;
-    border-bottom: 1px solid var(--border, #333);
+    border-bottom: 1px solid var(--border);
 }
 .session-debug-table th {
-    color: var(--text-muted, #999);
+    color: var(--text-muted);
     font-weight: 500;
     white-space: nowrap;
     width: 1%;
@@ -5187,8 +5675,8 @@ h3.conversation-title.editable:hover {
 }
 .session-debug-meta {
     padding: 0.5rem 1.5rem;
-    font-size: 0.8rem;
-    color: var(--text-muted, #999);
+    font-size: var(--text-label);
+    color: var(--text-muted);
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -5197,15 +5685,15 @@ h3.conversation-title.editable:hover {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     padding: 2px 4px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
-.session-debug-copy-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.08)); }
+.session-debug-copy-btn:hover { background: var(--hover-bg, var(--color-wash)); }
 .session-debug-system-prompt {
     margin: 0;
     padding: 1rem 1.5rem;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
@@ -5228,30 +5716,30 @@ h3.conversation-title.editable:hover {
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 0;
-    font-size: 0.8rem;
-    color: var(--text-muted, #999);
+    font-size: var(--text-label);
+    color: var(--text-muted);
     flex-wrap: wrap;
 }
 .session-debug-page-size {
-    background: var(--input-bg, #2a2a3a);
-    border: 1px solid var(--border, #333);
-    color: var(--text, #eee);
-    border-radius: 4px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius-sm);
     padding: 2px 4px;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
 }
 .session-debug-pager-btn {
     background: none;
-    border: 1px solid var(--border, #333);
-    color: var(--text-muted, #999);
-    border-radius: 4px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
     padding: 3px 8px;
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
 }
 .session-debug-pager-btn:hover:not(:disabled) {
-    color: var(--text, #eee);
-    border-color: var(--text-muted, #999);
+    color: var(--text);
+    border-color: var(--text-muted);
 }
 .session-debug-pager-btn:disabled {
     opacity: 0.4;
@@ -5263,18 +5751,18 @@ h3.conversation-title.editable:hover {
     gap: 0.5rem;
 }
 .session-debug-entry {
-    border: 1px solid var(--border, #333);
-    border-radius: 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     padding: 0.5rem 0.75rem;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
 }
 .session-debug-entry.compaction-boundary {
-    border-color: var(--warning, #f5a623);
-    background: rgba(245, 166, 35, 0.05);
+    border-color: var(--warning);
+    background: var(--color-warning-wash);
 }
 .session-debug-entry.crash-sentinel {
-    border-color: var(--danger, #f66);
-    background: rgba(255, 102, 102, 0.05);
+    border-color: var(--danger);
+    background: var(--color-danger-wash);
 }
 .session-debug-entry.historical {
     opacity: 0.7;
@@ -5287,31 +5775,31 @@ h3.conversation-title.editable:hover {
 }
 .entry-role-badge {
     font-weight: 600;
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
 }
 .entry-timestamp {
-    color: var(--text-muted, #999);
-    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-size: var(--text-caption);
 }
 .entry-flag {
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     padding: 1px 5px;
-    border-radius: 3px;
-    background: var(--warning, #f5a623);
-    color: #000;
+    border-radius: var(--radius-sm);
+    background: var(--warning);
+    color: var(--color-on-accent);
 }
 .entry-flag-sentinel {
-    background: var(--danger, #f66);
-    color: #fff;
+    background: var(--color-danger-fill);
+    color: var(--color-on-solid);
 }
 .entry-content-details summary {
     cursor: pointer;
-    color: var(--text-muted, #999);
-    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-size: var(--text-label);
 }
 .entry-content-full {
     margin: 0.25rem 0 0;
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     white-space: pre-wrap;
     word-break: break-word;
     max-height: 300px;
@@ -5364,8 +5852,8 @@ h3.conversation-title.editable:hover {
 }
 
 .agent-detail-id {
-    font-family: var(--font-mono, monospace);
-    font-size: 0.9rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono);
     color: var(--text-muted);
     background: var(--bg-surface);
     padding: 0.15rem 0.45rem;
@@ -5383,7 +5871,7 @@ h3.conversation-title.editable:hover {
     padding: 0.6rem 1rem;
     cursor: pointer;
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: var(--text-body);
     color: var(--text-secondary);
     list-style: none;
     display: flex;
@@ -5394,7 +5882,7 @@ h3.conversation-title.editable:hover {
 
 .agent-section > summary::before {
     content: '\25B6';
-    font-size: 0.65rem;
+    font-size: var(--text-caption);
     color: var(--text-muted);
     transition: transform 0.15s;
 }
@@ -5425,9 +5913,9 @@ h3.conversation-title.editable:hover {
     gap: 0.25rem;
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: 1rem;
+    border-radius: var(--radius-pill);
     padding: 0.15rem 0.5rem;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     color: var(--text-secondary);
 }
 
@@ -5437,7 +5925,7 @@ h3.conversation-title.editable:hover {
     cursor: pointer;
     color: var(--text-muted);
     padding: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     line-height: 1;
 }
 
@@ -5466,13 +5954,13 @@ h3.conversation-title.editable:hover {
 .agent-danger-zone {
     margin: 1rem;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--danger, #e53e3e);
+    border: 1px solid var(--danger);
     border-radius: var(--radius);
     display: flex;
     align-items: center;
     gap: 0.75rem;
     color: var(--text-secondary);
-    font-size: 0.9rem;
+    font-size: var(--text-body);
 }
 
 .sidebar-subnav-add {
@@ -5493,10 +5981,10 @@ h3.conversation-title.editable:hover {
 
 .world-default-badge {
     display: inline-block;
-    font-size: 0.7rem;
+    font-size: var(--text-caption);
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: 0.75rem;
+    border-radius: var(--radius-pill);
     padding: 0.1rem 0.4rem;
     color: var(--text-muted);
     margin-left: 0.4rem;
@@ -5511,10 +5999,10 @@ h3.conversation-title.editable:hover {
     gap: 4px;
     padding: 6px 12px;
     margin: 0 0 4px 0;
-    border: 1px solid var(--border-subtle, #333);
-    border-radius: 6px;
-    background: var(--surface-raised, #1a1a2e);
-    font-size: 0.82rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: var(--surface-raised);
+    font-size: var(--text-label);
     max-height: 120px;
     overflow-y: auto;
 }
@@ -5524,13 +6012,13 @@ h3.conversation-title.editable:hover {
     align-items: center;
     gap: 6px;
     padding: 3px 6px;
-    border-radius: 4px;
-    background: var(--surface-sunken, #12121f);
+    border-radius: var(--radius-sm);
+    background: var(--surface-sunken);
 }
 
 .steering-queue-icon {
     flex-shrink: 0;
-    font-size: 0.9rem;
+    font-size: var(--text-body);
 }
 
 .steering-dropped-icon {
@@ -5540,21 +6028,21 @@ h3.conversation-title.editable:hover {
 .steering-queue-badge {
     flex-shrink: 0;
     padding: 1px 6px;
-    border-radius: 3px;
-    font-size: 0.72rem;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-caption);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.02em;
 }
 
 .steering-queue-badge.steer {
-    background: var(--accent-blue-bg, #1e3a5f);
-    color: var(--accent-blue, #60a5fa);
+    background: var(--accent-blue-bg);
+    color: var(--accent-blue);
 }
 
 .steering-queue-badge.followup {
-    background: var(--accent-purple-bg, #2d1b4e);
-    color: var(--accent-purple, #a78bfa);
+    background: var(--accent-purple-bg);
+    color: var(--accent-purple);
 }
 
 .steering-queue-text {
@@ -5562,7 +6050,7 @@ h3.conversation-title.editable:hover {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-muted, #999);
+    color: var(--text-muted);
 }
 /* ── Window Controls Overlay (installed PWA on Windows/desktop) ──────── */
 /* When the app runs as an installed PWA with window-controls-overlay,
@@ -5614,13 +6102,13 @@ h3.conversation-title.editable:hover {
 }
 
 .activity-dashboard-title {
-    font-size: 1.5rem;
+    font-size: var(--text-display);
     margin: 0;
 }
 
 .activity-dashboard-subtitle {
-    color: var(--text-muted, #888);
-    font-size: 0.9rem;
+    color: var(--text-muted);
+    font-size: var(--text-body);
 }
 
 .activity-summary-strip {
@@ -5636,19 +6124,19 @@ h3.conversation-title.editable:hover {
     gap: 0.15rem;
     padding: 0.6rem 1rem;
     min-width: 6rem;
-    border: 1px solid var(--border-color, #444);
-    border-radius: 8px;
-    background: var(--surface-2, #2a2a2a);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
 }
 
 .activity-summary-value {
-    font-size: 1.35rem;
+    font-size: var(--text-title);
     font-weight: 600;
     line-height: 1.1;
 }
 
 .activity-summary-stat--freshness .activity-summary-value {
-    font-size: 1.05rem;
+    font-size: var(--text-heading);
 }
 
 .activity-summary-stat--action {
@@ -5659,24 +6147,24 @@ h3.conversation-title.editable:hover {
 }
 
 .activity-summary-stat--action:hover {
-    border-color: var(--accent, #3a6ea5);
+    border-color: var(--accent);
 }
 
 .activity-summary-stat--action.active {
-    background: var(--accent, #3a6ea5);
-    border-color: var(--accent, #3a6ea5);
-    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--color-on-accent);
 }
 
 .activity-summary-stat--action.active .activity-summary-label {
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--color-on-accent);
 }
 
 .activity-summary-label {
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    color: var(--text-muted, #888);
+    color: var(--text-muted);
 }
 
 .activity-filter-bar {
@@ -5690,18 +6178,18 @@ h3.conversation-title.editable:hover {
 .activity-filter-btn,
 .activity-filter-select {
     padding: 0.35rem 0.6rem;
-    border: 1px solid var(--border-color, #444);
-    border-radius: 6px;
-    background: var(--surface-2, #2a2a2a);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
     color: inherit;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
     cursor: pointer;
 }
 
 .activity-filter-btn.active {
-    background: var(--accent, #3a6ea5);
-    border-color: var(--accent, #3a6ea5);
-    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--color-on-accent);
 }
 
 .activity-loading,
@@ -5709,11 +6197,11 @@ h3.conversation-title.editable:hover {
 .activity-empty {
     padding: 2rem;
     text-align: center;
-    color: var(--text-muted, #888);
+    color: var(--text-muted);
 }
 
 .activity-error {
-    color: var(--danger, #c0392b);
+    color: var(--danger, var(--color-danger));
 }
 
 /* #2528: the table lives inside a scroller so content can never be clipped-and-unreachable.
@@ -5732,7 +6220,7 @@ h3.conversation-title.editable:hover {
     table-layout: fixed;
     min-width: 640px;
     border-collapse: collapse;
-    font-size: 0.9rem;
+    font-size: var(--text-body);
 }
 
 /* #2528: explicit column allocation - the title column gives way, the signal columns do not.
@@ -5750,8 +6238,8 @@ h3.conversation-title.editable:hover {
 .activity-table thead th {
     text-align: left;
     padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid var(--border-color, #444);
-    color: var(--text-muted, #888);
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-muted);
     font-weight: 600;
 }
 
@@ -5762,13 +6250,13 @@ h3.conversation-title.editable:hover {
 
 .activity-row:hover,
 .activity-row:focus {
-    background: var(--surface-2, #2a2a2a);
+    background: var(--surface-2);
     outline: none;
 }
 
 .activity-row td {
     padding: 0.6rem 0.75rem;
-    border-bottom: 1px solid var(--border-color-subtle, #333);
+    border-bottom: 1px solid var(--border-color-subtle);
     vertical-align: middle;
     /* #2528: every row is exactly one line tall regardless of title length. */
     white-space: nowrap;
@@ -5806,19 +6294,19 @@ h3.conversation-title.editable:hover {
     display: inline-block;
     padding: 0.1rem 0.45rem;
     margin: 0.1rem 0.2rem 0.1rem 0;
-    border-radius: 10px;
-    background: var(--surface-3, #383838);
-    font-size: 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--surface-3);
+    font-size: var(--text-caption);
 }
 
 /* #2857: role treatment on the agent chip. A left border rather than a background swap, so a
    roled chip stays visually a chip and unroled chips are pixel-identical to before. */
 .activity-agent-chip--initiator {
-    border-left: 3px solid var(--accent, #6ea8fe);
+    border-left: 3px solid var(--accent);
 }
 
 .activity-agent-chip--target {
-    border-left: 3px solid var(--accent-muted, #4a5a70);
+    border-left: 3px solid var(--accent-muted);
 }
 
 /* The role word rides inside the chip at reduced emphasis: present for scanning, never competing
@@ -5826,7 +6314,7 @@ h3.conversation-title.editable:hover {
 .activity-agent-role {
     margin-left: 0.3rem;
     opacity: 0.7;
-    font-size: 0.68rem;
+    font-size: var(--text-caption);
     text-transform: lowercase;
 }
 
@@ -5839,8 +6327,8 @@ h3.conversation-title.editable:hover {
     /* Mirrors .activity-badge: a variable-length id must never shrink or displace the title. */
     flex: 0 0 auto;
     margin-left: 0.3rem;
-    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
-    font-size: 0.68rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono);
     opacity: 0.75;
 }
 
@@ -5857,21 +6345,21 @@ h3.conversation-title.editable:hover {
     margin-left: 0.3rem;
     border-radius: 50%;
     vertical-align: middle;
-    background: var(--text-muted, #888);
+    background: var(--text-muted);
 }
 
 .activity-cron-health--ok {
-    background: var(--success, #3fb950);
+    background: var(--success);
 }
 
 .activity-cron-health--failed {
-    background: var(--danger, #f85149);
+    background: var(--danger);
 }
 
 /* Unknown is deliberately NOT green. An unrecognised status from a newer gateway means "we cannot
    tell", and rendering that as healthy is exactly the silent-failure this feature exists to end. */
 .activity-cron-health--unknown {
-    background: var(--text-muted, #888);
+    background: var(--text-muted);
     opacity: 0.6;
 }
 
@@ -5884,7 +6372,7 @@ h3.conversation-title.editable:hover {
     /* Full-width basis forces the wrap onto a second line within the cell. */
     flex: 1 0 100%;
     margin-top: 0.15rem;
-    font-size: 0.72rem;
+    font-size: var(--text-caption);
     line-height: 1.3;
     opacity: 0.65;
     overflow: hidden;
@@ -5898,13 +6386,13 @@ h3.conversation-title.editable:hover {
     flex: 0 0 auto;
     margin-left: 0.4rem;
     padding: 0.05rem 0.4rem;
-    border-radius: 8px;
-    font-size: 0.7rem;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-caption);
 }
 
 .activity-badge-cron {
-    background: var(--accent-muted, #4a5a70);
-    color: #fff;
+    background: var(--accent-muted);
+    color: var(--color-on-solid);
 }
 
 /*
@@ -5915,32 +6403,32 @@ h3.conversation-title.editable:hover {
  * renders no badge at all, so the palette only ever appears on rows that carry real signal.
  */
 .activity-badge-webhook {
-    background: var(--accent-webhook, #6b5a8a);
-    color: #fff;
+    background: var(--accent-webhook);
+    color: var(--color-on-solid);
 }
 
 .activity-badge-subagent {
-    background: var(--accent-subagent, #3f6b57);
-    color: #fff;
+    background: var(--accent-subagent);
+    color: var(--color-on-solid);
 }
 
 .activity-badge-a2a {
-    background: var(--accent-a2a, #7a5c3a);
-    color: #fff;
+    background: var(--accent-a2a);
+    color: var(--color-on-solid);
 }
 
 .activity-badge-agent {
-    background: var(--accent-agent, #5a5a6b);
-    color: #fff;
+    background: var(--accent-agent);
+    color: var(--color-on-solid);
 }
 
 .activity-status {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     text-transform: capitalize;
 }
 
 .activity-status-archived {
-    color: var(--text-muted, #888);
+    color: var(--text-muted);
 }
 
 .activity-row-cron {
@@ -5955,28 +6443,28 @@ h3.conversation-title.editable:hover {
  * entirely untouched, keeping the marks that do appear meaningful.
  */
 .activity-badge-pinned {
-    background: var(--accent-pinned, #8a6b2f);
-    color: #fff;
+    background: var(--accent-pinned);
+    color: var(--color-on-solid);
 }
 
 /* #2692: read-only marker for InspectableReadOnly rows. Muted/outlined rather than a
    colour-shouting fill, because it reports a capability limit, not urgency. */
 .activity-badge-readonly {
     background: transparent;
-    color: var(--text-muted, #8b93a1);
-    border: 1px solid var(--text-muted, #8b93a1);
+    color: var(--text-muted);
+    border: 1px solid var(--text-muted);
 }
 
 .activity-row-pinned {
-    box-shadow: inset 3px 0 0 var(--accent-pinned, #8a6b2f);
+    box-shadow: inset 3px 0 0 var(--accent-pinned);
 }
 
 /* #1888: live marker. The only PRESENT-TENSE signal on the row, so it gets the one
    animated treatment on the page - motion reads as "happening now" in a way no static
    colour does, and nothing else here moves, so it cannot be mistaken for decoration. */
 .activity-badge-live {
-    background: var(--accent-live, #1f7a4d);
-    color: #fff;
+    background: var(--accent-live);
+    color: var(--color-on-solid);
 }
 
 .activity-badge-live::before {
@@ -6003,17 +6491,17 @@ h3.conversation-title.editable:hover {
 }
 
 .activity-row-live {
-    box-shadow: inset 3px 0 0 var(--accent-live, #1f7a4d);
+    box-shadow: inset 3px 0 0 var(--accent-live);
 }
 
 /* A pinned row that is ALSO live shows both rails rather than one silently winning. */
 .activity-row-pinned.activity-row-live {
-    box-shadow: inset 3px 0 0 var(--accent-live, #1f7a4d),
-                inset 6px 0 0 var(--accent-pinned, #8a6b2f);
+    box-shadow: inset 3px 0 0 var(--accent-live),
+                inset 6px 0 0 var(--accent-pinned);
 }
 
 .activity-summary-stat--live .activity-summary-value {
-    color: var(--accent-live, #1f7a4d);
+    color: var(--accent-live);
 }
 
 
@@ -6026,7 +6514,7 @@ h3.conversation-title.editable:hover {
     display: block;
     margin-bottom: 0.4rem;
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     font-weight: 600;
 }
 .cron-rich-select {
@@ -6059,7 +6547,7 @@ h3.conversation-title.editable:hover {
 }
 .cron-selector-chevron {
     color: var(--text-muted);
-    font-size: 1rem;
+    font-size: var(--text-heading);
 }
 .cron-rich-select-menu {
     position: absolute;
@@ -6072,7 +6560,7 @@ h3.conversation-title.editable:hover {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    box-shadow: var(--shadow-raised);
 }
 .cron-rich-select-option {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -6080,7 +6568,7 @@ h3.conversation-title.editable:hover {
 }
 .cron-rich-select-option:last-child { border-bottom: 0; }
 .cron-rich-select-option:hover,
-.cron-rich-select-option.selected { background: rgba(255, 255, 255, 0.06); }
+.cron-rich-select-option.selected { background: var(--color-wash); }
 .cron-selector-option-main,
 .cron-selector-option-meta {
     display: flex;
@@ -6103,10 +6591,10 @@ h3.conversation-title.editable:hover {
 }
 .cron-selector-option-meta span {
     padding: 0.15rem 0.45rem;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.08);
+    border-radius: var(--radius-pill);
+    background: var(--color-wash);
     color: var(--text-muted);
-    font-size: 0.72rem;
+    font-size: var(--text-caption);
 }
 .cron-selection-empty { margin-top: 1rem; }
 .cron-page-card {
@@ -6124,7 +6612,7 @@ h3.conversation-title.editable:hover {
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--border);
 }
-.cron-page-card-header h3 { margin: 0; font-size: 1.05rem; }
+.cron-page-card-header h3 { margin: 0; font-size: var(--text-heading); }
 .cron-page-card-subtitle,
 .cron-page-actions {
     display: flex;
@@ -6143,7 +6631,7 @@ h3.conversation-title.editable:hover {
 .cron-static-props {
     padding: 0.85rem;
     margin: 0 0 1rem;
-    background: var(--bg-tertiary, #1e2027);
+    background: var(--bg-tertiary);
     border: 1px solid var(--border);
     border-radius: var(--radius);
 }
@@ -6162,11 +6650,11 @@ h3.conversation-title.editable:hover {
 .attach-btn { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
 .attach-btn:focus-within { outline: 2px solid var(--accent); }
 .attachment-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.attachment-chip { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 15rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 999px; font-size: 0.78rem; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 15rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: var(--radius-pill); font-size: var(--text-label); }
 .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-size { color: var(--text-muted); }
 .attachment-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; }
-.attachment-error { flex-basis: 100%; color: var(--error); font-size: 0.8rem; }
+.attachment-error { flex-basis: 100%; color: var(--error); font-size: var(--text-label); }
 
 /* ── User-defined conversation sections (#2124) ─────────────────────────── */
 /* #2441: "My sections" is nested under the agent chat section behind a collapsible
@@ -6214,16 +6702,16 @@ h3.conversation-title.editable:hover {
 
 .section-add-btn {
     background: none;
-    border: 1px solid var(--sidebar-border, rgba(255, 255, 255, 0.15));
-    border-radius: 4px;
+    border: 1px solid var(--sidebar-border);
+    border-radius: var(--radius-sm);
     color: inherit;
     cursor: pointer;
-    font-size: 0.72rem;
+    font-size: var(--text-caption);
     padding: 0.1rem 0.4rem;
 }
 
 .section-add-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--color-wash);
 }
 
 .conversation-section-header {
@@ -6259,7 +6747,7 @@ h3.conversation-title.editable:hover {
     border: none;
     color: inherit;
     cursor: pointer;
-    font-size: 0.72rem;
+    font-size: var(--text-caption);
     padding: 0.05rem 0.2rem;
     opacity: 0.75;
 }
@@ -6275,11 +6763,11 @@ h3.conversation-title.editable:hover {
 
 .section-name-input {
     flex: 1 1 auto;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--sidebar-border, rgba(255, 255, 255, 0.2));
-    border-radius: 4px;
+    background: var(--color-scrim-soft);
+    border: 1px solid var(--sidebar-border);
+    border-radius: var(--radius-sm);
     color: inherit;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     padding: 0.1rem 0.3rem;
 }
 
@@ -6292,11 +6780,11 @@ h3.conversation-title.editable:hover {
 .section-save-btn,
 .section-cancel-btn {
     background: none;
-    border: 1px solid var(--sidebar-border, rgba(255, 255, 255, 0.15));
-    border-radius: 4px;
+    border: 1px solid var(--sidebar-border);
+    border-radius: var(--radius-sm);
     color: inherit;
     cursor: pointer;
-    font-size: 0.72rem;
+    font-size: var(--text-caption);
     padding: 0.1rem 0.35rem;
 }
 
@@ -6305,7 +6793,7 @@ h3.conversation-title.editable:hover {
 }
 
 .conversation-section-empty {
-    font-size: 0.72rem;
+    font-size: var(--text-caption);
     opacity: 0.5;
     padding: 0.15rem 0.5rem;
 }
@@ -6315,7 +6803,7 @@ h3.conversation-title.editable:hover {
     align-items: center;
     justify-content: space-between;
     padding: 0.1rem 0.5rem;
-    font-size: 0.8rem;
+    font-size: var(--text-label);
 }
 
 .conversation-section-item-title {
@@ -6330,7 +6818,7 @@ h3.conversation-title.editable:hover {
     color: inherit;
     cursor: pointer;
     opacity: 0;
-    font-size: 0.72rem;
+    font-size: var(--text-caption);
 }
 
 .conversation-section-item:hover .section-remove-conversation-btn {
@@ -6363,7 +6851,7 @@ h3.conversation-title.editable:hover {
     width: 100%;
     height: 100%;
     border: 0;
-    background: #fff;
+    background: var(--color-embed-surface);
 }
 
 .tool-host-frame-overlay {
@@ -6401,7 +6889,7 @@ h3.conversation-title.editable:hover {
     padding: 0.55rem 1.1rem;
     border-radius: var(--radius);
     background: var(--accent);
-    color: #fff;
+    color: var(--color-on-accent);
     text-decoration: none;
     font-weight: 600;
 }
@@ -6446,15 +6934,15 @@ h3.conversation-title.editable:hover {
 }
 
 .tools-form-label {
-    font-size: 0.8rem;
+    font-size: var(--text-label);
     opacity: 0.75;
 }
 
 .tools-form-input {
     padding: 0.4rem 0.55rem;
-    border-radius: 4px;
-    border: 1px solid var(--border-color, #444);
-    background: var(--input-bg, #1b1b1b);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--input-bg);
     color: inherit;
     font: inherit;
     min-width: 0;
@@ -6463,8 +6951,8 @@ h3.conversation-title.editable:hover {
 .tools-form-errors {
     margin: 0 0 0.5rem 0;
     padding-left: 1.1rem;
-    color: var(--error-color, #e06c75);
-    font-size: 0.85rem;
+    color: var(--error-color);
+    font-size: var(--text-body);
 }
 
 .tools-list {
@@ -6481,12 +6969,12 @@ h3.conversation-title.editable:hover {
     align-items: center;
     gap: 0.75rem;
     padding: 0.55rem 0.75rem;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
 }
 
 .tools-list-icon {
-    font-size: 1.15rem;
+    font-size: var(--text-title);
     flex: 0 0 auto;
 }
 
@@ -6546,14 +7034,14 @@ h3.conversation-title.editable:hover {
 }
 
 .home-agent-count {
-    font-size: 1.4rem;
+    font-size: var(--text-title);
     font-weight: 600;
 }
 
 .home-agent-count-label,
 .home-agent-connected {
     opacity: 0.75;
-    font-size: 0.85rem;
+    font-size: var(--text-body);
 }
 
 .home-starter {
@@ -6564,7 +7052,7 @@ h3.conversation-title.editable:hover {
 
 .home-starter-title {
     margin: 0;
-    font-size: 1.2rem;
+    font-size: var(--text-title);
 }
 
 .home-message-input {
@@ -6590,7 +7078,7 @@ h3.conversation-title.editable:hover {
 }
 
 .home-control-label {
-    font-size: 0.75rem;
+    font-size: var(--text-caption);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     opacity: 0.7;
@@ -6610,9 +7098,9 @@ h3.conversation-title.editable:hover {
 
 .home-error {
     padding: 0.6rem 0.8rem;
-    border-radius: 4px;
-    background: rgba(220, 60, 60, 0.12);
-    border: 1px solid rgba(220, 60, 60, 0.4);
+    border-radius: var(--radius-sm);
+    background: var(--color-danger-wash);
+    border: 1px solid var(--color-danger);
 }
 
 .banner-home-link {
@@ -6621,4 +7109,423 @@ h3.conversation-title.editable:hover {
     gap: 0.4rem;
     text-decoration: none;
     color: inherit;
+}
+
+/* ── Provider usage popover ───────────────────────────────────────────────
+   Anchored under the top bar rather than centred, because it reports on the
+   indicator that opens it. The scrim is transparent: this is a glanceable
+   readout, not a decision the user must dismiss, so dimming the app behind it
+   would overstate its importance. It still covers the viewport so a click
+   anywhere closes it. */
+.usage-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: transparent;
+}
+
+.usage-panel {
+    position: absolute;
+    top: calc(var(--density-bar-h) + 8px);
+    right: 12px;
+    width: min(24rem, calc(100vw - 24px));
+    max-height: min(32rem, calc(100vh - var(--density-bar-h) - 24px));
+    overflow-y: auto;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-lg);
+    padding: 0.9rem 1rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    /* .material-overlay supplies the acrylic background and the overlay shadow. */
+}
+
+.usage-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.usage-header h3 {
+    margin: 0;
+    flex: 1;
+    color: var(--color-ink);
+}
+
+.usage-close {
+    background: none;
+    border: none;
+    color: var(--color-ink-faint);
+    cursor: pointer;
+    padding: 0 0.25rem;
+    min-width: var(--hit-pointer);
+    min-height: var(--hit-pointer);
+    border-radius: var(--radius-sm);
+    transition: color var(--motion-fast) var(--ease-standard);
+}
+
+.usage-close:hover { color: var(--color-ink); background: var(--color-wash); }
+
+.usage-select {
+    background: var(--color-surface-2);
+    color: var(--color-ink);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    padding: 0.15rem 0.4rem;
+    min-height: var(--hit-pointer);
+    cursor: pointer;
+}
+
+.usage-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.usage-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--color-hairline);
+    color: var(--color-ink);
+}
+
+.usage-dim { color: var(--color-ink-faint); }
+
+.usage-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-top: 0.35rem;
+}
+
+.usage-row-label { flex: 1; color: var(--color-ink); }
+.usage-row-value { white-space: nowrap; }
+.usage-row-reset { white-space: nowrap; }
+
+.usage-row-pct {
+    color: var(--color-ink);
+    font-variant-numeric: tabular-nums;
+    min-width: 2.6rem;
+    text-align: right;
+}
+
+/* The track is a surface step, not a tinted colour: the fill carries the meaning
+   and a coloured track would compete with it. */
+.usage-bar {
+    height: 6px;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface-2);
+    overflow: hidden;
+}
+
+.usage-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: var(--radius-pill);
+    transition: width var(--motion-base) var(--ease-standard);
+}
+
+/* Semantic, not decorative: green until three-quarters spent, amber approaching
+   the ceiling, red when throttling is imminent. */
+.usage-bar-fill.is-ok { background: var(--color-success); }
+.usage-bar-fill.is-warning { background: var(--color-warning); }
+.usage-bar-fill.is-critical { background: var(--color-danger); }
+
+.usage-totals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+    color: var(--color-ink-muted);
+}
+
+.usage-totals strong {
+    color: var(--color-ink);
+    font-variant-numeric: tabular-nums;
+}
+
+.usage-models {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-top: 0.2rem;
+}
+
+.usage-model-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    padding: 0.3rem 0.45rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+}
+
+.usage-model-name {
+    flex: 1;
+    color: var(--color-ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.usage-model-row span:not(.usage-model-name) { font-variant-numeric: tabular-nums; }
+
+.usage-empty {
+    color: var(--color-ink-faint);
+    margin: 0.4rem 0;
+}
+
+.usage-note {
+    color: var(--color-ink-faint);
+    margin: 0.5rem 0 0;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--color-hairline);
+}
+
+/* The top-bar indicator that opens the panel. */
+.banner-usage-btn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--color-ink-muted);
+    font-size: var(--text-caption);
+    cursor: pointer;
+    padding: 4px 8px;
+    min-height: var(--hit-pointer);
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-variant-numeric: tabular-nums;
+    transition: background var(--motion-fast) var(--ease-standard),
+                color var(--motion-fast) var(--ease-standard);
+}
+
+.banner-usage-btn:hover { background: var(--color-wash); color: var(--color-ink); }
+
+/* A 6px dot carrying the worst dimension's severity, so the bar is readable at a
+   glance without opening anything. */
+.banner-usage-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--color-ink-faint);
+}
+
+.banner-usage-dot.is-ok { background: var(--color-success); }
+.banner-usage-dot.is-warning { background: var(--color-warning); }
+.banner-usage-dot.is-critical { background: var(--color-danger); }
+
+@media (max-width: 34rem) {
+    .usage-panel { right: 6px; width: calc(100vw - 12px); }
+}
+
+
+/* ── Icon control sizing ──────────────────────────────────────────────────
+   Every icon-only or icon-led control in the portal was rendering its glyph at
+   12-14px inside a box as small as 20x19 - under half the area of Fluent's 32px
+   pointer minimum, and small enough that the symbol could not be identified
+   without leaning in. These rules raise both dimensions together: a bigger glyph
+   that is still in a 20px box is no easier to hit, and a bigger box around a
+   12px glyph is no easier to read.
+
+   Grouped rather than tuned per component so the whole set stays consistent and
+   a new icon button inherits the convention by using one of these classes. */
+
+.toggle-btn,
+.conversation-header-action,
+.config-btn,
+.new-chat-btn,
+.banner-settings-btn,
+.conversation-pin-btn,
+.conversation-archive-btn,
+.conversation-section-btn,
+.msg-copy-btn,
+.tool-copy-btn,
+.tool-popout-btn,
+.tool-modal-close,
+.session-debug-copy-btn,
+.workspace-tree-delete,
+.announcement-dismiss {
+    font-size: var(--icon-md);
+    min-width: var(--hit-pointer);
+    min-height: var(--hit-pointer);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+/* The tab strip keeps its own height, so only the glyph grows. */
+.agent-tab-icon {
+    font-size: var(--icon-md);
+    line-height: 1;
+}
+
+/* Sidebar nav glyphs sit beside a label and read as a row marker rather than a
+   target, so they take the smaller step. */
+.sidebar-nav-item .nav-icon,
+.conversation-new-btn {
+    font-size: var(--icon-sm);
+}
+
+/* The burger is the one control that must never be hard to find: it is how a
+   narrow viewport reaches the whole navigation. Its three bars are drawn, not a
+   glyph, so it is sized rather than scaled by font-size. */
+.burger-btn {
+    min-width: var(--hit-pointer);
+    min-height: var(--hit-pointer);
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.burger-btn .burger-line {
+    width: 18px;
+    height: 2px;
+}
+
+/* Message-hover actions overlay content, so they stay visually light - but light
+   is about contrast and background, not about being too small to hit. */
+.msg-copy-btn,
+.tool-copy-btn {
+    font-size: var(--icon-sm);
+}
+
+/* Two sidebar controls that are small buttons rather than rows: both are real targets and both sat
+   under the pointer minimum. The group header is deliberately excluded - at 215px wide it is a full
+   row and trivially hittable, and padding it out would only add vertical noise to a list header. */
+.conversation-new-btn,
+.conversation-filter-btn {
+    min-height: var(--hit-pointer);
+}
+
+/* Failure count in the usage panel. Danger-toned because a non-zero value here means sends are
+   being rejected right now - the one number in that panel that should interrupt a glance. */
+.usage-fail { color: var(--color-danger-text); }
+
+
+/* ── In-app guide ─────────────────────────────────────────────────────────
+   Contents on the left, the rendered page on the right. The body reuses
+   .msg-content, the same markdown typography the chat transcript uses, so the
+   guide cannot drift into a second look for the same kind of content — it only
+   adds a reading measure on top. */
+.guide-layout {
+    display: flex;
+    gap: 0;
+    height: 100%;
+    min-height: 0;
+}
+
+.guide-nav {
+    flex: 0 0 15rem;
+    min-width: 12rem;
+    overflow-y: auto;
+    border-right: 1px solid var(--color-hairline);
+    padding: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.guide-nav-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    text-align: left;
+    background: none;
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.6rem;
+    min-height: var(--hit-pointer);
+    color: var(--color-ink-muted);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-standard),
+                color var(--motion-fast) var(--ease-standard);
+}
+
+.guide-nav-item:hover {
+    background: var(--color-wash);
+    color: var(--color-ink);
+}
+
+.guide-nav-item.active {
+    background: var(--color-accent-wash-soft);
+    border-left-color: var(--color-accent);
+    color: var(--color-ink);
+}
+
+.guide-nav-item.is-child {
+    padding-left: 1.4rem;
+}
+
+.guide-nav-title { color: inherit; }
+.guide-nav-blurb { color: var(--color-ink-faint); }
+
+.guide-content {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 1.25rem 1.5rem 3rem;
+}
+
+/* ~68 characters is the readable measure for running prose; the chat bubble has
+   its own width and never needed one. */
+.guide-body {
+    max-width: 68ch;
+}
+
+/* Wide content in docs — option tables, sample payloads — scrolls in its own
+   box so the page itself never scrolls sideways. */
+.guide-body table,
+.guide-body pre {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.guide-search {
+    margin-left: auto;
+    min-width: 14rem;
+    max-width: 22rem;
+    min-height: var(--hit-pointer);
+    padding: 0.25rem 0.6rem;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+}
+
+/* Contextual help. Sits in a page header and deep-links into the guide, because
+   the moment someone needs an explanation is while they are looking at the
+   thing, not after they have gone hunting for a menu. */
+.help-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--hit-pointer);
+    min-height: var(--hit-pointer);
+    border-radius: var(--radius-sm);
+    color: var(--color-ink-faint);
+    font-size: var(--icon-md);
+    text-decoration: none;
+    transition: background var(--motion-fast) var(--ease-standard),
+                color var(--motion-fast) var(--ease-standard);
+}
+
+.help-link:hover {
+    background: var(--color-wash);
+    color: var(--color-accent);
+}
+
+@media (max-width: 48rem) {
+    .guide-layout { flex-direction: column; }
+    .guide-nav { flex: 0 0 auto; max-height: 12rem; border-right: none; border-bottom: 1px solid var(--color-hairline); }
 }

@@ -15,8 +15,8 @@ Set the provider on your agent in `config.json`:
 {
   "agents": {
     "my-agent": {
-      "apiProvider": "anthropic",
-      "modelId": "claude-sonnet-4-20250514"
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929"
     }
   }
 }
@@ -35,8 +35,8 @@ Alternatively, set the key directly in agent configuration (not recommended for 
 {
   "agents": {
     "my-agent": {
-      "apiProvider": "anthropic",
-      "modelId": "claude-sonnet-4-20250514",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
       "apiKey": "sk-ant-..."
     }
   }
@@ -63,8 +63,8 @@ Claude supports extended thinking (chain-of-thought reasoning before responding)
 {
   "agents": {
     "my-agent": {
-      "apiProvider": "anthropic",
-      "modelId": "claude-sonnet-4-20250514",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
       "reasoning": {
         "effort": "medium"
       }

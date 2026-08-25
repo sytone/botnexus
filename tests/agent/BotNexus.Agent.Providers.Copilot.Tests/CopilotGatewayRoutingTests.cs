@@ -80,7 +80,7 @@ public class CopilotGatewayRoutingTests
     /// Copilot carve-out does.
     /// </summary>
     [Theory]
-    [InlineData("anthropic", "claude-sonnet-4-20250514", "anthropic-messages", "api.anthropic.com", "/v1/messages")]
+    [InlineData("anthropic", "claude-sonnet-5", "anthropic-messages", "api.anthropic.com", "/v1/messages")]
     [InlineData("openai", "gpt-4.1", "openai-completions", "api.openai.com", "/v1/chat/completions")]
     [InlineData("openai", "o3", "openai-responses", "api.openai.com", "/v1/responses")]
     public async Task LlmClient_RoutesDirectModel_ToVendorEndpoint(

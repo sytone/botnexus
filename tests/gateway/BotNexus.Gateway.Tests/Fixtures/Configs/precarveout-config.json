@@ -34,7 +34,7 @@
       "enabled": true,
       "apiKey": "sk-ant-api03-REDACTED",
       "baseUrl": "https://api.anthropic.com",
-      "defaultModel": "claude-sonnet-4-20250514"
+      "defaultModel": "claude-sonnet-5"
     },
     "openai": {
       "enabled": true,

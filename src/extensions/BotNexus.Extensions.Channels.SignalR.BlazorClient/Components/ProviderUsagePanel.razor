@@ -1,0 +1,261 @@
+@using System.Net.Http.Json
+@using System.Globalization
+@inject HttpClient Http
+@implements IDisposable
+
+@if (_show)
+{
+    <div class="usage-overlay" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
+        <div class="usage-panel material-overlay" role="dialog" aria-modal="true"
+             aria-labelledby="usage-title" data-testid="provider-usage-panel" @onclick:stopPropagation="true">
+
+            <div class="usage-header">
+                <h3 id="usage-title" class="t-heading">Provider usage</h3>
+                @if (_providers.Count > 1)
+                {
+                    <select class="usage-select t-label" data-testid="usage-provider-select"
+                            value="@_selectedProvider" @onchange="SelectProvider" aria-label="Provider">
+                        @foreach (var p in _providers)
+                        {
+                            <option value="@p.Provider">@p.Provider</option>
+                        }
+                    </select>
+                }
+                <button class="usage-close" @onclick="Close" title="Close" aria-label="Close"
+                        data-testid="usage-close">&#x2715;</button>
+            </div>
+
+            @if (_error is not null)
+            {
+                <p class="usage-empty t-body">@_error</p>
+            }
+            else if (_current is null)
+            {
+                <p class="usage-empty t-body">
+                    No provider calls observed yet. Send a message and the limits will appear here.
+                </p>
+            }
+            else
+            {
+                <section class="usage-section">
+                    <div class="usage-section-head">
+                        <span class="t-label">Rate limits</span>
+                        <span class="t-caption usage-dim">@Ago(_current.ObservedAtUtc)</span>
+                    </div>
+
+                    @if (_current.Limits.Count == 0)
+                    {
+                        <p class="usage-empty t-caption">This provider reports no rate-limit headers.</p>
+                    }
+                    else
+                    {
+                        @foreach (var d in _current.Limits)
+                        {
+                            <div class="usage-row">
+                                <span class="usage-row-label t-body">@d.Label</span>
+                                <span class="usage-row-value t-caption usage-dim">
+                                    @Compact(d.Remaining) left of @Compact(d.Limit)
+                                </span>
+                                <span class="usage-row-reset t-caption usage-dim">@ResetIn(d.ResetUtc)</span>
+                                <span class="usage-row-pct t-caption">@d.PercentUsed.ToString("0.#", CultureInfo.InvariantCulture)%</span>
+                            </div>
+                            <div class="usage-bar" role="progressbar"
+                                 aria-valuenow="@((int)Math.Round(d.PercentUsed))" aria-valuemin="0" aria-valuemax="100"
+                                 aria-label="@d.Label used">
+                                <span class="usage-bar-fill @Severity(d.PercentUsed)"
+                                      style="width:@Width(d.PercentUsed)"></span>
+                            </div>
+                        }
+                    }
+                </section>
+
+                <section class="usage-section">
+                    <div class="usage-section-head">
+                        <span class="t-label">Burn</span>
+                        <select class="usage-select t-caption" data-testid="usage-window-select"
+                                value="@_windowMinutes" @onchange="SelectWindow" aria-label="Window">
+                            <option value="15">last 15 min</option>
+                            <option value="60">last hour</option>
+                            <option value="360">last 6 hours</option>
+                            <option value="1440">last 24 hours</option>
+                        </select>
+                    </div>
+
+                    <div class="usage-totals t-body">
+                        <span><strong>@_current.Burn.Requests</strong> @Plural(_current.Burn.Requests, "call")</span>
+                        <span><strong>@Compact(_current.Burn.InputTokens)</strong> in</span>
+                        <span><strong>@Compact(_current.Burn.OutputTokens)</strong> out</span>
+                        @* Only rendered when non-zero: a permanent "0 failed" trains the reader to
+                           stop seeing the row, which is the one row that must be noticed. *@
+                        @if (_current.Burn.Failures > 0)
+                        {
+                            <span class="usage-fail"><strong>@_current.Burn.Failures</strong> failed</span>
+                        }
+                    </div>
+
+                    @if (_current.Burn.Models.Count == 0)
+                    {
+                        <p class="usage-empty t-caption">Nothing in this window.</p>
+                    }
+                    else
+                    {
+                        <div class="usage-models">
+                            @foreach (var m in _current.Burn.Models)
+                            {
+                                <div class="usage-model-row">
+                                    <span class="usage-model-name t-mono">@m.Model</span>
+                                    <span class="t-caption usage-dim">@m.Requests @Plural(m.Requests, "call")</span>
+                                    @if (m.Failures > 0)
+                                    {
+                                        <span class="t-caption usage-fail">@m.Failures failed</span>
+                                    }
+                                    <span class="t-caption usage-dim">@Compact(m.InputTokens) / @Compact(m.OutputTokens)</span>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @* Stated plainly rather than buried. A number shown without its provenance
+                       invites being trusted for billing, which this is not. *@
+                    <p class="usage-note t-caption">
+                        Calls are counted exactly. Token figures come from the provider's own
+                        rate-limit counters, so concurrent calls to different models may be
+                        attributed to whichever returned last. Not a billing source.
+                    </p>
+                </section>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private bool _show;
+    private string? _error;
+    private string? _selectedProvider;
+    private int _windowMinutes = 60;
+    private List<ProviderUsage> _providers = [];
+    private ProviderUsage? _current;
+    private Timer? _poll;
+
+    /// <summary>Opens the panel and starts polling.</summary>
+    public async Task OpenAsync()
+    {
+        _show = true;
+        StateHasChanged();
+        await RefreshAsync();
+        // Only while open. Polling a closed panel would burn a request every few seconds for a
+        // view nobody is looking at.
+        _poll = new Timer(async void (_) =>
+        {
+            try { await InvokeAsync(RefreshAsync); }
+            catch { /* a failed poll is shown by the next successful one */ }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private void Close()
+    {
+        _show = false;
+        StopPolling();
+        StateHasChanged();
+    }
+
+    private void HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") Close();
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            var res = await Http.GetFromJsonAsync<UsageResponse>($"api/providers/usage?windowMinutes={_windowMinutes}");
+            _providers = res?.Providers ?? [];
+            _error = null;
+
+            // Keep the operator's choice across refreshes; fall back only if it disappeared.
+            if (_selectedProvider is null || _providers.All(p => p.Provider != _selectedProvider))
+                _selectedProvider = _providers.FirstOrDefault()?.Provider;
+
+            _current = _providers.FirstOrDefault(p => p.Provider == _selectedProvider);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Could not load usage: {ex.Message}";
+        }
+        StateHasChanged();
+    }
+
+    private async Task SelectProvider(ChangeEventArgs e)
+    {
+        _selectedProvider = e.Value?.ToString();
+        _current = _providers.FirstOrDefault(p => p.Provider == _selectedProvider);
+        await Task.CompletedTask;
+        StateHasChanged();
+    }
+
+    private async Task SelectWindow(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var w)) _windowMinutes = w;
+        await RefreshAsync();
+    }
+
+    private void StopPolling()
+    {
+        _poll?.Dispose();
+        _poll = null;
+    }
+
+    public void Dispose() => StopPolling();
+
+    /// <summary>Bar width, floored so a non-zero value is never invisible.</summary>
+    private static string Width(double pct) =>
+        (pct <= 0 ? 0 : Math.Max(2, Math.Min(100, pct))).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+
+    /// <summary>Severity class. Thresholds are about headroom, not aesthetics.</summary>
+    private static string Severity(double pct) => pct >= 90 ? "is-critical" : pct >= 75 ? "is-warning" : "is-ok";
+
+    /// <summary>Short human number: 1234 -> 1.2k, 5000000 -> 5.0M.</summary>
+    private static string Compact(long n) => n switch
+    {
+        >= 1_000_000_000 => (n / 1_000_000_000d).ToString("0.#", CultureInfo.InvariantCulture) + "B",
+        >= 1_000_000 => (n / 1_000_000d).ToString("0.#", CultureInfo.InvariantCulture) + "M",
+        >= 1_000 => (n / 1_000d).ToString("0.#", CultureInfo.InvariantCulture) + "k",
+        _ => n.ToString(CultureInfo.InvariantCulture),
+    };
+
+    private static string ResetIn(DateTimeOffset? reset)
+    {
+        if (reset is null) return string.Empty;
+        var d = reset.Value - DateTimeOffset.UtcNow;
+        // Past reset: the window rolled after this reading was taken. "seen Nm ago" in the section
+        // header already conveys staleness, so saying it again on every row is noise.
+        if (d <= TimeSpan.Zero) return string.Empty;
+        if (d.TotalHours >= 1) return $"resets in {(int)d.TotalHours}h {d.Minutes}m";
+        if (d.TotalMinutes >= 1) return $"resets in {(int)d.TotalMinutes}m";
+        return $"resets in {(int)d.TotalSeconds}s";
+    }
+
+    /// <summary>Naive plural, correct for the count nouns this panel uses.</summary>
+    private static string Plural(long n, string word) => n == 1 ? word : word + "s";
+
+    private static string Ago(DateTimeOffset at)
+    {
+        if (at == default) return string.Empty;
+        var d = DateTimeOffset.UtcNow - at;
+        if (d.TotalHours >= 1) return $"seen {(int)d.TotalHours}h ago";
+        if (d.TotalMinutes >= 1) return $"seen {(int)d.TotalMinutes}m ago";
+        return $"seen {Math.Max(0, (int)d.TotalSeconds)}s ago";
+    }
+
+    private sealed record UsageResponse(int WindowMinutes, List<ProviderUsage> Providers);
+
+    private sealed record ProviderUsage(
+        string Provider, DateTimeOffset ObservedAtUtc, List<LimitDimension> Limits, Burn Burn);
+
+    private sealed record LimitDimension(
+        string Id, string Label, long Limit, long Remaining, long Used, double PercentUsed, DateTimeOffset? ResetUtc);
+
+    private sealed record Burn(long Requests, long Failures, long InputTokens, long OutputTokens, List<ModelBurn> Models);
+
+    private sealed record ModelBurn(string Model, long Requests, long Failures, long InputTokens, long OutputTokens);
+}

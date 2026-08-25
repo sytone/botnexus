@@ -25,6 +25,13 @@ public sealed class DialogAccessibilityTests : IDisposable
         _ctx.Services.AddSingleton(prefs);
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
+
+        // SkillsExplorerPanel defers its REST load until the portal reports ready, because the
+        // rest client does not know its base URL until PortalLoadService has configured it.
+        // Rendering against a not-ready portal would exercise the waiting state, not the dialog.
+        var portalLoad = Substitute.For<IPortalLoadService>();
+        portalLoad.IsReady.Returns(true);
+        _ctx.Services.AddSingleton(portalLoad);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 

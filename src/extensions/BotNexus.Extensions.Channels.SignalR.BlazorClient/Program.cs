@@ -34,6 +34,10 @@ builder.Services.AddScoped<CronApiClient>();
 builder.Services.AddScoped<SectionsApiClient>();
 builder.Services.AddScoped<ConversationSectionsState>();
 builder.Services.AddScoped<ToolsApiClient>();
+// Sibling of the API clients around it and registered the same way. Its absence was not a design
+// choice: Pages/Plugins.razor injects it, so navigating to /plugins threw
+// "No registered service of type 'PluginsApiClient'" and the page never rendered at all.
+builder.Services.AddScoped<PluginsApiClient>();
 builder.Services.AddScoped<NavOrderApiClient>();
 builder.Services.AddScoped<IPortalPreferencesService, PortalPreferencesService>();
 

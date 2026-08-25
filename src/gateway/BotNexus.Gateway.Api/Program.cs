@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Providers;
 using BotNexus.Gateway.Api.Extensions;
 using BotNexus.Gateway.Api.Logging;
 using BotNexus.Gateway.Api;
@@ -336,6 +337,15 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddSingleton<ApiProviderRegistry>();
 builder.Services.AddSingleton<ModelRegistry>();
 builder.Services.AddSingleton<BuiltInModels>();
+
+// Provider usage: rate-limit headroom captured off every provider response, plus the observed
+// burn derived from it. Singleton because the whole point is a live rolling view held across
+// requests; nothing here is persisted (see ProviderUsageStore for why).
+builder.Services.AddSingleton<IProviderUsageStore, ProviderUsageStore>();
+builder.Services.AddTransient<ProviderRateLimitHandler>(sp => new ProviderRateLimitHandler(
+    sp.GetRequiredService<IProviderUsageStore>(),
+    sp.GetRequiredService<ILogger<ProviderRateLimitHandler>>()));
+
 builder.Services.AddHttpClient();
 builder.Services.AddTransient<ProviderLoggingHandler>(sp =>
 {
@@ -371,7 +381,12 @@ builder.Services.AddHttpClient("BotNexus", client =>
     // itself re-reads the config flag and the Debug level on every request, which is what makes
     // `botnexus config set gateway.enableProviderRequestLogging true` take effect on a live gateway.
     return sp.GetRequiredService<ProviderLoggingHandler>();
-});
+})
+.AddHttpMessageHandler(sp =>
+    // Innermost of the three, deliberately: it must observe the response that was actually
+    // returned to the caller, after the retry handler has finished replaying failures. Sitting
+    // outside it would capture the headroom of an attempt that got discarded.
+    sp.GetRequiredService<ProviderRateLimitHandler>());
 builder.Services.AddSingleton<HttpClient>(sp =>
 {
     var factory = sp.GetRequiredService<IHttpClientFactory>();

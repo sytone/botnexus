@@ -162,7 +162,7 @@ curl -X POST http://localhost:5005/api/chat \
 - **`displayName`** (required): Name shown in UI and logs
 - **`description`** (optional): Purpose and capabilities
 - **`provider`** (required): Provider key (`copilot`, `anthropic`, `openai`)
-- **`model`** (required): Model ID (e.g., `gpt-4.1`, `claude-opus-4.6`)
+- **`model`** (required): Model ID (e.g., `gpt-4.1`, `claude-opus-4-6`)
 - **`enabled`** (default: `true`): Enable/disable this agent
 
 ### Model Selection
@@ -172,7 +172,7 @@ Restrict which models an agent can use:
 ```json
 {
   "model": "gpt-4.1",
-  "allowedModels": ["gpt-4.1", "gpt-4o", "claude-sonnet-4-20250514"]
+  "allowedModels": ["gpt-4.1", "gpt-4o", "claude-sonnet-5"]
 }
 ```
 
@@ -532,7 +532,7 @@ Create a multi-agent system for code development:
     "displayName": "Developer",
     "description": "Code generation and implementation",
     "provider": "copilot",
-    "model": "claude-opus-4.6",
+    "model": "claude-opus-4-6",
     "toolIds": ["read_file", "write_file", "grep", "glob", "bash"],
     "subAgents": ["reviewer"],
     "systemPromptFiles": ["SOUL.md", "IDENTITY.md", "coding-standards.md"]
@@ -547,7 +547,7 @@ Create a multi-agent system for code development:
     "displayName": "Code Reviewer",
     "description": "Code review and quality assurance",
     "provider": "anthropic",
-    "model": "claude-sonnet-4-20250514",
+    "model": "claude-sonnet-5",
     "toolIds": ["read_file", "grep"],
     "systemPromptFiles": ["SOUL.md", "review-checklist.md"]
   }
@@ -608,7 +608,7 @@ curl http://localhost:5005/api/agents
       "agentId": "coder",
       "displayName": "Coding Agent",
       "description": "Code generation specialist",
-      "modelId": "claude-opus-4.6",
+      "modelId": "claude-opus-4-6",
       "provider": "copilot",
       "enabled": true
     }
@@ -718,9 +718,9 @@ custom.md      # Project-specific rules (frequent updates)
 ### 2. Model Selection
 
 **Match model to task:**
-- **Complex reasoning**: `claude-opus-4.6`, `gpt-5.4`
-- **General purpose**: `gpt-4.1`, `claude-sonnet-4-20250514`
-- **Fast/cheap**: `gpt-4o-mini`, `claude-haiku-4.5`
+- **Complex reasoning**: `claude-opus-4-6`, `gpt-5.4`
+- **General purpose**: `gpt-4.1`, `claude-sonnet-5`
+- **Fast/cheap**: `gpt-4o-mini`, `claude-haiku-4-5-20251001`
 
 ### 3. Tool Access
 

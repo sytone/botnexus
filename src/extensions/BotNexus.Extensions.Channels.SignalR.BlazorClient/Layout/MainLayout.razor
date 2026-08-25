@@ -43,6 +43,19 @@
                 <AgentIdentity AgentId="@bannerAgentId" />
             }
 
+            <button class="banner-usage-btn"
+                    @onclick="OpenUsage"
+                    title="Provider usage and rate limits"
+                    aria-label="Provider usage and rate limits"
+                    data-testid="banner-usage-btn">
+                <span class="banner-usage-dot"></span>
+                <span>Usage</span>
+            </button>
+            <button class="banner-theme-btn"
+                    @onclick="ToggleTheme"
+                    title="@(IsLightTheme ? "Switch to dark theme" : "Switch to light theme")"
+                    aria-label="@(IsLightTheme ? "Switch to dark theme" : "Switch to light theme")"
+                    data-testid="banner-theme-btn">@(IsLightTheme ? "\u263E" : "\u2600")</button>
             <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn">&#x2699;</button>
             @if (Prefs.Current.DebugModeEnabled)
             {
@@ -66,7 +79,7 @@
     }
 
     @* Two-column body *@
-    <div class="app-body">
+    <div class="app-body" id="app-body">
         @* Mobile overlay - tap to close sidebar *@
         @if (_sidebarOpen)
         {
@@ -94,12 +107,6 @@
                         <span class="gateway-started" title="@GatewayInfo.Info.StartedAt.ToString("o")">
                             &#x21BA; @FormatStarted(GatewayInfo.Info.StartedAt)
                         </span>
-                        <a class="gateway-commit"
-                           href="https://github.com/sytone/botnexus/commit/@GatewayInfo.Info.CommitSha"
-                           target="_blank"
-                           title="@GatewayInfo.Info.CommitSha">
-                            @GatewayInfo.Info.CommitShort
-                        </a>
                     </div>
                 }
 
@@ -140,6 +147,12 @@
         }
 
         @* Main canvas - @Body renders here *@
+        @* Reuses BotNexus.splitter, the same mechanism the workspace, reports and skills
+           panels already use, rather than a second drag implementation. The JS resolves the left
+           pane as this element's previousElementSibling, which is the sidebar. Desktop only: on
+           mobile the sidebar is a fixed overlay, so there is no boundary to drag. *@
+        <div class="panel-splitter sidebar-splitter" role="separator" aria-orientation="vertical"
+             aria-label="Resize sidebar" title="Drag to resize"></div>
         <main class="main-canvas">
             <GlobalErrorBoundary>
             @Body
@@ -151,6 +164,7 @@
 
 @* Modal overlays - rendered outside app-shell to avoid flex/overflow containment *@
 <PortalSettingsPanel @ref="_settingsPanel" />
+<ProviderUsagePanel @ref="_usagePanel" />
 @if (_showDebugPanel)
 {
     <SessionDebugPanel SessionId="@GetActiveSessionId()" OnClose="CloseDebug" />
@@ -191,6 +205,13 @@
     /// </summary>
     private string DensityAttribute => PortalDensity.Normalize(Prefs.Current.Density);
 
+
+    /// <summary>True when the light theme is active, driving the toggle's icon and label.</summary>
+    private bool IsLightTheme => PortalTheme.Normalize(Prefs.Current.Theme) == PortalTheme.Light;
+
+    /// <summary>Flips between the two themes and persists the choice.</summary>
+    private Task ToggleTheme() => Prefs.SetThemeAsync(PortalTheme.Toggle(Prefs.Current.Theme));
+
     private ConversationActivityFilter _activityFilter = ConversationActivityFilter.None;
     private const string ActivityFilterKey = "botnexus-conversation-activity-filter";
 
@@ -205,6 +226,7 @@
     private List<SidebarAgentItem> _sidebarAgents = [];
     private List<ToolDto> _tools = [];
     private PortalSettingsPanel? _settingsPanel;
+    private ProviderUsagePanel? _usagePanel;
     private bool _showDebugPanel = false;
     private bool _sidebarOpen = false;
     private bool _isMobile = false;
@@ -226,9 +248,13 @@
         public const string Agents = "agents";
         public const string Cron = "cron";
         public const string Plugins = "plugins";
+        public const string Guide = "guide";
 
+        // Guide sits last: it is a reference, not a place work happens. Adding a key here is safe
+        // for existing users - the resolver below walks this list and re-inserts anything missing
+        // from a saved order next to its neighbours, so a new entry appears without a migration.
         public static readonly IReadOnlyList<string> DefaultOrder =
-            [Home, Activity, Tools, Chat, Configuration, Skills, Agents, Cron, Plugins];
+            [Home, Activity, Tools, Chat, Configuration, Skills, Agents, Cron, Plugins, Guide];
     }
 
     /// <summary>
@@ -365,6 +391,7 @@
         NavOrderKeys.Agents => RenderAgentsNav(),
         NavOrderKeys.Cron => RenderCronNav(),
         NavOrderKeys.Plugins => RenderPluginsNav(),
+        NavOrderKeys.Guide => RenderGuideNav(),
         _ => _ => { }
     };
 
@@ -733,6 +760,13 @@
         @NavAnchor(NavOrderKeys.Plugins, @<text>&#x1F9E9; Plugins</text>)
     };
 
+    // The in-app guide. Goes through the same NavAnchor helper as every other entry, so it inherits
+    // the route-derived testid, the active-state matching and any user ordering override.
+    private RenderFragment RenderGuideNav() => __builder =>
+    {
+        @NavAnchor(NavOrderKeys.Guide, @<text>&#x1F4D6; Guide</text>)
+    };
+
     protected override void OnInitialized()
     {
         Store.OnChanged += HandleStateChanged;
@@ -757,8 +791,51 @@
     // populates deterministically as soon as the gateway responds (#2233, #2236). Never throws.
     protected override async Task OnInitializedAsync()
     {
+        await EnsurePortalInitializedAsync();
         await LoadToolsAsync();
         await LoadNavOrderAsync();
+    }
+
+    /// <summary>
+    /// Initialises the portal for every route, from the shell.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This used to be the responsibility of individual pages, and only three of them accepted it:
+    /// Landing, Home and Activity. Every other route - /skills, /agents, /tools, /cron, /plugins,
+    /// /configuration - reached by direct navigation, a bookmark or a refresh therefore ran against
+    /// a <c>GatewayRestClient</c> that had never been handed its base URL, because
+    /// <c>Configure()</c> is called from inside <c>InitializeAsync</c>.
+    /// </para>
+    /// <para>
+    /// The failure was silent and misattributed. Every REST call from those routes threw from
+    /// <c>EnsureConfigured</c>, each page caught it and rendered its own generic message, and the
+    /// Skills page reported "Unable to load skills directory" - blaming a folder that was perfectly
+    /// healthy for a startup ordering problem. Initialising here removes the whole class rather than
+    /// adding a fourth page to the list, which is how it grew to three.
+    /// </para>
+    /// <para>
+    /// The existing per-page calls are left in place: they are guarded on IsReady/IsLoading and
+    /// become no-ops, and removing them is a separate cleanup with no behavioural gain.
+    /// </para>
+    /// </remarks>
+    private async Task EnsurePortalInitializedAsync()
+    {
+        if (PortalLoad.IsReady || PortalLoad.IsLoading)
+            return;
+
+        try
+        {
+            var hubUrl = new Uri(new Uri(Nav.BaseUri), "/hub/gateway").ToString();
+            PortalLoad.ClientKind = "desktop";
+            await PortalLoad.InitializeAsync(hubUrl);
+        }
+        catch (Exception ex)
+        {
+            // Matches the pages this replaces: a portal that cannot reach the gateway must still
+            // render a shell the user can navigate, not a blank screen.
+            Console.Error.WriteLine($"Portal initialization failed: {ex.Message}");
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -786,6 +863,24 @@
                 _activityFilter = storedFilter;
             _isMobile = await JS.InvokeAsync<bool>("chatScroll.isMobileView");
             await Prefs.LoadAsync();
+            // Re-apply after load: the pre-paint script in index.html already set the attribute
+            // from the same stored value, but that script is the only thing that ran before this
+            // point, and re-applying keeps a single owner of the DOM state once Blazor is live.
+            await JS.InvokeVoidAsync("portalPrefs.applyTheme", PortalTheme.Normalize(Prefs.Current.Theme));
+
+            // Sidebar resize. min 180px keeps the conversation titles readable rather than letting
+            // the pane be dragged to a useless sliver; max 40% stops it swallowing the canvas.
+            // Width persists in its own localStorage key, independent of the open/closed toggle,
+            // so collapsing and reopening restores the width the user chose.
+            try
+            {
+                await JS.InvokeVoidAsync("BotNexus.splitter.init", "app-body", "bn-sidebar-width", 240, 180, 0.4);
+            }
+            catch
+            {
+                // A splitter that fails to initialise leaves a fixed-width sidebar, which is what
+                // the portal had before. Never worth failing first render over.
+            }
             // Re-render immediately after mobile detection so layout responds without waiting for gateway load.
             StateHasChanged();
 
@@ -1352,6 +1447,9 @@
     }
 
     private void OpenSettings() => _settingsPanel?.Open();
+
+    /// <summary>Opens the provider usage popover, which begins polling while it is visible.</summary>
+    private Task OpenUsage() => _usagePanel?.OpenAsync() ?? Task.CompletedTask;
 
     private void ShowUpdateConfirm() => _showUpdateConfirm = true;
     private void CancelUpdate() => _showUpdateConfirm = false;

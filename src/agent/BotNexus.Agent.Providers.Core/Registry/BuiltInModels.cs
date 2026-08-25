@@ -114,10 +114,20 @@ public sealed class BuiltInModels
 
     private static void RegisterAnthropicModels(ModelRegistry modelRegistry)
     {
-        Register(modelRegistry, "anthropic", "claude-3-5-haiku-20241022", "Claude Haiku 3.5", "anthropic-messages", AnthropicBaseUrl, false, ["text", "image"], 200000, 8192);
-        Register(modelRegistry, "anthropic", "claude-sonnet-4-20250514", "Claude Sonnet 4", "anthropic-messages", AnthropicBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtendedContextWindow: true);
+        // Verified against GET /v1/models. Three ids here previously did not resolve at all:
+        // claude-3-5-haiku-20241022 and claude-sonnet-4-20250514 returned 404 not_found_error, and
+        // claude-opus-4-5-20250929 carried the wrong date (the release is -20251101). Discovery
+        // overlays this table but only ADDS and UPDATES, so a retired id stayed selectable in the
+        // portal and a user picking it got a 404 on send.
+        //
+        // ContextWindow is the DEFAULT tier, not the advertised maximum: the 1M window on the
+        // long-context models is opt-in per request and costs a beta header, so it is expressed
+        // through SupportsExtendedContextWindow instead. See AnthropicModelDiscoveryProvider.
+        Register(modelRegistry, "anthropic", "claude-opus-5", "Claude Opus 5", "anthropic-messages", AnthropicBaseUrl, true, ["text", "image"], 200000, 128000, supportsExtraHighThinking: true, supportsExtendedContextWindow: true);
+        Register(modelRegistry, "anthropic", "claude-sonnet-5", "Claude Sonnet 5", "anthropic-messages", AnthropicBaseUrl, true, ["text", "image"], 200000, 128000, supportsExtraHighThinking: true, supportsExtendedContextWindow: true);
+        Register(modelRegistry, "anthropic", "claude-haiku-4-5-20251001", "Claude Haiku 4.5", "anthropic-messages", AnthropicBaseUrl, true, ["text", "image"], 200000, 64000);
         Register(modelRegistry, "anthropic", "claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "anthropic-messages", AnthropicBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtendedContextWindow: true);
-        Register(modelRegistry, "anthropic", "claude-opus-4-5-20250929", "Claude Opus 4.5", "anthropic-messages", AnthropicBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtendedContextWindow: true);
+        Register(modelRegistry, "anthropic", "claude-opus-4-5-20251101", "Claude Opus 4.5", "anthropic-messages", AnthropicBaseUrl, true, ["text", "image"], 200000, 64000);
     }
 
     private static void RegisterOpenAIModels(ModelRegistry modelRegistry)
