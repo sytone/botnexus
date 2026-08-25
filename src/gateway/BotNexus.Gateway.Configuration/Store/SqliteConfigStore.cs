@@ -141,6 +141,13 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
     /// arrive, silently overwriting one scope's value with another's.
     /// </para>
     /// <para>
+    /// <b>Removals are applied before upserts</b>, matching the document backend. A key can be both a
+    /// removal and the ancestor of an upsert when a leaf becomes a branch (<c>"auth": "none"</c> becoming
+    /// <c>"auth": { ... }</c>); deleting first clears the stale leaf row, whereas leaving it would give
+    /// the store two rows describing incompatible shapes and the rehydrator rejects that document as
+    /// inconsistent.
+    /// </para>
+    /// <para>
     /// The whole change set runs in one transaction, so a failure part-way cannot leave the store holding
     /// half an edit - which for a change spanning a credential and its enable flag would be worse than
     /// applying neither.
@@ -164,6 +171,20 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
         await using var transaction = (SqliteTransaction)await connection
             .BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
+        foreach (var path in changes.Removals)
+        {
+            await using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = """
+                DELETE FROM config_entries
+                WHERE scope = $scope AND scope_id = $scopeId AND key_path = $keyPath;
+                """;
+            delete.Parameters.AddWithValue("$scope", (int)ConfigScope.World);
+            delete.Parameters.AddWithValue("$scopeId", string.Empty);
+            delete.Parameters.AddWithValue("$keyPath", path);
+            await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         foreach (var entry in changes.Upserts)
         {
             await using var upsert = connection.CreateCommand();
@@ -180,20 +201,6 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
             upsert.Parameters.AddWithValue("$state", (int)entry.State);
             upsert.Parameters.AddWithValue("$value", (object?)entry.Value ?? DBNull.Value);
             await upsert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        foreach (var path in changes.EffectiveRemovals)
-        {
-            await using var delete = connection.CreateCommand();
-            delete.Transaction = transaction;
-            delete.CommandText = """
-                DELETE FROM config_entries
-                WHERE scope = $scope AND scope_id = $scopeId AND key_path = $keyPath;
-                """;
-            delete.Parameters.AddWithValue("$scope", (int)ConfigScope.World);
-            delete.Parameters.AddWithValue("$scopeId", string.Empty);
-            delete.Parameters.AddWithValue("$keyPath", path);
-            await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);

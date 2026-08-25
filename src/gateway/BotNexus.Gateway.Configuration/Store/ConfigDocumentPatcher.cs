@@ -34,9 +34,9 @@ public static class ConfigDocumentPatcher
         ArgumentNullException.ThrowIfNull(changes);
 
         // Removals run FIRST so a leaf that became a branch is cleared before the branch is written.
-        // Superseded removals are already filtered out by ConfigChangeSet.EffectiveRemovals - see the
-        // empty-object-is-a-leaf argument there - so this loop can apply what it is given.
-        foreach (var path in changes.EffectiveRemovals)
+        // A key can be both a removal and the ancestor of an upsert when a leaf becomes a branch;
+        // clearing it first is what makes that sequence correct. See ConfigChangeSet.Removals.
+        foreach (var path in changes.Removals)
         {
             RemovePath(document, path.Split('.'));
         }
