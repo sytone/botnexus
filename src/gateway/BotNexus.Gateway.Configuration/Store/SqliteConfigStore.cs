@@ -126,6 +126,79 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// <b>One statement per changed key, and nothing else is touched.</b> Contrast
+    /// <see cref="WriteDocumentAsync"/>, which clears the table first: changing one field there rewrites
+    /// every row, so the cost of an edit scales with the size of the configuration rather than the size
+    /// of the change, and any key the caller did not model is silently dropped on the way through.
+    /// </para>
+    /// <para>
+    /// <b><c>ON CONFLICT</c> requires the uniqueness constraint to name the same columns as the key.</b>
+    /// The upsert targets <c>(scope, scope_id, key_path)</c> because that triple is what identifies a
+    /// row; targeting <c>key_path</c> alone would collide across scopes the moment agent-scoped rows
+    /// arrive, silently overwriting one scope's value with another's.
+    /// </para>
+    /// <para>
+    /// The whole change set runs in one transaction, so a failure part-way cannot leave the store holding
+    /// half an edit - which for a change spanning a credential and its enable flag would be worse than
+    /// applying neither.
+    /// </para>
+    /// </remarks>
+    public async Task ApplyChangesAsync(ConfigChangeSet changes, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+
+        if (changes.IsEmpty)
+        {
+            // Nothing to do. Opening a transaction to write zero rows would burn a WAL frame and bump
+            // the database mtime for a write the caller already knows changes nothing.
+            return;
+        }
+
+        await EnsureInitialisedAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var connection = SqliteConnectionFactory.Create(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = (SqliteTransaction)await connection
+            .BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        foreach (var entry in changes.Upserts)
+        {
+            await using var upsert = connection.CreateCommand();
+            upsert.Transaction = transaction;
+            upsert.CommandText = """
+                INSERT INTO config_entries (scope, scope_id, key_path, state, value)
+                VALUES ($scope, $scopeId, $keyPath, $state, $value)
+                ON CONFLICT (scope, scope_id, key_path)
+                DO UPDATE SET state = excluded.state, value = excluded.value;
+                """;
+            upsert.Parameters.AddWithValue("$scope", (int)ConfigScope.World);
+            upsert.Parameters.AddWithValue("$scopeId", string.Empty);
+            upsert.Parameters.AddWithValue("$keyPath", entry.Path);
+            upsert.Parameters.AddWithValue("$state", (int)entry.State);
+            upsert.Parameters.AddWithValue("$value", (object?)entry.Value ?? DBNull.Value);
+            await upsert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var path in changes.Removals)
+        {
+            await using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = """
+                DELETE FROM config_entries
+                WHERE scope = $scope AND scope_id = $scopeId AND key_path = $keyPath;
+                """;
+            delete.Parameters.AddWithValue("$scope", (int)ConfigScope.World);
+            delete.Parameters.AddWithValue("$scopeId", string.Empty);
+            delete.Parameters.AddWithValue("$keyPath", path);
+            await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task EnsureInitialisedAsync(CancellationToken cancellationToken)
     {
         if (_initialised)

@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using BotNexus.Gateway.Configuration.Store;
 
 namespace BotNexus.Gateway.Configuration.Writers;
 
@@ -84,5 +85,72 @@ public sealed class FanOutConfigurationWriter : IConfigurationWriter
             "The stores now hold different documents; the configuration a reader sees depends on " +
             "provider precedence, so this must not be treated as a successful write.",
             failures);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// <b>Each backend diffs against its own current state, deliberately.</b> It is tempting to diff
+    /// once here and hand the same change set to every writer, but the backends are not guaranteed to be
+    /// identical - that is the entire premise of a JSON-to-SQLite transition, where the store starts
+    /// empty and the file is fully populated. A single shared change set computed from one backend would
+    /// be a no-op against the other and the two would never converge. Letting each compute its own means
+    /// a lagging backend catches up on the next write instead of silently staying behind.
+    /// </para>
+    /// <para>
+    /// The returned change set is the first successful backend's. They describe the same intent; where
+    /// they differ it is because a backend was already out of step, and reporting the first is more
+    /// useful than reporting an intersection that belongs to no store.
+    /// </para>
+    /// </remarks>
+    public async Task<ConfigChangeSet> ApplyAsync(
+        object dto,
+        string pathPrefix,
+        string reason,
+        ConfigDiffOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+        ArgumentNullException.ThrowIfNull(pathPrefix);
+
+        List<Exception>? failures = null;
+        var succeeded = new List<string>(_writers.Count);
+        ConfigChangeSet? applied = null;
+
+        foreach (var writer in _writers)
+        {
+            try
+            {
+                var changes = await writer
+                    .ApplyAsync(dto, pathPrefix, reason, options, cancellationToken)
+                    .ConfigureAwait(false);
+
+                applied ??= changes;
+                succeeded.Add(writer.Name);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(
+                    new InvalidOperationException(
+                        $"Configuration writer '{writer.Name}' failed to apply the change set.", ex));
+            }
+        }
+
+        if (failures is not null)
+        {
+            var wrote = succeeded.Count == 0 ? "none" : string.Join(", ", succeeded);
+            throw new AggregateException(
+                $"Configuration change set partially failed. Applied to: {wrote}. " +
+                "The stores now disagree; the configuration a reader sees depends on provider " +
+                "precedence, so this must not be treated as a successful write.",
+                failures);
+        }
+
+        // Unreachable with a non-empty writer set, which the constructor guarantees.
+        return applied ?? new ConfigChangeSet(pathPrefix, [], []);
     }
 }

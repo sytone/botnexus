@@ -49,6 +49,27 @@ public sealed class ConfigurationWriterFanOutTests : IDisposable
             Received.Add(document.ToJsonString());
             return Task.CompletedTask;
         }
+
+        /// <summary>Records the change set it was asked to apply.</summary>
+        public Task<ConfigChangeSet> ApplyAsync(
+            object dto,
+            string pathPrefix,
+            string reason,
+            ConfigDiffOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            var changes = ConfigDtoDiffer.Diff(Current, dto, pathPrefix, options);
+            Applied.Add(changes);
+            return Task.FromResult(changes);
+        }
+
+        /// <summary>
+        /// The document this backend claims to already hold, so a test can make two backends disagree.
+        /// </summary>
+        public JsonObject? Current { get; set; }
+
+        /// <summary>Change sets received via <see cref="ApplyAsync"/>, in order.</summary>
+        public List<ConfigChangeSet> Applied { get; } = [];
     }
 
     /// <summary>A backend that always fails, for partial-write assertions.</summary>
@@ -58,6 +79,14 @@ public sealed class ConfigurationWriterFanOutTests : IDisposable
 
         public Task WriteAsync(JsonObject document, string reason, CancellationToken cancellationToken = default)
             => Task.FromException(new InvalidOperationException("backend unavailable"));
+
+        public Task<ConfigChangeSet> ApplyAsync(
+            object dto,
+            string pathPrefix,
+            string reason,
+            ConfigDiffOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromException<ConfigChangeSet>(new InvalidOperationException("backend unavailable"));
     }
 
     // ---------------------------------------------------------------------------------------------

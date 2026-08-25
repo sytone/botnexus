@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using BotNexus.Gateway.Configuration.Store;
 
 namespace BotNexus.Gateway.Configuration.Writers;
 
@@ -42,4 +43,36 @@ public interface IConfigurationWriter
     /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task WriteAsync(JsonObject document, string reason, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Applies an updated DTO for one subtree, writing only the keys that actually changed (#3532).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the contract callers should reach for; <see cref="WriteAsync"/> is for imports.</b> A
+    /// whole-document write cannot distinguish "unchanged" from "not supplied", so it rewrites both
+    /// identically and deletes anything the caller's DTO does not model. That is #2816: a
+    /// <c>channels</c> write carrying one field destroyed the Service Bus settings and two Telegram bot
+    /// tokens, and the credentials were unrecoverable.
+    /// </para>
+    /// <para>
+    /// <paramref name="pathPrefix"/> is the blast radius. Removals are computed only within it, so a
+    /// write to <c>agents.nova</c> cannot touch <c>channels</c> - not because the implementation is
+    /// careful, but because it never looks there.
+    /// </para>
+    /// </remarks>
+    /// <param name="dto">The updated object for <paramref name="pathPrefix"/>.</param>
+    /// <param name="pathPrefix">
+    /// Canonical dotted path the DTO speaks for, e.g. <c>agents.nova</c>. Empty means the whole document.
+    /// </param>
+    /// <param name="reason">Why the write is happening, for backup labelling and diagnostics.</param>
+    /// <param name="options">Diff behaviour; defaults to <see cref="ConfigDiffOptions.Default"/>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The change set that was applied, so callers can report or assert on what moved.</returns>
+    Task<ConfigChangeSet> ApplyAsync(
+        object dto,
+        string pathPrefix,
+        string reason,
+        ConfigDiffOptions? options = null,
+        CancellationToken cancellationToken = default);
 }

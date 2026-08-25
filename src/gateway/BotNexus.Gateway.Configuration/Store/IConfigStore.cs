@@ -28,5 +28,26 @@ public interface IConfigStore
     /// </para>
     /// </summary>
     Task WriteDocumentAsync(JsonObject document, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Applies only the keys named in <paramref name="changes"/>, leaving every other row untouched (#3532).
+    ///
+    /// <para>
+    /// <b>Why this exists alongside <see cref="WriteDocumentAsync"/>.</b> The document write is honest
+    /// for an import - a snapshot genuinely replaces everything. It is dishonest for an edit, because it
+    /// cannot distinguish "unchanged" from "not supplied" and so rewrites ~200-400 rows to change one
+    /// field. Worse, any key the caller's DTO does not model is absent from the snapshot and is deleted:
+    /// that is #2816, where a <c>channels</c> write carrying one field destroyed the Service Bus settings
+    /// and two bot tokens beneath it.
+    /// </para>
+    ///
+    /// <para>
+    /// Both remain because they answer different questions. An importer replacing the world should keep
+    /// using <see cref="WriteDocumentAsync"/>; anything editing a subtree must use this.
+    /// </para>
+    /// </summary>
+    /// <param name="changes">The keys to upsert and remove, scoped to a path prefix.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task ApplyChangesAsync(ConfigChangeSet changes, CancellationToken cancellationToken = default);
 }
 

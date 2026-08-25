@@ -1,6 +1,4 @@
-using BotNexus.Gateway.Configuration.Store;
-
-namespace BotNexus.Gateway.Configuration.Writers;
+namespace BotNexus.Gateway.Configuration.Store;
 
 /// <summary>
 /// The keys one write actually changes, scoped to a subtree of the configuration document (#3532).

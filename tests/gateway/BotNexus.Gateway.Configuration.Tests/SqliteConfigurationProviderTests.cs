@@ -38,6 +38,33 @@ public sealed class SqliteConfigurationProviderTests
             SetDocument(document);
             return Task.CompletedTask;
         }
+
+        /// <summary>
+        /// Applies a change set the same way the real store does: upserts overwrite, removals delete,
+        /// and every other key is left alone.
+        /// </summary>
+        /// <remarks>
+        /// Implemented rather than throwing so these tests keep exercising the provider's read path
+        /// against a store that behaves. A <c>NotImplementedException</c> here would turn any future
+        /// provider test that happens to write into a failure about the double instead of the subject.
+        /// </remarks>
+        public Task ApplyChangesAsync(ConfigChangeSet changes, CancellationToken cancellationToken = default)
+        {
+            var next = new Dictionary<string, ConfigEntry>(_entries, StringComparer.Ordinal);
+
+            foreach (var entry in changes.Upserts)
+            {
+                next[entry.Path] = entry;
+            }
+
+            foreach (var path in changes.Removals)
+            {
+                next.Remove(path);
+            }
+
+            _entries = next;
+            return Task.CompletedTask;
+        }
     }
 
     private static JsonObject Document(string json) => JsonNode.Parse(json)!.AsObject();
