@@ -47,6 +47,62 @@ public sealed record ConfigChangeSet(
     IReadOnlyList<string> Removals)
 {
     /// <summary>
+    /// Removals that are not superseded by an upsert under the same path.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The flattener treats an empty object as a LEAF, so <c>"locations": {}</c> flattens to the single
+    /// key <c>gateway.locations</c>. Populating it yields an upsert at <c>gateway.locations.repo.type</c>
+    /// AND a removal of <c>gateway.locations</c>, because that leaf genuinely stopped existing as a leaf.
+    /// Honouring both would delete the subtree that was just written.
+    /// </para>
+    /// <para>
+    /// Filtering here rather than in each backend means every store - document-shaped and row-shaped
+    /// alike - inherits the same rule. A backend that filtered independently would eventually disagree,
+    /// and the disagreement would surface as a key that writes to one store and not the other.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<string> EffectiveRemovals { get; } = FilterSuperseded(Upserts, Removals);
+
+    private static IReadOnlyList<string> FilterSuperseded(
+        IReadOnlyList<ConfigEntry> upserts,
+        IReadOnlyList<string> removals)
+    {
+        ArgumentNullException.ThrowIfNull(upserts);
+        ArgumentNullException.ThrowIfNull(removals);
+
+        if (removals.Count == 0 || upserts.Count == 0)
+        {
+            return removals;
+        }
+
+        var kept = new List<string>(removals.Count);
+        foreach (var removal in removals)
+        {
+            // Segment-aware, so agents.novaBackup.model cannot make a removal of agents.nova look
+            // superseded.
+            var boundary = removal + ".";
+            var superseded = false;
+
+            foreach (var upsert in upserts)
+            {
+                if (upsert.Path.StartsWith(boundary, StringComparison.Ordinal))
+                {
+                    superseded = true;
+                    break;
+                }
+            }
+
+            if (!superseded)
+            {
+                kept.Add(removal);
+            }
+        }
+
+        return kept;
+    }
+
+    /// <summary>
     /// True when the write would change nothing.
     /// </summary>
     /// <remarks>
@@ -54,7 +110,7 @@ public sealed record ConfigChangeSet(
     /// the backup history and the file mtime for no reason, and on the store it would burn a
     /// transaction to write the rows it just read.
     /// </remarks>
-    public bool IsEmpty => Upserts.Count == 0 && Removals.Count == 0;
+    public bool IsEmpty => Upserts.Count == 0 && EffectiveRemovals.Count == 0;
 
     /// <summary>
     /// A short human-readable summary for diagnostics, e.g. <c>agents.nova: 2 changed, 1 removed</c>.
@@ -67,6 +123,6 @@ public sealed record ConfigChangeSet(
     public string Describe()
     {
         var scope = PathPrefix.Length == 0 ? "(root)" : PathPrefix;
-        return $"{scope}: {Upserts.Count} changed, {Removals.Count} removed";
+        return $"{scope}: {Upserts.Count} changed, {EffectiveRemovals.Count} removed";
     }
 }

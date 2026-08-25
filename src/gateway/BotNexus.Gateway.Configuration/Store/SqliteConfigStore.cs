@@ -182,7 +182,7 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
             await upsert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        foreach (var path in changes.Removals)
+        foreach (var path in changes.EffectiveRemovals)
         {
             await using var delete = connection.CreateCommand();
             delete.Transaction = transaction;

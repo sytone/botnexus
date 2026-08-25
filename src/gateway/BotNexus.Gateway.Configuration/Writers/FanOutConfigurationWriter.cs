@@ -153,4 +153,53 @@ public sealed class FanOutConfigurationWriter : IConfigurationWriter
         // Unreachable with a non-empty writer set, which the constructor guarantees.
         return applied ?? new ConfigChangeSet(pathPrefix, [], []);
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Every backend receives the same pre-computed change set, and unlike <see cref="ApplyAsync"/> that
+    /// is correct here: the caller already decided which keys move, so there is nothing for a backend to
+    /// re-derive from its own state. Failure handling matches the other paths - all backends are
+    /// attempted, and a partial application throws naming the ones that succeeded.
+    /// </remarks>
+    public async Task ApplyChangeSetAsync(
+        ConfigChangeSet changes,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+
+        List<Exception>? failures = null;
+        var succeeded = new List<string>(_writers.Count);
+
+        foreach (var writer in _writers)
+        {
+            try
+            {
+                await writer.ApplyChangeSetAsync(changes, reason, cancellationToken).ConfigureAwait(false);
+                succeeded.Add(writer.Name);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(
+                    new InvalidOperationException(
+                        $"Configuration writer '{writer.Name}' failed to apply the change set.", ex));
+            }
+        }
+
+        if (failures is null)
+        {
+            return;
+        }
+
+        var wrote = succeeded.Count == 0 ? "none" : string.Join(", ", succeeded);
+        throw new AggregateException(
+            $"Configuration change set partially failed. Applied to: {wrote}. " +
+            "The stores now disagree; the configuration a reader sees depends on provider precedence, " +
+            "so this must not be treated as a successful write.",
+            failures);
+    }
 }

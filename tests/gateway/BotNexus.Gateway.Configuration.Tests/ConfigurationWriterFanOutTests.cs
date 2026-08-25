@@ -68,7 +68,14 @@ public sealed class ConfigurationWriterFanOutTests : IDisposable
         /// </summary>
         public JsonObject? Current { get; set; }
 
-        /// <summary>Change sets received via <see cref="ApplyAsync"/>, in order.</summary>
+        /// <summary>Records a pre-computed change set.</summary>
+        public Task ApplyChangeSetAsync(ConfigChangeSet changes, string reason, CancellationToken cancellationToken = default)
+        {
+            Applied.Add(changes);
+            return Task.CompletedTask;
+        }
+
+        /// <summary>Change sets received via ApplyAsync/ApplyChangeSetAsync, in order.</summary>
         public List<ConfigChangeSet> Applied { get; } = [];
     }
 
@@ -87,6 +94,9 @@ public sealed class ConfigurationWriterFanOutTests : IDisposable
             ConfigDiffOptions? options = null,
             CancellationToken cancellationToken = default)
             => Task.FromException<ConfigChangeSet>(new InvalidOperationException("backend unavailable"));
+
+        public Task ApplyChangeSetAsync(ConfigChangeSet changes, string reason, CancellationToken cancellationToken = default)
+            => Task.FromException(new InvalidOperationException("backend unavailable"));
     }
 
     // ---------------------------------------------------------------------------------------------

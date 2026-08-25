@@ -75,4 +75,27 @@ public interface IConfigurationWriter
         string reason,
         ConfigDiffOptions? options = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Applies a change set the caller has already computed (#3532).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The overload for callers that hold both the before and after documents - <c>PlatformConfigWriter</c>
+    /// mutates a <see cref="JsonObject"/> against a pristine snapshot, so it can diff document-against-
+    /// document and needs no CLR type at all. Routing it through <see cref="ApplyAsync"/> would force a
+    /// typed projection it does not need and would drop every key its DTOs do not model.
+    /// </para>
+    /// <para>
+    /// Backends must apply exactly the named keys and touch nothing else, which is the property that
+    /// makes a partially-modelled section safe to write.
+    /// </para>
+    /// </remarks>
+    /// <param name="changes">The keys to upsert and remove.</param>
+    /// <param name="reason">Why the write is happening, for backup labelling and diagnostics.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task ApplyChangeSetAsync(
+        ConfigChangeSet changes,
+        string reason,
+        CancellationToken cancellationToken = default);
 }

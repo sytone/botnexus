@@ -61,4 +61,19 @@ public sealed class SqliteConfigurationWriter : IConfigurationWriter
         await _store.ApplyChangesAsync(changes, cancellationToken).ConfigureAwait(false);
         return changes;
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Delegates straight to the store, which applies one statement per named key. No document is
+    /// materialised: the store is row-shaped already, so rebuilding a document here only to flatten it
+    /// again would be the whole-document write wearing a different hat.
+    /// </remarks>
+    public Task ApplyChangeSetAsync(
+        ConfigChangeSet changes,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+        return _store.ApplyChangesAsync(changes, cancellationToken);
+    }
 }

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using BotNexus.Gateway.Configuration.Store;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -713,7 +714,7 @@ public sealed class PlatformConfigWriter
                     return errors;
             }
 
-            await WriteRootAsync(root, reason, ct);
+            await WriteRootAsync(root, reason, pristine, ct);
             return [];
         }
         finally
@@ -758,8 +759,35 @@ public sealed class PlatformConfigWriter
     /// both - which is what the read path has assumed since the store became reachable (#3514).
     /// </para>
     /// </remarks>
-    private Task WriteRootAsync(JsonObject root, string reason, CancellationToken ct)
-        => _writer.WriteAsync(root, reason, ct);
+    /// <param name="pristine">
+    /// The document as it was before the mutation, when available. Supplying it lets the write be
+    /// expressed as the keys that actually changed (#3532) rather than as a whole-document replace.
+    /// </param>
+    private Task WriteRootAsync(JsonObject root, string reason, JsonObject? pristine, CancellationToken ct)
+    {
+        if (pristine is null)
+        {
+            // No before-image: the caller cannot say what changed, so a full replace is the only
+            // honest write. This is the import path, where replacing everything is the intent.
+            return _writer.WriteAsync(root, reason, ct);
+        }
+
+        // Diff document-against-document rather than DTO-against-document. The mutation has already
+        // produced the desired JSON in `root`, so re-projecting a CLR type here would add nothing and
+        // would drop every key the type does not model - the #2816 failure. The DTO's role is the read
+        // side (bind through IOptions) and, in ConfigDtoDiffer, deriving key names reflectively; it is
+        // never the payload of a write.
+        var changes = ConfigDocumentDiffer.Diff(pristine, root);
+
+        if (changes.IsEmpty)
+        {
+            // A mutation that changed nothing must not churn the file mtime or the backup history,
+            // or an unchanged save becomes indistinguishable from a real one.
+            return Task.CompletedTask;
+        }
+
+        return _writer.ApplyChangeSetAsync(changes, reason, ct);
+    }
 
     // #2357: Windows fails File.Move(..., overwrite: true) with UnauthorizedAccessException when
     // ANY other handle is open on the destination - even one opened with the maximal

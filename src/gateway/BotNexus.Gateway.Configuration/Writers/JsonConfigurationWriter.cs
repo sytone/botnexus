@@ -86,15 +86,32 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
         var current = await ReadDocumentAsync(cancellationToken).ConfigureAwait(false);
         var changes = ConfigDtoDiffer.Diff(current, dto, pathPrefix, options);
 
+        await ApplyChangeSetAsync(changes, reason, cancellationToken).ConfigureAwait(false);
+        return changes;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Patches the document on disk rather than writing a projected object over it. A key absent from
+    /// the change set is never visited, so it survives regardless of whether any CLR type models it -
+    /// which is what makes writing a partially-modelled section safe (#2816).
+    /// </remarks>
+    public async Task ApplyChangeSetAsync(
+        ConfigChangeSet changes,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+
         if (changes.IsEmpty)
         {
-            return changes;
+            return;
         }
 
+        var current = await ReadDocumentAsync(cancellationToken).ConfigureAwait(false);
         var next = current ?? [];
         ConfigDocumentPatcher.Apply(next, changes);
         await WriteAsync(next, reason, cancellationToken).ConfigureAwait(false);
-        return changes;
     }
 
     /// <summary>

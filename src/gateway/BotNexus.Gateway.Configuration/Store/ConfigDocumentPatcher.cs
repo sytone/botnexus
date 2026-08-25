@@ -33,6 +33,14 @@ public static class ConfigDocumentPatcher
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(changes);
 
+        // Removals run FIRST so a leaf that became a branch is cleared before the branch is written.
+        // Superseded removals are already filtered out by ConfigChangeSet.EffectiveRemovals - see the
+        // empty-object-is-a-leaf argument there - so this loop can apply what it is given.
+        foreach (var path in changes.EffectiveRemovals)
+        {
+            RemovePath(document, path.Split('.'));
+        }
+
         foreach (var entry in changes.Upserts)
         {
             var segments = entry.Path.Split('.');
@@ -45,11 +53,6 @@ public static class ConfigDocumentPatcher
             parent[leaf] = entry.State == ConfigValueState.ExplicitNull || entry.Value is null
                 ? null
                 : JsonNode.Parse(entry.Value);
-        }
-
-        foreach (var path in changes.Removals)
-        {
-            RemovePath(document, path.Split('.'));
         }
     }
 
