@@ -1166,7 +1166,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     {
         var totalChars = session.History
             .Where(SessionContextProjector.IsVisibleInLiveContext)
-            .Sum(entry => (long)(entry.Content?.Length ?? 0));
+            .Sum(SessionContextProjector.GetLiveContextCharCost);
         return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
 
@@ -1174,7 +1174,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     {
         var totalChars = entries
             .Where(SessionContextProjector.IsVisibleInLiveContext)
-            .Sum(entry => (long)(entry.Content?.Length ?? 0));
+            .Sum(SessionContextProjector.GetLiveContextCharCost);
         return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
 
@@ -1202,13 +1202,14 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 continue;
             }
 
-            var content = entry.Content;
-            if (string.IsNullOrEmpty(content))
-            {
-                continue;
-            }
-
-            var bytes = Encoding.UTF8.GetByteCount(content);
+            // #3536: size the entry by everything that reaches the provider, not by Content alone.
+            // The previous form read entry.Content, skipped the row outright when it was empty, and
+            // therefore costed a tool-start row carrying 27,354 characters of arguments at ZERO -
+            // the single largest visible entries on the motivating session were invisible to the
+            // bloat trigger they were supposed to fire.
+            var bytes = Encoding.UTF8.GetByteCount(entry.Content ?? string.Empty)
+                + Encoding.UTF8.GetByteCount(entry.ToolArgs ?? string.Empty)
+                + Encoding.UTF8.GetByteCount(entry.ThinkingContent ?? string.Empty);
             if (bytes > largest)
             {
                 largest = bytes;
