@@ -61,6 +61,40 @@ internal sealed class ValidateCommand
             return 1;
         }
 
+        // Parse failures have to be caught here explicitly. The loader deliberately falls back to
+        // defaults on unreadable JSON so the gateway stays up, which is right for the gateway - but
+        // it means the accessor below hands back a pristine PlatformConfig for a file that is not
+        // JSON at all. Validating that reported "VALID" for a config the gateway could not read and
+        // was silently ignoring, which is the opposite of what this command exists to tell you.
+        string rawJson;
+        try
+        {
+            rawJson = await File.ReadAllTextAsync(configPath, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            PrintResult(valid: false, warnings: [], errors: [$"Unable to read config: {ex.Message}"]);
+            return 1;
+        }
+
+        try
+        {
+            using var _ = JsonDocument.Parse(rawJson, new JsonDocumentOptions { AllowTrailingCommas = true });
+        }
+        catch (JsonException ex)
+        {
+            PrintResult(
+                valid: false,
+                warnings: [],
+                errors:
+                [
+                    $"Config file is not valid JSON. {ex.Message}",
+                    "The gateway ignores an unreadable config and runs on defaults, so this would not "
+                    + "have surfaced as a startup failure - fix the JSON and restart to apply the file."
+                ]);
+            return 1;
+        }
+
         PlatformConfig config;
         try
         {

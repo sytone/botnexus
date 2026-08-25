@@ -46,14 +46,19 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
             context.ExitCode = await ExecuteSetAsync(key, value, configPath, verbose, CancellationToken.None);
         });
 
-        var schemaOutputOption = new Option<string>("--output", () => "docs\\botnexus-config.schema.json", "Schema output path.");
+        // Path.Combine, not a backslash literal: off Windows the literal is not a separator, so
+        // the documented bare `botnexus config schema` wrote a file actually *named*
+        // "docs\botnexus-config.schema.json" into the working directory - one file with a
+        // backslash in its name, and no schema where anyone would look for it.
+        var defaultSchemaOutput = Path.Combine("docs", "botnexus-config.schema.json");
+        var schemaOutputOption = new Option<string>("--output", () => defaultSchemaOutput, "Schema output path.");
         var schemaCommand = new Command("schema", "Generate JSON schema for platform config.")
         {
             schemaOutputOption
         };
         schemaCommand.SetHandler(async context =>
         {
-            var outputPath = context.ParseResult.GetValueForOption(schemaOutputOption) ?? "docs\\botnexus-config.schema.json";
+            var outputPath = context.ParseResult.GetValueForOption(schemaOutputOption) ?? defaultSchemaOutput;
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             context.ExitCode = await ExecuteSchemaAsync(outputPath, verbose, CancellationToken.None);
         });
