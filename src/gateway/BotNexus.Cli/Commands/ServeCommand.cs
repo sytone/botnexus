@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
+using BotNexus.Cli.Services;
 
 namespace BotNexus.Cli.Commands;
 
@@ -103,7 +104,9 @@ internal sealed class ServeCommand
 
         DeployExtensions(repoRoot, home, verbose);
 
-        var gatewayUrl = $"http://localhost:{port}";
+        // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
+        // argument below, so probe where it will actually listen rather than where we asked.
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
         var lastExitCode = 0;
 
         while (true)
@@ -165,7 +168,9 @@ internal sealed class ServeCommand
             return 1;
         }
 
-        var probeUrl = $"http://localhost:{port}";
+        // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
+        // argument below, so probe where it will actually listen rather than where we asked.
+        var probeUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
 
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule("[bold blue]BotNexus Probe[/]") { Justification = Justify.Left });

@@ -97,8 +97,14 @@ sync_instance() {
 
     # Deploy extensions — run CLI deploy then copy to the correct home
     log "[$label] Deploying extensions..."
-    BOTNEXUS_HOME="$home" "$DOTNET" "$repo/src/gateway/BotNexus.Cli/bin/Debug/net10.0/BotNexus.Cli.dll" \
-        gateway start --path "$repo" --dev >> "$LOG_FILE" 2>&1 || true
+    # --source/--skip-build, not --path/--dev: the CLI renamed these and rejects the old names.
+    # The `|| true` below is deliberate for a genuinely failed start, but it also swallowed the
+    # argument error, so this step silently deployed nothing at all for as long as the names were
+    # stale. Log the failure rather than discarding it.
+    if ! BOTNEXUS_HOME="$home" "$DOTNET" "$repo/src/gateway/BotNexus.Cli/bin/Debug/net10.0/BotNexus.Cli.dll" \
+        gateway start --source "$repo" --skip-build >> "$LOG_FILE" 2>&1; then
+        log "[$label] WARNING: gateway start reported failure — see $LOG_FILE."
+    fi
     # CLI always deploys to ~/.botnexus — copy to the right home if different
     if [[ "$home" != "$HOME/.botnexus" ]] && [[ -d "$HOME/.botnexus/extensions" ]]; then
         mkdir -p "$home/extensions"
