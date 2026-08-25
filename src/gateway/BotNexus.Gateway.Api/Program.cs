@@ -446,9 +446,17 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
         },
         loggerFactory.CreateLogger<CopilotModelDiscoveryProvider>());
 
+    // The Anthropic-direct list was hardcoded in BuiltInModels, so a retired model id stayed
+    // selectable in the portal until someone traced a 404 that surfaced only as an empty run.
+    // Overlay the account's real models exactly as the Copilot path above already does.
+    var anthropicDiscovery = new AnthropicModelDiscoveryProvider(
+        httpClient,
+        ct => authManager.GetApiKeyAsync("anthropic", ct),
+        loggerFactory.CreateLogger<AnthropicModelDiscoveryProvider>());
+
     var discoveryService = new ModelDiscoveryService(
         models,
-        [copilotDiscovery],
+        [copilotDiscovery, anthropicDiscovery],
         loggerFactory.CreateLogger<ModelDiscoveryService>());
     discoveryService.DiscoverAndRegisterAsync().GetAwaiter().GetResult();
 
