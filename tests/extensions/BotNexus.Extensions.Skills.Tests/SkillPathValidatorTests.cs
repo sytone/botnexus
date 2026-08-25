@@ -122,4 +122,21 @@ public sealed class SkillPathValidatorTests
         Assert.True(result);
         Assert.Null(error);
     }
+
+    // The containment walk must not depend on where the process happens to be running from.
+    [Fact]
+    public void TryValidate_WhenWorkingDirectoryIsNotTheFilesystemRoot_StillContainsAbsolutePath()
+    {
+        var fs = new MockFileSystem();
+        fs.AddDirectory(SkillRoot);
+        fs.AddDirectory("/opt/app");
+        fs.Directory.SetCurrentDirectory("/opt/app");
+
+        var target = $"{SkillRoot}/scripts/run.ps1";
+
+        var result = SkillPathValidator.TryValidate(target, Root(fs), fs, out var resolved, out var error);
+
+        Assert.True(result, error);
+        Assert.Equal(target, resolved.Value);
+    }
 }

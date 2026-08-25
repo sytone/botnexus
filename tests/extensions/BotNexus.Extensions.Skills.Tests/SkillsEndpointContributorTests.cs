@@ -196,4 +196,43 @@ public sealed class SkillsEndpointContributorTests
 
         result.GetType().Name.ShouldContain("Forbid");
     }
+
+    // Every other test here runs with MockFileSystem's default working directory, which sits at the
+    // filesystem root and hides the bug below: seeding the symlink walk with a trimmed path root
+    // ("/" trimmed to "") made each Path.Combine produce a relative path, so GetFullPath re-rooted
+    // the result at the working directory and containment rejected every entry. In production the
+    // gateway's working directory is its install folder, so the skills browser returned an empty
+    // list and every file read answered 403 — with the directory sitting there fully populated.
+    [Fact]
+    public void GetSkillsRoot_WhenWorkingDirectoryIsNotTheFilesystemRoot_StillReturnsEntries()
+    {
+        var fs = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [$"{SkillsRoot}/my-skill/SKILL.md"] = new MockFileData("# My Skill"),
+            ["/opt/app/BotNexus.dll"] = new MockFileData("binary")
+        });
+        fs.Directory.SetCurrentDirectory("/opt/app");
+
+        var result = SkillsEndpointContributor.GetSkillsRoot(fs, SkillsRoot, depth: 2);
+
+        var okResult = result.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<SkillsDirectoryResponse>>();
+        okResult.Value!.Entries.Count.ShouldBe(1);
+        okResult.Value.Entries[0].Name.ShouldBe("my-skill");
+    }
+
+    [Fact]
+    public void GetSkillsPath_WhenWorkingDirectoryIsNotTheFilesystemRoot_ReadsTheFile()
+    {
+        var fs = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [$"{SkillsRoot}/my-skill/SKILL.md"] = new MockFileData("# My Skill"),
+            ["/opt/app/BotNexus.dll"] = new MockFileData("binary")
+        });
+        fs.Directory.SetCurrentDirectory("/opt/app");
+
+        var result = SkillsEndpointContributor.GetSkillsPath("my-skill/SKILL.md", fs, SkillsRoot);
+
+        var okResult = result.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<SkillsFileResponse>>();
+        okResult.Value!.Content.ShouldBe("# My Skill");
+    }
 }

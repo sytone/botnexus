@@ -79,7 +79,12 @@ public static class SkillPathValidator
                 [fileSystem.Path.DirectorySeparatorChar, fileSystem.Path.AltDirectorySeparatorChar],
                 StringSplitOptions.RemoveEmptyEntries);
 
-        var current = root.TrimEnd(fileSystem.Path.DirectorySeparatorChar, fileSystem.Path.AltDirectorySeparatorChar);
+        // Seed the walk with the path root exactly as GetPathRoot returned it. Trimming the
+        // separator off turns "/" into "" on Unix, and every Path.Combine below then builds a
+        // *relative* path — so GetFullPath re-roots the whole walk at the process working
+        // directory and no absolute path is ever contained in its own root. Path.Combine already
+        // collapses the duplicate separator, so there is nothing to trim.
+        var current = root;
 
         foreach (var segment in segments)
         {
