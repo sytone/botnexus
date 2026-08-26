@@ -170,6 +170,10 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<BotNexus.Gateway.Audit.IToolAuditSink>(
             _ => BotNexus.Gateway.Audit.DefaultToolAuditSink.Instance);
         services.AddSingleton<AgentExchangeBudgetTracker>();
+        // #3494: per-agent inbound admission control. MUST be a singleton - a per-scope queue would
+        // gate nothing, since two concurrent exchanges targeting one agent would each see their own
+        // empty mailbox and both barge into the same single execution slot.
+        services.TryAddSingleton<AgentExchangeInboundQueue>();
         // #1542: the shared turn loop and cross-world federation routing are their own
         // single-responsibility collaborators, injected into AgentExchangeService.
         services.AddSingleton<AgentExchangeTurnEngine>(serviceProvider =>

@@ -52,6 +52,13 @@ public sealed class AgentExchangeService : IAgentExchangeService
     private readonly ICrossWorldExchangeRouter _crossWorldRouter;
 
     /// <summary>
+    /// Per-target admission control for inbound exchanges (#3494). Optional-with-fallback so the
+    /// many direct-construction test call sites keep compiling; every instance still gets a real
+    /// queue, because "no queue" is the defect itself and must not be reachable by omission.
+    /// </summary>
+    private readonly AgentExchangeInboundQueue _inboundQueue;
+
+    /// <summary>
     /// Publishes handoff milestones back into the initiating conversation (#3176). Optional-with-
     /// fallback so the many direct-construction test call sites keep compiling; the no-op instance
     /// makes "emit progress" unconditional at every call site instead of null-guarded.
@@ -81,7 +88,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
         AgentExchangeTurnEngine? turnEngine = null,
         ICrossWorldExchangeRouter? crossWorldRouter = null,
         IToolAuditSink? toolAudit = null,
-        IAgentExchangeProgressNotifier? progressNotifier = null)
+        IAgentExchangeProgressNotifier? progressNotifier = null,
+        AgentExchangeInboundQueue? inboundQueue = null)
     {
         _registry = registry;
         _supervisor = supervisor;
@@ -93,6 +101,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         _budgetTracker = budgetTracker;
         _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
         _progress = progressNotifier ?? NullAgentExchangeProgressNotifier.Instance;
+        _inboundQueue = inboundQueue ?? new AgentExchangeInboundQueue(_exchangeOptions);
 
         // The turn engine single-sources the shared loop/seal/archive; the router owns cross-world
         // federation. Both are injected in production DI. When omitted (the local-only construction
@@ -195,6 +204,19 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
         if (!isLocalTarget && parsedCrossWorldTarget is not null)
             return await _crossWorldRouter.ConverseCrossWorldAsync(request, parsedCrossWorldTarget, normalizedChain, cancellationToken).ConfigureAwait(false);
+
+        // #3494 admission gate. A local target is an in-process agent with exactly ONE execution
+        // slot, so a second exchange arriving while it is busy has to wait somewhere. Before this
+        // gate it waited nowhere: it minted a conversation + session, blocked downstream, and was
+        // killed by the caller's own deadline, leaving a one-row Active session and a bare
+        // "task was canceled".
+        //
+        // The gate sits BEFORE conversation/session creation on purpose. That ordering is what
+        // satisfies AC2 and AC4 at once: a refused or never-dispatched exchange mints no state at
+        // all, so there is nothing for a reaper to clean up and no session to strand. It is also
+        // placed AFTER the cross-world return above, because a federated target runs in another
+        // process and its slot is not ours to gate.
+        using var slot = await _inboundQueue.AcquireAsync(request.TargetId, cancellationToken).ConfigureAwait(false);
 
         // Phase 4 / F-3: create a real Conversation via IConversationStore so the exchange is
         // discoverable by ListByConversationAsync, the portal, and any future routing/permissions
@@ -326,6 +348,14 @@ public sealed class AgentExchangeService : IAgentExchangeService
         {
             // #553 parity: caller cancellation is not an exchange failure and does not seal the
             // session, so it does not get a terminal event either. Rethrow untouched.
+            //
+            // #3494 AC4: but it must not vanish silently either. The acceptance clause offers
+            // "seals OR marks", and marking is the only one compatible with #553 - sealing would
+            // reintroduce the 409 that made caller retries impossible. So we stamp an outcome and
+            // leave the status Active: the session stays retryable, and a reaper (or an operator
+            // reading the store) can now tell an abandoned exchange from a healthy in-flight one,
+            // which was impossible when both looked like "Active with one history row".
+            await MarkCallerCancelledAsync(sessionId).ConfigureAwait(false);
             throw;
         }
         catch (Exception ex)
@@ -356,6 +386,33 @@ public sealed class AgentExchangeService : IAgentExchangeService
             cancellationToken).ConfigureAwait(false);
 
         return result;
+    }
+
+    /// <summary>
+    /// Stamps <c>exchangeOutcome=callerCancelled</c> on an exchange session abandoned by a caller
+    /// deadline, WITHOUT sealing it (#3494 AC4).
+    /// </summary>
+    /// <remarks>
+    /// Always persists with <see cref="CancellationToken.None"/>: the caller's token has already
+    /// fired by definition, so threading it here would make the marker the one thing cancellation
+    /// reliably prevents. Failures are logged and swallowed - a diagnostic marker turning a
+    /// cancellation into a different exception would be a strictly worse bug than a missing marker.
+    /// </remarks>
+    private async Task MarkCallerCancelledAsync(SessionId sessionId)
+    {
+        try
+        {
+            var latest = await _sessionStore.GetAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+            if (latest is null)
+                return;
+            latest.Metadata["exchangeOutcome"] = "callerCancelled";
+            await _sessionStore.SaveAsync(latest, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Could not mark exchange session '{SessionId}' as caller-cancelled.", sessionId);
+        }
     }
 
     /// <summary>

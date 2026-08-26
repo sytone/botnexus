@@ -54,4 +54,30 @@ public sealed class AgentExchangeOptions
     /// non-positive value never disables exchanges entirely.
     /// </summary>
     public int EffectiveMaxTurnsCeiling => Math.Max(1, MaxTurnsCeiling);
+
+    /// <summary>
+    /// How many inbound exchanges may WAIT for one agent's single execution slot before further
+    /// callers are refused with explicit backpressure (#3494).
+    /// </summary>
+    /// <remarks>
+    /// An in-process agent runs one turn at a time. Without a bound, a busy agent would accumulate
+    /// waiters until every one of them expired on its own caller-side deadline - which is exactly
+    /// the silent message loss this setting exists to make visible. The in-flight exchange itself
+    /// does not count toward the bound; only genuinely blocked callers do. Values below 1 are
+    /// treated as 1, so a misconfiguration can never disable queueing to the point where a busy
+    /// agent refuses everything.
+    /// </remarks>
+    [Display(
+        Name = "Max inbound queue depth",
+        Description = "How many agent_converse exchanges may queue for one busy agent before callers are refused with backpressure. Values below 1 are treated as 1.",
+        GroupName = "Agent exchange",
+        Order = 2)]
+    [DefaultValue(8)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "agent-exchange", Order = 2)]
+    public int MaxInboundQueueDepth { get; set; } = 8;
+
+    /// <summary>
+    /// Returns the effective inbound queue bound, guaranteed to be at least 1.
+    /// </summary>
+    public int EffectiveMaxInboundQueueDepth => Math.Max(1, MaxInboundQueueDepth);
 }

@@ -942,9 +942,19 @@ public sealed class AgentExchangeServiceTests
             {
                 if (Interlocked.Increment(ref entered) == 2)
                     bothEntered.SetResult();
-                // Both callers must reach this point before either proceeds, proving they
-                // were ACTUALLY concurrent (not sequenced by Task.Run scheduling order).
-                await releaseBoth.Task.WaitAsync(ct);
+                // #3494: the two calls are no longer simultaneously INSIDE PromptAsync - the
+                // inbound mailbox serialises them onto the target agent's single execution slot,
+                // which is the entire point of that fix. The original barrier here waited for both
+                // to arrive at once, so it would deadlock by construction against the new gate.
+                //
+                // The invariant this test exists to protect is untouched and every assertion below
+                // is unchanged: two OVERLAPPING calls must produce distinct session ids and
+                // non-interleaved transcripts. The overlap is still genuine - both calls are in
+                // flight across the whole exchange, and the yield keeps completion order
+                // scheduler-determined rather than lexical - it is only the innermost prompt that
+                // is now exclusive, which is precisely the guarantee #3494 added.
+                await Task.Yield();
+                ct.ThrowIfCancellationRequested();
                 return new AgentResponse { Content = $"reply:{msg}" };
             });
 
@@ -975,12 +985,14 @@ public sealed class AgentExchangeServiceTests
             MaxTurns = 1
         }));
 
-        // Wait until both are genuinely parked inside PromptAsync — proves they're concurrent.
-        await bothEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Wait until both calls have passed through the target agent. With the #3494 mailbox
+        // in place they are serialised onto the single slot rather than parked here together,
+        // so this now proves both were DISPATCHED, which is what the isolation checks need.
+        await bothEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-        releaseBoth.SetResult();
-        var resultA = await taskA.WaitAsync(TimeSpan.FromSeconds(5));
-        var resultB = await taskB.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseBoth.TrySetResult();
+        var resultA = await taskA.WaitAsync(TimeSpan.FromSeconds(30));
+        var resultB = await taskB.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Primary invariant: per-call sessionId freshness. If this fails, ConverseAsync has
         // started reusing sessions across concurrent calls and the no-lock assumption breaks.
