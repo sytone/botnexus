@@ -1171,7 +1171,8 @@
     {
         @if (!agent.IsReadOnly && agent.Conversations.TryGetValue(conversationId, out var conversation) && !conversation.IsDefault)
         {
-            @RenderSectionAssign(agent, conversation)
+            @RenderSectionButton(conversation)
+            @RenderSectionMenu(agent, conversation)
         }
     };
 
@@ -1229,21 +1230,29 @@
             </a>
             @if (!conversation.IsDefault && !agent.IsReadOnly)
             {
-                <button class="conversation-pin-btn @(conversation.IsPinned ? "pinned" : "")" data-testid="conversation-pin-btn"
-                        title="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
-                        aria-label="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
-                        aria-pressed="@(conversation.IsPinned ? "true" : "false")"
-                        @onclick:stopPropagation="true"
-                        @onclick="() => SetConversationPinnedAsync(agent.AgentId, conversation.ConversationId, !conversation.IsPinned)">
-                    &#x1F4CC;
-                </button>
-                <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
-                        title="@(IsUnattendedConversation(conversation) ? "Close conversation \u2014 reopens on next trigger" : "Archive conversation")"
-                        @onclick:stopPropagation="true"
-                        @onclick="() => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, IsUnattendedConversation(conversation))">
-                    @(IsUnattendedConversation(conversation) ? "\u2715" : "\uD83D\uDDD1\uFE0F")
-                </button>
-                @RenderSectionAssign(agent, conversation)
+                @* One strip rather than three independently positioned buttons. The old
+                   per-button right: offsets were 21.6px apart and never revisited when the
+                   buttons gained a 32px minimum hit target, so each overlapped its neighbour
+                   and all three sat on the title. Flex + gap cannot drift out of step. The
+                   section menu stays outside the strip: it positions against the row. *@
+                <div class="conversation-row-actions">
+                    @RenderSectionButton(conversation)
+                    <button class="conversation-pin-btn @(conversation.IsPinned ? "pinned" : "")" data-testid="conversation-pin-btn"
+                            title="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
+                            aria-label="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
+                            aria-pressed="@(conversation.IsPinned ? "true" : "false")"
+                            @onclick:stopPropagation="true"
+                            @onclick="() => SetConversationPinnedAsync(agent.AgentId, conversation.ConversationId, !conversation.IsPinned)">
+                        &#x1F4CC;
+                    </button>
+                    <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
+                            title="@(IsUnattendedConversation(conversation) ? "Close conversation \u2014 reopens on next trigger" : "Archive conversation")"
+                            @onclick:stopPropagation="true"
+                            @onclick="() => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, IsUnattendedConversation(conversation))">
+                        @(IsUnattendedConversation(conversation) ? "\u2715" : "\uD83D\uDDD1\uFE0F")
+                    </button>
+                </div>
+                @RenderSectionMenu(agent, conversation)
             }
         </div>
     };
@@ -1253,7 +1262,7 @@
     // issue sanctions: a per-row folder button opening a small "move to section" menu. The richer
     // right-click context menu (#2326) and inline section rendering (#2325) are separate work; when
     // #2326 lands, this menu's Assign/Unassign handlers are the reusable seam it can call.
-    private RenderFragment RenderSectionAssign(AgentState agent, ConversationState conversation) => __builder =>
+    private RenderFragment RenderSectionButton(ConversationState conversation) => __builder =>
     {
         var isOpen = string.Equals(_sectionMenuConversationId, conversation.ConversationId, StringComparison.Ordinal);
         <button class="conversation-section-btn" data-testid="conversation-section-btn"
@@ -1265,6 +1274,14 @@
                 @onclick="() => ToggleSectionMenu(conversation.ConversationId)">
             &#x1F4C1;
         </button>
+    };
+
+    // The menu is a sibling of the actions strip, not a child of it: it positions against
+    // .conversation-list-item, and nesting it inside an absolutely positioned strip would
+    // re-anchor it to the strip instead.
+    private RenderFragment RenderSectionMenu(AgentState agent, ConversationState conversation) => __builder =>
+    {
+        var isOpen = string.Equals(_sectionMenuConversationId, conversation.ConversationId, StringComparison.Ordinal);
         @if (isOpen)
         {
             var sections = SectionsState.Sections;

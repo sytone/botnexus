@@ -4766,22 +4766,91 @@ details[open] > .thinking-summary::before {
     white-space: nowrap;
 }
 
-.conversation-archive-btn {
+/* ── Conversation row hover actions ────────────────────────────────────────────
+   Move-to-section, pin and archive, revealed on hover.
+
+   These used to be three separately positioned buttons at right: 2.95rem, 1.6rem and
+   0.25rem - 21.6px apart. They were later given a 32px minimum pointer target
+   (--hit-pointer) and the offsets were never revisited, so each button overlapped its
+   neighbour by 10px and all three sat, with no background at all, directly on top of the
+   conversation title. Two bugs from one omission: unreadable text and a half-unclickable
+   middle button.
+
+   Laying them out in a flex strip derives the spacing from the button size instead of
+   restating it, so the two can no longer contradict each other. A collapsed button is zero
+   width, which keeps the strip exactly as wide as whatever is actually visible - that is
+   what stops the backdrop covering empty space when only the pin is showing. */
+.conversation-row-actions {
+    /* Both layers of the backdrop are built from these, so the tint can vary by row state
+       without restating the gradient. */
+    --row-actions-tint: var(--color-wash-soft);
+    --row-actions-fade: 1.5rem;
+
     position: absolute;
-    right: 0.25rem;
-    top: 50%;
-    transform: translateY(-50%);
+    right: 0;
+    /* Anchored to the metadata line rather than centred on the whole row. Three 32px
+       buttons need 128px of a 155px row, so a vertically centred strip covers the title -
+       and the title is what you are reading when you reach for these. Displacing the
+       timestamp instead costs nothing: it is the one thing on the row you do not need
+       while you are acting on it. */
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding-right: 0.25rem;
+    padding-left: 0;
+    transition: padding-left 0.15s;
+}
+
+/* Height is the one dimension that has to give for the strip to clear the title on a
+   57px row. Width stays at the full --hit-pointer, and width is the dimension that
+   matters for a horizontal strip: 32x28 still clears the 24x24 WCAG 2.2 minimum. */
+.conversation-row-actions > button {
+    min-height: 28px;
+    height: 28px;
+}
+
+/* The selected row is tinted, so its backdrop has to be tinted the same way or the strip
+   reads as a patch of the wrong colour laid over it. */
+.conversation-list-item:has(.conversation-list-item-btn.active) .conversation-row-actions {
+    --row-actions-tint: var(--color-accent-wash-soft);
+}
+
+/* Revealed by hover, by the section menu being open, or by the pin being set - a pinned
+   conversation has to advertise itself with the pointer nowhere near it. The backdrop
+   appears with the buttons: at rest the strip paints nothing at all.
+   The fade runs across padding-left so the timestamp dissolves under the strip rather
+   than being cut off at a hard edge. */
+.conversation-list-item:hover .conversation-row-actions,
+.conversation-row-actions:has([aria-expanded="true"]),
+.conversation-row-actions:has(.conversation-pin-btn.pinned) {
+    padding-left: var(--row-actions-fade);
+    background-image:
+        linear-gradient(to right, transparent, var(--row-actions-tint) var(--row-actions-fade)),
+        linear-gradient(to right, transparent, var(--bg-secondary) var(--row-actions-fade));
+}
+
+.conversation-row-actions > button {
+    flex: 0 0 auto;
+    width: 0;
+    /* Overrides the shared icon-button floor above; the reveal rule restores it. */
+    min-width: 0;
+    padding: 0;
+    overflow: hidden;
     opacity: 0;
-    transition: opacity 0.15s;
     background: none;
     border: none;
     cursor: pointer;
     color: var(--text-muted);
     font-size: var(--text-caption);
-    padding: 0.1rem 0.25rem;
+    transition: opacity 0.15s, width 0.15s;
 }
 
-.conversation-list-item:hover .conversation-archive-btn {
+.conversation-list-item:hover .conversation-row-actions > button,
+.conversation-row-actions > [aria-expanded="true"],
+.conversation-row-actions > .conversation-pin-btn.pinned {
+    width: var(--hit-pointer);
+    min-width: var(--hit-pointer);
     opacity: 1;
 }
 
@@ -4789,62 +4858,15 @@ details[open] > .thinking-summary::before {
     color: var(--error);
 }
 
-.conversation-pin-btn {
-    position: absolute;
-    right: 1.6rem;
-    top: 50%;
-    transform: translateY(-50%);
-    opacity: 0;
-    transition: opacity 0.15s;
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: var(--text-caption);
-    padding: 0.1rem 0.25rem;
-    /* Dim the pushpin glyph so it reads as an inactive action until pinned. */
-    filter: grayscale(1) opacity(0.6);
-}
-
-.conversation-list-item:hover .conversation-pin-btn {
-    opacity: 1;
-}
-
-.conversation-pin-btn:hover {
-    filter: none;
-}
-
-/* A pinned conversation keeps its pushpin visible (and coloured) even without hover
-   so the pinned state is obvious at a glance. */
-.conversation-pin-btn.pinned {
-    opacity: 1;
-    filter: none;
-}
-
-/* ── Move-to-section affordance (#2324) ───────────────────────────────────────────────── */
-
-/* Third hover action on a conversation row, left of the pin, opening the section menu. */
+/* Dim the pushpin and folder glyphs so they read as inactive actions until they are used. */
+.conversation-pin-btn,
 .conversation-section-btn {
-    position: absolute;
-    right: 2.95rem;
-    top: 50%;
-    transform: translateY(-50%);
-    opacity: 0;
-    transition: opacity 0.15s;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--text-muted);
-    font-size: var(--text-caption);
-    padding: 0.1rem 0.25rem;
     filter: grayscale(1) opacity(0.6);
 }
 
-.conversation-list-item:hover .conversation-section-btn,
-.conversation-list-item .conversation-section-btn[aria-expanded="true"] {
-    opacity: 1;
-}
-
-.conversation-section-btn:hover {
+.conversation-pin-btn:hover,
+.conversation-section-btn:hover,
+.conversation-pin-btn.pinned {
     filter: none;
 }
 
@@ -6799,6 +6821,10 @@ h3.conversation-title.editable:hover {
 }
 
 .conversation-section-item {
+    /* The move-to-section menu positions against its row. This row was never a containing
+       block, so on a section member the menu resolved against whichever ancestor happened
+       to be positioned and landed away from the button that opened it. */
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: space-between;
