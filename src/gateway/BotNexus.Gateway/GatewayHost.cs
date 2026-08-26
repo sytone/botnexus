@@ -52,6 +52,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly ISessionCompactor _compactor;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ISessionContextWindowResolver? _contextWindowResolver;
+    private readonly Sessions.IContextExhaustionNotifier _contextExhaustionNotifier;
     private readonly ILogger<GatewayHost> _logger;
     private readonly IAgentRegistry? _registry;
     private readonly IMediaPipeline? _mediaPipeline;
@@ -108,10 +109,19 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         Sessions.ISessionTurnTracker? turnTracker = null,
         ChannelStartupReport? startupReport = null,
         ISessionContextWindowResolver? contextWindowResolver = null,
-        Audit.IToolAuditSink? toolAudit = null)
+        Audit.IToolAuditSink? toolAudit = null,
+        Sessions.IContextExhaustionNotifier? contextExhaustionNotifier = null)
     {
         _toolAudit = toolAudit ?? Audit.DefaultToolAuditSink.Instance;
         _contextWindowResolver = contextWindowResolver;
+        // #3535: a run that ends on an empty assistant completion because the context window is
+        // exhausted must say so instead of presenting as a blank turn. Built from the collaborators
+        // already in hand when DI did not supply one, so a directly-constructed host behaves the
+        // same as the wired one; it judges against the SAME scope-resolved window as compaction.
+        _contextExhaustionNotifier = contextExhaustionNotifier
+            ?? new Sessions.ContextExhaustionNotifier(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<Sessions.ContextExhaustionNotifier>.Instance,
+                contextWindowResolver);
         _supervisor = supervisor;
         _router = router;
         _sessions = sessions;
@@ -701,6 +711,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                             AssistantMessageKind: responseKind,
                             // #2921: surface a run that terminates on an empty assistant completion.
                             Logger: _logger,
+                            // #3535: and when that emptiness is context exhaustion, tell the user.
+                            ContextExhaustionNotifier: _contextExhaustionNotifier,
                             OnEventAsync: async (AgentStreamEvent evt, CancellationToken ct) =>
                             {
                                 // Enrich with agentId so the client can route events

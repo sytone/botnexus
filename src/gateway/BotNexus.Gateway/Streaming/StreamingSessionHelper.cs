@@ -346,10 +346,69 @@ public static class StreamingSessionHelper
             // TurnEnd flush and the final-content write above), so gating on it suppresses the
             // false positive without muting the genuine "ended without answering" signal that #2921
             // added and the #3125 spike depends on.
-            options.Logger?.LogWarning(
-                "Run for session '{SessionId}' terminated on an empty assistant completion " +
-                "(no content, no tool calls, no thinking). No transcript row was written.",
-                session.SessionId.Value);
+            //
+            // #3535: ONE of the shapes reaching here is a genuine user-facing failure rather than a
+            // curiosity - the prompt already filled the provider's context window, so there was no
+            // room left to answer. The notifier discriminates that case arithmetically (recorded
+            // provider prompt tokens vs the SCOPE-RESOLVED window) and appends a
+            // MessageRole.Notification only then. The thinking-only branch above and the #3129
+            // normal-run case never reach this line, and a run with no recorded provider count
+            // returns null here, so both stay silent exactly as before.
+            //
+            // The notice is delivered as a ContentDelta through options.OnEventAsync - the SAME
+            // callback every other byte of this run's user-visible output already travels on - so it
+            // reaches whatever channel is attached by a path that channel already renders, and this
+            // helper does not acquire any knowledge of channels. Best-effort throughout: this run
+            // has already failed to answer and a throwing notifier would turn a silent turn into a
+            // crashed one.
+            string? exhaustionNotice = null;
+            if (options.ContextExhaustionNotifier is { } exhaustionNotifier)
+            {
+                try
+                {
+                    exhaustionNotice = await exhaustionNotifier
+                        .TryBuildNoticeAsync(session, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    options.Logger?.LogWarning(ex,
+                        "Context-exhaustion check failed for session '{SessionId}'.",
+                        session.SessionId.Value);
+                }
+            }
+
+            if (exhaustionNotice is not null)
+            {
+                if (options.OnEventAsync is not null)
+                {
+                    try
+                    {
+                        await options.OnEventAsync(
+                            new AgentStreamEvent
+                            {
+                                Type = AgentStreamEventType.ContentDelta,
+                                ContentDelta = exhaustionNotice,
+                                SessionId = session.SessionId
+                            },
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        options.Logger?.LogWarning(ex,
+                            "Could not deliver the context-exhaustion notice for session '{SessionId}'. " +
+                            "The transcript row was still written.",
+                            session.SessionId.Value);
+                    }
+                }
+            }
+            else
+            {
+                options.Logger?.LogWarning(
+                    "Run for session '{SessionId}' terminated on an empty assistant completion " +
+                    "(no content, no tool calls, no thinking). No transcript row was written.",
+                    session.SessionId.Value);
+            }
         }
 
         // Remove crash sentinel on clean completion (#363).
@@ -473,7 +532,8 @@ public sealed record StreamingSessionOptions(
     int MaxPersistedToolResultBytes = 0,
     MessageKind? AssistantMessageKind = null,
     IToolAuditSink? ToolAuditSink = null,
-    ILogger? Logger = null);
+    ILogger? Logger = null,
+    Sessions.IContextExhaustionNotifier? ContextExhaustionNotifier = null);
 
 /// <summary>
 /// Represents the accumulated results of stream processing.
