@@ -174,6 +174,7 @@ export default defineConfig({
           { text: 'E2E Tests', link: '/development/e2e-tests' },
           { text: 'Triggers and Federation', link: '/development/triggers-and-federation' },
           { text: 'WebUI Connection', link: '/development/webui-connection' },
+          { text: 'App Integration Surfaces', link: '/development/app-integration-surfaces' },
           { text: 'Security-Sensitive File Guard', link: '/development/security-sensitive-file-guard' },
           { text: 'Comment Moderation', link: '/development/comment-moderation' },
           { text: 'Downloaded Payload Verification', link: '/development/downloaded-payload-verification' },
