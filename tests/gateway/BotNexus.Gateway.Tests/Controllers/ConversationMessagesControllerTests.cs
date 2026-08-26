@@ -183,9 +183,6 @@ public sealed class ConversationMessagesControllerTests
 
         await PostAcceptedAsync(controller, conversation.ConversationId.Value, "audit note", wake: false);
 
-        // Give a detached wake task every chance to have run before asserting it never started.
-        await Task.Delay(50);
-
         await _orchestrator.DidNotReceive()
             .AcceptAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>());
         _orchestrator.DidNotReceive().Post(Arg.Any<InboundMessage>());
@@ -355,9 +352,7 @@ public sealed class ConversationMessagesControllerTests
 
     private async Task<InboundMessage> AwaitAcceptedAsync()
     {
-        var completed = await Task.WhenAny(_accepted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-        completed.ShouldBe(_accepted.Task, "the controller never handed the message to the orchestrator");
-        return await _accepted.Task;
+        return await _accepted.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private async Task<PostConversationMessageResponse> PostAcceptedAsync(

@@ -21,7 +21,7 @@ namespace BotNexus.Architecture.Tests;
 /// prompt section would restore that fail-open one family at a time, so it fails here instead.
 /// </para>
 /// </remarks>
-public class PromptVariantRegistryArchitectureTests
+public class PromptVariantRegistryArchitectureTests : ArchitectureTest
 {
     /// <summary>The one file permitted to reflect over prompt-variant declarations.</summary>
     private const string SanctionedRegistry =
@@ -40,7 +40,6 @@ public class PromptVariantRegistryArchitectureTests
         @"ModelFamilyDetector\s*\.\s*(Claude|Gpt|Gemini|Copilot|DeepSeek|Qwen|Llama)\s*=>",
         RegexOptions.Compiled);
 
-    private static string RepoRoot => FindRepoRoot();
 
     /// <summary>
     /// AC3: no reflection on the prompt-build path. Only the registry reflects, and it does so from
@@ -123,10 +122,10 @@ public class PromptVariantRegistryArchitectureTests
 
     // ---- helpers ----
 
-    private static List<string> EnumeratePromptSources() =>
+    private List<string> EnumeratePromptSources() =>
         Directory
             .EnumerateFiles(
-                Path.Combine(RepoRoot, "src", "gateway", "BotNexus.Gateway.Prompts"),
+                Path.Combine(Repository.Root, "src", "gateway", "BotNexus.Gateway.Prompts"),
                 "*.cs",
                 SearchOption.AllDirectories)
             .Where(static path =>
@@ -147,21 +146,10 @@ public class PromptVariantRegistryArchitectureTests
         return Regex.Replace(source, @"^\s*//.*$", string.Empty, RegexOptions.Multiline);
     }
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string ToRepoRelative(string absolute) =>
-        Path.GetRelativePath(RepoRoot, absolute).Replace('\\', '/');
+    private string ToRepoRelative(string absolute) =>
+        Path.GetRelativePath(Repository.Root, absolute).Replace('\\', '/');
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

@@ -34,7 +34,7 @@ namespace BotNexus.Architecture.Tests;
 /// its target methods/symbols").
 /// </para>
 /// </remarks>
-public sealed class SessionTypeCollapseArchitectureTests
+public sealed class SessionTypeCollapseArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void SessionId_IsSoul_PredicateIsDeleted()
@@ -81,7 +81,7 @@ public sealed class SessionTypeCollapseArchitectureTests
     [Fact]
     public void NoProductionSourceFile_References_DeletedSessionTypeValues()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -106,7 +106,7 @@ public sealed class SessionTypeCollapseArchitectureTests
     [Fact]
     public void NoProductionSourceFile_References_DeletedSessionIdIsSoul()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -221,18 +221,6 @@ public sealed class SessionTypeCollapseArchitectureTests
             : full;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 
     /// <summary>
     /// Removes single-line (<c>//</c>, <c>///</c>) and block (<c>/* … */</c>) C# comments

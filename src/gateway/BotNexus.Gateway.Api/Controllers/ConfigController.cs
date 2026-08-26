@@ -236,7 +236,10 @@ public sealed class ConfigController : ControllerBase
         if (config.Agents is null || !config.Agents.TryGetValue(agentId, out var agentConfig))
         {
             var fallbackPath = ResolveConfiguredPath(configuration);
-            var fallbackConfig = await new PlatformConfigWriter(
+            // Read-only use, so the backend set does not affect the result - routed through the
+            // factory anyway so "never construct PlatformConfigWriter directly" stays a rule with no
+            // exceptions to remember (#3527).
+            var fallbackConfig = await BotNexus.Gateway.Configuration.Writers.ConfigWriterFactory.Create(
                 fallbackPath,
                 new System.IO.Abstractions.FileSystem()).ReadPlatformConfigAsync(ct);
             if (System.IO.File.Exists(fallbackPath))
@@ -254,18 +257,21 @@ public sealed class ConfigController : ControllerBase
         }
 
         var defaults = config.AgentDefaults;
-        var rawElementNullable = config.AgentRawElements is not null && config.AgentRawElements.TryGetValue(agentId, out var re)
-            ? re
-            : (JsonElement?)null;
 
-        var effective = AgentConfigMerger.Merge(defaults, agentConfig, rawElementNullable);
+        // #3515: no merge. The agent block is reported as authored, so this endpoint stays truthful
+        // about what the gateway actually runs - PlatformConfigAgentSource no longer merges either.
+        // Reporting a merged view here while the platform used the unmerged one is precisely the
+        // split-brain that made the portal show values the gateway was not using.
+        var effective = agentConfig;
 
-        var sources = BuildSources(defaults, agentConfig, rawElementNullable);
+        var sources = BuildSources(agentConfig);
 
         return Ok(new EffectiveAgentConfigResponse
         {
             AgentId = agentId,
-            DefaultsApplied = defaults is not null,
+            // Defaults exist in the document but are not applied while inheritance is being
+            // redesigned (#3503), so this reports false rather than implying they took effect.
+            DefaultsApplied = false,
             Config = new EffectiveAgentConfigDto
             {
                 ToolIds = effective.ToolIds,
@@ -277,34 +283,41 @@ public sealed class ConfigController : ControllerBase
         });
     }
 
-    private static Dictionary<string, string> BuildSources(
-        AgentDefaultsConfig? defaults,
-        AgentDefinitionConfig agent,
-        JsonElement? rawElement)
+    /// <summary>
+    /// Reports which layer supplied each field of the effective config.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// #3515: every field now comes from the agent, because nothing merges. This previously resolved
+    /// per-field provenance across <c>agents.defaults</c> and the agent block using the raw JSON to
+    /// tell "absent" from "explicitly null" - roughly a hundred lines of layer arithmetic whose only
+    /// purpose was describing a merge.
+    /// </para>
+    /// <para>
+    /// Kept as a method rather than inlined because the shape of the response is part of the API
+    /// contract, and provenance becomes meaningful again when defaults return (#3503). Reporting
+    /// "agent" for everything is the honest answer today; reporting a layered view for a merge that
+    /// does not happen would be the split-brain this work exists to remove.
+    /// </para>
+    /// </remarks>
+    private static Dictionary<string, string> BuildSources(AgentDefinitionConfig agent)
     {
-        var sources = new Dictionary<string, string>(StringComparer.Ordinal);
+        ArgumentNullException.ThrowIfNull(agent);
 
-        // toolIds
-        sources["toolIds"] = ResolveListSource("toolIds", defaults?.ToolIds, agent.ToolIds, rawElement);
+        const string Agent = "agent";
 
-        // memory.*
-        var agentMemObj = GetNestedObject(rawElement, "memory");
-        sources["memory.enabled"] = ResolveBoolSource("enabled", defaults?.Memory?.Enabled, agent.Memory?.Enabled, agentMemObj, agent.Memory is null);
-        sources["memory.indexing"] = ResolveStringSource("indexing", defaults?.Memory?.Indexing, agent.Memory?.Indexing, agentMemObj, agent.Memory is null);
-        sources["memory.promptInjection"] = ResolveStringSource("promptInjection", defaults?.Memory?.PromptInjection, agent.Memory?.PromptInjection, agentMemObj, agent.Memory is null);
-
-        // heartbeat.*
-        var agentHbObj = GetNestedObject(rawElement, "heartbeat");
-        sources["heartbeat.enabled"] = ResolveBoolSource("enabled", defaults?.Heartbeat?.Enabled, agent.Heartbeat?.Enabled, agentHbObj, agent.Heartbeat is null);
-        sources["heartbeat.intervalMinutes"] = ResolveIntSource("intervalMinutes", defaults?.Heartbeat?.IntervalMinutes, agent.Heartbeat?.IntervalMinutes, agentHbObj, agent.Heartbeat is null);
-
-        // fileAccess.*
-        var agentFaObj = GetNestedObject(rawElement, "fileAccess");
-        sources["fileAccess.allowedReadPaths"] = ResolveListSource("allowedReadPaths", defaults?.FileAccess?.AllowedReadPaths, agent.FileAccess?.AllowedReadPaths, agentFaObj);
-        sources["fileAccess.allowedWritePaths"] = ResolveListSource("allowedWritePaths", defaults?.FileAccess?.AllowedWritePaths, agent.FileAccess?.AllowedWritePaths, agentFaObj);
-        sources["fileAccess.deniedPaths"] = ResolveListSource("deniedPaths", defaults?.FileAccess?.DeniedPaths, agent.FileAccess?.DeniedPaths, agentFaObj);
-
-        return sources;
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["toolIds"] = Agent,
+            ["memory.enabled"] = Agent,
+            ["memory.indexing"] = Agent,
+            ["memory.promptInjection"] = Agent,
+            ["heartbeat.enabled"] = Agent,
+            ["heartbeat.intervalMinutes"] = Agent,
+            ["fileAccess.allowedReadPaths"] = Agent,
+            ["fileAccess.allowedWritePaths"] = Agent,
+            ["fileAccess.deniedPaths"] = Agent,
+        };
     }
 
     private static JsonElement? GetNestedObject(JsonElement? parent, string key)

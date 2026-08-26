@@ -54,11 +54,9 @@ public sealed class ConcurrentInboundScenario
         // Wait until the provider has been invoked for every inbound — that is the strongest
         // signal that the gateway has finished serializing each one through the per-conversation
         // queue. If the gateway has a race that drops or duplicates, TurnCount will not match.
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
-        while (DateTimeOffset.UtcNow < deadline && world.Provider.TurnCount < concurrency)
-        {
-            await Task.Delay(25);
-        }
+        await TestAwait.EventuallyAsync(
+            () => world.Provider.TurnCount >= concurrency,
+            $"all {concurrency} concurrent inbounds to reach the provider");
 
         // Assert — exactly ONE conversation exists for this agent. The routing rule
         // (channelType, channelAddress) -> conversation is 1:1 by construction; if a race
@@ -107,11 +105,9 @@ public sealed class ConcurrentInboundScenario
 
         await Task.WhenAll(inbounds);
 
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
-        while (DateTimeOffset.UtcNow < deadline && world.Provider.TurnCount < users)
-        {
-            await Task.Delay(25);
-        }
+        await TestAwait.EventuallyAsync(
+            () => world.Provider.TurnCount >= users,
+            $"all {users} distinct-address inbounds to reach the provider");
 
         // Assert — exactly N conversations (one per channel address).
         var conversations = await world.ListConversationsForAgentAsync("multi-user-agent");

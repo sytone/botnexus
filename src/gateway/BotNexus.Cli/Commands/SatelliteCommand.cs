@@ -3,6 +3,7 @@ using System.IO.Abstractions;
 using System.Text.Json;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
+using BotNexus.Gateway.Configuration.Writers;
 
 namespace BotNexus.Cli.Commands;
 
@@ -159,7 +160,7 @@ internal sealed class SatelliteCommand
 
         // Write to config
         var fileSystem = new FileSystem();
-        var writer = new PlatformConfigWriter(configPath, fileSystem);
+        var writer = ConfigWriterFactory.Create(configPath, fileSystem);
 
         await writer.MutateDocumentAsync(document =>
         {
@@ -208,7 +209,7 @@ internal sealed class SatelliteCommand
         }
 
         var removed = false;
-        await new PlatformConfigWriter(configPath, fileSystem).MutateDocumentAsync(document =>
+        await ConfigWriterFactory.Create(configPath, fileSystem).MutateDocumentAsync(document =>
         {
             if (document.FindEntryKey(SatellitesPath, name) is not { } matched)
                 return;
@@ -229,3 +230,5 @@ internal sealed class SatelliteCommand
         return 1;
     }
 }
+
+

@@ -125,6 +125,32 @@ public sealed class HeartbeatCronProvisioner : IHostedService, IHeartbeatProvisi
         }
     }
 
+    /// <inheritdoc/>
+    public async Task DeprovisionAsync(AgentId agentId, CancellationToken cancellationToken)
+    {
+        var jobId = JobId.From($"heartbeat:{agentId.Value}");
+        var existing = await _cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false);
+
+        if (existing is null)
+        {
+            // Idempotent: nothing provisioned (or already reclaimed) is success, not an error.
+            return;
+        }
+
+        if (!existing.System)
+        {
+            // Same ownership guard ProvisionAsync applies on the disable branch: the platform only
+            // deletes jobs it minted, never an operator-authored job that shares the id.
+            _logger.LogWarning(
+                "Leaving non-system cron job '{JobId}' in place while deprovisioning agent '{AgentId}'.",
+                jobId, agentId);
+            return;
+        }
+
+        await _cronStore.DeleteAsync(jobId, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Deprovisioned heartbeat cron job for deleted agent '{AgentId}'.", agentId);
+    }
+
     /// <summary>
     /// Builds the cron expression for a heartbeat job.
     /// When <see cref="HeartbeatAgentConfig.ActiveHours"/> is set, the hour range is baked

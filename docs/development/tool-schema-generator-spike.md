@@ -18,7 +18,7 @@ from `BotNexus.Gateway.Configuration`. A repo-wide scan of every `*.csproj` and 
 and **67** matching project files (the great majority of which are ordinary `IncludeAssets` analyzer
 lines, not generators).
 
-That materially reduced the cost of this spike: no new project, no `BotNexus.slnx` entry, no
+That materially reduced the cost of this spike: no new project, no traversal graph entry, no
 netstandard2.0/Roslyn-version archaeology. The second generator was added alongside the first.
 
 ## What was built

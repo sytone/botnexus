@@ -154,8 +154,8 @@
     {
       "id": "repair-101",
       "lane": "repair",
-      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-repair-101-3eacd28726664d93bc181d8366d4173a",
-      "marker": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-repair-101-3eacd28726664d93bc181d8366d4173a\\repair-101.marker",
+      "worktree": "%TEMP%\\maintenance-wt-repair-101-3eacd28726664d93bc181d8366d4173a",
+      "marker": "%TEMP%\\maintenance-wt-repair-101-3eacd28726664d93bc181d8366d4173a\\repair-101.marker",
       "commit": "7a088d1e702e38ac9f5d2ea5ce20e82d63461ab4",
       "tree": "f1eb9a5a773e0d1100d392dbf62f2f0d3ca56e98",
       "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
@@ -163,8 +163,8 @@
     {
       "id": "impl-201",
       "lane": "implementation",
-      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-201-26aefc22f3824d55891a9dc422e8e408",
-      "marker": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-201-26aefc22f3824d55891a9dc422e8e408\\impl-201.marker",
+      "worktree": "%TEMP%\\maintenance-wt-impl-201-26aefc22f3824d55891a9dc422e8e408",
+      "marker": "%TEMP%\\maintenance-wt-impl-201-26aefc22f3824d55891a9dc422e8e408\\impl-201.marker",
       "commit": "976c8a7eed41dd9d3c46a1c5fd38c58e24bab43d",
       "tree": "8bf91e8fb88b107b28306393ef6a765f6814d849",
       "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
@@ -172,8 +172,8 @@
     {
       "id": "impl-202",
       "lane": "implementation",
-      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-202-92c7e827fcb54bd7a4c16d4332772ecd",
-      "marker": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-202-92c7e827fcb54bd7a4c16d4332772ecd\\impl-202.marker",
+      "worktree": "%TEMP%\\maintenance-wt-impl-202-92c7e827fcb54bd7a4c16d4332772ecd",
+      "marker": "%TEMP%\\maintenance-wt-impl-202-92c7e827fcb54bd7a4c16d4332772ecd\\impl-202.marker",
       "commit": "4916f23235c7c6238d4e2289f5c89c964465e88c",
       "tree": "1af410cd66781571d75b0b9014f93e360df56601",
       "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
@@ -181,8 +181,8 @@
     {
       "id": "impl-203",
       "lane": "implementation",
-      "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-203-92d36dadb1524faa99ffdcdcaf5a1d99",
-      "marker": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-203-92d36dadb1524faa99ffdcdcaf5a1d99\\impl-203.marker",
+      "worktree": "%TEMP%\\maintenance-wt-impl-203-92d36dadb1524faa99ffdcdcaf5a1d99",
+      "marker": "%TEMP%\\maintenance-wt-impl-203-92d36dadb1524faa99ffdcdcaf5a1d99\\impl-203.marker",
       "commit": "3f6b3afdb900fdbd3d4084356e8df4a9fd0687fb",
       "tree": "19f9189b93cd8f19975da25c4a714b1446cb63f2",
       "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
@@ -324,7 +324,7 @@
       "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
       "provenance": "Invoke-MaintenanceThroughputProof",
       "details": {
-        "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-repair-101-3eacd28726664d93bc181d8366d4173a",
+        "worktree": "%TEMP%\\maintenance-wt-repair-101-3eacd28726664d93bc181d8366d4173a",
         "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
       }
     },
@@ -395,7 +395,7 @@
       "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
       "provenance": "Invoke-MaintenanceThroughputProof",
       "details": {
-        "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-201-26aefc22f3824d55891a9dc422e8e408",
+        "worktree": "%TEMP%\\maintenance-wt-impl-201-26aefc22f3824d55891a9dc422e8e408",
         "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
       }
     },
@@ -466,7 +466,7 @@
       "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
       "provenance": "Invoke-MaintenanceThroughputProof",
       "details": {
-        "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-202-92c7e827fcb54bd7a4c16d4332772ecd",
+        "worktree": "%TEMP%\\maintenance-wt-impl-202-92c7e827fcb54bd7a4c16d4332772ecd",
         "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
       }
     },
@@ -598,7 +598,7 @@
       "correlationId": "6ef818b9c64f4b95a0dc4f4ebe14eee8",
       "provenance": "Invoke-MaintenanceThroughputProof",
       "details": {
-        "worktree": "C:\\Users\\jobullen\\AppData\\Local\\Temp\\maintenance-wt-impl-203-92d36dadb1524faa99ffdcdcaf5a1d99",
+        "worktree": "%TEMP%\\maintenance-wt-impl-203-92d36dadb1524faa99ffdcdcaf5a1d99",
         "baseCommit": "8da5341174dbcc5376c68f297aff7916411eaf54"
       }
     },

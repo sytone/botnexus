@@ -48,7 +48,7 @@ temporary `BOTNEXUS_HOME`.
   - `SessionStore` - session persistence through the real store
   - `Conversation` - conversation REST + SignalR through the real pipeline/hub
   - `ProviderHttp`  - provider client through a real HTTP pipeline
-- Register every new project in `BotNexus.slnx` under the
+- Place every new test project under `tests/` so `tests/dirs.proj` discovers it under the
   `/tests/integration/` solution folder.
 
 When a future seam needs a regression home, add a new

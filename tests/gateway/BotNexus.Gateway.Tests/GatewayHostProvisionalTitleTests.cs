@@ -48,17 +48,18 @@ public sealed partial class GatewayHostTests
             CreateMessage("Help me plan a trip to Kyoto", channelType: "web", conversationId: "addr-1"));
 
         string? provisionalTitle = null;
-        for (var attempt = 0; attempt < 50; attempt++)
-        {
-            var conv = await conversationStore.GetAsync(convId, CancellationToken.None);
-            provisionalTitle = conv?.Title;
-            if (conv is not null && !ConversationAutoTitleService.IsDefaultTitle(conv.Title))
+        await TestAwait.EventuallyAsync(
+            async () =>
             {
-                ConversationAutoTitleService.IsProvisionalTitle(conv).ShouldBeTrue();
-                break;
-            }
-            await Task.Delay(50);
-        }
+                var conversation = await conversationStore.GetAsync(convId, CancellationToken.None);
+                provisionalTitle = conversation?.Title;
+                if (conversation is null || ConversationAutoTitleService.IsDefaultTitle(conversation.Title))
+                    return false;
+
+                ConversationAutoTitleService.IsProvisionalTitle(conversation).ShouldBeTrue();
+                return true;
+            },
+            "the first user message to produce a provisional conversation title");
 
         provisionalTitle.ShouldBe("Kyoto Trip");
 
@@ -89,14 +90,14 @@ public sealed partial class GatewayHostTests
             cts.Token);
 
         string? title = null;
-        for (var attempt = 0; attempt < 50; attempt++)
-        {
-            var conv = await conversationStore.GetAsync(convId, CancellationToken.None);
-            title = conv?.Title;
-            if (conv is not null && !ConversationAutoTitleService.IsDefaultTitle(conv.Title))
-                break;
-            await Task.Delay(50);
-        }
+        await TestAwait.EventuallyAsync(
+            async () =>
+            {
+                var conversation = await conversationStore.GetAsync(convId, CancellationToken.None);
+                title = conversation?.Title;
+                return conversation is not null && !ConversationAutoTitleService.IsDefaultTitle(conversation.Title);
+            },
+            "the interrupted first turn to produce a provisional conversation title");
 
         title.ShouldBe("Interrupted Topic");
 
@@ -162,17 +163,20 @@ public sealed partial class GatewayHostTests
         var dispatch = host.DispatchAsync(
             CreateMessage("notify me about this", channelType: "web", conversationId: "addr-1"));
 
-        for (var attempt = 0; attempt < 50; attempt++)
-        {
-            var conv = await conversationStore.GetAsync(convId, CancellationToken.None);
-            if (conv is not null && !ConversationAutoTitleService.IsDefaultTitle(conv.Title))
-                break;
-            await Task.Delay(50);
-        }
+        await TestAwait.EventuallyAsync(
+            async () =>
+            {
+                var conversation = await conversationStore.GetAsync(convId, CancellationToken.None);
+                return conversation is not null && !ConversationAutoTitleService.IsDefaultTitle(conversation.Title);
+            },
+            "the provisional conversation title to be persisted before notifying clients");
 
         assistantGate.TrySetResult(new AgentResponse { Content = "ok" });
         await dispatch;
 
+        await TestAwait.EventuallyAsync(
+            () => notifier.Invocations.Count > 0,
+            "the provisional-title notification invocation");
         notifier.Verify(n => n.NotifyConversationChangedAsync(
             "updated", ProvAgentId.Value, convId.Value, It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);

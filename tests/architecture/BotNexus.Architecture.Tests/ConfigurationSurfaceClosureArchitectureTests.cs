@@ -30,7 +30,7 @@ namespace BotNexus.Architecture.Tests;
 /// first; the second still requires someone to reintroduce a raw read at a call site, deliberately.
 /// </para>
 /// </summary>
-public sealed class ConfigurationSurfaceClosureArchitectureTests
+public sealed class ConfigurationSurfaceClosureArchitectureTests : ArchitectureTest
 {
     private static readonly Assembly ConfigAssembly = typeof(PlatformConfig).Assembly;
 
@@ -69,7 +69,7 @@ public sealed class ConfigurationSurfaceClosureArchitectureTests
     [Fact]
     public void CliFiles_DoNotPerformRawConfigDocumentIndexing()
     {
-        var cliRoot = ResolveRepoPath("src", "gateway", "BotNexus.Cli");
+        var cliRoot = Repository.Path("src", "gateway", "BotNexus.Cli");
         Directory.Exists(cliRoot).ShouldBeTrue($"expected the CLI project at {cliRoot}");
 
         var offenders = new List<string>();
@@ -109,7 +109,7 @@ public sealed class ConfigurationSurfaceClosureArchitectureTests
     [Fact]
     public void CliFiles_ActuallyUseTheCanonicalSurface()
     {
-        var cliRoot = ResolveRepoPath("src", "gateway", "BotNexus.Cli");
+        var cliRoot = Repository.Path("src", "gateway", "BotNexus.Cli");
 
         var users = Directory
             .EnumerateFiles(cliRoot, "*.cs", SearchOption.AllDirectories)
@@ -178,19 +178,4 @@ public sealed class ConfigurationSurfaceClosureArchitectureTests
             "direct ConfigPathSyntax use"),
     ];
 
-    /// <summary>
-    /// Walks up from the test binary to the repository root. Reading source is the point of this
-    /// fence, so the path must resolve from wherever the runner puts the assembly.
-    /// </summary>
-    private static string ResolveRepoPath(params string[] segments)
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "BotNexus.slnx")))
-            directory = directory.Parent;
-
-        directory.ShouldNotBeNull("could not locate the repository root (no BotNexus.slnx found above the test binary)");
-
-        return Path.Combine([directory.FullName, .. segments]);
-    }
 }

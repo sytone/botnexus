@@ -14,7 +14,7 @@ namespace BotNexus.Architecture.Tests;
 /// the defect. This fence pins the STRUCTURE - CR-aware mutation of streamed assistant content is
 /// allowed in exactly two named provider-seam types and nowhere else.
 /// </remarks>
-public class ProviderNewlineSeamArchitectureTests
+public class ProviderNewlineSeamArchitectureTests : ArchitectureTest
 {
     /// <summary>The only files permitted to perform CR-aware mutation of streamed text.</summary>
     private static readonly string[] SeamFiles =
@@ -50,7 +50,6 @@ public class ProviderNewlineSeamArchitectureTests
         statement.Contains("toolResult", StringComparison.OrdinalIgnoreCase) ||
         statement.Contains("textBlocks", StringComparison.Ordinal);
 
-    private static string RepoRoot => FindRepoRoot();
 
     /// <summary>
     /// A file participates in stream assembly if it constructs or consumes streamed assistant text
@@ -238,29 +237,18 @@ public class ProviderNewlineSeamArchitectureTests
         return Regex.Replace(withoutBlock, @"//[^\n]*", "");
     }
 
-    private static List<string> EnumerateSourceFiles() =>
-        Directory.EnumerateFiles(Path.Combine(RepoRoot, "src"), "*.cs", SearchOption.AllDirectories)
+    private List<string> EnumerateSourceFiles() =>
+        Directory.EnumerateFiles(Path.Combine(Repository.Root, "src"), "*.cs", SearchOption.AllDirectories)
             .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
                             StringComparison.Ordinal)
                         && !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
                             StringComparison.Ordinal))
             .ToList();
 
-    private static string Relative(string absolute) =>
-        Path.GetRelativePath(RepoRoot, absolute).Replace(Path.DirectorySeparatorChar, '/');
+    private string Relative(string absolute) =>
+        Path.GetRelativePath(Repository.Root, absolute).Replace(Path.DirectorySeparatorChar, '/');
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

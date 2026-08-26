@@ -74,7 +74,7 @@ namespace BotNexus.Architecture.Tests;
 /// message, and explicit vacuity guards so the fence cannot rot into a test that can never fail.
 /// </para>
 /// </summary>
-public sealed class WasmPayloadDependencyArchitectureTests
+public sealed class WasmPayloadDependencyArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The Blazor WebAssembly entry-point projects, relative to <c>src/extensions</c>. Anything
@@ -161,9 +161,8 @@ public sealed class WasmPayloadDependencyArchitectureTests
         "Microsoft.CSharp",
     ];
 
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string ExtensionsRoot => Path.Combine(RepoRoot, "src", "extensions");
+    private string ExtensionsRoot => Path.Combine(Repository.Root, "src", "extensions");
 
     [Fact]
     public void WasmEntryPoints_Exist()
@@ -253,7 +252,7 @@ public sealed class WasmPayloadDependencyArchitectureTests
             .Select(entry => Path.Combine(ExtensionsRoot, entry, "bin"))
             .ToList();
 
-        var scan = ScanWasmBuildOutput(binRoots, dll => Path.GetRelativePath(RepoRoot, dll));
+        var scan = ScanWasmBuildOutput(binRoots, dll => Path.GetRelativePath(Repository.Root, dll));
 
         // #2707: a checkout in which no WASM entry point has ever been built has nothing for this
         // fence to inspect. That is a fact about the machine, not about the source, so it must not
@@ -458,7 +457,7 @@ public sealed class WasmPayloadDependencyArchitectureTests
             $"{WireProject} is no longer allowlisted, so this guard has nothing to police. Remove " +
             "this test alongside the allowlist entry - do not leave it passing vacuously.");
 
-        var csproj = Path.Combine(RepoRoot, "src", "domain", WireProject, WireProject + ".csproj");
+        var csproj = Path.Combine(Repository.Root, "src", "domain", WireProject, WireProject + ".csproj");
         File.Exists(csproj).ShouldBeTrue(
             $"BotNexus.Domain.Wire project not found at {csproj}. It is allowlisted into the WASM " +
             "payload on the strict condition that it stays dependency-free; if it moved or was " +
@@ -613,17 +612,6 @@ public sealed class WasmPayloadDependencyArchitectureTests
         return AllowedProjectsInWasmClosure.ContainsKey(assemblyName);
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }
 
 /// <summary>

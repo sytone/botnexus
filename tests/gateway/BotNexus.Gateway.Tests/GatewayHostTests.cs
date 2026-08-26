@@ -179,14 +179,14 @@ public sealed partial class GatewayHostTests
 
         // TriggerBestEffort is fire-and-forget (Task.Run); poll for the persisted title change.
         string? finalTitle = null;
-        for (var attempt = 0; attempt < 50; attempt++)
-        {
-            var conv = await conversationStore.GetAsync(convId, CancellationToken.None);
-            finalTitle = conv?.Title;
-            if (!ConversationAutoTitleService.IsDefaultTitle(finalTitle))
-                break;
-            await Task.Delay(100);
-        }
+        await TestAwait.EventuallyAsync(
+            async () =>
+            {
+                var conversation = await conversationStore.GetAsync(convId, CancellationToken.None);
+                finalTitle = conversation?.Title;
+                return !ConversationAutoTitleService.IsDefaultTitle(finalTitle);
+            },
+            "the completed first exchange to produce a conversation title");
 
         finalTitle.ShouldBe("Meaning Of Life");
     }
@@ -826,14 +826,14 @@ public sealed partial class GatewayHostTests
 
         // TriggerBestEffort is fire-and-forget; poll for the persisted title change.
         string? finalTitle = null;
-        for (var attempt = 0; attempt < 50; attempt++)
-        {
-            var conv = await conversationStore.GetAsync(convId, CancellationToken.None);
-            finalTitle = conv?.Title;
-            if (!ConversationAutoTitleService.IsDefaultTitle(finalTitle))
-                break;
-            await Task.Delay(100);
-        }
+        await TestAwait.EventuallyAsync(
+            async () =>
+            {
+                var conversation = await conversationStore.GetAsync(convId, CancellationToken.None);
+                finalTitle = conversation?.Title;
+                return !ConversationAutoTitleService.IsDefaultTitle(finalTitle);
+            },
+            "the completed steered exchange to produce a conversation title");
 
         finalTitle.ShouldBe("Steered Chat Title");
     }
@@ -1190,16 +1190,20 @@ public sealed partial class GatewayHostTests
         var handle = new Mock<IAgentHandle>();
         handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
         handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
+        var promptStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePrompts = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(async () =>
+            .Returns<string, CancellationToken>(async (_, cancellationToken) =>
             {
-                await Task.Delay(250);
+                promptStarted.TrySetResult();
+                await releasePrompts.Task.WaitAsync(cancellationToken);
                 return new AgentResponse { Content = "ok" };
             });
         handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
-            .Returns(async () =>
+            .Returns<AgentUserMessage, CancellationToken>(async (_, cancellationToken) =>
             {
-                await Task.Delay(250);
+                promptStarted.TrySetResult();
+                await releasePrompts.Task.WaitAsync(cancellationToken);
                 return new AgentResponse { Content = "ok" };
             });
         var supervisor = new Mock<IAgentSupervisor>();
@@ -1219,11 +1223,10 @@ public sealed partial class GatewayHostTests
             sessionQueueCapacity: 1);
 
         var first = host.DispatchAsync(CreateMessage("one", sessionId: "session-1"));
+    await promptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var second = host.DispatchAsync(CreateMessage("two", sessionId: "session-1"));
-        // Yield until the first dispatch is actively running (PromptAsync takes 250ms, so both
-        // are in-flight by the time we need to verify busy rejection).
-        await Task.WhenAny(first, second, Task.Delay(100));
         await host.DispatchAsync(CreateMessage("three", sessionId: "session-1"));
+    releasePrompts.TrySetResult();
         await Task.WhenAll(first, second);
 
         channel.Verify(c => c.SendAsync(
@@ -1241,24 +1244,35 @@ public sealed partial class GatewayHostTests
 
         var inFlight = 0;
         var maxInFlight = 0;
+        var firstPromptStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstPrompt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var promptCount = 0;
         var handle = new Mock<IAgentHandle>();
         handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
         handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>(async (message, _) =>
+            .Returns<string, CancellationToken>(async (message, cancellationToken) =>
             {
                 var current = Interlocked.Increment(ref inFlight);
                 Interlocked.Exchange(ref maxInFlight, Math.Max(maxInFlight, current));
-                await Task.Delay(75);
+                if (Interlocked.Increment(ref promptCount) == 1)
+                {
+                    firstPromptStarted.TrySetResult();
+                    await releaseFirstPrompt.Task.WaitAsync(cancellationToken);
+                }
                 Interlocked.Decrement(ref inFlight);
                 return new AgentResponse { Content = $"echo:{message}" };
             });
         handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
-            .Returns<AgentUserMessage, CancellationToken>(async (message, _) =>
+            .Returns<AgentUserMessage, CancellationToken>(async (message, cancellationToken) =>
             {
                 var current = Interlocked.Increment(ref inFlight);
                 Interlocked.Exchange(ref maxInFlight, Math.Max(maxInFlight, current));
-                await Task.Delay(75);
+                if (Interlocked.Increment(ref promptCount) == 1)
+                {
+                    firstPromptStarted.TrySetResult();
+                    await releaseFirstPrompt.Task.WaitAsync(cancellationToken);
+                }
                 Interlocked.Decrement(ref inFlight);
                 return new AgentResponse { Content = $"echo:{message.Content}" };
             });
@@ -1278,7 +1292,10 @@ public sealed partial class GatewayHostTests
             sessionQueueCapacity: 8);
 
         var first = host.DispatchAsync(CreateMessage("one", sessionId: "session-1"));
+    await firstPromptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var second = host.DispatchAsync(CreateMessage("two", sessionId: "session-1"));
+    maxInFlight.ShouldBe(1);
+    releaseFirstPrompt.TrySetResult();
         await Task.WhenAll(first, second);
 
         maxInFlight.ShouldBe(1);
@@ -1868,8 +1885,7 @@ public sealed partial class GatewayHostTests
 
         public async IAsyncEnumerable<GatewayActivity> SubscribeAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            while (!cancellationToken.IsCancellationRequested)
-                await Task.Delay(10, cancellationToken);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;
         }
     }

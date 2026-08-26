@@ -16,7 +16,7 @@ internal sealed class BuildCommand
             "--dev",
             "Build from a development repo clone instead of the install location.");
 
-        var command = new Command("build", "Build the BotNexus solution.")
+        var command = new Command("build", "Build the BotNexus deployment projects.")
         {
             pathOption,
             devOption
@@ -41,24 +41,14 @@ internal sealed class BuildCommand
     /// </summary>
     internal const string DeployProjectFileName = "src/dirs.proj";
 
-    /// <summary>Full-solution fallback used when the deployment project is absent.</summary>
-    internal const string SolutionFileName = "BotNexus.slnx";
-
     /// <summary>
-    /// Chooses what MSBuild is pointed at. Prefers the deployment traversal project, but falls
-    /// back to the full solution when it is missing - for example when an older deployment repo
-    /// is updated by a newer CLI, or the other way round. Falling back to building MORE than
-    /// necessary is the safe direction: a slow build is recoverable, a skipped one is not.
-    /// Returns <c>null</c> when neither file exists, which is a hard error.
+    /// Chooses the deployment traversal project when it exists. Returns <c>null</c> when the
+    /// repository does not contain the build graph, which is a hard error.
     /// </summary>
     internal static string? ResolveBuildTarget(string repoRoot)
     {
         var deployProject = Path.Combine(repoRoot, DeployProjectFileName);
-        if (File.Exists(deployProject))
-            return deployProject;
-
-        var solution = Path.Combine(repoRoot, SolutionFileName);
-        return File.Exists(solution) ? solution : null;
+        return File.Exists(deployProject) ? deployProject : null;
     }
 
     internal static async Task<int> BuildSolutionAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
@@ -66,7 +56,7 @@ internal sealed class BuildCommand
         var solution = ResolveBuildTarget(repoRoot);
         if (solution is null)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Neither {CliText.SafeDisplay(DeployProjectFileName)} nor {CliText.SafeDisplay(SolutionFileName)} found in {CliText.SafeDisplay(repoRoot)}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(DeployProjectFileName)} not found in {CliText.SafeDisplay(repoRoot)}");
             return 1;
         }
 
@@ -74,7 +64,7 @@ internal sealed class BuildCommand
         // Falls back to "unknown" if git is unavailable or the directory is not a repo.
         var commitSha = ResolveCommitSha(repoRoot);
 
-        AnsiConsole.MarkupLine("[blue][[build]][/] Building solution (Release, skipping test projects)...");
+        AnsiConsole.MarkupLine("[blue][[build]][/] Building deployment projects (Release, skipping test projects)...");
 
         return await BuildOutputStreamer.RunAsync(solution, repoRoot, commitSha, verbose, cancellationToken);
     }

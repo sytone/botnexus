@@ -111,7 +111,7 @@ This is the same invocation used in [Install from Release](../getting-started-re
 
 ## Platform restore behind a blocked feed
 
-Installing the CLI is only half the job. `botnexus install --build` clones and builds the BotNexus platform, and `dotnet build BotNexus.slnx` restores its dependencies — both need package access of their own. A CLI installed from a local `.nupkg` will still fail at that step if restore cannot reach a feed.
+Installing the CLI is only half the job. `botnexus install --build` clones and builds the BotNexus platform, and `dotnet build dirs.proj` restores its dependencies — both need package access of their own. A CLI installed from a local `.nupkg` will still fail at that step if restore cannot reach a feed.
 
 Create a `nuget.config` at the root of the cloned repository:
 
@@ -133,8 +133,8 @@ The `<clear />` element is the important part: without it, sources inherited fro
 Verify restore succeeds before going further:
 
 ```bash
-dotnet restore BotNexus.slnx
-dotnet build BotNexus.slnx
+dotnet restore dirs.proj
+dotnet build dirs.proj
 ```
 
 To discover which sources are actually in effect:

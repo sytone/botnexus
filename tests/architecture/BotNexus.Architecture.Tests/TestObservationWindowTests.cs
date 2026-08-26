@@ -23,7 +23,7 @@ namespace BotNexus.Architecture.Tests;
 /// there a short value is the point.
 /// </para>
 /// </remarks>
-public class TestObservationWindowTests
+public class TestObservationWindowTests : ArchitectureTest
 {
     private static readonly string[] WaitHelpers =
     [
@@ -36,7 +36,7 @@ public class TestObservationWindowTests
     [Fact]
     public void ObservationWindows_AreGenerousEnoughForALoadedHost()
     {
-        var testsRoot = FindTestsRoot();
+        var testsRoot = Repository.TestsRoot;
         var pattern = new Regex(
             $@"({string.Join('|', WaitHelpers)})\s*\([^;]*?TimeSpan\.From(?<unit>Seconds|Milliseconds)\(\s*(?<value>\d+(?:\.\d+)?)\s*\)",
             RegexOptions.Singleline);
@@ -58,7 +58,9 @@ public class TestObservationWindowTests
                 var seconds = match.Groups["unit"].Value == "Seconds" ? value : value / 1000d;
 
                 // A test that asserts a timeout is THROWN needs a short window by design.
-                var context = text[Math.Max(0, match.Index - 200)..match.Index];
+                var context = text[
+                    Math.Max(0, match.Index - 200)..
+                    Math.Min(text.Length, match.Index + match.Length + 300)];
                 if (context.Contains("ThrowAsync<TimeoutException>", StringComparison.Ordinal))
                     continue;
 
@@ -90,17 +92,4 @@ public class TestObservationWindowTests
             $"be met.{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
     }
 
-    private static string FindTestsRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            if (File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-                return Path.Combine(current.FullName, "tests");
-
-            current = current.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate repository root from test base directory.");
-    }
 }

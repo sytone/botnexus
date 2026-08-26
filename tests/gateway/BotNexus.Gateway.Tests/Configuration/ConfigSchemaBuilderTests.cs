@@ -239,13 +239,30 @@ public sealed class ConfigSchemaBuilderTests
     }
 
     [Fact]
-    public void Build_UnannotatedField_FallsBackToHumanizedLabel()
+    public void Build_EveryPropertyNode_CarriesALabelAndDescriptionFromDisplay()
     {
+        // Supersedes Build_UnannotatedField_FallsBackToHumanizedLabel (#1804), whose premise #3533
+        // deliberately destroyed. That test used PlatformConfig.ApiKey as its exemplar of a field
+        // with no [Display], asserting the builder humanized the raw JSON key to "API Key". Every
+        // property reachable from PlatformConfig now carries [Display] with a real Name and
+        // Description, and ConfigFieldCoverageFenceArchitectureTests fails the build if one does
+        // not - so no reachable field can exercise the fallback any more.
+        //
+        // The fallback itself is NOT deleted: it remains the defence for a property added between
+        // an author writing it and the fence catching them, and Humanize_ProducesReadableLabel
+        // still pins the pure function across ten shapes. What is asserted here instead is the
+        // stronger invariant #3533 bought: the settings UI never renders a raw key or an empty
+        // help text, because the metadata is present at the source.
         var schema = BuildSchema();
 
-        // PlatformConfig.ApiKey has no [Display] -- must not regress to the raw "apiKey" JSON key.
         var node = GetPropertyNode(schema, "apiKey");
-        node["x-ui-label"]!.GetValue<string>().ShouldBe("API Key");
+        node["x-ui-label"]!.GetValue<string>().ShouldBe(
+            "API key",
+            "PlatformConfig.ApiKey is annotated as of #3533, so its label must come from " +
+            "[Display(Name)] verbatim rather than from the humanizer.");
+        node["x-ui-description"]!.GetValue<string>().ShouldNotBeNullOrWhiteSpace(
+            "An annotated field must also surface its Description - a labelled field with no help " +
+            "text is the failure mode #3533 set out to remove.");
     }
 
     // -- 9. Grouping honored from [Display] alone, no [ConfigField] required --

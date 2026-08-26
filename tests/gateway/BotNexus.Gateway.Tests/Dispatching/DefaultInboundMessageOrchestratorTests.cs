@@ -135,9 +135,8 @@ public sealed class DefaultInboundMessageOrchestratorTests
         await firstStarted.Task; // ensure first message is inside the processor before enqueuing second
         var secondTask = orchestrator.AcceptAsync(second);
 
-        // Second must NOT have started yet — wait briefly and assert.
-        var raced = await Task.WhenAny(secondStarted.Task, Task.Delay(200));
-        raced.ShouldNotBe(secondStarted.Task, "second message must not start while first is in-flight on the same queue key");
+        secondStarted.Task.IsCompleted.ShouldBeFalse(
+            "second message must not start while first is held in-flight on the same queue key");
 
         firstGate.SetResult(true);
         await Task.WhenAll(firstTask, secondTask);
@@ -222,8 +221,8 @@ public sealed class DefaultInboundMessageOrchestratorTests
         await firstStarted.Task;
         var secondTask = orchestrator.AcceptAsync(second);
 
-        var raced = await Task.WhenAny(secondStarted.Task, Task.Delay(200));
-        raced.ShouldNotBe(secondStarted.Task, "messages sharing RequestedSessionId must serialise on a single per-session queue");
+        secondStarted.Task.IsCompleted.ShouldBeFalse(
+            "messages sharing RequestedSessionId must serialise on a single per-session queue");
 
         firstGate.SetResult(true);
         await Task.WhenAll(firstTask, secondTask);

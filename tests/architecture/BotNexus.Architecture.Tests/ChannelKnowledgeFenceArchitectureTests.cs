@@ -17,7 +17,7 @@ namespace BotNexus.Architecture.Tests;
 /// a real violation, so an entry cannot silently outlive the coupling it was meant to phase out.
 /// <see cref="Rule1"/>..<see cref="Rule7"/> FAIL on any violation not in the baseline.</para>
 /// </summary>
-public sealed class ChannelKnowledgeFenceArchitectureTests
+public sealed class ChannelKnowledgeFenceArchitectureTests : ArchitectureTest
 {
     // ---------------------------------------------------------------------------------------
     // Scope
@@ -219,7 +219,7 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
     [Fact]
     public void Baseline_EntriesAreSpecificFilesLinkedToChildIssues()
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
         var problems = new List<string>();
         foreach (var b in s_baseline)
         {
@@ -249,7 +249,7 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
     [Fact]
     public void Scan_ActuallyReachesTheSourceTree()
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
         Directory.Exists(src).ShouldBeTrue($"source root not found: {src}");
 
         var orchestrationFiles = s_orchestrationProjects.SelectMany(p => CsFiles(Path.Combine(src, p))).Count();
@@ -280,7 +280,7 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
     [Fact]
     public void Rule2Scope_EnumeratesEveryNonGatewayGenericTree()
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
 
         foreach (var tree in s_nonGatewayGenericTrees)
         {
@@ -314,7 +314,7 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
     [Fact]
     public void Rule2_CatchesAConcreteChannelKeyLiteralPlacedInTheDomainTree()
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
 
         // Half 1: domain files are inside Rule 2's enumeration.
         var scanned = s_rule2Scopes
@@ -384,7 +384,7 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
             .ShouldNotBeEmpty("#2700 AC4: a trailing comment must not exempt the code before it");
 
         // --- The decision applied to the real domain files the widening newly reaches ---
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
         string[] commentOnlyDomainFiles =
         [
             Path.Combine("domain", "BotNexus.Domain", "Gateway", "Models", "GatewaySession.cs"),
@@ -488,7 +488,7 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
     [Fact]
     public void EventSinkContract_FromIssue2085_StillExists()
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
         File.Exists(Path.Combine(src, "gateway", "BotNexus.Gateway.Contracts", "Events", "IConversationEventSink.cs"))
             .ShouldBeTrue("#2085 IConversationEventSink is the generic seam rule 7 points channel extensions at");
     }
@@ -528,7 +528,7 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
         @"\b(signalR|signalr|telegram|serviceBus|servicebus|agent365|tui|discord|slack)[A-Za-z0-9]*(Observer|Observers|FanOut|Fanout|Bindings|Targets)\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private static IReadOnlyList<string> ChannelSpecificObserverSymbols(string source)
+    private IReadOnlyList<string> ChannelSpecificObserverSymbols(string source)
         => s_channelSpecificObserver.Matches(StripComments(source)).Select(m => m.Value).Distinct().ToList();
 
     // NOTE: `GroupName` is deliberately NOT listed. It is the config-UI grouping attribute used by
@@ -538,7 +538,7 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
         @"\b(ConnectionId|GroupId|PendingReplyQueue|PendingReplyQueueName|HubConnectionId|SignalRGroup)\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private static IReadOnlyList<string> ExtensionLocalRecipientSymbols(string source)
+    private IReadOnlyList<string> ExtensionLocalRecipientSymbols(string source)
         => s_extensionLocalRecipient.Matches(StripComments(source)).Select(m => m.Value).Distinct().ToList();
 
     // SendStream*Async exist only on the channel adapter contracts, so their names alone are
@@ -548,17 +548,17 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
         @"\.(SendStreamDeltaAsync|SendStreamEventAsync)\s*\(|\.SendAsync\s*\(\s*(new\s+OutboundMessage|remapped\b)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private static IReadOnlyList<string> DirectAdapterSends(string source)
+    private IReadOnlyList<string> DirectAdapterSends(string source)
         => s_directAdapterSend.Matches(StripComments(source)).Select(m => m.Value.Trim()).Distinct().ToList();
 
     private static readonly Regex s_signalRSpecificType = new(
         @"\bSignalR[A-Za-z0-9]*(Notifier|Bridge|Adapter|Broadcaster|Publisher|Client|Hub)\b|\bIHubContext\s*<|\bGatewayHub\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private static IReadOnlyList<string> SignalRSpecificTypeSymbols(string source)
+    private IReadOnlyList<string> SignalRSpecificTypeSymbols(string source)
         => s_signalRSpecificType.Matches(StripComments(source)).Select(m => m.Value.Trim()).Distinct().ToList();
 
-    private static bool ReachesEventSinkContract(string projectXml)
+    private bool ReachesEventSinkContract(string projectXml)
         => projectXml.Contains("BotNexus.Gateway.Contracts", StringComparison.Ordinal)
         || projectXml.Contains("BotNexus.Gateway.Channels", StringComparison.Ordinal);
 
@@ -566,9 +566,9 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
     // Repo traversal
     // ---------------------------------------------------------------------------------------
 
-    private static IReadOnlyList<Violation> FindRule1Violations()
+    private IReadOnlyList<Violation> FindRule1Violations()
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
         var found = new List<Violation>();
         foreach (var tree in s_genericSourceTrees)
         {
@@ -591,21 +591,21 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
     // #2700: Rule 2 scans the widened scope. R3/R5/R6 are orchestration-BEHAVIOUR rules and keep the
     // narrow orchestration project list - they concern what generic orchestration DOES, not what
     // names appear in leaf types.
-    private static IReadOnlyList<Violation> FindRule2Violations() =>
+    private IReadOnlyList<Violation> FindRule2Violations() =>
         ScanScopes(s_rule2Scopes, "R2", ChannelKeyLiterals, "concrete channel key literal(s)");
 
-    private static IReadOnlyList<Violation> FindRule3Violations() =>
+    private IReadOnlyList<Violation> FindRule3Violations() =>
         ScanOrchestration("R3", ChannelSpecificObserverSymbols, "channel-specific observer/fan-out symbol(s)");
 
-    private static IReadOnlyList<Violation> FindRule5Violations() =>
+    private IReadOnlyList<Violation> FindRule5Violations() =>
         ScanOrchestration("R5", DirectAdapterSends, "direct IChannelAdapter send call(s)");
 
-    private static IReadOnlyList<Violation> FindRule6Violations() =>
+    private IReadOnlyList<Violation> FindRule6Violations() =>
         ScanOrchestration("R6", SignalRSpecificTypeSymbols, "SignalR-specific notifier/bridge type reference(s)");
 
-    private static IReadOnlyList<Violation> FindRule4Violations()
+    private IReadOnlyList<Violation> FindRule4Violations()
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
         var found = new List<Violation>();
         foreach (var scope in s_conversationModelScopes)
         {
@@ -619,9 +619,9 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
         return found;
     }
 
-    private static IReadOnlyList<Violation> FindRule7Violations()
+    private IReadOnlyList<Violation> FindRule7Violations()
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
         var found = new List<Violation>();
         foreach (var proj in ChannelExtensionProjects())
         {
@@ -632,22 +632,22 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
         return found;
     }
 
-    private static IReadOnlyList<Violation> AllViolations() =>
+    private IReadOnlyList<Violation> AllViolations() =>
     [
         .. FindRule1Violations(), .. FindRule2Violations(), .. FindRule3Violations(),
         .. FindRule4Violations(), .. FindRule5Violations(), .. FindRule6Violations(),
         .. FindRule7Violations(),
     ];
 
-    private static IReadOnlyList<Violation> ScanOrchestration(
+    private IReadOnlyList<Violation> ScanOrchestration(
         string rule, Func<string, IReadOnlyList<string>> detector, string label)
         => ScanScopes(s_orchestrationProjects, rule, detector, label);
 
     /// <summary>#2700: scan an arbitrary set of scope paths (project dirs or whole trees).</summary>
-    private static IReadOnlyList<Violation> ScanScopes(
+    private IReadOnlyList<Violation> ScanScopes(
         string[] scopes, string rule, Func<string, IReadOnlyList<string>> detector, string label)
     {
-        var src = SourceRoot();
+        var src = Repository.SourceRoot;
         var found = new List<Violation>();
         foreach (var project in scopes)
         {
@@ -662,9 +662,9 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
     }
 
     /// <summary>Host-side channel extension projects (client/Blazor sub-projects are not channels).</summary>
-    private static IReadOnlyList<string> ChannelExtensionProjects()
+    private IReadOnlyList<string> ChannelExtensionProjects()
     {
-        var root = Path.Combine(SourceRoot(), "extensions");
+        var root = Path.Combine(Repository.SourceRoot, "extensions");
         return SafeFiles(root, "*.csproj")
             .Where(p => Path.GetFileNameWithoutExtension(p).StartsWith("BotNexus.Extensions.Channels.", StringComparison.Ordinal))
             .Where(p => !Path.GetFileNameWithoutExtension(p).Contains("BlazorClient", StringComparison.Ordinal))
@@ -752,12 +752,4 @@ public sealed class ChannelKnowledgeFenceArchitectureTests
         return f.StartsWith(r, StringComparison.OrdinalIgnoreCase) ? f[r.Length..] : f;
     }
 
-    private static string SourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-            current = current.Parent;
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return Path.Combine(current!.FullName, "src");
-    }
 }

@@ -2,7 +2,7 @@
   <!--
     When SkipTests=true, strip all build inputs so test projects produce
     empty assemblies almost instantly.
-    Usage: dotnet build BotNexus.slnx /p:SkipTests=true
+    Usage: dotnet build dirs.proj /p:SkipTests=true
   -->
   <PropertyGroup Condition="'$(SkipTests)' == 'true'">
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>

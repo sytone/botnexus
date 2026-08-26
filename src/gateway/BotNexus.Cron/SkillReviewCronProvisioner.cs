@@ -126,4 +126,28 @@ public sealed class SkillReviewCronProvisioner : IHostedService, ISkillReviewPro
             "Provisioned default skill-review cron job for agent '{AgentId}' with schedule '{Schedule}'.",
             descriptor.AgentId, DefaultSchedule);
     }
+
+    /// <inheritdoc/>
+    public async Task DeprovisionAsync(AgentId agentId, CancellationToken cancellationToken)
+    {
+        var jobId = JobId.From($"skill-review:{agentId.Value}");
+        var existing = await _cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false);
+
+        if (existing is null)
+        {
+            // Idempotent: an ineligible agent never had a job, and a second delete must not throw.
+            return;
+        }
+
+        if (!existing.System)
+        {
+            _logger.LogWarning(
+                "Leaving non-system cron job '{JobId}' in place while deprovisioning agent '{AgentId}'.",
+                jobId, agentId);
+            return;
+        }
+
+        await _cronStore.DeleteAsync(jobId, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Deprovisioned skill-review cron job for deleted agent '{AgentId}'.", agentId);
+    }
 }

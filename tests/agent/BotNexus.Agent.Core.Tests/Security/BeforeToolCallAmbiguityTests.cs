@@ -206,9 +206,7 @@ public sealed class BeforeToolCallAmbiguityTests
         const int iterations = 256;
 
         var executed = 0;
-        var unanimousAllows = 0;
         var splitVerdicts = 0;
-        var denials = 0;
 
         var tool = CreateTool("dangerous", _ =>
         {
@@ -221,38 +219,23 @@ public sealed class BeforeToolCallAmbiguityTests
         var config = TestHelpers.CreateTestConfig(
             beforeToolCall: async (_, ct) =>
             {
-                // Two reviewers running genuinely concurrently. Their verdicts are driven by a
-                // barrier-released race so the split/agree distribution is decided at runtime,
-                // not baked into the test.
-                using var gate = new SemaphoreSlim(0, 2);
-                var flag = 0;
+                var bothReviewersStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var reviewerCount = 0;
 
-                async Task<bool> ReviewAsync(int seed)
+                async Task<bool> ReviewAsync(bool verdict)
                 {
-                    await Task.Yield();
-                    gate.Release();
-                    await Task.Delay(seed % 2, ct).ConfigureAwait(false);
-                    // Each reviewer flips a shared cell; who wins the race decides the verdict.
-                    var observed = Interlocked.Exchange(ref flag, seed);
-                    return (observed + seed) % 2 == 0;
+                    if (Interlocked.Increment(ref reviewerCount) == 2)
+                        bothReviewersStarted.TrySetResult();
+
+                    await bothReviewersStarted.Task.WaitAsync(ct).ConfigureAwait(false);
+                    return verdict;
                 }
 
-                var a = Task.Run(() => ReviewAsync(Environment.CurrentManagedThreadId), ct);
-                var b = Task.Run(() => ReviewAsync(Environment.TickCount), ct);
+                var a = ReviewAsync(true);
+                var b = ReviewAsync(false);
                 var verdicts = await Task.WhenAll(a, b).ConfigureAwait(false);
 
-                if (verdicts[0] && verdicts[1])
-                {
-                    Interlocked.Increment(ref unanimousAllows);
-                    return new BeforeToolCallResult(Block: false);
-                }
-
-                if (!verdicts[0] && !verdicts[1])
-                {
-                    Interlocked.Increment(ref denials);
-                    return new BeforeToolCallResult(Block: true, Reason: "both reviewers denied");
-                }
-
+                verdicts.ShouldBe([true, false]);
                 Interlocked.Increment(ref splitVerdicts);
                 return BeforeToolCallResult.Indeterminate("reviewers disagreed");
             },
@@ -269,13 +252,9 @@ public sealed class BeforeToolCallAmbiguityTests
             });
 
         outcomes.Count.ShouldBe(iterations);
-        (unanimousAllows + splitVerdicts + denials).ShouldBe(iterations);
-
-        // The safety invariant. Execution count is bounded above by unanimous allows: an
-        // indeterminate or denied verdict can never have run the tool.
-        executed.ShouldBe(unanimousAllows);
-        outcomes.Count(o => o.Allowed).ShouldBe(unanimousAllows);
-        outcomes.Count(o => o.IsError).ShouldBe(splitVerdicts + denials);
+    splitVerdicts.ShouldBe(iterations);
+    executed.ShouldBe(0);
+    outcomes.ShouldAllBe(outcome => outcome.IsError && !outcome.Allowed);
     }
 
     /// <summary>
@@ -300,12 +279,8 @@ public sealed class BeforeToolCallAmbiguityTests
         var errors = 0;
 
         var config = TestHelpers.CreateTestConfig(
-            beforeToolCall: async (_, ct) =>
-            {
-                await Task.Yield();
-                await Task.Delay(1, ct).ConfigureAwait(false);
-                return BeforeToolCallResult.Indeterminate("no quorum");
-            },
+            beforeToolCall: (_, _) => Task.FromResult<BeforeToolCallResult?>(
+                BeforeToolCallResult.Indeterminate("no quorum")),
             beforeToolCallTimeout: TimeSpan.FromSeconds(30));
 
         await Parallel.ForEachAsync(

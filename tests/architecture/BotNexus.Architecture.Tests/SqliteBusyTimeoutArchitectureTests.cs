@@ -25,9 +25,8 @@ namespace BotNexus.Architecture.Tests;
 /// See #1435/#1436 for the shared-helper consolidation that will eventually replace these inline
 /// PRAGMAs.
 /// </summary>
-public sealed class SqliteBusyTimeoutArchitectureTests
+public sealed class SqliteBusyTimeoutArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
     // The SQLite store source files that #1450 covers (relative to repo root).
     // SqliteConversationStore.cs was added in #1437 once PR #1442 unlocked the file.
@@ -63,7 +62,7 @@ public sealed class SqliteBusyTimeoutArchitectureTests
     {
         foreach (var rel in StoreFiles)
         {
-            var path = Path.Combine(RepoRoot, rel.Replace('/', Path.DirectorySeparatorChar));
+            var path = Path.Combine(Repository.Root, rel.Replace('/', Path.DirectorySeparatorChar));
             File.Exists(path).ShouldBeTrue($"Expected SQLite store source not found: {path}");
         }
     }
@@ -73,7 +72,7 @@ public sealed class SqliteBusyTimeoutArchitectureTests
     {
         foreach (var rel in StoreFiles)
         {
-            var path = Path.Combine(RepoRoot, rel.Replace('/', Path.DirectorySeparatorChar));
+            var path = Path.Combine(Repository.Root, rel.Replace('/', Path.DirectorySeparatorChar));
             var source = File.ReadAllText(path);
 
             // Sanity: the file must still manage WAL - either the inline pragma or the shared
@@ -173,7 +172,7 @@ public sealed class SqliteBusyTimeoutArchitectureTests
     public void BusyTimeoutHandler_UsesSender_NotACapturedConnection()
     {
         const string rel = "src/persistence/BotNexus.Persistence.Sqlite/SqliteConnectionFactory.cs";
-        var path = Path.Combine(RepoRoot, rel.Replace('/', Path.DirectorySeparatorChar));
+        var path = Path.Combine(Repository.Root, rel.Replace('/', Path.DirectorySeparatorChar));
         var source = File.ReadAllText(path);
 
         // Precondition: this really is the file that owns the busy_timeout policy, so a rename
@@ -231,15 +230,4 @@ public sealed class SqliteBusyTimeoutArchitectureTests
             "over-tight and would flag the corrected shape.");
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

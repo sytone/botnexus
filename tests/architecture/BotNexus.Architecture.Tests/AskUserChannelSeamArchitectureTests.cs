@@ -33,9 +33,8 @@ namespace BotNexus.Architecture.Tests;
 /// expose the interactive-prompt capability the gateway uses to choose between structured
 /// rendering and the text-degraded fallback.</para>
 /// </summary>
-public sealed class AskUserChannelSeamArchitectureTests
+public sealed class AskUserChannelSeamArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
     /// <summary>
     /// Extension projects allowed to reference the Blazor client. The SignalR channel family
@@ -62,7 +61,7 @@ public sealed class AskUserChannelSeamArchitectureTests
 
             var content = File.ReadAllText(csproj);
             if (content.Contains("BlazorClient", StringComparison.OrdinalIgnoreCase))
-                offenders.Add(Path.GetRelativePath(RepoRoot, csproj));
+                offenders.Add(Path.GetRelativePath(Repository.Root, csproj));
         }
 
         offenders.ShouldBeEmpty(
@@ -77,7 +76,7 @@ public sealed class AskUserChannelSeamArchitectureTests
     {
         var offenders = new List<string>();
 
-        foreach (var file in Directory.EnumerateFiles(Path.Combine(RepoRoot, "src"), "*.cs", SearchOption.AllDirectories))
+        foreach (var file in Directory.EnumerateFiles(Path.Combine(Repository.Root, "src"), "*.cs", SearchOption.AllDirectories))
         {
             if (IsBuildArtifact(file))
                 continue;
@@ -93,7 +92,7 @@ public sealed class AskUserChannelSeamArchitectureTests
             // Scoped to the ask-user registry receiver: Channel<T>.Writer.TryComplete() is an
             // unrelated BCL call that appears throughout the streaming and queueing code.
             if (Regex.IsMatch(content, @"\b\w*(?i:askuser\w*registry|registry)\w*\s*\.\s*TryComplete\s*\("))
-                offenders.Add(Path.GetRelativePath(RepoRoot, file));
+                offenders.Add(Path.GetRelativePath(Repository.Root, file));
         }
 
         offenders.ShouldBeEmpty(
@@ -107,7 +106,7 @@ public sealed class AskUserChannelSeamArchitectureTests
     public void Channel_extensions_do_not_touch_the_ask_user_registry_directly()
     {
         var offenders = new List<string>();
-        var extensionsRoot = Path.Combine(RepoRoot, "src", "extensions");
+        var extensionsRoot = Path.Combine(Repository.Root, "src", "extensions");
 
         if (Directory.Exists(extensionsRoot))
         {
@@ -117,7 +116,7 @@ public sealed class AskUserChannelSeamArchitectureTests
                     continue;
 
                 if (File.ReadAllText(file).Contains("IAskUserResponseRegistry", StringComparison.Ordinal))
-                    offenders.Add(Path.GetRelativePath(RepoRoot, file));
+                    offenders.Add(Path.GetRelativePath(Repository.Root, file));
             }
         }
 
@@ -160,9 +159,9 @@ public sealed class AskUserChannelSeamArchitectureTests
             .ShouldNotBeNull("IAskUserPromptResolver.ResolveAsync is the single ask_user resolution entry point (#2322).");
     }
 
-    private static IEnumerable<string> EnumerateChannelExtensionProjects()
+    private IEnumerable<string> EnumerateChannelExtensionProjects()
     {
-        var extensionsRoot = Path.Combine(RepoRoot, "src", "extensions");
+        var extensionsRoot = Path.Combine(Repository.Root, "src", "extensions");
         if (!Directory.Exists(extensionsRoot))
             return [];
 
@@ -175,19 +174,4 @@ public sealed class AskUserChannelSeamArchitectureTests
         => path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
         || path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git")) ||
-                File.Exists(Path.Combine(directory.FullName, "BotNexus.slnx")))
-            {
-                return directory.FullName;
-            }
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate the repository root from the test output directory.");
-    }
 }

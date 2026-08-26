@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Cron;
@@ -18,4 +19,16 @@ public interface ISkillReviewProvisioner
     /// schedule, thresholds, or disable it, and those edits survive subsequent provisioning passes.
     /// </summary>
     Task ProvisionAsync(AgentDescriptor descriptor, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Removes the skill-review cron job belonging to <paramref name="agentId"/>.
+    /// </summary>
+    /// <remarks>
+    /// #3524: deleting an agent must reclaim the jobs the platform provisioned for it, otherwise the
+    /// scheduler keeps firing them against an id <see cref="BotNexus.Gateway.Abstractions.Agents.IAgentRegistry"/>
+    /// no longer knows. Deprovisioning is deliberately narrower than the non-destructive
+    /// <see cref="ProvisionAsync"/>: only a <c>System</c> job is removed, so an operator-authored job
+    /// that happens to share the id survives.
+    /// </remarks>
+    Task DeprovisionAsync(AgentId agentId, CancellationToken cancellationToken);
 }

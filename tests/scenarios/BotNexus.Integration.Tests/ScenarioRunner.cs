@@ -378,12 +378,12 @@ public class ScenarioRunner
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            if (dir.GetFiles("BotNexus.slnx").Length > 0)
+            if (dir.GetFiles("Directory.Packages.props").Length > 0)
                 return dir.FullName;
             dir = dir.Parent;
         }
         throw new InvalidOperationException(
-            $"Could not find BotNexus.slnx walking up from {AppContext.BaseDirectory}");
+            $"Could not find Directory.Packages.props walking up from {AppContext.BaseDirectory}");
     }
 
     private static List<ScenarioDefinition> LoadScenarios(string dir, string? filter)

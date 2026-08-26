@@ -80,7 +80,7 @@ public sealed class SatelliteCommandTests : IDisposable
                         "platform": "windows",
                         "apiKey": "sat_abc123",
                         "capabilities": ["notify", "canvas"],
-                        "ownerUserId": "user@test.com",
+                        "ownerUserId": "user@domain.com",
                         "enabled": true
                     }
                 }
@@ -113,7 +113,7 @@ public sealed class SatelliteCommandTests : IDisposable
             "satellite", "register", "sat_home",
             "--platform", "windows",
             "--capabilities", "notify,canvas",
-            "--owner", "user@test.com",
+            "--owner", "user@domain.com",
             "--target", _tempHome
         });
 
@@ -125,7 +125,7 @@ public sealed class SatelliteCommandTests : IDisposable
         var satellites = doc.RootElement.GetProperty("gateway").GetProperty("satellites");
         Assert.True(satellites.TryGetProperty("sat_home", out var sat));
         Assert.Equal("windows", sat.GetProperty("platform").GetString());
-        Assert.Equal("user@test.com", sat.GetProperty("ownerUserId").GetString());
+        Assert.Equal("user@domain.com", sat.GetProperty("ownerUserId").GetString());
 
         // API key must start with sat_
         var apiKey = sat.GetProperty("apiKey").GetString();
@@ -146,7 +146,7 @@ public sealed class SatelliteCommandTests : IDisposable
             "satellite", "register", "sat_bad",
             "--platform", "android",
             "--capabilities", "notify",
-            "--owner", "user@test.com",
+            "--owner", "user@domain.com",
             "--target", _tempHome
         });
 
@@ -169,7 +169,7 @@ public sealed class SatelliteCommandTests : IDisposable
             "satellite", "register", "sat_bad",
             "--platform", "windows",
             "--capabilities", "notify,teleport",
-            "--owner", "user@test.com",
+            "--owner", "user@domain.com",
             "--target", _tempHome
         });
 
@@ -192,7 +192,7 @@ public sealed class SatelliteCommandTests : IDisposable
                         "platform": "windows",
                         "apiKey": "sat_old",
                         "capabilities": ["notify"],
-                        "ownerUserId": "user@test.com",
+                        "ownerUserId": "user@domain.com",
                         "enabled": true
                     }
                 }
@@ -207,7 +207,7 @@ public sealed class SatelliteCommandTests : IDisposable
             "satellite", "register", "sat_existing",
             "--platform", "windows",
             "--capabilities", "notify",
-            "--owner", "user@test.com",
+            "--owner", "user@domain.com",
             "--target", _tempHome
         });
 
@@ -228,7 +228,7 @@ public sealed class SatelliteCommandTests : IDisposable
                         "platform": "linux",
                         "apiKey": "sat_xyz",
                         "capabilities": ["exec"],
-                        "ownerUserId": "admin@test.com",
+                        "ownerUserId": "admin@domain.com",
                         "enabled": true
                     }
                 }

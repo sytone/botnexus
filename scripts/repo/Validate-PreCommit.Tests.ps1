@@ -70,7 +70,7 @@ function New-TestRepository {
     Invoke-IsolatedGit -Arguments @('-c', 'core.bare=false', '-C', $path, 'init', '--initial-branch', 'main') *> $null
     if (-not (Test-Path (Join-Path $path '.git') -PathType Container)) { throw "Unable to initialize test repository: $path" }
     Invoke-IsolatedGit -Arguments @('-C', $path, 'config', '--local', 'user.name', 'test') *> $null
-    Invoke-IsolatedGit -Arguments @('-C', $path, 'config', '--local', 'user.email', 'test@example.invalid') *> $null
+    Invoke-IsolatedGit -Arguments @('-C', $path, 'config', '--local', 'user.email', 'test@domain.com') *> $null
     Set-Content (Join-Path $path 'candidate.txt') 'candidate' -Encoding utf8NoBOM
     Invoke-IsolatedGit -Arguments @('-C', $path, 'add', '--all') *> $null
     # Isolate fixture commits from the caller's configured hooks. Otherwise a global

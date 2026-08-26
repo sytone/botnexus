@@ -57,13 +57,13 @@ public sealed class UpdateFixtureAmbientWorktreeIsolationTests
     }
 
     /// <summary>
-    /// Walks up from the test binary to the directory containing <c>BotNexus.slnx</c>, i.e. the
+    /// Walks up from the test binary to the directory containing <c>Directory.Packages.props</c>, i.e. the
     /// live worktree the test run itself is executing inside. Used only for read-only observation.
     /// </summary>
     private static string? FindAmbientRepoRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
         {
             current = current.Parent;
         }

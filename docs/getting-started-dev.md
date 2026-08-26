@@ -125,13 +125,13 @@ Use `dev-loop.ps1` for the edit → build → test → run cycle:
 
 ```powershell
 # Full test suite (required before committing)
-dotnet test BotNexus.slnx --nologo --tl:off
+scripts/repo/Validate-PreCommit.ps1
 
 # Specific test project
 dotnet test tests\gateway\BotNexus.Gateway.Tests
 
 # Specific test by name
-dotnet test BotNexus.slnx --filter "FullyQualifiedName~MyTestName"
+scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>
 ```
 
 All tests must pass before pushing. Test execution runs remotely - see
@@ -357,13 +357,13 @@ All scripts live in `scripts/`.
 | Symptom | Fix |
 |---|---|
 | `dotnet: command not found` | Install .NET 10+ SDK from https://dotnet.microsoft.com/download |
-| Build fails | `dotnet clean BotNexus.slnx; dotnet build BotNexus.slnx` |
+| Build fails | `dotnet clean dirs.proj; dotnet build dirs.proj` |
 | Port 5005 already in use | `.\scripts\dev-loop.ps1 -Port 8080` |
 | Config file not found | Run the Gateway once — it auto-creates `~/.botnexus/` |
 | OAuth code expired | Send another message to trigger a fresh device code |
 | WebUI shows "Disconnected" | Restart: `.\scripts\dev-loop.ps1` |
 | Config changes ignored | Most settings hot-reload. `listenUrl` changes require restart. |
-| Tests fail | `dotnet clean BotNexus.slnx; dotnet build BotNexus.slnx --nologo --tl:off; dotnet test BotNexus.slnx --nologo --tl:off` |
+| Tests fail | `dotnet clean dirs.proj; dotnet build dirs.proj --nologo --tl:off; scripts/repo/Validate-PreCommit.ps1` |
 
 ---
 
