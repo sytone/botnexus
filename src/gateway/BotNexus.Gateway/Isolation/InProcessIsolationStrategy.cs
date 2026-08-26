@@ -676,7 +676,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             new ToolProviders.AgentConverseToolProvider(
                 _serviceProvider.GetService<IAgentExchangeService>(),
                 sessionStore,
-                _serviceProvider.GetService<IOptions<AgentExchangeOptions>>()),
+                _serviceProvider.GetService<IOptions<AgentExchangeOptions>>(),
+                _serviceProvider.GetService<IAgentRegistry>(),
+                _serviceProvider.GetService<IAgentSupervisor>()),
             new ToolProviders.FinishAgentExchangeToolProvider(sessionStore),
             new ToolProviders.ListAgentsToolProvider(
                 _serviceProvider.GetService<IAgentRegistry>(),

@@ -179,6 +179,41 @@ narrows that list to the exchanges belonging to one specific parent thread.
 
 ## Diagnostics
 
+### Cancellation results
+
+A cancelled `agent_converse` call never returns the bare .NET text `A task was canceled.` (issue
+#3577). The tool catches cancellation at its own boundary and returns a structured JSON report
+instead, so the caller can choose between retrying, waiting and giving up:
+
+```json
+{
+  "cancelled": true,
+  "cancellationCause": "timeout",
+  "cancelledBy": "caller",
+  "targetAgentId": "aurum",
+  "targetState": "unknown",
+  "timeoutSeconds": 180,
+  "elapsedSeconds": 180.004,
+  "retryAdvised": true,
+  "message": "The exchange with agent 'aurum' timed out: ..."
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `cancellationCause` | `timeout` when the caller's own `timeoutSeconds` budget was exhausted; `targetUnavailable` for every other cancellation. |
+| `cancelledBy` | `caller` or `target` — which side gave up. |
+| `targetState` | `idle`, `busy`, `unreachable`, `unregistered`, or `unknown`. |
+| `elapsedSeconds` | How much of `timeoutSeconds` was actually consumed. A value well below the budget proves the timeout was *not* the cause. |
+| `retryAdvised` | `false` only for `unregistered`, which is a deterministic failure that will never succeed on retry. |
+
+Each cancellation also emits a warning log carrying the caller agent id, caller session id, target
+agent id and tool call id, so a single occurrence is enough to correlate the tool result with the
+transcript row and diagnose the trigger.
+
+> A caller-initiated cancellation (the ambient turn token firing) still propagates as cancellation
+> rather than becoming a result — the turn is ending regardless, and reporting into it would be moot.
+
 ### REST Endpoint
 
 ```

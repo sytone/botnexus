@@ -473,7 +473,9 @@ internal sealed class SubAgentToolProvider(
 internal sealed class AgentConverseToolProvider(
     IAgentExchangeService? conversationService,
     ISessionStore? sessionStore,
-    IOptions<AgentExchangeOptions>? exchangeOptions) : IToolProvider
+    IOptions<AgentExchangeOptions>? exchangeOptions,
+    IAgentRegistry? agentRegistry = null,
+    IAgentSupervisor? agentSupervisor = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context)
@@ -484,7 +486,18 @@ internal sealed class AgentConverseToolProvider(
     {
         IReadOnlyList<IAgentTool> tools =
         [
-            new AgentConverseTool(conversationService!, sessionStore!, context.AgentId, context.SessionId, exchangeOptions?.Value)
+            // #3577: the registry and supervisor are what let a cancellation name the target's state
+            // rather than returning a bare "A task was canceled.". Both are optional so the tool
+            // still constructs in hosts that do not expose them - it degrades to "unknown" state.
+            new AgentConverseTool(
+                conversationService!,
+                sessionStore!,
+                context.AgentId,
+                context.SessionId,
+                exchangeOptions?.Value,
+                agentRegistry,
+                agentSupervisor,
+                context.Logger)
         ];
         return Task.FromResult(tools);
     }
