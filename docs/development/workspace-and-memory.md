@@ -326,7 +326,7 @@ Recommended sections (not enforced):
 # Memory
 
 ## Notes
-- Pattern: When the user says "build", run `dotnet build BotNexus.slnx`
+- Pattern: When the user says "build", run `dotnet build dirs.proj`
 - Pattern: User prefers concise summaries (max 100 words) before diving into detail
 - Decision: Always check build status before suggesting code changes
 - Learning: User timezone is Pacific Time; avoid scheduling tasks outside 8am-6pm
@@ -720,7 +720,7 @@ When consolidation is implemented, the planned flow is:
 Daily Notes (memory/2026-04-02.md):
 User prioritizes concise summaries, max 100 words
 Architecture has 17 projects with clean inversion
-Build command: dotnet build BotNexus.slnx
+Build command: dotnet build dirs.proj
 Confirmed user timezone is Pacific Time
 
 Consolidation → MEMORY.md updated by consolidation agent:
@@ -1021,8 +1021,8 @@ Lead/Architect for the engineering team. You own architectural decisions, code r
 - Team prefers async communication over sync meetings
 - Code review focuses on architecture and maintainability first
 - User timezone is Pacific Time; avoid scheduling outside 8am-6pm
-- Build command: `dotnet build BotNexus.slnx`
-- Test command: `dotnet test BotNexus.slnx`
+- Build command: `dotnet build dirs.proj`
+- Test command: use the remote repository validation gate
 
 ## Architecture Learnings
 - Core platform has 17 projects with clean dependency inversion

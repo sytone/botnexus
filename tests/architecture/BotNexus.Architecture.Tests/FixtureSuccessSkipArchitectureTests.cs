@@ -45,7 +45,7 @@ namespace BotNexus.Architecture.Tests;
 /// matches nothing would be the very defect it exists to prevent.
 /// </para>
 /// </remarks>
-public sealed class FixtureSuccessSkipArchitectureTests
+public sealed class FixtureSuccessSkipArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// Fixtures whose success flag legitimately cannot be asserted in an automated gate, with the
@@ -317,9 +317,9 @@ public sealed class FixtureSuccessSkipArchitectureTests
     // Source enumeration (read-only git; see TestGitInvocationScopeArchitectureTests).
     // ------------------------------------------------------------------
 
-    private static IEnumerable<(string Relative, string Content)> EnumerateTrackedTestSources()
+    private IEnumerable<(string Relative, string Content)> EnumerateTrackedTestSources()
     {
-        var repoRoot = FindSweepRepoRoot();
+        var repoRoot = Repository.Root;
         foreach (var relative in EnumerateTrackedFiles(repoRoot))
         {
             var normalised = relative.Replace('\\', '/');
@@ -384,15 +384,4 @@ public sealed class FixtureSuccessSkipArchitectureTests
         process.ExitCode.ShouldBe(0, "git ls-files failed: " + process.StandardError.ReadToEnd());
     }
 
-    private static string FindSweepRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current.FullName;
-    }
 }

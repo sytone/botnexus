@@ -12,23 +12,21 @@ namespace BotNexus.Gateway.Configuration;
 /// <para>
 /// Change notifications are debounced: rapid-fire events (e.g., from FileSystemWatcher
 /// spurious triggers or IOptionsMonitor re-binding) are coalesced into a single registry
-/// update after a quiet period of <see cref="DebounceDelay"/>.
+/// update after a quiet period.
 /// </para>
 /// </summary>
 internal sealed class AgentConfigurationHostedService(
     IEnumerable<IAgentConfigurationSource> sources,
     IAgentRegistry registry,
-    ILogger<AgentConfigurationHostedService> logger) : IHostedService, IDisposable
+    ILogger<AgentConfigurationHostedService> logger,
+    Func<TimeSpan, CancellationToken, Task>? delay = null) : IHostedService, IDisposable
 {
-    /// <summary>
-    /// Duration to wait after the last change notification before applying registry updates.
-    /// This coalesces rapid-fire FileSystemWatcher events into a single reload.
-    /// </summary>
-    internal static TimeSpan DebounceDelay { get; set; } = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(2);
 
     private readonly IAgentConfigurationSource[] _sources = sources.ToArray();
     private readonly IAgentRegistry _registry = registry;
     private readonly ILogger<AgentConfigurationHostedService> _logger = logger;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? Task.Delay;
     private readonly Lock _sync = new();
     private readonly List<IDisposable> _watchers = [];
     private readonly Dictionary<IAgentConfigurationSource, IReadOnlyList<AgentDescriptor>> _latestSourceDescriptors = [];
@@ -36,7 +34,10 @@ internal sealed class AgentConfigurationHostedService(
     private HashSet<string> _codeBasedAgentIds = new(StringComparer.OrdinalIgnoreCase);
 
     private CancellationTokenSource? _debounceCts;
+    private Task _debounceTask = Task.CompletedTask;
     private int _suppressedNotifications;
+
+    internal Task PendingDebounceTask => _debounceTask;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -72,11 +73,11 @@ internal sealed class AgentConfigurationHostedService(
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
         CancelDebounce();
+        await _debounceTask.WaitAsync(cancellationToken).ConfigureAwait(false);
         DisposeWatchers();
-        return Task.CompletedTask;
     }
 
     public void Dispose()
@@ -95,7 +96,7 @@ internal sealed class AgentConfigurationHostedService(
     }
 
     /// <summary>
-    /// Resets the debounce timer. When the timer fires after <see cref="DebounceDelay"/> of
+    /// Resets the debounce timer. When the timer fires after the configured quiet period,
     /// inactivity, <see cref="ApplyMergedDescriptors"/> runs once with the latest state.
     /// </summary>
     private void ScheduleDebouncedApply()
@@ -106,27 +107,34 @@ internal sealed class AgentConfigurationHostedService(
         _debounceCts = new CancellationTokenSource();
         _suppressedNotifications++;
 
-        var cts = _debounceCts;
-        _ = Task.Delay(DebounceDelay, cts.Token).ContinueWith(t =>
+        _debounceTask = ApplyAfterDebounceAsync(_debounceCts.Token);
+    }
+
+    private async Task ApplyAfterDebounceAsync(CancellationToken cancellationToken)
+    {
+        try
         {
-            if (t.IsCanceled)
-                return;
+            await _delay(DebounceDelay, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
 
-            lock (_sync)
+        lock (_sync)
+        {
+            var suppressed = _suppressedNotifications;
+            _suppressedNotifications = 0;
+
+            if (suppressed > 1)
             {
-                var suppressed = _suppressedNotifications;
-                _suppressedNotifications = 0;
-
-                if (suppressed > 1)
-                {
-                    _logger.LogInformation(
-                        "Agent configuration reload: coalesced {SuppressedCount} notifications into single apply.",
-                        suppressed);
-                }
-
-                ApplyMergedDescriptors();
+                _logger.LogInformation(
+                    "Agent configuration reload: coalesced {SuppressedCount} notifications into single apply.",
+                    suppressed);
             }
-        }, TaskScheduler.Default);
+
+            ApplyMergedDescriptors();
+        }
     }
 
     private void ApplyMergedDescriptors()

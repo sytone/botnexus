@@ -27,7 +27,8 @@ public sealed class TelegramChannelAdapter(
     IOptions<TelegramGatewayOptions> optionsAccessor,
     IHttpClientFactory httpClientFactory,
     IConfiguration? configuration = null,
-    IAskUserPromptResolver? promptResolver = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
+    IAskUserPromptResolver? promptResolver = null,
+    Func<TimeSpan, CancellationToken, Task>? retryDelay = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
 {
     private const int StreamingFlushThresholdChars = 100;
 
@@ -45,7 +46,11 @@ public sealed class TelegramChannelAdapter(
     private TelegramGatewayOptions _options => _optionsHolder.Current;
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private readonly IAskUserPromptResolver? _promptResolver = promptResolver;
+    private readonly Func<TimeSpan, CancellationToken, Task> _retryDelay = retryDelay ?? Task.Delay;
     private readonly ConcurrentDictionary<string, BotRuntime> _bots = new(StringComparer.OrdinalIgnoreCase);
+
+    internal Task? GetPollingTask(string botName)
+        => _bots.TryGetValue(botName, out var runtime) ? runtime.PollingTask : null;
 
     // Monotonic source of short callback tokens. The Bot API caps callback_data at 64 bytes, so the
     // button carries a token + ordinal rather than the choice value itself (see TelegramPromptKeyboard).
@@ -497,7 +502,7 @@ public sealed class TelegramChannelAdapter(
 
                 try
                 {
-                    await Task.Delay(response.RetryDelay, cancellationToken);
+                    await _retryDelay(response.RetryDelay, cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {

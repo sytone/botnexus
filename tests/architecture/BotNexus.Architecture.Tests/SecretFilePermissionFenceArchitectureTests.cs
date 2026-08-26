@@ -24,9 +24,8 @@ namespace BotNexus.Architecture.Tests;
 /// <para>Source-text based, like <see cref="SecretRedactionFenceArchitectureTests"/>: "this write
 /// path narrows its permissions" is not reliably observable by reflection.</para>
 /// </summary>
-public sealed class SecretFilePermissionFenceArchitectureTests
+public sealed class SecretFilePermissionFenceArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
     private const string SecureFilePermissionsSource =
         "src/gateway/BotNexus.Gateway.Configuration/SecureFilePermissions.cs";
@@ -38,9 +37,11 @@ public sealed class SecretFilePermissionFenceArchitectureTests
     private static readonly string[] SecretWritingSurfaces =
     {
         // Atomic temp-file + move rewrite of config.json (provider API keys, channel bot tokens).
-        "src/gateway/BotNexus.Gateway.Configuration/PlatformConfigWriter.cs",
-        // Second atomic rewrite seam for the same config.json, at gateway startup.
-        "src/gateway/BotNexus.Gateway.Configuration/ConfigNormalisationHostedService.cs",
+        //
+        // #3527: the write moved out of PlatformConfigWriter into the JSON writer backend. The file
+        // that PERFORMS the write is what this fence must track - naming the caller would leave the
+        // permission call unguarded the moment it moved again.
+        "src/gateway/BotNexus.Gateway.Configuration/Writers/JsonConfigurationWriter.cs",
         // Byte-for-byte backup copies of config.json, secrets included.
         "src/gateway/BotNexus.Gateway.Configuration/ConfigBackupService.cs",
         // auth.json - OAuth refresh/access tokens (gateway side).
@@ -101,13 +102,13 @@ public sealed class SecretFilePermissionFenceArchitectureTests
     public void OnlyCentralHelper_UsesRawPlatformPermissionApis()
     {
         var helperPath = Path.GetFullPath(ResolvePath(SecureFilePermissionsSource));
-        var srcRoot = Path.Combine(RepoRoot, "src");
+        var srcRoot = Path.Combine(Repository.Root, "src");
 
         var offenders = Directory
             .EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
             .Where(file => !string.Equals(Path.GetFullPath(file), helperPath, StringComparison.OrdinalIgnoreCase))
             .Where(file => RawPermissionApi.IsMatch(File.ReadAllText(file)))
-            .Select(file => Path.GetRelativePath(RepoRoot, file).Replace('\\', '/'))
+            .Select(file => Path.GetRelativePath(Repository.Root, file).Replace('\\', '/'))
             .OrderBy(p => p, StringComparer.Ordinal)
             .ToList();
 
@@ -173,18 +174,7 @@ public sealed class SecretFilePermissionFenceArchitectureTests
             "Positive pin: routing through the central helper must NOT be flagged as raw-API use.");
     }
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

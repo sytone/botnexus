@@ -153,7 +153,7 @@ knowledge; a harness that guessed it would quietly weaken assertions.
 - [ ] State that must never be clobbered lives structurally outside the broad write.
 - [ ] A deterministic lost-update seam test exists for every broad-vs-narrow pair.
 - [ ] The refusal path is asserted, and so is the retry path.
-- [ ] The test project is registered in `BotNexus.slnx` so the gate actually runs it.
+- [ ] The test project is under `tests/` so `tests/dirs.proj` discovers it and the gate runs it.
 
 ## Scope today
 

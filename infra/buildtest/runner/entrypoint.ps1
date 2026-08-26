@@ -19,8 +19,10 @@ $resultsRoot = Join-Path $artifactsRoot 'test-results'
 $runnerResultScript = '/runner/RunnerResult.ps1'
 $runnerTimeoutScript = '/runner/RunnerTimeout.ps1'
 $runnerCostScript = '/runner/RunnerCost.ps1'
+$runnerBuildScript = '/runner/RunnerBuild.ps1'
 . $runnerTimeoutScript
 . $runnerCostScript
+. $runnerBuildScript
 
 # SELF-IMPOSED DEADLINE (#3305)
 #
@@ -204,11 +206,6 @@ try {
         if ($LASTEXITCODE -ne 0) { $script:exitCode = $LASTEXITCODE; throw "Tool restore failed with exit code $LASTEXITCODE." }
     }
 
-    Invoke-TimedPhase -Phase 'build' -Body {
-        & dotnet build dirs.proj -c Debug --nologo --tl:off --no-restore 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'build.log')
-        if ($LASTEXITCODE -ne 0) { $script:exitCode = $LASTEXITCODE; throw "Build failed with exit code $LASTEXITCODE." }
-    }
-
     # Release build of the deployment closure (#2914).
     #
     # WHY THIS EXISTS. The gateway boot fixtures - ExtensionBootFixture and
@@ -238,12 +235,42 @@ try {
     # not pay for a Release compile it will never load.
     $needsReleaseBuild = $mode -in @('full', 'core', 'playwright')
     if ($needsReleaseBuild) {
-        Invoke-TimedPhase -Phase 'build-release' -Body {
-            & dotnet build src/dirs.proj -c Release --nologo --tl:off --no-restore 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'build-release.log')
-            if ($LASTEXITCODE -ne 0) { $script:exitCode = $LASTEXITCODE; throw "Release build failed with exit code $LASTEXITCODE." }
+        # Debug and Release use configuration-specific bin/obj trees. Starting both after the
+        # shared restore overlaps their critical paths while keeping independent logs and exit
+        # codes. The helper waits for BOTH children before a failure is raised, so no build is
+        # orphaned and diagnostics from the successful sibling are retained.
+        $buildResults = @(Invoke-ParallelRunnerProcesses -Processes @(
+            @{
+                Name = 'build'
+                FilePath = 'dotnet'
+                ArgumentList = @('build', 'dirs.proj', '-c', 'Debug', '--nologo', '--tl:off', '--no-restore')
+                LogPath = (Join-Path $artifactsRoot 'build.log')
+            },
+            @{
+                Name = 'build-release'
+                FilePath = 'dotnet'
+                ArgumentList = @('build', 'src/dirs.proj', '-c', 'Release', '--nologo', '--tl:off', '--no-restore')
+                LogPath = (Join-Path $artifactsRoot 'build-release.log')
+            }
+        ))
+
+        foreach ($result in $buildResults) {
+            $status = if ($result.ExitCode -eq 0) { 'ok' } else { 'failed' }
+            Write-PhaseTiming -Phase $result.Name -Status $status -Seconds $result.ElapsedSeconds
+        }
+
+        $failedBuilds = @($buildResults | Where-Object ExitCode -ne 0)
+        if ($failedBuilds.Count -gt 0) {
+            $script:exitCode = $failedBuilds[0].ExitCode
+            $failureSummary = ($failedBuilds | ForEach-Object { "$($_.Name)=$($_.ExitCode)" }) -join ', '
+            throw "Concurrent build failed: $failureSummary."
         }
     }
     else {
+        Invoke-TimedPhase -Phase 'build' -Body {
+            & dotnet build dirs.proj -c Debug --nologo --tl:off --no-restore 2>&1 | Tee-Object -FilePath (Join-Path $artifactsRoot 'build.log')
+            if ($LASTEXITCODE -ne 0) { $script:exitCode = $LASTEXITCODE; throw "Build failed with exit code $LASTEXITCODE." }
+        }
         Write-PhaseTiming -Phase 'build-release' -Status 'skipped'
     }
 

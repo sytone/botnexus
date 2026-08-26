@@ -42,10 +42,8 @@ public sealed class AskUserToolTests
         });
 
         var executionTask = tool.ExecuteAsync("call-ask-user", arguments, onUpdate: updates.Add);
-        await Task.Delay(100);
-
-        executionTask.IsCompleted.ShouldBeFalse();
         var request = await WaitForRequestAsync(updates);
+        executionTask.IsCompleted.ShouldBeFalse();
         registry.TryComplete(request.ConversationId, request.RequestId, CreateResponse(request.RequestId, freeFormText: "Hermes")).ShouldBeTrue();
         await executionTask;
     }
@@ -322,8 +320,8 @@ public sealed class AskUserToolTests
 
         // The emitted request advertises no timeout policy.
         request.Timeout.ShouldBeNull();
-        // Give the former default a chance to fire; it must not.
-        await Task.Delay(200);
+        // Emitting the request proves registration completed. With no timeout policy, the only
+        // remaining completion paths are an explicit answer, cancellation, or caller shutdown.
         executionTask.IsCompleted.ShouldBeFalse();
 
         registry.TryComplete(request.ConversationId, request.RequestId, CreateResponse(request.RequestId, freeFormText: "late but fine")).ShouldBeTrue();
@@ -428,18 +426,19 @@ public sealed class AskUserToolTests
         ConversationId conversationId,
         bool expectPresent)
     {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            var conversation = await store.GetAsync(conversationId);
-            var pending = conversation?.PendingAskUserJson;
-            if (expectPresent ? pending is not null : pending is null)
-                return pending;
+        string? pending = null;
+        await TestAwait.EventuallyAsync(
+            async () =>
+            {
+                var conversation = await store.GetAsync(conversationId);
+                pending = conversation?.PendingAskUserJson;
+                return expectPresent ? pending is not null : pending is null;
+            },
+            expectPresent
+                ? "the pending ask-user prompt to be persisted"
+                : "the pending ask-user prompt to be cleared");
 
-            await Task.Delay(25);
-        }
-
-        return (await store.GetAsync(conversationId))?.PendingAskUserJson;
+        return pending;
     }
 
     private static AskUserTool CreateTool(AskUserResponseRegistry registry, string conversationId)
@@ -459,19 +458,12 @@ public sealed class AskUserToolTests
 
     private static async Task<AskUserRequest> WaitForRequestAsync(IReadOnlyList<AgentToolResult> updates)
     {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            if (updates.Count > 0)
-            {
-                return updates[^1].Details as AskUserRequest
-                    ?? throw new InvalidOperationException("Ask user update payload was not available in tool result details.");
-            }
+        await TestAwait.EventuallyAsync(
+            () => updates.Count > 0,
+            "the ask-user update callback to emit a request");
 
-            await Task.Delay(25);
-        }
-
-        throw new TimeoutException("Timed out waiting for ask_user update callback.");
+        return updates[^1].Details as AskUserRequest
+            ?? throw new InvalidOperationException("Ask user update payload was not available in tool result details.");
     }
 
     private static AskUserResponse CreateResponse(

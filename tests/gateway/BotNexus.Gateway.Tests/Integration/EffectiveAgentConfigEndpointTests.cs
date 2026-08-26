@@ -101,11 +101,22 @@ public sealed class EffectiveAgentConfigEndpointTests : IDisposable
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    //  Scenario 2 — Known agent with defaults → DefaultsApplied = true, Sources populated
+    //  Scenario 2 — Known agent with defaults present in the document
     // ──────────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// A document containing <c>agents.defaults</c> reports <c>DefaultsApplied = false</c>, because
+    /// defaults are not applied while inheritance is redesigned (#3503).
+    /// </summary>
+    /// <remarks>
+    /// This previously asserted <c>true</c>. The flag describes whether the payload was produced by
+    /// merging defaults - not whether a <c>defaults</c> block exists in the file - so with the mergers
+    /// deleted (#3519) the honest answer is false. Leaving it true would tell an operator their
+    /// defaults took effect while the gateway ignores them, which is the split-brain this work exists
+    /// to remove.
+    /// </remarks>
     [Fact]
-    public async Task GetEffectiveAgentConfig_KnownAgentWithDefaults_ReturnsTrueDefaultsAppliedAndSourcesPopulated()
+    public async Task GetEffectiveAgentConfig_KnownAgentWithDefaults_ReportsDefaultsNotApplied()
     {
         var path = WriteConfig("""
         {
@@ -127,38 +138,16 @@ public sealed class EffectiveAgentConfigEndpointTests : IDisposable
 
         var payload = await GetEffective(client, "bot-beta");
 
-        payload.DefaultsApplied.ShouldBeTrue();
-        payload.Sources.ShouldNotBeEmpty();
+        payload.DefaultsApplied.ShouldBeFalse(
+            "defaults exist in the document but are not applied; reporting true would claim an " +
+            "inheritance that did not happen");
+        payload.Sources.ShouldNotBeEmpty("the endpoint must still report provenance for every field");
     }
 
     // ──────────────────────────────────────────────────────────────────────
     //  Scenario 3 — Agent inherits memory → sources["memory.enabled"] = "inherited"
     // ──────────────────────────────────────────────────────────────────────
 
-    [Fact]
-    public async Task GetEffectiveAgentConfig_AgentInheritsMemory_MemoryEnabledSourceIsInherited()
-    {
-        var path = WriteConfig("""
-        {
-          "agents": {
-            "defaults": {
-              "memory": { "enabled": true }
-            },
-            "bot-inherits-mem": {
-              "displayName": "Inheritor",
-              "model": "gpt-4o"
-            }
-          }
-        }
-        """);
-
-        await using var factory = CreateFactory(path);
-        using var client = factory.CreateClient();
-
-        var payload = await GetEffective(client, "bot-inherits-mem");
-
-        payload.Sources.ShouldContainKeyAndValue("memory.enabled", "inherited");
-    }
 
     // ──────────────────────────────────────────────────────────────────────
     //  Scenario 4 — Agent overrides memory → sources["memory.enabled"] = "agent"
@@ -190,34 +179,6 @@ public sealed class EffectiveAgentConfigEndpointTests : IDisposable
         payload.Sources.ShouldContainKeyAndValue("memory.enabled", "agent");
     }
 
-    [Fact]
-    public async Task GetEffectiveAgentConfig_AgentInheritsMemoryPromptInjection_SourceIsInherited()
-    {
-        var path = WriteConfig("""
-        {
-          "agents": {
-            "defaults": {
-              "memory": {
-                "enabled": true,
-                "promptInjection": "full"
-              }
-            },
-            "bot-inherits-prompt-injection": {
-              "displayName": "Inheritor",
-              "model": "gpt-4o",
-              "memory": { "enabled": true }
-            }
-          }
-        }
-        """);
-
-        await using var factory = CreateFactory(path);
-        using var client = factory.CreateClient();
-
-        var payload = await GetEffective(client, "bot-inherits-prompt-injection");
-
-        payload.Sources.ShouldContainKeyAndValue("memory.promptInjection", "inherited");
-    }
 
     [Fact]
     public async Task GetEffectiveAgentConfig_AgentOverridesMemoryPromptInjection_SourceIsAgent()
@@ -302,30 +263,6 @@ public sealed class EffectiveAgentConfigEndpointTests : IDisposable
     //  Scenario 7 — toolIds inherited → sources["toolIds"] = "inherited"
     // ──────────────────────────────────────────────────────────────────────
 
-    [Fact]
-    public async Task GetEffectiveAgentConfig_ToolIdsInherited_SourceIsInherited()
-    {
-        var path = WriteConfig("""
-        {
-          "agents": {
-            "defaults": {
-              "toolIds": ["default-tool-1", "default-tool-2"]
-            },
-            "bot-no-tools": {
-              "displayName": "NoTools",
-              "model": "gpt-4o"
-            }
-          }
-        }
-        """);
-
-        await using var factory = CreateFactory(path);
-        using var client = factory.CreateClient();
-
-        var payload = await GetEffective(client, "bot-no-tools");
-
-        payload.Sources.ShouldContainKeyAndValue("toolIds", "inherited");
-    }
 
     // ──────────────────────────────────────────────────────────────────────
     //  Scenario 8 — toolIds overridden → sources["toolIds"] = "agent"

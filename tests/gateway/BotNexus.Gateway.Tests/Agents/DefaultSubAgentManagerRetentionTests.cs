@@ -87,14 +87,15 @@ public sealed class DefaultSubAgentManagerRetentionTests
         // With both records retired and cap=1, a reap evicts the older `first`, keeps `second`.
         // GetAsync triggers a reap; poll until exactly one survives so the assertion never races the
         // cap-driven eviction sweep.
-        await WaitUntilAsync(
+        await TestAwait.EventuallyAsync(
             async () =>
             {
                 var firstPresent = (await manager.GetAsync(first.SubAgentId)) is not null;
                 var secondPresent = (await manager.GetAsync(second.SubAgentId)) is not null;
                 return !(firstPresent && secondPresent); // one has been evicted
             },
-            TimeSpan.FromSeconds(5));
+            "the count cap to evict one retired subagent",
+            timeout: TimeSpan.FromSeconds(30));
 
         var olderAfter = await manager.GetAsync(first.SubAgentId);
         var newerAfter = await manager.GetAsync(second.SubAgentId);
@@ -125,14 +126,15 @@ public sealed class DefaultSubAgentManagerRetentionTests
 
         // Wait until the cap-driven reap has fired with *both* records retired (exactly one of the
         // two survives under cap=1). Each GetAsync triggers a reap, so this also drives it.
-        await WaitUntilAsync(
+        await TestAwait.EventuallyAsync(
             async () =>
             {
                 var firstPresent = (await manager.GetAsync(first.SubAgentId)) is not null;
                 var secondPresent = (await manager.GetAsync(second.SubAgentId)) is not null;
                 return !(firstPresent && secondPresent); // one has been evicted
             },
-            TimeSpan.FromSeconds(5));
+            "the count cap to resolve tied retirement timestamps",
+            timeout: TimeSpan.FromSeconds(30));
 
         // The oldest-spawned record (`first`) must be the one evicted, every run.
         var olderAfter = await manager.GetAsync(first.SubAgentId);
@@ -149,8 +151,10 @@ public sealed class DefaultSubAgentManagerRetentionTests
         var manager = CreateManager(CreateSuccessfulHandle(), options, clock);
 
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-        await WaitUntilAsync(async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Completed,
-            TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
+            async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Completed,
+            "the subagent status to become completed",
+            timeout: TimeSpan.FromSeconds(30));
 
         // Cleanup already disposed the timeout source; a subsequent kill must not throw
         // ObjectDisposedException (the CTS dispose paths are idempotent). Reaching the assertion
@@ -247,20 +251,6 @@ public sealed class DefaultSubAgentManagerRetentionTests
         return handle;
     }
 
-    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
-    {
-        var deadline = DateTimeOffset.UtcNow.Add(timeout);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            if (await condition())
-                return;
-
-            await Task.Delay(25);
-        }
-
-        throw new TimeoutException("Condition was not met before timeout.");
-    }
-
     /// <summary>
     /// Awaits the record's actual retirement (its <c>RetiredAt</c> stamp), not merely its Completed
     /// status. The retention/count-cap eviction only considers retired records, and the stamp is
@@ -270,7 +260,10 @@ public sealed class DefaultSubAgentManagerRetentionTests
     /// retirement point, keeping the subsequent clock-advance + eviction assertions deterministic.
     /// </summary>
     private static Task WaitUntilRetiredAsync(DefaultSubAgentManager manager, string subAgentId, TimeSpan timeout)
-        => WaitUntilAsync(() => Task.FromResult(manager.IsRetiredForTest(subAgentId)), timeout);
+        => TestAwait.EventuallyAsync(
+            () => manager.IsRetiredForTest(subAgentId),
+            $"subagent {subAgentId} to receive its retirement stamp",
+            timeout: timeout);
 
     /// <summary>
     /// A minimal mutable <see cref="TimeProvider"/> test double so the retention sweep can be driven

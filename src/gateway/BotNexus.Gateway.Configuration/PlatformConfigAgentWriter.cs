@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 
@@ -17,14 +18,19 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
 
     private readonly BotNexusHome _botNexusHome;
     private readonly PlatformConfigWriter _configWriter;
+    private readonly ILocationResolver? _locationResolver;
 
-    public PlatformConfigAgentWriter(PlatformConfigWriter configWriter, BotNexusHome botNexusHome)
+    public PlatformConfigAgentWriter(
+        PlatformConfigWriter configWriter,
+        BotNexusHome botNexusHome,
+        ILocationResolver? locationResolver = null)
     {
         ArgumentNullException.ThrowIfNull(configWriter);
         ArgumentNullException.ThrowIfNull(botNexusHome);
 
         _configWriter = configWriter;
         _botNexusHome = botNexusHome;
+        _locationResolver = locationResolver;
     }
 
     public async Task SaveAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
@@ -53,7 +59,7 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             SetOptionalString(entry, "cacheRetention", descriptor.CacheRetentionMode);
             SetOptionalString(entry, "thinking", descriptor.Thinking);
             SetOptionalContextWindow(entry, "contextWindow", descriptor.ContextWindow);
-            SetOptionalInt(entry, "maxConcurrentSessions", descriptor.MaxConcurrentSessions);
+            SetOptionalCount(entry, "maxConcurrentSessions", descriptor.MaxConcurrentSessions);
 
             // List surface.
             SetOptionalList(entry, "systemPromptFiles", descriptor.SystemPromptFiles);
@@ -70,7 +76,7 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             SetOptionalNode(entry, "soul", descriptor.Soul);
             SetOptionalNode(entry, "heartbeat", descriptor.Heartbeat);
             SetOptionalNode(entry, "dateTimeInjection", descriptor.DateTimeInjection);
-            SetFileAccess(entry, descriptor.FileAccess);
+            SetFileAccess(entry, descriptor.FileAccess, _locationResolver);
             SetSessionAccess(entry, descriptor.SessionAccessLevel, descriptor.SessionAllowedAgents);
             SetConversationAccess(entry, descriptor.ConversationAccessLevel, descriptor.ConversationAllowedAgents);
             SetExtensions(entry, descriptor.ExtensionConfig);
@@ -125,13 +131,15 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         target[propertyName] = JsonSerializer.SerializeToNode(values, JsonOptions);
     }
 
-    private static void SetOptionalInt(JsonObject target, string propertyName, int value)
+    // #3547: a count of 0 is a LEGAL STORED VALUE ("unlimited"), not an absent one, and the
+    // descriptor carries no unset/zero distinction to tell them apart. Treating the sentinel as
+    // "remove" therefore deleted `maxConcurrentSessions: 0` whenever an unrelated field was edited.
+    // A non-positive value now leaves an existing key exactly as stored and only declines to create
+    // one that was never there, so the sentinel can no longer destroy a deliberate setting.
+    private static void SetOptionalCount(JsonObject target, string propertyName, int value)
     {
         if (value <= 0)
-        {
-            target.Remove(propertyName);
             return;
-        }
 
         target[propertyName] = value;
     }
@@ -175,29 +183,98 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
     // File access is persisted only when at least one path list is non-empty so an agent with no
     // policy leaves the section absent (workspace-only), matching how PlatformConfigAgentSource
     // treats a null FileAccess policy.
-    private static void SetFileAccess(JsonObject target, FileAccessPolicy? policy)
+    //
+    // #3547: PlatformConfigAgentSource RESOLVES '@location' references to absolute paths on read,
+    // so a descriptor that merely round-tripped carries resolved paths and writing them back
+    // silently replaced portable aliases with machine-specific absolute paths. PreservePathAliases
+    // restores the stored spelling for any entry whose resolved form is unchanged, so a genuine
+    // edit still writes through while an untouched list keeps its aliases.
+    private static void SetFileAccess(JsonObject target, FileAccessPolicy? policy, ILocationResolver? locationResolver)
     {
         if (policy is null
             || (policy.AllowedReadPaths.Count == 0
                 && policy.AllowedWritePaths.Count == 0
                 && policy.DeniedPaths.Count == 0))
         {
-            target.Remove("fileAccess");
+            // #3547: an absent policy on the descriptor is not an instruction to delete a stored
+            // one. Only remove when there is nothing stored to preserve.
             return;
         }
 
+        var stored = target["fileAccess"] as JsonObject;
         var fileAccess = new JsonObject();
-        AddPathList(fileAccess, "allowedReadPaths", policy.AllowedReadPaths);
-        AddPathList(fileAccess, "allowedWritePaths", policy.AllowedWritePaths);
-        AddPathList(fileAccess, "deniedPaths", policy.DeniedPaths);
+        AddPathList(fileAccess, "allowedReadPaths", policy.AllowedReadPaths, stored, locationResolver);
+        AddPathList(fileAccess, "allowedWritePaths", policy.AllowedWritePaths, stored, locationResolver);
+        AddPathList(fileAccess, "deniedPaths", policy.DeniedPaths, stored, locationResolver);
         target["fileAccess"] = fileAccess;
 
-        static void AddPathList(JsonObject parent, string name, IReadOnlyList<string> values)
+        static void AddPathList(
+            JsonObject parent,
+            string name,
+            IReadOnlyList<string> values,
+            JsonObject? stored,
+            ILocationResolver? locationResolver)
         {
             if (values.Count == 0)
                 return;
-            parent[name] = JsonSerializer.SerializeToNode(values, JsonOptions);
+            var storedList = stored?[name] as JsonArray;
+            parent[name] = JsonSerializer.SerializeToNode(
+                PreservePathAliases(values, storedList, locationResolver),
+                JsonOptions);
         }
+    }
+
+    /// <summary>
+    /// Restores the stored '@location' spelling of file-access paths that the config source
+    /// resolved to absolute paths on read (#3547).
+    /// </summary>
+    /// <remarks>
+    /// An alias is restored only when it still RESOLVES to the incoming absolute path, which is
+    /// precisely the "read and written back unchanged" case. A caller that genuinely changed the
+    /// path writes a value the alias no longer resolves to, so the edit is honoured rather than
+    /// silently re-aliased. Matching is by resolved value rather than by position, so adds,
+    /// removals and reorders are all handled without a length precondition. With no resolver
+    /// available the comparison cannot be made, so the caller's values are written through
+    /// unchanged - failing toward the caller's intent rather than toward a guessed alias.
+    /// </remarks>
+    private static List<string> PreservePathAliases(
+        IReadOnlyList<string> values,
+        JsonArray? stored,
+        ILocationResolver? locationResolver)
+    {
+        var result = new List<string>(values.Count);
+        if (stored is null || locationResolver is null)
+        {
+            result.AddRange(values);
+            return result;
+        }
+
+        // Map each stored alias to the absolute path it resolves to, so an incoming resolved path
+        // can be traced back to the alias that produced it.
+        Dictionary<string, string> aliasByResolved = new(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in stored)
+        {
+            var storedValue = node?.GetValue<string>();
+            if (storedValue is null || !storedValue.StartsWith('@'))
+                continue;
+
+            var resolved = LocationReferenceResolver.Resolve(storedValue, locationResolver);
+            if (resolved is not null)
+                aliasByResolved.TryAdd(resolved, storedValue);
+        }
+
+        foreach (var value in values)
+        {
+            if (!value.StartsWith('@') && aliasByResolved.TryGetValue(value, out var alias))
+            {
+                result.Add(alias);
+                continue;
+            }
+
+            result.Add(value);
+        }
+
+        return result;
     }
 
     // Session/conversation access default to "own" with no allowlist; only persist when the
@@ -228,18 +305,26 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         target[propertyName] = access;
     }
 
+    // #3547: the extensions bag is an OPEN MAP the descriptor only partially models - the config
+    // source strips null-valued entries on the way in, and a caller that never read an extension
+    // cannot echo it back. Replacing the whole object therefore deleted every unmodelled extension
+    // (10 keys lost from a live agent on a single `thinking` edit). Merge per key instead: the
+    // descriptor updates the extensions it carries and is silent about the rest, so an entry it
+    // never mentioned survives. Clearing one extension is an explicit config-path operation, not a
+    // side effect of omitting it here.
     private static void SetExtensions(JsonObject target, IReadOnlyDictionary<string, JsonElement> extensions)
     {
         if (extensions.Count == 0)
-        {
-            target.Remove("extensions");
             return;
+
+        if (target["extensions"] is not JsonObject extensionsObject)
+        {
+            extensionsObject = new JsonObject();
+            target["extensions"] = extensionsObject;
         }
 
-        var extensionsObject = new JsonObject();
         foreach (var (key, value) in extensions)
             extensionsObject[key] = JsonNode.Parse(value.GetRawText());
-        target["extensions"] = extensionsObject;
     }
 
     private static JsonObject EnsureAgentsObject(JsonObject root)

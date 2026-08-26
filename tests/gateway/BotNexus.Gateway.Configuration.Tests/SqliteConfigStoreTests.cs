@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using BotNexus.Gateway.Configuration.Shadow;
 using BotNexus.Gateway.Configuration.Store;
 using Shouldly;
 
@@ -96,16 +95,17 @@ public sealed class SqliteConfigStoreTests : IDisposable
     }
 
     /// <summary>
-    /// The round-trip is clean under #2766's diff — the harness and the store agree.
-    ///
-    /// <para>
-    /// Asserting through <c>ConfigShadowDiff</c> rather than by hand-comparing dictionaries is
-    /// deliberate: it exercises the exact comparison shadow mode will run in production, so a store
-    /// that satisfies this test satisfies the harness by construction rather than by coincidence.
-    /// </para>
+    /// The store reproduces a written document exactly, including the states a naive schema loses:
+    /// explicit null, arrays, and nested objects.
     /// </summary>
+    /// <remarks>
+    /// Previously asserted via <c>ConfigShadowDiff</c>, which was deleted with the shadow harness
+    /// (#3509). The comparison is now direct - flatten the source and compare entry-by-entry -
+    /// which is what the diff did, minus the reporting apparatus that existed to feed a report
+    /// nothing read.
+    /// </remarks>
     [Fact]
-    public async Task RoundTrip_IsCleanUnderTheShadowDiff()
+    public async Task RoundTrip_ReproducesTheDocumentExactly()
     {
         var document = Obj("""
             {
@@ -118,11 +118,17 @@ public sealed class SqliteConfigStoreTests : IDisposable
         await store.WriteDocumentAsync(document);
         var stored = await store.ReadEntriesAsync();
 
-        var report = ConfigShadowDiff.CompareEntries(ConfigDocumentFlattener.Flatten(document), stored);
+        var source = ConfigDocumentFlattener.Flatten(document);
 
-        report.IsClean.ShouldBeTrue(
-            $"the store must reproduce the document exactly. Differences: {report.Summary}");
-        report.SourceKeyCount.ShouldBeGreaterThan(0, "a clean diff over an empty input proves nothing");
+        source.Count.ShouldBeGreaterThan(0, "a clean comparison over an empty input proves nothing");
+        stored.Count.ShouldBe(source.Count, "the store must not lose or invent keys");
+
+        foreach (var (path, expected) in source)
+        {
+            stored.ShouldContainKey(path);
+            stored[path].State.ShouldBe(expected.State, $"state mismatch at '{path}'");
+            stored[path].Value.ShouldBe(expected.Value, $"value mismatch at '{path}'");
+        }
     }
 
     /// <summary>Arrays are stored as single leaf values, matching how configuration merges them.</summary>
@@ -181,3 +187,4 @@ public sealed class SqliteConfigStoreTests : IDisposable
         entries.ShouldBeEmpty();
     }
 }
+

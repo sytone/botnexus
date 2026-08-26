@@ -295,16 +295,19 @@ public sealed class VirtualWorld : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(channelAddress);
-        var deadline = DateTimeOffset.UtcNow + (timeout ?? _defaultOutboundWaitTimeout);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
+        AgentReply? reply = null;
+        await TestAwait.EventuallyAsync(
+            () =>
+            {
 
             // Non-streaming delivery — completed OutboundMessage on the channel address.
             var outbound = _adapter.Outbound.FirstOrDefault(m =>
                 string.Equals(m.ChannelAddress.Value, channelAddress, StringComparison.Ordinal));
             if (outbound is not null)
-                return new AgentReply(outbound.Content, channelAddress, AgentReplyDelivery.Outbound);
+            {
+                reply = new AgentReply(outbound.Content, channelAddress, AgentReplyDelivery.Outbound);
+                return true;
+            }
 
             // Streaming delivery — the channel saw TurnEnd or MessageEnd for this address,
             // meaning the agent has emitted a complete reply over the stream.
@@ -326,18 +329,20 @@ public sealed class VirtualWorld : IAsyncDisposable
                         content = string.Concat(deltas);
                     }
 
-                    return new AgentReply(content, channelAddress, AgentReplyDelivery.Stream);
+                    reply = new AgentReply(content, channelAddress, AgentReplyDelivery.Stream);
+                    return true;
                 }
             }
 
-            await Task.Delay(20, cancellationToken);
-        }
-
-        throw new TimeoutException(
-            $"No agent reply observed on channel address '{channelAddress}' within " +
-            $"{(timeout ?? _defaultOutboundWaitTimeout).TotalMilliseconds:F0}ms " +
+                return false;
+            },
+            $"an agent reply on '{channelAddress}' " +
             $"(outbound={_adapter.Outbound.Count}, streamEvents={(_adapter.StreamEvents.TryGetValue(channelAddress, out var e) ? e.Count : 0)}, " +
-            $"providerTurns={_provider.TurnCount}).");
+            $"providerTurns={_provider.TurnCount})",
+            timeout ?? _defaultOutboundWaitTimeout,
+            cancellationToken: cancellationToken);
+
+        return reply ?? throw new InvalidOperationException("Reply observation completed without a reply.");
     }
 
     /// <summary>
@@ -429,16 +434,11 @@ public sealed class VirtualWorld : IAsyncDisposable
 
     private static async Task WaitForAdapterStartAsync(VirtualChannelAdapter adapter, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var deadline = DateTimeOffset.UtcNow + timeout;
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            if (adapter.IsRunning) return;
-            cancellationToken.ThrowIfCancellationRequested();
-            await Task.Delay(10, cancellationToken);
-        }
-        throw new TimeoutException(
-            $"VirtualChannelAdapter did not start within {timeout.TotalSeconds:F0}s. " +
-            "Likely the gateway's BackgroundService failed to start its channel adapters.");
+        await TestAwait.EventuallyAsync(
+            () => adapter.IsRunning,
+            "the VirtualChannelAdapter to start; the gateway BackgroundService may have failed",
+            timeout,
+            cancellationToken: cancellationToken);
     }
 
     private static ConversationView ToView(Conversation conversation)

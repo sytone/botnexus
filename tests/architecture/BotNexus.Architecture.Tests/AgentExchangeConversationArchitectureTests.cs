@@ -27,7 +27,7 @@ namespace BotNexus.Architecture.Tests;
 /// 4. <c>AgentExchangeResult.ConversationId</c> must be a required non-nullable
 ///    <c>ConversationId</c>, so no construction path can omit it.
 /// </remarks>
-public sealed class AgentExchangeConversationArchitectureTests
+public sealed class AgentExchangeConversationArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void AgentExchangeService_DoesNotCall_SessionIdForAgentConversation()
@@ -143,7 +143,7 @@ public sealed class AgentExchangeConversationArchitectureTests
     /// first <c>{</c> after each <c>(public|private|protected|internal) ... Method(</c>
     /// declaration. Returns tuples of <c>(MethodName, BodyText, BodyStartIndexInFile)</c>.
     /// </summary>
-    private static List<(string Name, string Body, int StartIndex)> SplitIntoMethodBodies(string source)
+    private List<(string Name, string Body, int StartIndex)> SplitIntoMethodBodies(string source)
     {
         var methods = new List<(string, string, int)>();
         // Match: <access-modifier> [async|static|...]* <return-type> <name> (
@@ -232,10 +232,10 @@ public sealed class AgentExchangeConversationArchitectureTests
             string.Join(", ", routerNames));
     }
 
-    private static string LocateAgentExchangeServiceFile()
+    private string LocateAgentExchangeServiceFile()
     {
         var path = Path.Combine(
-            FindSourceRoot(),
+            Repository.SourceRoot,
             "gateway",
             "BotNexus.Gateway",
             "Agents",
@@ -245,10 +245,10 @@ public sealed class AgentExchangeConversationArchitectureTests
     }
 
     // #1542: the cross-world sender branch (ConverseCrossWorldAsync) lives here after the SRP split.
-    private static string LocateCrossWorldExchangeRouterFile()
+    private string LocateCrossWorldExchangeRouterFile()
     {
         var path = Path.Combine(
-            FindSourceRoot(),
+            Repository.SourceRoot,
             "gateway",
             "BotNexus.Gateway",
             "Agents",
@@ -257,10 +257,10 @@ public sealed class AgentExchangeConversationArchitectureTests
         return path;
     }
 
-    private static string LocateAgentExchangeResultFile()
+    private string LocateAgentExchangeResultFile()
     {
         var path = Path.Combine(
-            FindSourceRoot(),
+            Repository.SourceRoot,
             "domain",
             "BotNexus.Domain",
             "Gateway",
@@ -281,17 +281,4 @@ public sealed class AgentExchangeConversationArchitectureTests
         return line;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

@@ -117,6 +117,37 @@ try {
     $job = Invoke-AzJson @('rest', '--method', 'get', '--url', "${jobUrl}?api-version=2024-03-01")
     $template = $job.properties.template
     $container = $template.containers[0]
+
+    # #3516: warn when the deployed runner image was not built from these sources.
+    #
+    # On 2026-08-21 the job was pointed at an image built from an unmerged branch. It contained a
+    # file main does not have, threw before build or test ran, and reported `tests: null` for three
+    # days - no branch could be validated, and nothing said why. The tag is content-addressed
+    # (#2900), so the comparison is exact and free: we already have the job here.
+    #
+    # WARN, never throw. A mismatch is legitimate while an infra change is being rolled out, and a
+    # hard failure would make the gate unusable during exactly the window an operator needs it. What
+    # matters is that a gate result can no longer be silently unattributable to a commit.
+    try {
+        . (Join-Path $PSScriptRoot '..' '..' 'infra' 'buildtest' 'RunnerImageProvenance.ps1')
+        $provenance = Test-RunnerImageMatchesSources `
+            -RunnerPath (Join-Path $PSScriptRoot '..' '..' 'infra' 'buildtest' 'runner') `
+            -DeployedTag ($container.image -split ':')[-1]
+
+        if ($provenance.Verdict -eq 'mismatch') {
+            Write-Warning (
+                "Runner image provenance MISMATCH: the job runs '$($provenance.Deployed)' but these " +
+                "sources derive '$($provenance.Expected)'. The gate is executing runner code that is " +
+                "not in this worktree, so a failure here may not correspond to your change. " +
+                'Redeploy with infra/buildtest/Deploy-BuildTestInfrastructure.ps1 to realign.')
+        }
+    }
+    catch {
+        # Provenance is a diagnostic, not the subject of the gate. A check that could fail an
+        # otherwise-valid run would be worse than no check.
+        Write-Verbose "Runner image provenance check skipped: $($_.Exception.Message)"
+    }
+
     $managedIdentityClientId = ($container.env | Where-Object name -eq 'AZURE_CLIENT_ID' | Select-Object -First 1).value
     if ([string]::IsNullOrWhiteSpace($managedIdentityClientId)) { throw 'The job template does not expose its managed-identity client ID.' }
     $container.env = @(

@@ -29,14 +29,8 @@ namespace BotNexus.Architecture.Tests;
 /// exemption, or a NEW test project is dropped at the <c>tests/</c> root. It does not
 /// move, rename, or delete any existing project.</para>
 /// </summary>
-public sealed class SrcTestsMirrorArchitectureTests
+public sealed class SrcTestsMirrorArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
-
-    private static string SrcRoot => Path.Combine(RepoRoot, "src");
-
-    private static string TestsRoot => Path.Combine(RepoRoot, "tests");
-
     /// <summary>
     /// Folders directly under <c>tests/</c> that are recognised test categories. A test
     /// project must live under one of these; anything at the <c>tests/</c> root is a
@@ -110,12 +104,12 @@ public sealed class SrcTestsMirrorArchitectureTests
     [Fact]
     public void EverySrcProject_HasMirroredTestProject_OrIsExempt()
     {
-        Directory.Exists(SrcRoot).ShouldBeTrue($"src root not found at {SrcRoot}");
-        Directory.Exists(TestsRoot).ShouldBeTrue($"tests root not found at {TestsRoot}");
+        Directory.Exists(Repository.SourceRoot).ShouldBeTrue($"src root not found at {Repository.SourceRoot}");
+        Directory.Exists(Repository.TestsRoot).ShouldBeTrue($"tests root not found at {Repository.TestsRoot}");
 
         var violations = new List<string>();
 
-        foreach (var srcCsproj in EnumerateCsproj(SrcRoot))
+        foreach (var srcCsproj in EnumerateCsproj(Repository.SourceRoot))
         {
             var relSrc = ToRepoRelative(srcCsproj);
 
@@ -125,7 +119,7 @@ public sealed class SrcTestsMirrorArchitectureTests
             }
 
             var expectedTestRel = MirrorTestPath(relSrc);
-            var expectedTestAbs = Path.Combine(RepoRoot, expectedTestRel.Replace('/', Path.DirectorySeparatorChar));
+            var expectedTestAbs = Path.Combine(Repository.Root, expectedTestRel.Replace('/', Path.DirectorySeparatorChar));
 
             if (!File.Exists(expectedTestAbs))
             {
@@ -144,11 +138,11 @@ public sealed class SrcTestsMirrorArchitectureTests
     [Fact]
     public void NoTestProject_LivesAtTestsRoot_OrIsExempt()
     {
-        Directory.Exists(TestsRoot).ShouldBeTrue($"tests root not found at {TestsRoot}");
+        Directory.Exists(Repository.TestsRoot).ShouldBeTrue($"tests root not found at {Repository.TestsRoot}");
 
         var violations = new List<string>();
 
-        foreach (var testCsproj in EnumerateCsproj(TestsRoot))
+        foreach (var testCsproj in EnumerateCsproj(Repository.TestsRoot))
         {
             var relTest = ToRepoRelative(testCsproj);
 
@@ -198,7 +192,7 @@ public sealed class SrcTestsMirrorArchitectureTests
 
         foreach (var (relSrc, _) in TestMirrorExemptions)
         {
-            var abs = Path.Combine(RepoRoot, relSrc.Replace('/', Path.DirectorySeparatorChar));
+            var abs = Path.Combine(Repository.Root, relSrc.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(abs))
             {
                 stale.Add($"  '{relSrc}' — no such src project (remove this exemption).");
@@ -206,7 +200,7 @@ public sealed class SrcTestsMirrorArchitectureTests
             }
 
             var mirrorAbs = Path.Combine(
-                RepoRoot,
+                Repository.Root,
                 MirrorTestPath(relSrc).Replace('/', Path.DirectorySeparatorChar));
             if (File.Exists(mirrorAbs))
             {
@@ -224,7 +218,7 @@ public sealed class SrcTestsMirrorArchitectureTests
 
         foreach (var (relTest, _) in RootLevelTestExemptions)
         {
-            var abs = Path.Combine(RepoRoot, relTest.Replace('/', Path.DirectorySeparatorChar));
+            var abs = Path.Combine(Repository.Root, relTest.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(abs))
             {
                 stale.Add($"  '{relTest}' — no such test project (remove this exemption; #1960 may have relocated it).");
@@ -238,7 +232,7 @@ public sealed class SrcTestsMirrorArchitectureTests
     public void Fence_IsNotVacuous_MirrorMappingIsExercised()
     {
         // Guard against the fence passing because it enumerated nothing.
-        EnumerateCsproj(SrcRoot).Count.ShouldBeGreaterThan(10,
+        EnumerateCsproj(Repository.SourceRoot).Count.ShouldBeGreaterThan(10,
             "Vacuity guard: expected to enumerate many src projects; found too few — enumeration is broken.");
 
         // The mapping must transform a known src path to its known mirror path.
@@ -287,21 +281,10 @@ public sealed class SrcTestsMirrorArchitectureTests
         return normalized.Contains("/bin/") || normalized.Contains("/obj/");
     }
 
-    private static string ToRepoRelative(string absolutePath)
+    private string ToRepoRelative(string absolutePath)
     {
-        var rel = Path.GetRelativePath(RepoRoot, absolutePath);
+        var rel = Path.GetRelativePath(Repository.Root, absolutePath);
         return rel.Replace('\\', '/');
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

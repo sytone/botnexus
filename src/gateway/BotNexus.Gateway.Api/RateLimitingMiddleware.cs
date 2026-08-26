@@ -19,6 +19,7 @@ public sealed class RateLimitingMiddleware
 
     private readonly RequestDelegate _next;
     private readonly IOptions<PlatformConfig> _platformConfig;
+    private readonly TimeProvider _timeProvider;
     private readonly ConcurrentDictionary<string, ClientWindow> _clientWindows = new(StringComparer.Ordinal);
     private long _lastCleanupTicks;
 
@@ -27,10 +28,15 @@ public sealed class RateLimitingMiddleware
     /// </summary>
     /// <param name="next">The next middleware in the pipeline.</param>
     /// <param name="platformConfig">Loaded platform configuration.</param>
-    public RateLimitingMiddleware(RequestDelegate next, IOptions<PlatformConfig> platformConfig)
+    /// <param name="timeProvider">Clock used for request windows and cleanup; defaults to the system clock.</param>
+    public RateLimitingMiddleware(
+        RequestDelegate next,
+        IOptions<PlatformConfig> platformConfig,
+        TimeProvider? timeProvider = null)
     {
         _next = next;
         _platformConfig = platformConfig;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -65,7 +71,7 @@ public sealed class RateLimitingMiddleware
             ? configuredRateLimit.MaxEntries
             : 0;
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         var windowLength = TimeSpan.FromSeconds(windowSeconds);
         TryCleanupStaleEntries(now, windowLength);
         var clientKey = GetClientKey(context);

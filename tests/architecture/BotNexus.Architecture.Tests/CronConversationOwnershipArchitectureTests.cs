@@ -31,7 +31,7 @@ namespace BotNexus.Architecture.Tests;
 /// its target methods/symbols").
 /// </para>
 /// </remarks>
-public sealed class CronConversationOwnershipArchitectureTests
+public sealed class CronConversationOwnershipArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void CronJob_ConversationId_IsNullableConversationId()
@@ -54,7 +54,7 @@ public sealed class CronConversationOwnershipArchitectureTests
     [Fact]
     public void NoProductionSourceFile_Constructs_CronconvCompositeId()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -78,7 +78,7 @@ public sealed class CronConversationOwnershipArchitectureTests
     [Fact]
     public void CronconvAllowlist_OnlyContains_FilesThat_StillExist_AndStill_TripTheFence()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var stale = new List<string>();
 
         foreach (var relative in s_cronconvAllowlist)
@@ -104,7 +104,7 @@ public sealed class CronConversationOwnershipArchitectureTests
     [Fact]
     public void NoProductionSourceFile_References_CronSessionVirtualConversation()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -213,18 +213,6 @@ public sealed class CronConversationOwnershipArchitectureTests
             : full;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 
     /// <summary>
     /// Removes single-line (<c>//</c>, <c>///</c>) and block (<c>/* … */</c>) C# comments
