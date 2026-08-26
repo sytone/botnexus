@@ -3773,6 +3773,10 @@ details[open] > .thinking-summary::before {
     padding: 1.5rem;
     max-width: 960px;
     margin: 0 auto;
+    /* A flex item shrink-wraps its content, so max-width and auto margins do nothing
+       without this. Matches .home-page, which already had it. */
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .agents-toolbar {
@@ -4020,18 +4024,31 @@ details[open] > .thinking-summary::before {
     font-weight: 600;
     color: var(--text-muted);
 }
+/* The cron editor stacks its labels above its controls rather than using the two-column
+   rows the config and agent forms do, which suits its short fields in a responsive grid.
+   The controls themselves should still look like every other control in the product: this
+   was on --bg-tertiary (#1c232c) against --bg-input (#151a21) everywhere else, a visible
+   shade apart, with 0.1rem more vertical padding. */
 .cron-edit-field input[type="text"],
 .cron-edit-field select,
 .cron-edit-field textarea {
     width: 100%;
     box-sizing: border-box;
-    background: var(--bg-tertiary);
+    background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-primary);
-    padding: 0.45rem 0.6rem;
+    padding: 0.35rem 0.6rem;
     font-size: var(--text-body);
-    font-family: inherit;
+    font-family: var(--font-sans);
+    transition: border-color 0.15s;
+}
+
+.cron-edit-field input[type="text"]:focus,
+.cron-edit-field select:focus,
+.cron-edit-field textarea:focus {
+    border-color: var(--accent);
+    outline: none;
 }
 .cron-edit-field textarea { resize: vertical; }
 .cron-edit-field-inline > label {
@@ -4045,9 +4062,12 @@ details[open] > .thinking-summary::before {
 
 /* Allowed-models checkbox list (issue #290 agent editor) */
 .agent-checkbox-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
+    display: grid;
+    /* Its cell is a flex column aligned to the start, so without this the track list has no
+       width to fill and auto-fill collapses back to a single column. */
+    width: 100%;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: 0.25rem 1rem;
     max-height: 12rem;
     overflow-y: auto;
     padding: 0.25rem 0;
@@ -4074,22 +4094,85 @@ details[open] > .thinking-summary::before {
 
 .agents-form-grid {
     display: grid;
-    grid-template-columns: 160px 1fr;
+    grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr);
     gap: 0.65rem 1rem;
-    align-items: center;
+    align-items: start;
     margin-bottom: 1rem;
 }
 
 .agents-form-grid label {
-    font-size: var(--text-body);
+    /* Optical alignment with the first line of the control, which carries input padding. */
+    padding-top: 0.4rem;
+    font-size: var(--text-label);
+    line-height: var(--text-label-lh);
     color: var(--text-muted);
+    overflow-wrap: anywhere;
 }
 
 .required { color: var(--color-danger-text); }
 
-.agents-form-grid .cfg-input,
-.agents-form-grid .cfg-textarea {
+.cfg-input,
+.cfg-textarea {
     width: 100%;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: var(--text-body);
+    font-family: var(--font-sans);
+    transition: border-color 0.15s;
+}
+
+.cfg-textarea {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--text-mono);
+    line-height: 1.5;
+    resize: vertical;
+}
+
+.cfg-input:focus,
+.cfg-textarea:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.cfg-input:disabled,
+.cfg-textarea:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* A single-line control does not get more readable past this, and letting it run the full
+   width of the row pushes its label a long way from its value. Matches the config forms.
+   Applied by descent, not to direct children only: most controls here sit inside an
+   unclassed wrapper div, so a child-combinator cap reached about a third of them. */
+.agents-form-grid .cfg-input {
+    max-width: 26rem;
+}
+
+/* Most control cells are a bare block div, so a select and the hint that explains it lay out
+   on one line and the hint read as a suffix to the control. Only the cells that actually
+   carry a hint need to stack -- the others hold buttons and tag rows that are correct as
+   they are. */
+.agents-form-grid > div:has(> .agents-field-loading),
+.agents-form-grid > div:has(> .agents-field-error) {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+}
+
+/* A checkbox stretched to the width of the grid column keeps its 13px glyph but centres it
+   in the resulting box, so the control landed halfway across the row, nowhere near the
+   other inputs' left edge. */
+.agents-form-grid > input[type="checkbox"] {
+    justify-self: start;
+    width: 1rem;
+    height: 1rem;
+    margin-top: 0.45rem;
+    accent-color: var(--accent);
+    cursor: pointer;
 }
 
 .agents-form-error {
@@ -4104,10 +4187,11 @@ details[open] > .thinking-summary::before {
 }
 
 .agents-field-loading {
-    font-size: var(--text-label);
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
     color: var(--text-muted);
-    font-style: italic;
-    align-self: center;
+    align-self: start;
+    max-width: 70ch;
 }
 
 .agents-field-error {
@@ -5777,6 +5861,8 @@ h3.conversation-title.editable:hover {
     padding: 1.5rem;
     max-width: 1100px;
     margin: 0 auto;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .activity-dashboard-header {
@@ -7554,6 +7640,14 @@ h3.conversation-title.editable:hover {
     /* The glyphs sit on a 24px grid with 2px strokes and read as optically centred
        against text when their box is aligned to the text box rather than the baseline. */
     vertical-align: -0.125em;
+}
+
+/* A page heading pairs its icon with the title. The emoji these replaced sat in the text
+   run, so the gap between glyph and word was whatever the font gave it. */
+.page-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
 /* BEGIN generated icon tones -- scripts/generate-icons.py */
