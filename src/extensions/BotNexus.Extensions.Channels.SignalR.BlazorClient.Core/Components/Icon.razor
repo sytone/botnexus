@@ -1,0 +1,60 @@
+@*
+    One inline SVG from the generated icon set (assets/icons/svg -> IconLibrary.g.cs).
+
+    The whole element is emitted as a single MarkupString rather than an <svg> root with a
+    MarkupString body: raw markup inserted *inside* an existing SVG parent is parsed in the
+    HTML namespace and renders as nothing. Starting from <svg> lets the parser switch
+    namespaces the way it does for any inline SVG in a document.
+
+    Colour is not set here. Each icon carries a bn-icon-<name> class whose tone lives in a
+    generated CSS rule, so a hover, disabled or selected state can override it normally.
+*@
+@if (_markup is not null)
+{
+    @((MarkupString)_markup)
+}
+
+@code {
+    /// <summary>Icon name as it appears in assets/icons/svg, e.g. "home". Case-insensitive.</summary>
+    [Parameter, EditorRequired]
+    public string Name { get; set; } = default!;
+
+    /// <summary>Edge length in px. The set is drawn on a 24px grid for 16/20/24/32.</summary>
+    [Parameter]
+    public int Size { get; set; } = 20;
+
+    /// <summary>Extra classes, e.g. "bn-icon-flat" to drop a gradient for a flat tone.</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>
+    /// Accessible name. Leave null when the icon sits beside its own label -- the default is
+    /// aria-hidden, so a decorative icon is not announced twice.
+    /// </summary>
+    [Parameter]
+    public string? Title { get; set; }
+
+    private string? _markup;
+
+    protected override void OnParametersSet() => _markup = Build();
+
+    private string? Build()
+    {
+        if (string.IsNullOrWhiteSpace(Name) || !IconLibrary.Icons.TryGetValue(Name, out var def))
+            return null;
+
+        var slug = Name.Trim().ToLowerInvariant();
+        var css = string.IsNullOrWhiteSpace(Class) ? "" : " " + Encode(Class);
+        var labelling = string.IsNullOrWhiteSpace(Title)
+            ? """aria-hidden="true" focusable="false" """
+            : $"""role="img" aria-label="{Encode(Title)}" """;
+
+        return $"""
+            <svg class="bn-icon bn-icon-{Encode(slug)}{css}" width="{Size}" height="{Size}"
+                 viewBox="0 0 24 24" fill="none" stroke="{def.Stroke}" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" {labelling}>{def.Body}</svg>
+            """;
+    }
+
+    private static string Encode(string value) => System.Net.WebUtility.HtmlEncode(value);
+}

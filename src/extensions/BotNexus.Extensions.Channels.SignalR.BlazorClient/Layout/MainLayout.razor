@@ -400,12 +400,12 @@
     // glyph. The house glyph keeps it visually distinct from Agents.
     private RenderFragment RenderHomeNav() => __builder =>
     {
-        @NavAnchor("", @<text>&#x1F3E0; Home</text>)
+        @NavAnchor("", @<text><Icon Name="home" /><span class="sidebar-nav-label">Home</span></text>)
     };
 
     private RenderFragment RenderActivityNav() => __builder =>
     {
-        @NavAnchor(NavOrderKeys.Activity, @<text>&#x1F4CA; Activity</text>)
+        @NavAnchor(NavOrderKeys.Activity, @<text><Icon Name="activity" /><span class="sidebar-nav-label">Activity</span></text>)
     };
 
     private RenderFragment RenderToolsNav() => __builder =>
@@ -416,7 +416,7 @@
            same way the Scheduled group is) and the "No tools configured" placeholder row is not
            rendered at all - an empty section should cost zero vertical space. *@
         <div class="sidebar-nav-row">
-            @NavAnchor(NavOrderKeys.Tools, @<text>&#x1F9F0; Tools</text>)
+            @NavAnchor(NavOrderKeys.Tools, @<text><Icon Name="tools" /><span class="sidebar-nav-label">Tools</span></text>)
             @if (_tools.Count > 0)
             {
                 <button class="sidebar-nav-toggle" data-testid="tools-collapse-toggle"
@@ -453,7 +453,7 @@
 
     private RenderFragment RenderChatNav() => __builder =>
     {
-        @NavAnchor(NavOrderKeys.Chat, @<text>&#x1F4AC; Chat</text>)
+        @NavAnchor(NavOrderKeys.Chat, @<text><Icon Name="chat" /><span class="sidebar-nav-label">Chat</span></text>)
 
         @* Scrollable agent/conversation section *@
         <div class="sidebar-scroll-region">
@@ -703,20 +703,20 @@
 
     private RenderFragment RenderConfigurationNav() => __builder =>
     {
-        @NavAnchor(NavOrderKeys.Configuration, @<text>&#x2699;&#xFE0F; Configuration</text>)
+        @NavAnchor(NavOrderKeys.Configuration, @<text><Icon Name="configuration" /><span class="sidebar-nav-label">Configuration</span></text>)
     };
 
     private RenderFragment RenderSkillsNav() => __builder =>
     {
         @if (ExtensionFeatures.SkillsEnabled)
         {
-            @NavAnchor(NavOrderKeys.Skills, @<text>&#x1F9E0; Skills</text>)
+            @NavAnchor(NavOrderKeys.Skills, @<text><Icon Name="skills" /><span class="sidebar-nav-label">Skills</span></text>)
 
             @* Skills sub-nav -- shown when on the skills page *@
             @if (IsOnPage("skills"))
             {
                 <div class="sidebar-subnav">
-                    @SubNavAnchor("skills/explorer", @<text>&#x1F5C2;&#xFE0F; Explorer</text>)
+                    @SubNavAnchor("skills/explorer", @<text><Icon Name="workspace" /><span class="sidebar-nav-label">Explorer</span></text>)
                 </div>
             }
         }
@@ -724,7 +724,7 @@
 
     private RenderFragment RenderAgentsNav() => __builder =>
     {
-        @NavAnchor(NavOrderKeys.Agents, @<text>&#x1F916; Agents</text>)
+        @NavAnchor(NavOrderKeys.Agents, @<text><Icon Name="agents" /><span class="sidebar-nav-label">Agents</span></text>)
 
         @* Agents sub-nav -- only shown when on the agents page *@
         @if (IsOnPage("agents"))
@@ -747,7 +747,7 @@
         @* #2973: the one documented override. "nav-cron-jobs" tracks the LABEL, not the route, and
            predates the helper; renaming it would break live consumers for zero functional gain. The
            route-derived "nav-cron" is emitted alongside it as data-testid-alias. *@
-        @NavAnchor(NavOrderKeys.Cron, @<text>&#x23F0; Cron Jobs</text>, "nav-cron-jobs")
+        @NavAnchor(NavOrderKeys.Cron, @<text><Icon Name="cron-jobs" /><span class="sidebar-nav-label">Cron Jobs</span></text>, "nav-cron-jobs")
     };
 
     // #3346: the Plugins page (#2687) shipped routed at /plugins but with no sidebar entry, so it
@@ -757,14 +757,14 @@
     // special-casing, so user order overrides apply to it exactly as to any other built-in.
     private RenderFragment RenderPluginsNav() => __builder =>
     {
-        @NavAnchor(NavOrderKeys.Plugins, @<text>&#x1F9E9; Plugins</text>)
+        @NavAnchor(NavOrderKeys.Plugins, @<text><Icon Name="plugins" /><span class="sidebar-nav-label">Plugins</span></text>)
     };
 
     // The in-app guide. Goes through the same NavAnchor helper as every other entry, so it inherits
     // the route-derived testid, the active-state matching and any user ordering override.
     private RenderFragment RenderGuideNav() => __builder =>
     {
-        @NavAnchor(NavOrderKeys.Guide, @<text>&#x1F4D6; Guide</text>)
+        @NavAnchor(NavOrderKeys.Guide, @<text><Icon Name="guide" /><span class="sidebar-nav-label">Guide</span></text>)
     };
 
     protected override void OnInitialized()
@@ -1243,13 +1243,16 @@
                             aria-pressed="@(conversation.IsPinned ? "true" : "false")"
                             @onclick:stopPropagation="true"
                             @onclick="() => SetConversationPinnedAsync(agent.AgentId, conversation.ConversationId, !conversation.IsPinned)">
-                        &#x1F4CC;
+                        <Icon Name="pin" Size="16" />
                     </button>
                     <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
                             title="@(IsUnattendedConversation(conversation) ? "Close conversation \u2014 reopens on next trigger" : "Archive conversation")"
                             @onclick:stopPropagation="true"
                             @onclick="() => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, IsUnattendedConversation(conversation))">
-                        @(IsUnattendedConversation(conversation) ? "\u2715" : "\uD83D\uDDD1\uFE0F")
+                        @* An unattended conversation reopens on its next trigger, so closing it
+                           pauses it rather than discarding it. *@
+                        <Icon Name="@(IsUnattendedConversation(conversation) ? "pause" : "delete")"
+                              Size="16" Class="bn-icon-inherit" />
                     </button>
                 </div>
                 @RenderSectionMenu(agent, conversation)
@@ -1272,7 +1275,7 @@
                 aria-expanded="@(isOpen ? "true" : "false")"
                 @onclick:stopPropagation="true"
                 @onclick="() => ToggleSectionMenu(conversation.ConversationId)">
-            &#x1F4C1;
+            <Icon Name="move" Size="16" />
         </button>
     };
 
