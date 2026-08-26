@@ -67,17 +67,20 @@ internal sealed class CronStoreTestContext : IAsyncDisposable
         if (!Directory.Exists(TempDirectory))
             return;
 
-        for (var attempt = 0; attempt < 5; attempt++)
-        {
-            try
+        await TestAwait.EventuallyAsync(
+            () =>
             {
-                Directory.Delete(TempDirectory, recursive: true);
-                break;
-            }
-            catch (IOException) when (attempt < 4)
-            {
-                await Task.Delay(50);
-            }
-        }
+                try
+                {
+                    Directory.Delete(TempDirectory, recursive: true);
+                    return true;
+                }
+                catch (IOException)
+                {
+                    return false;
+                }
+            },
+            $"temporary cron store directory '{TempDirectory}' to be deletable",
+            timeout: TimeSpan.FromSeconds(2));
     }
 }

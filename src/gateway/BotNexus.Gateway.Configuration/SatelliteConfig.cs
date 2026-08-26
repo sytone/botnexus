@@ -53,6 +53,12 @@ public sealed class SatelliteConfig
     /// for it to gate. An empty list means "no capabilities declared" and behaves identically to a
     /// fully populated one. Use <see cref="Enabled"/> to actually stop a satellite connecting.</para>
     /// </summary>
+    [Display(
+        Name = "Capabilities",
+        Description = "Capabilities this satellite advertises. Valid values: notify, canvas, exec. DISPLAY-ONLY - this is NOT an authorization control (#2606). Setting a narrow list here does NOT restrict what the satellite may be asked to do: nothing in the gateway reads this list to permit or refuse an operation, and there is no satellite dispatch surface for it to gate. An empty list means \"no capabilities declared\" and behaves identically to a fully populated one. Use Enabled to actually stop a satellite connecting.",
+        GroupName = "Satellite",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "satellite", Order = 6)]
     public List<string>? Capabilities { get; set; }
 
     /// <summary>User ID of the satellite's owner. Events are filtered server-side to this user's conversations.</summary>

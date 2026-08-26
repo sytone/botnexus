@@ -51,6 +51,87 @@ public sealed class AgentDescriptorValidatorTests
         errors.ShouldContain("ApiProvider is required.");
     }
 
+    // ── Field length bounds (#3523) ───────────────────────────────────────────
+    // These fields are persisted to config.json and echoed verbatim into every registered
+    // IAgentWebhookTargetNotifier target. Unbounded, a REST caller can push arbitrary volumes of
+    // text through both. The bound is far above any legitimate value, so it only catches abuse.
+
+    [Fact]
+    public void Validate_WithOverlongDisplayName_ReturnsLengthError()
+    {
+        var descriptor = CreateValidDescriptor() with
+        {
+            DisplayName = new string('x', AgentDescriptorValidator.MaxShortFieldLength + 1)
+        };
+
+        AgentDescriptorValidator.Validate(descriptor)
+            .ShouldContain($"DisplayName must be {AgentDescriptorValidator.MaxShortFieldLength} characters or fewer.");
+    }
+
+    [Fact]
+    public void Validate_WithDisplayNameExactlyAtTheBound_ReturnsNoLengthError()
+    {
+        var descriptor = CreateValidDescriptor() with
+        {
+            DisplayName = new string('x', AgentDescriptorValidator.MaxShortFieldLength)
+        };
+
+        // Boundary asserted explicitly: an off-by-one here would reject legitimate values.
+        AgentDescriptorValidator.Validate(descriptor)
+            .ShouldNotContain(e => e.StartsWith("DisplayName must be", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_WithOverlongModelId_ReturnsLengthError()
+    {
+        var descriptor = CreateValidDescriptor() with
+        {
+            ModelId = new string('m', AgentDescriptorValidator.MaxShortFieldLength + 1)
+        };
+
+        AgentDescriptorValidator.Validate(descriptor)
+            .ShouldContain($"ModelId must be {AgentDescriptorValidator.MaxShortFieldLength} characters or fewer.");
+    }
+
+    [Fact]
+    public void Validate_WithOverlongApiProvider_ReturnsLengthError()
+    {
+        var descriptor = CreateValidDescriptor() with
+        {
+            ApiProvider = new string('p', AgentDescriptorValidator.MaxShortFieldLength + 1)
+        };
+
+        AgentDescriptorValidator.Validate(descriptor)
+            .ShouldContain($"ApiProvider must be {AgentDescriptorValidator.MaxShortFieldLength} characters or fewer.");
+    }
+
+    [Fact]
+    public void Validate_WithOverlongIsolationStrategy_ReturnsLengthError()
+    {
+        var descriptor = CreateValidDescriptor() with
+        {
+            IsolationStrategy = new string('s', AgentDescriptorValidator.MaxShortFieldLength + 1)
+        };
+
+        AgentDescriptorValidator.Validate(descriptor)
+            .ShouldContain($"IsolationStrategy must be {AgentDescriptorValidator.MaxShortFieldLength} characters or fewer.");
+    }
+
+    [Fact]
+    public void Validate_WithOverlongAgentId_ReturnsLengthError()
+    {
+        // AgentId cannot be blank (Vogen rejects it at construction) but it IS unbounded, and it
+        // becomes both a URL path segment and a downstream key.
+        var descriptor = CreateValidDescriptor() with
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From(
+                new string('a', AgentDescriptorValidator.MaxAgentIdLength + 1))
+        };
+
+        AgentDescriptorValidator.Validate(descriptor)
+            .ShouldContain($"AgentId must be {AgentDescriptorValidator.MaxAgentIdLength} characters or fewer.");
+    }
+
     [Fact]
     public void Validate_WithSystemPromptAndSystemPromptFile_ReturnsNoPromptErrors()
     {

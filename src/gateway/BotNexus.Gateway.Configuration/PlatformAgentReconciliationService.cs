@@ -83,7 +83,7 @@ public sealed class PlatformAgentReconciliationService : IHostedService
         var configPath = fileSystem.Path.Combine(home.RootPath, "config.json");
         var backup = new ConfigBackupService(ResolveBackupDirectory(home), fileSystem);
         return new PlatformAgentReconciliationService(
-            new PlatformConfigWriter(configPath, fileSystem, backup),
+            Writers.ConfigWriterFactory.Create(configPath, fileSystem, backup),
             catalog ?? BundledPlatformAgents.All,
             logger);
     }
@@ -293,3 +293,4 @@ public sealed class PlatformAgentReconciliationService : IHostedService
             ? value.GetValue<string>()
             : null;
 }
+

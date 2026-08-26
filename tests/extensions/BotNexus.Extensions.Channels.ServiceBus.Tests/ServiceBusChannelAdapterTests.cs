@@ -63,7 +63,7 @@ public sealed class ServiceBusChannelAdapterTests
             agentId = "coding-agent",
             conversationId = "conv-xyz",
             sessionId = "sess-123",
-            senderId = "user@org.com",
+            senderId = "user@domain.com",
             role = "user",
             content = "Hello agent",
             replyTo = "botnexus-outbound",
@@ -78,7 +78,7 @@ public sealed class ServiceBusChannelAdapterTests
             .Single();
 
         dispatched.ChannelType.ShouldBe(ChannelKey.From("servicebus"));
-        dispatched.SenderId.ShouldBe("user@org.com");
+        dispatched.SenderId.ShouldBe("user@domain.com");
         dispatched.Content.ShouldBe("Hello agent");
         dispatched.RoutingHints.ShouldNotBeNull();
         dispatched.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("coding-agent");
@@ -96,7 +96,7 @@ public sealed class ServiceBusChannelAdapterTests
         var adapter = CreateAdapter(factory: factory);
         var dispatcher = StartAdapter(adapter);
 
-        var json = """{ "content": "minimal message", "senderId": "bot@sys.com" }""";
+        var json = """{ "content": "minimal message", "senderId": "bot@domain.com" }""";
 
         await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
@@ -106,12 +106,12 @@ public sealed class ServiceBusChannelAdapterTests
             .Single();
 
         dispatched.Content.ShouldBe("minimal message");
-        dispatched.SenderId.ShouldBe("bot@sys.com");
+        dispatched.SenderId.ShouldBe("bot@domain.com");
         // Minimal envelope: no overrides supplied. LiftFromStrings returns null when all 3 inputs blank,
         // so RoutingHints itself is null on the inbound message.
         dispatched.RoutingHints.ShouldBeNull();
         // ChannelAddress falls back to senderId when conversationId is absent.
-        dispatched.ChannelAddress.Value.ShouldBe("bot@sys.com");
+        dispatched.ChannelAddress.Value.ShouldBe("bot@domain.com");
     }
 
     [Fact]
@@ -144,13 +144,13 @@ public sealed class ServiceBusChannelAdapterTests
             InboundQueueName = "q",
             DefaultReplyQueueName = "q-out",
         };
-        options.AllowedSenderIds.Add("allowed@org.com");
+        options.AllowedSenderIds.Add("allowed@domain.com");
 
         var factory = new FakeServiceBusAdapterClientFactory();
         var adapter = CreateAdapter(options, factory);
         var dispatcher = StartAdapter(adapter);
 
-        var json = """{ "content": "blocked", "senderId": "unknown@evil.com" }""";
+        var json = """{ "content": "blocked", "senderId": "unknown@domain.com" }""";
 
         await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
@@ -168,13 +168,13 @@ public sealed class ServiceBusChannelAdapterTests
             InboundQueueName = "q",
             DefaultReplyQueueName = "q-out",
         };
-        options.AllowedSenderIds.Add("allowed@org.com");
+        options.AllowedSenderIds.Add("allowed@domain.com");
 
         var factory = new FakeServiceBusAdapterClientFactory();
         var adapter = CreateAdapter(options, factory);
         var dispatcher = StartAdapter(adapter);
 
-        var json = """{ "content": "hello", "senderId": "allowed@org.com" }""";
+        var json = """{ "content": "hello", "senderId": "allowed@domain.com" }""";
 
         await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
@@ -193,7 +193,7 @@ public sealed class ServiceBusChannelAdapterTests
         StartAdapter(adapter);
 
         // Simulate an inbound message that sets up the pending reply context.
-        var json = """{ "content": "hi", "senderId": "u@x.com", "conversationId": "conv-1", "replyTo": "custom-reply-queue", "correlationId": "corr-99" }""";
+        var json = """{ "content": "hi", "senderId": "u@domain.com", "conversationId": "conv-1", "replyTo": "custom-reply-queue", "correlationId": "corr-99" }""";
         await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
         var outbound = new OutboundMessage
@@ -220,7 +220,7 @@ public sealed class ServiceBusChannelAdapterTests
         StartAdapter(adapter);
 
         // Inbound with no replyTo → pending context has null ReplyTo.
-        var json = """{ "content": "hi", "senderId": "u@x.com", "conversationId": "conv-2" }""";
+        var json = """{ "content": "hi", "senderId": "u@domain.com", "conversationId": "conv-2" }""";
         await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
         var outbound = new OutboundMessage
@@ -247,7 +247,7 @@ public sealed class ServiceBusChannelAdapterTests
 
         const string correlationId = "corr-preserved-42";
 
-        var inboundJson = $$"""{ "content": "q", "senderId": "s@x.com", "conversationId": "conv-3", "correlationId": "{{correlationId}}" }""";
+        var inboundJson = $$"""{ "content": "q", "senderId": "s@domain.com", "conversationId": "conv-3", "correlationId": "{{correlationId}}" }""";
         await adapter.HandleMessageBodyAsync(inboundJson, null, null, CancellationToken.None);
 
         var outbound = new OutboundMessage
@@ -296,7 +296,7 @@ public sealed class ServiceBusChannelAdapterTests
 
         // An unrelated inbound request is in flight on the SAME channel address.
         const string channelAddress = "agent-shared-address";
-        var inboundJson = $$"""{ "content": "unrelated question", "senderId": "victim@x.com", "conversationId": "{{channelAddress}}", "replyTo": "victim-reply-queue", "correlationId": "corr-victim" }""";
+        var inboundJson = $$"""{ "content": "unrelated question", "senderId": "victim@domain.com", "conversationId": "{{channelAddress}}", "replyTo": "victim-reply-queue", "correlationId": "corr-victim" }""";
         await adapter.HandleMessageBodyAsync(inboundJson, null, "inbound-victim", CancellationToken.None);
 
         // A proactive send from a DIFFERENT session, carrying its own destination and no
@@ -393,7 +393,7 @@ public sealed class ServiceBusChannelAdapterTests
         StartAdapter(adapter);
 
         const string requestKey = "inbound-legit";
-        var inboundJson = """{ "content": "q", "senderId": "u@x.com", "conversationId": "conv-legit", "replyTo": "legit-reply", "correlationId": "corr-legit" }""";
+        var inboundJson = """{ "content": "q", "senderId": "u@domain.com", "conversationId": "conv-legit", "replyTo": "legit-reply", "correlationId": "corr-legit" }""";
         await adapter.HandleMessageBodyAsync(inboundJson, null, requestKey, CancellationToken.None);
 
         var reply = new OutboundMessage
@@ -484,7 +484,7 @@ public sealed class ServiceBusChannelAdapterTests
 
         var appProps = new Dictionary<string, object>
         {
-            ["senderId"] = "fallback@sys.com",
+            ["senderId"] = "fallback@domain.com",
             ["agentId"] = "fallback-agent",
             ["conversationId"] = "fallback-conv",
             ["sessionId"] = "fallback-sess",
@@ -502,7 +502,7 @@ public sealed class ServiceBusChannelAdapterTests
             .Select(i => (InboundMessage)i.Arguments[0])
             .Single();
 
-        dispatched.SenderId.ShouldBe("fallback@sys.com");
+        dispatched.SenderId.ShouldBe("fallback@domain.com");
         dispatched.RoutingHints.ShouldNotBeNull();
         dispatched.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("fallback-agent");
         dispatched.RoutingHints.RequestedSessionId!.Value.Value.ShouldBe("fallback-sess");
@@ -551,15 +551,15 @@ public sealed class ServiceBusChannelAdapterTests
         const string retryMessageId = "sb-retry-msg-id";
         const string conversationId = "conv-retry-fifo";
 
-        var jsonA1 = $$"""{ "content": "msg A first delivery", "senderId": "u@x.com", "conversationId": "{{conversationId}}", "replyTo": "reply-queue-A", "correlationId": "corr-A" }""";
+        var jsonA1 = $$"""{ "content": "msg A first delivery", "senderId": "u@domain.com", "conversationId": "{{conversationId}}", "replyTo": "reply-queue-A", "correlationId": "corr-A" }""";
         await adapter.HandleMessageBodyAsync(jsonA1, null, retryMessageId, CancellationToken.None);
 
         // 2. Service Bus redelivers the same message (identical messageId) after abandonment.
-        var jsonA2 = $$"""{ "content": "msg A retry", "senderId": "u@x.com", "conversationId": "{{conversationId}}", "replyTo": "reply-queue-A", "correlationId": "corr-A" }""";
+        var jsonA2 = $$"""{ "content": "msg A retry", "senderId": "u@domain.com", "conversationId": "{{conversationId}}", "replyTo": "reply-queue-A", "correlationId": "corr-A" }""";
         await adapter.HandleMessageBodyAsync(jsonA2, null, retryMessageId, CancellationToken.None);
 
         // 3. A second, distinct message B arrives for the same conversation.
-        var jsonB = $$"""{ "content": "msg B", "senderId": "u@x.com", "conversationId": "{{conversationId}}", "replyTo": "reply-queue-B", "correlationId": "corr-B" }""";
+        var jsonB = $$"""{ "content": "msg B", "senderId": "u@domain.com", "conversationId": "{{conversationId}}", "replyTo": "reply-queue-B", "correlationId": "corr-B" }""";
         await adapter.HandleMessageBodyAsync(jsonB, null, "sb-distinct-msg-id-B", CancellationToken.None);
 
         // 4. Reply for A uses FIFO fallback (no MetaRequestKey), mirroring the live gateway path
@@ -612,8 +612,8 @@ public sealed class ServiceBusChannelAdapterTests
 
         // Two inbound messages for the same conversationId but distinct replyTo/correlationId.
         // This simulates MaxConcurrentCalls > 1 with two messages in-flight simultaneously.
-        var jsonA = """{ "content": "msg A", "senderId": "u@x.com", "conversationId": "conv-concurrent", "replyTo": "reply-queue-A", "correlationId": "corr-A" }""";
-        var jsonB = """{ "content": "msg B", "senderId": "u@x.com", "conversationId": "conv-concurrent", "replyTo": "reply-queue-B", "correlationId": "corr-B" }""";
+        var jsonA = """{ "content": "msg A", "senderId": "u@domain.com", "conversationId": "conv-concurrent", "replyTo": "reply-queue-A", "correlationId": "corr-A" }""";
+        var jsonB = """{ "content": "msg B", "senderId": "u@domain.com", "conversationId": "conv-concurrent", "replyTo": "reply-queue-B", "correlationId": "corr-B" }""";
 
         await adapter.HandleMessageBodyAsync(jsonA, null, "sb-msg-id-A", CancellationToken.None);
         await adapter.HandleMessageBodyAsync(jsonB, null, "sb-msg-id-B", CancellationToken.None);
@@ -1098,7 +1098,7 @@ public sealed class ServiceBusChannelAdapterTests
         await adapter.StartAsync(dispatcher.Object);
 
         const string messageId = "sb-lock-outlived-msg-id";
-        var json = """{ "content": "long running turn", "senderId": "u@x.com", "conversationId": "conv-lock-outlived", "replyTo": "reply-queue-lock", "correlationId": "corr-lock" }""";
+        var json = """{ "content": "long running turn", "senderId": "u@domain.com", "conversationId": "conv-lock-outlived", "replyTo": "reply-queue-lock", "correlationId": "corr-lock" }""";
 
         // Delivery 1: the turn succeeds but takes longer than the lock, so the completion
         // call fails with MessageLockLost and the broker will redeliver.

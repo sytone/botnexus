@@ -14,16 +14,22 @@ public sealed class SatelliteStaleDetectionService : BackgroundService
     private readonly ISatelliteRegistry _registry;
     private readonly ILogger<SatelliteStaleDetectionService> _logger;
     private readonly TimeSpan _checkInterval;
+    private readonly TimeProvider _timeProvider;
 
-    /// <summary>Creates the stale detection service with a 30-second check interval.</summary>
+    /// <summary>
+    /// Creates the periodic stale detector. The clock is injectable so a sweep can evaluate the
+    /// configured heartbeat boundaries without depending on wall-clock timing.
+    /// </summary>
     public SatelliteStaleDetectionService(
         ISatelliteRegistry registry,
         ILogger<SatelliteStaleDetectionService> logger,
-        TimeSpan? checkInterval = null)
+        TimeSpan? checkInterval = null,
+        TimeProvider? timeProvider = null)
     {
         _registry = registry;
         _logger = logger;
         _checkInterval = checkInterval ?? TimeSpan.FromSeconds(30);
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc />
@@ -49,9 +55,9 @@ public sealed class SatelliteStaleDetectionService : BackgroundService
         }
     }
 
-    private void DetectAndMarkStale()
+    internal void DetectAndMarkStale()
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         var stale = _registry.GetStaleSatellites(now);
 
         foreach (var satellite in stale)

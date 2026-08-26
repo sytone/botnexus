@@ -169,6 +169,7 @@ public sealed class SubAgentOptions
         Description = "Trusted sub-agent budget overrides keyed by spawning parent agent ID.",
         GroupName = "Sub-agents",
         Order = 9)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "sub-agents", Order = 9)]
     public Dictionary<string, SubAgentParentOverrideOptions> ParentOverrides { get; set; }
         = new(StringComparer.OrdinalIgnoreCase);
 
@@ -235,22 +236,52 @@ public sealed class SubAgentParentOverrideOptions
 {
     /// <summary>Gets or sets the default timeout in seconds.</summary>
     [Range(1, int.MaxValue)]
+    [Display(
+        Name = "Default timeout seconds",
+        Description = "Gets or sets the default timeout in seconds.",
+        GroupName = "Sub agent parent override",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agent-parent-override", Order = 0)]
     public int? DefaultTimeoutSeconds { get; set; }
 
     /// <summary>Gets or sets the timeout ceiling in seconds.</summary>
     [Range(1, int.MaxValue)]
+    [Display(
+        Name = "Max timeout seconds",
+        Description = "Gets or sets the timeout ceiling in seconds.",
+        GroupName = "Sub agent parent override",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agent-parent-override", Order = 1)]
     public int? MaxTimeoutSeconds { get; set; }
 
     /// <summary>Gets or sets the default turn budget.</summary>
     [Range(1, int.MaxValue)]
+    [Display(
+        Name = "Default max turns",
+        Description = "Default turn budget applied to a spawned sub-agent when the caller does not specify one.",
+        GroupName = "Sub agent parent override",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agent-parent-override", Order = 2)]
     public int? DefaultMaxTurns { get; set; }
 
     /// <summary>Gets or sets the turn ceiling.</summary>
     [Range(1, int.MaxValue)]
+    [Display(
+        Name = "Max turns ceiling",
+        Description = "Hard upper bound on a sub-agent's turn budget. A caller requesting more is clamped to this value.",
+        GroupName = "Sub agent parent override",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agent-parent-override", Order = 3)]
     public int? MaxTurnsCeiling { get; set; }
 
     /// <summary>Gets or sets the maximum concurrent sub-agents per parent session.</summary>
     [Range(1, int.MaxValue)]
+    [Display(
+        Name = "Max concurrent per session",
+        Description = "Gets or sets the maximum concurrent sub-agents per parent session.",
+        GroupName = "Sub agent parent override",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agent-parent-override", Order = 4)]
     public int? MaxConcurrentPerSession { get; set; }
 }
 

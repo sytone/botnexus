@@ -25,7 +25,7 @@ public sealed class SerilogConfigurationTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            if (File.Exists(Path.Combine(directory.FullName, "BotNexus.slnx")))
+            if (File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
             {
                 return directory.FullName;
             }
@@ -33,6 +33,6 @@ public sealed class SerilogConfigurationTests
             directory = directory.Parent;
         }
 
-        throw new InvalidOperationException("Could not locate BotNexus.slnx from test base directory.");
+        throw new InvalidOperationException("Could not locate Directory.Packages.props from test base directory.");
     }
 }

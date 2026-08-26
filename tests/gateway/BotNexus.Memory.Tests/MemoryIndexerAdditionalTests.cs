@@ -27,7 +27,6 @@ public sealed class MemoryIndexerAdditionalTests
         try
         {
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-null", "agent-a", SessionLifecycleEventType.Closed, null));
-            await Task.Delay(100);
             store.All.ShouldBeEmpty();
         }
         finally
@@ -53,7 +52,6 @@ public sealed class MemoryIndexerAdditionalTests
             ]);
 
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-created", "agent-a", SessionLifecycleEventType.Created, session));
-            await Task.Delay(100);
             store.All.ShouldBeEmpty();
         }
         finally
@@ -83,7 +81,9 @@ public sealed class MemoryIndexerAdditionalTests
             ]);
 
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-expired", "agent-a", SessionLifecycleEventType.Expired, session));
-            await WaitForAsync(() => store.All.Count == 2);
+            await TestAwait.EventuallyAsync(
+                () => store.All.Count == 2,
+                "both indexed conversation exchanges to be stored");
 
             store.All.ShouldAllBe(entry => entry.SourceType == "conversation");
             // Decode rather than match the wire shape: payloads are quoted since #2954.
@@ -121,7 +121,9 @@ public sealed class MemoryIndexerAdditionalTests
                 });
 
             await Task.WhenAll(tasks);
-            await WaitForAsync(() => store.All.Count == 8);
+            await TestAwait.EventuallyAsync(
+                () => store.All.Count == 8,
+                "all bounded conversation exchanges to be stored");
             store.All.Count().ShouldBe(8);
         }
         finally
@@ -154,7 +156,9 @@ public sealed class MemoryIndexerAdditionalTests
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-fail", "agent-a", SessionLifecycleEventType.Closed, first));
             await store.WaitForFirstInsertAttemptAsync();
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-pass", "agent-a", SessionLifecycleEventType.Closed, second));
-            await WaitForAsync(() => store.All.Any(entry => entry.SessionId == "s-pass"));
+            await TestAwait.EventuallyAsync(
+                () => store.All.Any(entry => entry.SessionId == "s-pass"),
+                "the valid session exchange to be stored");
 
             store.All.ShouldHaveSingleItem().SessionId.ShouldBe("s-pass");
         }
@@ -179,21 +183,8 @@ public sealed class MemoryIndexerAdditionalTests
             new SessionEntry { Role = MessageRole.Assistant, Content = "a" }
         ]);
         await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-after-stop", "agent-a", SessionLifecycleEventType.Closed, session));
-        await Task.Delay(100);
 
         store.All.ShouldBeEmpty();
-    }
-
-    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 5000)
-    {
-        var started = DateTime.UtcNow;
-        while (!condition())
-        {
-            if ((DateTime.UtcNow - started).TotalMilliseconds > timeoutMs)
-                throw new TimeoutException("Timed out waiting for indexing.");
-
-            await Task.Delay(20);
-        }
     }
 
     private static GatewaySession CreateSession(string sessionId, string agentId, IReadOnlyList<SessionEntry> entries)

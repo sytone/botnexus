@@ -56,10 +56,10 @@ public sealed class CronTimeZoneSingleDefinitionTests
     private static string LocateCronProjectSource()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "BotNexus.slnx")))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
             dir = dir.Parent;
 
-        dir.ShouldNotBeNull("Could not locate the repository root (BotNexus.slnx) from the test output directory.");
+        dir.ShouldNotBeNull("Could not locate the repository root (Directory.Packages.props) from the test output directory.");
 
         var cronSource = Path.Combine(dir!.FullName, "src", "gateway", "BotNexus.Cron");
         Directory.Exists(cronSource).ShouldBeTrue($"Expected the cron project source at {cronSource}.");

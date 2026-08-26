@@ -23,7 +23,7 @@ namespace BotNexus.Architecture.Tests;
 /// the provider tree rather than a defect discovered in production two generations later.
 /// </para>
 /// </remarks>
-public class ProviderCapabilitiesArchitectureTests
+public class ProviderCapabilitiesArchitectureTests : ArchitectureTest
 {
     /// <summary>The provider implementations required by #2432 to declare a capability record.</summary>
     private static readonly string[] RealProviderFiles =
@@ -85,7 +85,6 @@ public class ProviderCapabilitiesArchitectureTests
         @"\b\w*[Mm]odel\w*(\.Id)?\s*\.\s*(Contains|StartsWith|EndsWith|IndexOf)\s*\(\s*""",
         RegexOptions.Compiled);
 
-    private static string RepoRoot => FindRepoRoot();
 
     /// <summary>
     /// AC1: every real provider surfaces a <c>ProviderCapabilities</c>. Reading the source rather
@@ -243,28 +242,17 @@ public class ProviderCapabilitiesArchitectureTests
         return Regex.Replace(withoutBlock, @"//[^\n]*", "");
     }
 
-    private static List<string> EnumerateProviderSourceFiles() =>
-        Directory.EnumerateDirectories(Path.Combine(RepoRoot, "src", "agent"), "BotNexus.Agent.Providers.*")
+    private List<string> EnumerateProviderSourceFiles() =>
+        Directory.EnumerateDirectories(Path.Combine(Repository.Root, "src", "agent"), "BotNexus.Agent.Providers.*")
             .SelectMany(dir => Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories))
             .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                         && !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .ToList();
 
-    private static string Relative(string absolute) =>
-        Path.GetRelativePath(RepoRoot, absolute).Replace(Path.DirectorySeparatorChar, '/');
+    private string Relative(string absolute) =>
+        Path.GetRelativePath(Repository.Root, absolute).Replace(Path.DirectorySeparatorChar, '/');
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

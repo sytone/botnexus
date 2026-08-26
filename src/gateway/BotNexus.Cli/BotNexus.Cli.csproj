@@ -14,7 +14,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageTags>ai;agent;botnexus;dotnet;cli</PackageTags>
     <PackageReadmeFile>NUGET_README.md</PackageReadmeFile>
-    <!-- When the CLI invokes 'dotnet build' on the solution, it passes SkipCli=true
+    <!-- When the CLI invokes 'dotnet build' on the deployment traversal, it passes SkipCli=true
          so the CLI project skips rebuilding itself (the DLL is already loaded and locked). -->
     <IsExcludedFromBuild Condition="'$(SkipCli)' == 'true'">true</IsExcludedFromBuild>
   </PropertyGroup>

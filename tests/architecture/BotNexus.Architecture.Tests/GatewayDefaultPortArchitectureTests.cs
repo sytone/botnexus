@@ -27,7 +27,7 @@ namespace BotNexus.Architecture.Tests;
 /// <c>ASPNETCORE_URLS</c>, never a fallback - and is out of scope here.
 /// </para>
 /// </remarks>
-public sealed class GatewayDefaultPortArchitectureTests
+public sealed class GatewayDefaultPortArchitectureTests : ArchitectureTest
 {
     /// <summary>The single file permitted to spell the gateway's default listen URL.</summary>
     private const string CanonicalDefinition = "GatewayDefaults.cs";
@@ -44,7 +44,7 @@ public sealed class GatewayDefaultPortArchitectureTests
     [Fact]
     public void GatewayDefaultListenUrl_IsSpelledInExactlyOnePlaceUnderSrc()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var sourceRoot = Path.Combine(repoRoot, "src");
         Directory.Exists(sourceRoot).ShouldBeTrue($"Expected a src directory at '{sourceRoot}'.");
 
@@ -98,7 +98,7 @@ public sealed class GatewayDefaultPortArchitectureTests
     [Fact]
     public void StaleGatewayPort5000_DoesNotAppearAsADefaultUrlUnderSrc()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var stale = new Regex(@"(?:localhost|127\.0\.0\.1|0\.0\.0\.0)\s*:\s*5000\b", RegexOptions.Compiled);
 
         var offenders = Directory
@@ -134,20 +134,4 @@ public sealed class GatewayDefaultPortArchitectureTests
         return Regex.Replace(withoutBlockComments, @"(?<!:)//[^\r\n]*", " ");
     }
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git"))
-                || File.Exists(Path.Combine(directory.FullName, ".git")))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Unable to locate the repository root from " + AppContext.BaseDirectory);
-    }
 }

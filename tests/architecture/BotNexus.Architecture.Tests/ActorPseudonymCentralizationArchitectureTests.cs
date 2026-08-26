@@ -19,9 +19,8 @@ namespace BotNexus.Architecture.Tests;
 /// <see cref="SecretRedactionFenceArchitectureTests"/>) because "this method re-implements the
 /// scheme" is a syntactic property that reflection cannot see.</para>
 /// </summary>
-public sealed class ActorPseudonymCentralizationArchitectureTests
+public sealed class ActorPseudonymCentralizationArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
     /// <summary>The one file allowed to contain the actor-pseudonym truncating hex digest.</summary>
     private const string CanonicalImplementation =
@@ -191,29 +190,18 @@ public sealed class ActorPseudonymCentralizationArchitectureTests
             "Positive pin: delegating to ActorPseudonym.For must be accepted.");
     }
 
-    private static List<string> EnumerateSourceFiles() =>
-        Directory.EnumerateFiles(Path.Combine(RepoRoot, "src"), "*.cs", SearchOption.AllDirectories)
+    private List<string> EnumerateSourceFiles() =>
+        Directory.EnumerateFiles(Path.Combine(Repository.Root, "src"), "*.cs", SearchOption.AllDirectories)
             .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
                             StringComparison.Ordinal)
                         && !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
                             StringComparison.Ordinal))
             .ToList();
 
-    private static string Relative(string absolute) =>
-        Path.GetRelativePath(RepoRoot, absolute).Replace(Path.DirectorySeparatorChar, '/');
+    private string Relative(string absolute) =>
+        Path.GetRelativePath(Repository.Root, absolute).Replace(Path.DirectorySeparatorChar, '/');
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

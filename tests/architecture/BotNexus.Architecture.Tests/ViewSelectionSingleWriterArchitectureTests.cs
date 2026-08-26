@@ -27,7 +27,7 @@ namespace BotNexus.Architecture.Tests;
 /// self-test proving it ignores the legitimate data-only shape.
 /// </para>
 /// </remarks>
-public sealed class ViewSelectionSingleWriterArchitectureTests
+public sealed class ViewSelectionSingleWriterArchitectureTests : ArchitectureTest
 {
     /// <summary>The one class permitted to assign the view-selection backing field / expose SelectView.</summary>
     private const string SoleWriterFileName = "ClientStateStore.cs";
@@ -46,7 +46,7 @@ public sealed class ViewSelectionSingleWriterArchitectureTests
     [Fact]
     public void ViewSelectionBackingState_IsAssignedInExactlyOneClass()
     {
-        var servicesDir = ServicesDir();
+        var servicesDir = Repository.Path("src", s_servicesRelativeDir);
 
         var violations = new List<string>();
         foreach (var file in Directory.EnumerateFiles(servicesDir, "*.cs", SearchOption.AllDirectories))
@@ -72,7 +72,7 @@ public sealed class ViewSelectionSingleWriterArchitectureTests
     {
         // Anti-vacuity: the sole-writer file MUST itself contain the assignment, otherwise the
         // Rule-1 scan above would pass trivially because nobody assigns it anywhere.
-        var soleWriter = Path.Combine(ServicesDir(), SoleWriterFileName);
+        var soleWriter = Path.Combine(Repository.Path("src", s_servicesRelativeDir), SoleWriterFileName);
         File.Exists(soleWriter).ShouldBeTrue($"Expected the sole writer at {soleWriter}");
         AssignsSelectionBackingState(StripComments(File.ReadAllText(soleWriter)))
             .ShouldBeTrue($"{SoleWriterFileName} must assign _selection — it is the sole view-selection writer (#2246).");
@@ -83,7 +83,7 @@ public sealed class ViewSelectionSingleWriterArchitectureTests
     [Fact]
     public void InboundEventHandlers_DoNotReferenceSelectViewOrSelectionSetter()
     {
-        var servicesDir = ServicesDir();
+        var servicesDir = Repository.Path("src", s_servicesRelativeDir);
 
         var violations = new List<string>();
         foreach (var file in Directory.EnumerateFiles(servicesDir, "*.cs", SearchOption.AllDirectories))
@@ -212,15 +212,4 @@ public sealed class ViewSelectionSingleWriterArchitectureTests
         return Regex.Replace(noBlock, @"//[^\r\n]*", string.Empty);
     }
 
-    private static string ServicesDir()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-            current = current.Parent;
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-
-        var dir = Path.Combine(current.FullName, "src", s_servicesRelativeDir);
-        Directory.Exists(dir).ShouldBeTrue("Expected portal client-state services dir at " + dir);
-        return dir;
-    }
 }

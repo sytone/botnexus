@@ -31,7 +31,7 @@ namespace BotNexus.Architecture.Tests;
 /// itself (so the per-method fence is not vacuous against a refactor that deletes
 /// the helper but leaves stale call sites uncompilable).</para>
 /// </remarks>
-public sealed class AgentExchangeArchiveArchitectureTests
+public sealed class AgentExchangeArchiveArchitectureTests : ArchitectureTest
 {
     private const string HelperName = "ArchiveOnExchangeEndAsync";
 
@@ -276,7 +276,7 @@ public sealed class AgentExchangeArchiveArchitectureTests
         return pattern.IsMatch(body);
     }
 
-    private static (string Source, List<(string Name, string Body, int StartIndex)> Methods)
+    private (string Source, List<(string Name, string Body, int StartIndex)> Methods)
         LoadAndSplit(string path)
     {
         var source = File.ReadAllText(path);
@@ -289,7 +289,7 @@ public sealed class AgentExchangeArchiveArchitectureTests
     /// splitter in <see cref="AgentExchangeConversationArchitectureTests"/>; the regex
     /// supports generic return types like <c>Task&lt;AgentExchangeResult&gt;</c>.
     /// </summary>
-    private static List<(string Name, string Body, int StartIndex)> SplitIntoMethodBodies(string source)
+    private List<(string Name, string Body, int StartIndex)> SplitIntoMethodBodies(string source)
     {
         var methods = new List<(string, string, int)>();
         var headerPattern = new Regex(
@@ -322,10 +322,10 @@ public sealed class AgentExchangeArchiveArchitectureTests
         return methods;
     }
 
-    private static string LocateAgentExchangeServiceFile()
+    private string LocateAgentExchangeServiceFile()
     {
         var path = Path.Combine(
-            FindSourceRoot(),
+            Repository.SourceRoot,
             "gateway",
             "BotNexus.Gateway",
             "Agents",
@@ -335,10 +335,10 @@ public sealed class AgentExchangeArchiveArchitectureTests
     }
 
     // #1542: the shared turn loop (RunExchangeLoopAsync + ArchiveOnExchangeEndAsync) lives here.
-    private static string LocateAgentExchangeTurnEngineFile()
+    private string LocateAgentExchangeTurnEngineFile()
     {
         var path = Path.Combine(
-            FindSourceRoot(),
+            Repository.SourceRoot,
             "gateway",
             "BotNexus.Gateway",
             "Agents",
@@ -348,10 +348,10 @@ public sealed class AgentExchangeArchiveArchitectureTests
     }
 
     // #1542: the cross-world sender path (ConverseCrossWorldAsync) lives here.
-    private static string LocateCrossWorldExchangeRouterFile()
+    private string LocateCrossWorldExchangeRouterFile()
     {
         var path = Path.Combine(
-            FindSourceRoot(),
+            Repository.SourceRoot,
             "gateway",
             "BotNexus.Gateway",
             "Agents",
@@ -360,10 +360,10 @@ public sealed class AgentExchangeArchiveArchitectureTests
         return path;
     }
 
-    private static string LocateCrossWorldFederationControllerFile()
+    private string LocateCrossWorldFederationControllerFile()
     {
         var path = Path.Combine(
-            FindSourceRoot(),
+            Repository.SourceRoot,
             "gateway",
             "BotNexus.Gateway.Api",
             "Controllers",
@@ -372,17 +372,4 @@ public sealed class AgentExchangeArchiveArchitectureTests
         return path;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current!.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

@@ -31,7 +31,7 @@ namespace BotNexus.Architecture.Tests;
 ///   </item>
 /// </list>
 /// </remarks>
-public sealed class PortalLoadPathArchitectureTests
+public sealed class PortalLoadPathArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// Rule 1. Pins that no client file pairs a <c>SubscribeAll</c> result with a
@@ -85,7 +85,7 @@ public sealed class PortalLoadPathArchitectureTests
     public void ConversationChangeNotifier_DoesNotBroadcastToAllClients()
     {
         var file = Path.Combine(
-            RepoRoot(),
+            Repository.Root,
             "src",
             "extensions",
             "BotNexus.Extensions.Channels.SignalR",
@@ -119,10 +119,10 @@ public sealed class PortalLoadPathArchitectureTests
         return Regex.Replace(withoutBlock, @"//[^\r\n]*", string.Empty);
     }
 
-    private static List<string> ClientCoreFiles()
+    private List<string> ClientCoreFiles()
     {
         var dir = Path.Combine(
-            RepoRoot(),
+            Repository.Root,
             "src",
             "extensions",
             "BotNexus.Extensions.Channels.SignalR.BlazorClient.Core",
@@ -132,13 +132,4 @@ public sealed class PortalLoadPathArchitectureTests
         return [.. Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories)];
     }
 
-    private static string RepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-            current = current.Parent;
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

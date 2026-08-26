@@ -26,7 +26,7 @@ namespace BotNexus.Architecture.Tests;
 /// 3. <c>DefaultSubAgentManager.SpawnAsync</c> must pattern-match on
 ///    <c>request.Mode</c> rather than reading any legacy field.
 /// </remarks>
-public sealed class SubAgentSpawnRequestShapeTests
+public sealed class SubAgentSpawnRequestShapeTests : ArchitectureTest
 {
     private static readonly string[] s_deletedLegacyProperties =
     {
@@ -228,25 +228,12 @@ public sealed class SubAgentSpawnRequestShapeTests
             "The Mirror-pattern regex falsely matched clean source.");
     }
 
-    private static string LocateManagerFile()
+    private string LocateManagerFile()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var path = Path.Combine(srcRoot, "gateway", "BotNexus.Gateway", "Agents", "DefaultSubAgentManager.cs");
         File.Exists(path).ShouldBeTrue("Expected DefaultSubAgentManager.cs at " + path);
         return path;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current!.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

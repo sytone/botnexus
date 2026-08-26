@@ -72,7 +72,6 @@ public sealed class MobileReconnectLoopTests
 
         // And it did not keep dialling over the now-live socket.
         pacer.ReleaseAll();
-        await Task.Delay(50);
         attempts.ShouldBe(failuresBeforeRecovery + 1);
     }
 
@@ -330,7 +329,6 @@ public sealed class MobileReconnectLoopTests
         var atStop = attempts;
 
         pacer.ReleaseAll();
-        await Task.Delay(50);
 
         attempts.ShouldBe(atStop);
         loop.IsRetrying.ShouldBeFalse();
@@ -403,7 +401,7 @@ public sealed class MobileReconnectLoopTests
                 if (_releaseAll)
                     return Task.CompletedTask;
 
-                tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                tcs = new TaskCompletionSource();
                 _pending = tcs;
             }
 
@@ -426,41 +424,21 @@ public sealed class MobileReconnectLoopTests
 
         private async Task<bool> ReleaseOneAsync()
         {
-            // Wait for the loop to park on a delay before releasing it. This is a handshake with a
-            // generous scheduling allowance, not a timing assertion.
-            for (var spins = 0; spins < 500; spins++)
-            {
-                TaskCompletionSource? tcs;
-                lock (_sync)
-                    tcs = _pending;
-
-                if (tcs is not null)
+            TaskCompletionSource? pending = null;
+            await TestAwait.EventuallyAsync(
+                () =>
                 {
                     lock (_sync)
-                        _pending = null;
-
-                    var before = Requested.Count;
-                    tcs.TrySetResult();
-
-                    // Let the attempt run and the next delay be requested (or the loop finish).
-                    for (var wait = 0; wait < 500; wait++)
                     {
-                        await Task.Yield();
-                        await Task.Delay(1);
-                        lock (_sync)
-                        {
-                            if (_pending is not null || Requested.Count > before)
-                                return true;
-                        }
+                        pending = _pending;
+                        _pending = null;
                     }
+                    return pending is not null;
+                },
+                "the mobile reconnect loop to request its next delay");
 
-                    return true;
-                }
-
-                await Task.Delay(1);
-            }
-
-            return false;
+            pending!.TrySetResult();
+            return true;
         }
 
         /// <summary>Makes all present and future waits complete immediately.</summary>

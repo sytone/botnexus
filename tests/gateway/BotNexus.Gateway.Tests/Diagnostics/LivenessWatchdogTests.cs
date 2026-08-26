@@ -22,14 +22,17 @@ public sealed class ActivityTrackerTests
     }
 
     [Fact]
-    public async Task TimeSinceLastActivity_IncreasesBetweenCalls()
+    public void TimeSinceLastActivity_IncreasesWhenClockAdvances()
     {
-        var tracker = new ActivityTracker();
+        var timeProvider = new ManualTimeProvider(DateTimeOffset.Parse(
+            "2026-08-21T12:00:00Z",
+            System.Globalization.CultureInfo.InvariantCulture));
+        var tracker = new ActivityTracker(timeProvider);
         tracker.RecordActivity();
 
-        await Task.Delay(100);
+        timeProvider.Advance(TimeSpan.FromMilliseconds(100));
 
-        tracker.TimeSinceLastActivity.TotalMilliseconds.ShouldBeGreaterThanOrEqualTo(50);
+        tracker.TimeSinceLastActivity.ShouldBe(TimeSpan.FromMilliseconds(100));
     }
 
     [Fact]

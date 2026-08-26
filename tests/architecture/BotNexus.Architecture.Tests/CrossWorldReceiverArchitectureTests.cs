@@ -34,7 +34,7 @@ namespace BotNexus.Architecture.Tests;
 ///    removes the dep, every other invariant collapses.
 /// </para>
 /// </remarks>
-public sealed class CrossWorldReceiverArchitectureTests
+public sealed class CrossWorldReceiverArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void CrossWorldFederationController_DoesNotCall_SessionIdForAgentConversation()
@@ -334,7 +334,7 @@ public sealed class CrossWorldReceiverArchitectureTests
             "find it, fences cannot inspect it. Method splitter found: " + string.Join(", ", names));
     }
 
-    private static List<(string Name, string Body, int StartIndex)> SplitIntoMethodBodies(string source)
+    private List<(string Name, string Body, int StartIndex)> SplitIntoMethodBodies(string source)
     {
         var methods = new List<(string, string, int)>();
         // Match: <access-modifier> [async|static|...]* <return-type> <name> (
@@ -377,10 +377,10 @@ public sealed class CrossWorldReceiverArchitectureTests
         return methods;
     }
 
-    private static string LocateControllerFile()
+    private string LocateControllerFile()
     {
         var path = Path.Combine(
-            FindSourceRoot(),
+            Repository.SourceRoot,
             "gateway",
             "BotNexus.Gateway.Api",
             "Controllers",
@@ -400,17 +400,4 @@ public sealed class CrossWorldReceiverArchitectureTests
         return line;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

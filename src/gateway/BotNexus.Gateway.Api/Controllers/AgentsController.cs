@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Webhooks;
 using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -26,6 +27,7 @@ public sealed class AgentsController : ControllerBase
     private readonly IReadOnlyList<IAgentChangeNotifier> _agentChangeNotifiers;
     private readonly IHeartbeatProvisioner? _heartbeatProvisioner;
     private readonly ISkillReviewProvisioner? _skillReviewProvisioner;
+    private readonly IAgentWebhookProvisioner? _webhookProvisioner;
     private readonly ModelRegistry? _modelRegistry;
     private readonly ILogger<AgentsController> _logger;
 
@@ -40,7 +42,8 @@ public sealed class AgentsController : ControllerBase
         IHeartbeatProvisioner? heartbeatProvisioner = null,
         ISkillReviewProvisioner? skillReviewProvisioner = null,
         ModelRegistry? modelRegistry = null,
-        ILogger<AgentsController>? logger = null)
+        ILogger<AgentsController>? logger = null,
+        IAgentWebhookProvisioner? webhookProvisioner = null)
     {
         _registry = registry;
         _supervisor = supervisor;
@@ -48,6 +51,7 @@ public sealed class AgentsController : ControllerBase
         _agentChangeNotifiers = agentChangeNotifiers?.ToArray() ?? [];
         _heartbeatProvisioner = heartbeatProvisioner;
         _skillReviewProvisioner = skillReviewProvisioner;
+        _webhookProvisioner = webhookProvisioner;
         _modelRegistry = modelRegistry;
         _logger = logger ?? NullLogger<AgentsController>.Instance;
     }
@@ -93,9 +97,43 @@ public sealed class AgentsController : ControllerBase
     [HttpGet("{agentId}")]
     public ActionResult<AgentDescriptor> Get(string agentId)
     {
-        var typedAgentId = AgentId.From(agentId);
-        var descriptor = _registry.Get(typedAgentId);
+        if (!TryParseAgentId(agentId, out var typedAgentId, out var error))
+            return BadRequest(new { error });
+        var descriptor = _registry.Get(typedAgentId!.Value);
         return descriptor is not null ? Ok(descriptor) : NotFound();
+    }
+
+    /// <summary>
+    /// Parses a route-supplied agent id, turning a blank-after-normalization or over-long value
+    /// into a 400 rather than the 500 that <see cref="AgentId.From(string)"/> would produce.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="AgentId"/> trims its input and rejects whitespace, so a route segment of
+    /// <c>"%20"</c> is non-empty on the wire but blank after normalization. Left unguarded that
+    /// throws out of the action and surfaces as an unhandled 500 - a validation failure reported
+    /// as a server fault. Length is bounded here for the same reason
+    /// <c>AgentDescriptorValidator</c> bounds it on the body: the id becomes a URL path segment
+    /// and a downstream key.
+    /// </remarks>
+    private static bool TryParseAgentId(string? agentId, out AgentId? typedAgentId, out string? error)
+    {
+        typedAgentId = null;
+
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            error = "Agent id is required and must not be blank after trimming.";
+            return false;
+        }
+
+        if (agentId.Trim().Length > BotNexus.Gateway.Agents.AgentDescriptorValidator.MaxAgentIdLength)
+        {
+            error = $"Agent id must be {BotNexus.Gateway.Agents.AgentDescriptorValidator.MaxAgentIdLength} characters or fewer.";
+            return false;
+        }
+
+        typedAgentId = AgentId.From(agentId);
+        error = null;
+        return true;
     }
 
     /// <summary>
@@ -161,6 +199,10 @@ public sealed class AgentsController : ControllerBase
                 await _heartbeatProvisioner.ProvisionAsync(descriptor, cancellationToken);
             if (_skillReviewProvisioner is not null)
                 await _skillReviewProvisioner.ProvisionAsync(descriptor, cancellationToken);
+            // #3523: the webhook binding is part of what makes a newly created agent usable, so it
+            // shares the create path's rollback semantics rather than being best-effort.
+            if (_webhookProvisioner is not null)
+                await _webhookProvisioner.ProvisionAsync(descriptor, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -191,6 +233,9 @@ public sealed class AgentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<AgentDescriptor>> Update(string agentId, [FromBody] AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
+        if (!TryParseAgentId(agentId, out _, out var routeError))
+            return BadRequest(new { error = routeError });
+
         if (!string.Equals(agentId, descriptor.AgentId.Value, StringComparison.OrdinalIgnoreCase))
         {
             return BadRequest(new
@@ -247,6 +292,11 @@ public sealed class AgentsController : ControllerBase
                 await _heartbeatProvisioner.ProvisionAsync(descriptor, cancellationToken);
             if (_skillReviewProvisioner is not null)
                 await _skillReviewProvisioner.ProvisionAsync(descriptor, cancellationToken);
+            // #3523: a display-name change must reach the downstream target, otherwise it shows a
+            // stale name indefinitely. ProvisionAsync is create-or-leave-alone, so this re-sends
+            // the existing binding rather than re-keying it.
+            if (_webhookProvisioner is not null)
+                await _webhookProvisioner.ProvisionAsync(descriptor, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -273,7 +323,10 @@ public sealed class AgentsController : ControllerBase
     [HttpDelete("{agentId}")]
     public async Task<ActionResult> Unregister(string agentId, CancellationToken cancellationToken)
     {
-        var typedAgentId = AgentId.From(agentId);
+        if (!TryParseAgentId(agentId, out var parsedAgentId, out var routeError))
+            return BadRequest(new { error = routeError });
+
+        var typedAgentId = parsedAgentId!.Value;
         var existingDescriptor = _registry.Get(typedAgentId);
 
         // 1) Delete config first. If this fails the registry still holds the agent (no divergence).
@@ -292,9 +345,66 @@ public sealed class AgentsController : ControllerBase
         // 2) Drop the registry entry.
         _registry.Unregister(typedAgentId);
 
+        // 3) #3524: reclaim the system cron jobs the platform provisioned for this agent. Best-effort
+        // and AFTER the registry commit: the agent is already gone, so a cron-store failure must not
+        // turn a successful delete into a 500 and leave the caller believing the agent survived. The
+        // worst case of a swallowed failure is the orphaned job we had before this fix, logged loudly.
+        await DeprovisionBestEffortAsync(typedAgentId, cancellationToken);
+
         if (existingDescriptor is not null)
             await NotifyAgentsChangedBestEffortAsync("removed", agentId, cancellationToken);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Removes platform-provisioned per-agent cron jobs, never failing the delete.
+    /// </summary>
+    private async Task DeprovisionBestEffortAsync(AgentId agentId, CancellationToken cancellationToken)
+    {
+        if (_heartbeatProvisioner is not null)
+        {
+            try
+            {
+                await _heartbeatProvisioner.DeprovisionAsync(agentId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to deprovision heartbeat cron job for deleted agent {AgentId}; the job may be orphaned.",
+                    agentId);
+            }
+        }
+
+        if (_skillReviewProvisioner is not null)
+        {
+            try
+            {
+                await _skillReviewProvisioner.DeprovisionAsync(agentId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to deprovision skill-review cron job for deleted agent {AgentId}; the job may be orphaned.",
+                    agentId);
+            }
+        }
+
+        // #3523: deliberately weaker than the create path. A downstream outage must never block
+        // deleting an agent, so the registration removal and the target notification are
+        // best-effort; the next startup reconciliation is the recovery path.
+        if (_webhookProvisioner is not null)
+        {
+            try
+            {
+                await _webhookProvisioner.DeprovisionAsync(agentId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to deprovision outbound webhook registration for deleted agent {AgentId}.",
+                    agentId);
+            }
+        }
     }
 
     /// <summary>Gets the status of a running agent instance.</summary>

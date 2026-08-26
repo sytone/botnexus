@@ -20,7 +20,10 @@ public sealed class DefaultSubAgentManagerActivityTests
         var manager = CreateManager(CreateHangingHandle(), out _, out var activity);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
 
-        await WaitUntilAsync(() => activity.Activities.Any(HasLifecycleEvent("subagent_spawned")), TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
+            () => activity.Activities.Any(HasLifecycleEvent("subagent_spawned")),
+            "the subagent_spawned activity",
+            timeout: TimeSpan.FromSeconds(30));
 
         activity.Activities.ShouldContain(activity =>
             activity.Type == GatewayActivityType.SubAgentSpawned &&
@@ -38,9 +41,10 @@ public sealed class DefaultSubAgentManagerActivityTests
         // Wait on the lifecycle event, not on Status == Completed — the status can flip before
         // the "subagent_completed" activity is published (see the failure test for the same
         // window).
-        await WaitUntilAsync(
+        await TestAwait.EventuallyAsync(
             () => activity.Activities.Any(HasLifecycleEvent("subagent_completed")),
-            TimeSpan.FromSeconds(30));
+            "the subagent_completed activity",
+            timeout: TimeSpan.FromSeconds(30));
 
         activity.Activities.Any(HasLifecycleEvent("subagent_completed")).ShouldBeTrue();
         (await manager.GetAsync(spawned.SubAgentId))!.Status.ShouldBe(SubAgentStatus.Completed);
@@ -57,9 +61,10 @@ public sealed class DefaultSubAgentManagerActivityTests
         // "subagent_failed" activity, so polling on status can return while the event is still
         // in flight — an intermittent failure. Polling on the event (as the spawned/killed
         // tests do) removes that window.
-        await WaitUntilAsync(
+        await TestAwait.EventuallyAsync(
             () => activity.Activities.Any(HasLifecycleEvent("subagent_failed")),
-            TimeSpan.FromSeconds(30));
+            "the subagent_failed activity",
+            timeout: TimeSpan.FromSeconds(30));
 
         activity.Activities.Any(HasLifecycleEvent("subagent_failed")).ShouldBeTrue();
         (await manager.GetAsync(spawned.SubAgentId))!.Status.ShouldBe(SubAgentStatus.Failed);
@@ -74,7 +79,10 @@ public sealed class DefaultSubAgentManagerActivityTests
         var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
 
         killed.ShouldBeTrue();
-        await WaitUntilAsync(() => activity.Activities.Any(HasLifecycleEvent("subagent_killed")), TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
+            () => activity.Activities.Any(HasLifecycleEvent("subagent_killed")),
+            "the subagent_killed activity",
+            timeout: TimeSpan.FromSeconds(30));
         activity.Activities.Any(HasLifecycleEvent("subagent_killed")).ShouldBeTrue();
     }
 
@@ -95,7 +103,10 @@ public sealed class DefaultSubAgentManagerActivityTests
 
         // Two running sub-agents under two different parent sessions -> the platform-wide count is 2,
         // even though each parent's ListAsync would only see one.
-        await WaitUntilAsync(() => manager.ActiveSubAgentCount == 2, TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
+            () => manager.ActiveSubAgentCount == 2,
+            "two active subagents",
+            timeout: TimeSpan.FromSeconds(30));
         manager.ActiveSubAgentCount.ShouldBe(2);
         (await manager.ListAsync(SessionId.From("parent-session"))).Count.ShouldBe(1);
         (await manager.ListAsync(SessionId.From("parent-session-2"))).Count.ShouldBe(1);
@@ -103,7 +114,10 @@ public sealed class DefaultSubAgentManagerActivityTests
         // Killing one completes that record; the platform-wide active count must exclude it.
         (await manager.KillAsync(first.SubAgentId, SessionId.From("parent-session"))).ShouldBeTrue();
 
-        await WaitUntilAsync(() => manager.ActiveSubAgentCount == 1, TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
+            () => manager.ActiveSubAgentCount == 1,
+            "one active subagent after kill",
+            timeout: TimeSpan.FromSeconds(30));
         manager.ActiveSubAgentCount.ShouldBe(1);
     }
     private static SubAgentSpawnRequest CreateSpawnRequestFor(string parentSessionId)
@@ -222,20 +236,6 @@ public sealed class DefaultSubAgentManagerActivityTests
             activity.Data is not null &&
             activity.Data.TryGetValue("event", out var value) &&
             string.Equals(value as string, eventName, StringComparison.Ordinal);
-
-    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
-    {
-        var deadline = DateTimeOffset.UtcNow.Add(timeout);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            if (condition())
-                return;
-
-            await Task.Delay(25);
-        }
-
-        throw new TimeoutException("Condition was not met before timeout.");
-    }
 
     private sealed class RecordingActivityBroadcaster : IActivityBroadcaster
     {

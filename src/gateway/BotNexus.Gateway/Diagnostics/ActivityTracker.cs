@@ -5,15 +5,26 @@ namespace BotNexus.Gateway.Diagnostics;
 /// </summary>
 public sealed class ActivityTracker : IActivityTracker
 {
-    private long _lastActivityTicks = DateTimeOffset.UtcNow.Ticks;
+    private readonly TimeProvider _timeProvider;
+    private long _lastActivityTicks;
+
+    /// <summary>
+    /// Creates an activity tracker using the system clock in production and an injectable clock for
+    /// deterministic elapsed-time verification.
+    /// </summary>
+    public ActivityTracker(TimeProvider? timeProvider = null)
+    {
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _lastActivityTicks = _timeProvider.GetUtcNow().Ticks;
+    }
 
     /// <inheritdoc />
     public void RecordActivity()
-        => Interlocked.Exchange(ref _lastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+        => Interlocked.Exchange(ref _lastActivityTicks, _timeProvider.GetUtcNow().Ticks);
 
     /// <inheritdoc />
     public TimeSpan TimeSinceLastActivity
-        => DateTimeOffset.UtcNow - LastActivityUtc;
+        => _timeProvider.GetUtcNow() - LastActivityUtc;
 
     /// <inheritdoc />
     public DateTimeOffset LastActivityUtc

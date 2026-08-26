@@ -24,7 +24,7 @@ Per test-run sandbox under `Path.GetTempPath()/botnexus-e2e/<runId>/`:
 5. `botnexus locations add <name> --type filesystem --path <tmp>` × 2.
 6. `botnexus config set world.id`, `world.displayName`,
    `extensions.enabled true`, `gateway.defaultAgentId`.
-7. `dotnet build BotNexus.slnx -c Release` (warmup so step 8 is fast).
+7. `dotnet build dirs.proj -c Release` (warmup so step 8 is fast).
 8. `botnexus gateway start --attached --source <repo> --target <home>
    --port <free>` — runs as a child subprocess for the test-suite lifetime.
 9. Poll `GET /health` until `200 OK` (max 3 minutes).
@@ -34,7 +34,7 @@ Per test-run sandbox under `Path.GetTempPath()/botnexus-e2e/<runId>/`:
 
 ```pwsh
 # One-time: install Chromium for Playwright.
-dotnet build BotNexus.slnx -c Release
+dotnet build dirs.proj -c Release
 pwsh tests/integration/BotNexus.Integration.E2E.Tests/bin/Debug/net10.0/playwright.ps1 install chromium
 
 # Run the suite.

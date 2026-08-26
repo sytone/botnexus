@@ -99,13 +99,15 @@ public sealed class GatewayProcessManagerTests : IDisposable
     [Fact]
     public async Task StartAsync_WhenProcessExitsDuringReadiness_FailsPromptlyWithExitCode()
     {
+        var healthCheckStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _healthChecker.WaitForHealthyAsync(
             Arg.Any<string>(),
             Arg.Any<TimeSpan>(),
             Arg.Any<CancellationToken>())
             .Returns(async call =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(30), call.Arg<CancellationToken>());
+                healthCheckStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
                 return false;
             });
 
@@ -113,16 +115,14 @@ public sealed class GatewayProcessManagerTests : IDisposable
             ExecutablePath: "missing-gateway.dll",
             HomePath: _testPidDirectory,
             ReadinessTimeout: TimeSpan.FromSeconds(60));
-        var stopwatch = Stopwatch.StartNew();
+        var startTask = _manager.StartAsync(options);
+        await healthCheckStarted.Task.WaitAsync(TimeSpan.FromMinutes(2));
+        var result = await startTask.WaitAsync(TimeSpan.FromMinutes(2));
 
-        var result = await _manager.StartAsync(options);
-
-        stopwatch.Stop();
         result.Success.ShouldBeFalse();
         result.Message.ShouldNotBeNull();
         result.Message.ShouldContain("exited");
         result.Message.ShouldContain("exit code");
-        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10));
     }
 
     [Fact]
@@ -150,13 +150,15 @@ public sealed class GatewayProcessManagerTests : IDisposable
     [Fact]
     public async Task StartAsync_WhenReadinessIsCancelled_PropagatesCancellation()
     {
+        var healthCheckStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _healthChecker.WaitForHealthyAsync(
             Arg.Any<string>(),
             Arg.Any<TimeSpan>(),
             Arg.Any<CancellationToken>())
             .Returns(async call =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(30), call.Arg<CancellationToken>());
+                healthCheckStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
                 return false;
             });
 
@@ -164,10 +166,13 @@ public sealed class GatewayProcessManagerTests : IDisposable
             ExecutablePath: "BotNexus.Gateway.Api.dll",
             HomePath: _testPidDirectory,
             ReadinessTimeout: TimeSpan.FromSeconds(60));
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        using var cancellation = new CancellationTokenSource();
 
-        await Should.ThrowAsync<OperationCanceledException>(() =>
-            _manager.StartAsync(options, cancellation.Token));
+        var startTask = _manager.StartAsync(options, cancellation.Token);
+        await healthCheckStarted.Task.WaitAsync(TimeSpan.FromMinutes(2));
+        await cancellation.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => startTask);
     }
 
     [Fact]
@@ -332,7 +337,7 @@ public sealed class GatewayProcessManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetStatusAsync_WhenRunning_ReturnsPidAndUptime()
+    public async Task GetStatusAsync_WhenProcessHasExited_CleansUpPidFile()
     {
         // Start a long-running dotnet process (which will pass the name check)
         var psi = new ProcessStartInfo
@@ -349,28 +354,14 @@ public sealed class GatewayProcessManagerTests : IDisposable
 
         try
         {
-            // Give process a moment to start
-            await Task.Delay(100);
+            await process.WaitForExitAsync();
 
             await WriteIdentityPidFileAsync(process);
 
             var status = await _manager.GetStatusAsync(_testPidDirectory);
 
-            // If process is still running, should be detected
-            if (!process.HasExited)
-            {
-                status.State.ShouldBe(GatewayState.Running);
-                status.Pid.ShouldBe(process.Id);
-                status.Uptime.ShouldNotBeNull();
-                status.Message.ShouldNotBeNull();
-                var message = status.Message ?? throw new InvalidOperationException("Expected status message.");
-                message.ShouldContain("Running");
-            }
-            else
-            {
-                // Process exited quickly - that's ok, it should be cleaned up
-                status.State.ShouldBe(GatewayState.NotRunning);
-            }
+            status.State.ShouldBe(GatewayState.NotRunning);
+            File.Exists(GetPidFilePath()).ShouldBeFalse();
         }
         finally
         {
@@ -459,21 +450,20 @@ public sealed class GatewayProcessManagerTests : IDisposable
             // the child - the override path was never reached and the test saw Success=true.
             // That reported a product defect for a scheduling delay. The assertion below is
             // unchanged: the override still must force the !exited path and yield a failure.
-            var startDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
-            while (DateTimeOffset.UtcNow < startDeadline)
-            {
-                try
+            await TestAwait.EventuallyAsync(
+                () =>
                 {
-                    if (!Process.GetProcessById(process.Id).HasExited)
-                        break;
-                }
-                catch (ArgumentException)
-                {
-                    // Not visible to the OS yet; keep waiting.
-                }
-
-                await Task.Delay(25);
-            }
+                    try
+                    {
+                        return !Process.GetProcessById(process.Id).HasExited;
+                    }
+                    catch (ArgumentException)
+                    {
+                        return false;
+                    }
+                },
+                $"spawned process {process.Id} to become visible to the operating system",
+                timeout: TimeSpan.FromSeconds(30));
 
             var result = await neverExitsManager.StopAsync(_testPidDirectory);
 

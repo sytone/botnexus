@@ -97,10 +97,10 @@ public sealed class CronNextRunSingleDefinitionTests
     private static string LocateGatewaySource()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "BotNexus.slnx")))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
             dir = dir.Parent;
 
-        dir.ShouldNotBeNull("Could not locate the repository root (BotNexus.slnx) from the test output directory.");
+        dir.ShouldNotBeNull("Could not locate the repository root (Directory.Packages.props) from the test output directory.");
 
         var gatewaySource = Path.Combine(dir!.FullName, "src", "gateway");
         Directory.Exists(gatewaySource).ShouldBeTrue($"Expected the gateway source at {gatewaySource}.");

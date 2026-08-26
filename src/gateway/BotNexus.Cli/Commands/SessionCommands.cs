@@ -255,7 +255,7 @@ internal sealed class SessionCommands
         PlatformConfig config;
         try
         {
-            config = await PlatformConfigLoader.LoadAsync(configPath, CancellationToken.None, validateOnLoad: false);
+            config = PlatformConfigAccessor.Shared.Get(configPath);
         }
         catch (Exception ex)
         {
@@ -273,3 +273,4 @@ internal sealed class SessionCommands
         return await action(resolution.Store).ConfigureAwait(false);
     }
 }
+

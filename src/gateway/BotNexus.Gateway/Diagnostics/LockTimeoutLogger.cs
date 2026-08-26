@@ -10,10 +10,12 @@ namespace BotNexus.Gateway.Diagnostics;
 /// </summary>
 public sealed class LockTimeoutLogger(
     ILogger<LockTimeoutLogger> logger,
-    TimeSpan warningThreshold)
+    TimeSpan warningThreshold,
+    Func<TimeSpan, CancellationToken, Task>? delay = null)
 {
     private readonly ILogger<LockTimeoutLogger> _logger = logger;
     private readonly TimeSpan _warningThreshold = warningThreshold;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? Task.Delay;
 
     /// <summary>
     /// Creates a LockTimeoutLogger with the default 5-second warning threshold.
@@ -68,7 +70,7 @@ public sealed class LockTimeoutLogger(
     {
         try
         {
-            await Task.Delay(_warningThreshold, ct);
+            await _delay(_warningThreshold, ct);
 
             // If we get here, the threshold was exceeded while still waiting
             _logger.LogWarning(

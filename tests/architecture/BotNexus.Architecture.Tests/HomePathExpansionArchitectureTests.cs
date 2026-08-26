@@ -23,7 +23,7 @@ namespace BotNexus.Architecture.Tests;
 /// is to forbid a second implementation, not a second mention.
 /// </para>
 /// </remarks>
-public sealed class HomePathExpansionArchitectureTests
+public sealed class HomePathExpansionArchitectureTests : ArchitectureTest
 {
     /// <summary>The single file permitted to implement <c>~</c> expansion.</summary>
     private const string CanonicalImplementation = "HomePathExpander.cs";
@@ -50,7 +50,7 @@ public sealed class HomePathExpansionArchitectureTests
     [Fact]
     public void OnlyOneTildeExpansionImplementation_ExistsUnderSrc()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var sourceRoot = Path.Combine(repoRoot, "src");
         Directory.Exists(sourceRoot).ShouldBeTrue($"Expected a src directory at '{sourceRoot}'.");
 
@@ -119,20 +119,4 @@ public sealed class HomePathExpansionArchitectureTests
         return Regex.Replace(withoutLineComments, "\"(?:[^\"\\\\\r\n]|\\\\.)*\"", "\"\"");
     }
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git"))
-                || File.Exists(Path.Combine(directory.FullName, ".git")))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Unable to locate the repository root from " + AppContext.BaseDirectory);
-    }
 }
