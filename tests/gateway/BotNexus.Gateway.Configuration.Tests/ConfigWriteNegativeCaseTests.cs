@@ -58,6 +58,24 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// A sentinel modification time, far enough in the past that any real write moves it.
+    /// </summary>
+    /// <remarks>
+    /// Stamping a known timestamp and asserting it is unchanged replaces sleeping to let the clock
+    /// tick. A finite <c>Task.Delay</c> here would be both slower and flakier - filesystem timestamp
+    /// granularity is not guaranteed to be finer than the delay - and it is fenced by
+    /// <c>TestDelayFlakeFenceTests</c> for exactly that reason.
+    /// </remarks>
+    private static readonly DateTime MtimeSentinel = new(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    /// <summary>Stamps the config file with <see cref="MtimeSentinel"/> so a write is detectable.</summary>
+    private void StampSentinelMtime() => File.SetLastWriteTimeUtc(_configPath, MtimeSentinel);
+
+    /// <summary>Asserts the config file has not been rewritten since <see cref="StampSentinelMtime"/>.</summary>
+    private void ShouldNotHaveBeenRewritten() =>
+        File.GetLastWriteTimeUtc(_configPath).ShouldBe(MtimeSentinel, "the file must not have been rewritten");
+
     private PlatformConfigWriter Writer() => new(_configPath, _fileSystem);
 
     private async Task SeedAsync(string json) => await File.WriteAllTextAsync(_configPath, json);
@@ -231,8 +249,7 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
             {"channels":{"telegram":{"enabled":true,"botToken":"tg-secret"},"teams":{"enabled":true}}}
             """);
         var original = await File.ReadAllTextAsync(_configPath);
-        var originalTime = File.GetLastWriteTimeUtc(_configPath);
-        await Task.Delay(30);
+        StampSentinelMtime();
 
         var writer = Writer();
 
@@ -254,7 +271,7 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
 
         errors.ShouldNotBeEmpty("the guard must reject an undeclared section collapse");
         (await File.ReadAllTextAsync(_configPath)).ShouldBe(original);
-        File.GetLastWriteTimeUtc(_configPath).ShouldBe(originalTime);
+        ShouldNotHaveBeenRewritten();
     }
 
     /// <summary>
@@ -454,14 +471,12 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
     {
         await SeedAsync("""{"providers":{"a":{"apiKey":"sk-a"}}}""");
         var before = await File.ReadAllTextAsync(_configPath);
-        var beforeTime = File.GetLastWriteTimeUtc(_configPath);
-        await Task.Delay(30);
+        StampSentinelMtime();
 
         await Writer().RemoveSectionEntryAsync("providers", "does-not-exist", CancellationToken.None);
 
         (await File.ReadAllTextAsync(_configPath)).ShouldBe(before);
-        File.GetLastWriteTimeUtc(_configPath).ShouldBe(beforeTime,
-            "a no-op delete must not churn the file or the backup history");
+        ShouldNotHaveBeenRewritten();
     }
 
     /// <summary>
@@ -532,16 +547,14 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
     public async Task CliSetToIdenticalValue_DoesNotRewriteTheFile()
     {
         await SeedAsync("""{"gateway":{"listenUrl":"http://localhost:8080"}}""");
-        var beforeTime = File.GetLastWriteTimeUtc(_configPath);
-        await Task.Delay(30);
+        StampSentinelMtime();
 
         await Writer().MutateDocumentAsync(
             document => document.Set("gateway.listenUrl", "http://localhost:8080"),
             "cli-noop",
             CancellationToken.None);
 
-        File.GetLastWriteTimeUtc(_configPath).ShouldBe(beforeTime,
-            "an identical value must produce an empty change set and no write");
+        ShouldNotHaveBeenRewritten();
     }
 
     /// <summary>

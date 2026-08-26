@@ -92,13 +92,15 @@ public sealed class ConfigWriterApplyTests : IDisposable
         var changes = ConfigDocumentDiffer.Diff(document, document.DeepClone().AsObject());
         changes.IsEmpty.ShouldBeTrue();
 
-        var before = File.GetLastWriteTimeUtc(_configPath);
-        await Task.Delay(50);
+        // A sentinel timestamp rather than a sleep: any real write moves it, and asserting equality is
+        // deterministic where waiting for the clock to tick is not.
+        var sentinel = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(_configPath, sentinel);
 
         await new JsonConfigurationWriter(_configPath, new FileSystem())
             .ApplyChangeSetAsync(changes, "test");
 
-        File.GetLastWriteTimeUtc(_configPath).ShouldBe(before);
+        File.GetLastWriteTimeUtc(_configPath).ShouldBe(sentinel);
     }
 
     /// <summary>
