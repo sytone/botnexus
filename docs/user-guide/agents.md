@@ -221,6 +221,32 @@ Files are concatenated in the order specified. Paths are relative to `~/.botnexu
 
 Recent daily memory notes (`memory/{today}.md` and `memory/{yesterday}.md`) are auto-loaded regardless of `systemPromptFiles`, which only chooses which workspace prompt files to load. To suppress daily notes (and `MEMORY.md`), set `memory.promptInjection` to `"none"`.
 
+#### World-level instructions
+
+`WORLD.md` is the one instruction file that does **not** live in the agent's own
+directory. Put it at `~/.botnexus/WORLD.md` and it is prepended to the context of
+*every* agent, ahead of that agent's own files:
+
+```text
+~/.botnexus/WORLD.md          <- shared by every agent
+~/.botnexus/agents/<id>/...   <- that agent's own files
+```
+
+Use it for rules that hold across the whole installation - house conventions, standing
+prohibitions, facts about the environment the agents run in - rather than repeating
+them in each agent's `AGENTS.md`.
+
+Two things to know:
+
+- **Placement is the whole trick.** A `WORLD.md` inside an agent's directory is not
+  loaded. It is not in the default list above, so nothing reads it and nothing warns
+  you - the agent simply never sees the file.
+- **It is not affected by `systemPromptFiles`.** That setting selects workspace prompt
+  files; `WORLD.md` is injected separately and always applies.
+
+Like the other instruction files it supports model and provider variants, so
+`WORLD.gpt.md` can carry rules that only apply when a GPT model is serving the turn.
+
 ### Tool Assignment
 
 Grant tools to an agent:
@@ -390,14 +416,19 @@ System prompts define agent behavior. BotNexus supports a structured approach:
 ### File Structure
 
 ```text
-~/.botnexus/agents/<agentId>/
-├── SOUL.md          # Personality, values, tone
-├── IDENTITY.md      # Role, expertise, boundaries
-├── TOOLS.md         # Tool usage guidelines
-├── BOOTSTRAP.md     # Initialization instructions
-├── AGENTS.md        # Multi-agent coordination
-└── USER.md          # User-specific preferences
+~/.botnexus/
+├── WORLD.md             # Shared by every agent (optional)
+└── agents/<agentId>/
+    ├── SOUL.md          # Personality, values, tone
+    ├── IDENTITY.md      # Role, expertise, boundaries
+    ├── TOOLS.md         # Tool usage guidelines
+    ├── BOOTSTRAP.md     # Initialization instructions
+    ├── AGENTS.md        # Multi-agent coordination
+    └── USER.md          # User-specific preferences
 ```
+
+`WORLD.md` sits at the home root, not inside the agent directory - see
+[World-level instructions](#world-level-instructions).
 
 ### Example: SOUL.md
 
