@@ -42,7 +42,6 @@ public class SignalREndpointContributor : IEndpointContributor
         }
 
         var fileProvider = new PhysicalFileProvider(blazorPath);
-        var indexBytes = File.ReadAllBytes(indexHtmlPath);
         var prefix = pathPrefix ?? string.Empty;
 
         app.Use(async (context, next) =>
@@ -77,6 +76,21 @@ public class SignalREndpointContributor : IEndpointContributor
 
             var subPath = path == "/" ? "/index.html" : path;
             var fileInfo = fileProvider.GetFileInfo(subPath);
+
+            // A client-side route (no file extension, no file on disk) is served the SPA
+            // document. This used to be a separate branch writing a byte[] captured with
+            // File.ReadAllBytes at startup, which meant every deep link served whatever build
+            // was on disk when the gateway last started: "/" and "/index.html" read from disk
+            // and picked a redeployment up immediately, while "/configuration" kept booting the
+            // previous runtime and its assembly list. The snapshot also bypassed the content
+            // type, Cache-Control and ETag handling below, so the one document that MUST
+            // revalidate was the one served without a validator. Rewriting the path instead of
+            // duplicating the response keeps all of that in one place.
+            if ((!fileInfo.Exists || fileInfo.IsDirectory) && !subPath.Contains('.'))
+            {
+                subPath = "/index.html";
+                fileInfo = fileProvider.GetFileInfo(subPath);
+            }
 
             if (fileInfo.Exists && !fileInfo.IsDirectory)
             {
@@ -126,14 +140,6 @@ public class SignalREndpointContributor : IEndpointContributor
                 context.Response.ContentLength = fileToServe.Length;
                 await using var stream = fileToServe.CreateReadStream();
                 await stream.CopyToAsync(context.Response.Body);
-                return;
-            }
-
-            // SPA fallback for client-side routes
-            if (!subPath.Contains('.'))
-            {
-                context.Response.ContentType = "text/html";
-                await context.Response.Body.WriteAsync(indexBytes);
                 return;
             }
 

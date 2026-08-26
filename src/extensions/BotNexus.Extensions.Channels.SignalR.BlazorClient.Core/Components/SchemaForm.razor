@@ -25,7 +25,7 @@ else
             <div class="schema-group" data-group="@group.Key">
                 @if (!string.IsNullOrEmpty(group.Key))
                 {
-                    <h4 class="schema-group-title">@group.Key</h4>
+                    <h4 class="schema-group-title">@GroupLabel(group.Key)</h4>
                 }
                 @foreach (var (name, node) in group.Value)
                 {
@@ -215,6 +215,10 @@ else
             .OrderBy(kv => kv.Value["x-ui-order"]?.GetValue<int>() ?? int.MaxValue)
             .ThenBy(kv => kv.Key, StringComparer.Ordinal)
             .GroupBy(kv => kv.Value["x-ui-group"]?.GetValue<string>() ?? string.Empty)
+            // Fields that declare no group are the section's own; they read as orphans if they
+            // appear below the named buckets, so they are hoisted to the top where the card
+            // title already accounts for them.
+            .OrderBy(g => string.IsNullOrEmpty(g.Key) ? 0 : 1)
             .Select(g => new KeyValuePair<string, List<KeyValuePair<string, JsonObject>>>(g.Key, g.ToList()));
     }
 
@@ -242,6 +246,49 @@ else
 
     private static string Label(string name, JsonObject node) => node["x-ui-label"]?.GetValue<string>() ?? name;
 
+    /// <summary>
+    /// The field's explanatory text. Every generated field carries one - x-ui-description on all
+    /// 31 of the 34 gateway fields, for instance - and the renderer used to discard all of it,
+    /// which is why the forms read as a wall of bare labels.
+    /// </summary>
+    private static string? Description(JsonObject node)
+    {
+        var d = node["x-ui-description"]?.GetValue<string>() ?? node["description"]?.GetValue<string>();
+        return string.IsNullOrWhiteSpace(d) ? null : d;
+    }
+
+    /// <summary>
+    /// Stable DOM id for a field, so its label can carry a for= attribute. The JSON path is
+    /// already unique per field; dots are not legal in an id fragment we want to select on.
+    /// </summary>
+    private static string FieldId(string path) => "cfg-" + path.Replace('.', '-');
+
+    /// <summary>
+    /// x-ui-group values are kebab-case slugs ("tool-result-persistence"). Render them as prose.
+    /// </summary>
+    /// <summary>
+    /// True when a group heading would only restate the title of the card containing it -
+    /// "Session store" > SESSION STORE. Compared on alphanumerics alone so kebab-case slugs
+    /// match their prose labels, and by prefix so "rate-limit" matches "Rate limiting".
+    /// </summary>
+    private static bool GroupRestatesOwner(string slug, string ownerLabel)
+    {
+        static string Normalise(string v) =>
+            new string(v.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+        var g = Normalise(slug);
+        var o = Normalise(ownerLabel);
+        if (g.Length == 0 || o.Length == 0)
+            return false;
+        return g.StartsWith(o, StringComparison.Ordinal) || o.StartsWith(g, StringComparison.Ordinal);
+    }
+
+    private static string GroupLabel(string slug)
+    {
+        var words = slug.Replace('-', ' ').Replace('_', ' ').Trim();
+        return words.Length == 0 ? words : char.ToUpperInvariant(words[0]) + words[1..];
+    }
+
     // Recursive node dispatcher: object -> children; dict -> entries; array -> items; else widget.
     private RenderFragment RenderNode(string name, JsonObject node, string path) => __builder =>
     {
@@ -249,12 +296,26 @@ else
         {
             <fieldset class="schema-object" data-testid="@($"object-{path}")">
                 <legend>@Label(name, node)</legend>
+                @if (Description(node) is { } objectDescription)
+                {
+                    <p class="schema-object-description">@objectDescription</p>
+                }
+                @* OrderAndGroup already buckets these by x-ui-group. The grouping was computed
+                   here and then thrown away - only group.Value was read - so every field inside
+                   a section rendered as one flat run regardless of the group it declared. The
+                   schema has carried the buckets all along; this just draws them. *@
                 @foreach (var group in OrderAndGroup(node["properties"]?.AsObject()))
                 {
-                    @foreach (var (childName, childNode) in group.Value)
-                    {
-                        @RenderNode(childName, childNode, $"{path}.{childName}")
-                    }
+                    <div class="schema-subgroup" data-group="@group.Key">
+                        @if (!string.IsNullOrEmpty(group.Key) && !GroupRestatesOwner(group.Key, Label(name, node)))
+                        {
+                            <h5 class="schema-subgroup-title">@GroupLabel(group.Key)</h5>
+                        }
+                        @foreach (var (childName, childNode) in group.Value)
+                        {
+                            @RenderNode(childName, childNode, $"{path}.{childName}")
+                        }
+                    </div>
                 }
             </fieldset>
         }
@@ -341,22 +402,26 @@ else
         var textValue = AsString(current) ?? "";
         var numberValue = current?.ToString() ?? "";
         var selectValue = AsString(current) ?? "";
-        <div class="schema-field" data-testid="@($"field-{path}")">
-            <label class="schema-field-label">@Label(name, node)</label>
+        var fieldId = FieldId(path);
+        var description = Description(node);
+        var describedBy = description is null ? null : $"{fieldId}-desc";
+        <div class="schema-field schema-field-@widget" data-testid="@($"field-{path}")">
+            <label class="schema-field-label" for="@fieldId">@Label(name, node)</label>
+            <div class="schema-field-control">
             @if (widget == "toggle")
             {
-                <input type="checkbox" checked="@(AsBool(Resolve(path)))"
+                <input type="checkbox" id="@fieldId" aria-describedby="@describedBy" checked="@(AsBool(Resolve(path)))"
                        @onchange="e => Set(path, JsonValue.Create((bool)e.Value!))" />
             }
             else if (widget == "number")
             {
-                <input type="number" value="@numberValue"
+                <input type="number" id="@fieldId" aria-describedby="@describedBy" value="@numberValue"
                        @onchange="e => SetNumber(path, e.Value?.ToString())" />
             }
             else if (widget == "select")
             {
                 var options = SelectOptions(node, path);
-                <select value="@selectValue"
+                <select value="@selectValue" id="@fieldId" aria-describedby="@describedBy"
                         @onchange="e => Set(path, JsonValue.Create(e.Value?.ToString()))">
                     @* Blank sentinel so an unset/optional select can stay empty and a dynamic list
                        that has not loaded yet still shows the current value. *@
@@ -369,19 +434,24 @@ else
             }
             else if (IsSecret(node))
             {
-                <input type="password" placeholder="@secretPlaceholder"
+                <input type="password" id="@fieldId" aria-describedby="@describedBy" placeholder="@secretPlaceholder"
                        value="@secretValue"
                        @onchange="e => Set(path, JsonValue.Create(e.Value?.ToString()))" />
             }
             else
             {
-                <input type="text" value="@textValue"
+                <input type="text" id="@fieldId" aria-describedby="@describedBy" value="@textValue"
                        @onchange="e => Set(path, JsonValue.Create(e.Value?.ToString()))" />
+            }
+            @if (description is not null)
+            {
+                <p class="schema-field-description" id="@describedBy">@description</p>
             }
             @if (error is not null)
             {
                 <span class="schema-field-error">@error</span>
             }
+            </div>
         </div>
     };
 

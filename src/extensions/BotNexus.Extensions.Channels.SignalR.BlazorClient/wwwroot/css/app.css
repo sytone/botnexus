@@ -1881,7 +1881,6 @@ html, body, #app {
     min-width: 0;
 }
 
-
 .streaming-badge {
     font-size: var(--text-caption);
     color: var(--accent);
@@ -3267,7 +3266,6 @@ details[open] > .thinking-summary::before {
     font-size: var(--text-label);
 }
 
-
 /* ── Agent config panel (modal overlay) ─────────────────────────────── */
 
 .config-overlay {
@@ -3686,334 +3684,6 @@ details[open] > .thinking-summary::before {
     max-width: 900px;
 }
 
-/* Top-level field (e.g., version) */
-.pcfg-top-field {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.75rem 1rem;
-}
-
-.pcfg-top-field label {
-    font-size: var(--text-label);
-    color: var(--text-muted);
-    min-width: 120px;
-    flex-shrink: 0;
-}
-
-.pcfg-top-field input {
-    flex: 1;
-    max-width: 200px;
-}
-
-/* Section card */
-.pcfg-section {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-}
-
-.pcfg-section-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    cursor: pointer;
-    background: var(--color-wash-soft);
-    border-bottom: 1px solid var(--border);
-    user-select: none;
-    transition: background 0.15s;
-}
-
-.pcfg-section-header:hover {
-    background: var(--color-wash-soft);
-}
-
-.pcfg-section-header h3 {
-    margin: 0;
-    font-size: var(--text-body);
-    font-weight: 600;
-    white-space: nowrap;
-}
-
-.pcfg-section-desc {
-    font-size: var(--text-caption);
-    color: var(--text-muted);
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.pcfg-collapse-icon {
-    font-size: var(--text-caption);
-    color: var(--text-secondary);
-    width: 14px;
-    text-align: center;
-    flex-shrink: 0;
-}
-
-.pcfg-section-body {
-    padding: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-}
-
-/* Field row */
-.pcfg-field {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-.pcfg-field > label {
-    min-width: 160px;
-    font-size: var(--text-label);
-    color: var(--text-muted);
-    flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-.pcfg-field input[type="text"],
-.pcfg-field input[type="password"],
-.pcfg-field input[type="number"],
-.pcfg-field select {
-    flex: 1;
-    max-width: 420px;
-    padding: 0.35rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: var(--text-body);
-    font-family: var(--font-sans);
-    transition: border-color 0.15s;
-}
-
-.pcfg-field input:focus,
-.pcfg-field select:focus {
-    border-color: var(--accent);
-    outline: none;
-}
-
-/* Boolean toggle */
-.pcfg-toggle {
-    position: relative;
-    display: inline-block;
-    flex-shrink: 0;
-    width: 36px;
-    height: 20px;
-    cursor: pointer;
-}
-
-.pcfg-toggle input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-.pcfg-toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    inset: 0;
-    background: var(--bg-surface);
-    border-radius: var(--radius-pill);
-    transition: background 0.2s;
-}
-
-.pcfg-toggle-slider::before {
-    content: '';
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    left: 3px;
-    bottom: 3px;
-    background: var(--text-secondary);
-    border-radius: 50%;
-    transition: transform 0.2s, background 0.2s;
-}
-
-.pcfg-toggle input:checked + .pcfg-toggle-slider {
-    background: var(--accent);
-}
-
-.pcfg-toggle input:checked + .pcfg-toggle-slider::before {
-    transform: translateX(16px);
-    background: var(--color-on-solid);
-}
-
-/* Nested sub-section */
-.pcfg-nested {
-    border-left: 3px solid var(--bg-surface);
-    padding-left: 1rem;
-    margin-top: 0.25rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.pcfg-nested h4 {
-    font-size: var(--text-body);
-    color: var(--text-primary);
-    margin: 0;
-    font-weight: 600;
-}
-
-/* List field */
-.pcfg-list-field {
-    align-items: flex-start;
-}
-
-.pcfg-list {
-    flex: 1;
-    max-width: 420px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.pcfg-list-item {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-}
-
-.pcfg-list-item input {
-    flex: 1;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: var(--text-label);
-}
-
-.pcfg-list-item input:focus {
-    border-color: var(--accent);
-    outline: none;
-}
-
-.pcfg-list-remove {
-    background: transparent;
-    border: none;
-    color: var(--error);
-    cursor: pointer;
-    font-size: var(--text-label);
-    padding: 0.2rem 0.4rem;
-    border-radius: var(--radius);
-    transition: background 0.15s;
-}
-
-.pcfg-list-remove:hover {
-    background: var(--color-danger-wash);
-}
-
-.pcfg-list-add,
-.pcfg-add-btn {
-    background: transparent;
-    border: 1px dashed var(--border);
-    border-radius: var(--radius);
-    color: var(--text-muted);
-    font-size: var(--text-label);
-    padding: 0.25rem 0.6rem;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-    align-self: flex-start;
-}
-
-.pcfg-list-add:hover,
-.pcfg-add-btn:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-/* Dictionary section */
-.pcfg-dict-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-}
-
-.pcfg-dict-header h4 {
-    margin: 0;
-    font-size: var(--text-body);
-    font-weight: 600;
-}
-
-.pcfg-dict-header-inline {
-    justify-content: flex-end;
-}
-
-/* Dictionary entry */
-.pcfg-entry {
-    background: var(--color-wash-soft);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    margin-bottom: 0.5rem;
-}
-
-.pcfg-entry-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0.75rem;
-    background: var(--color-wash-soft);
-    border-bottom: 1px solid var(--border);
-}
-
-.pcfg-entry-name {
-    font-weight: 600;
-    font-size: var(--text-body);
-    color: var(--accent);
-}
-
-.pcfg-entry-id {
-    font-weight: 400;
-    font-size: var(--text-caption);
-    color: var(--text-muted);
-    margin-left: 0.35rem;
-    user-select: all;
-}
-
-.pcfg-entry-id code {
-    font-family: var(--font-mono);
-    font-size: var(--text-mono);
-}
-
-.pcfg-entry-delete {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    font-size: var(--text-body);
-    padding: 0.15rem 0.3rem;
-    border-radius: var(--radius);
-    transition: background 0.15s;
-}
-
-.pcfg-entry-delete:hover {
-    background: var(--color-danger-wash);
-}
-
-.pcfg-entry-fields {
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.pcfg-path-value-database {
-    color: var(--error);
-    font-weight: 600;
-}
-
 /* Validation dialog */
 .validation-overlay {
     position: fixed;
@@ -4080,22 +3750,6 @@ details[open] > .thinking-summary::before {
 
     .platform-config-actions {
         flex-wrap: wrap;
-    }
-
-    .pcfg-field {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .pcfg-field > label {
-        min-width: unset;
-    }
-
-    .pcfg-field input,
-    .pcfg-field select,
-    .pcfg-list {
-        max-width: 100%;
-        width: 100%;
     }
 }
 
@@ -4594,8 +4248,6 @@ details[open] > .thinking-summary::before {
     color: var(--text-muted);
     padding-top: 0.4rem;
 }
-
-
 
 /* ── Conversation UI — Wave 2 ─────────────────────────────────────────────── */
 
@@ -6107,7 +5759,6 @@ h3.conversation-title.editable:hover {
     }
 }
 
-
 /* ── Home / Activity dashboard (#1888) ─────────────────────────────────────── */
 .activity-dashboard {
     padding: 1.5rem;
@@ -6526,7 +6177,6 @@ h3.conversation-title.editable:hover {
     color: var(--accent-live);
 }
 
-
 /* Cron Jobs single-page selector and editor */
 .cron-selector-section {
     margin-bottom: 1.25rem;
@@ -6665,7 +6315,6 @@ h3.conversation-title.editable:hover {
     .cron-page-card-header { align-items: flex-start; flex-direction: column; }
     .cron-detail-props { grid-template-columns: 1fr; }
 }
-
 
 /* Chat attachments */
 .attachment-composer { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; max-width: 55%; }
@@ -6850,8 +6499,6 @@ h3.conversation-title.editable:hover {
 .conversation-section-item:hover .section-remove-conversation-btn {
     opacity: 0.7;
 }
-
-
 
 /* Tools iframe host route /tools/{id} (#2234) */
 .tool-host-page {
@@ -7350,7 +6997,6 @@ h3.conversation-title.editable:hover {
     .usage-panel { right: 6px; width: calc(100vw - 12px); }
 }
 
-
 /* ── Icon control sizing ──────────────────────────────────────────────────
    Every icon-only or icon-led control in the portal was rendering its glyph at
    12-14px inside a box as small as 20x19 - under half the area of Fluent's 32px
@@ -7435,7 +7081,6 @@ h3.conversation-title.editable:hover {
 /* Failure count in the usage panel. Danger-toned because a non-zero value here means sends are
    being rejected right now - the one number in that panel that should interrupt a glance. */
 .usage-fail { color: var(--color-danger-text); }
-
 
 /* ── In-app guide ─────────────────────────────────────────────────────────
    Contents on the left, the rendered page on the right. The body reuses
@@ -7554,4 +7199,331 @@ h3.conversation-title.editable:hover {
 @media (max-width: 48rem) {
     .guide-layout { flex-direction: column; }
     .guide-nav { flex: 0 0 auto; max-height: 12rem; border-right: none; border-bottom: 1px solid var(--color-hairline); }
+}
+
+/* =====================================================
+   Config forms (SchemaForm)
+
+   SchemaForm has always emitted these class names; the stylesheet had no rule for a
+   single one of them, so every configuration screen - desktop and mobile - rendered as
+   raw browser defaults. That is why the labels butted straight against their inputs and
+   the fieldset legends sat on top of their own borders. A .pcfg-* block styling the markup
+   SchemaForm replaced sat unreferenced in this file until these rules took over from it.
+   ===================================================== */
+
+.schema-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    /* Config text is read, not scanned. Past this width the label column and its control
+       drift too far apart to associate at a glance. */
+    max-width: 900px;
+}
+
+.schema-form-empty {
+    color: var(--text-muted);
+    font-size: var(--text-body);
+    padding: 1rem;
+}
+
+.schema-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.schema-group-title {
+    margin: 0;
+    font-size: var(--text-heading);
+    line-height: var(--text-heading-lh);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* ── Cards: objects, dictionaries and arrays ──────────────────────────────── */
+
+/* A fieldset carries the right semantics for a group of controls - the legend is
+   announced with each control inside it - but its default border draws through its own
+   legend. Reset the chrome, keep the element. */
+.schema-object,
+.schema-dict,
+.schema-array {
+    min-width: 0;
+    margin: 0;
+    padding: 0.9rem 1rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+}
+
+.schema-object > legend,
+.schema-dict > legend,
+.schema-array > legend {
+    display: block;
+    float: left;
+    width: 100%;
+    padding: 0;
+    margin-bottom: 0.6rem;
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+/* float:left on the legend takes it out of flow; this restores the card's own. */
+.schema-object > legend + *,
+.schema-dict > legend + *,
+.schema-array > legend + * {
+    clear: both;
+}
+
+.schema-object-description {
+    margin: 0 0 0.75rem;
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    color: var(--text-muted);
+    max-width: 70ch;
+}
+
+/* Nested cards step down rather than repeating the same weight at every depth. */
+.schema-object .schema-object,
+.schema-object .schema-dict,
+.schema-object .schema-array {
+    background: var(--bg-secondary);
+}
+
+/* ── Buckets inside a card ────────────────────────────────────────────────── */
+
+.schema-subgroup {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+
+.schema-subgroup + .schema-subgroup {
+    margin-top: 1.1rem;
+}
+
+.schema-subgroup-title {
+    margin: 0 0 0.15rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+/* ── Field rows ───────────────────────────────────────────────────────────── */
+
+.schema-field {
+    display: grid;
+    /* Label column is bounded at both ends: it has to be wide enough to read and narrow
+       enough to leave the control the majority of the row. */
+    grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr);
+    gap: 0.35rem 1rem;
+    align-items: start;
+}
+
+.schema-field-label {
+    /* Optical alignment with the first line of the control, which carries input padding. */
+    padding-top: 0.4rem;
+    font-size: var(--text-label);
+    line-height: var(--text-label-lh);
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+
+.schema-field-control {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.schema-field-control > input[type="text"],
+.schema-field-control > input[type="password"],
+.schema-field-control > input[type="number"],
+.schema-field-control > select {
+    width: 100%;
+    max-width: 26rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: var(--text-body);
+    font-family: var(--font-sans);
+    transition: border-color 0.15s;
+}
+
+.schema-field-control > input:focus,
+.schema-field-control > select:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+/* A checkbox is its own control; stretching it to the field width would be absurd. */
+.schema-field-toggle .schema-field-control > input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+    margin: 0.45rem 0 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.schema-field-description {
+    margin: 0;
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    color: var(--text-muted);
+    max-width: 70ch;
+}
+
+.schema-field-error,
+.schema-array-error,
+.schema-dict-error {
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    color: var(--color-danger-text);
+}
+
+/* ── Collections ──────────────────────────────────────────────────────────── */
+
+.schema-array-item,
+.schema-dict-entry {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.35rem 0;
+}
+
+.schema-array-item + .schema-array-item,
+.schema-dict-entry + .schema-dict-entry {
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* A list item is identified by its position, so the generated "[0]" label is noise -
+   and it costs a whole label column that the value could be using. */
+.schema-array-item > .schema-field,
+.schema-dict-entry > .schema-field {
+    display: block;
+    flex: 1 1 14rem;
+    min-width: 0;
+}
+
+.schema-array-item > .schema-field > .schema-field-label,
+.schema-dict-entry > .schema-field > .schema-field-label {
+    display: none;
+}
+
+.schema-dict-key {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--text-mono);
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.schema-dict-add {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.dict-newkey,
+.dict-rename-input {
+    flex: 0 1 12rem;
+    min-width: 0;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: var(--text-label);
+    font-family: var(--font-sans);
+}
+
+.dict-newkey:focus,
+.dict-rename-input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+/* ── Collection buttons ───────────────────────────────────────────────────── */
+
+.array-add,
+.dict-add,
+.array-item-up,
+.array-item-down,
+.array-item-remove,
+.dict-entry-delete,
+.dict-rename {
+    flex-shrink: 0;
+    padding: 0.25rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--text-caption);
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.array-add,
+.dict-add {
+    align-self: flex-start;
+    margin-top: 0.6rem;
+    border-style: dashed;
+    color: var(--text-muted);
+}
+
+.array-add:hover,
+.dict-add:hover,
+.array-item-up:hover:not(:disabled),
+.array-item-down:hover:not(:disabled),
+.dict-rename:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.array-item-remove:hover,
+.dict-entry-delete:hover {
+    border-color: var(--color-danger-text);
+    background: var(--color-danger-wash);
+    color: var(--color-danger-text);
+}
+
+.array-item-up:disabled,
+.array-item-down:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* ── Narrow layouts ───────────────────────────────────────────────────────── */
+
+/* Below this the two-column row leaves the control too little room to be usable, so the
+   label sits above its input instead. Mobile Settings renders this same component. */
+@media (max-width: 720px) {
+    .schema-field {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.2rem;
+    }
+
+    .schema-field-label {
+        padding-top: 0;
+    }
+
+    .schema-field-control > input[type="text"],
+    .schema-field-control > input[type="password"],
+    .schema-field-control > input[type="number"],
+    .schema-field-control > select {
+        max-width: 100%;
+    }
 }
