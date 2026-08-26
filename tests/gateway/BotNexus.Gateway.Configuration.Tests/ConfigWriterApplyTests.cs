@@ -7,12 +7,12 @@ using Shouldly;
 namespace BotNexus.Gateway.Configuration.Tests;
 
 /// <summary>
-/// End-to-end cover for the DTO-diff write path (#3532) against a real file and a real SQLite store.
+/// End-to-end cover for the change-set write path (#3532) against a real file and a real SQLite store.
 /// </summary>
 /// <remarks>
-/// <see cref="ConfigDtoDifferTests"/> pins the diff in isolation. These tests exist because the property
-/// that matters is not "the change set is correct" but "the bytes on disk still contain the credential
-/// afterwards" - which only a real round-trip can demonstrate.
+/// <see cref="ConfigWriteMatrixTests"/> covers shape-by-shape behaviour across both backends. These
+/// tests exist for the properties that only a real round-trip can show: that the bytes on disk still
+/// contain the credential afterwards, and that a no-op genuinely does not touch the file.
 /// </remarks>
 public sealed class ConfigWriterApplyTests : IDisposable
 {
@@ -37,14 +37,11 @@ public sealed class ConfigWriterApplyTests : IDisposable
         }
         catch (IOException)
         {
-            // A leaked handle must not fail an otherwise-passing test; the temp directory is disposable.
+            // A leaked handle must not fail an otherwise-passing test.
         }
     }
 
-    private sealed class ChannelDto
-    {
-        public bool Enabled { get; set; }
-    }
+    private static JsonObject Doc(string json) => JsonNode.Parse(json)!.AsObject();
 
     /// <summary>
     /// The #2816 reconstruction, end to end: enabling one channel must not disturb the credentials
@@ -53,7 +50,6 @@ public sealed class ConfigWriterApplyTests : IDisposable
     [Fact]
     public async Task EnablingOneChannel_LeavesSiblingCredentialsOnDisk()
     {
-        var fileSystem = new FileSystem();
         await File.WriteAllTextAsync(_configPath, """
             {
               "channels": {
@@ -63,44 +59,45 @@ public sealed class ConfigWriterApplyTests : IDisposable
             }
             """);
 
-        var writer = new JsonConfigurationWriter(_configPath, fileSystem);
+        var before = Doc(await File.ReadAllTextAsync(_configPath));
+        var after = before.DeepClone().AsObject();
+        after["channels"]!["telegram"]!["enabled"] = true;
 
-        var changes = await writer.ApplyAsync(
-            new ChannelDto { Enabled = true },
-            "channels.telegram",
-            reason: "test",
-            ConfigDiffOptions.Additive);
-
+        var changes = ConfigDocumentDiffer.Diff(before, after);
         changes.Upserts.ShouldHaveSingleItem().Path.ShouldBe("channels.telegram.enabled");
 
-        var after = JsonNode.Parse(await File.ReadAllTextAsync(_configPath))!.AsObject();
+        var writer = new JsonConfigurationWriter(_configPath, new FileSystem());
+        await writer.ApplyChangeSetAsync(changes, "test");
+
+        var result = Doc(await File.ReadAllTextAsync(_configPath));
 
         // The change landed...
-        after["channels"]!["telegram"]!["enabled"]!.GetValue<bool>().ShouldBeTrue();
+        result["channels"]!["telegram"]!["enabled"]!.GetValue<bool>().ShouldBeTrue();
 
         // ...and neither credential was collateral damage. This is the assertion #2816 needed.
-        after["channels"]!["telegram"]!["botToken"]!.GetValue<string>().ShouldBe("tg-secret");
-        after["channels"]!["teams"]!["serviceBus"]!.GetValue<string>().ShouldBe("Endpoint=sb://real");
+        result["channels"]!["telegram"]!["botToken"]!.GetValue<string>().ShouldBe("tg-secret");
+        result["channels"]!["teams"]!["serviceBus"]!.GetValue<string>().ShouldBe("Endpoint=sb://real");
     }
 
     /// <summary>
-    /// A no-op apply must not rewrite the file, because an unchanged save would otherwise be
+    /// An empty change set must not rewrite the file, because an unchanged save would otherwise be
     /// indistinguishable from a real one in the backup history and the mtime.
     /// </summary>
     [Fact]
-    public async Task UnchangedApply_DoesNotTouchTheFile()
+    public async Task EmptyChangeSet_DoesNotTouchTheFile()
     {
-        var fileSystem = new FileSystem();
         await File.WriteAllTextAsync(_configPath, """{ "channels": { "telegram": { "enabled": true } } }""");
+
+        var document = Doc(await File.ReadAllTextAsync(_configPath));
+        var changes = ConfigDocumentDiffer.Diff(document, document.DeepClone().AsObject());
+        changes.IsEmpty.ShouldBeTrue();
 
         var before = File.GetLastWriteTimeUtc(_configPath);
         await Task.Delay(50);
 
-        var writer = new JsonConfigurationWriter(_configPath, fileSystem);
-        var changes = await writer.ApplyAsync(
-            new ChannelDto { Enabled = true }, "channels.telegram", "test", ConfigDiffOptions.Additive);
+        await new JsonConfigurationWriter(_configPath, new FileSystem())
+            .ApplyChangeSetAsync(changes, "test");
 
-        changes.IsEmpty.ShouldBeTrue();
         File.GetLastWriteTimeUtc(_configPath).ShouldBe(before);
     }
 
@@ -110,19 +107,23 @@ public sealed class ConfigWriterApplyTests : IDisposable
     [Fact]
     public async Task StoreApply_TouchesOnlyTheChangedRow()
     {
-        var store = new SqliteConfigStore($"Data Source={_storePath}");
-        await store.WriteDocumentAsync(JsonNode.Parse("""
+        var before = Doc("""
             {
               "channels": {
                 "telegram": { "enabled": false, "botToken": "tg-secret" },
                 "teams": { "enabled": true }
               }
             }
-            """)!.AsObject());
+            """);
 
-        var writer = new SqliteConfigurationWriter(store);
-        await writer.ApplyAsync(
-            new ChannelDto { Enabled = true }, "channels.telegram", "test", ConfigDiffOptions.Additive);
+        var store = new SqliteConfigStore($"Data Source={_storePath}");
+        await store.WriteDocumentAsync(before);
+
+        var after = before.DeepClone().AsObject();
+        after["channels"]!["telegram"]!["enabled"] = true;
+
+        await new SqliteConfigurationWriter(store)
+            .ApplyChangeSetAsync(ConfigDocumentDiffer.Diff(before, after), "test");
 
         var entries = await store.ReadEntriesAsync();
 
@@ -136,44 +137,43 @@ public sealed class ConfigWriterApplyTests : IDisposable
     /// rather than as a configured-but-empty section.
     /// </summary>
     [Fact]
-    public async Task RemovingTheLastKey_PrunesTheEmptiedParentOnly()
+    public void RemovingTheLastKey_PrunesTheEmptiedParentOnly()
     {
-        var document = JsonNode.Parse("""
+        var document = Doc("""
             { "agents": { "retired": { "model": "old" }, "nova": { "model": "sonnet" } } }
-            """)!.AsObject();
+            """);
 
-        var changes = new ConfigChangeSet("agents.retired", [], ["agents.retired.model"]);
-        ConfigDocumentPatcher.Apply(document, changes);
+        ConfigDocumentPatcher.Apply(document, new ConfigChangeSet([], ["agents.retired.model"]));
 
         document["agents"]!.AsObject().ContainsKey("retired").ShouldBeFalse();
 
         // The sibling is untouched - pruning stops the moment a parent still has children.
         document["agents"]!["nova"]!["model"]!.GetValue<string>().ShouldBe("sonnet");
-
-        await Task.CompletedTask;
     }
 
     /// <summary>
-    /// A fan-out apply reaches both backends, and each converges even when they started out of step.
+    /// A fan-out apply reaches both backends, so a store that started empty catches up rather than
+    /// silently staying behind - the JSON-to-SQLite transition state.
     /// </summary>
     [Fact]
     public async Task FanOutApply_ConvergesABackendThatWasBehind()
     {
-        var fileSystem = new FileSystem();
         await File.WriteAllTextAsync(_configPath, """{ "channels": { "telegram": { "enabled": false } } }""");
 
-        // The store starts EMPTY - the JSON-to-SQLite transition state.
+        var before = Doc(await File.ReadAllTextAsync(_configPath));
+        var after = before.DeepClone().AsObject();
+        after["channels"]!["telegram"]!["enabled"] = true;
+
+        // The store starts EMPTY.
         var store = new SqliteConfigStore($"Data Source={_storePath}");
         var fanOut = new FanOutConfigurationWriter(
-            [new JsonConfigurationWriter(_configPath, fileSystem), new SqliteConfigurationWriter(store)]);
+            [new JsonConfigurationWriter(_configPath, new FileSystem()), new SqliteConfigurationWriter(store)]);
 
-        await fanOut.ApplyAsync(
-            new ChannelDto { Enabled = true }, "channels.telegram", "test", ConfigDiffOptions.Additive);
+        await fanOut.ApplyChangeSetAsync(ConfigDocumentDiffer.Diff(before, after), "test");
 
-        var file = JsonNode.Parse(await File.ReadAllTextAsync(_configPath))!.AsObject();
+        var file = Doc(await File.ReadAllTextAsync(_configPath));
         file["channels"]!["telegram"]!["enabled"]!.GetValue<bool>().ShouldBeTrue();
 
-        // The lagging store caught up rather than staying silently behind.
         var entries = await store.ReadEntriesAsync();
         entries["channels.telegram.enabled"].Value.ShouldBe("true");
     }

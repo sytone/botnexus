@@ -39,31 +39,6 @@ public sealed class SqliteConfigurationWriter : IConfigurationWriter
 
     /// <inheritdoc />
     /// <remarks>
-    /// Reads the store's own entries rather than re-reading the JSON file. The store is what this writer
-    /// is about to modify, so diffing against anything else would compute a change set against a
-    /// document that is not there - and during a JSON-to-SQLite transition the two legitimately differ
-    /// until the first fan-out write reconciles them.
-    /// </remarks>
-    public async Task<ConfigChangeSet> ApplyAsync(
-        object dto,
-        string pathPrefix,
-        string reason,
-        ConfigDiffOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(dto);
-        ArgumentNullException.ThrowIfNull(pathPrefix);
-
-        var entries = await _store.ReadEntriesAsync(cancellationToken).ConfigureAwait(false);
-        var current = ConfigDocumentRehydrator.Rehydrate(entries);
-
-        var changes = ConfigDtoDiffer.Diff(current, dto, pathPrefix, options);
-        await _store.ApplyChangesAsync(changes, cancellationToken).ConfigureAwait(false);
-        return changes;
-    }
-
-    /// <inheritdoc />
-    /// <remarks>
     /// Delegates straight to the store, which applies one statement per named key. No document is
     /// materialised: the store is row-shaped already, so rebuilding a document here only to flatten it
     /// again would be the whole-document write wearing a different hat.

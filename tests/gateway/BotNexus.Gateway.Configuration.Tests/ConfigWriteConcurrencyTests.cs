@@ -180,7 +180,6 @@ public sealed class ConfigWriteConcurrencyTests : IDisposable
             // Each change set writes a PAIR of keys. A non-atomic apply would let a reader observe
             // one without the other, so asserting pair-consistency at the end detects it.
             var changes = new ConfigChangeSet(
-                string.Empty,
                 [
                     new ConfigEntry($"agents.a{i}.model", ConfigValueState.Value, "\"m\""),
                     new ConfigEntry($"agents.a{i}.apiKey", ConfigValueState.Value, "\"k\""),
@@ -211,7 +210,6 @@ public sealed class ConfigWriteConcurrencyTests : IDisposable
         await store.WriteDocumentAsync(new JsonObject());
 
         var changes = new ConfigChangeSet(
-            string.Empty,
             [new ConfigEntry("gateway.port", ConfigValueState.Value, "8080")],
             []);
 
@@ -245,7 +243,6 @@ public sealed class ConfigWriteConcurrencyTests : IDisposable
         for (var i = 0; i < 8; i++)
         {
             var changes = new ConfigChangeSet(
-                string.Empty,
                 [new ConfigEntry($"agents.a{i}.model", ConfigValueState.Value, "\"m\"")],
                 []);
 
@@ -276,7 +273,6 @@ public sealed class ConfigWriteConcurrencyTests : IDisposable
         await cts.CancelAsync();
 
         var changes = new ConfigChangeSet(
-            string.Empty,
             [new ConfigEntry("gateway.host", ConfigValueState.Value, "\"localhost\"")],
             []);
 

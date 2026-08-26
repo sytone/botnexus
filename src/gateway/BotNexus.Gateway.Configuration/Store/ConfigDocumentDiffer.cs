@@ -7,23 +7,7 @@ namespace BotNexus.Gateway.Configuration.Store;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why a document differ as well as <see cref="Writers.ConfigDtoDiffer"/>.</b> They serve different
-/// callers. The DTO differ answers "here is an updated object for this subtree" and derives the key
-/// names reflectively from the CLR type - that is the API-facing contract. This one answers "here is
-/// the document before and after a mutation", which is what <c>PlatformConfigWriter</c> already holds:
-/// its mutation lambdas edit a <see cref="JsonObject"/> in place against a pristine snapshot.
-/// </para>
-/// <para>
-/// <b>Routing the existing writer through the DTO differ instead would be a downgrade.</b> The mutated
-/// document is already the desired state, so projecting a CLR type over it would add a lossy step: 33
-/// of the 34 configuration classes carry no <c>[JsonExtensionData]</c>, so every unmodelled key would
-/// be dropped on the way through. Comparing documents keeps unmodelled keys in scope and still reduces
-/// the write to the changed keys.
-/// </para>
-/// <para>
-/// The result carries an empty <see cref="ConfigChangeSet.PathPrefix"/> because a document-wide diff
-/// genuinely speaks for the whole tree - but unlike a whole-document write, it only names the keys that
-/// actually moved.
+/// Unlike a whole-document write it names only the keys that actually moved.
 /// </para>
 /// </remarks>
 public static class ConfigDocumentDiffer
@@ -69,6 +53,6 @@ public static class ConfigDocumentDiffer
         upserts.Sort(static (a, b) => string.CompareOrdinal(a.Path, b.Path));
         removals.Sort(StringComparer.Ordinal);
 
-        return new ConfigChangeSet(string.Empty, upserts, removals);
+        return new ConfigChangeSet(upserts, removals);
     }
 }

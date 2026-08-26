@@ -37,7 +37,12 @@ public interface IConfigurationWriter
     /// <summary>
     /// Persists <paramref name="document"/>.
     /// </summary>
-    /// <param name="document">The complete configuration document. Writers replace, never merge.</param>
+    /// <param name="document">
+    /// The complete configuration document. Writers replace, never merge - this is the IMPORT path.
+    /// An edit must use <see cref="ApplyChangeSetAsync"/> instead, because a whole-document write
+    /// cannot distinguish "unchanged" from "not supplied" and deletes anything the caller did not
+    /// model (#2816).
+    /// </param>
     /// <param name="reason">
     /// Why the write is happening, for backup labelling and diagnostics. Not persisted as data.
     /// </param>
@@ -45,50 +50,26 @@ public interface IConfigurationWriter
     Task WriteAsync(JsonObject document, string reason, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Applies an updated DTO for one subtree, writing only the keys that actually changed (#3532).
+    /// Applies a change set the caller has already computed (#3532).
     /// </summary>
     /// <remarks>
     /// <para>
     /// <b>This is the contract callers should reach for; <see cref="WriteAsync"/> is for imports.</b> A
     /// whole-document write cannot distinguish "unchanged" from "not supplied", so it rewrites both
-    /// identically and deletes anything the caller's DTO does not model. That is #2816: a
-    /// <c>channels</c> write carrying one field destroyed the Service Bus settings and two Telegram bot
-    /// tokens, and the credentials were unrecoverable.
+    /// identically and deletes anything the caller did not model. That is #2816: a <c>channels</c> write
+    /// carrying one field destroyed the Service Bus settings and two Telegram bot tokens, and the
+    /// credentials were unrecoverable.
     /// </para>
     /// <para>
-    /// <paramref name="pathPrefix"/> is the blast radius. Removals are computed only within it, so a
-    /// write to <c>agents.nova</c> cannot touch <c>channels</c> - not because the implementation is
-    /// careful, but because it never looks there.
-    /// </para>
-    /// </remarks>
-    /// <param name="dto">The updated object for <paramref name="pathPrefix"/>.</param>
-    /// <param name="pathPrefix">
-    /// Canonical dotted path the DTO speaks for, e.g. <c>agents.nova</c>. Empty means the whole document.
-    /// </param>
-    /// <param name="reason">Why the write is happening, for backup labelling and diagnostics.</param>
-    /// <param name="options">Diff behaviour; defaults to <see cref="ConfigDiffOptions.Default"/>.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The change set that was applied, so callers can report or assert on what moved.</returns>
-    Task<ConfigChangeSet> ApplyAsync(
-        object dto,
-        string pathPrefix,
-        string reason,
-        ConfigDiffOptions? options = null,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Applies a change set the caller has already computed (#3532).
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The overload for callers that hold both the before and after documents - <c>PlatformConfigWriter</c>
-    /// mutates a <see cref="JsonObject"/> against a pristine snapshot, so it can diff document-against-
-    /// document and needs no CLR type at all. Routing it through <see cref="ApplyAsync"/> would force a
-    /// typed projection it does not need and would drop every key its DTOs do not model.
+    /// <c>PlatformConfigWriter</c> mutates a <see cref="JsonObject"/> against a pristine snapshot, so it
+    /// diffs document-against-document and needs no CLR type. A DTO-shaped overload was built first and
+    /// deleted unused: projecting a typed object over an already-correct document adds a lossy step,
+    /// because 33 of the 34 configuration classes carry no <c>[JsonExtensionData]</c> and would drop
+    /// every key they do not model. DTOs belong on the read side, bound through <c>IOptions</c>.
     /// </para>
     /// <para>
-    /// Backends must apply exactly the named keys and touch nothing else, which is the property that
-    /// makes a partially-modelled section safe to write.
+    /// Backends must apply exactly the named keys and touch nothing else, and must apply removals
+    /// BEFORE upserts - see <see cref="ConfigChangeSet.Removals"/> for why.
     /// </para>
     /// </remarks>
     /// <param name="changes">The keys to upsert and remove.</param>

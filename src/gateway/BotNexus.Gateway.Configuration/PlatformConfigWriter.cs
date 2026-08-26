@@ -772,11 +772,10 @@ public sealed class PlatformConfigWriter
             return _writer.WriteAsync(root, reason, ct);
         }
 
-        // Diff document-against-document rather than DTO-against-document. The mutation has already
-        // produced the desired JSON in `root`, so re-projecting a CLR type here would add nothing and
-        // would drop every key the type does not model - the #2816 failure. The DTO's role is the read
-        // side (bind through IOptions) and, in ConfigDtoDiffer, deriving key names reflectively; it is
-        // never the payload of a write.
+        // Diff document-against-document. The mutation has already produced the desired JSON in
+        // `root`, so re-projecting a CLR type here would add nothing and would drop every key the
+        // type does not model - the #2816 failure, and the reason the DTO-shaped writer overload was
+        // deleted unused. The DTO's role is the read side: bind through IOptions.
         var changes = ConfigDocumentDiffer.Diff(pristine, root);
 
         if (changes.IsEmpty)

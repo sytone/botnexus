@@ -654,11 +654,6 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
             return Task.CompletedTask;
         }
 
-        public Task<ConfigChangeSet> ApplyAsync(
-            object dto, string pathPrefix, string reason,
-            ConfigDiffOptions? options = null, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("PlatformConfigWriter must not use the DTO overload.");
-
         public Task ApplyChangeSetAsync(
             ConfigChangeSet changes, string reason, CancellationToken cancellationToken = default)
         {

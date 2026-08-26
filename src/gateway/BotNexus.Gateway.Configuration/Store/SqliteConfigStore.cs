@@ -18,6 +18,12 @@ namespace BotNexus.Gateway.Configuration.Store;
 /// </para>
 ///
 /// <para>
+/// <b>The whole-document write is now the import path only (#3532).</b> <see cref="ApplyChangesAsync"/>
+/// applies one statement per changed key, so an edit no longer costs a table rewrite and cannot drop
+/// keys the caller did not model.
+/// </para>
+///
+/// <para>
 /// <b>Presence is row existence, and that is the whole design.</b> Configuration inheritance is
 /// three-valued: absent means inherit, explicit <c>null</c> means suppress, a value means override.
 /// A nullable column collapses the first two, so the store records one row per (scope, key) and lets

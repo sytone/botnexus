@@ -60,38 +60,6 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
 
     /// <inheritdoc />
     /// <remarks>
-    /// <para>
-    /// <b>The change set is applied to the document on disk, not to a re-serialised DTO.</b> That is what
-    /// preserves the 33-of-34 configuration classes carrying no <c>[JsonExtensionData]</c>: a key the
-    /// CLR type does not model is never visited, so it survives untouched instead of vanishing through a
-    /// typed round-trip. Writing the DTO directly would be the whole-document write again with extra
-    /// steps.
-    /// </para>
-    /// <para>
-    /// An empty change set returns without touching the file at all. The no-op matters beyond
-    /// efficiency: rewriting identical bytes still churns the backup history and the file mtime, so a
-    /// save that changed nothing would be indistinguishable from one that did.
-    /// </para>
-    /// </remarks>
-    public async Task<ConfigChangeSet> ApplyAsync(
-        object dto,
-        string pathPrefix,
-        string reason,
-        ConfigDiffOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(dto);
-        ArgumentNullException.ThrowIfNull(pathPrefix);
-
-        var current = await ReadDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var changes = ConfigDtoDiffer.Diff(current, dto, pathPrefix, options);
-
-        await ApplyChangeSetAsync(changes, reason, cancellationToken).ConfigureAwait(false);
-        return changes;
-    }
-
-    /// <inheritdoc />
-    /// <remarks>
     /// Patches the document on disk rather than writing a projected object over it. A key absent from
     /// the change set is never visited, so it survives regardless of whether any CLR type models it -
     /// which is what makes writing a partially-modelled section safe (#2816).
