@@ -51,6 +51,23 @@ public sealed class CronScheduler(
     private readonly ConcurrentDictionary<string, ActiveCronRun> _activeRuns = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// #3517: how many consecutive one-shot deletion failures a job is allowed before it is driven
+    /// to a terminal state instead of being re-armed for another attempt.
+    /// </summary>
+    /// <remarks>
+    /// Three, not one: a single transient store or archive hiccup should not strand a job that would
+    /// have cleaned itself up on the next tick. What must not survive is the UNBOUNDED case - the
+    /// reported incident retried the identical failure 154 times over 15 hours with no decay.
+    /// </remarks>
+    internal const int MaxOneShotDeleteAttempts = 3;
+
+    // #3517: consecutive one-shot deletion failures per job id. Process-scoped and deliberately not
+    // persisted - the bound exists to stop a wedged run's job hammering the error channel for the
+    // life of THIS process, and a gateway restart clears the wedged run along with the counter, so
+    // a fresh attempt after a restart is the correct behaviour rather than a leak.
+    private readonly ConcurrentDictionary<string, int> _oneShotDeleteFailures = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// Number of runs currently registered as in flight in this process (#3160). Exposed so the
     /// registry's lifecycle is assertable as an observable on every terminal path rather than
     /// inferred from a log line - a leaked entry is both a memory leak and a stale cancellation
@@ -131,6 +148,10 @@ public sealed class CronScheduler(
     /// archive surfaces an error and leaves the job intact for retry. Session cleanup (#2893)
     /// runs next and is best-effort in the opposite direction - a session-store failure is logged
     /// and never aborts the delete.
+    /// #3517: the archive is SKIPPED (with a warning) when cancellation was not actually observed,
+    /// because a still-live run holds the conversation's write stripe and the archive is then
+    /// guaranteed to fail. Aborting the delete on that guaranteed failure is what produced the
+    /// unbounded retry loop.
     /// </remarks>
     public async Task DeleteJobAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
@@ -148,9 +169,24 @@ public sealed class CronScheduler(
         // the action is still executing is not merely untidy - the run keeps writing into a
         // conversation that has just been archived (resurrecting it) and the sweep deletes the very
         // session rows the run is mid-write on. Both are states #3160 observed in production.
-        await CancelActiveRunAsync(jobId, cancellationToken).ConfigureAwait(false);
+        var cancellation = await CancelActiveRunsAsync(jobId, cancellationToken).ConfigureAwait(false);
 
-        if (existing.ConversationId.HasValue)
+        // #3517: the #3160 ordering only holds when the cancellation was actually OBSERVED. When it
+        // was not, the run is still live and still holding this conversation's write stripe, so the
+        // archive below is not merely risky - it is guaranteed to fail, and its failure used to
+        // abort the whole delete and re-arm an unbounded retry. Skip it explicitly and say so.
+        // The delete itself still proceeds: fail-open, exactly as the cancellation watchdog does.
+        if (existing.ConversationId.HasValue && !cancellation.Observed)
+        {
+            _logger.LogWarning(
+                "Not archiving conversation '{ConversationId}' for cron job '{JobId}': {Count} in-flight run(s) never "
+                + "observed cancellation, so the conversation is still being written to. The job is being deleted anyway; "
+                + "the conversation is left active rather than blocking the delete on a step that cannot succeed.",
+                existing.ConversationId.Value,
+                jobId,
+                cancellation.Signalled);
+        }
+        else if (existing.ConversationId.HasValue)
         {
             try
             {
@@ -767,6 +803,30 @@ public sealed class CronScheduler(
     /// </para>
     /// </remarks>
     public async Task<int> CancelActiveRunAsync(JobId jobId, CancellationToken cancellationToken = default)
+        => (await CancelActiveRunsAsync(jobId, cancellationToken).ConfigureAwait(false)).Signalled;
+
+    /// <summary>
+    /// Outcome of a cancellation sweep: how many runs were signalled, and whether every one of them
+    /// was actually seen to leave its action body before the grace period elapsed (#3517).
+    /// </summary>
+    /// <param name="Signalled">How many in-flight runs were signalled. Zero means the job was idle.</param>
+    /// <param name="Observed">
+    /// <c>true</c> when every signalled run observed its cancellation (trivially true when none were
+    /// signalled). <c>false</c> means at least one run is STILL EXECUTING and still holds whatever
+    /// the run holds - which is precisely when a follow-on teardown step must not be attempted.
+    /// </param>
+    internal readonly record struct CancellationSweep(int Signalled, bool Observed);
+
+    /// <summary>
+    /// The <see cref="CancelActiveRunAsync"/> body, reporting whether cancellation was OBSERVED as
+    /// well as how many runs were signalled (#3517).
+    /// </summary>
+    /// <remarks>
+    /// The distinction is the whole of #3517. <see cref="CancelActiveRunAsync"/> returns a count,
+    /// which tells a caller nothing about whether the runs are gone - so <see cref="DeleteJobAsync"/>
+    /// proceeded into an archive that a still-live run made impossible, failed, and retried forever.
+    /// </remarks>
+    internal async Task<CancellationSweep> CancelActiveRunsAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
         var matches = _activeRuns
             .Where(entry => entry.Value.Job == jobId)
@@ -774,7 +834,7 @@ public sealed class CronScheduler(
             .ToList();
 
         if (matches.Count == 0)
-            return 0;
+            return new CancellationSweep(0, Observed: true);
 
         foreach (var active in matches)
             active.RequestOperatorCancel();
@@ -786,7 +846,11 @@ public sealed class CronScheduler(
 
         var graceSeconds = _optionsMonitor.CurrentValue?.ActiveRunCancellationGraceSeconds ?? 30;
         if (graceSeconds <= 0)
-            return matches.Count;
+        {
+            // No grace configured means no opportunity to observe. Report that honestly rather than
+            // claiming an observation that was never waited for.
+            return new CancellationSweep(matches.Count, Observed: false);
+        }
 
         // Linked source so the grace timer is torn down the instant the runs are observed, rather
         // than being left pending on the TimeProvider for the whole grace period on every delete.
@@ -809,7 +873,7 @@ public sealed class CronScheduler(
                 graceSeconds);
         }
 
-        return matches.Count;
+        return new CancellationSweep(matches.Count, Observed: winner == observed);
     }
 
     /// <summary>
@@ -852,14 +916,30 @@ public sealed class CronScheduler(
         if (!job.DeleteJobAfterRun)
             return;
 
+        // #3517: already terminal. Once the bound is reached the job has been disabled and no
+        // further deletion is attempted for the life of this process - re-entering here would let
+        // the attempt count (and the error) keep growing, which is the defect.
+        if (_oneShotDeleteFailures.TryGetValue(job.Id.Value, out var priorFailures) && priorFailures >= MaxOneShotDeleteAttempts)
+        {
+            _logger.LogDebug(
+                "One-shot removal not re-attempted for job '{JobId}': it already failed {Attempts} times and was disabled.",
+                job.Id,
+                priorFailures);
+            return;
+        }
+
         try
         {
             var latest = await _cronStore.GetAsync(job.Id, CancellationToken.None).ConfigureAwait(false);
             if (latest is null)
+            {
+                _oneShotDeleteFailures.TryRemove(job.Id.Value, out _);
                 return;
+            }
 
             if (!latest.DeleteJobAfterRun)
             {
+                _oneShotDeleteFailures.TryRemove(job.Id.Value, out _);
                 _logger.LogDebug(
                     "One-shot removal skipped for job '{JobId}': deleteJobAfterRun was cleared while the run was in flight.",
                     job.Id);
@@ -867,6 +947,7 @@ public sealed class CronScheduler(
             }
 
             await DeleteJobAsync(job.Id, CancellationToken.None).ConfigureAwait(false);
+            _oneShotDeleteFailures.TryRemove(job.Id.Value, out _);
             _logger.LogInformation(
                 "Deleted one-shot cron job '{JobId}' ('{JobName}') after its terminal run (deleteJobAfterRun).",
                 job.Id,
@@ -874,10 +955,70 @@ public sealed class CronScheduler(
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(
+            var failures = _oneShotDeleteFailures.AddOrUpdate(job.Id.Value, 1, static (_, current) => current + 1);
+
+            if (failures < MaxOneShotDeleteAttempts)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to delete one-shot cron job '{JobId}' after its run (attempt {Attempt} of {Max}). The run outcome is "
+                    + "unaffected; removal will be retried after the next run.",
+                    job.Id,
+                    failures,
+                    MaxOneShotDeleteAttempts);
+                return;
+            }
+
+            // #3517: the bound. Past this point retrying is not a policy, it is a stuck job
+            // re-emitting an identical error every schedule interval forever - 81% of the platform's
+            // whole error budget in the reported window. Drive the job to a TERMINAL state instead
+            // and say so exactly once.
+            await DisableUndeletableOneShotJobAsync(job, failures, ex).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Terminal state for a one-shot job whose deletion has failed <see cref="MaxOneShotDeleteAttempts"/>
+    /// times: disabled, so it stops firing, with a single actionable error (#3517).
+    /// </summary>
+    /// <remarks>
+    /// Disabling rather than force-deleting is deliberate. The delete failed for a reason nobody has
+    /// diagnosed yet, and silently dropping the row would destroy the only evidence an operator has.
+    /// A disabled job stops consuming a provider round-trip every interval, stops re-emitting the
+    /// error, and stays visible for a human to inspect - which is what "terminal" has to mean here.
+    /// </remarks>
+    private async Task DisableUndeletableOneShotJobAsync(CronJob job, int failures, Exception cause)
+    {
+        try
+        {
+            var latest = await _cronStore.GetAsync(job.Id, CancellationToken.None).ConfigureAwait(false);
+            if (latest is null)
+            {
+                _oneShotDeleteFailures.TryRemove(job.Id.Value, out _);
+                return;
+            }
+
+            await _cronStore.UpdateDefinitionAsync(latest with { Enabled = false }, CancellationToken.None).ConfigureAwait(false);
+            await _cronStore.SetNextRunAtAsync(job.Id, null, CancellationToken.None).ConfigureAwait(false);
+
+            _logger.LogError(
+                cause,
+                "One-shot cron job '{JobId}' ('{JobName}') could not be deleted after {Attempts} attempts and has been "
+                + "DISABLED so it stops firing. This is the terminal outcome: no further deletion attempts will be made. "
+                + "Investigate the cause below and remove the job manually.",
+                job.Id,
+                job.Name,
+                failures);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort to the last: this runs from a finally and must never escape it.
+            _logger.LogError(
                 ex,
-                "Failed to delete one-shot cron job '{JobId}' after its run. The run outcome is unaffected; removal will be retried after the next run.",
-                job.Id);
+                "One-shot cron job '{JobId}' could not be deleted after {Attempts} attempts, and disabling it also failed. "
+                + "The job requires manual removal.",
+                job.Id,
+                failures);
         }
     }
 

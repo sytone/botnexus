@@ -34,6 +34,24 @@ public sealed class SqliteConversationStore : IConversationStore
     // of sync primitives (no per-conversation SemaphoreSlim leak over the process
     // lifetime) and cannot strand a lock on an exception (the stripe is pool-owned).
     private readonly StripedAsyncLock _conversationLocks = new();
+
+    /// <summary>
+    /// Default bound on the archive path's wait for a conversation stripe (#3517).
+    /// </summary>
+    public static readonly TimeSpan DefaultArchiveLockTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// How long <see cref="ArchiveAsync(ConversationId, string, string?, string, CancellationToken)"/>
+    /// waits for the conversation stripe before failing with <see cref="StripeLockTimeoutException"/>.
+    /// </summary>
+    /// <remarks>
+    /// Archive is the one write that is routinely issued by a JANITOR (cron one-shot removal,
+    /// duplicate cleanup) rather than by the conversation's own writer, and janitors run with
+    /// <see cref="CancellationToken.None"/>. #3517: with no bound of its own that made a stripe
+    /// held by a wedged run an unbounded wait, so the delete could never complete and the caller
+    /// retried the identical failure every five minutes forever. Settable for tests only.
+    /// </remarks>
+    internal TimeSpan ArchiveLockTimeout { get; set; } = DefaultArchiveLockTimeout;
     // Bounded read-through cache capped by LRU so a long-running gateway does not
     // retain every conversation ever touched. Cold reads fall through to SQLite.
     private readonly BoundedLruCache<string, Conversation> _cache;
@@ -439,7 +457,11 @@ public sealed class SqliteConversationStore : IConversationStore
         activity?.SetTag("botnexus.conversation.correlation_id", correlationId);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
-        var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
+        // #3517: BOUNDED. See ArchiveLockTimeout - this overload is the janitor path and is called
+        // with CancellationToken.None, so the token cannot be the thing that ends the wait.
+        var conversationLock = await _conversationLocks
+            .AcquireAsync(conversationId.Value, ArchiveLockTimeout, ct)
+            .ConfigureAwait(false);
         try
         {
             await using var connection = CreateConnection();
@@ -1184,6 +1206,13 @@ public sealed class SqliteConversationStore : IConversationStore
 
     private Task<IDisposable> AcquireConversationLockAsync(string conversationId, CancellationToken cancellationToken)
         => _conversationLocks.AcquireAsync(conversationId, cancellationToken);
+
+    /// <summary>
+    /// Test hook (#3517): takes the same conversation stripe the write paths take, so contention can
+    /// be created deterministically instead of by racing two real operations against each other.
+    /// </summary>
+    internal Task<IDisposable> AcquireConversationLockForTestAsync(string conversationId)
+        => _conversationLocks.AcquireAsync(conversationId, CancellationToken.None);
 
     // Additive column migrations for the `conversations` table. Table-driven and race-tolerant:
     // each entry is applied with a plain ALTER TABLE ... ADD COLUMN, and the "duplicate column
