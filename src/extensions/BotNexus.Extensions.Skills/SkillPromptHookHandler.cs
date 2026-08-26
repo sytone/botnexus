@@ -98,19 +98,11 @@ public sealed class SkillPromptHookHandler
         });
     }
 
+    /// <summary>
+    /// Binds through the extension's single JSON seam so camelCase operator config binds (#3495).
+    /// </summary>
     private static SkillsConfig? ResolveSkillsConfig(AgentDescriptor descriptor)
-    {
-        if (descriptor.ExtensionConfig.TryGetValue("botnexus-skills", out var element))
-        {
-            try
-            {
-                return System.Text.Json.JsonSerializer.Deserialize<SkillsConfig>(element.GetRawText());
-            }
-            catch { /* invalid config — use defaults */ }
-        }
-
-        return null;
-    }
+        => SkillsExtensionJson.ResolveSkillsConfig(descriptor);
 
     private static string ResolveUserHomePath()
     {

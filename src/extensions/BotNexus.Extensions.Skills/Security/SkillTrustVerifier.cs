@@ -67,11 +67,11 @@ public static class SkillTrustVerifier
 {
     public const string CatalogFileName = "trust.json";
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        WriteIndented = true,
-    };
+    /// <summary>
+    /// JSON policy for the trust catalog. Delegates to the extension-wide seam (#3495) so the
+    /// Skills extension has exactly one place that decides case-sensitivity.
+    /// </summary>
+    private static JsonSerializerOptions JsonOptions => SkillsExtensionJson.IndentedOptions;
 
     /// <summary>
     /// Verifies a skill directory against its trust catalog.

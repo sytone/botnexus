@@ -210,7 +210,7 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
             return Results.BadRequest(new { error = "Parent directory does not exist." });
 
         var body = await System.Text.Json.JsonSerializer.DeserializeAsync<SkillsWriteRequest>(
-            request.Body, cancellationToken: request.HttpContext.RequestAborted);
+            request.Body, SkillsExtensionJson.Options, request.HttpContext.RequestAborted);
 
         if (body is null)
             return Results.BadRequest(new { error = "Request body is required." });

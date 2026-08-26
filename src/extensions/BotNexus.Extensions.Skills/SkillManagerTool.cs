@@ -488,8 +488,18 @@ public sealed class SkillManagerTool(
         return null;
     }
 
+    /// <summary>
+    /// The shared-scope refusal. #3495 acceptance criterion 4: name the config source that was
+    /// READ, rather than asserting a value the operator can see is different in their own file.
+    /// The original message stated "AllowSharedSkillManagement = false" to operators who had set
+    /// it to true everywhere - the value was right and the BINDING was broken, so the message sent
+    /// them to re-edit config that was already correct.
+    /// </summary>
     private static string SharedGateMessage()
-        => "Shared (all-agent) skill management is not enabled (AllowSharedSkillManagement = false). Copy the skill to the agent or workspace scope first.";
+        => "Shared (all-agent) skill management is not enabled: AllowSharedSkillManagement resolved " +
+           $"to false from {SkillsExtensionJson.ConfigSourceDescription}. Set " +
+           "\"allowSharedSkillManagement\": true there (keys bind case-insensitively), or copy the " +
+           "skill to the agent or workspace scope first.";
 
     /// <summary>
     /// Finds the skill directory for the given skill name across workspace, agent, and global sources.

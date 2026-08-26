@@ -41,20 +41,9 @@ public sealed class SkillManagerToolContributor(ISkillUsageTelemetry? telemetry 
         return Task.FromResult(new AgentToolContribution(tools));
     }
 
+    /// <summary>
+    /// Binds through the extension's single JSON seam so camelCase operator config binds (#3495).
+    /// </summary>
     private static T? ResolveExtensionConfig<T>(AgentDescriptor descriptor, string extensionId) where T : class
-    {
-        if (descriptor.ExtensionConfig.TryGetValue(extensionId, out var element))
-        {
-            try
-            {
-                return System.Text.Json.JsonSerializer.Deserialize<T>(element.GetRawText());
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        return null;
-    }
+        => SkillsExtensionJson.ResolveExtensionConfig<T>(descriptor, extensionId);
 }
