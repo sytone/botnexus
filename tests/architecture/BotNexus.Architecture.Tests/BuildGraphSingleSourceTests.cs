@@ -23,10 +23,23 @@ public class BuildGraphSingleSourceTests : ArchitectureTest
     [Fact]
     public void E2eCliPack_UsesAnIsolatedArtifactsPath()
     {
+        // Retargeted by #3388. The pack command line moved out of the fixture and into
+        // E2ECliPack.BuildPackArguments so it could be unit-asserted without running a real pack;
+        // this fence follows it rather than pinning to the old location. Deliberately stronger
+        // than the original single grep: it now requires BOTH that the helper emits the isolation
+        // switch AND that the fixture actually supplies a per-run directory for it, so neither
+        // half can be dropped while the other keeps the test green.
+        var pack = File.ReadAllText(Repository.Path(
+            "tests", "integration", "BotNexus.Integration.E2E.Tests", "E2ECliPack.cs"));
+
+        // Asserted via Assert rather than Shouldly: this project's local ShouldlyShim shadows the
+        // string overloads, so a two-argument ShouldContain binds to the LINQ predicate overload.
+        Assert.Contains("/p:ArtifactsPath=", pack);
+
         var fixture = File.ReadAllText(Repository.Path(
             "tests", "integration", "BotNexus.Integration.E2E.Tests", "NewUserExperienceFixture.cs"));
 
-        fixture.ShouldContain("/p:ArtifactsPath=");
+        Assert.Contains("packArtifactsDir", fixture);
     }
 
     [Fact]
