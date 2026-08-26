@@ -58,7 +58,7 @@ namespace BotNexus.Architecture.Tests;
 /// baseline entry naming a file that no longer exists fails.
 /// </para>
 /// </remarks>
-public sealed class PrimitiveIdParameterFenceArchitectureTests
+public sealed class PrimitiveIdParameterFenceArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The three identifiers under enforcement, mapped to the value object the failure message
@@ -139,7 +139,7 @@ public sealed class PrimitiveIdParameterFenceArchitectureTests
         var stale = new List<string>();
         foreach (var (path, allowed) in baseline.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
-            var absolute = Path.Combine(RepoRoot, path.Replace('/', Path.DirectorySeparatorChar));
+            var absolute = Path.Combine(Repository.Root, path.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(absolute))
             {
                 stale.Add($"{path}: baseline entry names a file that no longer exists.");
@@ -217,11 +217,11 @@ public sealed class PrimitiveIdParameterFenceArchitectureTests
 
     private readonly record struct ViolationSite(int Line, string ParameterName, string Text);
 
-    private static Dictionary<string, List<ViolationSite>> ScanNonBoundaryViolations()
+    private Dictionary<string, List<ViolationSite>> ScanNonBoundaryViolations()
     {
         var results = new Dictionary<string, List<ViolationSite>>(StringComparer.Ordinal);
 
-        foreach (var absolute in Directory.EnumerateFiles(Path.Combine(RepoRoot, "src"), "*.cs", SearchOption.AllDirectories))
+        foreach (var absolute in Directory.EnumerateFiles(Path.Combine(Repository.Root, "src"), "*.cs", SearchOption.AllDirectories))
         {
             var relative = Relative(absolute);
             if (relative.Contains("/obj/", StringComparison.Ordinal) || relative.Contains("/bin/", StringComparison.Ordinal))
@@ -329,18 +329,8 @@ public sealed class PrimitiveIdParameterFenceArchitectureTests
         return order.ToDictionary(key => key, key => baseline[key], StringComparer.Ordinal);
     }
 
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string Relative(string absolute) =>
-        Path.GetRelativePath(RepoRoot, absolute).Replace(Path.DirectorySeparatorChar, '/');
+    private string Relative(string absolute) =>
+        Path.GetRelativePath(Repository.Root, absolute).Replace(Path.DirectorySeparatorChar, '/');
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "src")))
-            directory = directory.Parent;
-
-        return directory?.FullName
-            ?? throw new DirectoryNotFoundException("Could not locate the repository root from the test base directory.");
-    }
 }

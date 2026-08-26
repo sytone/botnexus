@@ -25,7 +25,7 @@ namespace BotNexus.Architecture.Tests;
 /// rewrite pre-#512 rows. New references anywhere else fail the build.
 /// </para>
 /// </remarks>
-public sealed class ThreadIdRemovedArchitectureTests
+public sealed class ThreadIdRemovedArchitectureTests : ArchitectureTest
 {
     // Files allowed to mention the historic ThreadId type / thread_id column. The
     // migration code in SqliteConversationStore must reference the legacy column to
@@ -53,7 +53,7 @@ public sealed class ThreadIdRemovedArchitectureTests
     [Fact]
     public void NoCode_References_ThreadId_Type()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         // Match identifier "ThreadId" not preceded by "Message" (which would be
         // Telegram's API field MessageThreadId — legitimate).
         var pattern = new Regex(@"(?<!Message)\bThreadId\b", RegexOptions.Compiled);
@@ -83,7 +83,7 @@ public sealed class ThreadIdRemovedArchitectureTests
     [Fact]
     public void NoCode_References_thread_id_Column()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var offenders = Directory
             .EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
@@ -122,17 +122,4 @@ public sealed class ThreadIdRemovedArchitectureTests
         return !stripped.Contains("thread_id", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

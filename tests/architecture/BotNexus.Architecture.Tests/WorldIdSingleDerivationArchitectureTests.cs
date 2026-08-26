@@ -20,7 +20,7 @@ namespace BotNexus.Architecture.Tests;
 /// <para>Consumers take the injected <c>WorldId</c> dependency. The single legal reader of the raw
 /// <c>worldId</c> configuration key is the resolver itself.</para>
 /// </summary>
-public sealed class WorldIdSingleDerivationArchitectureTests
+public sealed class WorldIdSingleDerivationArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The only files permitted to mention the raw <c>worldId</c> configuration key: the resolver that
@@ -51,7 +51,7 @@ public sealed class WorldIdSingleDerivationArchitectureTests
     public void NoProductionCodeReadsWorldIdFromConfigurationDirectly()
     {
         var offenders = Directory
-            .EnumerateFiles(Path.Combine(RepoRoot, "src"), "*.cs", SearchOption.AllDirectories)
+            .EnumerateFiles(Path.Combine(Repository.Root, "src"), "*.cs", SearchOption.AllDirectories)
             .Select(path => (Path: Relative(path), Text: LineComment.Replace(File.ReadAllText(path), string.Empty)))
             .Where(file => !AllowedFiles.Contains(file.Path))
             .Where(file => RawKeyRead.IsMatch(file.Text))
@@ -75,25 +75,15 @@ public sealed class WorldIdSingleDerivationArchitectureTests
     {
         foreach (var relative in AllowedFiles)
         {
-            var absolute = Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+            var absolute = Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
             File.Exists(absolute).ShouldBeTrue($"Allow-listed file '{relative}' does not exist.");
             RawKeyRead.IsMatch(LineComment.Replace(File.ReadAllText(absolute), string.Empty))
                 .ShouldBeTrue($"Allow-listed file '{relative}' no longer references worldId - remove it from the allow-list.");
         }
     }
 
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string Relative(string absolute) =>
-        Path.GetRelativePath(RepoRoot, absolute).Replace(Path.DirectorySeparatorChar, '/');
+    private string Relative(string absolute) =>
+        Path.GetRelativePath(Repository.Root, absolute).Replace(Path.DirectorySeparatorChar, '/');
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "src")))
-            directory = directory.Parent;
-
-        return directory?.FullName
-            ?? throw new DirectoryNotFoundException("Could not locate the repository root from the test base directory.");
-    }
 }

@@ -2,7 +2,7 @@
   Deployment closure for `botnexus build` / `botnexus update` / `botnexus serve`.
 
   WHY THIS EXISTS
-  Building `BotNexus.slnx` builds 102 projects, 55 of which live under `tests/`. Even with
+  Building root `dirs.proj` includes every test project. Even with
   `SkipTests=true` (which strips their inputs so they emit empty assemblies) MSBuild still
   evaluates, restores and target-walks all 55. Nothing that is deployed consumes them.
 

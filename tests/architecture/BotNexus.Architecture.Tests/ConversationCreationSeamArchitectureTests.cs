@@ -31,7 +31,7 @@ namespace BotNexus.Architecture.Tests;
 /// the pattern catches the canonical violation and does not fire on legitimate lookalikes.
 /// </para>
 /// </remarks>
-public sealed class ConversationCreationSeamArchitectureTests
+public sealed class ConversationCreationSeamArchitectureTests : ArchitectureTest
 {
     /// <summary>The single production type permitted to construct a <c>Conversation</c>.</summary>
     private const string SeamFileName = "ConversationFactory.cs";
@@ -54,7 +54,7 @@ public sealed class ConversationCreationSeamArchitectureTests
     [Fact]
     public void Conversation_IsConstructedInExactlyOneProductionType()
     {
-        var srcDir = SrcDir();
+        var srcDir = Repository.SourceRoot;
 
         var violations = new List<string>();
         foreach (var file in Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories))
@@ -85,7 +85,7 @@ public sealed class ConversationCreationSeamArchitectureTests
         // Anti-vacuity: if the seam stopped containing the construction (renamed, moved, deleted),
         // the scan above would pass trivially because nobody constructs a Conversation anywhere.
         var seam = Directory
-            .EnumerateFiles(SrcDir(), SeamFileName, SearchOption.AllDirectories)
+            .EnumerateFiles(Repository.SourceRoot, SeamFileName, SearchOption.AllDirectories)
             .FirstOrDefault();
 
         seam.ShouldNotBeNull($"Expected the conversation creation seam file {SeamFileName} under src/.");
@@ -100,7 +100,7 @@ public sealed class ConversationCreationSeamArchitectureTests
         // ConversationSource value has no corresponding factory, callers on that origin path have
         // nowhere to go and will be tempted back to a raw constructor.
         var seam = Directory
-            .EnumerateFiles(SrcDir(), SeamFileName, SearchOption.AllDirectories)
+            .EnumerateFiles(Repository.SourceRoot, SeamFileName, SearchOption.AllDirectories)
             .FirstOrDefault();
         seam.ShouldNotBeNull($"Expected the conversation creation seam file {SeamFileName} under src/.");
 
@@ -163,15 +163,4 @@ public sealed class ConversationCreationSeamArchitectureTests
         return Regex.Replace(noBlock, @"//[^\r\n]*", string.Empty);
     }
 
-    private static string SrcDir()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-            current = current.Parent;
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-
-        var dir = Path.Combine(current.FullName, "src");
-        Directory.Exists(dir).ShouldBeTrue("Expected source dir at " + dir);
-        return dir;
-    }
 }

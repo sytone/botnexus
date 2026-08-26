@@ -28,12 +28,12 @@ public sealed class TelegramPollingLoopBoundingTests
         var adapter = CreateAdapter(handler);
         await adapter.StartAsync(new NoOpDispatcher(), CancellationToken.None);
 
-        // Give the loop far longer than the old flat 2s retry needed to fire repeatedly.
-        var observed = await WaitForStableGetUpdatesCountAsync(handler);
+        var pollingTask = adapter.GetPollingTask(Bot).ShouldNotBeNull();
+        await pollingTask.WaitAsync(TimeSpan.FromSeconds(2));
 
         // The loop must have parked after the terminal 409. One in-flight attempt is the whole
         // budget; the pre-fix loop kept issuing getUpdates indefinitely.
-        observed.ShouldBe(1);
+        handler.GetUpdatesCalls.ShouldBe(1);
 
         await adapter.StopAsync(CancellationToken.None);
     }
@@ -47,9 +47,10 @@ public sealed class TelegramPollingLoopBoundingTests
         var adapter = CreateAdapter(handler);
         await adapter.StartAsync(new NoOpDispatcher(), CancellationToken.None);
 
-        var observed = await WaitForStableGetUpdatesCountAsync(handler);
+        var pollingTask = adapter.GetPollingTask(Bot).ShouldNotBeNull();
+        await pollingTask.WaitAsync(TimeSpan.FromSeconds(2));
 
-        observed.ShouldBe(1);
+        handler.GetUpdatesCalls.ShouldBe(1);
 
         await adapter.StopAsync(CancellationToken.None);
     }
@@ -59,21 +60,25 @@ public sealed class TelegramPollingLoopBoundingTests
     {
         var handler = new CountingTelegramHandler();
         handler.FailGetUpdatesWith(HttpStatusCode.BadGateway);
+        handler.ParkAfterGetUpdatesCall = 2;
+        var retryDelayStarted = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRetryDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var adapter = CreateAdapter(handler);
+        var adapter = CreateAdapter(handler, (delay, cancellationToken) =>
+        {
+            retryDelayStarted.TrySetResult(delay);
+            return releaseRetryDelay.Task.WaitAsync(cancellationToken);
+        });
         await adapter.StartAsync(new NoOpDispatcher(), CancellationToken.None);
 
-        // First failure schedules a 2s backoff, so a second attempt lands after it. The loop
-        // must still be alive - a transient upstream blip must not park the transport.
-        var deadline = DateTime.UtcNow.AddSeconds(8);
-        while (handler.GetUpdatesCalls < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(100);
+        var requestedDelay = await retryDelayStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        requestedDelay.ShouldBe(TimeSpan.FromSeconds(2));
+        handler.GetUpdatesCalls.ShouldBe(1);
 
-        handler.GetUpdatesCalls.ShouldBeGreaterThanOrEqualTo(2);
+        releaseRetryDelay.TrySetResult();
+        await handler.Parked.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        // ...but it must be BOUNDED. Without backoff the old loop would have burned far more
-        // than a handful of attempts in this window.
-        handler.GetUpdatesCalls.ShouldBeLessThan(8);
+        handler.GetUpdatesCalls.ShouldBe(2);
 
         await adapter.StopAsync(CancellationToken.None);
     }
@@ -82,51 +87,22 @@ public sealed class TelegramPollingLoopBoundingTests
     public async Task HealthyLoop_KeepsPollingUnaffected()
     {
         var handler = new CountingTelegramHandler();
+        handler.ParkAfterGetUpdatesCall = 3;
 
         var adapter = CreateAdapter(handler);
         await adapter.StartAsync(new NoOpDispatcher(), CancellationToken.None);
 
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (handler.GetUpdatesCalls < 3 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await handler.Parked.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         // Success path is untouched: no breaker-imposed delay on a healthy transport.
-        handler.GetUpdatesCalls.ShouldBeGreaterThanOrEqualTo(3);
+        handler.GetUpdatesCalls.ShouldBe(3);
 
         await adapter.StopAsync(CancellationToken.None);
     }
 
-    /// <summary>
-    /// Polls until the getUpdates call count stops changing, then returns it. A parked loop
-    /// settles; a spinning loop does not.
-    /// </summary>
-    private static async Task<int> WaitForStableGetUpdatesCountAsync(CountingTelegramHandler handler)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        var last = -1;
-        var stableFor = 0;
-
-        while (DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(200);
-            var current = handler.GetUpdatesCalls;
-            if (current == last)
-            {
-                stableFor++;
-                if (stableFor >= 10)
-                    return current;
-            }
-            else
-            {
-                stableFor = 0;
-                last = current;
-            }
-        }
-
-        return handler.GetUpdatesCalls;
-    }
-
-    private static TelegramChannelAdapter CreateAdapter(CountingTelegramHandler handler)
+    private static TelegramChannelAdapter CreateAdapter(
+        CountingTelegramHandler handler,
+        Func<TimeSpan, CancellationToken, Task>? retryDelay = null)
     {
         var options = new TelegramGatewayOptions();
         options.Bots[Bot] = new TelegramBotConfig { BotToken = $"token-{Bot}", PollingTimeoutSeconds = 1 };
@@ -134,7 +110,8 @@ public sealed class TelegramPollingLoopBoundingTests
         return new TelegramChannelAdapter(
             NullLogger<TelegramChannelAdapter>.Instance,
             Options.Create(options),
-            new StubHttpClientFactory(handler));
+            new StubHttpClientFactory(handler),
+            retryDelay: retryDelay);
     }
 
     private sealed class StubHttpClientFactory(CountingTelegramHandler handler) : IHttpClientFactory
@@ -156,6 +133,8 @@ public sealed class TelegramPollingLoopBoundingTests
         private int _getUpdatesCalls;
 
         public int GetUpdatesCalls => Volatile.Read(ref _getUpdatesCalls);
+        public int? ParkAfterGetUpdatesCall { get; set; }
+        public TaskCompletionSource Parked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public HttpStatusCode? GetUpdatesFailureStatus { get; private set; }
 
@@ -164,28 +143,34 @@ public sealed class TelegramPollingLoopBoundingTests
 
         public void FailGetUpdatesWith(HttpStatusCode status) => GetUpdatesFailureStatus = status;
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var url = request.RequestUri!.ToString();
 
             if (url.EndsWith("/getUpdates", StringComparison.Ordinal))
             {
-                Interlocked.Increment(ref _getUpdatesCalls);
+                var call = Interlocked.Increment(ref _getUpdatesCalls);
+
+                if (call == ParkAfterGetUpdatesCall)
+                {
+                    Parked.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
 
                 if (ThrowOnGetUpdates)
                     throw new NotSupportedException("an exception nobody classified");
 
                 if (GetUpdatesFailureStatus is { } status)
-                    return Task.FromResult(new HttpResponseMessage(status)
+                    return new HttpResponseMessage(status)
                     {
                         Content = new StringContent("{\"ok\":false,\"description\":\"terminated by other getUpdates request\"}")
-                    });
+                    };
 
-                return Task.FromResult(Ok("[]"));
+                return Ok("[]");
             }
 
-            return Task.FromResult(Ok("true"));
+            return Ok("true");
         }
 
         private static HttpResponseMessage Ok(string resultJson) => new(HttpStatusCode.OK)

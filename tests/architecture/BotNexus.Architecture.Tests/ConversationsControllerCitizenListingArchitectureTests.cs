@@ -32,7 +32,7 @@ namespace BotNexus.Architecture.Tests;
 /// "every regex-based architecture fence must include a self-test" memory.
 /// </para>
 /// </remarks>
-public sealed class ConversationsControllerCitizenListingArchitectureTests
+public sealed class ConversationsControllerCitizenListingArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void GetSummariesAsync_HasOnlyParameterless_Overload()
@@ -61,7 +61,7 @@ public sealed class ConversationsControllerCitizenListingArchitectureTests
     [Fact]
     public void NoProductionSourceFile_CallsGetSummariesAsync_OutsideAllowlist()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -85,7 +85,7 @@ public sealed class ConversationsControllerCitizenListingArchitectureTests
     [Fact]
     public void CallAllowlist_OnlyContains_FilesThat_StillExist_AndStill_TripTheFence()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var stale = new List<string>();
 
         foreach (var relative in s_callAllowlist)
@@ -189,18 +189,6 @@ public sealed class ConversationsControllerCitizenListingArchitectureTests
             : full;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 
     /// <summary>
     /// Removes single-line (<c>//</c>, <c>///</c>) and block (<c>/* … */</c>) C# comments

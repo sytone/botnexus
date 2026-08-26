@@ -174,9 +174,10 @@ public sealed class SubAgentIntegrationTests
         var manager = CreateManager(supervisor.Object, registry.Object, workspaceManager: workspaceManager.Object);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
 
-        await WaitUntilAsync(
+        await TestAwait.EventuallyAsync(
             async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Completed,
-            TimeSpan.FromSeconds(30));
+            "the subagent status to become completed",
+            timeout: TimeSpan.FromSeconds(30));
         var completed = await manager.GetAsync(spawned.SubAgentId);
 
         completed.ShouldNotBeNull();
@@ -189,9 +190,10 @@ public sealed class SubAgentIntegrationTests
         // "expected once, but was 0 times" that then printed the invocation as having occurred.
         // The sibling SpawnFailure_/SpawnTimeout_CleansWorkspace tests already wait on this second
         // signal; this case was the only one missing it.
-        await WaitUntilAsync(
+        await TestAwait.EventuallyAsync(
             () => Task.FromResult(workspaceManager.Invocations.Count > 0),
-            TimeSpan.FromSeconds(30));
+            "the completed subagent workspace cleanup invocation",
+            timeout: TimeSpan.FromSeconds(30));
 
         supervisor.Verify(s => s.StopAsync(
                 It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
@@ -215,12 +217,14 @@ public sealed class SubAgentIntegrationTests
         var manager = CreateManager(supervisor.Object, registry.Object, workspaceManager: workspaceManager.Object);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
 
-        await WaitUntilAsync(
+        await TestAwait.EventuallyAsync(
             async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Failed,
-            TimeSpan.FromSeconds(30));
-        await WaitUntilAsync(
+            "the subagent status to become failed",
+            timeout: TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
             () => Task.FromResult(workspaceManager.Invocations.Count > 0),
-            TimeSpan.FromSeconds(30));
+            "the failed subagent workspace cleanup invocation",
+            timeout: TimeSpan.FromSeconds(30));
 
         workspaceManager.Verify(w => w.TryCleanupWorkspace(It.IsAny<string>()), Times.Once);
     }
@@ -239,12 +243,14 @@ public sealed class SubAgentIntegrationTests
         var manager = CreateManager(supervisor.Object, registry.Object, workspaceManager: workspaceManager.Object);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest(timeoutSeconds: 1));
 
-        await WaitUntilAsync(
+        await TestAwait.EventuallyAsync(
             async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.TimedOut,
-            TimeSpan.FromSeconds(30));
-        await WaitUntilAsync(
+            "the subagent status to become timed out",
+            timeout: TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
             () => Task.FromResult(workspaceManager.Invocations.Count > 0),
-            TimeSpan.FromSeconds(30));
+            "the timed-out subagent workspace cleanup invocation",
+            timeout: TimeSpan.FromSeconds(30));
 
         workspaceManager.Verify(w => w.TryCleanupWorkspace(It.IsAny<string>()), Times.Once);
     }
@@ -345,20 +351,6 @@ public sealed class SubAgentIntegrationTests
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("boom"));
         return handle;
-    }
-
-    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
-    {
-        var deadline = DateTimeOffset.UtcNow.Add(timeout);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            if (await condition())
-                return;
-
-            await Task.Delay(25);
-        }
-
-        throw new TimeoutException("Condition was not met before timeout.");
     }
 
     private static InProcessIsolationStrategy CreateStrategy(

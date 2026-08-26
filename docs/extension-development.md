@@ -1488,7 +1488,7 @@ dotnet build src/extensions/BotNexus.Extensions.ExecTool
 
 ```bash
 # Build the entire solution (includes all extensions)
-dotnet build BotNexus.slnx
+dotnet build dirs.proj
 ```
 
 ### Deploying

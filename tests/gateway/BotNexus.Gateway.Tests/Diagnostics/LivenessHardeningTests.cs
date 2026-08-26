@@ -123,7 +123,7 @@ public sealed class HealthEndpointTimeoutTests
         cts.Cancel();
 
         var result = await HealthEndpointHelper.ExecuteWithTimeoutAsync(
-            () => Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => new HealthResponse("ok", null, null)),
+            () => Task.Delay(Timeout.InfiniteTimeSpan).ContinueWith(_ => new HealthResponse("ok", null, null)),
             cts.Token);
 
         Assert.Equal("timeout", result.Status);
@@ -136,7 +136,7 @@ public sealed class HealthEndpointTimeoutTests
         cts.Cancel();
 
         var result = await HealthEndpointHelper.ExecuteWithTimeoutAsync(
-            () => Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => new HealthResponse("ok", "2026-01-01", 42.0)),
+            () => Task.Delay(Timeout.InfiniteTimeSpan).ContinueWith(_ => new HealthResponse("ok", "2026-01-01", 42.0)),
             cts.Token);
 
         Assert.Null(result.LastActivity);
@@ -183,7 +183,16 @@ public sealed class LockTimeoutLoggerTests
         // Arrange
         var logger = new FakeLogger<LockTimeoutLogger>();
         var semaphore = new SemaphoreSlim(1, 1);
-        var lockLogger = new LockTimeoutLogger(logger, TimeSpan.FromMilliseconds(50));
+        var warningDelayStarted = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWarningDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lockLogger = new LockTimeoutLogger(
+            logger,
+            TimeSpan.FromMilliseconds(50),
+            (delay, cancellationToken) =>
+            {
+                warningDelayStarted.TrySetResult(delay);
+                return releaseWarningDelay.Task.WaitAsync(cancellationToken);
+            });
 
         // Hold the semaphore to force contention
         await semaphore.WaitAsync();
@@ -191,8 +200,13 @@ public sealed class LockTimeoutLoggerTests
         // Act: try to acquire with very short threshold — will log warning
         var acquireTask = lockLogger.AcquireAsync(semaphore, "TestLock", CancellationToken.None);
 
-        // Wait for the warning threshold to fire
-        await Task.Delay(200);
+        var requestedDelay = await warningDelayStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        requestedDelay.ShouldBe(TimeSpan.FromMilliseconds(50));
+        releaseWarningDelay.TrySetResult();
+        await TestAwait.EventuallyAsync(
+            () => logger.Entries.Any(entry =>
+                entry.Level == LogLevel.Warning && entry.Message.Contains("TestLock")),
+            "the lock contention warning to be logged");
 
         // Release so the acquire completes
         semaphore.Release();
@@ -201,10 +215,10 @@ public sealed class LockTimeoutLoggerTests
             // acquired after delay
         }
 
-        // Assert: warning was logged about slow acquisition
-        Assert.Contains(logger.Entries, e =>
-            e.Level == LogLevel.Warning &&
-            e.Message.Contains("TestLock"));
+        // Assert: the warning remains recorded after acquisition completes.
+        Assert.Contains(logger.Entries, entry =>
+            entry.Level == LogLevel.Warning &&
+            entry.Message.Contains("TestLock"));
     }
 
     [Fact]

@@ -28,7 +28,7 @@ RUN apt-get update \
     && mkdir -p /work /cache/nuget \
     && chmod 0777 /work /cache/nuget
 
-COPY entrypoint.ps1 RunnerResult.ps1 RunnerTimeout.ps1 RunnerCost.ps1 /runner/
+COPY entrypoint.ps1 RunnerResult.ps1 RunnerTimeout.ps1 RunnerCost.ps1 RunnerBuild.ps1 /runner/
 WORKDIR /work
 
 # Fail the IMAGE BUILD, not a later test run, if a hard runner dependency is missing.

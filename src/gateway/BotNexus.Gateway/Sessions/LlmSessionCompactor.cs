@@ -233,12 +233,46 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         };
     }
 
+    /// <summary>
+    /// #3534: evaluates the two TOKEN-unit compaction triggers against a measurement, so
+    /// <see cref="ShouldCompact"/> and the #1574 &quot;still above threshold&quot; fallback gate in
+    /// <see cref="CompactAsync"/> can never disagree about whether a session is over budget.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The estimate trigger is the historical one: the local <c>chars/4</c> count over LLM-visible
+    /// entries. It systematically UNDER-counts, because it cannot see the system prompt, the tool
+    /// schemas, or workspace-injected files.
+    /// </para>
+    /// <para>
+    /// The provider trigger (#3534) closes exactly that blind spot. <c>lastProviderPromptTokens</c>
+    /// is the provider's own count of what the previous call actually cost, so it includes
+    /// everything the estimator misses. It was already read by <see cref="MeasureTokens"/> and used
+    /// to normalise the cut plan, but nothing consumed it as a TRIGGER - a session could sit at
+    /// 999,306 provider prompt tokens against a 120,000 threshold and never compact, until the
+    /// provider returned an empty completion because the window was exhausted. Both signals are
+    /// additive: whichever trips first wins, matching the #1599 bloat trigger's contract.
+    /// </para>
+    /// <para>
+    /// A null provider count means &quot;unavailable&quot;, never zero, so an unmeasured session
+    /// behaves exactly as it did before this change.
+    /// </para>
+    /// </remarks>
+    internal static (bool estimateTrigger, bool providerTrigger, int threshold) EvaluateTokenTriggers(
+        CompactionTokenMeasurement measurement,
+        CompactionOptions options)
+    {
+        var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
+        var estimateTrigger = measurement.EstimatedTokens > threshold;
+        var providerTrigger = measurement.ProviderPromptTokens is int provider && provider > threshold;
+        return (estimateTrigger, providerTrigger, threshold);
+    }
+
     public bool ShouldCompact(Session session, CompactionOptions options)
     {
         var estimatedTokens = EstimateVisibleTokenCount(session);
         var measurement = MeasureTokens(session, estimatedTokens);
-        var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
-        var tokenTrigger = estimatedTokens > threshold;
+        var (tokenTrigger, providerTrigger, threshold) = EvaluateTokenTriggers(measurement, options);
 
         // #1599: bloat-aware trigger. A session can be dominated by a small number of enormous
         // low-value entries (e.g. a raw transcript dump) whose total still sits under the token
@@ -246,16 +280,30 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // Additive: whichever of the token-count or per-entry-byte signal trips first wins.
         var (bloatTrigger, largestEntryBytes) = EvaluateLargestVisibleEntryBytes(session, options.LargestEntryBytesThreshold);
 
-        var shouldCompact = tokenTrigger || bloatTrigger;
+        var shouldCompact = tokenTrigger || providerTrigger || bloatTrigger;
 
-        _logger.LogDebug(
-            "ShouldCompact check for session {SessionId}: estimated {EstimatedTokens} tokens, " +
-            "threshold {Threshold} (window {Window} * ratio {Ratio}), largestVisibleEntry {LargestBytes} bytes " +
-            "(byteThreshold {ByteThreshold}, bloatTrigger {BloatTrigger}), " +
-            "providerPromptTokens {ProviderPromptTokens}, providerToEstimateRatio {TokenRatio}, " +
-            "result: {ShouldCompact}",
+        // #3534: this decision was previously logged at Debug ONLY, which production log levels
+        // filter out. When a session silently failed to compact there was therefore zero forensic
+        // trace - diagnosing the original incident required a source trace plus a direct SQLite
+        // query against sessions.db. Any decision that TRIGGERS, and any measurement that is over
+        // threshold in either unit, is now recorded at Information so the reason survives in the
+        // logs. The quiet, healthy, under-threshold case stays at Debug so steady-state volume is
+        // unchanged.
+        const string template =
+            "ShouldCompact check for session {SessionId}: estimated {EstimatedTokens} tokens " +
+            "(estimateTrigger {EstimateTrigger}), threshold {Threshold} (window {Window} * ratio {Ratio}), " +
+            "largestVisibleEntry {LargestBytes} bytes (byteThreshold {ByteThreshold}, bloatTrigger {BloatTrigger}), " +
+            "providerPromptTokens {ProviderPromptTokens} (providerTrigger {ProviderTrigger}), " +
+            "providerToEstimateRatio {TokenRatio}, result: {ShouldCompact}";
+
+        var level = shouldCompact ? LogLevel.Information : LogLevel.Debug;
+
+        _logger.Log(
+            level,
+            template,
             session.SessionId,
             estimatedTokens,
+            tokenTrigger,
             threshold,
             options.ContextWindowTokens,
             options.TokenThresholdRatio,
@@ -263,6 +311,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             options.LargestEntryBytesThreshold,
             bloatTrigger,
             measurement.ProviderPromptTokensDisplay,
+            providerTrigger,
             measurement.RatioDisplay,
             shouldCompact);
 
@@ -375,8 +424,17 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             // threshold, fall back to a smaller effective PreservedTurns so the oldest turn becomes
             // summarizable and we actually shed context. Genuinely-below-threshold sessions keep
             // returning Skipped (history is already minimal -- nothing to shed).
-            var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
-            if (visibleTokens > threshold)
+            //
+            // #3534: this gate MUST be evaluated in the same units as the trigger. It previously
+            // compared the local estimate only, so once ShouldCompact could also fire on the provider
+            // count, a session over budget in provider tokens but under it in estimate tokens would
+            // skip here and re-trigger on the next turn forever - reintroducing the exact cascade
+            // #1574 exists to prevent. Sharing EvaluateTokenTriggers makes that divergence
+            // unrepresentable.
+            var fallbackMeasurement = MeasureTokens(session.Session, visibleTokens);
+            var (fallbackEstimateTrigger, fallbackProviderTrigger, threshold) =
+                EvaluateTokenTriggers(fallbackMeasurement, options);
+            if (fallbackEstimateTrigger || fallbackProviderTrigger)
             {
                 for (var fallbackTurns = effectivePreservedTurns - 1; fallbackTurns >= 1; fallbackTurns--)
                 {
@@ -1108,7 +1166,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     {
         var totalChars = session.History
             .Where(SessionContextProjector.IsVisibleInLiveContext)
-            .Sum(entry => (long)(entry.Content?.Length ?? 0));
+            .Sum(SessionContextProjector.GetLiveContextCharCost);
         return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
 
@@ -1116,7 +1174,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     {
         var totalChars = entries
             .Where(SessionContextProjector.IsVisibleInLiveContext)
-            .Sum(entry => (long)(entry.Content?.Length ?? 0));
+            .Sum(SessionContextProjector.GetLiveContextCharCost);
         return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
 
@@ -1144,13 +1202,14 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 continue;
             }
 
-            var content = entry.Content;
-            if (string.IsNullOrEmpty(content))
-            {
-                continue;
-            }
-
-            var bytes = Encoding.UTF8.GetByteCount(content);
+            // #3536: size the entry by everything that reaches the provider, not by Content alone.
+            // The previous form read entry.Content, skipped the row outright when it was empty, and
+            // therefore costed a tool-start row carrying 27,354 characters of arguments at ZERO -
+            // the single largest visible entries on the motivating session were invisible to the
+            // bloat trigger they were supposed to fire.
+            var bytes = Encoding.UTF8.GetByteCount(entry.Content ?? string.Empty)
+                + Encoding.UTF8.GetByteCount(entry.ToolArgs ?? string.Empty)
+                + Encoding.UTF8.GetByteCount(entry.ThinkingContent ?? string.Empty);
             if (bytes > largest)
             {
                 largest = bytes;

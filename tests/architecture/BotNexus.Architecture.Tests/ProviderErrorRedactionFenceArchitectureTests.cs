@@ -34,11 +34,10 @@ namespace BotNexus.Architecture.Tests;
 /// message. Explicit vacuity guards and positive pins keep the detectors honest in both directions.
 /// </para>
 /// </summary>
-public sealed class ProviderErrorRedactionFenceArchitectureTests
+public sealed class ProviderErrorRedactionFenceArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string AgentRoot => Path.Combine(RepoRoot, "src", "agent");
+    private string AgentRoot => Path.Combine(Repository.Root, "src", "agent");
 
     private const string ChokePoint =
         "src/agent/BotNexus.Agent.Providers.Core/ProviderHttpErrorHelper.cs";
@@ -266,21 +265,10 @@ public sealed class ProviderErrorRedactionFenceArchitectureTests
             "must not be flagged by the AC5 scan.");
     }
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string ToRepoRelative(string absolute) =>
-        Path.GetRelativePath(RepoRoot, absolute).Replace(Path.DirectorySeparatorChar, '/');
+    private string ToRepoRelative(string absolute) =>
+        Path.GetRelativePath(Repository.Root, absolute).Replace(Path.DirectorySeparatorChar, '/');
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

@@ -85,7 +85,7 @@ public sealed record ReferenceContentPart : MessageContentPart
 
 ```bash
 dotnet new classlib -n BotNexus.Extensions.MyHandler
-dotnet sln BotNexus.slnx add extensions/BotNexus.Extensions.MyHandler/BotNexus.Extensions.MyHandler.csproj
+dotnet build dirs.proj
 ```
 
 Add a reference to the contracts project:

@@ -61,6 +61,45 @@ public static class SessionContextProjector
         !entry.IsHistory && !entry.IsCrashSentinel && !entry.Role.Equals(MessageRole.Notification);
 
     /// <summary>
+    /// The billable character cost of a single entry: every field of it that is serialised into the
+    /// LLM message list, not just its rendered text (#3536).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This exists because <see cref="IsVisibleInLiveContext"/> and the cost of what it selects were
+    /// previously decided in different places. The predicate correctly selected Tool entries - which
+    /// a continuous session really does send - while the compaction estimator summed
+    /// <see cref="SessionEntry.Content"/> alone. On the session that motivated this,
+    /// <see cref="SessionEntry.ToolArgs"/> was 69% of the visible context: the estimator reported
+    /// ~403,891 tokens where ~1,290,071 were present, a 3.19x undercount, and a
+    /// <c>tool-start</c> row carrying 27,354 characters of arguments and no content was costed at
+    /// zero.
+    /// </para>
+    /// <para>
+    /// Keeping this beside the visibility predicate is the point: <b>selecting an entry and costing
+    /// it are one decision</b>. Any consumer that filters on <c>IsVisibleInLiveContext</c> must size
+    /// entries with this helper, so a field added to <see cref="SessionEntry"/> that reaches the
+    /// provider is accounted for in exactly one place instead of being silently free in some
+    /// callers. <c>ToolArgsAndContentFenceArchitectureTests</c> enforces that pairing.
+    /// </para>
+    /// <para>
+    /// <see cref="SessionEntry.ThinkingContent"/> is included for the same reason: providers that
+    /// echo reasoning blocks back into the transcript charge for them. It was zero on the motivating
+    /// session, so this is correctness for the general case rather than a fix for observed mass.
+    /// </para>
+    /// </remarks>
+    /// <param name="entry">The entry to size. Null-safe on every field.</param>
+    /// <returns>Total characters this entry contributes to the next provider call.</returns>
+    public static long GetLiveContextCharCost(SessionEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        return (long)(entry.Content?.Length ?? 0)
+            + (entry.ToolArgs?.Length ?? 0)
+            + (entry.ThinkingContent?.Length ?? 0);
+    }
+
+    /// <summary>
     /// Eager projection used by isolation strategies to build the initial LLM
     /// message list on cold-start resume. Materialised so callers cannot be
     /// surprised by deferred enumeration over a <see cref="GatewaySession.History"/>

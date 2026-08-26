@@ -139,7 +139,7 @@ $alwaysRunPatterns = @(
 )
 
 # Enumerate every test project (used for -All and safety-net).
-# #2842: discovered from disk to match tests/dirs.proj rather than parsing BotNexus.slnx,
+# #2842: discovered from disk to match tests/dirs.proj rather than maintaining a second project list,
 # which was a second hand-maintained spelling of the same set.
 function Get-AllSolutionTestProjects {
     return @(Get-ChildItem -Path (Join-Path $repoRoot 'tests') -Filter '*.Tests.csproj' -Recurse -File |

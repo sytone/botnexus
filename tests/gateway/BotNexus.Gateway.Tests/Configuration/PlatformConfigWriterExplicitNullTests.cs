@@ -100,10 +100,23 @@ public sealed class PlatformConfigWriterExplicitNullTests : IDisposable
 
     /// <summary>
     /// Acceptance criterion 4: the consequence that actually matters. After the document has been
-    /// rewritten, the merger must still suppress inheritance for the explicitly-null agent.
+    /// rewritten, the explicit null must still be present in the raw JSON.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This previously asserted through <c>AgentConfigMerger</c>, which #3515 deleted. The merger was
+    /// only the observation instrument: what the test protects is that <c>PlatformConfigWriter</c>
+    /// does not silently drop <c>"memory": null</c> when it rewrites the document, because a POCO
+    /// round-trip collapses "absent" and "explicitly null" into the same null field.
+    /// </para>
+    /// <para>
+    /// So the assertion now reads the raw element directly. That is strictly closer to the property
+    /// being defended - the bytes on disk - and it survives whatever inheritance model replaces the
+    /// merger (#3503), because it makes no claim about how the null is later interpreted.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public async Task AfterRoundTrip_MergerStillSuppressesInheritance_ForExplicitlyNullAgent()
+    public async Task AfterRoundTrip_ExplicitNullSurvivesInTheDocument()
     {
         await File.WriteAllTextAsync(_configPath, SourceJson);
         var writer = new PlatformConfigWriter(_configPath, _fileSystem);
@@ -116,15 +129,16 @@ public sealed class PlatformConfigWriterExplicitNullTests : IDisposable
         reloaded.AgentDefaults.ShouldNotBeNull();
         reloaded.AgentDefaults!.Memory.ShouldNotBeNull("World defaults must still carry a memory section.");
 
-        JsonElement? alphaRaw = reloaded.AgentRawElements!["alpha"];
-        var merged = AgentConfigMerger.Merge(reloaded.AgentDefaults, reloaded.Agents!["alpha"], alphaRaw);
-        merged.Memory.ShouldBeNull(
-            "#2705: 'memory': null means suppress inheritance; after a rewrite the agent must not inherit defaults.");
+        // alpha wrote "memory": null - present, and null.
+        var alphaRaw = reloaded.AgentRawElements!["alpha"];
+        alphaRaw.TryGetProperty("memory", out var alphaMemory).ShouldBeTrue(
+            "#2705: 'memory': null must survive a rewrite; dropping the key turns suppression into inheritance.");
+        alphaMemory.ValueKind.ShouldBe(JsonValueKind.Null);
 
-        // Control: the agent that never mentioned memory must still inherit.
-        JsonElement? betaRaw = reloaded.AgentRawElements!["beta"];
-        var mergedBeta = AgentConfigMerger.Merge(reloaded.AgentDefaults, reloaded.Agents!["beta"], betaRaw);
-        mergedBeta.Memory.ShouldNotBeNull("An absent key must still inherit the world default.");
+        // Control: beta never mentioned memory, so the key must be ABSENT rather than written as null.
+        var betaRaw = reloaded.AgentRawElements!["beta"];
+        betaRaw.TryGetProperty("memory", out _).ShouldBeFalse(
+            "an absent key must not be materialised as an explicit null - that would invert its meaning.");
     }
 
     public void Dispose()

@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
+using BotNexus.Gateway.Configuration.Writers;
 
 namespace BotNexus.Cli.Commands;
 
@@ -101,7 +102,7 @@ internal static class CliConfigMutation
 
         var fileSystem = new System.IO.Abstractions.FileSystem();
         var backupsDir = Path.Combine(directory, "backups");
-        return new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
+        return ConfigWriterFactory.Create(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
     }
 
     /// <summary>
@@ -122,7 +123,9 @@ internal static class CliConfigMutation
 
         var fileSystem = new System.IO.Abstractions.FileSystem();
         var backups = new ConfigBackupService(Path.Combine(directory, "backups"), fileSystem);
-        var writer = new PlatformConfigWriter(configPath, fileSystem, backups);
+        var writer = ConfigWriterFactory.Create(configPath, fileSystem, backups);
         return new ConfigBackupRestoreService(backups, writer, fileSystem);
     }
 }
+
+

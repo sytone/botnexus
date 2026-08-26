@@ -49,7 +49,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using BotNexus.Gateway.Configuration.Shadow;
 using BotNexus.Gateway.Configuration.Store;
 using Microsoft.FeatureManagement;
 using System.Globalization;
@@ -212,7 +211,6 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<ISessionWarmupService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
         services.AddSingleton<IMessageRouter, DefaultMessageRouter>();
-        services.AddSingleton<IConfigPathResolver, ConfigPathResolver>();
         services.TryAddSingleton<IChannelManager, ChannelManager>();
         // Channel-neutral conversation event seam (#2085). Registered here so gateway code can
         // publish conversation facts today; sinks are supplied by channel extensions as the
@@ -444,31 +442,27 @@ public static class GatewayServiceCollectionExtensions
         PlatformConfigLoader.EnsureConfigDirectory(configDirectory, fileSystem);
         var config = LoadConfigForRegistration(configuration, resolvedConfigPath, fileSystem);
 
-        if (configuration is not null)
-        {
-            // Bind PlatformConfig from the host IConfiguration root (config.json is already in the pipeline).
-            // IOptionsMonitor hot-reload comes free from reloadOnChange: true in Program.cs.
-            services.AddOptions<PlatformConfig>().Bind(configuration);
-            services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
-                new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
-            // Explicit factory: the validator has a second, internal constructor used only by
-            // tests, so resolve the logger deliberately rather than relying on constructor
-            // selection. Without the logger the #3037 unknown-property warning would be silent.
-            services.AddSingleton<IValidateOptions<PlatformConfig>>(sp =>
-                new PlatformConfigOptionsValidator(
-                    sp.GetService<ILogger<PlatformConfigOptionsValidator>>()));
-        }
-        else
-        {
-            // Fallback when IConfiguration is not threaded in (e.g. tests or CLI-only usage).
-            // Use a manual load + PostConfigure without hot reload.
-            services.AddOptions<PlatformConfig>()
-                .Configure(options =>
-                {
-                    var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
-                    ApplyPlatformConfig(options, freshConfig);
-                });
-        }
+        // #3504: ONE registration path. Previously an `IConfiguration`-present branch bound from the
+        // pipeline while an else-branch hand-loaded the file on every options access - two ways to
+        // populate the same type, with only the first getting hot reload, store values, and
+        // last-known-good. When no configuration was threaded in we now build the same pipeline
+        // instead of reading the file, so every host binds identically.
+        configuration ??= new ConfigurationBuilder()
+            .AddPlatformConfiguration(resolvedConfigPath)
+            .Build();
+
+        // Bind PlatformConfig from the IConfiguration root. IOptionsMonitor hot-reload comes free
+        // from reloadOnChange on the file provider and the store's reload token.
+        services.AddOptions<PlatformConfig>().Bind(configuration);
+        services.TryAddSingleton(configuration);
+        services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
+            new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
+        // Explicit factory: the validator has a second, internal constructor used only by
+        // tests, so resolve the logger deliberately rather than relying on constructor
+        // selection. Without the logger the #3037 unknown-property warning would be silent.
+        services.AddSingleton<IValidateOptions<PlatformConfig>>(sp =>
+            new PlatformConfigOptionsValidator(
+                sp.GetService<ILogger<PlatformConfigOptionsValidator>>()));
 
         // #3281: the world event bus and the provider-health observer are registered together
         // because neither is useful alone. The bus had no publisher and no registration at all -
@@ -554,7 +548,11 @@ public static class GatewayServiceCollectionExtensions
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
             var writer = serviceProvider.GetRequiredService<PlatformConfigWriter>();
-            return new PlatformConfigAgentWriter(writer, home);
+            // #3547: the resolver lets the writer recognise an incoming absolute path as the
+            // resolved form of a stored '@location' alias and write the alias back instead.
+            // Optional by design - without it the writer persists the caller's values verbatim.
+            var locationResolver = serviceProvider.GetService<ILocationResolver>();
+            return new PlatformConfigAgentWriter(writer, home, locationResolver);
         }));
         // Config hydration — populate missing keys with defaults on startup
         services.AddSingleton<IConfigSchemaContributor, GatewaySchemaContributor>();
@@ -566,20 +564,11 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IConfigSchemaContributor, RateLimitSchemaContributor>();
         services.AddHostedService<ConfigHydrationService>();
 
-        // #2646 PBI 2 / #2766: the configuration shadow migration. Placed AFTER
-        // ConfigHydrationService because hydration writes defaults into config.json, and a shadow pass
-        // that ran first would be comparing against a document the platform is about to modify.
-        //
-        // The whole path is inert until ConfigStoreShadowMigration is enabled, and the flag defaults
-        // off: with it off the service returns before it reads anything at all.
-        //
-        // Nothing here can change which configuration the gateway serves. The store is written to and
-        // read back purely to be diffed; ConfigStoreAuthoritative - the flag that would put it in the
-        // read path - is not consumed by any of these registrations.
-        services.TryAddSingleton<IConfigShadowReportSink, ConfigShadowReportSink>();
-        services.TryAddSingleton<IConfigShadowGate, FeatureManagerConfigShadowGate>();
-        services.TryAddSingleton<IConfigShadowSource>(sp =>
-            new FileConfigShadowSource(sp.GetRequiredService<IFileSystem>()));
+        // #3509: the shadow verification harness is gone. It migrated config.json into the store and
+        // diffed the round-trip to prove the copy was faithful - which mattered when the store was
+        // being introduced behind a flag. It writes a report nothing reads, and the store is now an
+        // ordinary configuration provider whose values are simply served, so there is no separate
+        // copy left to verify.
         services.TryAddSingleton<IConfigStore>(sp =>
         {
             // Sits beside config.json rather than in a separate location, so "delete the store to roll
@@ -588,23 +577,6 @@ public static class GatewayServiceCollectionExtensions
             var directory = PlatformConfigLoader.GetDefaultConfigDirectory(fs);
             return new SqliteConfigStore($"Data Source={Path.Combine(directory, "config.db")}");
         });
-        services.TryAddSingleton<IConfigStoreEntryRoundTrip>(sp =>
-            new ConfigStoreRoundTrip(sp.GetRequiredService<IConfigStore>()));
-        // The document-shaped seam is unused once the entry-shaped one is registered, but the hosted
-        // service takes it as a required constructor argument, so a no-op keeps the graph resolvable
-        // without inventing a second real implementation.
-        services.TryAddSingleton<IConfigStoreRoundTrip, NoOpConfigStoreRoundTrip>();
-        services.AddHostedService<ConfigShadowMigrationHostedService>();
-
-        // #2646 PBI 3: the store-backed read path. Registered but NOT yet consumed by
-        // PlatformConfigLoader - this PBI builds and proves the seam; replacing the loader's own read
-        // is a separate change with a far larger blast radius, and doing both at once would make a
-        // regression impossible to attribute to either.
-        //
-        // ConfigStoreAuthoritative gates it and defaults off, so with the flag unset this resolves to a
-        // source that reads the file and never opens the store.
-        services.TryAddSingleton<IConfigStoreAuthoritativeGate, FeatureManagerConfigStoreAuthoritativeGate>();
-        services.TryAddSingleton<IConfigDocumentSource, StoreBackedConfigDocumentSource>();
 
         // #2635: additively reconcile the bundled agent catalog into config.json. Registered
         // HERE, ahead of AgentConfigurationHostedService below, so an entry inserted on this
@@ -641,8 +613,12 @@ public static class GatewayServiceCollectionExtensions
 
     private static PlatformConfig LoadConfigForRegistration(IConfiguration? configuration, string resolvedConfigPath, IFileSystem fileSystem)
     {
-        if (configuration is null)
-            return PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
+        // #3504: no hand-rolled load. When no IConfiguration was threaded in (tests, CLI-only
+        // usage) build the same provider pipeline the gateway uses rather than reading the file
+        // directly - so the store is visible and last-known-good applies in every host.
+        configuration ??= new ConfigurationBuilder()
+            .AddPlatformConfiguration(resolvedConfigPath)
+            .Build();
 
         var config = new PlatformConfig();
         configuration.Bind(config);
@@ -681,11 +657,20 @@ public static class GatewayServiceCollectionExtensions
         }
     }
 
+    /// <summary>
+    /// Builds the platform config writer, fanning writes out to every backing store (#3527).
+    /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="BotNexus.Gateway.Configuration.Writers.ConfigWriterFactory"/> so the DI
+    /// path and the seven direct call sites in the CLI and API assemble the same backend set. Two
+    /// copies of "which writers does this path need" is precisely how the gateway and the CLI would
+    /// drift into disagreeing about where a write lands.
+    /// </remarks>
     private static PlatformConfigWriter CreatePlatformConfigWriter(string configPath, IFileSystem fileSystem)
     {
         var directory = Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.GetDefaultConfigDirectory(fileSystem);
         var backup = new ConfigBackupService(Path.Combine(directory, "backups"), fileSystem);
-        return new PlatformConfigWriter(configPath, fileSystem, backup);
+        return BotNexus.Gateway.Configuration.Writers.ConfigWriterFactory.Create(configPath, fileSystem, backup);
     }
 
     /// <summary>
@@ -924,3 +909,4 @@ public static class GatewayServiceCollectionExtensions
     }
 
 }
+

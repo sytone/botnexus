@@ -4,7 +4,7 @@ namespace BotNexus.Integration.Cli.Tests;
 
 /// <summary>
 /// Locates the repository root by walking up from the test assembly's base directory
-/// until a marker file (.git or BotNexus.slnx) is found. Used by integration tests
+/// until a marker file (.git or Directory.Packages.props) is found. Used by integration tests
 /// that need to clone or build from the in-tree repo.
 /// </summary>
 internal static class RepoLocator
@@ -15,7 +15,7 @@ internal static class RepoLocator
         while (dir is not null)
         {
             if (Directory.Exists(Path.Combine(dir.FullName, ".git")) ||
-                File.Exists(Path.Combine(dir.FullName, "BotNexus.slnx")))
+                File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
             {
                 return dir.FullName;
             }
@@ -23,6 +23,6 @@ internal static class RepoLocator
         }
 
         throw new DirectoryNotFoundException(
-            $"Could not locate repo root (no .git or BotNexus.slnx marker) walking up from {AppContext.BaseDirectory}.");
+            $"Could not locate repo root (no .git or Directory.Packages.props marker) walking up from {AppContext.BaseDirectory}.");
     }
 }

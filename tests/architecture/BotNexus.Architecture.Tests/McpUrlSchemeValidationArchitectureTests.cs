@@ -26,14 +26,13 @@ namespace BotNexus.Architecture.Tests;
 /// <para><b>Rule 4</b> — both known credential-bearing call sites actually consume the helper, so
 /// the fence cannot pass by the rule simply having no users.</para>
 /// </summary>
-public sealed class McpUrlSchemeValidationArchitectureTests
+public sealed class McpUrlSchemeValidationArchitectureTests : ArchitectureTest
 {
     private const string HelperTypeName = "McpUrlSecurity";
 
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string McpSourceDirectory =>
-        Path.Combine(RepoRoot, "src", "extensions", "BotNexus.Extensions.Mcp");
+    private string McpSourceDirectory =>
+        Path.Combine(Repository.Root, "src", "extensions", "BotNexus.Extensions.Mcp");
 
     [Fact]
     public void Mcp_extension_declares_exactly_one_scheme_validation_helper()
@@ -49,7 +48,7 @@ public sealed class McpUrlSchemeValidationArchitectureTests
             .Where(f => Regex.IsMatch(
                 StripComments(File.ReadAllText(f)),
                 $@"\b(class|static\s+class|record|struct)\s+{HelperTypeName}\b"))
-            .Select(f => Path.GetRelativePath(RepoRoot, f))
+            .Select(f => Path.GetRelativePath(Repository.Root, f))
             .ToList();
 
         declarations.Count.ShouldBe(1,
@@ -80,7 +79,7 @@ public sealed class McpUrlSchemeValidationArchitectureTests
             foreach (var (name, pattern) in handRolled)
             {
                 if (pattern.IsMatch(source))
-                    offenders.Add($"{Path.GetRelativePath(RepoRoot, file)}: {name}");
+                    offenders.Add($"{Path.GetRelativePath(Repository.Root, file)}: {name}");
             }
         }
 
@@ -102,7 +101,7 @@ public sealed class McpUrlSchemeValidationArchitectureTests
                 continue;
 
             if (newUri.IsMatch(StripComments(File.ReadAllText(file))))
-                offenders.Add(Path.GetRelativePath(RepoRoot, file));
+                offenders.Add(Path.GetRelativePath(Repository.Root, file));
         }
 
         offenders.ShouldBeEmpty(
@@ -133,7 +132,7 @@ public sealed class McpUrlSchemeValidationArchitectureTests
         }
     }
 
-    private static List<string> EnumerateMcpSourceFiles()
+    private List<string> EnumerateMcpSourceFiles()
     {
         if (!Directory.Exists(McpSourceDirectory))
             return [];
@@ -160,19 +159,4 @@ public sealed class McpUrlSchemeValidationArchitectureTests
         return source;
     }
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git")) ||
-                File.Exists(Path.Combine(directory.FullName, "BotNexus.slnx")))
-            {
-                return directory.FullName;
-            }
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate the repository root from the test output directory.");
-    }
 }

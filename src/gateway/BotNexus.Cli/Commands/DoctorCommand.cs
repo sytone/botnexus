@@ -3,6 +3,7 @@ using BotNexus.Cli.Commands.Doctor;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
+using BotNexus.Cli.Services;
 
 namespace BotNexus.Cli.Commands;
 
@@ -368,7 +369,7 @@ internal sealed class DoctorCommand
 
         try
         {
-            return await PlatformConfigLoader.LoadAsync(configPath, cancellationToken, validateOnLoad: false);
+            return PlatformConfigAccessor.Shared.Get(configPath);
         }
         catch (Exception ex)
         {
@@ -377,3 +378,4 @@ internal sealed class DoctorCommand
         }
     }
 }
+
