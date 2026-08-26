@@ -19,7 +19,7 @@ namespace BotNexus.Architecture.Tests;
 /// copy could have been added without failing anything.
 /// </para>
 /// </remarks>
-public sealed class SurrogateSafeTruncationArchitectureTests
+public sealed class SurrogateSafeTruncationArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// Matches a range slice whose result is immediately concatenated with a string literal - the
@@ -93,7 +93,7 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     [Fact]
     public void NoProductionSourceFile_TruncatesContentWithRawRangeSlicing()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var candidates = 0;
         var violations = new List<string>();
 
@@ -140,7 +140,7 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     [Fact]
     public void SafeTruncate_HasExactlyOneImplementation()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var declaring = EnumerateAllCsFiles(srcRoot)
             .Where(p => DeclaresNonShimSafeTruncate(File.ReadAllText(p)))
@@ -211,7 +211,7 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     [Fact]
     public void GraphemeSafeBoundary_HasExactlyOneImplementation()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var declaring = EnumerateAllCsFiles(srcRoot)
             .Where(p => File.ReadAllText(p).Contains(
@@ -249,7 +249,7 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     [Fact]
     public void SurrogateInspectionAllowList_EntriesAllExistAndAreJustified()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var missing = s_allowedSurrogateInspection.Keys
             .Where(rel => !File.Exists(Path.Combine(srcRoot, rel)))
@@ -278,7 +278,7 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     [Fact]
     public void Fence_ActuallyScansExtensions_AndWouldFlagARawSliceThere()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var extensionFiles = EnumerateFencedCsFiles(srcRoot)
             .Where(p => ToRelative(srcRoot, p).StartsWith("extensions", StringComparison.OrdinalIgnoreCase))
@@ -355,7 +355,7 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     [Fact]
     public void ToolOutputPreviewSites_RouteThroughTheSharedPolicy()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var sites = new Dictionary<string, string>
         {
@@ -384,7 +384,7 @@ public sealed class SurrogateSafeTruncationArchitectureTests
     [Fact]
     public void AllowList_Entries_AllExist()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var missing = s_allowed.Keys
             .Where(rel => !File.Exists(Path.Combine(srcRoot, rel)))
             .ToList();
@@ -419,15 +419,4 @@ public sealed class SurrogateSafeTruncationArchitectureTests
         return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full[root.Length..] : full;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return Path.Combine(current!.FullName, "src");
-    }
 }

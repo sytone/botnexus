@@ -18,5 +18,8 @@
 
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)NullableBoolShouldlyExtensions.cs" Link="NullableBoolShouldlyExtensions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)BotNexus.Testing/TestAwait.cs" Link="Shared/TestAwait.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)BotNexus.Testing/ManualTimeProvider.cs" Link="Shared/ManualTimeProvider.cs" />
+    <Using Include="BotNexus.Testing" />
   </ItemGroup>
 </Project>

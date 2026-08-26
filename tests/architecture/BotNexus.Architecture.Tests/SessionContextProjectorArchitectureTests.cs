@@ -12,7 +12,7 @@ namespace BotNexus.Architecture.Tests;
 /// <c>BotNexus.Gateway.Sessions</c> assembly — and is not re-invented inline
 /// anywhere else in <c>src/gateway/</c>.
 /// </summary>
-public sealed class SessionContextProjectorArchitectureTests
+public sealed class SessionContextProjectorArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The projector must live in the <c>BotNexus.Gateway.Sessions</c> assembly so
@@ -48,7 +48,7 @@ public sealed class SessionContextProjectorArchitectureTests
     [Fact]
     public void NoInlineProjectionFilter_OutsideAllowlist()
     {
-        var gatewayRoot = FindGatewaySourceRoot();
+        var gatewayRoot = Repository.Path("src", "gateway");
         var allowlist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             // The canonical filter — the one and only place that combines IsHistory and
@@ -103,17 +103,4 @@ public sealed class SessionContextProjectorArchitectureTests
             "Offenders:\n  " + string.Join("\n  ", offenders));
     }
 
-    private static string FindGatewaySourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var gatewayRoot = Path.Combine(current.FullName, "src", "gateway");
-        Directory.Exists(gatewayRoot).ShouldBeTrue("Expected src/gateway under " + current.FullName);
-        return gatewayRoot;
-    }
 }

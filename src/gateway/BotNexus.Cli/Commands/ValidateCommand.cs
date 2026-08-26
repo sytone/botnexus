@@ -64,7 +64,7 @@ internal sealed class ValidateCommand
         PlatformConfig config;
         try
         {
-            config = await PlatformConfigLoader.LoadAsync(configPath, cancellationToken, validateOnLoad: false);
+            config = PlatformConfigAccessor.Shared.Get(configPath);
         }
         catch (Exception ex)
         {
@@ -176,7 +176,10 @@ internal sealed class ValidateCommand
 
         try
         {
-            var config = PlatformConfigLoader.Load(validateOnLoad: false);
+            // No explicit path: resolve the default the same way the loader did, then read through
+            // the provider pipeline like every other call site.
+            var config = PlatformConfigAccessor.Shared.Get(
+                PlatformConfigLoader.GetDefaultConfigPath(new System.IO.Abstractions.FileSystem()));
             return config.Gateway?.ListenUrl ?? GatewayClientFactory.DefaultUrl;
         }
         catch
@@ -228,3 +231,4 @@ internal sealed record ConfigValidationResponse(
     string ConfigPath,
     IReadOnlyList<string>? Warnings,
     IReadOnlyList<string>? Errors);
+

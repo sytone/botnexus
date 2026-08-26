@@ -43,7 +43,7 @@ namespace BotNexus.Architecture.Tests;
 /// rule 2 constrains a test's own fixture rather than anything asserted about production code.
 /// </para>
 /// </remarks>
-public class TestConcurrencyFlakeFenceTests
+public class TestConcurrencyFlakeFenceTests : ArchitectureTest
 {
     private static readonly string[] WaitHelpers =
     [
@@ -61,7 +61,7 @@ public class TestConcurrencyFlakeFenceTests
     [Fact]
     public void PollWaits_AreNotFollowedByAnUnsynchronisedMockVerify()
     {
-        var testsRoot = FindTestsRoot();
+        var testsRoot = Repository.TestsRoot;
         var waitPattern = new Regex($@"\b({string.Join('|', WaitHelpers)})\s*\(", RegexOptions.Compiled);
         // A Verify asserting a call COUNT is the racy shape. Times.Never is excluded: proving a call
         // did not happen cannot be made to pass by waiting longer, so it is not a race of this kind.
@@ -110,7 +110,7 @@ public class TestConcurrencyFlakeFenceTests
     [Fact]
     public void TestHelpers_DoNotYieldFromAnUnboundedAsyncIterator()
     {
-        var testsRoot = FindTestsRoot();
+        var testsRoot = Repository.TestsRoot;
         var iteratorPattern = new Regex(
             @"IAsyncEnumerable<[^>]+>\s+\w+\s*\([^)]*\)\s*(?<body>\{)",
             RegexOptions.Compiled);
@@ -185,17 +185,4 @@ public class TestConcurrencyFlakeFenceTests
         }
     }
 
-    private static string FindTestsRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            if (File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-                return Path.Combine(current.FullName, "tests");
-
-            current = current.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate repository root from test base directory.");
-    }
 }

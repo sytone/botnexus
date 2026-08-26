@@ -106,7 +106,7 @@ internal static class ConfigPathFence
     /// <summary>
     /// Extracts every config-path literal used by source outside the configuration project.
     /// </summary>
-    /// <param name="repoRoot">Repository root (the directory holding <c>BotNexus.slnx</c>).</param>
+    /// <param name="repoRoot">Repository root (the directory holding <c>Directory.Packages.props</c>).</param>
     internal static IReadOnlyList<Usage> ExtractUsages(string repoRoot)
     {
         var usages = new List<Usage>();
@@ -430,15 +430,4 @@ internal static class ConfigPathFence
         return previous[b.Length];
     }
 
-    /// <summary>Locates the repository root by walking up to the solution file.</summary>
-    internal static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-            current = current.Parent;
-
-        return current?.FullName
-               ?? throw new DirectoryNotFoundException(
-                   "Could not locate the repository root from " + AppContext.BaseDirectory);
-    }
 }

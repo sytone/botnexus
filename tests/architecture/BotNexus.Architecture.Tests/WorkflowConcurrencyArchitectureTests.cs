@@ -32,11 +32,10 @@ namespace BotNexus.Architecture.Tests;
 /// <c>cancel-in-progress: false</c>. It does not dictate the exact group-key expression beyond
 /// referencing <c>github.ref</c> / <c>github.head_ref</c>, leaving room for the maintainer to tune.
 /// </remarks>
-public sealed class WorkflowConcurrencyArchitectureTests
+public sealed class WorkflowConcurrencyArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string WorkflowsDir => Path.Combine(RepoRoot, ".github", "workflows");
+    private string WorkflowsDir => Path.Combine(Repository.Root, ".github", "workflows");
 
     // Workflows that MUST carry a per-ref concurrency group. (deploy-docs.yml already has one and
     // is not in scope here; release-cli.yml / security-secrets-deps.yml are intentionally left to
@@ -299,15 +298,4 @@ public sealed class WorkflowConcurrencyArchitectureTests
                groupValue.Contains("github.run_id", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

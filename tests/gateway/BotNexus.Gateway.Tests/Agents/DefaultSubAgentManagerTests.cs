@@ -207,11 +207,14 @@ public sealed class DefaultSubAgentManagerTests
         // window keeps the assertion exact - the status must still become TimedOut, and a
         // sub-agent that never times out still fails - without making the test a measurement
         // of container scheduling latency.
-        await WaitUntilAsync(async () =>
-        {
-            var info = await manager.GetAsync(spawned.SubAgentId);
-            return info?.Status == SubAgentStatus.TimedOut;
-        }, TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
+            async () =>
+            {
+                var info = await manager.GetAsync(spawned.SubAgentId);
+                return info?.Status == SubAgentStatus.TimedOut;
+            },
+            "the subagent status to become timed out",
+            timeout: TimeSpan.FromSeconds(30));
 
         var updated = await manager.GetAsync(spawned.SubAgentId);
         updated.ShouldNotBeNull();
@@ -265,22 +268,6 @@ public sealed class DefaultSubAgentManagerTests
 
     private static ISubAgentManager CreateScaffoldManager(IAgentSupervisor supervisor, SubAgentOptions? options = null)
         => new InterfaceBackedSubAgentManager(supervisor, options ?? new SubAgentOptions());
-
-    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (await condition())
-            {
-                return;
-            }
-
-            await Task.Delay(50);
-        }
-
-        throw new TimeoutException("Condition was not met before timeout.");
-    }
 
     private sealed class InterfaceBackedSubAgentManager : ISubAgentManager
     {

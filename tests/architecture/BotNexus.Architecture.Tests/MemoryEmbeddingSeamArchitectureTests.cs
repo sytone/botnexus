@@ -33,7 +33,7 @@ namespace BotNexus.Architecture.Tests;
 /// mention of the embeddings capability namespace in its sources.
 /// </para>
 /// </summary>
-public sealed class MemoryEmbeddingSeamArchitectureTests
+public sealed class MemoryEmbeddingSeamArchitectureTests : ArchitectureTest
 {
     /// <summary>Project-name prefix identifying the provider stack this fence keeps out.</summary>
     private const string ProviderStackPrefix = "BotNexus.Agent.Providers";
@@ -41,10 +41,9 @@ public sealed class MemoryEmbeddingSeamArchitectureTests
     /// <summary>Namespace whose appearance under BotNexus.Memory would mean the seam was crossed in source.</summary>
     private const string EmbeddingCapabilityNamespace = "BotNexus.Agent.Providers.Core.Embeddings";
 
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string MemoryProject =>
-        Path.Combine(RepoRoot, "src", "gateway", "BotNexus.Memory", "BotNexus.Memory.csproj");
+    private string MemoryProject =>
+        Path.Combine(Repository.Root, "src", "gateway", "BotNexus.Memory", "BotNexus.Memory.csproj");
 
     [Fact]
     public void MemoryProject_HasNoProjectReferenceIntoTheProviderStack()
@@ -89,7 +88,7 @@ public sealed class MemoryEmbeddingSeamArchitectureTests
         // the boundary was crossed by source even if the csproj edge came in transitively. The
         // memory TOOLS legitimately use BotNexus.Agent.Providers.Core.Models (the tool contract),
         // so this checks the embeddings namespace specifically, not the whole provider root.
-        var memoryDirectory = Path.Combine(RepoRoot, "src", "gateway", "BotNexus.Memory");
+        var memoryDirectory = Path.Combine(Repository.Root, "src", "gateway", "BotNexus.Memory");
         var offenders = Directory
             .EnumerateFiles(memoryDirectory, "*.cs", SearchOption.AllDirectories)
             .Where(file =>
@@ -98,7 +97,7 @@ public sealed class MemoryEmbeddingSeamArchitectureTests
                 return text.Contains(EmbeddingCapabilityNamespace, StringComparison.Ordinal)
                        || text.Contains("IEmbeddingProvider", StringComparison.Ordinal);
             })
-            .Select(file => Path.GetRelativePath(RepoRoot, file))
+            .Select(file => Path.GetRelativePath(Repository.Root, file))
             .ToList();
 
         offenders.ShouldBeEmpty(
@@ -113,7 +112,7 @@ public sealed class MemoryEmbeddingSeamArchitectureTests
         // The adapter satisfies the seam through Microsoft.Extensions.AI, so the provider project
         // must not need the memory assembly either. Neither side knows about the other.
         var providerCore = Path.Combine(
-            RepoRoot, "src", "agent", "BotNexus.Agent.Providers.Core", "BotNexus.Agent.Providers.Core.csproj");
+            Repository.Root, "src", "agent", "BotNexus.Agent.Providers.Core", "BotNexus.Agent.Providers.Core.csproj");
 
         ProjectReferencesOf(providerCore)
             .Where(r => r.Contains("BotNexus.Memory", StringComparison.OrdinalIgnoreCase))
@@ -132,20 +131,4 @@ public sealed class MemoryEmbeddingSeamArchitectureTests
             .ToList();
     }
 
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git"))
-                || File.Exists(Path.Combine(directory.FullName, ".git")))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate the repository root from the test output directory.");
-    }
 }

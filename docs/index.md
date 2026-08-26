@@ -42,7 +42,7 @@ features:
 ```bash
 git clone https://github.com/sytone/botnexus.git
 cd botnexus
-dotnet build BotNexus.slnx
+dotnet build dirs.proj
 dotnet run --project src/gateway/BotNexus.Gateway.Api
 # Open http://localhost:5005
 ```

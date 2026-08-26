@@ -1,6 +1,7 @@
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Cli.Commands.Doctor.Generated;
+using BotNexus.Cli.Services;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -28,7 +29,7 @@ internal sealed class LocationAccessibilityCheck : IDoctorCheck
         PlatformConfig config;
         try
         {
-            config = await PlatformConfigLoader.LoadAsync(context.ConfigPath, cancellationToken, validateOnLoad: false);
+            config = PlatformConfigAccessor.Shared.Get(context.ConfigPath);
         }
         catch (Exception ex)
         {
@@ -78,3 +79,4 @@ internal sealed class LocationAccessibilityCheck : IDoctorCheck
         return new DoctorCheckResult(outcome, summary, details);
     }
 }
+

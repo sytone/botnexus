@@ -9,8 +9,9 @@ namespace BotNexus.Gateway.Tests.Satellites;
 public sealed class SatelliteStaleDetectionServiceTests
 {
     [Fact]
-    public async Task ExecuteAsync_DetectsAndMarksStale()
+    public void DetectAndMarkStale_MarksExpiredSatelliteOffline()
     {
+        var now = DateTimeOffset.Parse("2026-08-21T12:00:00Z");
         var entries = new[]
         {
             new SatelliteConnectionInfo
@@ -20,37 +21,19 @@ public sealed class SatelliteStaleDetectionServiceTests
                 Platform = "windows",
                 OwnerUserId = "jon",
                 Status = SatelliteStatus.Online,
-                LastSeen = DateTimeOffset.UtcNow.AddMinutes(-5),
+                LastSeen = now.AddMinutes(-5),
                 StaleTimeoutSeconds = 60
             }
         };
 
         var registry = new InMemorySatelliteRegistry(entries, NullLogger<InMemorySatelliteRegistry>.Instance);
 
-        using var cts = new CancellationTokenSource();
         var service = new SatelliteStaleDetectionService(
             registry,
             NullLogger<SatelliteStaleDetectionService>.Instance,
-            checkInterval: TimeSpan.FromMilliseconds(50));
+            timeProvider: new ManualTimeProvider(now));
 
-        // Start service and poll for the outcome.
-        //
-        // #2825: this previously slept 200ms and hoped a 50ms cycle had run, which failed on a
-        // loaded container (Expected Offline, Actual Online) because the background service had
-        // not been scheduled yet. Sleeping a fixed time asserts the host's throughput; polling
-        // for the condition asserts the behaviour. A service that never marks the satellite
-        // stale still fails, so the assertion is unchanged - it just no longer requires the
-        // scheduler to be prompt.
-        var task = service.StartAsync(cts.Token);
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
-        while (registry.GetById("stale-sat")?.Status != SatelliteStatus.Offline
-            && DateTimeOffset.UtcNow < deadline)
-        {
-            await Task.Delay(25);
-        }
-
-        await cts.CancelAsync();
-        await service.StopAsync(CancellationToken.None);
+        service.DetectAndMarkStale();
 
         var sat = registry.GetById("stale-sat");
         Assert.NotNull(sat);
@@ -58,8 +41,9 @@ public sealed class SatelliteStaleDetectionServiceTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_FreshSatellites_NotMarkedStale()
+    public void DetectAndMarkStale_LeavesFreshSatelliteOnline()
     {
+        var now = DateTimeOffset.Parse("2026-08-21T12:00:00Z");
         var entries = new[]
         {
             new SatelliteConnectionInfo
@@ -69,23 +53,19 @@ public sealed class SatelliteStaleDetectionServiceTests
                 Platform = "windows",
                 OwnerUserId = "jon",
                 Status = SatelliteStatus.Online,
-                LastSeen = DateTimeOffset.UtcNow,
+                LastSeen = now,
                 StaleTimeoutSeconds = 120
             }
         };
 
         var registry = new InMemorySatelliteRegistry(entries, NullLogger<InMemorySatelliteRegistry>.Instance);
 
-        using var cts = new CancellationTokenSource();
         var service = new SatelliteStaleDetectionService(
             registry,
             NullLogger<SatelliteStaleDetectionService>.Instance,
-            checkInterval: TimeSpan.FromMilliseconds(50));
+            timeProvider: new ManualTimeProvider(now));
 
-        var task = service.StartAsync(cts.Token);
-        await Task.Delay(200);
-        await cts.CancelAsync();
-        await service.StopAsync(CancellationToken.None);
+        service.DetectAndMarkStale();
 
         var sat = registry.GetById("fresh-sat");
         Assert.NotNull(sat);

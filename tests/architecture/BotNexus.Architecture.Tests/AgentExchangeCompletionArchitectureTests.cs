@@ -18,7 +18,7 @@ namespace BotNexus.Architecture.Tests;
 /// (c) synthetic-violation self-test (proves the regex fires when violated),
 /// (d) synthetic-clean self-test (proves the regex doesn't fire on legitimate code).
 /// </remarks>
-public sealed class AgentExchangeCompletionArchitectureTests
+public sealed class AgentExchangeCompletionArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void AgentExchangeService_HasNoSubstringMatchInCompletionDecision()
@@ -131,32 +131,20 @@ public sealed class AgentExchangeCompletionArchitectureTests
         return source[start..end].Replace("\n", "\\n").Replace("\r", "");
     }
 
-    private static string LocateAgentExchangeServiceFile()
+    private string LocateAgentExchangeServiceFile()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var path = Path.Combine(srcRoot, "gateway", "BotNexus.Gateway", "Agents", "AgentExchangeService.cs");
         File.Exists(path).ShouldBeTrue("Expected AgentExchangeService.cs at " + path);
         return path;
     }
 
-    private static string LocateCrossWorldFederationControllerFile()
+    private string LocateCrossWorldFederationControllerFile()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var path = Path.Combine(srcRoot, "gateway", "BotNexus.Gateway.Api", "Controllers", "CrossWorldFederationController.cs");
         File.Exists(path).ShouldBeTrue("Expected CrossWorldFederationController.cs at " + path);
         return path;
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

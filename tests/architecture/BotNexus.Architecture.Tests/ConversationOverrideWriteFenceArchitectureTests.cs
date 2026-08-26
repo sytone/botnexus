@@ -38,7 +38,7 @@ namespace BotNexus.Architecture.Tests;
 /// primitive did this call site choose" is a property of the source. A compiled assembly shows a
 /// property setter call either way and retains no trace of the decision.</para>
 /// </summary>
-public sealed class ConversationOverrideWriteFenceArchitectureTests
+public sealed class ConversationOverrideWriteFenceArchitectureTests : ArchitectureTest
 {
     /// <summary>Roots scanned by this fence - the whole production source tree.</summary>
     private const string SourceRoot = "src";
@@ -73,7 +73,6 @@ public sealed class ConversationOverrideWriteFenceArchitectureTests
     private static readonly Regex PatchOverrideUse =
         new(@"\bPatchOverrideAsync\s*\(", RegexOptions.Compiled);
 
-    private static string RepoRoot => FindRepoRoot();
 
     [Fact]
     public void SanctionedPrimitive_IsDeclaredOnTheContract()
@@ -218,9 +217,9 @@ public sealed class ConversationOverrideWriteFenceArchitectureTests
             $"every assertion above would pass without inspecting anything. Check that '{SourceRoot}' " +
             "still exists relative to the repo root.");
 
-    private static IEnumerable<string> EnumerateSources()
+    private IEnumerable<string> EnumerateSources()
     {
-        var root = Path.Combine(RepoRoot, SourceRoot);
+        var root = Path.Combine(Repository.Root, SourceRoot);
         Directory.Exists(root).ShouldBeTrue($"Source root not found: {root}");
         return Directory
             .EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
@@ -234,21 +233,10 @@ public sealed class ConversationOverrideWriteFenceArchitectureTests
             || normalised.Contains("/obj/", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string ToRepoRelative(string absolutePath) =>
-        Path.GetRelativePath(RepoRoot, absolutePath).Replace('\\', '/');
+    private string ToRepoRelative(string absolutePath) =>
+        Path.GetRelativePath(Repository.Root, absolutePath).Replace('\\', '/');
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

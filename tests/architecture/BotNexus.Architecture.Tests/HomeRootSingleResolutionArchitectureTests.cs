@@ -22,7 +22,7 @@ namespace BotNexus.Architecture.Tests;
 /// resolver exists. A new name appearing here must be justified in review, not absorbed by a wildcard.
 /// </para>
 /// </remarks>
-public sealed class HomeRootSingleResolutionArchitectureTests
+public sealed class HomeRootSingleResolutionArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// Files permitted to derive a home root from the user profile. Every one of these is either the
@@ -105,18 +105,9 @@ public sealed class HomeRootSingleResolutionArchitectureTests
             "nothing and the pattern may no longer match anything at all.");
     }
 
-    private static IEnumerable<string> EnumerateSourceFiles()
-        => Directory.EnumerateFiles(SourceRoot(), "*.cs", SearchOption.AllDirectories)
+    private IEnumerable<string> EnumerateSourceFiles()
+        => Directory.EnumerateFiles(Repository.SourceRoot, "*.cs", SearchOption.AllDirectories)
             .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
 
-    private static string SourceRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "src")))
-            directory = directory.Parent;
-
-        directory.ShouldNotBeNull("could not locate the repository root from the test output directory.");
-        return Path.Combine(directory!.FullName, "src");
-    }
 }

@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.IO.Abstractions;
 
@@ -55,6 +57,14 @@ public static class WebhookServiceCollectionExtensions
             services.Configure<WebhookConversationRetentionOptions>(
                 configuration.GetSection(ConversationRetentionSection).Bind);
         services.AddHostedService<WebhookConversationRetentionHostedService>();
+
+        // #3523: reconcile per-agent outbound webhook registrations from agent lifecycle. Exposed
+        // BOTH as IHostedService (startup reconciliation over the whole registry) and as
+        // IAgentWebhookProvisioner (per-agent calls from AgentsController), resolving to the same
+        // singleton - the DI idiom CronServiceCollectionExtensions uses for the cron provisioners.
+        services.AddSingleton<AgentWebhookProvisioner>();
+        services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<AgentWebhookProvisioner>());
+        services.TryAddSingleton<IAgentWebhookProvisioner>(sp => sp.GetRequiredService<AgentWebhookProvisioner>());
 
         return services;
     }

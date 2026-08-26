@@ -64,8 +64,8 @@ public sealed class CliInstallAndInitWorkflowTests : IAsyncLifetime
             $"Expected source directory at {sourceDir} after install.");
         Directory.Exists(Path.Combine(sourceDir, ".git")).ShouldBeTrue(
             "Cloned source should contain a .git directory.");
-        File.Exists(Path.Combine(sourceDir, "BotNexus.slnx")).ShouldBeTrue(
-            "Cloned source should contain BotNexus.slnx (proves the clone is of the current repo).");
+        File.Exists(Path.Combine(sourceDir, "dirs.proj")).ShouldBeTrue(
+            "Cloned source should contain the root traversal project (proves the clone is of the current repo).");
     }
 
     [Fact]

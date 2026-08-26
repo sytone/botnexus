@@ -258,7 +258,6 @@ public sealed class DesktopReconnectLoopTests
 
         // Release any further waits; nothing more should dial.
         pacer.ReleaseAll();
-        await Task.Delay(50);
 
         dials.ShouldBe(dialsAtStop);
         loop.IsReconnecting.ShouldBeFalse();
@@ -326,7 +325,7 @@ public sealed class DesktopReconnectLoopTests
                 if (_releaseAll)
                     return Task.CompletedTask;
 
-                tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                tcs = new TaskCompletionSource();
                 _pending = tcs;
             }
 
@@ -350,41 +349,21 @@ public sealed class DesktopReconnectLoopTests
 
         private async Task<bool> ReleaseOneAsync()
         {
-            // Wait for the loop to park on a delay before releasing it. Bounded by a generous
-            // scheduling allowance -- this is a handshake, not a timing assertion.
-            for (var spins = 0; spins < 500; spins++)
-            {
-                TaskCompletionSource? tcs;
-                lock (_sync)
-                    tcs = _pending;
-
-                if (tcs is not null)
+            TaskCompletionSource? pending = null;
+            await TestAwait.EventuallyAsync(
+                () =>
                 {
                     lock (_sync)
-                        _pending = null;
-
-                    var before = Requested.Count;
-                    tcs.TrySetResult();
-
-                    // Let the dial run and the next delay be requested (or the loop finish).
-                    for (var wait = 0; wait < 500; wait++)
                     {
-                        await Task.Yield();
-                        await Task.Delay(1);
-                        lock (_sync)
-                        {
-                            if (_pending is not null || Requested.Count > before)
-                                return true;
-                        }
+                        pending = _pending;
+                        _pending = null;
                     }
+                    return pending is not null;
+                },
+                "the desktop reconnect loop to request its next delay");
 
-                    return true;
-                }
-
-                await Task.Delay(1);
-            }
-
-            return false;
+            pending!.TrySetResult();
+            return true;
         }
 
         /// <summary>Makes all present and future waits complete immediately.</summary>

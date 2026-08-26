@@ -30,7 +30,7 @@ namespace BotNexus.Architecture.Tests;
 /// that group is explicitly out of scope for this change.
 /// </para>
 /// </remarks>
-public sealed partial class SecurityStrongTypeArchitectureTests
+public sealed partial class SecurityStrongTypeArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The only file permitted to mint a contained <c>SkillPath</c> from a resolved string. Every
@@ -45,7 +45,7 @@ public sealed partial class SecurityStrongTypeArchitectureTests
     [Fact]
     public void SkillPath_PrivilegedFactory_HasExactlyOneCallSite()
     {
-        var srcRoot = FindSrcRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
         var pattern = SkillPathFromResolved();
         var callSites = new List<string>();
@@ -85,7 +85,7 @@ public sealed partial class SecurityStrongTypeArchitectureTests
     [Fact]
     public void SkillSandboxBoundary_DoesNotAcceptBareStringsForValidatedPaths()
     {
-        var srcRoot = FindSrcRoot();
+        var srcRoot = Repository.SourceRoot;
         var validator = Path.Combine(srcRoot, "extensions", "BotNexus.Extensions.Skills", "Security", "SkillPathValidator.cs");
         var verifier = Path.Combine(srcRoot, "extensions", "BotNexus.Extensions.Skills", "Security", "SkillTrustVerifier.cs");
 
@@ -105,7 +105,7 @@ public sealed partial class SecurityStrongTypeArchitectureTests
     [Fact]
     public void WebhookSecret_RawValue_IsOnlyReachedThroughTheExplicitRevealCall()
     {
-        var srcRoot = FindSrcRoot();
+        var srcRoot = Repository.SourceRoot;
         var secretFile = Path.Combine(srcRoot, "domain", "BotNexus.Domain", "Security", "WebhookSecret.cs");
         Assert.True(File.Exists(secretFile), $"Expected {secretFile} to exist.");
 
@@ -123,19 +123,6 @@ public sealed partial class SecurityStrongTypeArchitectureTests
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
 
-    private static string FindSrcRoot()
-    {
-        var dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
-        while (dir is not null)
-        {
-            var srcCandidate = Path.Combine(dir, "src");
-            if (Directory.Exists(srcCandidate) && File.Exists(Path.Combine(dir, "BotNexus.slnx")))
-                return srcCandidate;
-            dir = Path.GetDirectoryName(dir);
-        }
-
-        throw new InvalidOperationException("Could not locate repository src/ root from test assembly location.");
-    }
 
     [GeneratedRegex(@"SkillPath\.FromResolved\s*\(", RegexOptions.Compiled)]
     private static partial Regex SkillPathFromResolved();

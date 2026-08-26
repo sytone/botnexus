@@ -9,6 +9,7 @@ using BotNexus.Cli.Diagnostics;
 using BotNexus.Cli.Wizard;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
+using BotNexus.Cli.Services;
 
 namespace BotNexus.Cli.Commands;
 
@@ -613,7 +614,7 @@ internal sealed class ProviderCommand
 
         try
         {
-            return await PlatformConfigLoader.LoadAsync(configPath, cancellationToken, validateOnLoad: false);
+            return PlatformConfigAccessor.Shared.Get(configPath);
         }
         catch
         {
@@ -672,3 +673,4 @@ internal sealed class ProviderCommand
         public string? Endpoint { get; set; }
     }
 }
+

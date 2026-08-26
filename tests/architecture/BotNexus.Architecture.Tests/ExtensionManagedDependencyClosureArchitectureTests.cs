@@ -33,10 +33,9 @@ namespace BotNexus.Architecture.Tests;
 /// offending project - instead of crashing the gateway in production.
 /// </para>
 /// </summary>
-public sealed class ExtensionManagedDependencyClosureArchitectureTests
+public sealed class ExtensionManagedDependencyClosureArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
-    private static string ExtensionsRoot => Path.Combine(RepoRoot, "src", "extensions");
+    private string ExtensionsRoot => Path.Combine(Repository.Root, "src", "extensions");
 
     [Fact]
     public void ExtensionsDirectory_Exists()
@@ -144,15 +143,4 @@ public sealed class ExtensionManagedDependencyClosureArchitectureTests
         Regex.IsMatch(csprojXml, @"<CopyLocalLockFileAssemblies>\s*true\s*</CopyLocalLockFileAssemblies>", RegexOptions.IgnoreCase) ||
         Regex.IsMatch(csprojXml, @"<EnableDynamicLoading>\s*true\s*</EnableDynamicLoading>", RegexOptions.IgnoreCase);
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

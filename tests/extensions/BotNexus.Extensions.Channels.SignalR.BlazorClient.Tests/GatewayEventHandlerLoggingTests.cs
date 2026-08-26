@@ -65,10 +65,10 @@ public sealed class GatewayEventHandlerLoggingTests
     public void Handler_has_no_console_error_writes_remaining()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "BotNexus.slnx")))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Directory.Packages.props")))
             dir = dir.Parent;
         if (dir is null)
-            throw new InvalidOperationException("Could not locate BotNexus.slnx from test base directory.");
+            throw new InvalidOperationException("Could not locate Directory.Packages.props from test base directory.");
 
         var path = Path.Combine(
             dir.FullName,

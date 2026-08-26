@@ -10,9 +10,7 @@ examples/
 tools/
 scripts/
 agents/
-.squad/
 .ai-team/
-.copilot/
 *.md
 *.lock
 mkdocs.yml

@@ -21,11 +21,14 @@
     <Compile Include="WebhookConversationProvenance.cs" />
     <Compile Include="WebhookConversationRetentionOptions.cs" />
     <Compile Include="WebhookConversationRetentionHostedService.cs" />
+    <Compile Include="IAgentWebhookProvisioner.cs" />
+    <Compile Include="AgentWebhookProvisioner.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" />
