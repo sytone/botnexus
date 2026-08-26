@@ -71,34 +71,35 @@ You should see the root command help listing all available subcommands.
 19. [config schema](#config-schema) — Generate JSON schema
 20. [config backups list](#config-backups-list) — List retained config.json backups
 21. [config restore](#config-restore) — Validate and restore a config.json backup
-22. [gateway](#gateway) — Manage the gateway lifecycle
-23. [provider](#provider) — Show or set up providers
-24. [provider setup](#provider-setup) — Interactive provider setup wizard
-25. [provider list](#provider-list) — List configured providers
-26. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-27. [provider remove](#provider-remove) — Remove a provider non-interactively
-28. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
-29. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-30. [prompt](#prompt) — Manage prompt templates
-31. [prompt list](#prompt-list) — List available prompt templates
-32. [prompt render](#prompt-render) — Render a prompt template
-33. [prompt run](#prompt-run) — Render and execute a prompt template
-34. [satellite](#satellite) — Manage satellite nodes
-35. [doctor](#doctor) — Run the complete CLI diagnostic suite
-36. [doctor config](#doctor-config) — Guided config migration
-37. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
-38. [locations](#locations) — Manage configured locations
-39. [update](#update) — Pull, build, and restart the gateway
-40. [memory](#memory) — Backfill agent memory stores
-41. [cron](#cron-command) — Manage cron jobs from the CLI
-42. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
-43. [debug sessions](#debug-sessions) — Inspect session SQLite database
-44. [debug logs](#debug-logs) — Inspect log files
-45. [debug memory](#debug-memory) — Inspect agent memory directories
-46. [debug db](#debug-db) — Inspect raw databases
-47. [debug gateway](#debug-gateway) — Live gateway diagnostics
-48. [debug cron](#debug-cron) — Cron scheduler diagnostics
-49. [Examples](#examples)
+22. [config store](#config-store) - Manage the SQLite configuration store
+23. [gateway](#gateway) — Manage the gateway lifecycle
+24. [provider](#provider) — Show or set up providers
+25. [provider setup](#provider-setup) — Interactive provider setup wizard
+26. [provider list](#provider-list) — List configured providers
+27. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+28. [provider remove](#provider-remove) — Remove a provider non-interactively
+29. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
+30. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+31. [prompt](#prompt) — Manage prompt templates
+32. [prompt list](#prompt-list) — List available prompt templates
+33. [prompt render](#prompt-render) — Render a prompt template
+34. [prompt run](#prompt-run) — Render and execute a prompt template
+35. [satellite](#satellite) — Manage satellite nodes
+36. [doctor](#doctor) — Run the complete CLI diagnostic suite
+37. [doctor config](#doctor-config) — Guided config migration
+38. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
+39. [locations](#locations) — Manage configured locations
+40. [update](#update) — Pull, build, and restart the gateway
+41. [memory](#memory) — Backfill agent memory stores
+42. [cron](#cron-command) — Manage cron jobs from the CLI
+43. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
+44. [debug sessions](#debug-sessions) — Inspect session SQLite database
+45. [debug logs](#debug-logs) — Inspect log files
+46. [debug memory](#debug-memory) — Inspect agent memory directories
+47. [debug db](#debug-db) — Inspect raw databases
+48. [debug gateway](#debug-gateway) — Live gateway diagnostics
+49. [debug cron](#debug-cron) — Cron scheduler diagnostics
+50. [Examples](#examples)
 
 ---
 
@@ -1250,6 +1251,78 @@ Generated schema: docs\botnexus-config.schema.json
 
 ```powershell
 botnexus config schema --output my-schema.json
+```
+
+---
+
+## config store
+
+Manage the SQLite configuration store (`config.db`). When the store is enabled it serves
+configuration to the gateway and **its values win over `config.json`**; the file stays on disk and
+is never modified by these commands.
+
+### Usage
+
+```powershell
+botnexus config store <COMMAND> [OPTIONS]
+```
+
+### Subcommands
+
+| Subcommand | Description |
+|---|---|
+| `enable` | Create `config.db` from the current `config.json`. The store then serves configuration, with its values winning over the file. |
+| `status` | Report whether the store exists and how many entries it holds. |
+| `disable` | Delete `config.db`. The gateway returns to file-only configuration on the next start. |
+
+### Options
+
+| Option | Default | Description |
+|---|---|---|
+| `--target` | resolved config directory | Directory holding `config.json`; the store is placed alongside it. |
+
+### Behaviour
+
+- `enable` reads the **raw** JSON document rather than a bound config object. Binding collapses
+  "key absent" and "key present and null" into the same null, and the store records those two
+  states distinctly — populating from a bound object would silently rewrite every deliberate null
+  as an absence.
+- `enable` reports how many entries were imported and requires a **gateway restart** to take
+  effect. It exits `1` if `config.json` is missing (run `botnexus init` first) or is not a JSON
+  object.
+- `status` exits `0` in both states: it prints `Configuration store not enabled.` when `config.db`
+  is absent, and the entry count plus the store-wins note when it is present.
+- `disable` needs **no `--commit` flag and prompts for nothing** — unlike
+  [`config restore`](#config-restore), which overwrites the source document. The store is a derived
+  copy of `config.json`, which is left untouched, so a disable discards nothing that
+  `config store enable` cannot regenerate. Disabling an absent store is a no-op that exits `0`.
+
+### Examples
+
+**Enable the store:**
+
+```powershell
+botnexus config store enable
+```
+
+Output:
+
+```text
+Configuration store enabled. ~/.botnexus/config.db
+  184 entries imported from config.json.
+  Restart the gateway for the store to take effect.
+```
+
+**Check status:**
+
+```powershell
+botnexus config store status
+```
+
+**Return to file-only configuration:**
+
+```powershell
+botnexus config store disable
 ```
 
 ---

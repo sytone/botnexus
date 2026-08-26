@@ -173,12 +173,17 @@ and leaves no row in the store.
 | `orphanedRunThresholdSeconds` | int | `86400` | How far a run's `started_at` may deviate from now (in **either** direction) before the scheduler treats a still-`running` row as orphaned and stamps it as an error (#2410). The bound is symmetric, so a clock skew forward widens the reap window rather than nulling live runs. |
 | `maxConcurrentJobs` | int | `5` | Aggregate cap on how many due jobs the scheduler executes concurrently on a single tick (#2670). Jobs beyond the cap **queue and run as slots free** - none are dropped. A value of `0` or less degrades to the default of `5` rather than to unbounded fan-out. Independent of the per-job lock, which separately prevents two runs of the *same* job from overlapping. |
 | `activeRunCancellationGraceSeconds` | int | `30` | How long a delete or disable waits for a cancelled in-flight run to actually observe its cancellation before archiving the conversation and sweeping the run's sessions (#3160). A grace period, not a guarantee: it **fails open**, so an action that swallows its cancellation token can never make its job permanently undeletable. `0` or less skips the wait entirely. |
+| `selfPacingFloorSeconds` | int | `60` | Floor for the self-pacing `next_check` action (#3338). A job may never ask to be woken sooner than this. A non-positive value degrades to the built-in default of 1 minute rather than to "no floor" — a bad config value must not be able to disable the bound the clamp exists to enforce. See [Self-pacing](./features/cron-session-targets.md#self-pacing-the-next-check-bound). |
+| `selfPacingCeilingSeconds` | int | `3600` | Ceiling for the self-pacing `next_check` action. A job asking to sleep longer than this is pinned here and told so, because a loop parked far out looks scheduled while doing nothing. A value at or below the floor degrades to the built-in default of 1 hour. |
 | `jobs` | dict | `{}` | Config-defined job registry (key → job descriptor, see §3.2) |
 
-> Only `enabled`, `tickIntervalSeconds` and `jobs` are copied out of `config.json`'s `cron`
-> section into the scheduler options; `defaultJobTimeoutSeconds`, `orphanedRunThresholdSeconds`
-> and `maxConcurrentJobs` are scheduler options bound in code and are documented here because
-> they govern observable scheduler behaviour.
+> **Reachability.** Only `enabled`, `tickIntervalSeconds` and `jobs` are copied out of
+> `config.json`'s `cron` section into the scheduler options — `CronConfig` declares no other
+> property, and `Program.cs` builds `CronOptions` with a hand-written projection of exactly those
+> three. `defaultJobTimeoutSeconds`, `orphanedRunThresholdSeconds`, `maxConcurrentJobs`,
+> `activeRunCancellationGraceSeconds`, `selfPacingFloorSeconds` and `selfPacingCeilingSeconds` are
+> scheduler options **bound in code, not from `config.json`**; setting them in the file has no
+> effect. They are documented here because they govern observable scheduler behaviour.
 
 ### 3.2 Per-Job Configuration
 
@@ -197,10 +202,23 @@ and leaves no row in the store.
 | `webhookUrl` | string | (webhook jobs only) | URL invoked by a webhook job. Must be an absolute `http`/`https` URL with no embedded credentials - see [2.3](#_2-3-webhook-jobs-actiontype-webhook). |
 | `shellCommand` | string | (command jobs only) | Script run by a `command` job. Firing is gated through the `exec` tool policy — see [Shell Execution](./features/shell-execution.md). |
 | `enabled` | bool | `true` | Whether the job is active |
-| `system` | bool | `false` | Marks a job as system-provisioned (e.g. `heartbeat`, `skill-review`). System jobs are hidden from `cron` tool `list` output unless `includeSystem` is set. |
-| `timeZone` | string | `null` | IANA timezone the schedule is evaluated in (UTC when omitted) |
 | `createdBy` | string | `null` | Provenance marker for who created the job |
 | `metadata` | dict | `{}` | Free-form metadata carried with the job. The key `timeoutSeconds` overrides `defaultJobTimeoutSeconds` for this job - see [Per-job timeout](#_3-2-1-per-job-timeout-timeoutseconds). |
+
+Those thirteen properties are the **complete** set `CronJobConfig` declares, and therefore the
+complete set a `cron.jobs` entry in `config.json` can carry.
+
+### 3.2.0 Runtime-only job properties
+
+The following properties exist on a cron job **row** (`CronJob` in the store, and the
+`ConfiguredCronJob` the scheduler works with) but are **not** declared on `CronJobConfig`. They are
+set through the `cron` tool or the REST API and persist in `cron.sqlite` — putting them in a
+`config.json` `cron.jobs` entry has **no effect**, because the config loader never reads them.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `system` | bool | `false` | Marks a job as system-provisioned (e.g. `heartbeat`, `skill-review`). System jobs are hidden from `cron` tool `list` output unless `includeSystem` is set. |
+| `timeZone` | string | `null` | IANA timezone the schedule is evaluated in (UTC when omitted) |
 | `deleteAfterRun` | bool | `false` | Opt-in cleanup for ephemeral jobs: when `true`, the scheduler deletes the run's agent session and its transcript after the run completes (across success / timeout / error / abort), provided the run produced a cron-scoped (`cron:`) session. Prevents run-scoped sessions from accumulating transcript entries indefinitely. Leave off for long-lived reporting jobs that intentionally persist context across runs — use compaction for those. Only ever deletes `cron:`-prefixed sessions, so a misconfigured flag cannot remove an unrelated long-lived session. |
 | `deleteJobAfterRun` | bool | `false` | Opt-in **job-level** one-shot disposition: when `true`, the scheduler deletes the **job itself** after its first terminal run - success, timeout, error, or host abort alike - from the same post-run teardown that already owns the run. Deliberately **not** `deleteAfterRun`, which removes the run's ephemeral *session* and leaves the job scheduled forever; the two compose. Use this instead of writing "delete this cron job after running" into the prompt: a prompt instruction has no enforcement and no retry if the turn ends early, this flag does. Off by default, and rows written before the column existed read `false`, so nothing is ever removed without an explicit opt-in. |
 | `executionClass` | bool | `false` | Marks the job as **execution-class**: its contract is to *perform work*, so a run that completes having made **zero tool calls** records `no_tool_calls` instead of `ok` (see [Zero-tool-call runs](#11b-zero-tool-call-runs-2985)). Off by default, and rows written before the column existed read `false`, so an unmarked job is completely unaffected and may legitimately finish with no tool call. Only meaningful for `agent-prompt` jobs -- `command` and `webhook` actions report no tool count at all and can never reach the outcome. |
