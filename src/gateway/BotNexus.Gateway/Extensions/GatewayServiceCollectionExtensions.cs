@@ -548,7 +548,11 @@ public static class GatewayServiceCollectionExtensions
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
             var writer = serviceProvider.GetRequiredService<PlatformConfigWriter>();
-            return new PlatformConfigAgentWriter(writer, home);
+            // #3547: the resolver lets the writer recognise an incoming absolute path as the
+            // resolved form of a stored '@location' alias and write the alias back instead.
+            // Optional by design - without it the writer persists the caller's values verbatim.
+            var locationResolver = serviceProvider.GetService<ILocationResolver>();
+            return new PlatformConfigAgentWriter(writer, home, locationResolver);
         }));
         // Config hydration — populate missing keys with defaults on startup
         services.AddSingleton<IConfigSchemaContributor, GatewaySchemaContributor>();

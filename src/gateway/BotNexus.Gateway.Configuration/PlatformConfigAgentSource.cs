@@ -432,35 +432,7 @@ public sealed class PlatformConfigAgentSource(
     }
 
     private string? ResolveLocationReference(string path)
-    {
-        if (_locationResolver is null)
-            return null;
-
-        var reference = path[1..];
-        if (string.IsNullOrWhiteSpace(reference))
-            return null;
-
-        var separatorIndex = reference.IndexOfAny(['/', '\\']);
-        var locationName = separatorIndex >= 0 ? reference[..separatorIndex] : reference;
-        if (string.IsNullOrWhiteSpace(locationName))
-            return null;
-
-        var basePath = _locationResolver.ResolvePath(locationName);
-        if (string.IsNullOrWhiteSpace(basePath))
-            return null;
-
-        if (separatorIndex < 0 || separatorIndex == reference.Length - 1)
-            return Path.GetFullPath(basePath);
-
-        var subPath = reference[(separatorIndex + 1)..];
-        if (string.IsNullOrWhiteSpace(subPath))
-            return Path.GetFullPath(basePath);
-
-        var normalizedSubPath = subPath
-            .Replace('/', Path.DirectorySeparatorChar)
-            .Replace('\\', Path.DirectorySeparatorChar);
-        return Path.GetFullPath(Path.Combine(basePath, normalizedSubPath));
-    }
+        => LocationReferenceResolver.Resolve(path, _locationResolver);
 
 
     /// <summary>
