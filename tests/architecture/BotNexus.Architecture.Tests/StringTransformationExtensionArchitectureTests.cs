@@ -29,7 +29,7 @@ namespace BotNexus.Architecture.Tests;
 /// expanding scope.
 /// </para>
 /// </remarks>
-public sealed class StringTransformationExtensionArchitectureTests
+public sealed class StringTransformationExtensionArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// A <c>public static</c> method returning <c>string</c>/<c>string?</c> whose first parameter is
@@ -42,6 +42,15 @@ public sealed class StringTransformationExtensionArchitectureTests
 
     private static readonly Regex s_publicStaticClass = new(
         @"public\s+static\s+(partial\s+)?class\s+(?<name>\w+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// An interface-typed parameter, i.e. an injected collaborator. A method that needs one is not
+    /// a general-purpose string transformation - it is a service operation that happens to take and
+    /// return text - so <c>this string</c> would be the wrong shape for it.
+    /// </summary>
+    private static readonly Regex s_collaboratorParameter = new(
+        @"\bI[A-Z]\w*\??\s+\w+\s*[,)]",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>
@@ -68,11 +77,9 @@ public sealed class StringTransformationExtensionArchitectureTests
         "agent/BotNexus.Agent.Providers.Core/Embeddings/HostedEmbeddingFingerprint.cs::Derive",
         "agent/BotNexus.Agent.Providers.Core/EnvironmentApiKeys.cs::DescribeSourceVariable",
         "agent/BotNexus.Agent.Providers.Core/EnvironmentApiKeys.cs::GetApiKey",
-        "agent/BotNexus.Agent.Providers.Core/ProviderHttpErrorHelper.cs::RedactDiagnosticText",
         "agent/BotNexus.Agent.Providers.Core/Registry/ModelPreflight.cs::FormatList",
         "agent/BotNexus.Agent.Providers.Core/Streaming/CompletionsStreamEngine.cs::ExtractProviderErrorMessage",
         "agent/BotNexus.Agent.Providers.Core/Streaming/ResponsesStreamPrimitives.cs::ComposeToolCallId",
-        "agent/BotNexus.Agent.Providers.Core/Streaming/StreamAssemblyConformance.cs::Reconcile",
         "agent/BotNexus.Agent.Providers.Core/Utilities/ShortHash.cs::Generate",
         "domain/BotNexus.Domain.Wire/GraphemeSafeTruncation.cs::Truncate",
         "domain/BotNexus.Domain.Wire/TextualMimeType.cs::BoundText",
@@ -113,7 +120,6 @@ public sealed class StringTransformationExtensionArchitectureTests
         "gateway/BotNexus.Gateway.Configuration/BotNexusHome.cs::ResolveDataPath",
         "gateway/BotNexus.Gateway.Configuration/BotNexusHome.cs::ResolveHomePath",
         "gateway/BotNexus.Gateway.Configuration/ConfigSectionGuard.cs::FormatRejection",
-        "gateway/BotNexus.Gateway.Configuration/SubAgentWorkspaceRootResolver.cs::Resolve",
         "gateway/BotNexus.Gateway.Conversations/ConversationInputValidator.cs::ValidateInstructions",
         "gateway/BotNexus.Gateway.Conversations/ConversationInputValidator.cs::ValidatePurpose",
         "gateway/BotNexus.Gateway.Conversations/ConversationInputValidator.cs::ValidateTitle",
@@ -153,7 +159,7 @@ public sealed class StringTransformationExtensionArchitectureTests
     [Fact]
     public void NoNewPublicStaticClass_Exposes_A_NonExtension_StringToStringMethod()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var violations = new List<string>();
 
         foreach (var (relative, text) in EnumerateProductionCsFiles(srcRoot))
@@ -169,6 +175,7 @@ public sealed class StringTransformationExtensionArchitectureTests
 
                 if (s_baseline.Contains(key)) continue;
                 if (isShim) continue;
+                if (TakesCollaborator(text, match.Index)) continue;
                 violations.Add(key);
             }
         }
@@ -191,14 +198,17 @@ public sealed class StringTransformationExtensionArchitectureTests
     [Fact]
     public void Baseline_HasNoStaleEntries()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var live = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var (relative, text) in EnumerateProductionCsFiles(srcRoot))
         {
             if (!s_publicStaticClass.IsMatch(text)) continue;
             foreach (Match match in s_nonExtensionStringTransform.Matches(text))
+            {
+                if (TakesCollaborator(text, match.Index)) continue;
                 live.Add($"{relative}::{match.Groups["name"].Value}");
+            }
         }
 
         var stale = s_baseline.Where(entry => !live.Contains(entry)).OrderBy(x => x, StringComparer.Ordinal).ToList();
@@ -224,6 +234,42 @@ public sealed class StringTransformationExtensionArchitectureTests
             "public static ConversationOrigin ParseKind(string raw)").ShouldBeFalse();
         s_nonExtensionStringTransform.IsMatch(
             "public static IReadOnlyList<string> SplitAll(string value)").ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A method that needs an injected collaborator is a service operation, not a general-purpose
+    /// string transformation: <c>path.Resolve()</c> could not reach an <c>IFileSystem</c>, so
+    /// forcing it onto <c>this string</c> would be strictly worse than the static it replaced.
+    /// Pinned so the exemption is a deliberate, named rule rather than a silent baseline entry.
+    /// </summary>
+    [Fact]
+    public void Fence_Exempts_StaticMethod_TakingAnInjectedCollaborator()
+    {
+        const string withCollaborator =
+            "public static string ResolveStorePath(string configPath, IFileSystem fileSystem)";
+        var hit = s_nonExtensionStringTransform.Match(withCollaborator);
+        hit.Success.ShouldBeTrue("the shape still matches the base pattern");
+        TakesCollaborator(withCollaborator, hit.Index).ShouldBeTrue();
+
+        const string nullableCollaborator =
+            "public static string? Resolve(string? path, ILocationResolver? locationResolver)";
+        TakesCollaborator(nullableCollaborator, s_nonExtensionStringTransform.Match(nullableCollaborator).Index)
+            .ShouldBeTrue("a nullable collaborator is still a collaborator");
+
+        // A pure transformation must NOT be laundered by this exemption.
+        const string pure = "public static string Sanitize(string value, int maxLength)";
+        TakesCollaborator(pure, s_nonExtensionStringTransform.Match(pure).Index).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// True when the matched signature declares an interface-typed parameter. Bounded to the
+    /// parameter list so a collaborator on a LATER method cannot exempt an earlier one.
+    /// </summary>
+    private static bool TakesCollaborator(string text, int matchIndex)
+    {
+        var close = text.IndexOf(')', matchIndex);
+        if (close < 0) return false;
+        return s_collaboratorParameter.IsMatch(text[matchIndex..(close + 1)]);
     }
 
     /// <summary>Vacuity guard: the pattern must actually fire on the shape it claims to police.</summary>
@@ -310,16 +356,5 @@ public sealed class StringTransformationExtensionArchitectureTests
         var full = Path.GetFullPath(fullPath);
         var root = Path.GetFullPath(srcRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full[root.Length..] : full;
-    }
-
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return Path.Combine(current!.FullName, "src");
     }
 }
