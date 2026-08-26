@@ -156,6 +156,12 @@ These flags live in the agent extension config under `botnexus-skills`:
 | `AllowSkillDeletion` | `true` | Allows `delete` and `remove_file`. |
 | `AllowSharedSkillManagement` | `false` | Allows writing to the global all-agent skills dir via `scope: shared`. Wide blast radius -- opt-in. |
 
+Key names bind **case-insensitively**, so `allowSharedSkillManagement` and `AllowSharedSkillManagement`
+are equivalent — write whichever matches the rest of your config file's style. Before #3495 the
+extension bound case-sensitively, so a camelCase key silently bound to nothing and the property kept
+its default; if you are upgrading from a build that predates that fix, a shared-scope gate you
+thought was open may only now start working.
+
 ## Security scanning and scoped acknowledgements
 
 Every skill directory is scanned at discovery time by `SkillSecurityScanner`. A skill with **any
