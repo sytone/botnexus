@@ -89,7 +89,8 @@ public sealed class DefaultSubAgentManagerSpawnHelpersTests
         // helper returns null so the caller falls back to the base descriptor's FileAccess.
         var manager = BuildManager(denied: []);
 
-        var policy = manager.BuildChildFileAccessPolicy(Request(shareWorkspace: false, grantedPaths: null));
+        var policy = manager.BuildChildFileAccessPolicy(
+            Request(shareWorkspace: false, grantedPaths: null), basePolicy: null);
 
         policy.ShouldBeNull();
     }
@@ -100,7 +101,7 @@ public sealed class DefaultSubAgentManagerSpawnHelpersTests
         const string parentWorkspace = "/home/user/.botnexus/agents/parent-agent/workspace";
         var manager = BuildManager(denied: [], parentWorkspacePath: parentWorkspace);
 
-        var policy = manager.BuildChildFileAccessPolicy(Request(shareWorkspace: true));
+        var policy = manager.BuildChildFileAccessPolicy(Request(shareWorkspace: true), basePolicy: null);
 
         policy.ShouldNotBeNull();
         policy!.AllowedReadPaths.ShouldContain(p => p.Contains("parent-agent"));
@@ -115,7 +116,7 @@ public sealed class DefaultSubAgentManagerSpawnHelpersTests
         var manager = BuildManager(denied: []);
 
         var policy = manager.BuildChildFileAccessPolicy(
-            Request(grantedPaths: ["/data/shared", "/repos/project"]));
+            Request(grantedPaths: ["/data/shared", "/repos/project"]), basePolicy: null);
 
         policy.ShouldNotBeNull();
         policy!.AllowedReadPaths.Count.ShouldBe(2);
@@ -130,7 +131,7 @@ public sealed class DefaultSubAgentManagerSpawnHelpersTests
         var manager = BuildManager(denied: [], parentWorkspacePath: parentWorkspace);
 
         var policy = manager.BuildChildFileAccessPolicy(
-            Request(shareWorkspace: true, grantedPaths: ["/data/shared"]));
+            Request(shareWorkspace: true, grantedPaths: ["/data/shared"]), basePolicy: null);
 
         policy.ShouldNotBeNull();
         // Parent workspace (read+write) plus one granted path (read only).
@@ -144,7 +145,7 @@ public sealed class DefaultSubAgentManagerSpawnHelpersTests
         var manager = BuildManager(denied: []);
 
         var policy = manager.BuildChildFileAccessPolicy(
-            Request(grantedPaths: ["/valid/path", "", "  ", "/another/path"]));
+            Request(grantedPaths: ["/valid/path", "", "  ", "/another/path"]), basePolicy: null);
 
         policy.ShouldNotBeNull();
         // Blank / whitespace-only entries are skipped so they never widen access.

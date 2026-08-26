@@ -326,10 +326,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // #2650: fail fast on a write-capable child that was handed read-only granted paths.
         WarnOnUnwritableGrantedPaths(request, toolIds);
 
+        // A relative deny is workspace-relative to whichever agent owns the policy, so re-anchor it
+        // before the policy crosses onto the child. See RebaseInheritedDenies.
+        var baseFileAccess = RebaseInheritedDenies(baseDescriptor.FileAccess, baseDescriptor.AgentId);
+
         // Build file access policy for workspace isolation. Null means "fully isolated" -
         // the child falls back to the base descriptor's FileAccess below. See
         // BuildChildFileAccessPolicy.
-        var childFileAccess = BuildChildFileAccessPolicy(request);
+        var childFileAccess = BuildChildFileAccessPolicy(request, baseFileAccess);
 
         // #2647: ONE resolution, consumed by both the descriptor the child actually runs on and the
         // SubAgentInfo reporting record below. Computing it twice is exactly how "what runs" and
@@ -393,7 +397,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 // resolution above - the same values the SubAgentInfo record reports.
                 ModelId = effectiveModel ?? baseDescriptor.ModelId,
                 ApiProvider = effectiveProvider,
-                FileAccess = childFileAccess ?? baseDescriptor.FileAccess
+                FileAccess = childFileAccess ?? baseFileAccess
             });
         }
 
@@ -733,6 +737,38 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     /// <summary>
+    /// Re-anchors a base descriptor's relative deny paths onto the workspace of the agent that owns
+    /// them, before that policy is composed into a child policy or copied onto the child wholesale.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DefaultPathValidator"/> reads a relative deny as "&lt;my workspace&gt;/x", so an
+    /// entry carried across verbatim silently re-points at the CHILD's workspace and stops guarding
+    /// the directory the operator named - which the child can then reach through whatever it was
+    /// granted. No-op without an <see cref="IAgentWorkspaceManager"/>: there is no workspace to
+    /// anchor to, and dropping the entries instead would un-deny them.
+    /// <para>
+    /// Denies only, deliberately. A drifting deny stops guarding what the operator named, while a
+    /// drifting allow moves a grant without un-protecting anything; rebasing the allow-lists is a
+    /// wider change raised separately.
+    /// </para>
+    /// </remarks>
+    /// <param name="policy">The base descriptor's policy.</param>
+    /// <param name="ownerAgentId">The agent whose workspace the relative denies are written against.</param>
+    /// <returns>The policy with its denies re-anchored, or the input unchanged.</returns>
+    internal FileAccessPolicy? RebaseInheritedDenies(FileAccessPolicy? policy, AgentId ownerAgentId)
+    {
+        if (policy is null || policy.DeniedPaths.Count == 0 || _workspaceManager is null)
+            return policy;
+
+        return policy with
+        {
+            DeniedPaths = DefaultPathValidator.RebaseRelativePaths(
+                policy.DeniedPaths,
+                _workspaceManager.GetWorkspacePath(ownerAgentId.Value))
+        };
+    }
+
+    /// <summary>
     /// Composes the child's <see cref="FileAccessPolicy"/> for workspace isolation, or returns
     /// <c>null</c> when the child should stay fully isolated (the caller then falls back to the
     /// base descriptor's <see cref="AgentDescriptor.FileAccess"/>). By default a sub-agent can only
@@ -750,10 +786,25 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// kept path is resolved via <see cref="Path.GetFullPath(string)"/>. Extracted from
     /// <see cref="SpawnAsync"/> so the policy composition (read/write split, blank filtering, the
     /// isolated -> null contract) is independently unit-testable (#1630).
+    /// <para>
+    /// A composed policy REPLACES the base one on the child descriptor, so
+    /// <see cref="FileAccessPolicy.DeniedPaths"/> is inherited from <paramref name="basePolicy"/>:
+    /// asking for a grant must never erase the denies the operator configured. The allow-lists
+    /// are deliberately NOT inherited - starting the child from only what it was granted narrows it,
+    /// which is the intended isolation posture.
+    /// </para>
     /// </remarks>
     /// <param name="request">The spawn request carrying the share-workspace flag and granted paths.</param>
+    /// <param name="basePolicy">
+    /// The base descriptor's policy, source of the inherited denies, already re-anchored by
+    /// <see cref="RebaseInheritedDenies"/>. Required rather than optional-with-default so that
+    /// omitting it is a compile error: a caller that silently passed nothing is precisely how the
+    /// denies came to be dropped.
+    /// </param>
     /// <returns>The composed policy, or <c>null</c> when the child stays fully isolated.</returns>
-    internal FileAccessPolicy? BuildChildFileAccessPolicy(SubAgentSpawnRequest request)
+    internal FileAccessPolicy? BuildChildFileAccessPolicy(
+        SubAgentSpawnRequest request,
+        FileAccessPolicy? basePolicy)
     {
         if (!request.ShareWorkspace
             && request.GrantedPaths is not { Count: > 0 }
@@ -795,10 +846,15 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             }
         }
 
-        return new FileAccessPolicy
+        // Derived FROM the base rather than built fresh, so a field added to FileAccessPolicy later
+        // carries the operator's configuration forward instead of silently resetting to its default.
+        return (basePolicy ?? new FileAccessPolicy()) with
         {
             AllowedReadPaths = allowedRead,
-            AllowedWritePaths = allowedWrite
+            AllowedWritePaths = allowedWrite,
+            // Denies are the only policy field that subtracts access, and this policy replaces the
+            // base one wholesale, so not carrying them forward silently un-denies the child.
+            DeniedPaths = basePolicy?.DeniedPaths ?? []
         };
     }
 

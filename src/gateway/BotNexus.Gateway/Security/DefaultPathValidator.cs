@@ -86,6 +86,55 @@ public sealed class DefaultPathValidator : IPathValidator
     }
 
     /// <summary>
+    /// Re-anchors workspace-relative entries in <paramref name="paths"/> onto
+    /// <paramref name="workspacePath"/> so a policy list keeps its meaning when it is copied onto
+    /// another agent's policy. Rooted entries and glob patterns come back verbatim: neither binds to
+    /// a workspace during resolution, so the destination validator resolves them to the same place
+    /// the source one did. Only a relative entry would silently re-bind to the new owner's workspace
+    /// and stop protecting the directory the operator named.
+    /// </summary>
+    /// <param name="paths">The policy list to re-anchor.</param>
+    /// <param name="workspacePath">The workspace of the agent the list came from.</param>
+    /// <returns>The re-anchored list, or the input unchanged when there is no workspace to anchor to.</returns>
+    internal static IReadOnlyList<string> RebaseRelativePaths(
+        IReadOnlyList<string>? paths,
+        string workspacePath)
+    {
+        if (paths is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        // Empty is the only workspace with nowhere to anchor to - the constructor rejects it outright.
+        // Everything else goes through the constructor's own NormalizePath, so a relative workspace
+        // lands where the source validator put it instead of somewhere this helper invented.
+        if (string.IsNullOrWhiteSpace(workspacePath))
+        {
+            return paths;
+        }
+
+        var root = NormalizePath(workspacePath);
+        var rebased = new List<string>(paths.Count);
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path) || IsGlobPattern(path))
+            {
+                rebased.Add(path);
+                continue;
+            }
+
+            var expanded = HomePathExpander.Expand(path.Trim())
+                .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+
+            rebased.Add(Path.IsPathRooted(expanded)
+                ? path
+                : NormalizePath(Path.Combine(root, expanded)));
+        }
+
+        return rebased;
+    }
+
+    /// <summary>
     /// Resolves <paramref name="rawPath"/> using operating-system semantics: each
     /// segment is appended in order and, when it is a symbolic link or junction, the
     /// link is followed before the next segment (including <c>..</c>) is applied.

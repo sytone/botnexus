@@ -49,7 +49,7 @@ public sealed class SubAgentGrantedWritePathsTests : IDisposable
         var granted = Path.Combine(_tempRoot, "readonly-dir");
         Directory.CreateDirectory(granted);
 
-        var policy = manager.BuildChildFileAccessPolicy(Request(grantedPaths: [granted]));
+        var policy = manager.BuildChildFileAccessPolicy(Request(grantedPaths: [granted]), basePolicy: null);
 
         policy.ShouldNotBeNull();
         policy!.AllowedReadPaths.ShouldContain(p => p.Equals(Path.GetFullPath(granted), StringComparison.OrdinalIgnoreCase));
@@ -64,7 +64,7 @@ public sealed class SubAgentGrantedWritePathsTests : IDisposable
         Directory.CreateDirectory(granted);
         var target = Path.Combine(granted, "output.txt");
 
-        var policy = manager.BuildChildFileAccessPolicy(Request(grantedPaths: [granted]));
+        var policy = manager.BuildChildFileAccessPolicy(Request(grantedPaths: [granted]), basePolicy: null);
         var validator = new DefaultPathValidator(policy, ChildWorkspace());
 
         validator.ValidateAndResolve(target, FileAccessMode.Read).ShouldNotBeNull();
@@ -80,7 +80,7 @@ public sealed class SubAgentGrantedWritePathsTests : IDisposable
         var writable = Path.Combine(_tempRoot, "worktree");
         Directory.CreateDirectory(writable);
 
-        var policy = manager.BuildChildFileAccessPolicy(Request(grantedWritePaths: [writable]));
+        var policy = manager.BuildChildFileAccessPolicy(Request(grantedWritePaths: [writable]), basePolicy: null);
 
         policy.ShouldNotBeNull();
         var resolved = Path.GetFullPath(writable);
@@ -96,7 +96,7 @@ public sealed class SubAgentGrantedWritePathsTests : IDisposable
         Directory.CreateDirectory(writable);
         var target = Path.Combine(writable, "src", "new-file.cs");
 
-        var policy = manager.BuildChildFileAccessPolicy(Request(grantedWritePaths: [writable]));
+        var policy = manager.BuildChildFileAccessPolicy(Request(grantedWritePaths: [writable]), basePolicy: null);
         var validator = new DefaultPathValidator(policy, ChildWorkspace());
 
         validator.ValidateAndResolve(target, FileAccessMode.Write).ShouldNotBeNull();
@@ -112,7 +112,7 @@ public sealed class SubAgentGrantedWritePathsTests : IDisposable
         Directory.CreateDirectory(writable);
         Directory.CreateDirectory(sibling);
 
-        var policy = manager.BuildChildFileAccessPolicy(Request(grantedWritePaths: [writable]));
+        var policy = manager.BuildChildFileAccessPolicy(Request(grantedWritePaths: [writable]), basePolicy: null);
         var validator = new DefaultPathValidator(policy, ChildWorkspace());
 
         validator.ValidateAndResolve(Path.Combine(sibling, "f.txt"), FileAccessMode.Write).ShouldBeNull();
@@ -126,7 +126,7 @@ public sealed class SubAgentGrantedWritePathsTests : IDisposable
         Directory.CreateDirectory(writable);
 
         var policy = manager.BuildChildFileAccessPolicy(
-            Request(grantedWritePaths: [writable, "", "   "]));
+            Request(grantedWritePaths: [writable, "", "   "]), basePolicy: null);
 
         policy.ShouldNotBeNull();
         policy!.AllowedWritePaths.Count.ShouldBe(1);
@@ -202,7 +202,7 @@ public sealed class SubAgentGrantedWritePathsTests : IDisposable
         Directory.CreateDirectory(parentWorkspace);
         var manager = BuildManager(out _, parentWorkspacePath: parentWorkspace);
 
-        var policy = manager.BuildChildFileAccessPolicy(Request(shareWorkspace: true));
+        var policy = manager.BuildChildFileAccessPolicy(Request(shareWorkspace: true), basePolicy: null);
 
         policy.ShouldNotBeNull();
         policy!.AllowedReadPaths.ShouldContain(p => p.Equals(parentWorkspace, StringComparison.OrdinalIgnoreCase));
@@ -223,7 +223,8 @@ public sealed class SubAgentGrantedWritePathsTests : IDisposable
         var manager = BuildManager(out _, parentWorkspacePath: parentWorkspace);
 
         var policy = manager.BuildChildFileAccessPolicy(
-            Request(shareWorkspace: true, grantedPaths: ["/data/shared"], grantedWritePaths: [writable]));
+            Request(shareWorkspace: true, grantedPaths: ["/data/shared"], grantedWritePaths: [writable]),
+            basePolicy: null);
 
         policy.ShouldNotBeNull();
         // parent workspace + granted read + granted write
