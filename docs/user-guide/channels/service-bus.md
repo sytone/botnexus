@@ -72,10 +72,33 @@ All options are configured via `~/.botnexus/config.json` under the `channels.ser
 | `ConnectionString` | `string` | *(required unless using custom factory)* | Azure Service Bus connection string using a Shared Access Policy with Listen and Send rights. Takes precedence over `FullyQualifiedNamespace` when both are set. Not required when a custom `IServiceBusAdapterClientFactory` is registered. |
 | `FullyQualifiedNamespace` | `string` | *(none)* | Fully-qualified Service Bus namespace (e.g. `myns.servicebus.windows.net`) to authenticate against with managed identity via `DefaultAzureCredential`. The recommended keyless setup; required for namespaces created with `disableLocalAuth: true`. Used only when `ConnectionString` is empty. |
 | `InboundQueueName` | `string` | `botnexus-inbound` | Name of the queue BotNexus **listens on** for incoming messages. |
-| `DefaultReplyQueueName` | `string` | `botnexus-outbound` | Name of the queue BotNexus **sends replies to** by default. Individual messages can override this via the `replyTo` envelope field or application property. |
+| `DefaultReplyQueueName` | `string` | `botnexus-outbound` | Name of the queue BotNexus **sends replies to** by default. Individual messages can override this via the `replyTo` envelope field or application property. **Must not equal `InboundQueueName`** — see [Self-send loop guard](#self-send-loop-guard). |
 | `MaxConcurrentCalls` | `int` | `1` | Maximum number of messages processed in parallel. Increase for higher throughput; keep at `1` if strict ordering within the inbound queue is required. |
 | `MaxAutoLockRenewalMinutes` | `int` | `30` | Maximum wall-clock duration, in minutes, for which the processor keeps automatically renewing a message lock while the agent turn is still running. The Azure SDK default is five minutes, which is shorter than many agent turns; when it lapses the completion call fails with a lock-lost error and Service Bus redelivers work that already succeeded. Valid range `0`–`1440`; set to `0` to disable automatic renewal entirely (not recommended). |
-| `AllowedSenderIds` | `string[]` | `[]` *(empty — all allowed)* | Optional allow-list of sender identifiers. When non-empty, messages whose `senderId` is not in this list are abandoned without processing. |
+| `AllowedSenderIds` | `string[]` | `[]` *(empty — all allowed)* | Optional allow-list of **end-user** sender identifiers, compared against the envelope's `senderId`. When non-empty, messages whose `senderId` is not in this list are abandoned without processing, and the block is logged at `Warning`. This does **not** filter which service or proxy may publish — use Service Bus RBAC for that. |
+
+---
+
+## Self-send loop guard
+
+The adapter never publishes a reply into the queue its own processor consumes from. Doing so would
+make every reply re-enter the gateway as fresh inbound work, looping until Service Bus
+`maxDeliveryCount` dead-letters the message — after the throughput and dead-letter capacity have
+already been spent.
+
+Two guards enforce this:
+
+1. **At startup**, if `DefaultReplyQueueName` equals `InboundQueueName` (case-insensitively — Service
+   Bus entity names are not case-sensitive), the adapter logs a `Warning` naming both values. It
+   still starts, so a bad configuration reload cannot take a running gateway down.
+2. **At send time**, any reply whose resolved reply queue is the inbound queue is refused with an
+   error naming the queue and the resolution source. This covers all three resolution branches —
+   outbound metadata, the per-message value carried on the inbound envelope's `replyTo` field or its
+   `applicationProperties["replyTo"]` entry, and the configured default — because a per-message
+   `replyTo` *overrides* the configured default and arrives from an untrusted producer.
+
+`AllowedSenderIds` is **not** a mitigation for this: it filters end-user identities, and a hostile or
+mistaken `replyTo` rides in on a message from a perfectly legitimate user.
 
 ---
 

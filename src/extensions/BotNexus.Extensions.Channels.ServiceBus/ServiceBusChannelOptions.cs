@@ -114,4 +114,33 @@ public sealed class ServiceBusChannelOptions
     /// An empty list permits all senders.
     /// </summary>
     public ICollection<string> AllowedSenderIds { get; } = [];
+
+    /// <summary>
+    /// #3501: returns a description of the self-send misconfiguration when
+    /// <see cref="DefaultReplyQueueName"/> resolves to the same entity as
+    /// <see cref="InboundQueueName"/>, or <see langword="null"/> when the configuration is safe.
+    /// </summary>
+    /// <remarks>
+    /// Replying into the queue the processor consumes from is an unbounded redelivery loop: every
+    /// reply is re-consumed as new inbound work and only <c>maxDeliveryCount</c> eventually
+    /// dead-letters it, after the throughput and DLQ capacity have already been spent. The
+    /// comparison is case-insensitive because Service Bus entity names are not case-sensitive, so
+    /// <c>botnexus-inbound</c> and <c>BotNexus-Inbound</c> are the same queue.
+    /// </remarks>
+    internal string? DescribeSelfSendMisconfiguration()
+        => !string.IsNullOrWhiteSpace(InboundQueueName)
+            && string.Equals(InboundQueueName, DefaultReplyQueueName, StringComparison.OrdinalIgnoreCase)
+            ? $"DefaultReplyQueueName '{DefaultReplyQueueName}' is the same Service Bus queue as InboundQueueName '{InboundQueueName}'. "
+              + "Every reply would be re-consumed as new inbound work until maxDeliveryCount dead-letters it. "
+              + "Configure a separate reply queue."
+            : null;
+
+    /// <summary>
+    /// #3501: whether <paramref name="queueName"/> names the queue this adapter's processor
+    /// consumes from. Publishing there is always a self-send loop, whatever resolved the value.
+    /// </summary>
+    internal bool IsInboundQueue(string? queueName)
+        => !string.IsNullOrWhiteSpace(queueName)
+            && !string.IsNullOrWhiteSpace(InboundQueueName)
+            && string.Equals(queueName, InboundQueueName, StringComparison.OrdinalIgnoreCase);
 }

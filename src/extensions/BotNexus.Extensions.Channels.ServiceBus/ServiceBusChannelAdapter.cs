@@ -206,6 +206,19 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
     {
         _activeFactory = _injectedFactory ?? CreateDefaultFactory();
 
+        // #3501 AC1: an operator who points the reply queue at the inbound queue has configured an
+        // unbounded self-feeding loop. Startup is the only place this is visible before traffic
+        // arrives, and it is otherwise accepted silently. Warn rather than refuse to start, so a
+        // running deployment is not taken down by a config reload; the send-time guard in
+        // GuardAgainstSelfSend is the actual containment.
+        if (_options.DescribeSelfSendMisconfiguration() is { } misconfiguration)
+        {
+            _logger.LogWarning(
+                "{DisplayName} self-send misconfiguration: {Detail} Replies resolving to the inbound queue will be refused at send time.",
+                DisplayName,
+                misconfiguration);
+        }
+
         var processorOptions = new ServiceBusProcessorOptions
         {
             MaxConcurrentCalls = _options.MaxConcurrentCalls,
@@ -967,12 +980,48 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         PendingReplyContext? pendingCtx)
     {
         if (GetMetadataString(metadata, MetaReplyTo) is { Length: > 0 } metaQueue)
-            return metaQueue;
+            return GuardAgainstSelfSend(metaQueue, "outbound metadata 'servicebus.replyTo'");
 
         if (pendingCtx?.ReplyTo is { Length: > 0 } pendingQueue)
-            return pendingQueue;
+            return GuardAgainstSelfSend(pendingQueue, "the pending inbound context (envelope 'replyTo' or application property 'replyTo')");
 
-        return _options.DefaultReplyQueueName;
+        return GuardAgainstSelfSend(_options.DefaultReplyQueueName, "the configured default reply queue");
+    }
+
+    /// <summary>
+    /// #3501 AC2/AC3: refuses to publish into the queue this adapter's own processor consumes from.
+    /// </summary>
+    /// <remarks>
+    /// The guard sits inside <see cref="ResolveReplyQueue"/> rather than at any single call site so
+    /// that ALL THREE resolution branches are covered, including the per-message value an untrusted
+    /// producer can inject via the envelope <c>replyTo</c> field or a Service Bus
+    /// <c>applicationProperties["replyTo"]</c> entry — that injected value overrides the configured
+    /// default, so guarding only the default leaves the hostile path open. Placing it here also
+    /// covers the streaming publisher, which resolves through the same helper.
+    /// <para>
+    /// Failing loudly is deliberate. Silently rewriting the destination would deliver the reply
+    /// somewhere the producer did not ask for, and silently dropping it would hide a live
+    /// misconfiguration. Throwing surfaces the defect to the caller's existing retry/abandon path
+    /// with both the queue and the resolution source named, so an operator can tell a misconfigured
+    /// default apart from an injected per-message value.
+    /// </para>
+    /// </remarks>
+    private string GuardAgainstSelfSend(string replyQueue, string source)
+    {
+        if (!_options.IsInboundQueue(replyQueue))
+            return replyQueue;
+
+        _logger.LogError(
+            "{DisplayName} refused to publish a reply to queue '{ReplyQueue}' resolved from {Source}: "
+            + "it is this adapter's own inbound queue, so the reply would be re-consumed as new inbound work",
+            DisplayName,
+            replyQueue,
+            source);
+
+        throw new InvalidOperationException(
+            $"Service Bus reply refused: the reply queue '{replyQueue}', resolved from {source}, is this "
+            + $"adapter's own inbound queue '{_options.InboundQueueName}'. Publishing there would loop the "
+            + "reply back in as new inbound work until maxDeliveryCount dead-letters it.");
     }
 
     private static (string? CorrelationId, string? ConversationId) ResolveReplyContext(

@@ -15,10 +15,10 @@ Send a Service Bus message to the **inbound queue** (`botnexus-inbound` by defau
 | `agentId` | string | No | Target agent ID. If omitted, the gateway routes to the default agent. |
 | `conversationId` | string | No | Conversation thread identifier. Used as the channel address for session routing, so messages with the same `conversationId` are grouped into the same conversation. |
 | `sessionId` | string | No | Resume a specific existing session by ID. |
-| `senderId` | string | No | Identifier of the sender (user name, service account, etc.). Used for `AllowedSenderIds` filtering and as the wire-level `InboundMessage.SenderId` for audit. The Service Bus adapter resolves this string into a typed `InboundMessage.Sender` (a `CitizenId` of species `User`) at the channel boundary; downstream code routes on `Sender`, not on this raw string. |
+| `senderId` | string | No | Identifier of the sender (user name, service account, etc.). Used for `AllowedSenderIds` filtering and as the wire-level `InboundMessage.SenderId` for audit. This is an **end-user** identity, not the identity of the service or proxy that published the message — `AllowedSenderIds` therefore cannot restrict which workload may publish (use Service Bus RBAC for that). The Service Bus adapter resolves this string into a typed `InboundMessage.Sender` (a `CitizenId` of species `User`) at the channel boundary; downstream code routes on `Sender`, not on this raw string. |
 | `role` | string | No | Informational only. Always treated as `"user"` regardless of the value supplied. |
 | `content` | string | **Yes** | The message text to deliver to the agent. |
-| `replyTo` | string | No | Per-message override for the reply queue name. Takes precedence over `DefaultReplyQueueName`. |
+| `replyTo` | string | No | Per-message override for the reply queue name. Takes precedence over `DefaultReplyQueueName`. **Must not name the adapter's `InboundQueueName`** — such a send is refused, because it would loop the reply back in as new inbound work. |
 | `timestamp` | ISO 8601 | No | When the message was created (e.g. `2024-11-01T14:30:00Z`). Informational; not used for scheduling. |
 | `streamResponse` | boolean | No | Set `true` to receive ordered `delta` envelopes followed by one consolidated `done` envelope. Missing, `null`, or `false` preserves the historical one-shot reply. |
 | `metadata` | object | No | Arbitrary key/value string pairs forwarded to the gateway as additional context. |
@@ -93,7 +93,7 @@ The adapter supports application properties on inbound messages as **fallbacks**
 
 | Application property | Envelope field equivalent | Notes |
 |----------------------|--------------------------|-------|
-| `senderId` | `senderId` | Used for `AllowedSenderIds` filtering. |
+| `senderId` | `senderId` | Used for `AllowedSenderIds` filtering. This is an end-user identity, not a service or proxy identity. |
 | `conversationId` | `conversationId` | Thread / channel address for session routing. |
 | `replyTo` | `replyTo` | Per-message reply queue override. |
 | `correlationId` | `correlationId` | Echoed back in the outbound envelope. |

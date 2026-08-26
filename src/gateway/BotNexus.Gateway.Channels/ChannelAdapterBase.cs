@@ -125,7 +125,15 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     {
         if (AllowList.Count > 0 && !AllowList.Contains(message.SenderId))
         {
-            Logger.LogDebug("Blocked message from '{SenderId}' — not in allow list for '{ChannelType}'", message.SenderId, ChannelType);
+            // #3501 AC4: this is a total blackhole for the blocked sender. At LogDebug a wrong
+            // non-empty allow-list drops every message with no operator-visible signal at all,
+            // which is indistinguishable from the channel being dead. Warn instead, and name the
+            // configured entries so the misconfiguration is diagnosable from the log line alone.
+            Logger.LogWarning(
+                "Blocked message from '{SenderId}' — not in allow list for '{ChannelType}' (allow list has {AllowListCount} entries)",
+                message.SenderId,
+                ChannelType,
+                AllowList.Count);
             return;
         }
 

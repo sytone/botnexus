@@ -109,8 +109,16 @@ Notes:
 
 - **No secrets in config.** With `fullyQualifiedNamespace` set and
   `connectionString` omitted, BotNexus uses `DefaultAzureCredential`.
-- **Restrict senders.** Populate `allowedSenderIds` with the identifiers you
-  expect on the wire to reject unknown callers at the channel boundary.
+- **Restrict senders — with end-user ids, not service identities.** `allowedSenderIds` is compared
+  against the envelope's `senderId`, which is an **end-user** identifier (see
+  [the envelope reference](../../docs/user-guide/channels/service-bus-envelope.md)). It cannot
+  restrict *which workload* may publish — use Service Bus RBAC (`Azure Service Bus Data Sender` on
+  the inbound queue) for that. A non-empty list that omits your real senders blackholes every
+  message; the block is logged at `Warning` so it is visible in the gateway log.
+- **Keep the two queues distinct.** `defaultReplyQueueName` must never equal `inboundQueueName`.
+  The adapter warns at startup and refuses any send whose resolved reply queue is the inbound
+  queue, because replying into your own inbound queue is an unbounded redelivery loop that only
+  `maxDeliveryCount` terminates.
 - **Local development.** `az login` (or a Visual Studio / VS Code Azure sign-in)
   provides a `DefaultAzureCredential` identity. Grant your dev user the same two
   queue-scoped roles to test end-to-end without a deployed identity.

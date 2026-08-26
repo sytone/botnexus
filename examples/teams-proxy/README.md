@@ -25,13 +25,48 @@ Settings are under the `TeamsProxy` configuration section.
 | `BotClientId` | Client ID of the user-assigned managed identity configured on the Azure Bot. |
 | `ManagedIdentityClientId` | Client ID used by the App Service to access Service Bus and Bot Connector. |
 | `ServiceBusFullyQualifiedNamespace` | Service Bus namespace host, for example `myservicebus.servicebus.windows.net`. |
-| `InboundQueueName` | Queue for Teams messages to BotNexus. Sent as `replyTo` in the inbound envelope. |
-| `OutboundQueueName` | Queue for BotNexus replies to Teams. |
+| `InboundQueueName` | Queue for Teams messages to BotNexus. The proxy publishes here; BotNexus listens here. **Never use this value as the envelope `replyTo`** — see [Queue separation](#queue-separation-and-sender-filtering). |
+| `OutboundQueueName` | Queue for BotNexus replies to Teams. This is the value the proxy sends as the inbound envelope's `replyTo`. |
 | `AllowedServiceUrlHosts` | Host allow-list for outbound Bot Connector calls. Defaults to Teams `smba.trafficmanager.net` and Azure Bot web chat `webchat.botframework.com`. |
 | `SkipOutboundServiceUrlHosts` | Hosts that should not receive delayed Connector sends. Defaults to Azure Bot web chat because the portal test surface is inbound-only for this queue bridge. |
 | `OutboundWorkerEnabled` | Enables the background worker that reads BotNexus replies and sends them to Teams. Disabled in local Development settings. |
 
 `AllowUnauthenticatedRequests` is accepted only in `Development`.
+
+## Queue separation and sender filtering
+
+### The inbound and outbound queues must be different entities
+
+The `replyTo` the proxy publishes (`OutboundQueueName`) must never name the queue BotNexus listens
+on (`InboundQueueName`). If it does, every agent reply is published straight back into BotNexus's
+own inbound queue and re-consumed as a fresh user message — an unbounded self-feeding loop that
+only stops when Service Bus `maxDeliveryCount` finally dead-letters the message, after the
+namespace throughput and DLQ capacity have already been spent.
+
+The BotNexus Service Bus adapter guards this from its side (#3501): it warns at startup when
+`defaultReplyQueueName` equals `inboundQueueName`, and refuses any send whose resolved reply queue
+is the inbound queue, whatever supplied it — the envelope `replyTo` field, an
+`applicationProperties["replyTo"]` entry, or the configured default. A refused reply surfaces as an
+error rather than looping, so keep the two queue names distinct in `appsettings.json` and in
+`infra/main.bicep`.
+
+### `allowedSenderIds` filters end users, not this proxy
+
+BotNexus's `channels:servicebus:allowedSenderIds` is an allow-list of **end-user** identities. The
+proxy populates the envelope's `senderId` from the Teams user (`from.Id ?? from.Name`, see
+`Services/InboundQueuePublisher.cs`), so the value compared against the allow-list is a Teams user
+id — not the proxy's managed identity, app registration, or any other service principal.
+
+Consequences:
+
+- **You cannot restrict access to this proxy by putting its identity in `allowedSenderIds`.** No
+  such value ever reaches the comparison. Use Service Bus RBAC (`Azure Service Bus Data Sender` on
+  the inbound queue) to control which workloads may publish at all.
+- **A non-empty allow-list that does not contain your real Teams user ids blackholes every
+  message.** Populate it with Teams user identities, or leave it empty to permit all senders and
+  rely on the queue's RBAC instead.
+- Sender filtering and loop prevention are **orthogonal**. An allow-list cannot stop a hostile or
+  mistaken `replyTo`, because that value rides in on a message from a perfectly legitimate user.
 
 ## Queue contracts
 
