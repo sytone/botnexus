@@ -1,6 +1,7 @@
 using BotNexus.Cron;
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -29,6 +30,14 @@ public sealed class CronController(
     // run queue or causing overflow in downstream arithmetic.
     private static readonly DateTimeOffset MinAllowedTimestamp = new(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset MaxAllowedTimestamp = new(9000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    /// <summary>
+    /// #3575: the denial body for an unauthorized cron mutation. Emitted as an explicit 403
+    /// <see cref="StatusCodeResult"/> rather than <c>Forbid()</c> because this gateway authenticates
+    /// through its own middleware and registers no ASP.NET authentication scheme - <c>Forbid()</c>
+    /// would throw looking for one, turning a denial into a 500.
+    /// </summary>
+    private const string ForbiddenMessage = "You can only manage cron jobs created by or targeting an agent you are authorized for.";
 
     /// <summary>Lists cron jobs.</summary>
     /// <summary>
@@ -182,12 +191,29 @@ public sealed class CronController(
         if (existing is null)
             return NotFound();
 
+        // #3575: the REST seam applies the SAME ownership rule as the tool seam, via the shared
+        // CronJobOwnership predicate. Forbidden, NOT NotFound: the caller already proved the job
+        // exists by being told 404 only when it does not, and collapsing the two would trade a
+        // truthful authorization answer for a existence-oracle defence this endpoint does not need.
+        if (!IsCallerAuthorizedFor(existing))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ForbiddenMessage });
+
         var updated = request with
         {
             Id = typedJobId,
             ActionType = NormalizeActionType(request.ActionType),
             WebhookUrl = normalizedWebhookUrl,
             CreatedAt = existing.CreatedAt,
+
+            // #3575, mirroring the #2554 shape below: PUT binds the domain record directly, so
+            // AgentId and CreatedBy arrive from the request body and SqliteCronStore writes both
+            // under WHERE id = $id. CreatedBy is provenance the server stamps at creation and no
+            // REST caller authors it, so it is always taken from the stored row. AgentId may only
+            // move to an agent the authenticated caller is itself scoped to - otherwise a single
+            // body field would let an owner hand their job to an agent they cannot act as, which is
+            // the ownership-capture half of this issue.
+            CreatedBy = existing.CreatedBy,
+            AgentId = ResolveUpdatedAgentId(request.AgentId, existing.AgentId),
 
             // #2554: PUT binds the domain record directly, so a caller can put a
             // ScheduleActivatedAt in the body. Strip it explicitly here (the store also refuses
@@ -235,13 +261,68 @@ public sealed class CronController(
     [HttpDelete("{jobId}")]
     public async Task<IActionResult> Delete(string jobId, CancellationToken cancellationToken)
     {
+        var typedJobId = JobId.From(jobId);
+
+        // #3575: read before delete so the ownership rule can be applied. An absent job is still a
+        // no-op NoContent (the pre-existing contract - Delete never 404'd), but a job that exists
+        // and is not the caller's is a 403 rather than a silent removal of another agent's work.
+        var existing = await store.GetAsync(typedJobId, cancellationToken);
+        if (existing is not null && !IsCallerAuthorizedFor(existing))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ForbiddenMessage });
+
         // Route through the scheduler so the job's pinned conversation is archived
         // alongside the job record (P9-D directive G-5: the conversation lives until
         // the cron job is deleted).
-        await scheduler.DeleteJobAsync(JobId.From(jobId), cancellationToken);
+        await scheduler.DeleteJobAsync(typedJobId, cancellationToken);
         logger.LogInformation("Cron job deleted via API: {JobId}", jobId);
         return NoContent();
     }
+
+    /// <summary>
+    /// Applies the shared <see cref="CronJobOwnership"/> rule to the authenticated caller (#3575).
+    /// </summary>
+    /// <remarks>
+    /// The gateway authenticates a CALLER, not an agent, and a caller carries a set of permitted
+    /// agent ids. An unscoped or admin caller (<c>AllowedAgents</c> empty, matching
+    /// <c>GatewayAuthMiddleware.IsAgentAuthorized</c>) is already trusted platform-wide, so it stays
+    /// permitted - this guard closes the per-agent gap, it is not a second authentication layer.
+    /// A request with no identity in <c>HttpContext.Items</c> has not passed the auth middleware at
+    /// all (unit-test construction, or an endpoint on the skip list); denying there would break
+    /// callers the middleware itself allows, so the decision is deferred to it exactly as every
+    /// other controller does.
+    /// </remarks>
+    private bool IsCallerAuthorizedFor(CronJob job)
+    {
+        var identity = CallerIdentity;
+        if (identity is null || identity.IsAdmin || identity.AllowedAgents.Count == 0)
+            return true;
+
+        return CronJobOwnership.CanManageAsAny(job, identity.AllowedAgents);
+    }
+
+    /// <summary>
+    /// Resolves the <c>AgentId</c> an update may write: the requested one when the caller is scoped
+    /// to it, otherwise the stored one (#3575).
+    /// </summary>
+    private AgentId? ResolveUpdatedAgentId(AgentId? requested, AgentId? existing)
+    {
+        if (!requested.HasValue || requested == existing)
+            return existing;
+
+        var identity = CallerIdentity;
+        if (identity is null || identity.IsAdmin || identity.AllowedAgents.Count == 0)
+            return requested;
+
+        var scoped = identity.AllowedAgents.Any(agent =>
+            string.Equals(agent, requested.Value.Value, StringComparison.OrdinalIgnoreCase));
+        return scoped ? requested : existing;
+    }
+
+    /// <summary>The identity stamped by <c>GatewayAuthMiddleware</c>, or null when unauthenticated.</summary>
+    private GatewayCallerIdentity? CallerIdentity
+        => HttpContext?.Items.TryGetValue(GatewayAuthMiddleware.CallerIdentityItemKey, out var value) == true
+            ? value as GatewayCallerIdentity
+            : null;
 
     /// <summary>Triggers immediate execution for a cron job.</summary>
     /// <summary>

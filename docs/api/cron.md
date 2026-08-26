@@ -68,12 +68,32 @@ Updates an existing job from the request body. The route `jobId` wins over any `
 in the body, and the original `createdAt` is preserved. `nextRunAt`, when present, is
 range-validated as on create.
 
-Returns `200 OK` with the updated job, or `404 Not Found` when the job does not exist.
+`agentId` and `createdBy` are **not** caller-authored on this route (#3575). `createdBy` is
+server-stamped provenance and is always taken from the stored row; `agentId` moves only to an
+agent the authenticated caller is itself scoped to, and otherwise keeps its stored value. This
+mirrors the existing `scheduleActivatedAt` stripping (#2554) - the request binds the domain
+record directly, so any column the store writes must be governed explicitly here.
+
+Returns `200 OK` with the updated job, `404 Not Found` when the job does not exist, or
+`403 Forbidden` when the job exists but is not manageable by the caller.
 
 ### `DELETE /api/cron/{jobId}`
 
 Deletes a cron job through the scheduler, which also archives the job's pinned
-conversation. Returns `204 No Content`.
+conversation. Returns `204 No Content`, or `403 Forbidden` when the job exists but is not
+manageable by the caller.
+
+### Ownership on the mutating routes
+
+`PUT` and `DELETE` apply the same ownership rule as the `cron` agent tool, through the shared
+`CronJobOwnership` predicate: a job is manageable when the caller is scoped to the agent that
+created it or to the agent it targets. A caller whose API key carries no `allowedAgents` scope,
+or which is marked `isAdmin`, is already trusted platform-wide by the gateway auth middleware and
+is not further restricted here.
+
+An unauthorized target answers `403 Forbidden`, not `404` - the caller has already learned the
+job exists from the route's own `404` contract, so collapsing the two would trade a truthful
+authorization answer for an existence-oracle defence this endpoint does not provide anyway.
 
 ### `POST /api/cron/{jobId}/run`
 
