@@ -36,7 +36,7 @@ cd botnexus
 ### 2. Build the Solution
 
 ```bash
-dotnet build BotNexus.slnx
+dotnet build dirs.proj
 ```
 
 This will:
@@ -296,7 +296,7 @@ Now that BotNexus is running:
 
 | Task | Command |
 |------|---------|
-| **Build** | `dotnet build BotNexus.slnx` |
+| **Build** | `dotnet build dirs.proj` |
 | **Run Gateway** | `dotnet run --project src/gateway/BotNexus.Gateway.Api` |
 | **Health Check** | `curl http://localhost:5005/health` |
 | **List Agents** | `curl http://localhost:5005/api/agents` |

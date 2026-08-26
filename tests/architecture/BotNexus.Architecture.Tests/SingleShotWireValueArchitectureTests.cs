@@ -24,12 +24,12 @@ namespace BotNexus.Architecture.Tests;
 /// <c>AgentExchangeServiceTests.ConverseAsync_NoObjectiveSet_SingleShotReasonReturned</c>.
 /// </para>
 /// </remarks>
-public sealed class SingleShotWireValueArchitectureTests
+public sealed class SingleShotWireValueArchitectureTests : ArchitectureTest
 {
     [Fact]
     public void NoProductionSourceFile_ContainsLegacyObjectiveMetWireValue()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
 
         var violations = new List<string>();
         foreach (var path in EnumerateProductionCsFiles(srcRoot))
@@ -311,16 +311,4 @@ public sealed class SingleShotWireValueArchitectureTests
     private static string NormalizePath(string path)
         => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

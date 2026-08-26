@@ -20,14 +20,13 @@ namespace BotNexus.Architecture.Tests;
 /// fail the build instead of shipping.
 /// </para>
 /// </summary>
-public sealed class WebToolSanitizationBoundaryArchitectureTests
+public sealed class WebToolSanitizationBoundaryArchitectureTests : ArchitectureTest
 {
-    private static string RepoRoot => FindRepoRoot();
 
-    private static string WebToolsRoot =>
-        Path.Combine(RepoRoot, "src", "extensions", "BotNexus.Extensions.WebTools");
+    private string WebToolsRoot =>
+        Path.Combine(Repository.Root, "src", "extensions", "BotNexus.Extensions.WebTools");
 
-    private static string SearchProvidersRoot => Path.Combine(WebToolsRoot, "Search");
+    private string SearchProvidersRoot => Path.Combine(WebToolsRoot, "Search");
 
     /// <summary>Non-vacuity guard: the fence is worthless if it is scanning an empty tree.</summary>
     [Fact]
@@ -155,15 +154,4 @@ public sealed class WebToolSanitizationBoundaryArchitectureTests
         return code;
     }
 
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.ShouldNotBeNull("Could not locate repository root (no .git directory found).");
-        return dir!.FullName;
-    }
 }

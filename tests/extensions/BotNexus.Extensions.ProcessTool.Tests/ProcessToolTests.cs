@@ -73,58 +73,14 @@ public sealed class ProcessToolTests : IDisposable
         return managed;
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout, TimeSpan? pollInterval = null)
-    {
-        var interval = pollInterval ?? TimeSpan.FromMilliseconds(100);
-        var stopwatch = Stopwatch.StartNew();
-        while (stopwatch.Elapsed < timeout)
-        {
-            if (condition())
+    private Task WaitForOutputContainsAsync(int pid, string expectedText, int? tail = null)
+        => TestAwait.EventuallyAsync(
+            async () =>
             {
-                return;
-            }
-
-            await Task.Delay(interval);
-        }
-
-        condition().ShouldBeTrue("condition should be met within timeout");
-    }
-
-    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout, TimeSpan? pollInterval = null)
-    {
-        var interval = pollInterval ?? TimeSpan.FromMilliseconds(100);
-        var stopwatch = Stopwatch.StartNew();
-        while (stopwatch.Elapsed < timeout)
-        {
-            if (await condition())
-            {
-                return;
-            }
-
-            await Task.Delay(interval);
-        }
-
-        (await condition()).ShouldBeTrue("condition should be met within timeout");
-    }
-
-    private async Task WaitForOutputContainsAsync(int pid, string expectedText, int? tail = null)
-    {
-        var timeoutAt = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (DateTime.UtcNow < timeoutAt)
-        {
-            var result = await _tool.ExecuteAsync("c1", Args("output", pid: pid, tail: tail));
-            var text = ResultText(result);
-            if (text.Contains(expectedText, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            await Task.Delay(100);
-        }
-
-        var finalResult = await _tool.ExecuteAsync("c1", Args("output", pid: pid, tail: tail));
-        ResultText(finalResult).ShouldContain(expectedText);
-    }
+                var result = await _tool.ExecuteAsync("c1", Args("output", pid: pid, tail: tail));
+                return ResultText(result).Contains(expectedText, StringComparison.Ordinal);
+            },
+            $"process {pid} output to contain '{expectedText}'");
 
     // ───────────── list ─────────────
 
@@ -157,12 +113,14 @@ public sealed class ProcessToolTests : IDisposable
     {
         var managed = SpawnTestProcess("ping -n 60 127.0.0.1 >nul", "sleep 60");
         var text = string.Empty;
-        await WaitUntilAsync(async () =>
-        {
-            var result = await _tool.ExecuteAsync("c1", Args("status", pid: managed.Pid));
-            text = ResultText(result);
-            return text.Contains("running", StringComparison.Ordinal);
-        }, TimeSpan.FromSeconds(5));
+        await TestAwait.EventuallyAsync(
+            async () =>
+            {
+                var result = await _tool.ExecuteAsync("c1", Args("status", pid: managed.Pid));
+                text = ResultText(result);
+                return text.Contains("running", StringComparison.Ordinal);
+            },
+            $"process {managed.Pid} status to report running");
 
         text.ShouldContain("running");
         text.ShouldContain(managed.Pid.ToString());
@@ -228,7 +186,9 @@ public sealed class ProcessToolTests : IDisposable
     public async Task Kill_TerminatesRunningProcess()
     {
         var managed = SpawnTestProcess("ping -n 60 127.0.0.1 >nul", "sleep 60");
-        await WaitUntilAsync(() => managed.IsRunning, TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
+            () => managed.IsRunning,
+            $"process {managed.Pid} to report running");
 
         managed.IsRunning.ShouldBeTrue();
 
@@ -236,7 +196,9 @@ public sealed class ProcessToolTests : IDisposable
         var text = ResultText(result);
 
         text.ShouldContain("terminated");
-        await WaitUntilAsync(() => !managed.IsRunning, TimeSpan.FromSeconds(30));
+        await TestAwait.EventuallyAsync(
+            () => !managed.IsRunning,
+            $"process {managed.Pid} to stop after kill");
         managed.IsRunning.ShouldBeFalse();
     }
 

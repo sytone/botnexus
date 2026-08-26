@@ -76,8 +76,8 @@ error CS0246: The type or namespace name 'BotNexus' could not be found
    ```
 2. Restore and rebuild:
    ```bash
-   dotnet restore BotNexus.slnx
-   dotnet build BotNexus.slnx
+  dotnet restore dirs.proj
+  dotnet build dirs.proj
    ```
 
 ### Error: Compilation Failed
@@ -123,7 +123,7 @@ Unhandled exception. System.IO.FileNotFoundException: Could not load file or ass
    ```
 2. Rebuild:
    ```bash
-   dotnet build BotNexus.slnx
+  dotnet build dirs.proj
    ```
 3. Run again:
    ```bash

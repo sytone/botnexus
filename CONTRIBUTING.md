@@ -42,7 +42,7 @@ cd botnexus
 
 dotnet tool restore   # installs pinned tools from dotnet-tools.json (dotnet-affected, etc.)
 dotnet restore        # restores NuGet packages (Central Package Management)
-dotnet build          # builds the solution (BotNexus.slnx)
+dotnet build dirs.proj
 ```
 
 Run the CLI directly from source:
@@ -178,7 +178,7 @@ botnexus/
 └── tools/              supporting utilities
 ```
 
-The solution file is [`BotNexus.slnx`](BotNexus.slnx). Many directories carry
+The root traversal project is [`dirs.proj`](dirs.proj). Many directories carry
 their own `AGENTS.md` with area-specific conventions — read the one closest to the
 code you are changing.
 

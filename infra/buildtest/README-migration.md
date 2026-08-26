@@ -50,10 +50,10 @@ supported for a consumption-only environment. We are the first case.
 
 | Field | Value |
 |---|---|
-| Subscription | `d0024f9b-079d-4464-a10a-c19e2fd4a781` (`jobullen-tst-dev-lrn`) |
+| Subscription | `$env:BOTNEXUS_BUILDTEST_SUBSCRIPTION_ID` |
 | Resource group | `botnexus-buildtest` |
 | Environment | `bnx-buildtest-env` |
-| Current static IP | `4.246.50.69` (platform-owned — this is the thing being fixed) |
+| Current static IP | Query at runtime with the command in step 4 (platform-owned — this is the thing being fixed) |
 | `subnetResourceId` | *(empty)* |
 | `natGatewayId` | *(empty)* |
 
@@ -62,8 +62,8 @@ supported for a consumption-only environment. We are the first case.
 1. **Adding the subnet must be the ONLY change in the request.** Do not change tags, log
    configuration, or anything else in the same deployment. This is why the migration deploys the
    network resources first and attaches the subnet second.
-2. **The frontend IP will change.** Anything referencing `4.246.50.69` directly, or an A record in
-   DNS, must be updated. CNAME records need no change. DNS refresh takes several minutes.
+2. **The frontend IP will change.** Anything referencing the current address directly, or an A
+   record in DNS, must be updated. CNAME records need no change. DNS refresh takes several minutes.
    `Invoke-AzureBuildTest.ps1` resolves the job by resource ID, not IP — verify before deploying.
 3. **Subnet must be delegated** to `Microsoft.App/environments`, and a **NAT gateway must be
    attached** to it.
@@ -89,7 +89,10 @@ should be settled before this work is declared complete.
 
 1. **Confirm no gate run is in flight:**
    ```powershell
-   $sub = 'd0024f9b-079d-4464-a10a-c19e2fd4a781'
+   $sub = $env:BOTNEXUS_BUILDTEST_SUBSCRIPTION_ID
+   if ([string]::IsNullOrWhiteSpace($sub)) {
+     throw 'Set BOTNEXUS_BUILDTEST_SUBSCRIPTION_ID before running this migration.'
+   }
    az containerapp job execution list -g botnexus-buildtest -n bnx-buildtest-runner `
      --subscription $sub --query "[?properties.status=='Running']" -o json   # must be []
    ```
@@ -121,8 +124,8 @@ should be settled before this work is declared complete.
    and their definitions survive; the ACR, storage account, managed identity and role assignments
    are untouched.
 
-   Verified 2026-08-13: both `bnx-buildtest-runner` and `bn-reloadprobe-job` came through the
-   attach with `provisioningState: Succeeded`.
+   Verified 2026-08-13: both the build-test runner and the manually-created reload probe job came
+   through the attach with `provisioningState: Succeeded`.
 3. **Verify the subnet attached:**
    ```powershell
    az containerapp env show -g botnexus-buildtest -n bnx-buildtest-env --subscription $sub `
@@ -172,8 +175,8 @@ environment that already exists. Do not use it for a rebuild.
 
 ### Caveats a rebuild must account for
 
-- **`bn-reloadprobe-job` is not in the template.** It was created by hand on 2026-08-05. A
-  from-scratch deploy will not recreate it.
+- **The reload probe job is not in the template.** It was created by hand on 2026-08-05. A
+   from-scratch deploy will not recreate it.
 - **The public-IP service-tag question is unresolved** (see above). A rebuild inherits it.
 - **`Deploy-BuildTestInfrastructure.ps1` submits with `--no-wait` and polls** (#3118). It no
   longer hangs on this subscription, so the script is a valid rebuild path. It fails with the
@@ -182,11 +185,11 @@ environment that already exists. Do not use it for a rebuild.
 
 ## Unresolved / needs a decision
 
-1. **Two orphaned resource sets in this resource group** — `bnxbtc19e2fd4acr` / `bnxbtc19e2fd4sa`
-   alongside the live `bnxbt2fd4a781acr` / `bnxbt2fd4a781sa`. The suffix derives from the
-   subscription ID, so an earlier deployment used a different algorithm. Confirm unused and delete.
-2. **`bn-reloadprobe-job` is not in `main.bicep`.** Created manually
-   (`createdBy: jobullen@microsoft.com`, 2026-08-05) from `bn-inoprobe:1`. It SURVIVES this
-   migration, but it remains undeclared infrastructure that a future template deployment will not
-   reproduce. Either add it or remove it deliberately.
+1. **Two orphaned resource sets exist in this resource group.** The generated suffix derives from
+   the subscription ID, and an earlier deployment used a different algorithm. Identify the legacy
+   pair from Azure Resource Graph, confirm it is unused, and delete it.
+2. **The reload probe job is not in `main.bicep`.** An operator created it manually on 2026-08-05
+   from a temporary probe image. It SURVIVES this migration, but it remains undeclared
+   infrastructure that a future template deployment will not reproduce. Either add it or remove it
+   deliberately.
 3. **Whether the NAT public IP needs a service tag** (see above).

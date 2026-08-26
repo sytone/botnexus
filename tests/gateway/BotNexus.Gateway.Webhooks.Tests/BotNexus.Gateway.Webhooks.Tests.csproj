@@ -20,6 +20,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Webhooks\BotNexus.Gateway.Webhooks.csproj" />
     <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <!-- #3523: IAgentRegistry / AgentDescriptor for the provisioner's startup reconciliation. -->
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
+    <!-- #3523: IAgentWebhookTargetNotifier, the product-agnostic delivery seam. -->
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

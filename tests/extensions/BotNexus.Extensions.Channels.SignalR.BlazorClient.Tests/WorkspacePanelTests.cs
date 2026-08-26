@@ -420,12 +420,12 @@ public sealed class WorkspacePanelTests : IDisposable
         var current = new DirectoryInfo(AppContext.BaseDirectory);
         while (current is not null)
         {
-            if (File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+            if (File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
                 return current.FullName;
 
             current = current.Parent;
         }
 
-        throw new DirectoryNotFoundException("Unable to locate BotNexus.slnx from test base directory.");
+        throw new DirectoryNotFoundException("Unable to locate Directory.Packages.props from test base directory.");
     }
 }

@@ -80,7 +80,7 @@ public sealed class SqliteRetryHelperTests
         {
             await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
             {
-                await Task.Delay(1000, token);
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
                 return 0;
             }, cts.Token);
         });

@@ -2,6 +2,7 @@ using System.CommandLine;
 using BotNexus.Cli.Commands.Doctor;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
+using BotNexus.Cli.Services;
 
 namespace BotNexus.Cli.Commands;
 
@@ -90,7 +91,7 @@ internal sealed class DoctorConfigCommand
         PlatformConfig config;
         try
         {
-            config = await PlatformConfigLoader.LoadAsync(configPath, cancellationToken, validateOnLoad: false);
+            config = PlatformConfigAccessor.Shared.Get(configPath);
         }
         catch (Exception ex)
         {
@@ -206,3 +207,4 @@ internal sealed class DoctorConfigCommand
         return 0;
     }
 }
+

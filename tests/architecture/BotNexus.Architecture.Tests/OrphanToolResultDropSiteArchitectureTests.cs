@@ -26,7 +26,7 @@ namespace BotNexus.Architecture.Tests;
 /// <c>CompletionsOrphanToolResultTests</c>. The two layers complement; neither alone is sufficient.
 /// </para>
 /// </remarks>
-public sealed class OrphanToolResultDropSiteArchitectureTests
+public sealed class OrphanToolResultDropSiteArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// The marker comment that names the single sanctioned drop site. Any second occurrence means a
@@ -107,9 +107,9 @@ public sealed class OrphanToolResultDropSiteArchitectureTests
         return Regex.Replace(withoutBlock, @"//.*?$", string.Empty, RegexOptions.Multiline);
     }
 
-    private static List<string> ProviderSourceFiles()
+    private List<string> ProviderSourceFiles()
     {
-        var srcRoot = FindSourceRoot();
+        var srcRoot = Repository.SourceRoot;
         var agentRoot = Path.Combine(srcRoot, "agent");
         Directory.Exists(agentRoot).ShouldBeTrue("Expected src/agent under " + srcRoot);
 
@@ -121,17 +121,4 @@ public sealed class OrphanToolResultDropSiteArchitectureTests
             .ToList();
     }
 
-    private static string FindSourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var srcRoot = Path.Combine(current!.FullName, "src");
-        Directory.Exists(srcRoot).ShouldBeTrue("Expected src/ under " + current.FullName);
-        return srcRoot;
-    }
 }

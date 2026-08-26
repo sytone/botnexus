@@ -65,7 +65,13 @@ public sealed class RateLimitingAdversarialTests
     [Fact]
     public async Task InvokeAsync_AfterWindowExpires_AllowsRequestsAgain()
     {
-        var middleware = new RateLimitingMiddleware(_ => Task.CompletedTask, CreateConfig(requestsPerMinute: 1, windowSeconds: 1));
+        var timeProvider = new ManualTimeProvider(DateTimeOffset.Parse(
+            "2026-08-21T12:00:00Z",
+            System.Globalization.CultureInfo.InvariantCulture));
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 1, windowSeconds: 1),
+            timeProvider);
 
         var firstRequest = CreateContext("127.0.0.20");
         await middleware.InvokeAsync(firstRequest);
@@ -74,7 +80,7 @@ public sealed class RateLimitingAdversarialTests
         await middleware.InvokeAsync(secondRequest);
         secondRequest.Response.StatusCode.ShouldBe(StatusCodes.Status429TooManyRequests);
 
-        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
 
         var thirdRequest = CreateContext("127.0.0.20");
         await middleware.InvokeAsync(thirdRequest);

@@ -137,7 +137,7 @@ All tests run with `BOTNEXUS_HOME` set to a temp directory via `test.runsettings
 
 ```powershell
 # Skip test compilation for faster production builds
-dotnet build BotNexus.slnx /p:SkipTests=true
+dotnet build dirs.proj /p:SkipTests=true
 
 # Run only tests affected by your current changes (uses project dependency graph)
 scripts/repo/test-impacted.ps1
@@ -159,3 +159,12 @@ This uses `Directory.Build.targets` to strip all test project inputs when `SkipT
 - **No warning suppression** — fix nullable and async warnings instead of using `#nullable disable` or `#pragma warning disable`
 - **Isolation** — tests must not depend on external services or user config
 - **Naming** — `MethodUnderTest_Scenario_ExpectedResult`
+
+### Asynchronous Coordination
+
+- Prefer explicit completion/readiness signals. Use `TaskCompletionSource<T>` with `RunContinuationsAsynchronously`, and apply `Task.WaitAsync` only as a diagnostic deadline around that signal.
+- Use `TestAwait.EventuallyAsync` from `BotNexus.Testing` only for a positive condition exposed by a boundary that cannot signal completion directly. It provides consistent timeout, cancellation, polling, and diagnostics.
+- Never prove a negative by sleeping and observing that nothing happened. First reach a deterministic boundary, then assert synchronously, await a drain/quiescence signal, or test the invariant at a synchronous core method.
+- When elapsed time is behavior, inject `TimeProvider`. Use `ManualTimeProvider` for clock reads; timer and delay behavior requires a scheduler-aware fake or an injected delay delegate.
+- Do not add finite `Task.Delay` or `Thread.Sleep` calls to coordinate test execution, and do not create project-local `WaitUntilAsync`, `WaitForAsync`, `EventuallyAsync`, or `PollUntilAsync` loops.
+- Infinite delays that model work until cancellation are valid sentinels.

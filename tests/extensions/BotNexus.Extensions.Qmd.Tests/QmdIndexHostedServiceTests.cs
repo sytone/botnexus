@@ -18,10 +18,10 @@ public sealed class QmdIndexHostedServiceTests
         };
 
         var service = new QmdIndexHostedService(_mockBackend.Object, config, _mockLogger.Object);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
 
-        await service.StartAsync(cts.Token);
-        await Task.Delay(500, cts.Token);
+        await service.StartAsync(CancellationToken.None);
+    var executionTask = service.ExecuteTask.ShouldNotBeNull();
+    await executionTask.WaitAsync(TimeSpan.FromSeconds(2));
         await service.StopAsync(CancellationToken.None);
 
         _mockBackend.Verify(x => x.UpdateIndexAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -160,7 +160,7 @@ public sealed class QmdIndexHostedServiceTests
     public async Task UpdateStoreAsync_CancellationFromGateway_Propagates()
     {
         _mockBackend.Setup(x => x.UpdateIndexAsync("cancel", It.IsAny<CancellationToken>()))
-            .Returns<string?, CancellationToken>((_, ct) => Task.Delay(TimeSpan.FromSeconds(30), ct));
+            .Returns<string?, CancellationToken>((_, ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct));
 
         var config = new QmdConfig
         {

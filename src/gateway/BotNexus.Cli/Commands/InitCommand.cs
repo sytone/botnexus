@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
+using BotNexus.Gateway.Configuration.Writers;
 
 namespace BotNexus.Cli.Commands;
 
@@ -162,7 +163,7 @@ internal sealed class InitCommand
         var homeRoot = Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath();
         var backupsDir = PlatformAgentReconciliationService.ResolveBackupDirectory(
             new BotNexusHome(fileSystem, homeRoot));
-        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
+        var writer = ConfigWriterFactory.Create(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
         await writer.MutateDocumentAsync(
             document => document.ReplaceWith(generated),
             "before-init-write",
@@ -182,3 +183,4 @@ internal sealed class InitCommand
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 }
+

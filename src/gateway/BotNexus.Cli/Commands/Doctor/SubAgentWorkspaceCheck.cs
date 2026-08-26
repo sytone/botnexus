@@ -1,6 +1,7 @@
 using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Cli.Commands.Doctor.Generated;
+using BotNexus.Cli.Services;
 
 namespace BotNexus.Cli.Commands.Doctor;
 
@@ -94,6 +95,7 @@ internal sealed class SubAgentWorkspaceCheck : IDoctorCheck
             if (!_fileSystem.File.Exists(configPath))
                 return null;
 
+            // Injected IFileSystem: see SubAgentCommand for why this cannot use the provider pipeline (#3504).
             var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
             return config.Gateway?.SubAgents?.WorkspaceRoot;
         }
@@ -103,3 +105,5 @@ internal sealed class SubAgentWorkspaceCheck : IDoctorCheck
         }
     }
 }
+
+

@@ -77,54 +77,6 @@ public static class PlatformConfigLoader
     }
 
     /// <summary>
-    /// Loads config from whichever source is currently authoritative (#3180).
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The cutover entry point. <see cref="Load"/> and <see cref="LoadAsync"/> read the file
-    /// unconditionally and are unchanged; this overload delegates the choice of source to
-    /// <paramref name="source"/>, which honours <c>ConfigStoreAuthoritative</c> and falls back to the
-    /// file on any store failure.
-    /// </para>
-    /// <para>
-    /// The store-served document is funnelled through the <em>same</em> <see cref="FinishLoad"/>
-    /// pipeline as a file-served one - deserialize, migrate legacy schema, extract agent defaults,
-    /// validate. That is the point of routing through the raw JSON text rather than binding the
-    /// document directly: a store-backed load and a file-backed load cannot drift, because after the
-    /// read there is only one code path. A second binding path would be free to silently skip the
-    /// legacy migration and produce a subtly different <see cref="PlatformConfig"/> from identical
-    /// content.
-    /// </para>
-    /// <para>
-    /// A <see langword="null"/> document (no configuration anywhere) yields a default
-    /// <see cref="PlatformConfig"/>, matching what the file loaders do when <c>config.json</c> is
-    /// absent.
-    /// </para>
-    /// </remarks>
-    /// <param name="source">Supplies the document and reports which source served it.</param>
-    /// <param name="configPath">Used only for error messages, so a failure names a real location.</param>
-    /// <param name="validateOnLoad">Whether to run schema and cross-field validation.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    public static async Task<PlatformConfig> LoadFromSourceAsync(
-        Store.IConfigDocumentSource source,
-        string? configPath = null,
-        bool validateOnLoad = true,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(source);
-
-        var read = await source.ReadAsync(cancellationToken).ConfigureAwait(false);
-        if (read.Document is null)
-            return new PlatformConfig();
-
-        var path = configPath ?? (read.Origin == Store.ConfigDocumentOrigin.Store
-            ? "the configuration store"
-            : DefaultConfigPath);
-
-        return FinishLoad(read.Document.ToJsonString(), path, validateOnLoad);
-    }
-
-    /// <summary>
     /// Shared post-read pipeline for <see cref="Load"/> and <see cref="LoadAsync"/>: deserialize,
     /// migrate legacy schema, optionally validate, and emit the version warning.
     /// </summary>

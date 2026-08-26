@@ -114,7 +114,7 @@ Modify existing rows matching a WHERE clause. Both `set` and `where` are require
 {
   "action": "update",
   "table": "contacts",
-  "set": "{\"email\": \"alice@newdomain.com\"}",
+  "set": "{\"email\": \"alice@domain.com\"}",
   "where": "name = 'Alice'"
 }
 ```

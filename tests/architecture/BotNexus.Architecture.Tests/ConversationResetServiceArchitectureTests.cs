@@ -19,7 +19,7 @@ namespace BotNexus.Architecture.Tests;
 /// architecture failure.
 /// </para>
 /// </remarks>
-public sealed class ConversationResetServiceArchitectureTests
+public sealed class ConversationResetServiceArchitectureTests : ArchitectureTest
 {
     /// <summary>
     /// No file in <c>src/gateway/</c> outside the allowlist may invoke
@@ -30,7 +30,7 @@ public sealed class ConversationResetServiceArchitectureTests
     [Fact]
     public void NoDirect_ISessionEndMemoryFlusher_FlushAsync_OutsideAllowlist()
     {
-        var gatewayRoot = FindGatewaySourceRoot();
+        var gatewayRoot = Repository.Path("src", "gateway");
         var allowlist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             // The canonical orchestrator — the only legitimate caller of
@@ -68,17 +68,4 @@ public sealed class ConversationResetServiceArchitectureTests
             "Offenders:\n  " + string.Join("\n  ", offenders));
     }
 
-    private static string FindGatewaySourceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        var gatewayRoot = Path.Combine(current.FullName, "src", "gateway");
-        Directory.Exists(gatewayRoot).ShouldBeTrue("Expected src/gateway under " + current.FullName);
-        return gatewayRoot;
-    }
 }

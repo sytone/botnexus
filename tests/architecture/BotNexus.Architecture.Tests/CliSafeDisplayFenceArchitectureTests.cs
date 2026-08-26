@@ -44,7 +44,7 @@ namespace BotNexus.Architecture.Tests;
 /// "which escaping helper did this call site choose" is a property of the source, and the
 /// compiled assembly retains no trace of it - both spellings end up as a string.</para>
 /// </summary>
-public sealed class CliSafeDisplayFenceArchitectureTests
+public sealed class CliSafeDisplayFenceArchitectureTests : ArchitectureTest
 {
     /// <summary>Root of the CLI project this fence governs.</summary>
     private const string CliRoot = "src/gateway/BotNexus.Cli";
@@ -76,7 +76,6 @@ public sealed class CliSafeDisplayFenceArchitectureTests
     private static readonly Regex SafeDisplayUse =
         new(@"\bCliText\s*\.\s*SafeDisplay\s*\(", RegexOptions.Compiled);
 
-    private static string RepoRoot => FindRepoRoot();
 
     [Fact]
     public void Helper_Exists()
@@ -206,28 +205,17 @@ public sealed class CliSafeDisplayFenceArchitectureTests
             "empty, so every assertion above would pass without inspecting anything. Check " +
             $"that '{CliRoot}' still exists relative to the repo root.");
 
-    private static IEnumerable<string> EnumerateCliSources()
+    private IEnumerable<string> EnumerateCliSources()
     {
-        var cliRoot = Path.Combine(RepoRoot, CliRoot.Replace('/', Path.DirectorySeparatorChar));
+        var cliRoot = Path.Combine(Repository.Root, CliRoot.Replace('/', Path.DirectorySeparatorChar));
         Directory.Exists(cliRoot).ShouldBeTrue($"CLI source root not found: {cliRoot}");
         return Directory.EnumerateFiles(cliRoot, "*.cs", SearchOption.AllDirectories);
     }
 
-    private static string ToRepoRelative(string absolutePath) =>
-        Path.GetRelativePath(RepoRoot, absolutePath).Replace('\\', '/');
+    private string ToRepoRelative(string absolutePath) =>
+        Path.GetRelativePath(Repository.Root, absolutePath).Replace('\\', '/');
 
-    private static string ResolvePath(string relative) =>
-        Path.Combine(RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private string ResolvePath(string relative) =>
+        Path.Combine(Repository.Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-
-        current.ShouldNotBeNull("Could not locate repo root (BotNexus.slnx) from " + AppContext.BaseDirectory);
-        return current!.FullName;
-    }
 }

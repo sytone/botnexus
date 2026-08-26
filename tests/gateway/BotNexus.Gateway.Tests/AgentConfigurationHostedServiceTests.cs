@@ -9,22 +9,8 @@ using Moq;
 
 namespace BotNexus.Gateway.Tests;
 
-public sealed class AgentConfigurationHostedServiceTests : IDisposable
+public sealed class AgentConfigurationHostedServiceTests
 {
-    private readonly TimeSpan _originalDebounce;
-
-    public AgentConfigurationHostedServiceTests()
-    {
-        _originalDebounce = AgentConfigurationHostedService.DebounceDelay;
-        // Default tests run without debounce for deterministic behavior
-        AgentConfigurationHostedService.DebounceDelay = TimeSpan.Zero;
-    }
-
-    public void Dispose()
-    {
-        AgentConfigurationHostedService.DebounceDelay = _originalDebounce;
-    }
-
     [Fact]
     public async Task StartAsync_WithMultipleSources_RegistersDescriptorsFromAllSources()
     {
@@ -39,7 +25,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         sourceB.Setup(s => s.Watch(It.IsAny<Action<IReadOnlyList<AgentDescriptor>>>()))
             .Returns(Mock.Of<IDisposable>());
         var registry = new RecordingAgentRegistry();
-        var service = new AgentConfigurationHostedService([sourceA.Object, sourceB.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var service = CreateService([sourceA.Object, sourceB.Object], registry);
 
         await service.StartAsync(CancellationToken.None);
 
@@ -55,7 +41,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         source.Setup(s => s.Watch(It.IsAny<Action<IReadOnlyList<AgentDescriptor>>>()))
             .Returns(Mock.Of<IDisposable>());
         var registry = new RecordingAgentRegistry([CreateDescriptor("code-agent")]);
-        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var service = CreateService([source.Object], registry);
 
         await service.StartAsync(CancellationToken.None);
 
@@ -75,7 +61,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
             .Callback<Action<IReadOnlyList<AgentDescriptor>>>(cb => callback = cb)
             .Returns(Mock.Of<IDisposable>());
         var registry = new RecordingAgentRegistry();
-        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var service = CreateService([source.Object], registry);
 
         await service.StartAsync(CancellationToken.None);
         callback.ShouldNotBeNull();
@@ -112,7 +98,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
             .Callback<Action<IReadOnlyList<AgentDescriptor>>>(cb => callback = cb)
             .Returns(Mock.Of<IDisposable>());
         var registry = new RecordingAgentRegistry();
-        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var service = CreateService([source.Object], registry);
 
         await service.StartAsync(CancellationToken.None);
         registry.GetAll().ShouldBeEmpty();
@@ -138,7 +124,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
             .Callback<Action<IReadOnlyList<AgentDescriptor>>>(cb => callback = cb)
             .Returns(Mock.Of<IDisposable>());
         var registry = new RecordingAgentRegistry();
-        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var service = CreateService([source.Object], registry);
 
         await service.StartAsync(CancellationToken.None);
         registry.RegisterOperations.Clear();
@@ -147,7 +133,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
 
         // Fire change with an identical descriptor (new instance, same values)
         callback!([CreateDescriptor("agent-a", "Stable Agent")]);
-        await Task.Delay(200);
+        await service.PendingDebounceTask;
 
         registry.UnregisterOperations.ShouldBeEmpty();
         // Should NOT re-register — agent unchanged
@@ -157,8 +143,6 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
     [Fact]
     public async Task Debounce_RapidFireNotifications_CoalescedIntoSingleApply()
     {
-        AgentConfigurationHostedService.DebounceDelay = TimeSpan.FromMilliseconds(200);
-
         var source = new Mock<IAgentConfigurationSource>();
         Action<IReadOnlyList<AgentDescriptor>>? callback = null;
         source.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
@@ -167,7 +151,8 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
             .Callback<Action<IReadOnlyList<AgentDescriptor>>>(cb => callback = cb)
             .Returns(Mock.Of<IDisposable>());
         var registry = new RecordingAgentRegistry();
-        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var debounce = new ControllableDelay();
+        var service = CreateService([source.Object], registry, debounce.DelayAsync);
 
         await service.StartAsync(CancellationToken.None);
         callback.ShouldNotBeNull();
@@ -181,8 +166,8 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         // Before debounce fires — nothing should be registered
         registry.RegisterOperations.ShouldBeEmpty();
 
-        // Wait for debounce to fire (generous margin for slow CI runners)
-        await Task.Delay(1000);
+        debounce.ReleaseLatest();
+        await service.PendingDebounceTask;
 
         // Only the final state should be applied (agent-9 from the last call)
         registry.Contains(AgentId.From("agent-9")).ShouldBeTrue();
@@ -201,7 +186,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         source.Setup(s => s.Watch(It.IsAny<Action<IReadOnlyList<AgentDescriptor>>>()))
             .Returns(watcher.Object);
         var registry = new RecordingAgentRegistry();
-        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var service = CreateService([source.Object], registry);
 
         await service.StartAsync(CancellationToken.None);
         await service.StopAsync(CancellationToken.None);
@@ -212,8 +197,6 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
     [Fact]
     public async Task StopAsync_CancelsPendingDebounce()
     {
-        AgentConfigurationHostedService.DebounceDelay = TimeSpan.FromMilliseconds(500);
-
         var source = new Mock<IAgentConfigurationSource>();
         Action<IReadOnlyList<AgentDescriptor>>? callback = null;
         source.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
@@ -222,7 +205,8 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
             .Callback<Action<IReadOnlyList<AgentDescriptor>>>(cb => callback = cb)
             .Returns(Mock.Of<IDisposable>());
         var registry = new RecordingAgentRegistry();
-        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var debounce = new ControllableDelay();
+        var service = CreateService([source.Object], registry, debounce.DelayAsync);
 
         await service.StartAsync(CancellationToken.None);
         callback.ShouldNotBeNull();
@@ -230,9 +214,6 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
         // Schedule a change but stop before debounce fires
         callback!([CreateDescriptor("agent-pending")]);
         await service.StopAsync(CancellationToken.None);
-
-        // Wait past the debounce window
-        await Task.Delay(700);
 
         // Should NOT have been applied (stop cancelled it)
         registry.Contains(AgentId.From("agent-pending")).ShouldBeFalse();
@@ -242,7 +223,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
     public async Task StartAsync_WithNoSources_DoesNotRegisterAgents()
     {
         var registry = new RecordingAgentRegistry();
-        var service = new AgentConfigurationHostedService([], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var service = CreateService([], registry);
 
         await service.StartAsync(CancellationToken.None);
 
@@ -350,7 +331,7 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
             .Callback<Action<IReadOnlyList<AgentDescriptor>>>(cb => callback = cb)
             .Returns(Mock.Of<IDisposable>());
         var registry = new RecordingAgentRegistry();
-        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+        var service = CreateService([source.Object], registry);
 
         await service.StartAsync(CancellationToken.None);
         registry.RegisterOperations.Clear();
@@ -404,6 +385,39 @@ public sealed class AgentConfigurationHostedServiceTests : IDisposable
             ModelId = "model",
             ApiProvider = "provider"
         };
+
+    private static AgentConfigurationHostedService CreateService(
+        IEnumerable<IAgentConfigurationSource> sources,
+        IAgentRegistry registry,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        => new(
+            sources,
+            registry,
+            NullLogger<AgentConfigurationHostedService>.Instance,
+            delay ?? ((_, _) => Task.CompletedTask));
+
+    private sealed class ControllableDelay
+    {
+        private readonly Lock _gate = new();
+        private readonly List<TaskCompletionSource> _requests = [];
+
+        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        {
+            var request = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            cancellationToken.Register(() => request.TrySetCanceled(cancellationToken));
+            lock (_gate)
+                _requests.Add(request);
+            return request.Task;
+        }
+
+        public void ReleaseLatest()
+        {
+            TaskCompletionSource request;
+            lock (_gate)
+                request = _requests[^1];
+            request.TrySetResult();
+        }
+    }
 
     private sealed class RecordingAgentRegistry : IAgentRegistry
     {

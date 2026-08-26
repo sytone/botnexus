@@ -29,7 +29,7 @@ namespace BotNexus.Architecture.Tests;
 /// but never staged" a build failure instead of an outage.
 /// </para>
 /// </remarks>
-public sealed class TemplateReferenceResolutionArchitectureTests
+public sealed class TemplateReferenceResolutionArchitectureTests : ArchitectureTest
 {
     // The fence's own source names the dangling-path shapes it hunts for
     // (and the probe fixture below deliberately contains one), so allowlist
@@ -65,7 +65,7 @@ public sealed class TemplateReferenceResolutionArchitectureTests
     [Fact]
     public void EveryReferencedTemplatePath_ResolvesToATrackedFile()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var tracked = EnumerateTrackedFiles(repoRoot)
             .Select(p => p.Replace('\\', '/'))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -124,7 +124,7 @@ public sealed class TemplateReferenceResolutionArchitectureTests
     [Fact]
     public void Sweep_InspectsANonTrivialCorpusAndFindsKnownReferences()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var tracked = EnumerateTrackedFiles(repoRoot)
             .Select(p => p.Replace('\\', '/'))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -158,7 +158,7 @@ public sealed class TemplateReferenceResolutionArchitectureTests
     [Fact]
     public void Resolver_RejectsDanglingReferenceAndAcceptsTrackedOne()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = Repository.Root;
         var tracked = EnumerateTrackedFiles(repoRoot)
             .Select(p => p.Replace('\\', '/'))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -267,14 +267,4 @@ public sealed class TemplateReferenceResolutionArchitectureTests
         process.ExitCode.ShouldBe(0, "git ls-files failed: " + process.StandardError.ReadToEnd());
     }
 
-    private static string FindRepoRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
-        {
-            current = current.Parent;
-        }
-        current.ShouldNotBeNull("Could not locate repo root from " + AppContext.BaseDirectory);
-        return current.FullName;
-    }
 }
