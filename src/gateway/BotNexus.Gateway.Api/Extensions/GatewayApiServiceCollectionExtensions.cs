@@ -32,9 +32,14 @@ public static class GatewayApiServiceCollectionExtensions
         services.AddSingleton<IHostedService>(provider => provider.GetRequiredService<CronSessionStartupReconciler>());
         services.AddSingleton<HeartbeatTrigger>();
         services.AddSingleton<SoulTrigger>();
+        services.AddSingleton<MemoryTrigger>();
         services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<CronTrigger>());
         services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<SoulTrigger>());
         services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<HeartbeatTrigger>());
+        // #3543: SessionEndMemoryFlusher has always asked for a TriggerType.Memory trigger. Until
+        // this registration existed the lookup never matched and every /reset memory flush was
+        // executed as a cron run under a malformed jobless `cron:` session id.
+        services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<MemoryTrigger>());
 
         // Conversation history assembly is stateless (it only holds the conversation/session
         // stores, both singletons) so it is safe to register as a singleton. Registering it lets

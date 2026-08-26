@@ -57,12 +57,15 @@ public sealed class CronTrigger(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
+        // #3543: validate the job id BEFORE any conversation is created, so a jobless caller is
+        // rejected cleanly rather than leaving an orphan conversation behind.
+        var sessionId = BuildCronSessionId(request?.CronJobId);
+
         var (conversation, createdFreshConversation) = await ResolveOrCreateConversationAsync(agentId, request, ct).ConfigureAwait(false);
 
         if (request is not null && request.ResolvedConversationId is null)
             request.ResolvedConversationId = conversation.ConversationId;
 
-        var sessionId = BuildCronSessionId(request?.CronJobId);
         var session = await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
         session.ChannelType ??= ChannelKey.From(Type.Value);
         session.CallerId ??= $"{Type.Value}:{agentId.Value}";
@@ -393,14 +396,34 @@ public sealed class CronTrigger(
         return CitizenId.Of(agentId);
     }
 
+    /// <summary>
+    /// Mints the canonical cron session id <c>cron:&lt;jobId&gt;:&lt;timestamp&gt;:&lt;suffix&gt;</c>.
+    /// </summary>
+    /// <remarks>
+    /// #3543: an absent job id is now REJECTED rather than silently degraded to a three-segment
+    /// <c>cron:&lt;timestamp&gt;:&lt;suffix&gt;</c>. That jobless shape matched cron's broad
+    /// <c>cron:</c> prefix check but belonged to no job, so <c>CronScheduler</c>'s job-scoped
+    /// <c>cron:&lt;jobIdSlug&gt;:</c> scans could never claim it and the rows became permanently
+    /// invisible to per-job cleanup. Every legitimate caller (the cron actions and stubs) always
+    /// supplies <c>CronJobId</c>; the only producer that did not was the session-end memory flush,
+    /// which now has its own <c>MemoryTrigger</c>. Failing loudly here is what stops a future
+    /// jobless caller from quietly re-accumulating unclaimable sessions.
+    /// </remarks>
     private static SessionId BuildCronSessionId(JobId? jobId)
     {
+        var safeJobId = SanitizeSessionIdPart(jobId?.Value);
+        if (string.IsNullOrWhiteSpace(safeJobId))
+        {
+            throw new InvalidOperationException(
+                "CronTrigger requires InternalTriggerRequest.CronJobId: a cron session id must carry "
+                + "its job id (cron:<jobId>:<timestamp>:<suffix>) or cron's job-scoped session scans "
+                + "can never claim it (#3543). A non-cron internal flow must use its own trigger "
+                + "rather than borrowing CronTrigger.");
+        }
+
         var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
         var suffix = Guid.NewGuid().ToString("N");
-        var safeJobId = SanitizeSessionIdPart(jobId?.Value);
-        return string.IsNullOrWhiteSpace(safeJobId)
-            ? SessionId.From($"cron:{timestamp}:{suffix}")
-            : SessionId.From($"cron:{safeJobId}:{timestamp}:{suffix}");
+        return SessionId.From($"cron:{safeJobId}:{timestamp}:{suffix}");
     }
 
     private static string? SanitizeSessionIdPart(string? value)
