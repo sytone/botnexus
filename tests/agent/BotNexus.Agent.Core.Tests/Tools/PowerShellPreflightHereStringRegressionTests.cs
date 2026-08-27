@@ -112,17 +112,38 @@ public class PowerShellPreflightHereStringRegressionTests
     }
 
     /// <summary>
-    /// <c>@'x'</c> is NOT a here-string opener (no end-of-line after the quote), so the ordinary
-    /// single-quote scanner still owns it and an unterminated one is still refused.
+    /// <c>@'x'</c> is NOT a here-string opener - a here-string header must be followed by end-of-line -
+    /// so the here-string scanner must not claim it and swallow the rest of the script as body text.
     /// </summary>
+    /// <remarks>
+    /// Issue #3576 corrected what this fixture asserts. It used to require that
+    /// <c>Write-Output @'literal'</c> be ALLOWED, on the reasoning that if it is not a here-string the
+    /// ordinary single-quote scanner owns it and finds it terminated. But that is not what PowerShell
+    /// does: verified against both <c>Parser.ParseInput</c> and a live <c>pwsh -Command</c>, the real
+    /// grammar rejects it outright with <c>No characters are allowed after a here-string header but
+    /// before the end of the line.</c> The old assertion encoded the hand-rolled scanner's blind spot,
+    /// not the language, and it is exactly the class of miss #3576 was filed for - so it now asserts
+    /// the refusal instead. The load-bearing premise is unchanged and still tested: the here-string
+    /// scanner must not treat <c>@'x'</c> as an opener and run off the end of the script.
+    /// </remarks>
     [Fact]
     public void Validate_AtQuoteWithoutNewline_IsNotTreatedAsHereString()
     {
-        PowerShellPreflight.Validate("Write-Output @'literal'").ShouldBeNull();
+        // Both forms are genuinely invalid PowerShell and both must be refused with the parser's own
+        // here-string-header message - NOT with a runaway "missing terminator" from a scanner that
+        // mistook this for a here-string opener and consumed everything after it.
+        var quoted = PowerShellPreflight.Validate("Write-Output @'literal'");
+        quoted.ShouldNotBeNull();
+        quoted!.Message.ShouldContain("here-string header");
 
-        var error = PowerShellPreflight.Validate("Write-Output @'literal");
-        error.ShouldNotBeNull();
-        error!.Message.ShouldContain("missing the terminator");
+        var unterminated = PowerShellPreflight.Validate("Write-Output @'literal");
+        unterminated.ShouldNotBeNull();
+
+        // The premise itself: a REAL here-string opener (quote then end-of-line) is still recognised,
+        // its body is still inert, and the script around it still parses. If @'x' were being treated
+        // as an opener, this contrast would not hold.
+        PowerShellPreflight.Validate("$s = @'\nliteral 'body' \"here\"\n'@\nWrite-Output $s")
+            .ShouldBeNull();
     }
 
     /// <summary>

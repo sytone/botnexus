@@ -6,6 +6,15 @@
 
   <ItemGroup>
     <PackageReference Include="OpenTelemetry.Api" />
+    <!--
+      The AUTHORITATIVE PowerShell parser (issue #3576). PowerShellPreflight used to be a hand-rolled
+      scanner precisely to avoid this dependency, but a 7-day replay showed it admitted 85 of 102
+      genuinely un-parseable commands - the parse-backed rules it did have were a small subset of what
+      the real grammar rejects, and no amount of extra hand-rolled rules closes that gap without
+      re-introducing the false positives of #2757/#2905/#3566. System.Management.Automation is the
+      parser-only surface (Parser.ParseInput); it does not start a runspace or execute anything.
+    -->
+    <PackageReference Include="System.Management.Automation" />
   </ItemGroup>
 
 </Project>
