@@ -21,6 +21,12 @@
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
+    <!--
+      #3595: the since-token store must live under the VERIFIED BotNexus home, not a home path this
+      extension derives for itself. BotNexusHome is the single canonical resolver (#2836 AC4), so the
+      reference exists to consume it rather than to re-implement it.
+    -->
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Configuration\BotNexus.Gateway.Configuration.csproj" />
     <ProjectReference Include="..\..\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" />
   </ItemGroup>
   <ItemGroup>

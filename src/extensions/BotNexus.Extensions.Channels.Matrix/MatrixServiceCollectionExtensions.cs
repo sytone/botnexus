@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -45,15 +46,19 @@ public static class MatrixServiceCollectionExtensions
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetService<ISecretRedactor>()));
 
-        // Durable /sync cursor (#3595). Persisted alongside the other BotNexus SQLite state under
-        // ~/.botnexus/data, computed from the same UserProfile root the skills and plugin surfaces
-        // use, so the cursor lands next to the state it describes without a compile-time dependency
-        // on Gateway internals. TryAdd so a host with its own cursor store keeps it.
-        services.TryAddSingleton<IMatrixSyncCursorStore>(_ =>
+        // Durable /sync cursor (#3595). The database lives under the VERIFIED BotNexus home rather
+        // than a home path this extension derives for itself: a store that resolves its own home has
+        // never been checked against this world's sentinel, which is exactly where the #2836 guard
+        // would have a hole. Prefer the container's BotNexusHome when the host registered one, and
+        // fall back to the same canonical resolver's static entry point when it did not, so a
+        // standalone host still lands in the right place. TryAdd so a host with its own cursor store
+        // keeps it.
+        services.TryAddSingleton<IMatrixSyncCursorStore>(sp =>
         {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var home = sp.GetService<BotNexusHome>();
+            var dataRoot = home?.DataPath ?? BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath();
             return new SqliteMatrixSyncCursorStore(
-                Path.Combine(home, ".botnexus", "data", "matrix-sync-cursor.db"));
+                Path.Combine(dataRoot, "data", "matrix-sync-cursor.db"));
         });
 
         services.AddSingleton<IChannelAdapter, MatrixChannelAdapter>();

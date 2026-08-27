@@ -1,6 +1,7 @@
 using BotNexus.Extensions.Channels.Matrix.Tests.Fakes;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Testing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -14,7 +15,9 @@ namespace BotNexus.Extensions.Channels.Matrix.Tests;
 /// <remarks>
 /// Each test is named for the acceptance clause it holds, so a regression that removes the
 /// load-on-start or the write-after-process fails a test that says so by name rather than producing
-/// an anonymous red.
+/// an anonymous red. All waits go through <see cref="TestAwait.EventuallyAsync(Func{bool}, string,
+/// TimeSpan?, TimeSpan?, CancellationToken, Func{TimeSpan, CancellationToken, Task})"/> so no test
+/// here sleeps for a fixed wall-clock duration.
 /// </remarks>
 public sealed class MatrixSyncCursorPersistenceTests
 {
@@ -78,13 +81,6 @@ public sealed class MatrixSyncCursorPersistenceTests
         },
     };
 
-    private static async Task WaitForAsync(Func<bool> condition, int timeoutSeconds = 5)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
-        while (!condition() && DateTime.UtcNow < deadline)
-            await Task.Delay(10);
-    }
-
     /// <summary>
     /// Clause 2: an account with a stored token resumes <c>/sync</c> from it. Removing the
     /// load-on-start makes this test fail by name.
@@ -100,10 +96,10 @@ public sealed class MatrixSyncCursorPersistenceTests
         var adapter = CreateAdapter(factory, store);
 
         await adapter.StartAsync(new NoOpDispatcher());
-        await WaitForAsync(() => client.SinceTokens.Count > 0);
+        await TestAwait.EventuallyAsync(
+            () => client.SinceTokens.Count > 0,
+            "the account to issue its first /sync");
         await adapter.StopAsync();
-
-        client.SinceTokens.ShouldNotBeEmpty();
 
         // The very FIRST wire call must already carry the stored token. Asserting a later call would
         // pass even if the adapter performed a fresh initial sync first, which is the exact defect.
@@ -122,10 +118,11 @@ public sealed class MatrixSyncCursorPersistenceTests
         var adapter = CreateAdapter(factory, store);
 
         await adapter.StartAsync(new NoOpDispatcher());
-        await WaitForAsync(() => client.SinceTokens.Count > 0);
+        await TestAwait.EventuallyAsync(
+            () => client.SinceTokens.Count > 0,
+            "the account to issue its first /sync");
         await adapter.StopAsync();
 
-        client.SinceTokens.ShouldNotBeEmpty();
         client.SinceTokens[0].ShouldBeNull();
     }
 
@@ -145,11 +142,12 @@ public sealed class MatrixSyncCursorPersistenceTests
         var adapter = CreateAdapter(factory, store);
 
         await adapter.StartAsync(new NoOpDispatcher());
-        await WaitForAsync(() => store.WriteSnapshot().Count > 0);
+        await TestAwait.EventuallyAsync(
+            () => store.WriteSnapshot().Count > 0,
+            "the processed batch's next_batch token to reach the cursor store");
         await adapter.StopAsync();
 
         var writes = store.WriteSnapshot();
-        writes.ShouldNotBeEmpty();
         writes[0].Key.ShouldBe($"{AgentId}/{Account}");
         writes[0].Token.ShouldBe("s_next");
 
@@ -158,9 +156,15 @@ public sealed class MatrixSyncCursorPersistenceTests
     }
 
     /// <summary>
-    /// Clause 3: a batch that fails mid-processing must not advance the durable cursor, so the
-    /// restart replays the batch rather than skipping the events it contained.
+    /// Clause 3: a batch that fails mid-processing must not advance the durable cursor, so a restart
+    /// replays the batch rather than skipping the events it contained.
     /// </summary>
+    /// <remarks>
+    /// The absence of a write is asserted against a FULLY SETTLED state, not a sampled one: the test
+    /// waits for the dispatch to be attempted, then <c>StopAsync</c> awaits the sync loop to
+    /// completion. Once that await returns no further iteration can run, so "no cursor was written"
+    /// is a settled fact rather than a race the test happened to win.
+    /// </remarks>
     [Fact]
     public async Task Clause3_MidBatchFailure_DoesNotPersistTheSinceToken()
     {
@@ -169,21 +173,25 @@ public sealed class MatrixSyncCursorPersistenceTests
         var client = factory.ClientFor(Account);
         client.EnqueueSync(BatchWithMessage("s_should_not_persist"));
 
+        var dispatcher = new ThrowingDispatcher();
         var adapter = CreateAdapter(factory, store);
 
         // The dispatcher throwing is a mid-batch failure: the batch's event never completes
         // processing, so the cursor that would skip it must never reach the store.
-        await adapter.StartAsync(new ThrowingDispatcher());
-        await WaitForAsync(() => client.SinceTokens.Count > 0);
+        await adapter.StartAsync(dispatcher);
+        await TestAwait.EventuallyAsync(
+            () => dispatcher.Attempts > 0,
+            "the adapter to attempt dispatching the batch's event");
 
-        // Give the loop ample room to (wrongly) write the cursor before asserting its absence.
-        await Task.Delay(300);
-        var writes = store.WriteSnapshot();
-
+        // Drains the loop to completion, so nothing can write after the assertions below.
         await adapter.StopAsync();
 
-        writes.ShouldBeEmpty();
+        store.WriteSnapshot().ShouldBeEmpty();
         (await store.GetAsync(AgentId, Account)).ShouldBeNull();
+
+        // The account only ever synced from its original (absent) cursor - the failed batch's token
+        // was never adopted, in memory or durably.
+        client.SinceTokens.ShouldAllBe(t => t == null);
     }
 
     /// <summary>
@@ -206,12 +214,13 @@ public sealed class MatrixSyncCursorPersistenceTests
         var adapter = CreateAdapter(factory, store);
 
         await adapter.StartAsync(new NoOpDispatcher());
-        await WaitForAsync(() => client.SinceTokens.Count >= 3);
+        await TestAwait.EventuallyAsync(
+            () => client.SinceTokens.Count >= 3,
+            "the sync loop to poll three times despite every cursor write throwing");
         await adapter.StopAsync();
 
         // The loop kept polling despite every write throwing, and the in-memory token still advanced
         // across batches - that is what "degrades to in-memory continuity" means.
-        client.SinceTokens.Count.ShouldBeGreaterThanOrEqualTo(3);
         client.SinceTokens[0].ShouldBeNull();
         client.SinceTokens[1].ShouldBe("s_a");
         client.SinceTokens[2].ShouldBe("s_b");
@@ -236,10 +245,11 @@ public sealed class MatrixSyncCursorPersistenceTests
         var adapter = CreateAdapter(factory, store);
 
         await adapter.StartAsync(new NoOpDispatcher());
-        await WaitForAsync(() => client.SinceTokens.Count >= 2);
+        await TestAwait.EventuallyAsync(
+            () => client.SinceTokens.Count >= 2,
+            "the sync loop to poll twice after the cursor read threw");
         await adapter.StopAsync();
 
-        client.SinceTokens.Count.ShouldBeGreaterThanOrEqualTo(2);
         client.SinceTokens[0].ShouldBeNull();
         client.SinceTokens[1].ShouldBe("s_a");
     }
@@ -261,10 +271,11 @@ public sealed class MatrixSyncCursorPersistenceTests
             factory);
 
         await adapter.StartAsync(new NoOpDispatcher());
-        await WaitForAsync(() => client.SinceTokens.Count >= 2);
+        await TestAwait.EventuallyAsync(
+            () => client.SinceTokens.Count >= 2,
+            "the sync loop to poll twice with no cursor store registered");
         await adapter.StopAsync();
 
-        client.SinceTokens.Count.ShouldBeGreaterThanOrEqualTo(2);
         client.SinceTokens[1].ShouldBe("s_a");
     }
 
@@ -276,7 +287,15 @@ public sealed class MatrixSyncCursorPersistenceTests
 
     private sealed class ThrowingDispatcher : IChannelDispatcher
     {
-        public Task DispatchAsync(InboundMessage message, CancellationToken cancellationToken = default) =>
+        private int _attempts;
+
+        /// <summary>How many times the adapter tried to dispatch. Observable start-of-batch signal.</summary>
+        public int Attempts => Volatile.Read(ref _attempts);
+
+        public Task DispatchAsync(InboundMessage message, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _attempts);
             throw new InvalidOperationException("dispatch failed mid-batch");
+        }
     }
 }

@@ -16,7 +16,7 @@ namespace BotNexus.Extensions.Channels.Matrix;
 /// serialising upserts, and a declared schema version enforced by
 /// <see cref="SqliteSchemaMigrator"/> (#2835).
 /// </remarks>
-public sealed class SqliteMatrixSyncCursorStore : IMatrixSyncCursorStore, IAsyncDisposable
+public sealed class SqliteMatrixSyncCursorStore : IMatrixSyncCursorStore, IDisposable, IAsyncDisposable
 {
     /// <summary>
     /// The schema version this build writes and understands. Bump it in the same commit as a schema
@@ -149,7 +149,15 @@ public sealed class SqliteMatrixSyncCursorStore : IMatrixSyncCursorStore, IAsync
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
-        _writeLock.Dispose();
+        Dispose();
         return ValueTask.CompletedTask;
     }
+
+    /// <summary>
+    /// Releases the write lock. Implemented alongside <see cref="DisposeAsync"/> because
+    /// <c>ServiceProvider.Dispose()</c> throws for a singleton that is <b>only</b>
+    /// <see cref="IAsyncDisposable"/>, and a host that disposes its container synchronously must not
+    /// be broken by registering this store.
+    /// </summary>
+    public void Dispose() => _writeLock.Dispose();
 }
