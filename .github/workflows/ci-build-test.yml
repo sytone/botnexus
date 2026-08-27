@@ -90,6 +90,23 @@ jobs:
       - name: Test (core)
         run: dotnet test tests/dirs.proj --no-build --filter "FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E" --logger "trx;LogFilePrefix=ci" --results-directory ${{ github.workspace }}/artifacts/test-results
 
+      # Judge the run by the same fail-closed contract the remote container gate uses (#3602).
+      #
+      # The step above answers only "did any test that ran fail?". It is silent on whether the
+      # tests ran at all, so a crashed fixture, a filter typo or a missing TRX exits 0 and paints
+      # this check green. On 2026-08-06 the E2E project emitted notExecuted=0 while carrying 265
+      # NotExecuted rows -- 15 of 280 tests executed and the gate passed. The container grew
+      # RunnerResult.ps1 for exactly that (#2851); CI never did, so a PR could be certified by a
+      # standard this repo had already rejected.
+      #
+      # `if: always()` so a red dotnet test still gets its result contract evaluated and reported
+      # rather than being short-circuited -- the contract's failureReason is the more informative
+      # diagnostic of the two.
+      - name: Validate test-result contract (core)
+        if: always()
+        shell: pwsh
+        run: ./scripts/repo/Assert-TestResultContract.ps1 -ResultsDirectory '${{ github.workspace }}/artifacts/test-results' -MinimumTotal 12000 -SummaryPath '${{ github.workspace }}/artifacts/test-results/contract-core.json'
+
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
@@ -126,7 +143,26 @@ jobs:
         # was over-broad: those projects declare their own environmental skips with stated reasons
         # ("Dev gateway not running at localhost:5006", "GITHUB_TOKEN not set"), so the runner can
         # execute them and report honest skips rather than never running them at all.
-        run: dotnet test tests/dirs.proj --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E"
+        run: dotnet test tests/dirs.proj --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E" --logger "trx;LogFilePrefix=ci" --results-directory ${{ github.workspace }}/artifacts/test-results
+
+      # Same fail-closed contract as the PR job above (#3602). Main's push run is the safety net;
+      # a safety net judged by a weaker standard than the PR gate it backstops is not one.
+      #
+      # This job previously emitted no TRX at all -- only coverage -- so there was literally
+      # nothing to audit after the fact. The --logger/--results-directory added above is what
+      # makes main's true red/green state reconstructable per commit.
+      - name: Validate test-result contract (full)
+        if: always()
+        shell: pwsh
+        run: ./scripts/repo/Assert-TestResultContract.ps1 -ResultsDirectory '${{ github.workspace }}/artifacts/test-results' -MinimumTotal 12000 -SummaryPath '${{ github.workspace }}/artifacts/test-results/contract-full.json'
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-test-results
+          path: artifacts/test-results/*.trx
+          if-no-files-found: error
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
