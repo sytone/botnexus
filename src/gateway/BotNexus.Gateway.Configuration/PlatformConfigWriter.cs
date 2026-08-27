@@ -55,6 +55,16 @@ public sealed class PlatformConfigWriter
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
     private static readonly JsonSerializerOptions PlatformPersistOptions = new() { WriteIndented = true };
+
+    /// <summary>
+    /// Per-process key that makes the compare-and-swap revision opaque to its holder (#3469).
+    /// </summary>
+    /// <remarks>
+    /// Generated once per gateway process and never persisted, logged or exposed on any surface.
+    /// See <see cref="ComputeRevision"/> for why the token must not be derivable from document
+    /// content, and for the restart semantics this implies.
+    /// </remarks>
+    private static readonly byte[] RevisionKey = RandomNumberGenerator.GetBytes(32);
     private readonly string _configPath;
     private readonly IFileSystem _fileSystem;
     private readonly ConfigBackupService? _backup;
@@ -497,13 +507,40 @@ public sealed class PlatformConfigWriter
     }
 
     /// <summary>
-    /// Computes the revision token for a configuration document: a stable content digest of its
-    /// canonical serialization, used as the compare-and-swap token for whole-document replaces.
+    /// Computes the revision token for a configuration document: a keyed digest of its canonical
+    /// serialization, used as the compare-and-swap token for whole-document replaces.
     /// </summary>
+    /// <remarks>
+    /// <para><b>Issue #3469 - why this is keyed rather than a bare content hash.</b> The revision
+    /// crosses the redaction boundary: <c>GET /api/config/snapshot</c> redacts every secret out of
+    /// the returned document but hands the caller this token, and the same value reaches the client
+    /// again on the <c>409 Conflict</c> path via
+    /// <see cref="PlatformConfigConcurrencyException.ActualRevision"/>. A bare
+    /// <c>SHA256(canonical)</c> therefore let anyone authorised only for the <em>redacted</em> view
+    /// verify a guessed secret offline in one hash - unrated-limited and unaudited - because the
+    /// redacted document already reveals the full structure, every non-secret value and the exact
+    /// set of configured providers. HMAC under a key the caller does not have breaks that
+    /// derivation while leaving the token a pure function of document state.</para>
+    /// <para><b>Why not hash a redacted canonicalisation instead.</b> That was the issue's first
+    /// suggestion and it is unsound here: <see cref="ConfigSecretMerge.Redact"/> collapses every
+    /// secret to the single literal <see cref="ConfigSecretMerge.Placeholder"/>, so two documents
+    /// differing <em>only</em> in a secret value produce an identical digest. A concurrent
+    /// secret-only write - rotating an API key is exactly that - would then be undetectable by
+    /// compare-and-swap, trading a confidentiality bug for a silent lost update. Matches upstream
+    /// OpenClaw <c>a4f17833ada0</c>, which bound its token to a startup-phase key for the same
+    /// reason.</para>
+    /// <para><b>Consequence: tokens do not survive a gateway restart.</b> The key is per-process and
+    /// never persisted, so a patch quoting a token minted by a previous process is rejected with
+    /// <c>409</c> and the client reloads. That is the sound direction to fail - a snapshot from a
+    /// previous process lifetime cannot prove what committed across the restart - and the key is
+    /// deliberately not derived from anything on disk, because a disk-derived key is recoverable by
+    /// precisely the reader this defends against.</para>
+    /// </remarks>
     private static string ComputeRevision(JsonObject root)
     {
         var canonical = root.ToJsonString(PlatformPersistOptions);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+        return Convert.ToHexString(
+            HMACSHA256.HashData(RevisionKey, Encoding.UTF8.GetBytes(canonical)));
     }
 
     /// <summary>
