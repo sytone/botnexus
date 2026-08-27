@@ -48,6 +48,7 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
     private readonly ILogger<MatrixChannelAdapter> _logger;
     private readonly LateBoundChannelOptions<MatrixChannelOptions> _optionsHolder;
     private readonly IMatrixClientFactory _clientFactory;
+    private readonly IMatrixSyncCursorStore? _cursorStore;
 
     // Read at point of use so a runtime config.json edit is reflected without a gateway restart
     // (#2010), matching every other channel extension.
@@ -65,11 +66,16 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
     /// <param name="configuration">
     /// Host configuration used for the late-bound self-bind fallback. Null in unit tests.
     /// </param>
+    /// <param name="cursorStore">
+    /// Durable home for each account's <c>/sync</c> cursor (#3595). Optional: a host that registers
+    /// none keeps the pre-#3595 in-memory-only behaviour rather than failing activation.
+    /// </param>
     public MatrixChannelAdapter(
         ILogger<MatrixChannelAdapter> logger,
         IOptions<MatrixChannelOptions> optionsAccessor,
         IMatrixClientFactory clientFactory,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        IMatrixSyncCursorStore? cursorStore = null)
         : base(logger)
     {
         ArgumentNullException.ThrowIfNull(optionsAccessor);
@@ -77,6 +83,7 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
 
         _logger = logger;
         _clientFactory = clientFactory;
+        _cursorStore = cursorStore;
         _optionsHolder = new LateBoundChannelOptions<MatrixChannelOptions>(
             () => ResolveOptions(optionsAccessor, configuration),
             configuration);
@@ -410,6 +417,8 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
     {
         var breaker = new ChannelLoopCircuitBreaker($"Matrix account '{runtime.AccountName}' sync loop");
 
+        await LoadPersistedCursorAsync(runtime, cancellationToken);
+
         while (!cancellationToken.IsCancellationRequested)
         {
             try
@@ -423,7 +432,10 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
                 // Advance the since token only after the batch has been processed, so a crash mid
                 // batch replays it rather than skipping the events it contained.
                 if (!string.IsNullOrWhiteSpace(response.NextBatch))
+                {
                     runtime.SinceToken = response.NextBatch;
+                    await PersistCursorAsync(runtime, response.NextBatch!, cancellationToken);
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -465,6 +477,70 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
                     break;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Seeds the account's in-memory cursor from the durable store before the first <c>/sync</c>,
+    /// so a restart resumes from the last fully-processed <c>next_batch</c> instead of performing a
+    /// fresh initial sync (#3595).
+    /// </summary>
+    /// <remarks>
+    /// A read failure is not fatal: the loop falls back to an initial sync, which is exactly the
+    /// pre-#3595 behaviour, rather than refusing to start the channel over a cursor cache miss.
+    /// </remarks>
+    private async Task LoadPersistedCursorAsync(MatrixAccountRuntime runtime, CancellationToken cancellationToken)
+    {
+        if (_cursorStore is null)
+            return;
+
+        try
+        {
+            var stored = await _cursorStore.GetAsync(runtime.AgentId, runtime.AccountName, cancellationToken);
+            if (string.IsNullOrWhiteSpace(stored))
+                return;
+
+            runtime.SinceToken = stored;
+            _logger.LogInformation(
+                "{DisplayName} account '{AccountName}' resumed /sync from its persisted since-token",
+                DisplayName,
+                runtime.AccountName);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} account '{AccountName}' could not read its persisted since-token; falling back to an initial sync",
+                DisplayName,
+                runtime.AccountName);
+        }
+    }
+
+    /// <summary>
+    /// Records the account's cursor after the batch that produced it has been fully processed.
+    /// </summary>
+    /// <remarks>
+    /// A write failure degrades to in-memory continuity and must never stop the sync loop: the
+    /// in-memory token has already advanced, so the process keeps making forward progress and only
+    /// loses restart continuity. Throwing here would turn a cursor-persistence hiccup into a dead
+    /// channel, which is strictly worse than the bug this store exists to fix.
+    /// </remarks>
+    private async Task PersistCursorAsync(MatrixAccountRuntime runtime, string sinceToken, CancellationToken cancellationToken)
+    {
+        if (_cursorStore is null)
+            return;
+
+        try
+        {
+            await _cursorStore.SetAsync(runtime.AgentId, runtime.AccountName, sinceToken, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} account '{AccountName}' failed to persist its since-token; sync continues with in-memory continuity only",
+                DisplayName,
+                runtime.AccountName);
         }
     }
 

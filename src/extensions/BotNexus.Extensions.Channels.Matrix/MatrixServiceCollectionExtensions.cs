@@ -44,6 +44,18 @@ public static class MatrixServiceCollectionExtensions
         services.TryAddSingleton<IMatrixClientFactory>(sp => new DefaultMatrixClientFactory(
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetService<ISecretRedactor>()));
+
+        // Durable /sync cursor (#3595). Persisted alongside the other BotNexus SQLite state under
+        // ~/.botnexus/data, computed from the same UserProfile root the skills and plugin surfaces
+        // use, so the cursor lands next to the state it describes without a compile-time dependency
+        // on Gateway internals. TryAdd so a host with its own cursor store keeps it.
+        services.TryAddSingleton<IMatrixSyncCursorStore>(_ =>
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return new SqliteMatrixSyncCursorStore(
+                Path.Combine(home, ".botnexus", "data", "matrix-sync-cursor.db"));
+        });
+
         services.AddSingleton<IChannelAdapter, MatrixChannelAdapter>();
 
         return services;

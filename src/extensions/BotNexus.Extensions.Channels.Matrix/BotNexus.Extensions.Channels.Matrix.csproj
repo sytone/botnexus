@@ -1,6 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>BotNexus.Extensions.Channels.Matrix</RootNamespace>
+    <!--
+      Extension assemblies load into an isolated AssemblyLoadContext, so their managed NuGet
+      dependency closure must ship in the extension output directory. Library projects do not copy
+      transitive managed dependencies by default, so the ALC cannot resolve Microsoft.Data.Sqlite
+      (pulled in for the #3595 since-token store) and fails with FileNotFoundException at load time.
+      Same class of defect as the ServiceBus adapter (#2001) and the Skills extension (#2184).
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Extensions.Channels.Matrix.Tests" />
@@ -13,5 +21,9 @@
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
+    <ProjectReference Include="..\..\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
 </Project>
