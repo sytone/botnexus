@@ -362,6 +362,30 @@ public sealed class LocationsController(
            && string.Equals(left.ConnectionString, right.ConnectionString, StringComparison.Ordinal)
            && string.Equals(left.Description, right.Description, StringComparison.Ordinal);
 
+    /// <summary>
+    /// Builds the entry to persist, preserving every stored field the request does not model.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// #3616. This deliberately mutates a COPY of <paramref name="existingConfig"/> rather than
+    /// constructing a fresh <see cref="LocationConfig"/>. <see cref="UpsertLocationRequest"/> models
+    /// four fields - name, type, value, description - while <see cref="LocationConfig"/> declares
+    /// six. Rebuilding from the DTO silently dropped <c>Properties</c>, so editing a location's
+    /// description destroyed the extensible settings a consumer of that location depends on.
+    /// </para>
+    /// <para>
+    /// The loss was invisible: the write succeeded, the response was 200, and the change set
+    /// genuinely contained only the edited keys - because the entry had already been narrowed
+    /// before the differ ever saw it. Same defect class as #3547 on <c>PUT /api/agents/{id}</c>,
+    /// where a typed DTO projected over stored configuration deleted everything it did not model.
+    /// </para>
+    /// <para>
+    /// Absent from the payload means "not being changed", never "delete it". The one place that
+    /// rule does NOT apply is the type-discriminated value: changing a location's type must clear
+    /// the previous type's field, or a filesystem-turned-api location would keep a stale
+    /// <c>Path</c> alongside its new <c>Endpoint</c>. That clearing is explicit below.
+    /// </para>
+    /// </remarks>
     private static LocationConfig? BuildLocationConfig(
         UpsertLocationRequest request,
         LocationConfig? existingConfig,
@@ -384,11 +408,18 @@ public sealed class LocationsController(
             value = existingConfig?.ConnectionString;
         }
 
-        var config = new LocationConfig
-        {
-            Type = type,
-            Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim()
-        };
+        // Start from what is stored so unmodelled fields survive; on create there is nothing to
+        // preserve and this is an empty instance, exactly as before.
+        var config = CloneForUpdate(existingConfig);
+
+        config.Type = type;
+        config.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+
+        // Type-discriminated value: set the field this type uses and clear the other two, so a
+        // type change cannot strand the previous type's value.
+        config.Path = null;
+        config.Endpoint = null;
+        config.ConnectionString = null;
 
         if (type == LocationType.FileSystem.Value)
             config.Path = value;
@@ -406,6 +437,29 @@ public sealed class LocationsController(
         error = null;
         return config;
     }
+
+    /// <summary>
+    /// Copies the stored entry so an update starts from persisted state rather than from defaults.
+    /// </summary>
+    /// <remarks>
+    /// Copied field-by-field rather than by serialization round trip: a round trip would silently
+    /// acquire any future property, which sounds convenient but would also silently acquire one
+    /// that must NOT be carried forward. An explicit list means adding a property to
+    /// <see cref="LocationConfig"/> forces a decision here, and the companion fence test fails
+    /// until that decision is made.
+    /// </remarks>
+    private static LocationConfig CloneForUpdate(LocationConfig? existing)
+        => existing is null
+            ? new LocationConfig()
+            : new LocationConfig
+            {
+                Type = existing.Type,
+                Path = existing.Path,
+                Endpoint = existing.Endpoint,
+                ConnectionString = existing.ConnectionString,
+                Description = existing.Description,
+                Properties = existing.Properties,
+            };
 
     private static string? ResolveStoredValue(LocationConfig config)
         => config.Path ?? config.Endpoint ?? config.ConnectionString;
