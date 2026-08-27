@@ -598,7 +598,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
         _logger.LogInformation(
             "Compacted session {SessionId}: {Summarized} entries marked historical, {Preserved} preserved, " +
-            "tokens {Before}→{After} (delta {Delta}) — full history retained in store",
+            "tokens before={Before} after={After} (delta {Delta}) - full history retained in store",
             session.SessionId,
             toSummarize.Count,
             toPreserve.Count,

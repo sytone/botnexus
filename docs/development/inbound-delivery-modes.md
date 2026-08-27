@@ -106,3 +106,27 @@ field is ignored when `wake` is `false`, because an append-only write schedules 
 `InboundDispatchStatus.Steered` reports that a message was absorbed by a turn already running, so no
 separate dispatch ran and `Dispatches` is empty. It is returned only when a caller explicitly asked
 for `Steer` or `Interrupt` **and** a turn was active; `Auto` never yields it.
+
+`InboundDispatchStatus.Stalled` (#3600) reports that a message reached its queue but the queue did
+not drain within the orchestrator's bounded observation window, so the caller's await was released
+without a processing result.
+
+**`Stalled` is not a drop.** The message stays on the channel and is still processed when the head of
+the queue clears; only the *await* is bounded. The bound applies solely to the wait for a message to
+reach the front of its queue - once the worker has handed it to `IInboundMessageProcessor`, the await
+is unbounded again, so a legitimately long agent turn is never truncated.
+
+The status exists because before #3600 "processed" and "stuck behind a head that is not moving" were
+indistinguishable: `AcceptAsync` simply never returned, nothing threw, and nothing was logged. Every
+`Stalled` outcome now carries a warning naming the isolation key, channel, conversation, session and
+agent, plus user-visible channel feedback via the same seam that reports `Busy`.
+
+The bound is `DefaultInboundMessageOrchestrator.DefaultQueueWaitTimeout` (10 seconds) and is
+overridable per host through the constructor's `queueWaitTimeout` argument.
+
+## Boundary observability
+
+`GatewayHubApplicationService.AcceptAsync` logs the resolved `InboundIsolationKey` and the terminal
+`InboundDispatchStatus` for **every** inbound message - at Debug for `Accepted`/`Steered`, at Warning
+for everything else. Before #3600 this method was a bare forward, which is why a message that never
+reached `GatewayHost.ProcessAsync` produced no line of its own and the drop was invisible.
