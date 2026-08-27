@@ -72,4 +72,12 @@ public sealed class GatewayProbeUrlResolverTests
     [Fact]
     public void Resolve_Malformed_FallsBackToLoopback()
         => GatewayProbeUrlResolver.Resolve("not-a-url", 5005).ShouldBe("http://localhost:5005");
+
+    // #3598: the resolver is a general-purpose string-to-string transformation, so the #2925 fence
+    // requires it to be reachable as `this string`. Calling it in extension form is what pins that
+    // shape - a future revert to a plain static would fail to compile here rather than only
+    // reddening the architecture suite on main.
+    [Fact]
+    public void Resolve_IsCallableAsAStringExtension()
+        => "http://192.0.2.10:7000".Resolve(5005).ShouldBe("http://192.0.2.10:7000");
 }

@@ -42,7 +42,7 @@ public static class GatewayProbeUrlResolver
     /// </summary>
     /// <param name="configuredListenUrl">The operator's <c>gateway.listenUrl</c>, if any.</param>
     /// <param name="fallbackPort">The port the CLI was asked to use, when no listen URL is set.</param>
-    public static string Resolve(string? configuredListenUrl, int fallbackPort)
+    public static string Resolve(this string? configuredListenUrl, int fallbackPort)
     {
         if (string.IsNullOrWhiteSpace(configuredListenUrl))
             return $"http://localhost:{fallbackPort}";
