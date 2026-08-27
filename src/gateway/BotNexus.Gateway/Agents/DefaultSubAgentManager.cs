@@ -330,6 +330,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // before the policy crosses onto the child. See RebaseInheritedDenies.
         var baseFileAccess = RebaseInheritedDenies(baseDescriptor.FileAccess, baseDescriptor.AgentId);
 
+        // #3562: the symmetric contradiction - a write grant handed to a toolset that cannot write.
+        // Rejects rather than warns; see ValidateWriteGrantIsUsable.
+        ValidateWriteGrantIsUsable(request, toolIds, archetype);
+
         // Build file access policy for workspace isolation. Null means "fully isolated" -
         // the child falls back to the base descriptor's FileAccess below. See
         // BuildChildFileAccessPolicy.
@@ -766,6 +770,60 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 policy.DeniedPaths,
                 _workspaceManager.GetWorkspacePath(ownerAgentId.Value))
         };
+    }
+
+    /// <summary>
+    /// Rejects a spawn that grants the child a writable location it has no tool to write with
+    /// (#3562). <c>grantedWritePaths</c>/<c>shareWorkspace</c> and the archetype tool allowlist are
+    /// resolved on independent code paths, so <c>spawn_subagent(archetype: "researcher",
+    /// grantedWritePaths: [...])</c> was accepted and produced a worker holding a writable directory
+    /// and no <c>write</c>, <c>edit</c> or <c>exec</c> tool.
+    /// </summary>
+    /// <remarks>
+    /// Throws rather than warning, per the issue: the failure otherwise surfaces at the END of the
+    /// child's run when it tries to produce its deliverable, after its whole token and wall-clock
+    /// budget is spent, and a parent-side log warning is never seen by the worker. The message names
+    /// both the archetype and the missing tools so the caller can correct the call without reading
+    /// gateway source. A <c>null</c>/empty <paramref name="toolIds"/> means "inherit the parent's
+    /// tools" and is never rejected - no restriction was resolved, so nothing contradicts the grant.
+    /// This is the mirror image of <see cref="WarnOnUnwritableGrantedPaths"/>, which is deliberately
+    /// left untouched: it covers write-capable tools with read-only <c>grantedPaths</c>.
+    /// </remarks>
+    /// <param name="request">The spawn request carrying the write grant.</param>
+    /// <param name="toolIds">The resolved tools the child would be granted, or <c>null</c>/empty.</param>
+    /// <param name="archetype">The resolved archetype, named in the rejection message.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when a write grant is present and the resolved toolset contains no write-capable tool.
+    /// </exception>
+    internal void ValidateWriteGrantIsUsable(
+        SubAgentSpawnRequest request,
+        IReadOnlyList<string>? toolIds,
+        SubAgentArchetype archetype)
+    {
+        // AC3: shareWorkspace is the same contradiction expressed differently, so both grant shapes
+        // enter the same check.
+        var hasWriteGrant = request.ShareWorkspace || request.GrantedWritePaths is { Count: > 0 };
+        if (!hasWriteGrant)
+            return;
+
+        // No resolved restriction => the child inherits the parent's tools, which normally write.
+        if (toolIds is not { Count: > 0 })
+            return;
+
+        if (toolIds.Any(BuiltInArchetypes.WriteCapableToolIds.Contains))
+            return;
+
+        var grantDescription = request.ShareWorkspace && request.GrantedWritePaths is { Count: > 0 }
+            ? "shareWorkspace and grantedWritePaths"
+            : request.ShareWorkspace ? "shareWorkspace" : "grantedWritePaths";
+
+        throw new InvalidOperationException(
+            $"Sub-agent spawn requests {grantDescription} but archetype '{archetype.Value}' resolves a "
+            + $"toolset with no write-capable tool (has: {string.Join(", ", toolIds)}). The write grant "
+            + $"would be unusable and the child would lose its output at the end of its run. Supply one "
+            + $"of [{string.Join(", ", BuiltInArchetypes.WriteCapableToolIds.Order(StringComparer.Ordinal))}] "
+            + "via the 'tools' override, choose a write-capable archetype (for example 'coder' or "
+            + "'writer'), or drop the write grant and use grantedPaths for read-only access.");
     }
 
     /// <summary>
