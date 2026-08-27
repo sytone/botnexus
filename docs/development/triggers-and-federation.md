@@ -17,13 +17,24 @@ public interface IInternalTrigger
     Task<SessionId> CreateSessionAsync(
         AgentId agentId,
         string prompt,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        InternalTriggerRequest? request = null);
 }
 ```
 
+The optional `InternalTriggerRequest` carries scheduler-supplied options in (`CronJobId`, `ModelOverride`,
+`ConversationId`, `JobName`, `CreatedBy`) and is written back out by the trigger after the turn completes
+(`ResolvedConversationId`, `ToolInvocationCount`, `TurnCount`, `PromptTokens`, `CompletionTokens`,
+`DeliveryError`). A `null` write-back means "not measured", never zero - the cron scheduler relies on that
+distinction when it applies the execution-class zero-tool rule.
+
 **Trigger Types:**
-- `Cron`: Scheduled execution via cron expressions
-- `Soul`: Daily soul session heartbeat
+
+| Type | Implementation | Display name |
+|------|----------------|--------------|
+| `Cron` | `CronTrigger` | Cron Scheduler |
+| `Soul` | `SoulTrigger` | Soul Session |
+| `Heartbeat` | `HeartbeatTrigger` | Heartbeat |
 
 ### Cron Trigger
 
@@ -34,9 +45,16 @@ public interface IInternalTrigger
 
 **Implementation:**
 
-`CreateSessionAsync` creates a unique cron session, adds the prompt as a user message, executes the agent, records the response, and saves the session.
+`CreateSessionAsync` resolves the run's conversation, adds the prompt as a user message, executes the agent, records the response, and saves the session.
 
-See [CronChannelAdapter.cs](../../src/gateway/BotNexus.Gateway.Api/Hubs/CronChannelAdapter.cs) for the full implementation.
+Conversation ownership is inverted: `CronJob.ConversationId` is the canonical link from a job to its
+long-lived conversation. When the scheduler passes an `InternalTriggerRequest.ConversationId` (a pinned
+job) the trigger reuses that conversation verbatim; otherwise it creates a fresh one titled after the job.
+When two parallel runs create different conversations, the scheduler's compare-and-set
+(`ICronStore.TrySetConversationIdAsync`) picks one winner and the loser archives its conversation and
+rebinds its session.
+
+See [CronTrigger.cs](../../src/gateway/BotNexus.Gateway.Api/Triggers/CronTrigger.cs) for the full implementation.
 
 **Execution Flow:**
 
@@ -100,11 +118,15 @@ CronScheduler → CronTrigger → CreateSession → Agent Execution → Session 
 `SoulTrigger` implements `IInternalTrigger` for daily soul sessions. Key behaviors:
 
 - **Resolves soul date** respecting agent timezone and day boundary via `ResolveCalendarSettings`
-- **Session ID format:** `soul:{agentId}:{yyyy-MM-dd}`
+- **Session ID format:** `{agentId}::soul::{yyyy-MM-dd}`, produced by `SessionId.ForSoul`. This shape is
+  part of the persisted wire format and has format-pinning tests. Note that soul-ness is **not** inferred
+  from the id - the canonical signal is `Session.Metadata["soulDate"]` (directive G-4).
 - **Seals older soul sessions** before creating today's session
 - **Optional reflection prompt** before sealing, configurable via `SoulAgentConfig.ReflectionOnSeal`
+- **Timezone resolution** accepts an IANA id first, falls back to a Windows id via
+  `TimeZoneInfo.TryConvertIanaIdToWindowsId`, and degrades to UTC when neither resolves
 
-See [SoulTrigger.cs](../../src/gateway/BotNexus.Gateway.Api/Hubs/SoulTrigger.cs) for the full implementation.
+See [SoulTrigger.cs](../../src/gateway/BotNexus.Gateway.Api/Triggers/SoulTrigger.cs) for the full implementation.
 
 **Soul Date Resolution:**
 
@@ -126,13 +148,13 @@ DateOnly ResolveSoulDate(DateTimeOffset utcNow, TimeZoneInfo timeZone, TimeSpan 
 **SoulAgentConfig:**
 
 ```csharp
-public record SoulAgentConfig
+public sealed class SoulAgentConfig
 {
-    public string? TimeZone { get; init; }              // IANA timezone (e.g., "America/Los_Angeles")
-    public TimeSpan? DayBoundary { get; init; }         // When new day starts (default: 00:00)
-    public bool ReflectionOnSeal { get; init; }         // Run reflection before sealing
-    public string? ReflectionPrompt { get; init; }      // Prompt for end-of-day reflection
-    public int RetentionDays { get; init; }             // How long to keep sealed sessions
+    public bool Enabled { get; set; }                       // Soul journalling on/off for this agent
+    public string Timezone { get; set; } = "UTC";           // IANA timezone (e.g. "America/Los_Angeles")
+    public string DayBoundary { get; set; } = "00:00";      // Local HH:mm at which the journal day rolls over
+    public bool ReflectionOnSeal { get; set; }              // Write a reflection when a day is sealed
+    public string? ReflectionPrompt { get; set; }           // Custom prompt; built-in prompt when unset
 }
 ```
 
@@ -144,11 +166,11 @@ public record SoulAgentConfig
   "displayName": "Personal Assistant",
   "model": "anthropic:claude-sonnet-4",
   "soul": {
-    "timeZone": "America/Los_Angeles",
-    "dayBoundary": "04:00:00",
+    "enabled": true,
+    "timezone": "America/Los_Angeles",
+    "dayBoundary": "04:00",
     "reflectionOnSeal": true,
-    "reflectionPrompt": "Reflect on today's conversations. What did you learn? What should you remember for tomorrow?",
-    "retentionDays": 90
+    "reflectionPrompt": "Reflect on today's conversations. What did you learn? What should you remember for tomorrow?"
   }
 }
 ```
@@ -157,7 +179,7 @@ public record SoulAgentConfig
 
 ```text
 Day 1 (2024-01-15):
-  - Session: soul:personal-assistant:2024-01-15
+  - Session: personal-assistant::soul::2024-01-15
   - Status: Active
   - Multiple heartbeat prompts throughout the day
   - Accumulates conversation history
@@ -165,7 +187,7 @@ Day 1 (2024-01-15):
 Day 2 (2024-01-16):
   - Previous session (2024-01-15) gets reflection prompt
   - Previous session sealed (Status: Sealed)
-  - New session: soul:personal-assistant:2024-01-16
+  - New session: personal-assistant::soul::2024-01-16
   - Status: Active
   - Has access to sealed sessions for context
 ```
@@ -224,90 +246,128 @@ The `agent_converse` tool accepts the following parameters:
 
 The wall-clock timeout and `maxTurns` are independent budgets. Values above the 30-minute timeout ceiling are clamped; values below one second or non-integer values are rejected. Caller cancellation continues to stop an exchange immediately.
 
-`ExecuteAsync` resolves the call chain to prevent cycles, then delegates to `IAgentConversationService.ConverseAsync` with a `ConversationRequest`.
+`ExecuteAsync` resolves the call chain to prevent cycles, then delegates to `IAgentExchangeService.ConverseAsync`
+with an `AgentExchangeRequest`. `maxTurns` is clamped to `AgentExchangeOptions.MaxTurnsCeiling` (default 30).
 
 See [AgentConverseTool.cs](../../src/gateway/BotNexus.Gateway/Tools/AgentConverseTool.cs) for the full implementation.
 
-### Agent Conversation Service
+### Agent Exchange Service
 
-**IAgentConversationService:**
+**IAgentExchangeService:**
 
 ```csharp
-public interface IAgentConversationService
+public interface IAgentExchangeService
 {
-    Task<AgentConversationResult> ConverseAsync(
-        ConversationRequest request,
-        CancellationToken ct = default);
+    Task<AgentExchangeResult> ConverseAsync(
+        AgentExchangeRequest request,
+        CancellationToken cancellationToken = default);
 }
 ```
 
-**ConversationRequest:**
+**AgentExchangeRequest:**
 
 ```csharp
-public record ConversationRequest
+public sealed record AgentExchangeRequest
 {
-    public AgentId InitiatorId { get; init; }
-    public AgentId TargetId { get; init; }
-    public string Message { get; init; }
+    public required AgentId InitiatorId { get; init; }
+    public required AgentId TargetId { get; init; }
+    public required string Message { get; init; }
     public string? Objective { get; init; }
     public int MaxTurns { get; init; } = 1;
     public IReadOnlyList<AgentId> CallChain { get; init; } = [];
+
+    // Observational only - the delivery address for handoff progress events.
+    public SessionId? InitiatorSessionId { get; init; }
+    public ConversationId? InitiatorConversationId { get; init; }
 }
 ```
 
-**AgentConversationResult:**
+Leaving `InitiatorSessionId`/`InitiatorConversationId` null silently disables progress emission and changes
+nothing else about the exchange.
+
+**AgentExchangeResult:**
 
 ```csharp
-public record AgentConversationResult
+public sealed record AgentExchangeResult
 {
-    public SessionId SessionId { get; init; }
-    public string FinalResponse { get; init; }
-    public IReadOnlyList<AgentConversationTranscriptEntry> Transcript { get; init; }
-    public bool ObjectiveMet { get; init; }
-    public int TurnCount { get; init; }
+    public required SessionId SessionId { get; init; }
+    public required ConversationId ConversationId { get; init; }
+    public required string Status { get; init; }
+    public required int Turns { get; init; }
+    public required string FinalResponse { get; init; }
+    public IReadOnlyList<AgentExchangeTranscriptEntry> Transcript { get; init; } = [];
+    public string? CompletionReason { get; init; }
+    public string? FinishReason { get; init; }
+    public string? FinishSummary { get; init; }
 }
 ```
+
+Each `ConverseAsync` call creates exactly one new conversation - agent-to-agent exchanges are one-shot
+bounded loops - so `ConversationId` is the handle for retrieving the persisted transcript later via
+`IConversationStore.GetAsync` or `ISessionStore.ListByConversationAsync`.
+
+**CompletionReason values:**
+
+| Value | Meaning |
+|-------|---------|
+| `exchangeFinished` | The target agent invoked the `finish_agent_exchange` tool successfully. `FinishReason` and `FinishSummary` carry its arguments. |
+| `singleShot` | The request set no `Objective`, so the exchange ran for exactly one prompt and returned the target's first response. |
+| `maxTurnsReached` | The multi-turn loop exhausted `MaxTurns` without a completion signal. |
+| `error` | An exception was thrown during the exchange. |
+
+Completion is a **tool call**, not prose inspection - there is no substring matching on the target's reply.
 
 ### Conversation Flow
 
-`AgentConversationService.ConverseAsync` orchestrates the full agent-to-agent conversation:
+`AgentExchangeService.ConverseAsync` orchestrates the full agent-to-agent conversation:
 
-1. **Validate request** and check authorization (`SubAgentIds` whitelist)
-2. **Check for cycles** via call chain tracking
-3. **Create AgentAgent session** with both participants (initiator + target)
-4. **Execute conversation turns** up to `maxTurns`
-5. **Check objective completion** after each turn
-6. **Save session** and return transcript with result metadata
+1. **Validate request** and check authorization (the initiator's `SubAgentIds` allow-list, or a role match
+   between the initiator's `SubAgentRoles` and the target's `metadata.role`)
+2. **Check for cycles and depth** via `EnsureCallChainAllowed`
+3. **Enforce the exchange budget** (daily cap, loop detection, cooldown). A budget refusal is the one
+   terminal outcome that produces no child conversation at all, so it publishes a `Halted` progress event
+   before rethrowing.
+4. **Route cross-world** to `ICrossWorldExchangeRouter` when the target is a `world:` reference
+5. **Create a real `Conversation`** via `IConversationStore` so the exchange is discoverable by
+   `ListByConversationAsync` and the portal - the conversation owns the lifecycle, the session is one
+   bounded LLM context inside it
+6. **Execute turns** up to `MaxTurns`, stopping early when the target calls `finish_agent_exchange`
+7. **Seal and archive**, returning the transcript and result metadata
 
-See [AgentConversationService.cs](../../src/gateway/BotNexus.Gateway/Agents/AgentConversationService.cs) for the full implementation.
+See [AgentExchangeService.cs](../../src/gateway/BotNexus.Gateway/Agents/AgentExchangeService.cs) for the full implementation.
 
 ### Cycle Detection
 
 **Call Chain Tracking:**
 
 ```csharp
-AgentId[] callChain = [AgentA, AgentB, AgentC];
+AgentId[] callChain = [AgentA, AgentB];
 
-// AgentC wants to call AgentD
-EnsureCallChainAllowed(callChain, AgentD);  // OK
+// AgentB wants to call AgentC - depth 3, within the default maximum
+EnsureCallChainAllowed(callChain, AgentC);  // OK
 
-// AgentC wants to call AgentA (cycle!)
+// AgentB wants to call AgentA (cycle!)
 EnsureCallChainAllowed(callChain, AgentA);  // Throws InvalidOperationException
+
+// Comparison is case-insensitive on the agent id value.
 ```
 
 **Implementation:**
 
 ```csharp
-void EnsureCallChainAllowed(IReadOnlyList<AgentId> chain, AgentId targetId)
+private void EnsureCallChainAllowed(IReadOnlyList<AgentId> chain, AgentId targetId)
 {
-    if (chain.Contains(targetId))
+    if (chain.Any(id => string.Equals(id.Value, targetId.Value, StringComparison.OrdinalIgnoreCase)))
+        throw new InvalidOperationException($"Cycle detected: {chainText}");
+
+    // Configurable, not a constant: gateway.agentConversationMaxDepth (default 3).
+    var maxDepth = _options.Value.AgentConversationMaxDepth <= 0
+        ? 1
+        : _options.Value.AgentConversationMaxDepth;
+
+    if (chain.Count + 1 > maxDepth)
         throw new InvalidOperationException(
-            $"Conversation cycle detected: {string.Join(" → ", chain)} → {targetId}");
-    
-    const int MaxDepth = 5;
-    if (chain.Count >= MaxDepth)
-        throw new InvalidOperationException(
-            $"Maximum conversation depth ({MaxDepth}) exceeded.");
+            $"Agent conversation call chain depth {chain.Count + 1} exceeded maximum configured depth {maxDepth}. Chain: {chainText}");
 }
 ```
 
@@ -319,30 +379,51 @@ Enables conversations between agents in different BotNexus instances.
 
 Parses `world:{worldId}:{agentId}` format references for cross-world agent targeting (e.g., `world:production:data-analyst`).
 
-See [CrossWorldAgentReference.cs](../../src/domain/BotNexus.Domain/Conversations/CrossWorldAgentReference.cs) for the full implementation.
+See [CrossWorldAgentReference.cs](../../src/domain/BotNexus.Domain/AgentExchange/CrossWorldAgentReference.cs) for the full implementation.
 
 **Cross-World Conversation Flow:**
 
-When `ConverseAsync` detects a `world:` prefix in the target agent ID, it delegates to `ConverseCrossWorldAsync`, which:
+When `ConverseAsync` detects a `world:` prefix in the target agent ID, it delegates to
+`ICrossWorldExchangeRouter.ConverseCrossWorldAsync`, which:
 
-1. Resolves the target world endpoint from `FederatedWorlds` configuration
-2. Creates a `CrossWorldRelayRequest` with source/target metadata and the call chain
-3. Sends the request via `CrossWorldChannelAdapter`
-4. Returns the response as an `AgentConversationResult`
+1. Resolves the target world endpoint from the `gateway.crossWorld` peer configuration
+2. Enforces the outbound cross-world permission gate
+3. Builds the sender-side conversation and creates a `CrossWorldRelayRequest` per turn
+4. Sends each turn via `CrossWorldChannelAdapter`
+5. Returns the response as an `AgentExchangeResult`
 
-See [AgentConversationService.cs](../../src/gateway/BotNexus.Gateway/Agents/AgentConversationService.cs) for the full implementation.
+Federation routing was split out of `AgentExchangeService` (#1542) so the peer, permission and call-chain
+logic is testable against just a config plus a fake relay. The shared turn loop, session pinning, transcript
+and seal/archive stay in `AgentExchangeTurnEngine`; the router owns only the cross-world resolution,
+permission gate and per-turn relay.
+
+See [CrossWorldExchangeRouter.cs](../../src/gateway/BotNexus.Gateway/Agents/CrossWorldExchangeRouter.cs) for the full implementation.
 
 **CrossWorldChannelAdapter:**
 
-Sends HTTP POST to `{endpoint}/api/federation/relay` with a `CrossWorldRelayRequest` body and optional `X-Cross-World-Key` authentication header.
+Sends HTTP POST to `{endpoint}/api/federation/cross-world/relay` (the path is configurable via `RelayPath`)
+with a `CrossWorldRelayRequest` body and an optional `X-Cross-World-Key` authentication header.
+
+Two relay fields exist for multi-turn correctness:
+
+- `CloseAfterResponse` - sender-determined finality. When `true` the receiver **must** archive its local
+  conversation when the relay completes, regardless of whether the target called `finish_agent_exchange`.
+  Defaults to `false` so older senders keep the previous behaviour.
+- `TurnId` - optional per-turn idempotency key. When supplied, the receiver skips re-appending the user
+  turn if the last history entry already carries the same key, preventing duplicate entries on
+  cancel-and-retry.
+
+The response (`CrossWorldRelayResponse`) carries `Response`, `Status`, `SessionId`, and the
+`ExchangeFinished`/`FinishReason`/`FinishSummary` completion signals.
 
 See [CrossWorldChannelAdapter.cs](../../src/gateway/BotNexus.Gateway.Channels/CrossWorldChannelAdapter.cs) for the full implementation.
 
 **Relay Endpoint (Target World):**
 
-Receives relay requests at `POST api/federation/relay`, authenticates via `X-Cross-World-Key` header, creates a cross-world session, executes the target agent, and returns the response.
-
-<!-- Note: Implementation is in the federation controller/hub handling relay requests -->
+Receives relay requests at `POST /api/federation/cross-world/relay`, authenticates via the
+`X-Cross-World-Key` header, creates a cross-world session, executes the target agent, and returns the
+response. See [Cross-World Relay](../api-reference#cross-world-relay) for the REST contract and
+[`gateway.crossWorld`](../configuration) for the peer and inbound allow-list configuration.
 
 ## Summary
 
@@ -350,18 +431,20 @@ Receives relay requests at `POST api/federation/relay`, authenticates via `X-Cro
 
 - **Cron**: Scheduled agent execution (reports, monitoring, maintenance)
 - **Soul**: Daily soul sessions with reflection (long-term memory)
+- **Heartbeat**: System liveness ticks
 
 **Agent-to-Agent:**
 
-- **agent_converse tool**: Peer conversations within same world
-- **Cycle detection**: Prevents infinite call loops
-- **Call chain tracking**: Records conversation depth
-- **Authorization**: SubAgentIds whitelist controls who can talk to whom
+- **agent_converse tool**: Peer conversations within same world, served by `IAgentExchangeService`
+- **Cycle detection**: Prevents infinite call loops (case-insensitive on the agent id)
+- **Call chain tracking**: Depth capped by `gateway.agentConversationMaxDepth` (default 3)
+- **Authorization**: The initiator's `SubAgentIds` allow-list, or a `SubAgentRoles`/`metadata.role` match
+- **Completion**: The target calls `finish_agent_exchange`; there is no prose inspection
 
 **Cross-World Federation:**
 
 - **world:worldId:agentId**: Reference agents in other BotNexus instances
-- **CrossWorldChannelAdapter**: HTTP-based relay protocol
+- **CrossWorldChannelAdapter**: HTTP-based relay protocol to `/api/federation/cross-world/relay`
 - **Dual sessions**: Source and target both create sessions
 - **Authentication**: X-Cross-World-Key header validation
 - **Use cases**: Multi-datacenter deployments, team collaboration, specialized agent clusters

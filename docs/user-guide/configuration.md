@@ -146,6 +146,20 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `crossWorld.inbound.enabled` | bool | `true` | Whether the inbound cross-world relay endpoint accepts traffic |
 | `crossWorld.inbound.allowedWorlds` | array | `[]` | Source world IDs permitted to relay in. Empty allows **no** source world — it is an allow-list |
 | `crossWorld.inbound.apiKeys` | map | `{}` | Shared keys keyed by source world ID. Secret — redacted by the config API |
+| `toolResultPersistence.enabled` | bool | `true` | Enables the write-time cap on tool results stored in session history |
+| `toolResultPersistence.maxBytes` | int | `16384` (16 KiB) | Max UTF-8 bytes of a single **persisted** tool result; larger results get a `[truncated N bytes]` marker at write time. `0` or less disables truncation. Distinct from `toolOutputBudget`, which bounds what reaches the model in the first place |
+| `claimAudit.enabled` | bool | `true` | Whether the post-turn claim auditor runs |
+| `claimAudit.mode` | string | `warn` | Reaction to an unbacked claim: `warn` emits an observable signal only; `block` also marks the turn as one that should be blocked. Unrecognised values fall back to `warn` |
+| `memoryEmbeddings.backend` | string | `none` | Embedding backend: `none` (lexical-only), `local` (on-box inference) or `provider`. An unrecognised token degrades to `none` rather than failing startup |
+| `memoryEmbeddings.enabled` | bool | `false` | Legacy toggle consulted only when `backend` is unset. Enabling embedding sends memory content to the configured endpoint |
+| `memoryEmbeddings.provider` | string | `null` | Provider key whose embeddings endpoint supplies vectors (e.g. `ollama`, `openai`) |
+| `memoryEmbeddings.model` | string | `null` | Embedding model identifier as the endpoint expects it |
+| `memoryEmbeddings.dimensions` | int | `0` | Vector width the model emits. Declared, not discovered — a response of a different width is discarded and that entry falls back to lexical-only |
+| `memoryEmbeddings.baseUrl` | string | `null` | Base URL of the OpenAI-compatible endpoint; `/embeddings` is appended |
+| `memoryEmbeddings.apiKey` | string | `null` | Bearer token for the embeddings endpoint. Optional for a local endpoint. Secret — stored and shown masked |
+| `dateTimeInjection.enabled` | bool | `false` | Prepend the current datetime to every user message so the agent has reliable temporal context |
+| `dateTimeInjection.timezone` | string | `null` | IANA timezone used to format the injected datetime. Falls back to the gateway default timezone, then UTC |
+| `dateTimeInjection.format` | string | `iso8601` | Output format. Only `iso8601` is supported today |
 
 ### Remote and mesh access
 
