@@ -332,19 +332,13 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
             Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
     }
 
-    private static StopReason MapStopReason(string? reason) => reason switch
-    {
-        "end_turn" => StopReason.Stop,
-        "max_tokens" => StopReason.Length,
-        "tool_use" => StopReason.ToolUse,
-        "refusal" => StopReason.Refusal,
-        "pause_turn" => StopReason.Stop,
-        "stop_sequence" => StopReason.Stop,
-        "content_policy" => StopReason.Sensitive,
-        "safety" => StopReason.Sensitive,
-        "sensitive" => StopReason.Sensitive,
-        _ => throw new InvalidOperationException($"Unhandled Copilot Messages stop reason: {reason}")
-    };
+    /// <summary>
+    /// Maps a Copilot Messages <c>stop_reason</c> to the core <see cref="StopReason"/>. Delegates to
+    /// the shared total mapper (#3564) rather than carrying a private switch whose default arm threw:
+    /// an unrecognised or absent stop reason now degrades the turn instead of destroying it.
+    /// </summary>
+    internal static StopReason MapStopReason(string? reason) =>
+        MessagesStopReasonMap.MapStopReason(reason, "Copilot Messages");
 
     // #2374: delegates to the shared parsed family+version gate rather than carrying a private copy
     // of the literal substring list. A new Opus/Sonnet generation now needs no edit here at all.
