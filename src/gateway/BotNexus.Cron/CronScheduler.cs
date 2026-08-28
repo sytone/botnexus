@@ -998,7 +998,7 @@ public sealed class CronScheduler(
                 return;
             }
 
-            await _cronStore.UpdateDefinitionAsync(latest with { Enabled = false }, CancellationToken.None).ConfigureAwait(false);
+            await _cronStore.UpdateDefinitionAsync(latest with { Enabled = false }, expectedOwnership: null, CancellationToken.None).ConfigureAwait(false);
             await _cronStore.SetNextRunAtAsync(job.Id, null, CancellationToken.None).ConfigureAwait(false);
 
             _logger.LogError(
