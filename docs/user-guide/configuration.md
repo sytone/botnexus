@@ -160,6 +160,9 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `dateTimeInjection.enabled` | bool | `false` | Prepend the current datetime to every user message so the agent has reliable temporal context |
 | `dateTimeInjection.timezone` | string | `null` | IANA timezone used to format the injected datetime. Falls back to the gateway default timezone, then UTC |
 | `dateTimeInjection.format` | string | `iso8601` | Output format. Only `iso8601` is supported today |
+| `agentExchange.accessPolicy` | string | `open` | Which agents may start an `agent_converse` exchange: `open` (any registered agent) or `whitelist` (initiator must have the target in `subAgentIds` or a matching `subAgentRoles` grant) |
+| `agentExchange.maxTurnsCeiling` | int | `30` | Upper bound on the `maxTurns` of a single `agent_converse` call, whatever the agent requests. Values below 1 are treated as 1 |
+| `agentExchange.maxInboundQueueDepth` | int | `8` | How many exchanges may queue for one busy agent before further callers are refused with backpressure. The in-flight exchange does not count. Values below 1 are treated as 1 |
 
 ### Remote and mesh access
 
