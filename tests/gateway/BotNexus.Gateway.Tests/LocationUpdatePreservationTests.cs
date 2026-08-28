@@ -239,6 +239,74 @@ public sealed class LocationUpdatePreservationTests : IDisposable
         persisted.ConnectionString.ShouldBeNull();
     }
 
+    /// <summary>
+    /// The four properties #3556 added to <see cref="LocationConfig"/> survive an update that does
+    /// not mention them (#3621).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the behavioural counterpart to the architecture fence. The fence proves each property
+    /// is <em>named</em> in the preservation copy; this proves the copy actually works end to end
+    /// through the controller and the writer, against a real configuration file.
+    /// </para>
+    /// <para>
+    /// <c>CredentialRef</c> and <c>VerifyTls</c> carry the weight. Losing a credential reference
+    /// silently detaches a location from its secret, and <c>VerifyTls</c> defaults to
+    /// <see langword="true"/> - so a location deliberately configured to skip verification for a
+    /// self-signed homelab certificate would have that decision quietly reversed by an unrelated
+    /// description edit. Both values here differ from their defaults, so a regression cannot pass
+    /// by coincidence.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Update_PreservesCredentialAndTransportFields()
+    {
+        var storedPath = Path.Combine(_rootPath, "repo");
+        var configPath = WriteConfig($$"""
+            {
+              "gateway": {
+                "locations": {
+                  "repo": {
+                    "type": "filesystem",
+                    "path": {{Serialize(storedPath)}},
+                    "description": "before",
+                    "username": "automation@pve",
+                    "credentialRef": "env:PROXMOX_TOKEN",
+                    "verifyTls": false,
+                    "tags": [ "homelab", "hypervisor" ],
+                    "properties": { "node": "pve-01" }
+                  }
+                }
+              }
+            }
+            """);
+
+        var (controller, _) = CreateController(configPath);
+
+        var update = await controller.Update("repo", new UpsertLocationRequest
+        {
+            Name = "repo",
+            Type = "filesystem",
+            Value = storedPath,
+            Description = "after"
+        }, CancellationToken.None);
+
+        update.Result.ShouldBeOfType<OkObjectResult>();
+
+        var persisted = await LoadLocationAsync(configPath, "repo");
+        persisted.Description.ShouldBe("after");
+        persisted.Username.ShouldBe("automation@pve");
+        persisted.CredentialRef.ShouldBe(
+            "env:PROXMOX_TOKEN",
+            "an unrelated edit must not detach a location from its credential (#3621)");
+        persisted.VerifyTls.ShouldBeFalse(
+            "verifyTls:false must not revert to its true default on an unrelated edit (#3621)");
+        persisted.Tags.ShouldNotBeNull();
+        persisted.Tags!.ShouldBe(["homelab", "hypervisor"]);
+        persisted.Properties.ShouldNotBeNull();
+        persisted.Properties!["node"].ShouldBe("pve-01");
+    }
+
     private static async Task<LocationConfig> LoadLocationAsync(string configPath, string name)
     {
         var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);

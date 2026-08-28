@@ -459,6 +459,17 @@ public sealed class LocationsController(
                 ConnectionString = existing.ConnectionString,
                 Description = existing.Description,
                 Properties = existing.Properties,
+
+                // #3621. Added to LocationConfig by #3556 (credential primitives and the location
+                // registry) and not modelled by UpsertLocationRequest, so all four are preserved
+                // rather than overwritten. CredentialRef is the one that matters most: losing it
+                // silently detaches a location from its credential, and VerifyTls reverting to its
+                // true default would quietly re-enable certificate verification an operator turned
+                // off on purpose.
+                Username = existing.Username,
+                CredentialRef = existing.CredentialRef,
+                VerifyTls = existing.VerifyTls,
+                Tags = existing.Tags,
             };
 
     private static string? ResolveStoredValue(LocationConfig config)
