@@ -94,6 +94,8 @@
     <!-- OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Api" Version="1.15.3" />
+    <!-- Parser-only use: Parser.ParseInput for the inline-command preflight (#3576). -->
+    <PackageVersion Include="System.Management.Automation" Version="7.6.5" />
     <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />

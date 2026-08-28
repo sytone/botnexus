@@ -20,7 +20,8 @@ agent answers as a first-class Matrix user rather than through a shared gateway 
 This is the **first vertical slice** of the Matrix adapter. The following are implemented:
 
 - Per-agent Matrix account configuration (homeserver, user ID, access token)
-- `/sync` long-poll loop with `since`-token continuity and a bounded failure circuit breaker
+- `/sync` long-poll loop with `since`-token continuity that survives a gateway restart, and a
+  bounded failure circuit breaker
 - Send and receive `m.room.message` events
 - Markdown → `org.matrix.custom.html` formatting
 - Streaming responses via in-place `m.replace` edits
@@ -138,6 +139,24 @@ exponential backoff.
 
 The `since` token is advanced **only after** a batch has been fully processed, so a crash mid-batch
 replays that batch rather than skipping the events it contained.
+
+## Sync continuity across restarts
+
+Each account's `next_batch` token is persisted durably, keyed by agent id and account name, in a
+SQLite database under the verified BotNexus home (`<data-root>/data/matrix-sync-cursor.db`). On
+start, an account with a stored token resumes `/sync` from it; an account with no stored token
+performs a normal initial sync.
+
+This matters because restarts are routine — config reload, deploy, crash recovery. Without a durable
+cursor every restart re-issued `/sync` with `since: null`, and depending on what the homeserver
+returned for an initial sync the account either re-dispatched already-answered turns or silently
+missed messages sent during the restart window.
+
+The cursor is written on the same write-after-process boundary described above, so the durable token
+never names a batch that was not fully handled. A store read or write failure is **not** fatal: a
+failed read falls back to an initial sync and a failed write leaves the loop running with in-memory
+continuity only, each with a logged warning. Losing restart continuity is strictly better than a dead
+channel.
 
 ## Registration
 

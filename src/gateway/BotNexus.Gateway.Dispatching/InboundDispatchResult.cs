@@ -51,4 +51,12 @@ public sealed record InboundDispatchResult(
     /// </summary>
     public static InboundDispatchResult Steered() =>
         new(InboundDispatchStatus.Steered, EmptyDispatches);
+
+    /// <summary>
+    /// Convenience factory for a stalled outcome (#3600): the message is queued and still live, but
+    /// the queue did not drain within the orchestrator's bounded observation window, so the caller's
+    /// await was released with no processing result rather than hanging forever.
+    /// </summary>
+    public static InboundDispatchResult Stalled() =>
+        new(InboundDispatchStatus.Stalled, EmptyDispatches);
 }

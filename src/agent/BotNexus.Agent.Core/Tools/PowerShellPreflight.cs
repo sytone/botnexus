@@ -1,5 +1,7 @@
 namespace BotNexus.Agent.Core.Tools;
 
+using System.Management.Automation.Language;
+
 /// <summary>
 /// Preflight validator for inline PowerShell scripts passed to <c>pwsh</c>/<c>powershell</c> via
 /// <c>-Command</c>. It catches the syntax mistakes that agents most commonly emit - empty pipe
@@ -9,19 +11,26 @@ namespace BotNexus.Agent.Core.Tools;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why a hand-rolled scanner and not the real parser?</b> The authoritative check would be
-/// <c>System.Management.Automation.Language.Parser.ParseInput</c>, but nothing in the solution
-/// references <c>Microsoft.PowerShell.SDK</c>. Pulling that package in solely to preflight a
-/// command string is a very heavy managed dependency (tens of MB, its own dependency closure) and
-/// is especially problematic for <c>BotNexus.Extensions.ExecTool</c>, which loads into an isolated
-/// <c>AssemblyLoadContext</c> and must ship its entire managed closure (see issue #2184). A small,
-/// quote/comment-aware scanner that reproduces the exact error signatures observed from the real
-/// parser is far cheaper and keeps both tools dependency-free.
+/// <b>Why the real parser (issue #3576).</b> This type began as a hand-rolled scanner specifically to
+/// avoid taking a dependency on <c>System.Management.Automation</c>, on the reasoning that a small
+/// quote/comment-aware scanner reproducing the observed error signatures was far cheaper. A 7-day
+/// forensic replay retired that reasoning: of 102 commands that produced a runtime <c>ParserError</c>,
+/// <b>85 failed to parse deterministically</b> and the scanner admitted every one. The gap is not a
+/// missing rule or three - it is the entire long tail of a real grammar - so the authoritative parser
+/// now runs on every inline command. The dependency is used for <c>Parser.ParseInput</c> only: it
+/// builds an AST, starts no runspace and executes nothing.
 /// </para>
 /// <para>
-/// The scanner is deliberately conservative: when in doubt it reports <b>valid</b> so that
-/// legitimate one-liners always pass through unchanged. It only rejects the specific, high-confidence
-/// signatures that the real PowerShell parser also rejects (verified locally):
+/// The original hand-rolled rules are RETAINED and run <b>first</b>. They reproduce signatures the real
+/// parser also produces, and keeping them ahead of the parse preserves their offsets and their derived
+/// cause explanations (e.g. the #2417 "the operand before '|' is empty, so an outer quoting layer
+/// probably ate a $variable" diagnosis, which the bare parser message does not give). The parser pass
+/// therefore only ever ADDS refusals; it never changes an existing one.
+/// </para>
+/// <para>
+/// The scanner rules are deliberately conservative: when in doubt they report <b>valid</b>. They only
+/// reject the specific, high-confidence signatures that the real PowerShell parser also rejects
+/// (verified locally):
 /// <list type="bullet">
 ///   <item><c>An empty pipe element is not allowed.</c> - a leading or trailing <c>|</c>.</item>
 ///   <item><c>Variable reference is not valid. The variable name is missing.</c> - <c>${}</c>, <c>${:}</c>, <c>${x:}</c>.</item>
@@ -30,11 +39,12 @@ namespace BotNexus.Agent.Core.Tools;
 /// </list>
 /// </para>
 /// <para>
-/// <b>What this preflight deliberately does NOT do (issue #2757).</b> It never refuses a command on
-/// a heuristic that the real parser would accept. An earlier <c>Nested quoting detected</c> rule did
-/// exactly that - it flagged single-quoted argument values containing <c>"</c> or <c>$</c> - and was
-/// removed after a corpus replay showed 20 of 20 such rejections parsed cleanly. Any new rule added
-/// here must reproduce a signature <c>Parser.ParseInput</c> also produces.
+/// <b>What this preflight deliberately does NOT do (issue #2757).</b> It never refuses a command the
+/// real parser would accept. An earlier <c>Nested quoting detected</c> rule did exactly that - it
+/// flagged single-quoted argument values containing <c>"</c> or <c>$</c> - and was removed after a
+/// corpus replay showed 20 of 20 such rejections parsed cleanly. With the parser now the oracle that
+/// property holds by construction, and the gate fails open on anything that is not a definite
+/// <c>ParseError</c>.
 /// </para>
 /// </remarks>
 public static class PowerShellPreflight
@@ -52,7 +62,13 @@ public static class PowerShellPreflight
     /// </summary>
     /// <param name="Message">Parser-style description of the problem.</param>
     /// <param name="Offset">Zero-based character offset of the offending extent within the script.</param>
-    public sealed record PreflightError(string Message, int Offset);
+    /// <param name="Remediation">
+    /// A shape-specific fix that REPLACES the generic <see cref="RemediationHint"/> when present
+    /// (issue #3576). For a syntax error such as <c>foreach(...){...} | cmd</c> the generic "move it
+    /// into a tmp/*.ps1 file" advice is actively wrong - relocating invalid syntax does not make it
+    /// valid - so a named correction must displace it rather than sit alongside it.
+    /// </param>
+    public sealed record PreflightError(string Message, int Offset, string? Remediation = null);
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="executable"/> names PowerShell
@@ -331,7 +347,110 @@ public static class PowerShellPreflight
         // The parser-backed rules - unterminated string, empty pipe element, missing closing brace,
         // malformed ${...} - are NOT affected and continue to refuse; they were measured at
         // ~69-100% true-positive over the same corpus.
-        return null;
+        //
+        // The script is clean under the legacy hand-rolled rules above - but those rules only ever
+        // covered a handful of signatures. Hand it to the AUTHORITATIVE parser (issue #3576).
+        return ParseWithRealParser(s);
+    }
+
+    /// <summary>
+    /// Runs the script through <c>System.Management.Automation.Language.Parser.ParseInput</c> - the
+    /// same parser the shell itself uses - and converts the first genuine <c>ParseError</c> into a
+    /// <see cref="PreflightError"/>. Returns <see langword="null"/> when the script parses cleanly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the real parser (issue #3576).</b> Replaying every command that produced a runtime
+    /// <c>ParserError</c> over a 7-day window found 102 commands, of which <b>85 fail to parse</b>
+    /// deterministically - every one catchable before a process launch, and every one admitted by the
+    /// hand-rolled scanner. 47 were a single idiom (<c>foreach(...){...} | cmd</c>), 20 were an
+    /// unclosed <c>(</c>, and the rest spread across here-string headers, Unicode escapes,
+    /// <c>foreach</c> without <c>in</c>, redirection without a file spec, array indexing and
+    /// subexpressions. That long tail is what a real grammar gets for free and what a scanner can only
+    /// chase one rule at a time.
+    /// </para>
+    /// <para>
+    /// <b>Why this cannot re-introduce #2757/#2905/#3566.</b> Those were false positives: heuristics
+    /// refusing text the real parser accepts. Here the parser <i>is</i> the oracle, so by construction
+    /// nothing that parses can be refused. The gate <b>fails open</b> on everything that is not a
+    /// definite <c>ParseError</c> - including any exception from the parser itself, which is treated as
+    /// "cannot prove it is broken" and therefore allowed through.
+    /// </para>
+    /// <para>
+    /// The legacy rules deliberately run FIRST and are retained: they reproduce the same messages this
+    /// parser produces, and keeping them ahead of the parse preserves their existing offsets and
+    /// derived diagnostics (e.g. the #2417 "operand before '|' is empty" cause explanation). This
+    /// method only ever ADDS refusals the scanner missed.
+    /// </para>
+    /// </remarks>
+    private static PreflightError? ParseWithRealParser(string script)
+    {
+        ParseError[] errors;
+        try
+        {
+            Parser.ParseInput(script, out _, out errors);
+        }
+        catch
+        {
+            // Fail open: an unexpected parser failure is not evidence that the agent's script is bad.
+            return null;
+        }
+
+        if (errors is null || errors.Length == 0)
+        {
+            return null;
+        }
+
+        var first = errors[0];
+        var offset = first.Extent?.StartOffset ?? 0;
+        if (offset < 0 || offset > script.Length)
+        {
+            offset = 0;
+        }
+
+        // Normalise the parser's embedded newlines so the rejection stays a single readable line.
+        var message = first.Message.Replace("\r\n", " ").Replace("\n", " ").Trim();
+
+        return new PreflightError(message, offset, DescribeRemediation(script, first));
+    }
+
+    /// <summary>
+    /// The named correction for the single most common shape in the #3576 corpus - 47 of 85 weekly
+    /// failures. <c>foreach</c>, <c>if</c>, <c>switch</c>, <c>while</c>, <c>for</c> and <c>do</c> are
+    /// <b>statements</b>, not expressions, so they cannot be a pipeline source; PowerShell reports the
+    /// attempt as <c>An empty pipe element is not allowed.</c>, which names the symptom and not the
+    /// cause. Wrapping the statement in a subexpression <c>$(...)</c> makes it a pipeline source.
+    /// </summary>
+    public const string StatementPipeRemediation =
+        "foreach/if/switch/while are STATEMENTS and cannot be piped from directly - PowerShell reports "
+        + "that as an empty pipe element. Wrap the statement in a subexpression so it becomes a pipeline "
+        + "source: $(foreach ($x in $items) { ... }) | <cmd>.";
+
+    // Returns a shape-specific correction when the error matches a named remediation, else null so
+    // the generic file-based hint applies.
+    private static string? DescribeRemediation(string script, ParseError error)
+    {
+        if (!string.Equals(error.ErrorId, "EmptyPipeElement", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        // Only claim the statement-pipe diagnosis when the text immediately before the offending pipe
+        // really is the close of a statement block: '}' possibly preceded by whitespace. Anything else
+        // (a genuinely trailing '|', an empty operand) keeps the generic hint.
+        var offset = error.Extent?.StartOffset ?? -1;
+        if (offset <= 0 || offset > script.Length)
+        {
+            return null;
+        }
+
+        var i = offset - 1;
+        while (i >= 0 && char.IsWhiteSpace(script[i]))
+        {
+            i--;
+        }
+
+        return i >= 0 && script[i] == '}' ? StatementPipeRemediation : null;
     }
 
     /// <summary>
@@ -368,9 +487,13 @@ public static class PowerShellPreflight
     public static string BuildRejectionMessage(PreflightError error, string script)
     {
         var extent = DescribeExtent(script, error.Offset);
+        // A shape-specific correction REPLACES the generic file-based hint (#3576): telling an agent to
+        // move `foreach(...){...} | cmd` into a tmp/*.ps1 file does not fix it - the syntax is invalid
+        // wherever it lives - and burns another turn discovering that.
+        var remediation = error.Remediation ?? $"To fix this, {RemediationHint}";
         return $"PowerShell preflight rejected the inline -Command script before execution: "
                + $"{error.Message} (at offset {error.Offset}{extent}) "
-               + $"To fix this, {RemediationHint}";
+               + remediation;
     }
 
     /// <summary>

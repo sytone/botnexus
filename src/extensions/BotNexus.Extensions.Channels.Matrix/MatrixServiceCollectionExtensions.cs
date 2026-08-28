@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -44,6 +45,22 @@ public static class MatrixServiceCollectionExtensions
         services.TryAddSingleton<IMatrixClientFactory>(sp => new DefaultMatrixClientFactory(
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetService<ISecretRedactor>()));
+
+        // Durable /sync cursor (#3595). The database lives under the VERIFIED BotNexus home rather
+        // than a home path this extension derives for itself: a store that resolves its own home has
+        // never been checked against this world's sentinel, which is exactly where the #2836 guard
+        // would have a hole. Prefer the container's BotNexusHome when the host registered one, and
+        // fall back to the same canonical resolver's static entry point when it did not, so a
+        // standalone host still lands in the right place. TryAdd so a host with its own cursor store
+        // keeps it.
+        services.TryAddSingleton<IMatrixSyncCursorStore>(sp =>
+        {
+            var home = sp.GetService<BotNexusHome>();
+            var dataRoot = home?.DataPath ?? BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath();
+            return new SqliteMatrixSyncCursorStore(
+                Path.Combine(dataRoot, "data", "matrix-sync-cursor.db"));
+        });
+
         services.AddSingleton<IChannelAdapter, MatrixChannelAdapter>();
 
         return services;

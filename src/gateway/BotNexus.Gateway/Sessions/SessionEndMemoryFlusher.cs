@@ -87,10 +87,20 @@ public sealed class SessionEndMemoryFlusher : ISessionEndMemoryFlusher
         }
     }
 
+    /// <summary>
+    /// Resolves the memory trigger, and <b>only</b> the memory trigger.
+    /// </summary>
+    /// <remarks>
+    /// #3543: this lookup used to fall back to <see cref="TriggerType.Cron"/> when no
+    /// <see cref="TriggerType.Memory"/> trigger was found - and none existed, so the fallback was
+    /// the only path ever taken. CronTrigger with no job id minted a malformed jobless
+    /// <c>cron:&lt;timestamp&gt;:&lt;guid&gt;</c> session id that the portal rendered inside human
+    /// conversations and that cron's own job-scoped scans could never claim (305 such rows
+    /// accumulated). The fallback is deliberately gone: a memory flush is not a cron run, and
+    /// borrowing another subsystem's trigger to perform one is how the misattribution happened.
+    /// When <c>MemoryTrigger</c> is absent from DI the flush is skipped with a warning, which is an
+    /// honest no-op rather than a silently mislabelled session.
+    /// </remarks>
     private IInternalTrigger? ResolveTrigger()
-    {
-        var all = _triggers.ToList();
-        return all.FirstOrDefault(t => t.Type.Equals(TriggerType.Memory))
-            ?? all.FirstOrDefault(t => t.Type.Equals(TriggerType.Cron));
-    }
+        => _triggers.FirstOrDefault(t => t.Type.Equals(TriggerType.Memory));
 }

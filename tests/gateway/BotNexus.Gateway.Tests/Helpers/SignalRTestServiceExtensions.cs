@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Dispatching;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Tests.Helpers;
 
@@ -33,7 +34,8 @@ public static class SignalRTestServiceExtensions
                 sp.GetRequiredService<ISessionWarmupService>(),
                 sp.GetRequiredService<IConversationDispatcher>(),
                 sp.GetRequiredService<ISessionCompactionCoordinator>(),
-                sp.GetService<IConversationResetService>()));
+                sp.GetService<IConversationResetService>(),
+                sp.GetService<ILogger<GatewayHubApplicationService>>()));
         return services;
     }
 }

@@ -76,7 +76,21 @@ public class PowerShellPreflightNestedQuotingRegressionTests
         // Inside a single-quoted PowerShell string both '"' and '$' are literal by language
         // definition, so no outer layer can consume them. This is the premise the old heuristic got
         // wrong.
-        PowerShellPreflight.Validate("--jq '.a | select(.b==\"$c\")'").ShouldBeNull();
+        //
+        // Issue #3576: this fixture used to be the bare fragment `--jq '...'`, which is NOT a valid
+        // command in isolation - real pwsh rejects it with "Missing expression after unary operator
+        // '--'" (verified by executing it). The old hand-rolled scanner had no concept of expression
+        // position, so it returned null and the fixture silently encoded that blind spot as though it
+        // were the language rule. The premise under test is about the QUOTING of the value, so the
+        // fixture now carries that value on a real command line where the argument actually is an
+        // argument. Verified against Parser.ParseInput: zero errors. The assertion is unchanged and
+        // still fails if a heuristic starts refusing single-quoted values.
+        PowerShellPreflight
+            .Validate("gh pr view 1 --json body --jq '.a | select(.b==\"$c\")'")
+            .ShouldBeNull();
+
+        // Same premise on a different tool, so the rule stays general rather than one-command-shaped.
+        PowerShellPreflight.Validate("jq '.a | select(.b==\"$c\")' file.json").ShouldBeNull();
     }
 
     // === Clause 3: the parser-backed rules must still refuse, each pinned by name. ===

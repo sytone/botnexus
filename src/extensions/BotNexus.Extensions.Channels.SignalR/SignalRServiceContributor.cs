@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Dispatching;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.SignalR;
 
@@ -43,6 +44,7 @@ public sealed class SignalRServiceContributor : IServiceContributor
                 serviceProvider.GetRequiredService<ISessionWarmupService>(),
                 serviceProvider.GetRequiredService<IConversationDispatcher>(),
                 serviceProvider.GetRequiredService<ISessionCompactionCoordinator>(),
-                serviceProvider.GetService<IConversationResetService>()));
+                serviceProvider.GetService<IConversationResetService>(),
+                serviceProvider.GetService<ILogger<GatewayHubApplicationService>>()));
     }
 }

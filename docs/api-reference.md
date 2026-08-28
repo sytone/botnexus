@@ -2110,6 +2110,15 @@ The reserved key `defaults` is not an agent and returns 404 Not Found.
 **Description:** Returns the raw configuration document (secrets redacted) together with the
 revision token it was read at. Pair with `PATCH /api/config` to save with optimistic concurrency.
 
+The revision is an **opaque token**, not a digest of the document: it is keyed to the running
+gateway process, so clients must treat it as a value to round-trip verbatim and must not attempt to
+recompute or interpret it. It was previously a bare SHA-256 of the *unredacted* document, which let
+a caller authorised only for this redacted view confirm a guessed secret offline (#3469).
+
+Because the key is per-process and never persisted, a revision does **not** survive a gateway
+restart: a patch quoting a token minted before a restart returns `409 Conflict` and the client
+should reload the snapshot and retry.
+
 **Response:** 200 OK
 ```json
 {
