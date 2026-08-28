@@ -165,6 +165,69 @@ public sealed class LocationUpdatePreservationTests : IDisposable
     }
 
     /// <summary>
+    /// The credential and transport identity added by #3556 must survive a description-only edit
+    /// (#3621).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the second instance of the same defect, and it arrived exactly the way the fence's
+    /// doc comment predicted: <c>LocationConfig</c> grew four properties in a separate PR while
+    /// <c>CloneForUpdate</c> stayed at six, so an edit that never mentioned authentication
+    /// silently unauthenticated the location.
+    /// </para>
+    /// <para>
+    /// <c>VerifyTls</c> is asserted from a stored <c>false</c> specifically because its default is
+    /// <c>true</c>: a test that stored <c>true</c> would pass against a fresh
+    /// <c>LocationConfig</c> that dropped the field entirely, and prove nothing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Update_ChangingOnlyDescription_PreservesCredentialAndTransportFields()
+    {
+        var configPath = WriteConfig("""
+            {
+              "gateway": {
+                "locations": {
+                  "proxmox": {
+                    "type": "api",
+                    "endpoint": "https://pve.invalid/api2/json",
+                    "description": "before",
+                    "username": "automation@pve",
+                    "credentialRef": "env:PROXMOX_TOKEN",
+                    "verifyTls": false,
+                    "tags": [ "homelab", "hypervisor" ]
+                  }
+                }
+              }
+            }
+            """);
+
+        var (controller, _) = CreateController(configPath);
+
+        var update = await controller.Update("proxmox", new UpsertLocationRequest
+        {
+            Name = "proxmox",
+            Type = "api",
+            Value = "https://pve.invalid/api2/json",
+            Description = "after"
+        }, CancellationToken.None);
+
+        update.Result.ShouldBeOfType<OkObjectResult>();
+
+        var persisted = await LoadLocationAsync(configPath, "proxmox");
+        persisted.Description.ShouldBe("after");
+        persisted.Username.ShouldBe(
+            "automation@pve", "editing a description must not delete the location's username (#3621)");
+        persisted.CredentialRef.ShouldBe(
+            "env:PROXMOX_TOKEN", "editing a description must not unauthenticate the location (#3621)");
+        persisted.VerifyTls.ShouldBeFalse(
+            "a stored verifyTls=false must survive an unrelated edit rather than snapping back to " +
+            "the true default (#3621)");
+        persisted.Tags.ShouldNotBeNull("editing a description must not delete the location's tags (#3621)");
+        persisted.Tags!.ShouldBe(["homelab", "hypervisor"]);
+    }
+
+    /// <summary>
     /// Updating one location must not disturb another. Guards the cross-entry blast radius, which
     /// is a different property from the within-entry preservation above.
     /// </summary>

@@ -459,6 +459,13 @@ public sealed class LocationsController(
                 ConnectionString = existing.ConnectionString,
                 Description = existing.Description,
                 Properties = existing.Properties,
+                // Credential and transport identity (#3556). None of these is modelled by
+                // UpsertLocationRequest, so preservation is the only correct disposition: an
+                // edit to the description must not silently unauthenticate the location.
+                Username = existing.Username,
+                CredentialRef = existing.CredentialRef,
+                VerifyTls = existing.VerifyTls,
+                Tags = existing.Tags,
             };
 
     private static string? ResolveStoredValue(LocationConfig config)
