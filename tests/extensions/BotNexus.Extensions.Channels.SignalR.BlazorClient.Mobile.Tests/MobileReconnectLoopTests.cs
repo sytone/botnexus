@@ -58,6 +58,7 @@ public sealed class MobileReconnectLoopTests
             isConnected: () => connected,
             delayAsync: pacer.DelayAsync);
 
+        pacer.LoopSettled = () => !loop.IsRetrying;
         loop.Start();
         await pacer.AdvanceAsync(failuresBeforeRecovery + 1);
 
@@ -123,11 +124,48 @@ public sealed class MobileReconnectLoopTests
             isConnected: () => true,
             delayAsync: pacer.DelayAsync);
 
+        pacer.LoopSettled = () => !loop.IsRetrying;
         loop.Start();
         await pacer.AdvanceAsync(1);
 
         attempts.ShouldBe(1);
         loop.IsRetrying.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Determinism proof for #3617. The single-attempt case above is the one that raced: with only
+    /// one release there is no <em>subsequent</em> <c>AdvanceAsync</c> call to act as an accidental
+    /// barrier, and because the loop EXITS on success it never registers another delay either, so
+    /// nothing ordered the assertion after the attempt. Repeating the whole scenario many times in
+    /// one test turns "it passed once on this runner" into evidence the barrier actually orders the
+    /// two, rather than the race merely re-hiding itself. Cost is bounded: no attempt sleeps.
+    /// </summary>
+    [Fact]
+    public async Task Loop_StopsRetrying_WhenResumeThrowsButConnectionCameUp_IsDeterministic()
+    {
+        const int iterations = 50;
+
+        for (var i = 0; i < iterations; i++)
+        {
+            var attempts = 0;
+            var pacer = new DelayPacer();
+
+            await using var loop = new MobileReconnectLoop(
+                resumeAsync: _ =>
+                {
+                    Interlocked.Increment(ref attempts);
+                    throw new IOException("negotiate blew up after the socket landed");
+                },
+                isConnected: () => true,
+                delayAsync: pacer.DelayAsync);
+
+            pacer.LoopSettled = () => !loop.IsRetrying;
+            loop.Start();
+            await pacer.AdvanceAsync(1);
+
+            attempts.ShouldBe(1, $"iteration {i} observed the pre-#3617 race");
+            loop.IsRetrying.ShouldBeFalse($"iteration {i} observed the pre-#3617 race");
+        }
     }
 
     /// <summary>
@@ -354,6 +392,7 @@ public sealed class MobileReconnectLoopTests
             delayAsync: pacer.DelayAsync);
 
         loop.OnRetryStateChanged += () => transitions.Add(loop.IsRetrying);
+        pacer.LoopSettled = () => !loop.IsRetrying;
 
         loop.IsRetrying.ShouldBeFalse();
         loop.Start();
@@ -386,6 +425,16 @@ public sealed class MobileReconnectLoopTests
         private TaskCompletionSource? _pending;
         private bool _releaseAll;
 
+        /// <summary>
+        /// Optional observation of the loop having come to rest without registering a further delay --
+        /// in practice <c>() =&gt; !loop.IsRetrying</c>. This is the second half of the ordering barrier
+        /// (#3617): a released attempt is normally ordered by the loop registering its NEXT delay, but
+        /// an attempt that reconnects makes the loop RETURN, so no next registration ever arrives.
+        /// Tests whose loop can terminate must set this or <see cref="AdvanceAsync"/> has nothing to
+        /// wait on and will return before the final attempt has run.
+        /// </summary>
+        public Func<bool>? LoopSettled { get; set; }
+
         /// <summary>Every duration the loop asked to wait, in order.</summary>
         public IReadOnlyList<TimeSpan> Requested
         {
@@ -410,21 +459,42 @@ public sealed class MobileReconnectLoopTests
         }
 
         /// <summary>
-        /// Releases <paramref name="count"/> waits, letting the loop perform that many attempts,
-        /// waiting for each to complete before releasing the next so the sequence is deterministic.
+        /// Releases <paramref name="count"/> waits, letting the loop perform that many attempts, and
+        /// returns only once every released attempt has actually COMPLETED -- for <c>count == 1</c> as
+        /// much as for larger counts, and whether the loop went on to schedule another delay or
+        /// terminated instead. An attempt is observed as complete when the loop reaches its next
+        /// state: either it registers a further delay, or <see cref="LoopSettled"/> reports it has
+        /// come to rest.
         /// </summary>
-        public async Task AdvanceAsync(int count)
+        /// <remarks>
+        /// Before #3617 this method released a wait and returned immediately, and only
+        /// <em>incidentally</em> ordered anything: for <c>count &gt; 1</c> the next release blocked
+        /// until the loop registered its next delay, which necessarily happens after the previous
+        /// attempt. With a single release there was no such follow-up, so the caller's assertions
+        /// could run before the loop's continuation had incremented anything -- observed on `main` as
+        /// <c>attempts should be 1 but was 0</c>. The barrier below is the guarantee the old doc
+        /// comment merely claimed.
+        /// </remarks>
+        /// <returns>
+        /// The number of waits actually released. A value below <paramref name="count"/> means the
+        /// loop finished early (it reconnected) and had no further delay to release.
+        /// </returns>
+        public async Task<int> AdvanceAsync(int count)
         {
             for (var i = 0; i < count; i++)
             {
                 if (!await ReleaseOneAsync())
-                    return;   // loop-drain helper exit: the loop finished early (it reconnected).
+                    return i;   // loop-drain helper exit: the loop finished early (it reconnected).
             }
+
+            return count;
         }
 
         private async Task<bool> ReleaseOneAsync()
         {
             TaskCompletionSource? pending = null;
+            var registeredBefore = 0;
+
             await TestAwait.EventuallyAsync(
                 () =>
                 {
@@ -432,12 +502,35 @@ public sealed class MobileReconnectLoopTests
                     {
                         pending = _pending;
                         _pending = null;
+                        registeredBefore = _requested.Count;
                     }
-                    return pending is not null;
+
+                    // Settling is a terminal state, so treat it as satisfying the wait rather than
+                    // burning the full observation window on a loop that will never ask again.
+                    return pending is not null || LoopSettled?.Invoke() == true;
                 },
                 "the mobile reconnect loop to request its next delay");
 
-            pending!.TrySetResult();
+            if (pending is null)
+                return false;   // the loop terminated: there is genuinely nothing left to pace.
+
+            pending.TrySetResult();
+
+            // THE BARRIER (#3617). Do not return until the attempt this release unblocked has run to
+            // completion, evidenced by the loop reaching its next observable state.
+            await TestAwait.EventuallyAsync(
+                () =>
+                {
+                    lock (_sync)
+                    {
+                        if (_requested.Count > registeredBefore)
+                            return true;
+                    }
+
+                    return LoopSettled?.Invoke() == true;
+                },
+                "the released mobile reconnect attempt to complete");
+
             return true;
         }
 
