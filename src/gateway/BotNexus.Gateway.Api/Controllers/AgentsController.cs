@@ -460,16 +460,53 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Context summary for a running agent session.</summary>
+    /// <remarks>
+    /// #3609 (AC4): a <c>404 "No active handle."</c> for a session the store reports as
+    /// <c>Active</c> is an <b>expected transient</b>, not an inconsistency. The distinguishing
+    /// condition is that the agent handle is an in-memory cache owned by
+    /// <c>DefaultAgentSupervisor._instances</c>, whereas <c>sessions.status</c> and
+    /// <c>conversations.active_session_id</c> are durable store state. The two are intentionally
+    /// decoupled: <c>SessionCompactionCoordinator.CompactAsync</c> evicts the handle via
+    /// <c>IAgentSupervisor.StopAsync</c> after every applied compaction (and a gateway restart
+    /// clears every handle) without touching the store, because the ordinary inbound path
+    /// rebuilds the handle from persisted history on the next message through
+    /// <c>IAgentSupervisor.GetOrCreateAsync</c>. So the durable state is authoritative and it is
+    /// what DRIVES rehydration - clearing it on eviction would destroy the very state the rebuild
+    /// reads.
+    /// <para>
+    /// Read the 404 as "no agent is resident for this session <i>right now</i>", i.e. diagnostics
+    /// are unavailable until the next turn. It is NOT evidence that the session is dead, and it
+    /// must not be surfaced to a user as an error. This endpoint deliberately does not create a
+    /// handle: minting one to answer a read-only diagnostics call would spawn an agent process as
+    /// a side effect of inspecting it.
+    /// </para>
+    /// </remarks>
     [HttpGet("{agentId}/sessions/{sessionId}/context")]
     public ActionResult GetContext(string agentId, string sessionId)
     {
         var handle = GetAgentHandle(agentId, sessionId);
-        if (handle is null) return NotFound("No active handle.");
+        if (handle is null) return NotFound(NoActiveHandleMessage);
         var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
         if (diag is null) return NotFound("Handle does not support diagnostics.");
         var window = (handle as IAgentHandleInspector)?.GetContextWindowTokens();
         return Ok(BuildContextResponse(agentId, sessionId, diag, window));
     }
+
+    /// <summary>
+    /// #3609 (AC4): the body returned when no agent handle is resident for a session. It states
+    /// the condition is transient rather than leaving the caller to infer a dead session from a
+    /// bare "No active handle.", which is what made the observed incident look like corruption.
+    /// </summary>
+    /// <remarks>
+    /// Exposed as a <c>public const</c> so a test can assert the shipped body without duplicating
+    /// the literal. Do not shorten it back to a bare phrase: the wording IS the AC4 deliverable.
+    /// </remarks>
+    public const string NoActiveHandleMessage =
+        "No active handle. This is an expected transient, not an inconsistency: the agent handle is "
+        + "an in-memory cache that is evicted after context compaction or a gateway restart, while "
+        + "the session row stays Active because that durable state is what rebuilds the handle on the "
+        + "next inbound message via IAgentSupervisor.GetOrCreateAsync. Context diagnostics become "
+        + "available again once the session takes another turn.";
 
     /// <summary>
     /// Builds the body of <see cref="GetContext"/>. Extracted from the action (#2795) so a test can
