@@ -209,6 +209,54 @@ public sealed class LocationsControllerTests : IDisposable
 
 
     [Fact]
+    public async Task Update_PreservesCredentialFieldsTheRequestDoesNotModel()
+    {
+        // #3624: Username, CredentialRef, VerifyTls and Tags arrived with the credential
+        // primitives (#3556) and are set by the operator, but UpsertLocationRequest models none
+        // of them. Without an explicit copy in CloneForUpdate, editing only the description
+        // silently deletes the account, the credential pointer and the TLS posture - a location
+        // that authenticated yesterday stops authenticating, with nothing in the response to
+        // say why. The fence (#3616) catches the missing copy; this proves the round trip.
+        var configPath = WriteConfig("""
+            {
+              "gateway": {
+                "locations": {
+                  "pve": {
+                    "type": "api",
+                    "endpoint": "https://pve.internal:8006",
+                    "description": "Initial",
+                    "username": "automation@pve",
+                    "credentialRef": "env:PROXMOX_TOKEN",
+                    "verifyTls": false,
+                    "tags": ["homelab", "hypervisor"]
+                  }
+                }
+              }
+            }
+            """);
+        var (controller, _) = CreateController(configPath);
+
+        var update = await controller.Update("pve", new UpsertLocationRequest
+        {
+            Name = "pve",
+            Type = "api",
+            Value = "https://pve.internal:8006",
+            Description = "Updated description"
+        }, CancellationToken.None);
+
+        update.Result.ShouldBeOfType<OkObjectResult>();
+
+        var stored = (await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false))
+            .Gateway!.Locations!["pve"];
+
+        stored.Description.ShouldBe("Updated description");
+        stored.Username.ShouldBe("automation@pve");
+        stored.CredentialRef.ShouldBe("env:PROXMOX_TOKEN");
+        stored.VerifyTls.ShouldBeFalse();
+        stored.Tags.ShouldBe(["homelab", "hypervisor"]);
+    }
+
+    [Fact]
     public async Task DatabaseLocations_RedactConnectionStringInApiResponses_ButPersistInConfig()
     {
         const string secret = "Server=db.internal;Database=BotNexus;User Id=botnexus;Password=SuperSecret123!;";

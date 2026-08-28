@@ -458,6 +458,10 @@ public sealed class LocationsController(
                 Endpoint = existing.Endpoint,
                 ConnectionString = existing.ConnectionString,
                 Description = existing.Description,
+                Username = existing.Username,
+                CredentialRef = existing.CredentialRef,
+                VerifyTls = existing.VerifyTls,
+                Tags = existing.Tags,
                 Properties = existing.Properties,
             };
 
