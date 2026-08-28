@@ -426,12 +426,25 @@ public sealed class SqliteCronStore(
     /// schedule change is a separate <see cref="SetNextRunAtAsync"/> call. Returns the
     /// re-read job (runtime columns reflect the current stored state), or <c>null</c> if the
     /// job no longer exists.
+    ///
+    /// <para>
+    /// #3573: when <paramref name="expectedOwnership"/> is supplied the UPDATE is additionally
+    /// conditioned on <c>created_by</c>/<c>agent_id</c> still holding the values the caller's
+    /// authorization decision was made against, using SQLite's null-safe <c>IS</c> (the same idiom
+    /// the <c>schedule_activated_at</c> re-stamp uses). A mismatch affects zero rows and raises
+    /// <see cref="CronJobOwnershipChangedException"/> instead of silently committing an update
+    /// that rewrites both ownership columns on behalf of a caller who no longer owns the job.
+    /// </para>
     /// </summary>
-    public async Task<CronJob?> UpdateDefinitionAsync(CronJob job, CancellationToken ct = default)
+    public async Task<CronJob?> UpdateDefinitionAsync(
+        CronJob job,
+        CronJobOwnershipExpectation? expectedOwnership = null,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(job);
         await InitializeAsync(ct).ConfigureAwait(false);
 
+        var ownershipRejected = false;
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -474,22 +487,60 @@ public sealed class SqliteCronStore(
                         ELSE schedule_activated_at
                     END
                 WHERE id = $id
+                  -- #3573: null-safe ownership predicate. When no expectation is supplied both
+                  -- $expect* parameters are NULL and $hasOwnershipExpectation is 0, so the two
+                  -- clauses short-circuit to TRUE and the statement is byte-for-byte the
+                  -- pre-#3573 write. 'IS' rather than '=' because agent_id is nullable and '='
+                  -- against NULL is NULL, which would reject every edit of an untargeted job.
+                  AND ($hasOwnershipExpectation = 0 OR created_by IS $expectedCreatedBy)
+                  AND ($hasOwnershipExpectation = 0 OR agent_id IS $expectedAgentId)
                 """;
             BindDefinition(command, job);
+            command.Parameters.AddWithValue("$hasOwnershipExpectation", expectedOwnership.HasValue ? 1 : 0);
+            command.Parameters.AddWithValue(
+                "$expectedCreatedBy",
+                (object?)expectedOwnership?.CreatedBy ?? DBNull.Value);
+            command.Parameters.AddWithValue(
+                "$expectedAgentId",
+                (object?)expectedOwnership?.AgentId ?? DBNull.Value);
             command.Parameters.AddWithValue("$scheduleActivatedAt", DateTimeOffset.UtcNow.ToString("O"));
-            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-            _logger.LogInformation(
-                "Updated cron job definition '{JobId}' (action={ActionType}, enabled={Enabled}).",
-                job.Id,
-                job.ActionType,
-                job.Enabled);
+            var affected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            // Zero rows is ambiguous on its own - the job may simply be gone - so distinguish the
+            // two OUTSIDE the write lock rather than collapsing an authorization answer into a
+            // not-found one. Absence stays absence (null); a surviving row means ownership moved.
+            if (affected == 0 && expectedOwnership.HasValue)
+            {
+                ownershipRejected = true;
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Updated cron job definition '{JobId}' (action={ActionType}, enabled={Enabled}).",
+                    job.Id,
+                    job.ActionType,
+                    job.Enabled);
+            }
         }
         finally
         {
             _writeLock.Release();
         }
 
-        return await GetAsync(job.Id, ct).ConfigureAwait(false);
+        var current = await GetAsync(job.Id, ct).ConfigureAwait(false);
+
+        if (ownershipRejected)
+        {
+            if (current is null)
+                return null;
+
+            _logger.LogWarning(
+                "Rejected cron job definition update for '{JobId}': ownership changed after the caller was authorized (#3573).",
+                job.Id);
+            throw new CronJobOwnershipChangedException(job.Id);
+        }
+
+        return current;
     }
 
     /// <summary>

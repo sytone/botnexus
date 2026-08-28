@@ -2057,7 +2057,7 @@ public sealed class CronScheduler(
 
             // #2133: config-sync is a definition write only; runtime/conversation columns
             // are scheduler/CAS-owned and must not be round-tripped here.
-            await _cronStore.UpdateDefinitionAsync(merged, ct).ConfigureAwait(false);
+            await _cronStore.UpdateDefinitionAsync(merged, expectedOwnership: null, ct).ConfigureAwait(false);
         }
     }
 
