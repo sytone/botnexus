@@ -120,19 +120,134 @@ public sealed class ChannelFailureClassifierTests
     }
 
     /// <summary>
-    /// #3116 AC2 - a cooperative cancellation whose inner chain contains a transport fault is
-    /// still shutdown, not a timeout. Without a <see cref="TimeoutException"/> marker the walk
-    /// must not be allowed to reach the transient IOException arm below.
+    /// #3630 AC1 - <b>supersedes the #3116 assertion that this same chain is Terminal.</b> That
+    /// assertion encoded the defect #3630 was filed against: a <see cref="TaskCanceledException"/>
+    /// wrapping a live transport fault is not a token-signalled shutdown, it is a connection that
+    /// died on the wire, and calling it Terminal parked both Telegram polling loops for 3+ hours on
+    /// 2026-08-28. Cooperative cancellation is still pinned Terminal by
+    /// <see cref="Classify_CooperativeTaskCanceled_IsTerminal"/> and
+    /// <see cref="Classify_CooperativeTaskCanceledWrappingNonTransientFault_IsTerminal"/>, neither
+    /// of which this case may be satisfied by weakening.
     /// </summary>
     [Fact]
-    public void Classify_CooperativeTaskCanceledWrappingTransportFault_IsTerminal()
+    public void Classify_CooperativeTaskCanceledWrappingTransportFault_IsTransient()
     {
         var ex = new TaskCanceledException(
             "A task was canceled.",
             new IOException("connection closed", new SocketException((int)SocketError.ConnectionReset)));
 
+        ChannelFailureClassifier.Classify(ex).ShouldBe(ChannelFailureKind.Transient);
+    }
+
+    /// <summary>
+    /// #3630 AC1 - the verbatim chain from the 2026-08-28 live trace, produced by a host
+    /// sleep/resume killing every long-lived socket at once:
+    /// TaskCanceledException -&gt; HttpRequestException (no status) -&gt; IOException -&gt;
+    /// SocketException(10054, ConnectionReset). There is <b>no TimeoutException anywhere in this
+    /// chain</b>, so the marker hunt the guard used to perform returned false and the whole
+    /// classification fell to Terminal - never reaching the SocketException arm that already lists
+    /// ConnectionReset as transient.
+    /// </summary>
+    [Fact]
+    public void Classify_LiveHostResumeSocketResetChain_IsTransient()
+    {
+        var socket = new SocketException((int)SocketError.ConnectionReset); // 10054
+        var io = new IOException(
+            "Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host.",
+            socket);
+        var http = new HttpRequestException("An error occurred while sending the request.", io);
+        var ex = new TaskCanceledException("The operation was canceled.", http);
+
+        ChannelFailureClassifier.Classify(ex).ShouldBe(ChannelFailureKind.Transient);
+    }
+
+    /// <summary>
+    /// #3630 AC2 - every socket error the classifier already names transient must reach the same
+    /// verdict through the cancellation guard as it does through the direct walk. The guard and the
+    /// <see cref="SocketException"/> arm disagreeing about the same socket error is precisely the
+    /// defect; this pins that they cannot diverge again.
+    /// </summary>
+    [Theory]
+    [InlineData(SocketError.ConnectionReset)]
+    [InlineData(SocketError.ConnectionAborted)]
+    [InlineData(SocketError.ConnectionRefused)]
+    [InlineData(SocketError.TimedOut)]
+    [InlineData(SocketError.HostUnreachable)]
+    [InlineData(SocketError.HostNotFound)]
+    [InlineData(SocketError.NetworkUnreachable)]
+    [InlineData(SocketError.TryAgain)]
+    public void Classify_TaskCanceledWrappingTransientSocketError_IsTransient(SocketError error)
+    {
+        var ex = new TaskCanceledException(
+            "The operation was canceled.",
+            new HttpRequestException(
+                "An error occurred while sending the request.",
+                new IOException("transport", new SocketException((int)error))));
+
+        ChannelFailureClassifier.Classify(ex).ShouldBe(ChannelFailureKind.Transient);
+    }
+
+    /// <summary>
+    /// #3630 AC3 - the fail-closed half. A cancellation whose chain carries only a fault the
+    /// classifier does <b>not</b> recognise as transient stays Terminal, so gateway shutdown is
+    /// never retried. <see cref="SocketError.OperationAborted"/> (995) is deliberately outside the
+    /// transient allow-list, which makes this the tightest possible counterpart to the AC1 tests
+    /// above: identical shape, opposite verdict, decided solely by the socket error.
+    /// </summary>
+    [Fact]
+    public void Classify_CooperativeTaskCanceledWrappingNonTransientFault_IsTerminal()
+    {
+        var ex = new TaskCanceledException(
+            "A task was canceled.",
+            new SocketException((int)SocketError.OperationAborted));
+
         ChannelFailureClassifier.Classify(ex).ShouldBe(ChannelFailureKind.Terminal);
     }
+
+    /// <summary>
+    /// #3630 AC3/AC6 - a cancellation wrapping an entirely unrecognised fault still fails closed.
+    /// </summary>
+    [Fact]
+    public void Classify_CooperativeTaskCanceledWrappingUnknownFault_IsTerminal()
+    {
+        var ex = new TaskCanceledException("A task was canceled.", new FormatException("unrelated"));
+
+        ChannelFailureClassifier.Classify(ex).ShouldBe(ChannelFailureKind.Terminal);
+    }
+
+    /// <summary>
+    /// #3630 AC5 - the guard must inherit the SDK <c>IsTransient</c> convention too, so the Service
+    /// Bus receive loop and the #2447 start path get the same verdict as Telegram from one place.
+    /// </summary>
+    [Fact]
+    public void Classify_TaskCanceledWrappingTransientSdkFault_IsTransient()
+        => ChannelFailureClassifier
+            .Classify(new TaskCanceledException("A task was canceled.", new SelfDescribingException(isTransient: true)))
+            .ShouldBe(ChannelFailureKind.Transient);
+
+    /// <summary>
+    /// #3630 AC2 - a retryable HTTP status surfaced beneath a cancellation is transient, matching
+    /// the direct-walk verdict for the same status.
+    /// </summary>
+    [Fact]
+    public void Classify_TaskCanceledWrappingServerErrorStatus_IsTransient()
+        => ChannelFailureClassifier
+            .Classify(new TaskCanceledException(
+                "The operation was canceled.",
+                new HttpRequestException("boom", null, HttpStatusCode.BadGateway)))
+            .ShouldBe(ChannelFailureKind.Transient);
+
+    /// <summary>
+    /// #3630 AC3 - a deterministic 401 beneath a cancellation stays Terminal, so the guard does not
+    /// become a blanket "anything nested is retryable" escape hatch.
+    /// </summary>
+    [Fact]
+    public void Classify_TaskCanceledWrappingUnauthorizedStatus_IsTerminal()
+        => ChannelFailureClassifier
+            .Classify(new TaskCanceledException(
+                "The operation was canceled.",
+                new HttpRequestException("nope", null, HttpStatusCode.Unauthorized)))
+            .ShouldBe(ChannelFailureKind.Terminal);
 
     /// <summary>
     /// #3116 AC4 - the fail-closed default survives the fix: an unrecognised exception type with

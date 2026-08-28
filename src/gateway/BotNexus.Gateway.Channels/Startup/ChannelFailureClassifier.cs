@@ -39,38 +39,31 @@ public static class ChannelFailureClassifier
     {
         ArgumentNullException.ThrowIfNull(exception);
 
+        // A cooperatively cancelled start or loop is a shutdown signal, never something to retry,
+        // so an OperationCanceledException at the head of the chain is handled before the general
+        // walk. It cannot simply be classified Terminal on type alone: HttpClient surfaces its own
+        // transport failures as TaskCanceledException too, and those are the most transient faults
+        // a long-polling channel can produce.
+        //
+        // Earlier revisions answered "is this a timeout?" by hunting for a TimeoutException marker
+        // (#3116). That marker is set only on the HttpClient.Timeout path; a host sleep/resume
+        // produces TaskCanceledException -> HttpRequestException -> IOException ->
+        // SocketException(ConnectionReset) with no marker anywhere, so the guard returned Terminal
+        // and parked both Telegram polling loops for hours (#3630). Ask the question the guard
+        // actually means instead: does the chain carry a cause this classifier already recognises
+        // as transient? Genuine cooperative cancellation carries no such cause and still fails
+        // closed to Terminal.
+        if (exception is OperationCanceledException)
+        {
+            return HasTransientCause(exception)
+                ? ChannelFailureKind.Transient
+                : ChannelFailureKind.Terminal;
+        }
+
         for (Exception? current = exception; current is not null; current = current.InnerException)
         {
-            switch (current)
-            {
-                // A cooperatively cancelled start or loop is a shutdown signal, never something to
-                // retry. This must be checked before TaskCanceledException's transient-timeout
-                // treatment below - but ONLY for genuine cancellation. HttpClient reports its own
-                // request timeout as a TaskCanceledException too (#3116), which is the most
-                // transient failure a long-polling transport can produce; classifying it Terminal
-                // parked the Telegram polling loop until the gateway was restarted. Since .NET 6
-                // the framework distinguishes the two by setting a TimeoutException inner on the
-                // timeout case, so honour that marker rather than the type alone.
-                case OperationCanceledException when exception is OperationCanceledException:
-                    return HasTimeoutCause(exception)
-                        ? ChannelFailureKind.Transient
-                        : ChannelFailureKind.Terminal;
-
-                // A status-bearing HttpRequestException is authoritative. Without a status the
-                // request failed below HTTP, so keep walking for the transport fault underneath
-                // rather than assuming the worst here.
-                case HttpRequestException { StatusCode: { } status }:
-                    return ClassifyStatus(status);
-
-                case SocketException socket:
-                    return IsTransientSocketError(socket.SocketErrorCode)
-                        ? ChannelFailureKind.Transient
-                        : ChannelFailureKind.Terminal;
-
-                case TimeoutException:
-                case IOException:
-                    return ChannelFailureKind.Transient;
-            }
+            if (ClassifyCause(current) is { } verdict)
+                return verdict;
 
             // Azure SDK faults (ServiceBusException, RequestFailedException derivatives) carry
             // their own retryability verdict on a public bool IsTransient. Honour it via the
@@ -83,6 +76,57 @@ public static class ChannelFailureClassifier
         }
 
         return ChannelFailureKind.Terminal;
+    }
+
+    /// <summary>
+    /// Classifies a single link of an exception chain, or returns <see langword="null"/> when this
+    /// link carries no verdict and the walk should continue.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the general walk and the cancellation guard so the two can never disagree about
+    /// the same cause - the disagreement that made #3630 possible, where the guard called a
+    /// <see cref="SocketException"/> chain Terminal while the walk below it already called the same
+    /// socket error Transient.
+    /// </remarks>
+    private static ChannelFailureKind? ClassifyCause(Exception exception) => exception switch
+    {
+        // A status-bearing HttpRequestException is authoritative. Without a status the request
+        // failed below HTTP, so keep walking for the transport fault underneath rather than
+        // assuming the worst here.
+        HttpRequestException { StatusCode: { } status } => ClassifyStatus(status),
+
+        SocketException socket => IsTransientSocketError(socket.SocketErrorCode)
+            ? ChannelFailureKind.Transient
+            : ChannelFailureKind.Terminal,
+
+        TimeoutException or IOException => ChannelFailureKind.Transient,
+
+        _ => null,
+    };
+
+    /// <summary>
+    /// Determines whether a cancellation was caused by an underlying transport fault rather than by
+    /// a cooperative <see cref="CancellationToken"/>.
+    /// </summary>
+    /// <remarks>
+    /// Cooperative cancellation is raised by the token alone and carries no transport cause, so an
+    /// inner chain containing any cause this classifier recognises as transient - a
+    /// <see cref="TimeoutException"/> (#3116), an <see cref="IOException"/>, a transient
+    /// <see cref="SocketException"/> (#3630), a retryable HTTP status, or an SDK fault declaring
+    /// <c>IsTransient</c> - means the operation died on the wire and can plausibly recover.
+    /// </remarks>
+    private static bool HasTransientCause(Exception exception)
+    {
+        for (Exception? current = exception.InnerException; current is not null; current = current.InnerException)
+        {
+            if (ClassifyCause(current) == ChannelFailureKind.Transient)
+                return true;
+
+            if (TryReadIsTransient(current) == true)
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -104,28 +148,6 @@ public static class ChannelFailureClassifier
         >= HttpStatusCode.InternalServerError => ChannelFailureKind.Transient, // 5xx
         _ => ChannelFailureKind.Terminal,
     };
-
-    /// <summary>
-    /// Determines whether a cancellation was caused by a client-side timeout rather than by a
-    /// cooperative <see cref="CancellationToken"/>.
-    /// </summary>
-    /// <remarks>
-    /// <see cref="HttpClient"/> surfaces both as <see cref="TaskCanceledException"/>. Since .NET 6
-    /// the timeout case is identifiable because the framework sets a <see cref="TimeoutException"/>
-    /// as the inner exception; a token-driven cancellation carries no such cause. The walk covers
-    /// the whole inner chain because the live trace nests the marker beneath further transport
-    /// exceptions (#3116).
-    /// </remarks>
-    private static bool HasTimeoutCause(Exception exception)
-    {
-        for (Exception? current = exception.InnerException; current is not null; current = current.InnerException)
-        {
-            if (current is TimeoutException)
-                return true;
-        }
-
-        return false;
-    }
 
     /// <summary>
     /// Reads a public instance <c>bool IsTransient</c> property when the exception exposes one.
