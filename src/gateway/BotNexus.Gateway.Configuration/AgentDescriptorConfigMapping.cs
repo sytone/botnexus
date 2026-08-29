@@ -48,6 +48,7 @@ public static class AgentDescriptorConfigMapping
         nameof(AgentDescriptor.Kind),
         nameof(AgentDescriptor.Emoji),
         nameof(AgentDescriptor.Description),
+        nameof(AgentDescriptor.Summary),
         nameof(AgentDescriptor.ModelId),
         nameof(AgentDescriptor.ApiProvider),
         nameof(AgentDescriptor.SystemPromptFile),

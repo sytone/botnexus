@@ -313,6 +313,8 @@ public sealed class PlatformConfigAgentRoundTripTests : IDisposable
             ApiProvider = "github-copilot",
             Emoji = "🤖",
             Description = "A portal-created agent",
+            // #3596: the agent-owned summary must round-trip on the same path as every other field.
+            Summary = "Currently triaging platform issues and shipping fixes.",
             SystemPromptFile = "AGENTS.md",
             SystemPromptFiles = ["AGENTS.md", "SOUL.md"],
             ToolIds = ["read", "write"],
@@ -379,6 +381,7 @@ public sealed class PlatformConfigAgentRoundTripTests : IDisposable
         effective.DisplayName.ShouldBe(submitted.DisplayName);
         effective.Emoji.ShouldBe(submitted.Emoji);
         effective.Description.ShouldBe(submitted.Description);
+        effective.Summary.ShouldBe(submitted.Summary);
         effective.ModelId.ShouldBe(submitted.ModelId);
         effective.ApiProvider.ShouldBe(submitted.ApiProvider);
         effective.SystemPromptFile.ShouldBe(submitted.SystemPromptFile);

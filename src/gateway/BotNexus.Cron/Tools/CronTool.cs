@@ -426,7 +426,16 @@ public sealed class CronTool(
         if (string.Equals(updated.ActionType, "command", StringComparison.Ordinal))
             EnsureCommandAuthorized(updated, newShellCommand!);
 
-        var saved = await cronStore.UpdateDefinitionAsync(updated, cancellationToken).ConfigureAwait(false)
+        // #3573: the authorization decision above was made against `existing`, and ~100 lines of
+        // argument parsing, model preflight and an AWAITED alert-target validation have run since.
+        // Carrying the ownership snapshot into the WHERE clause makes the commit conditional on
+        // that decision still holding; a re-read here would only narrow the window, not close it,
+        // and would leave the REST seam - which reaches the same store method - unguarded.
+        var saved = await cronStore.UpdateDefinitionAsync(
+                updated,
+                CronJobOwnershipExpectation.From(existing),
+                cancellationToken)
+            .ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
 
         // #3160: disabling a job must abort the run it has in flight, not merely stop future fires.

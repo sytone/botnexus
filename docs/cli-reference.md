@@ -72,34 +72,35 @@ You should see the root command help listing all available subcommands.
 20. [config backups list](#config-backups-list) — List retained config.json backups
 21. [config restore](#config-restore) — Validate and restore a config.json backup
 22. [config store](#config-store) - Manage the SQLite configuration store
-23. [gateway](#gateway) — Manage the gateway lifecycle
-24. [provider](#provider) — Show or set up providers
-25. [provider setup](#provider-setup) — Interactive provider setup wizard
-26. [provider list](#provider-list) — List configured providers
-27. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
-28. [provider remove](#provider-remove) — Remove a provider non-interactively
-29. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
-30. [provider ollama](#provider-ollama) — Ollama local model diagnostics
-31. [prompt](#prompt) — Manage prompt templates
-32. [prompt list](#prompt-list) — List available prompt templates
-33. [prompt render](#prompt-render) — Render a prompt template
-34. [prompt run](#prompt-run) — Render and execute a prompt template
-35. [satellite](#satellite) — Manage satellite nodes
-36. [doctor](#doctor) — Run the complete CLI diagnostic suite
-37. [doctor config](#doctor-config) — Guided config migration
-38. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
-39. [locations](#locations) — Manage configured locations
-40. [update](#update) — Pull, build, and restart the gateway
-41. [memory](#memory) — Backfill agent memory stores
-42. [cron](#cron-command) — Manage cron jobs from the CLI
-43. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
-44. [debug sessions](#debug-sessions) — Inspect session SQLite database
-45. [debug logs](#debug-logs) — Inspect log files
-46. [debug memory](#debug-memory) — Inspect agent memory directories
-47. [debug db](#debug-db) — Inspect raw databases
-48. [debug gateway](#debug-gateway) — Live gateway diagnostics
-49. [debug cron](#debug-cron) — Cron scheduler diagnostics
-50. [Examples](#examples)
+23. [secret](#secret) - Manage the sqlite: secret store
+24. [gateway](#gateway) — Manage the gateway lifecycle
+25. [provider](#provider) — Show or set up providers
+26. [provider setup](#provider-setup) — Interactive provider setup wizard
+27. [provider list](#provider-list) — List configured providers
+28. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+29. [provider remove](#provider-remove) — Remove a provider non-interactively
+30. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
+31. [provider ollama](#provider-ollama) — Ollama local model diagnostics
+32. [prompt](#prompt) — Manage prompt templates
+33. [prompt list](#prompt-list) — List available prompt templates
+34. [prompt render](#prompt-render) — Render a prompt template
+35. [prompt run](#prompt-run) — Render and execute a prompt template
+36. [satellite](#satellite) — Manage satellite nodes
+37. [doctor](#doctor) — Run the complete CLI diagnostic suite
+38. [doctor config](#doctor-config) — Guided config migration
+39. [doctor agents](#doctor-agents) — Reconcile persistent agent workspaces
+40. [locations](#locations) — Manage configured locations
+41. [update](#update) — Pull, build, and restart the gateway
+42. [memory](#memory) — Backfill agent memory stores
+43. [cron](#cron-command) — Manage cron jobs from the CLI
+44. [subagent workspace](#subagent-workspace) — Inspect and prune sub-agent workspaces
+45. [debug sessions](#debug-sessions) — Inspect session SQLite database
+46. [debug logs](#debug-logs) — Inspect log files
+47. [debug memory](#debug-memory) — Inspect agent memory directories
+48. [debug db](#debug-db) — Inspect raw databases
+49. [debug gateway](#debug-gateway) — Live gateway diagnostics
+50. [debug cron](#debug-cron) — Cron scheduler diagnostics
+51. [Examples](#examples)
 
 ---
 
@@ -1324,6 +1325,78 @@ botnexus config store status
 ```powershell
 botnexus config store disable
 ```
+
+---
+
+## secret
+
+Manage the built-in `sqlite:` secret store — the only credential backend BotNexus itself owns, and therefore the only one it can populate. Secrets stored here are referenced from a location's `credentialRef` as `sqlite:<name>`.
+
+Aliased as `secrets`.
+
+### Usage
+
+```powershell
+botnexus secret <subcommand> [name] [--target <path>]
+```
+
+### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `set <name>` | Store a secret, reading the value from stdin. Overwrites an existing entry of the same name. |
+| `list` | List stored secret names and their last-updated timestamps. Never prints values. |
+| `remove <name>` | Remove a stored secret. Aliased as `rm`. |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--target <path>` | BotNexus home directory to operate on. Defaults to the resolved home. The store lives beside it. |
+| `--verbose` | Verbose output. |
+
+### The value is never an argument
+
+`set` takes only a **name** on the command line. The value is read from stdin — piped, or prompted for without echo when attached to a terminal. This is deliberate: anything passed as an argument lands in shell history, in `ps` output for the life of the process, and in any CI log that echoes its commands.
+
+```powershell
+# piped (scripts, CI)
+'my-api-key' | botnexus secret set contoso-api
+
+# prompted, no echo (interactive)
+botnexus secret set contoso-api
+```
+
+### There is deliberately no `get`
+
+BotNexus resolves a secret at the moment it needs one. A command whose entire purpose is to print a credential to a terminal is a facility for exfiltrating it, so none is provided. Use the platform's own tooling if you genuinely need to read a value back.
+
+`list` shows names and timestamps only:
+
+```powershell
+botnexus secret list
+```
+
+```text
+Secrets (~/.botnexus/secrets.db)
+  contoso-api  2026-08-28T09:14:02.1234567Z
+```
+
+### File permissions
+
+The store file is narrowed to owner-only access when it is first created — before any value is written into it — and the restriction is **re-applied after every write**, because SQLite recreates journal siblings as it goes and a guard-rail that only held for the file's first version would be worthless. `list` additionally warns when the store is readable by other users.
+
+### Exit codes
+
+| Code | Condition |
+|------|-----------|
+| `0` | Success. `list` also returns `0` when no store exists yet or the store is empty. |
+| `1` | Empty name, no value supplied, `remove` of a name that is not present, no store for `remove`, or a SQLite read/write failure. |
+
+### Related
+
+- [Servers, credentials and agents](user-guide/secrets-and-locations.md) — the `credentialRef` model and the other resolver schemes (`env:`, `file:`, `keyring:`)
+- [`locations`](#locations) — registering the servers that reference these secrets
 
 ---
 

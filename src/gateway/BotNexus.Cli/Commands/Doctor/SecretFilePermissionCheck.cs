@@ -15,8 +15,11 @@ namespace BotNexus.Cli.Commands.Doctor;
 /// stays strictly read-only - it never changes permissions behind the operator's back.</para>
 ///
 /// <para>Files inspected: <c>config.json</c> (provider API keys, channel bot tokens),
-/// <c>auth.json</c> (OAuth refresh/access tokens), and every <c>config-*.json</c> under
-/// <c>backups/</c> (full copies of the same secrets).</para>
+/// <c>auth.json</c> (OAuth refresh/access tokens), every <c>config-*.json</c> under
+/// <c>backups/</c> (full copies of the same secrets), and the SQLite configuration store
+/// <c>config.db</c> together with its WAL-mode sidecars <c>config.db-wal</c> and
+/// <c>config.db-shm</c> (#3414 - the store holds a full copy of every value in config.json, and the
+/// sidecars hold recently written pages before they are checkpointed).</para>
 /// </summary>
 [DoctorCheck(Id = "secret-file-permissions", Suite = DoctorSuite.Aggregate, Order = 2)]
 internal sealed class SecretFilePermissionCheck : IDoctorCheck
@@ -78,6 +81,13 @@ internal sealed class SecretFilePermissionCheck : IDoctorCheck
     }
 
     /// <summary>
+    /// The SQLite configuration store and its WAL-mode sidecars, relative to the home directory
+    /// (#3414). Named here rather than globbed so that dropping one from the inspected set is a
+    /// visible source edit that <c>SecretFilePermissionCheckTests</c> catches.
+    /// </summary>
+    internal static readonly string[] ConfigStoreFileNames = ["config.db", "config.db-wal", "config.db-shm"];
+
+    /// <summary>
     /// Yields the existing secret-bearing files for the active home. Uses
     /// <see cref="IFileSystem.Path"/> throughout so the paths are correct on both platforms
     /// (never a hand-concatenated separator).
@@ -90,6 +100,15 @@ internal sealed class SecretFilePermissionCheck : IDoctorCheck
         var authPath = _fileSystem.Path.Combine(context.HomePath, "auth.json");
         if (_fileSystem.File.Exists(authPath))
             yield return authPath;
+
+        // The configuration store carries the same secrets as config.json, so an unnarrowed
+        // config.db is exactly the exposure this check exists to surface (#3414).
+        foreach (var storeFile in ConfigStoreFileNames)
+        {
+            var storePath = _fileSystem.Path.Combine(context.HomePath, storeFile);
+            if (_fileSystem.File.Exists(storePath))
+                yield return storePath;
+        }
 
         var backupsDirectory = _fileSystem.Path.Combine(context.HomePath, "backups");
         if (!_fileSystem.Directory.Exists(backupsDirectory))

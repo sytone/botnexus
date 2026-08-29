@@ -472,8 +472,8 @@ public sealed class CronToolTests
         var existingJob = CreateJobWithTarget("job-1", createdBy: "nova", agentId: "farnsworth");
         store.Setup(s => s.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(existingJob);
-        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((CronJob job, CancellationToken _) => (CronJob?)job);
+        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CronJob job, CronJobOwnershipExpectation? _, CancellationToken _) => (CronJob?)job);
 
         var cronStore2 = store.Object;
         var scopeFactory = new ServiceCollection()
@@ -620,7 +620,7 @@ public sealed class CronToolTests
 
         var ex = await act.ShouldThrowAsync<UnauthorizedAccessException>();
         ex.Message.ShouldContain("Cron jobs may only target the calling agent.");
-        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never);
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -907,8 +907,8 @@ public sealed class CronToolTests
         var holder = new[] { initial };
         store.Setup(s => s.GetAsync(initial.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => holder[0]);
-        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
-            .Returns<CronJob, CancellationToken>((job, _) =>
+        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()))
+            .Returns<CronJob, CronJobOwnershipExpectation?, CancellationToken>((job, _, _) =>
             {
                 var existing = holder[0];
                 var merged = job with

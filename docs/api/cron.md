@@ -74,8 +74,14 @@ agent the authenticated caller is itself scoped to, and otherwise keeps its stor
 mirrors the existing `scheduleActivatedAt` stripping (#2554) - the request binds the domain
 record directly, so any column the store writes must be governed explicitly here.
 
-Returns `200 OK` with the updated job, `404 Not Found` when the job does not exist, or
-`403 Forbidden` when the job exists but is not manageable by the caller.
+Returns `200 OK` with the updated job, `404 Not Found` when the job does not exist,
+`403 Forbidden` when the job exists but is not manageable by the caller, or `409 Conflict` when
+the job's ownership changed between the authorization check and the write (#3573).
+
+The `409` is distinct from the `403` on purpose. A `403` means the caller may not touch this job
+at all; a `409` means the caller *was* authorized, but `createdBy`/`agentId` moved while the
+request was in flight, so the commit was refused rather than applied against a stale owner. The
+remedy differs accordingly: re-read the job and retry.
 
 ### `DELETE /api/cron/{jobId}`
 

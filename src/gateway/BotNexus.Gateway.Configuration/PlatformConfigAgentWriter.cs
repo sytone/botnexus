@@ -54,6 +54,9 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             // Simple scalar surface.
             SetOptionalString(entry, "emoji", descriptor.Emoji);
             SetOptionalString(entry, "description", descriptor.Description);
+            // #3596: the agent-owned summary persists on the same path as every other descriptor
+            // field, so a self-written summary survives a gateway restart without a second store.
+            SetOptionalString(entry, "summary", descriptor.Summary);
             SetOptionalString(entry, "systemPromptFile", descriptor.SystemPromptFile);
             SetOptionalString(entry, "isolationStrategy", descriptor.IsolationStrategy);
             SetOptionalString(entry, "cacheRetention", descriptor.CacheRetentionMode);

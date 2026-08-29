@@ -14,6 +14,11 @@ Set-StrictMode -Version Latest
 $script:DeliberateSkipPatterns = @(
     'Dev gateway not running at'
     'GITHUB_TOKEN environment variable not set'
+    # LocalCliCopilotSetupTests drives the real GitHub device-code endpoint. A runner with no
+    # egress to github.com skips it deliberately, but the reason was never allow-listed, so an
+    # otherwise fully-green core run (failed=0 across 62 TRX files) was rejected as a fixture
+    # failure -- see #3639, which blocked PR #3637 on a two-file diff that cannot reach it.
+    'device-code endpoint unreachable'
     '^Windows-only test\.'
     '^Blocked by #\d+'
     '^E2E_[A-Z0-9_]+ (not set|!=)'

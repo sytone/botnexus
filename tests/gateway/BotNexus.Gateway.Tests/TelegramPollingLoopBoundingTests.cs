@@ -19,6 +19,28 @@ public sealed class TelegramPollingLoopBoundingTests
 {
     private const string Bot = "farnsworth";
 
+    /// <summary>
+    /// Hang guard for signals the polling loop raises essentially immediately.
+    /// </summary>
+    /// <remarks>
+    /// This is deliberately NOT a scheduling budget (#3583, same remedy as #3303/#3447). Every
+    /// observation these tests make is already signal-gated: the fake handler parks, the polling
+    /// task completes, or the injected retry-delay callback fires. A wall clock adds nothing to
+    /// the assertions, and a 2-second cap on a contended 4-CPU gate container running ~17k tests
+    /// was failing the wait rather than the adapter (bare `System.TimeoutException`, no Shouldly
+    /// assertion message). The only remaining job for a clock is to turn a genuine dead loop into
+    /// a failing test rather than a hung one, which is why the value is generous: when the test is
+    /// green it is never waited on.
+    /// </remarks>
+    private static readonly TimeSpan PollingSignalHangGuard = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Iterations for the in-suite determinism proof. The scenario drives no real clock - the
+    /// retry delay is an injected callback - so repeating it is cheap and is the only evidence
+    /// that survives past the session that produced it (a hand-run loop expires immediately).
+    /// </summary>
+    private const int DeterminismIterations = 25;
+
     [Fact]
     public async Task Conflict409_StopsThePollingLoopInsteadOfSpinning()
     {
@@ -29,7 +51,7 @@ public sealed class TelegramPollingLoopBoundingTests
         await adapter.StartAsync(new NoOpDispatcher(), CancellationToken.None);
 
         var pollingTask = adapter.GetPollingTask(Bot).ShouldNotBeNull();
-        await pollingTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await pollingTask.WaitAsync(PollingSignalHangGuard);
 
         // The loop must have parked after the terminal 409. One in-flight attempt is the whole
         // budget; the pre-fix loop kept issuing getUpdates indefinitely.
@@ -48,7 +70,7 @@ public sealed class TelegramPollingLoopBoundingTests
         await adapter.StartAsync(new NoOpDispatcher(), CancellationToken.None);
 
         var pollingTask = adapter.GetPollingTask(Bot).ShouldNotBeNull();
-        await pollingTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await pollingTask.WaitAsync(PollingSignalHangGuard);
 
         handler.GetUpdatesCalls.ShouldBe(1);
 
@@ -56,7 +78,34 @@ public sealed class TelegramPollingLoopBoundingTests
     }
 
     [Fact]
-    public async Task TransientFailure_DoesNotStopTheLoopAndBacksOff()
+    public Task TransientFailure_DoesNotStopTheLoopAndBacksOff()
+        => RunTransientFailureBackoffScenarioAsync();
+
+    /// <summary>
+    /// #3583 determinism proof, kept IN the suite rather than in a throwaway local loop: the
+    /// previously-flaky scenario is replayed <see cref="DeterminismIterations"/> times and the
+    /// iteration index is attached to any failure, so a residual race shows up as "failed on
+    /// iteration 17" on the gate instead of as a one-in-N mystery on an unrelated PR.
+    /// </summary>
+    [Fact]
+    public async Task TransientFailureBackoff_IsDeterministicAcrossRepeatedRuns()
+    {
+        for (var iteration = 1; iteration <= DeterminismIterations; iteration++)
+        {
+            try
+            {
+                await RunTransientFailureBackoffScenarioAsync();
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Transient-failure backoff scenario failed on iteration {iteration} of {DeterminismIterations}: {ex.Message}",
+                    ex);
+            }
+        }
+    }
+
+    private static async Task RunTransientFailureBackoffScenarioAsync()
     {
         var handler = new CountingTelegramHandler();
         handler.FailGetUpdatesWith(HttpStatusCode.BadGateway);
@@ -71,12 +120,12 @@ public sealed class TelegramPollingLoopBoundingTests
         });
         await adapter.StartAsync(new NoOpDispatcher(), CancellationToken.None);
 
-        var requestedDelay = await retryDelayStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var requestedDelay = await retryDelayStarted.Task.WaitAsync(PollingSignalHangGuard);
         requestedDelay.ShouldBe(TimeSpan.FromSeconds(2));
         handler.GetUpdatesCalls.ShouldBe(1);
 
         releaseRetryDelay.TrySetResult();
-        await handler.Parked.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await handler.Parked.Task.WaitAsync(PollingSignalHangGuard);
 
         handler.GetUpdatesCalls.ShouldBe(2);
 
@@ -92,7 +141,7 @@ public sealed class TelegramPollingLoopBoundingTests
         var adapter = CreateAdapter(handler);
         await adapter.StartAsync(new NoOpDispatcher(), CancellationToken.None);
 
-        await handler.Parked.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await handler.Parked.Task.WaitAsync(PollingSignalHangGuard);
 
         // Success path is untouched: no breaker-imposed delay on a healthy transport.
         handler.GetUpdatesCalls.ShouldBe(3);

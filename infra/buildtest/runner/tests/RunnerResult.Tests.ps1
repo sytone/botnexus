@@ -125,6 +125,7 @@ try {
         'dotnet pack exit 1.',
         'Fixture init failed: Solution prebuild exit 1.',
         'Fixture init failed: dotnet pack exit 1.',
+        'Fixture init failed: GitHub device-code endpoint unreachable from this host. exit code 1',
         'System.InvalidOperationException: the harness never started'
     )) {
         $path = Join-Path $temp ('crash-' + [Guid]::NewGuid().ToString('N') + '.trx')
@@ -192,6 +193,39 @@ try {
     Assert-Equal 38 $result.skipped 'Green-run parity: skipped count.'
     Assert-Equal 0 $result.fixtureFailures 'Green-run parity: no skip may be reclassified as a crash.'
     Assert-Equal $true $result.isComplete 'Green-run parity: the last green core run must stay green.'
+
+    # #3639: LocalCliCopilotSetupTests skips on a runner with no egress to github.com. The
+    # reason was absent from the allow-list, so run 33208723818 was rejected with
+    # fixtureFailures=1 despite failed=0 across all 62 TRX files, blocking PR #3637.
+    #
+    # The reason string below is VERBATIM from
+    # tests/integration/BotNexus.Integration.Cli.Tests/LocalCliCopilotSetupTests.cs:59. Keeping
+    # it byte-identical is the point: rewording the guard without extending the pattern must
+    # fail here rather than silently reopening the gap in CI.
+    $deviceCodeReason = 'GitHub device-code endpoint unreachable from this host.'
+    Assert-Equal $true (Test-DeliberateSkipReason -Reason $deviceCodeReason) `
+        'The device-code egress skip must be recognised as deliberate.'
+
+    $deviceCode = Join-Path $temp 'device-code.trx'
+    Write-TrxWithResults $deviceCode 35 34 34 @($deviceCodeReason)
+    $result = Get-RunnerTestResult -TrxPaths @($deviceCode) -RequireZeroSkipped
+    Assert-Equal 0 $result.fixtureFailures 'A device-code egress skip is not a fixture failure.'
+    Assert-Equal $true $result.isComplete 'A run whose only skip is the device-code guard stays green.'
+
+    # The full 39-skip decomposition of the rejected run, so this reproduces the exact shape
+    # that was red rather than an idealised single-skip case.
+    $observed = Join-Path $temp 'run-33208723818.trx'
+    $observedSkips = @()
+    $observedSkips += ,'Dev gateway not running at localhost:5006' * 28
+    $observedSkips += ,'GITHUB_TOKEN environment variable not set. Skipping integration test.' * 8
+    $observedSkips += 'Windows-only test.'
+    $observedSkips += 'Blocked by #383: canvas HTML is not persisted across reconnect.'
+    $observedSkips += $deviceCodeReason
+    Write-TrxWithResults $observed 17783 17744 17744 $observedSkips
+    $result = Get-RunnerTestResult -TrxPaths @($observed) -RequireZeroSkipped -MinimumTotal 12000
+    Assert-Equal 39 $result.skipped 'Rejected-run repro: skipped count matches the observed run.'
+    Assert-Equal 0 $result.fixtureFailures 'Rejected-run repro: every skip is now explained.'
+    Assert-Equal $true $result.isComplete 'Rejected-run repro: the run must certify green.'
 
     Write-Host 'RunnerResult.Tests.ps1: PASS'
 }

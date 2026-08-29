@@ -425,6 +425,7 @@ public sealed class EditTool : IAgentTool
                     throw new InvalidOperationException(
                         $"Expected exactly one match for edits[].oldText, but found {exactMatchCount}."
                         + DescribeMatchLines(normalizedOriginal, normalizedOld)
+                        + DescribeAppendAffordance(normalizedOld, normalizedNew)
                         + DescribeClosestText(normalizedOriginal, normalizedOld));
                 }
 
@@ -447,6 +448,7 @@ public sealed class EditTool : IAgentTool
                     throw new InvalidOperationException(
                         $"Expected exactly one match for edits[].oldText, but found {fuzzyMatchCount}."
                         + DescribeFuzzyMatchLines(normalizedOriginal, normalizedForFuzzy, fuzzyOld)
+                        + DescribeAppendAffordance(normalizedOld, normalizedNew)
                         + DescribeClosestText(normalizedOriginal, normalizedOld));
                 }
 
@@ -674,6 +676,31 @@ public sealed class EditTool : IAgentTool
         }
 
         return FormatMatchLines(lineNumbers);
+    }
+
+    /// <summary>
+    /// Detects the faked-append shape (issue #3571) and names the real affordance. When an agent wants
+    /// to append to a log it has historically anchored <c>oldText</c> on the file's last line and set
+    /// <c>newText</c> to that same text plus the new entry — so <c>oldText</c> is an exact prefix of
+    /// <c>newText</c>. In an append-only log the anchor is boilerplate that recurs by design, so the
+    /// match count grows with the file and the edit is guaranteed to fail with <c>found N</c>. Rather
+    /// than telling the caller to widen an anchor it should not need at all, point it at
+    /// <c>write</c> with <c>append</c>. Returns an empty string when the shape does not apply so
+    /// callers can concatenate unconditionally.
+    /// </summary>
+    private static string DescribeAppendAffordance(string normalizedOld, string normalizedNew)
+    {
+        if (string.IsNullOrEmpty(normalizedOld)
+            || normalizedNew.Length <= normalizedOld.Length
+            || !normalizedNew.StartsWith(normalizedOld, StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        return " This looks like an append: oldText is an exact prefix of newText, so the only new content"
+               + " is the text after it. An append needs no anchor and cannot be ambiguous \u2014 call `write`"
+               + " with `append` set to true and pass only the new text as `content` instead of an anchored"
+               + " replace.";
     }
 
     private static string FormatMatchLines(List<int> lineNumbers)

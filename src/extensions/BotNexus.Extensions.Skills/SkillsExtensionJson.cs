@@ -81,20 +81,4 @@ public static class SkillsExtensionJson
             return null;
         }
     }
-
-    /// <summary>
-    /// Reads <paramref name="extensionId"/>'s config block off <paramref name="descriptor"/>,
-    /// or <c>null</c> when the agent has no such block.
-    /// </summary>
-    public static T? ResolveExtensionConfig<T>(AgentDescriptor descriptor, string extensionId)
-        where T : class
-        => descriptor.ExtensionConfig.TryGetValue(extensionId, out var element)
-            ? Bind<T>(element)
-            : null;
-
-    /// <summary>
-    /// Reads this extension's own <see cref="SkillsConfig"/> off an agent descriptor.
-    /// </summary>
-    public static SkillsConfig? ResolveSkillsConfig(AgentDescriptor descriptor)
-        => ResolveExtensionConfig<SkillsConfig>(descriptor, ExtensionId);
 }

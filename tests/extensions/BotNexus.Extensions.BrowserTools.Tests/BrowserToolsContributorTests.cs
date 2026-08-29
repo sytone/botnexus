@@ -4,6 +4,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Text;
 using Shouldly;
 
 namespace BotNexus.Extensions.BrowserTools.Tests;
@@ -632,8 +633,8 @@ public sealed class BrowserToolsContributorTests
         var tools = await ToolsFor(Contributor(runner), Context());
         var output = await InvokeAsync(Tool(tools, "browser_snapshot"));
 
-        output.ShouldContain(BrowserSnapshotEnvelope.BeginMarker);
-        output.ShouldContain(BrowserSnapshotEnvelope.EndMarker);
+        output.ShouldContain(UntrustedContentFence.BeginKeyword);
+        output.ShouldContain(UntrustedContentFence.EndKeyword);
         output.ShouldContain("page body");
     }
 

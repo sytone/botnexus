@@ -112,6 +112,21 @@ internal sealed class OutboundResponseDeliverer(
                 return;
             }
 
+            // #3518: ask an address-aware adapter whether this binding is deliverable at all
+            // BEFORE building an envelope. A Service Bus binding created by the gateway is
+            // addressed by AGENT ID, which is a session-routing key and never an external wire
+            // address; the adapter's fail-closed #2815 guard then throws once per turn and the
+            // reply is silently lost. Asking first turns a per-turn ERROR into one DEBUG skip.
+            // Adapters that do not implement the probe are treated as always addressable.
+            if (adapter is IAddressableChannelAdapter addressable
+                && !addressable.CanDeliverTo(binding.ChannelAddress, out var undeliverableReason))
+            {
+                _logger.LogDebug(
+                    "Fan-out: skipping binding {BindingId} on {ChannelType} - {Reason}.",
+                    binding.BindingId, binding.ChannelType, undeliverableReason);
+                return;
+            }
+
             await adapter.SendAsync(new OutboundMessage
             {
                 ChannelType = binding.ChannelType,

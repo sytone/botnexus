@@ -46,6 +46,12 @@ public static class AssistantTextSanitizer
     private static readonly Regex CourtJunkPrefixPattern = new(
         @"\bcourt(?=\s*<(?:invoke|tool_use|tool_call|function_calls)\b)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // Collapses a run of three OR MORE newlines down to a single blank line. The quantifier must be
+    // open-ended: the fixed-width \n{3} (no comma) matched EXACTLY three newlines over non-overlapping matches,
+    // so a seven-newline run collapsed to five rather than two (issue #3578).
+    private static readonly Regex BlankLineRunPattern = new(
+        @"\n{3,}",
+        RegexOptions.Compiled);
 
     /// <summary>
     /// Strips any embedded thinking/reasoning XML tags from assistant text.
@@ -66,7 +72,7 @@ public static class AssistantTextSanitizer
         var stripped = ThinkingTagPattern.Replace(text, string.Empty);
 
         // Collapse multiple consecutive blank lines left after tag removal.
-        stripped = Regex.Replace(stripped, @"\n{3}", "\n\n");
+        stripped = BlankLineRunPattern.Replace(stripped, "\n\n");
 
         return stripped.Trim();
     }
@@ -112,7 +118,7 @@ public static class AssistantTextSanitizer
         stripped = CourtJunkPrefixPattern.Replace(stripped, string.Empty);
         stripped = EscapedMarkupNormalizer.ReplaceMatches(stripped, ToolCallBlockPattern);
         stripped = EscapedMarkupNormalizer.ReplaceMatches(stripped, ToolCallStrayTagPattern);
-        stripped = Regex.Replace(stripped, @"\n{3}", "\n\n");
+        stripped = BlankLineRunPattern.Replace(stripped, "\n\n");
         return stripped.Trim();
     }
 

@@ -1006,12 +1006,36 @@ public sealed class CrossWorldFederationControllerTests
     }
 
     [Fact]
-    public async Task RelayAsync_WhenSecondCallerUsesDifferentRemoteSessionId_DoesNotBlock()
+    public Task RelayAsync_WhenSecondCallerUsesDifferentRemoteSessionId_DoesNotBlock()
+        => RunDifferentSessionRelayScenarioAsync(iteration: 0);
+
+    /// <summary>
+    /// #3625 determinism proof. The single-shot pin above used to be gated on fixed wall-clock
+    /// budgets (two 5s <c>WaitAsync</c> calls and a 3s poll deadline), so a loaded CI runner
+    /// failed it with a bare <see cref="TimeoutException"/> even though the per-session keying
+    /// contract held. The budgets are now signals, which makes the scenario cheap enough to run
+    /// many times: this fact re-runs the exact same body 50 times and names the failing iteration,
+    /// so the repeat-execution evidence lives in the suite instead of expiring with a local loop.
+    /// Nothing sleeps, so the whole loop costs milliseconds.
+    /// </summary>
+    [Fact]
+    public async Task RelayAsync_WhenSecondCallerUsesDifferentRemoteSessionId_DoesNotBlock_IsDeterministicAcrossRepeats()
+    {
+        for (var iteration = 1; iteration <= DeterminismRepeatCount; iteration++)
+            await RunDifferentSessionRelayScenarioAsync(iteration);
+    }
+
+    /// <summary>Number of repeats executed by the #3625 determinism proof.</summary>
+    private const int DeterminismRepeatCount = 50;
+
+    private static async Task RunDifferentSessionRelayScenarioAsync(int iteration)
     {
         // Per-session keying: a relay against session X must NOT block a relay against session Y.
         // Defends against a regression that uses a single global mutex instead of per-session
         // keying — that would silently serialize unrelated cross-world traffic and make the
         // gateway a global bottleneck.
+
+        var where = iteration == 0 ? string.Empty : $" (iteration {iteration} of {DeterminismRepeatCount})";
 
         var (controller, sessions, conversations, _, barrier, _) = BuildControllerWithBarrier();
         SetApiKeyHeader(controller, SharedApiKey);
@@ -1041,31 +1065,74 @@ public sealed class CrossWorldFederationControllerTests
         var taskX = Task.Run(() => controller.RelayAsync(
             BuildRequest(message: "X", remoteSessionId: sessionXId.Value), CancellationToken.None));
 
-        // Wait for X's PromptAsync to park.
-        await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Wait for X's PromptAsync to park. This is a signal, not a duration: the barrier's
+        // Entered TCS is set from inside the mocked PromptAsync, so awaiting it establishes a
+        // happens-before edge with X's parking regardless of how much CPU the runner has left.
+        await AwaitSignalAsync(barrier.Entered.Task,
+            "Caller X's PromptAsync never parked on the barrier" + where);
 
         var taskY = Task.Run(() => controller.RelayAsync(
             BuildRequest(message: "Y", remoteSessionId: sessionYId.Value), CancellationToken.None));
 
         // Y targets a DIFFERENT session id — its PromptAsync should be invoked despite X being
         // parked. Because the barrier counter only blocks the FIRST call, Y's call returns
-        // immediately on entry (no barrier wait). We assert PromptCallCount reaches 2 BEFORE
-        // releasing X. A global lock regression would keep PromptCallCount at 1 here.
-        var pollDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
-        while (DateTime.UtcNow < pollDeadline && Volatile.Read(ref barrier.PromptCallCount) < 2)
-            await Task.Delay(25);
+        // immediately on entry (no barrier wait), so Y's own completion IS the signal that Y
+        // progressed: we await taskY rather than polling PromptCallCount against a deadline.
+        // Under a global-lock regression taskY cannot complete at all while X holds the lock, so
+        // the generous bound below still fails such a regression — it is a liveness backstop that
+        // no plausible scheduling delay can reach, not a timing heuristic the contract rests on.
+        var yResponse = await AwaitSignalAsync(taskY,
+            "Caller Y never completed while caller X was parked — per-session keying requires " +
+            "unrelated sessions to NOT block each other. A regression to a single global lock " +
+            "would park Y until X is released" + where);
+        yResponse.Result.ShouldBeOfType<OkObjectResult>();
 
         Volatile.Read(ref barrier.PromptCallCount).ShouldBe(2,
             "Caller Y's PromptAsync must have run while caller X is parked — per-session keying " +
             "requires unrelated sessions to NOT block each other. A regression to a global lock " +
-            "would prevent Y from progressing until X is released.");
+            "would prevent Y from progressing until X is released." + where);
         taskY.IsCompleted.ShouldBeTrue(
-            "Y should have completed independently of X because the lock is keyed per session id.");
+            "Y should have completed independently of X because the lock is keyed per session id." + where);
 
         // Release X and verify it completes cleanly.
         barrier.Release.SetResult();
-        var xResponse = await taskX.WaitAsync(TimeSpan.FromSeconds(5));
+        var xResponse = await AwaitSignalAsync(taskX,
+            "Caller X never completed after the barrier was released" + where);
         xResponse.Result.ShouldBeOfType<OkObjectResult>();
+    }
+
+    /// <summary>
+    /// Liveness backstop for signal-gated concurrency waits (#3625). The awaited task is the
+    /// ordering primitive; this bound exists only so a genuine deadlock reports a named failure
+    /// instead of hanging the run until the xUnit-level timeout. It is deliberately far above any
+    /// plausible scheduling delay on a loaded runner, and a real regression never completes at all
+    /// so a generous bound costs it nothing in detection power.
+    /// </summary>
+    private static readonly TimeSpan SignalLivenessBound = TimeSpan.FromSeconds(60);
+
+    private static async Task AwaitSignalAsync(Task signal, string because)
+    {
+        try
+        {
+            await signal.WaitAsync(SignalLivenessBound);
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail(because);
+        }
+    }
+
+    private static async Task<T> AwaitSignalAsync<T>(Task<T> signal, string because)
+    {
+        try
+        {
+            return await signal.WaitAsync(SignalLivenessBound);
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail(because);
+            throw; // unreachable: Assert.Fail always throws.
+        }
     }
 
     // ─── P9-C auto-archive A↔A receiver pins ────────────────────────────────────────────
