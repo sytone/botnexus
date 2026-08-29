@@ -256,6 +256,10 @@ public sealed class ExecTool : IAgentTool
             SkillScriptPreflight.ThrowIfMissing(resolvedTarget);
         }
 
+        // #3569: diagnose a reclaimed sub-agent workspace before the process start fails with a
+        // bare "The directory name is invalid", which names no cause and invites a futile retry.
+        ReclaimedWorkspacePreflight.ThrowIfReclaimed(workingDir ?? _workingDirectory);
+
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,

@@ -1,4 +1,5 @@
 using System.IO.Abstractions.TestingHelpers;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -78,8 +79,18 @@ public sealed class SubAgentWorkspaceSweepHostedServiceTests
             home,
             fileSystem,
             Options.Create(options),
-            NullLogger<SubAgentWorkspaceSweepHostedService>.Instance);
+            NullLogger<SubAgentWorkspaceSweepHostedService>.Instance,
+            new AllDeadProbe());
 
         return (service, fileSystem, home.AgentsPath);
+    }
+
+    /// <summary>
+    /// Reports every workspace as not-live. These cases pin the hosted service's scheduling and
+    /// root-resolution behaviour, so the #3569 liveness gate is held open to isolate them.
+    /// </summary>
+    private sealed class AllDeadProbe : ISubAgentWorkspaceLivenessProbe
+    {
+        public bool IsLive(string workspaceDirectoryName) => false;
     }
 }

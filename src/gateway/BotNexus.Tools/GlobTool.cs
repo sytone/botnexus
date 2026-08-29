@@ -136,6 +136,13 @@ public sealed class GlobTool : IAgentTool
 
         if (!_fileSystem.Directory.Exists(baseDirectory))
         {
+            // #3569: when the miss is this sub-agent's own reclaimed workspace, say so explicitly.
+            // "Base directory ... does not exist" reads as a bad argument, so the agent retried
+            // other paths instead of stopping - 28 of the 66 recorded failures came through here.
+            ReclaimedWorkspacePreflight.ThrowIfReclaimed(
+                _workingDirectory,
+                _fileSystem.Directory.Exists);
+
             throw new DirectoryNotFoundException($"Base directory '{baseDirectory}' does not exist.");
         }
 

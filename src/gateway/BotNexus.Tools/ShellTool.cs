@@ -252,6 +252,11 @@ public sealed class ShellTool : IAgentTool
             SkillScriptPreflight.ThrowIfMissing(ResolveAgainstWorkingDirectory(scriptTarget));
         }
 
+        // #3569: before spawning anything, check whether this sub-agent's workspace was reclaimed
+        // mid-run. Without this the OS reports only "The directory name is invalid", which reads as
+        // a caller mistake and drives the agent to retry until its budget is gone.
+        ReclaimedWorkspacePreflight.ThrowIfReclaimed(_workingDirectory);
+
         // Combine the clamp warning (if any) with the shell-detection warning so both surface
         // on the tool result without threading two prefixes through every output build site.
         var warningPrefix = string.Concat(clampWarning, invocation.WarningPrefix);

@@ -1,4 +1,5 @@
 using System.IO.Abstractions;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -22,13 +23,16 @@ public sealed class SubAgentWorkspaceSweepHostedService(
     BotNexusHome botNexusHome,
     IFileSystem fileSystem,
     IOptions<SubAgentWorkspaceSweepOptions> optionsAccessor,
-    ILogger<SubAgentWorkspaceSweepHostedService> logger) : BackgroundService
+    ILogger<SubAgentWorkspaceSweepHostedService> logger,
+    ISubAgentWorkspaceLivenessProbe livenessProbe) : BackgroundService
 {
     private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(30);
 
     private readonly BotNexusHome _botNexusHome = botNexusHome;
     private readonly IFileSystem _fileSystem = fileSystem;
     private readonly ILogger<SubAgentWorkspaceSweepHostedService> _logger = logger;
+    private readonly ISubAgentWorkspaceLivenessProbe _livenessProbe =
+        livenessProbe ?? throw new ArgumentNullException(nameof(livenessProbe));
 
     private SubAgentWorkspaceSweepOptions Options => optionsAccessor.Value;
 
@@ -86,14 +90,15 @@ public sealed class SubAgentWorkspaceSweepHostedService(
         if (!options.Enabled || options.Retention <= TimeSpan.Zero)
             return default;
 
-        var sweeper = new SubAgentWorkspaceSweeper(_fileSystem, _logger);
+        var sweeper = new SubAgentWorkspaceSweeper(_fileSystem, _logger, _livenessProbe);
         var result = sweeper.Sweep(_botNexusHome.AgentsPath, options.Retention, options.Grace, DateTime.UtcNow);
 
         _logger.LogInformation(
-            "Sub-agent workspace sweep: removed {Removed} directory(ies), reclaimed {BytesReclaimed} bytes, skipped {SkippedRecent} recent/unexpired (retention {RetentionHours}h, grace {GraceMinutes}m).",
+            "Sub-agent workspace sweep: removed {Removed} directory(ies), reclaimed {BytesReclaimed} bytes, skipped {SkippedRecent} recent/unexpired and {SkippedLive} still-live (retention {RetentionHours}h, grace {GraceMinutes}m).",
             result.Removed,
             result.BytesReclaimed,
             result.SkippedRecent,
+            result.SkippedLive,
             options.RetentionHours,
             options.GraceMinutes);
 

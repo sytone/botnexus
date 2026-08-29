@@ -1,4 +1,5 @@
 using System.IO.Abstractions;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -10,7 +11,17 @@ namespace BotNexus.Gateway.Agents;
 /// <param name="Removed">Number of sub-agent workspace directories deleted.</param>
 /// <param name="BytesReclaimed">Total bytes freed by the deleted directories (best-effort).</param>
 /// <param name="SkippedRecent">Directories skipped because they were modified within the grace window or not yet expired.</param>
-public readonly record struct SubAgentWorkspaceSweepResult(int Removed, long BytesReclaimed, int SkippedRecent);
+/// <param name="SkippedLive">
+/// Directories that were age-eligible for removal but retained because their sub-agent is still
+/// running (or its liveness could not be established). This counter is deliberately separate from
+/// <paramref name="SkippedRecent"/>: a non-zero value here is the operator-visible evidence that
+/// the age heuristic alone would have deleted a live run's workspace (issue #3569).
+/// </param>
+public readonly record struct SubAgentWorkspaceSweepResult(
+    int Removed,
+    long BytesReclaimed,
+    int SkippedRecent,
+    int SkippedLive = 0);
 
 /// <summary>
 /// Pure, filesystem-abstracted engine that performs the age-based sweep of completed sub-agent
@@ -20,8 +31,12 @@ public readonly record struct SubAgentWorkspaceSweepResult(int Removed, long Byt
 /// <list type="bullet">
 ///   <item>Only directories whose name contains the <c>--subagent--</c> marker are ever considered,
 ///   so top-level registered agent workspaces (the domain of #2039) are never touched.</item>
-///   <item>Directories modified within the grace window are always skipped, so a live / in-flight
-///   worker is never yanked.</item>
+///   <item>Directories modified within the grace window are always skipped.</item>
+///   <item>Age-eligible directories are removed only after an explicit liveness check against the
+///   agent registry. Elapsed time is NOT a liveness signal: a live sub-agent waiting on a provider
+///   writes nothing to its workspace, so its directory ages past the TTL while the run is healthy.
+///   That is exactly how the pre-#3569 sweep deleted the working directory out from under 37 live
+///   sub-agents in one week. Anything not positively known to be dead is retained.</item>
 ///   <item>Deletion is confined to the resolved agents root and reparse points (symlinks / junctions)
 ///   are never followed or deleted through, so a sweep can never escape the agents root.</item>
 /// </list>
@@ -33,12 +48,26 @@ public sealed class SubAgentWorkspaceSweeper
 
     private readonly IFileSystem _fileSystem;
     private readonly ILogger _logger;
+    private readonly ISubAgentWorkspaceLivenessProbe _livenessProbe;
 
-    /// <summary>Creates a sweeper over the given filesystem abstraction.</summary>
-    public SubAgentWorkspaceSweeper(IFileSystem fileSystem, ILogger logger)
+    /// <summary>
+    /// Creates a sweeper over the given filesystem abstraction.
+    /// </summary>
+    /// <param name="fileSystem">Filesystem abstraction the sweep reads and deletes through.</param>
+    /// <param name="logger">Logger receiving the per-removal audit line.</param>
+    /// <param name="livenessProbe">
+    /// Authority consulted before any deletion. Required, and deliberately so: an optional probe
+    /// would let a misconfigured DI graph silently fall back to the time-only deletion that caused
+    /// #3569, and that failure would be invisible until it destroyed another live run.
+    /// </param>
+    public SubAgentWorkspaceSweeper(
+        IFileSystem fileSystem,
+        ILogger logger,
+        ISubAgentWorkspaceLivenessProbe livenessProbe)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _livenessProbe = livenessProbe ?? throw new ArgumentNullException(nameof(livenessProbe));
     }
 
     /// <summary>
@@ -65,6 +94,7 @@ public sealed class SubAgentWorkspaceSweeper
         var removed = 0;
         long bytesReclaimed = 0;
         var skippedRecent = 0;
+        var skippedLive = 0;
 
         foreach (var directory in _fileSystem.Directory.EnumerateDirectories(fullRoot))
         {
@@ -94,7 +124,7 @@ public sealed class SubAgentWorkspaceSweeper
             var lastWrite = directoryInfo.LastWriteTimeUtc;
             var age = nowUtc - lastWrite;
 
-            // Never yank a live / in-flight worker: anything touched within the grace window is safe.
+            // Cheap age filters first, so a recently-touched directory never even reaches the probe.
             if (age < grace)
             {
                 skippedRecent++;
@@ -104,6 +134,16 @@ public sealed class SubAgentWorkspaceSweeper
             if (age < retention)
             {
                 skippedRecent++;
+                continue;
+            }
+
+            // Age-eligible is NOT the same as dead (#3569). Ask the authority, and treat a probe
+            // failure as "live". The costs are asymmetric: retaining a dead workspace wastes disk
+            // for one interval; deleting a live one destroys the whole run and returns a wrong
+            // summary to the parent.
+            if (IsLive(name))
+            {
+                skippedLive++;
                 continue;
             }
 
@@ -122,6 +162,16 @@ public sealed class SubAgentWorkspaceSweeper
                 directoryInfo.Delete(recursive: true);
                 removed++;
                 bytesReclaimed += size;
+
+                // AC4: log EACH removal, not just an aggregate count. The original defect left no
+                // trace naming what removed a live sub-agent's workspace, which is why the cause
+                // stayed unconfirmed across 66 failures.
+                _logger.LogInformation(
+                    "Sub-agent workspace sweep removed '{Directory}' ({BytesReclaimed} bytes): idle for {AgeHours:F1}h, exceeding the {RetentionHours:F1}h retention, and its sub-agent is not registered as running.",
+                    name,
+                    size,
+                    age.TotalHours,
+                    retention.TotalHours);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -132,7 +182,27 @@ public sealed class SubAgentWorkspaceSweeper
             }
         }
 
-        return new SubAgentWorkspaceSweepResult(removed, bytesReclaimed, skippedRecent);
+        return new SubAgentWorkspaceSweepResult(removed, bytesReclaimed, skippedRecent, skippedLive);
+    }
+
+    /// <summary>
+    /// Whether the sub-agent owning <paramref name="directoryName"/> must be presumed live. Returns
+    /// <c>true</c> when the probe throws, so uncertainty always retains.
+    /// </summary>
+    private bool IsLive(string directoryName)
+    {
+        try
+        {
+            return _livenessProbe.IsLive(directoryName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Sub-agent workspace liveness probe failed for '{Directory}'; retaining it rather than risking deletion of a live run's workspace.",
+                directoryName);
+            return true;
+        }
     }
 
     private bool IsStrictlyWithinRoot(string root, string path)

@@ -173,6 +173,10 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
+         // #3569: the backstop workspace sweep must consult a lifecycle authority before deleting.
+         // The registry holds a child agent descriptor for exactly as long as its sub-agent run
+         // lasts, so it is the liveness signal the age-only sweep was missing.
+         services.TryAddSingleton<ISubAgentWorkspaceLivenessProbe, RegistrySubAgentWorkspaceLivenessProbe>();
          services.AddSingleton<IUserRegistry, DefaultUserRegistry>();
          services.AddSingleton<ICitizenRegistry, DefaultCitizenRegistry>();
          services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();

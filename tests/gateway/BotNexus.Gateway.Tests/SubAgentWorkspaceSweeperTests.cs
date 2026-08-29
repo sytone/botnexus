@@ -1,5 +1,6 @@
 using System.IO.Abstractions;
 using System.IO.Abstractions.TestingHelpers;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Agents;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -21,7 +22,17 @@ public sealed class SubAgentWorkspaceSweeperTests
     {
         _agentsRoot = _fileSystem.Path.Combine(_fileSystem.Path.GetTempPath(), "botnexus-sweep-tests", "agents");
         _fileSystem.Directory.CreateDirectory(_agentsRoot);
-        _sweeper = new SubAgentWorkspaceSweeper(_fileSystem, NullLogger.Instance);
+        // #3569 added a mandatory liveness gate ahead of deletion. These #2237 cases are all about
+        // the AGE rules, so they run against a probe that reports every workspace dead - isolating
+        // the age behaviour they were written to pin. Liveness itself is covered by
+        // SubAgentWorkspaceSweeperLivenessTests.
+        _sweeper = new SubAgentWorkspaceSweeper(_fileSystem, NullLogger.Instance, new AllDeadProbe());
+    }
+
+    /// <summary>Reports every workspace as not-live, so age rules are tested in isolation.</summary>
+    private sealed class AllDeadProbe : ISubAgentWorkspaceLivenessProbe
+    {
+        public bool IsLive(string workspaceDirectoryName) => false;
     }
 
     private string AddSubAgentDir(string name, DateTime lastWriteUtc, long fileBytes = 0)
