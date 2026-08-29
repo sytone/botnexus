@@ -132,6 +132,43 @@ public class TransientErrorClassifierTests
     public void Classify_ExhaustionText_StillReturnsExhausted(string message)
         => Assert.Equal(ProviderFailureClass.Exhausted, TransientErrorClassifier.Classify(message));
 
+    /// <summary>
+    /// #3567 AC1. Every spelling of the bare network-failure phrase must classify as transient.
+    /// The only pre-existing pattern containing "network" was anchored to a timeout, so the
+    /// <c>finish_reason: network_error</c> vocabulary matched nothing at all.
+    /// </summary>
+    [Theory]
+    [InlineData("network error")]
+    [InlineData("network-error")]
+    [InlineData("network_error")]
+    [InlineData("NETWORK ERROR")]
+    [InlineData("Provider finish_reason: network_error")]
+    public void IsTransient_NetworkErrorSpellings_ReturnTrue(string message)
+        => Assert.True(TransientErrorClassifier.IsTransient(message), message);
+
+    /// <summary>
+    /// #3567 AC1, lane assertion. "Transient" is only useful if it lands in the retry lane rather
+    /// than being reclassified as exhaustion; the #3015 ordering contract guarantees it and this
+    /// pins it, since the new pattern is disjoint from the exhaustion table by construction.
+    /// </summary>
+    [Theory]
+    [InlineData("network error")]
+    [InlineData("network-error")]
+    [InlineData("network_error")]
+    public void Classify_NetworkError_ReturnsTransient(string message)
+        => Assert.Equal(ProviderFailureClass.Transient, TransientErrorClassifier.Classify(message));
+
+    /// <summary>
+    /// #3567 non-vacuity. The pattern must not swallow unrelated prose that merely contains the word
+    /// "network" -- otherwise "retryable" would degenerate into "anything mentioning networking".
+    /// </summary>
+    [Theory]
+    [InlineData("the network policy forbids this model")]
+    [InlineData("neural network weights failed to load")]
+    [InlineData("network configuration is invalid")]
+    public void IsTransient_UnrelatedNetworkProse_ReturnsFalse(string message)
+        => Assert.False(TransientErrorClassifier.IsTransient(message), message);
+
     /// <summary>A null message or exception is not transient.</summary>
     [Fact]
     public void IsTransient_Null_ReturnsFalse()

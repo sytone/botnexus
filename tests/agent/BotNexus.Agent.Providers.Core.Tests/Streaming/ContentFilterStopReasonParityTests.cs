@@ -166,12 +166,25 @@ public class ContentFilterStopReasonParityTests
 
     // AC1, sad path. The remap must be surgical: the reasons that legitimately mean "provider
     // failure" must still be Error, or the fix would have traded one misattribution for another.
+    // #3567 removed "network_error" from this theory deliberately: it is a TRANSPORT failure, and
+    // the mapping now throws for it so the agent loop's retry lane can see it. Its replacement
+    // assertion lives in CompletionsStreamEngineTests; the clause that matters here -- "the
+    // content_filter remap did not swallow genuine failures" -- is still carried by the unknown
+    // reason plus the explicit throw case below.
     [Theory]
-    [InlineData("network_error")]
     [InlineData("some_unknown_reason")]
+    [InlineData("server_overloaded")]
     public void MapStopReason_GenuineFailureReasons_RemainError(string reason)
     {
         CompletionsStreamEngine.MapStopReason(reason).StopReason.ShouldBe(StopReason.Error);
+    }
+
+    // #3567. The transport reason is neither Sensitive nor a returned Error message -- it throws.
+    [Fact]
+    public void MapStopReason_NetworkError_ThrowsRatherThanReturningATerminalOutcome()
+    {
+        Should.Throw<ProviderTransientFinishReasonException>(
+            () => CompletionsStreamEngine.MapStopReason("network_error"));
     }
 
     // AC1, end-to-end through the real parser rather than the helper.
