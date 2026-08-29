@@ -1,6 +1,8 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using BotNexus.Gateway.Api.Configuration;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -673,5 +675,115 @@ public sealed class SchemaFormTests : IDisposable
 
         var input = cut.Find("[data-testid='field-apiKeys.k2'] input");
         Assert.Equal("password", input.GetAttribute("type"));
+    }
+
+    // -- 12. #3654: numeric compaction knobs are numbers, not secrets -------
+
+    /// <summary>
+    /// #3654 AC6. <c>CompactionOptions.TokenThresholdRatio</c> (double) and
+    /// <c>ContextWindowTokens</c> (int) were annotated <c>[ConfigField(Secret = true)]</c>, so
+    /// <c>ConfigSchemaBuilder</c> emitted <c>x-ui-secret: true</c> for them. <see cref="SchemaForm"/>
+    /// tests <c>IsSecret(node)</c> BEFORE it can reach the number branch, so both fields rendered as
+    /// <c>&lt;input type="password"&gt;</c> and committed <c>JsonValue.Create(string)</c> - writing a
+    /// JSON <em>string</em> into a numeric config member, which then fails to bind.
+    ///
+    /// This drives the REAL schema produced by <c>ConfigSchemaBuilder</c> (not a hand-built stub)
+    /// through the real component, so a regression in the annotation reddens it. Both the rendered
+    /// widget type and the committed <see cref="JsonNode"/> kind are asserted.
+    /// </summary>
+    [Theory]
+    [InlineData("tokenThresholdRatio", "0.7", 0.7)]
+    [InlineData("contextWindowTokens", "200000", 200000d)]
+    public void Compaction_numeric_fields_render_as_numbers_and_commit_numeric_json(
+        string field, string typed, double expected)
+    {
+        var node = RealCompactionProperties()[field]!.AsObject();
+
+        // The schema must not mark a numeric tuning knob as a secret (the root cause).
+        Assert.Null(node["x-ui-secret"]);
+        Assert.Equal("number", node["x-ui-widget"]!.GetValue<string>());
+
+        var schema = Envelope(new JsonObject { [field] = node.DeepClone() });
+        var value = new JsonObject { [field] = 1 };
+
+        JsonObject? committed = null;
+        var cut = Render(schema, value, v => committed = v);
+
+        // Number widget, not a password box.
+        var input = cut.Find($"[data-testid='field-{field}'] input");
+        Assert.Equal("number", input.GetAttribute("type"));
+
+        input.Change(typed);
+
+        Assert.NotNull(committed);
+        var written = committed![field]!;
+
+        // The core assertion: a NUMBER was committed, not the string the password branch produced.
+        Assert.Equal(JsonValueKind.Number, written.GetValueKind());
+
+        // The committed node's backing CLR type depends on the typed text (Int64 for an integral
+        // literal, Double for a fractional one), and JsonNode.GetValue<T> will not cross that
+        // boundary. Compare on the serialized numeric text so the assertion is exact but shape-
+        // agnostic.
+        var actual = double.Parse(
+            written.ToJsonString(),
+            System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(expected, actual);
+    }
+
+    /// <summary>
+    /// Pulls the compaction property bag out of the real <c>GET /api/config/schema</c> envelope.
+    ///
+    /// <c>JsonSchemaExporter</c> may emit shared/nullable types as <c>$ref</c> into <c>$defs</c>
+    /// rather than inlining them (<c>gateway</c> itself surfaces as a nullable union), so walking a
+    /// fixed <c>gateway.compaction</c> path is not reliable across exporter shapes. Instead, search
+    /// the whole emitted document for the property bag that declares BOTH compaction knob names -
+    /// they exist on no other config type, so the match is unambiguous. This still asserts against
+    /// the real builder output, not a stub.
+    /// </summary>
+    private static JsonObject RealCompactionProperties()
+    {
+        var envelope = ConfigSchemaBuilder.Build();
+
+        return FindBagDeclaring(envelope, "tokenThresholdRatio", "contextWindowTokens")
+            ?? throw new InvalidOperationException(
+                "The real config schema contains no property bag declaring both compaction knobs. " +
+                "Either CompactionOptions is no longer reachable from PlatformConfig, or the " +
+                "exporter shape changed. Envelope root keys: " +
+                string.Join(", ", envelope.Select(kv => kv.Key)));
+    }
+
+    /// <summary>
+    /// Depth-first search for a JSON-schema <c>properties</c> bag that declares every one of
+    /// <paramref name="names"/>.
+    /// </summary>
+    private static JsonObject? FindBagDeclaring(JsonNode? node, params string[] names)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if (obj["properties"] is JsonObject bag && names.All(n => bag[n] is JsonObject))
+                    return bag;
+
+                foreach (var (_, child) in obj)
+                {
+                    if (FindBagDeclaring(child, names) is { } found)
+                        return found;
+                }
+
+                return null;
+
+            case JsonArray array:
+                foreach (var item in array)
+                {
+                    if (FindBagDeclaring(item, names) is { } found)
+                        return found;
+                }
+
+                return null;
+
+            default:
+                return null;
+        }
     }
 }

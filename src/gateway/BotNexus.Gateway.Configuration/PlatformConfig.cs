@@ -501,7 +501,15 @@ public sealed class GatewaySettingsConfig
         Description = "Multi-tenant API keys keyed by key ID. Each entry authorises a caller and scopes what it may reach.",
         GroupName = "Security",
         Order = 0)]
-    [ConfigField(Group = "security", Order = 0, Secret = true)]
+    // #3654: the CONTAINER is not itself a secret -- the secret is ApiKeyConfig.ApiKey, which
+    // carries its own [ConfigField(Secret = true)] and is reached through the "*" wildcard
+    // recursion. Marking the dictionary secret made discovery emit a SecretTerminal.Scalar path
+    // (it is Dictionary<string, ApiKeyConfig>, not Dictionary<string, string>), and ApplyRedact
+    // only overwrites a JsonValue -- so the path was a silent no-op that redacted nothing while
+    // still stamping x-ui-secret on an object-valued node in the generated schema.
+    // Redaction parity is covered by ConfigControllerTests
+    // .GetSection_GatewaySection_RedactsApiKeysConnectionStringsAndCrossWorldSecrets.
+    [ConfigField(Group = "security", Order = 0)]
     public Dictionary<string, ApiKeyConfig>? ApiKeys { get; set; }
     /// <summary>Extensions loading settings.</summary>
     [Display(

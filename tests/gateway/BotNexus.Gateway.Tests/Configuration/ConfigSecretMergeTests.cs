@@ -1,4 +1,7 @@
+using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 
@@ -182,6 +185,164 @@ public sealed class ConfigSecretMergeTests
         RestoreWith(paths, existing, incoming);
         incoming["topSecret"]!.GetValue<string>().ShouldBe("ROOT-REAL");
         incoming["widgets"]!["w1"]!["freshSecret"]!.GetValue<string>().ShouldBe("WIDGET-REAL");
+    }
+
+    /// <summary>
+    /// #3654 AC3: the two numeric compaction tuning knobs are NOT credentials and must not appear
+    /// in the discovered secret-path set. They were annotated <c>Secret = true</c>, which made every
+    /// redacting read path serve the string <c>"***"</c> for a JSON number.
+    /// </summary>
+    [Fact]
+    public void DiscoverSecretPaths_ExcludesNumericCompactionTuningFields()
+    {
+        var rendered = ConfigSecretMerge.DiscoverSecretPaths(typeof(PlatformConfig))
+            .Select(static p => string.Join('.', p.Segments))
+            .ToArray();
+
+        rendered.ShouldNotContain("compaction.tokenThresholdRatio");
+        rendered.ShouldNotContain("compaction.contextWindowTokens");
+
+        // Nothing anywhere in the graph terminates on either name (e.g. a per-agent copy).
+        rendered.Where(static p => p.EndsWith(".tokenThresholdRatio", StringComparison.Ordinal)).ShouldBeEmpty();
+        rendered.Where(static p => p.EndsWith(".contextWindowTokens", StringComparison.Ordinal)).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// #3654 AC4 — the fence. <see cref="ConfigSecretMerge"/> discovery is deliberately
+    /// "best effort": any non-dictionary shape marked secret becomes a
+    /// <c>SecretTerminal.Scalar</c> redaction target with no type check. Redaction then overwrites
+    /// that node with the string placeholder <c>"***"</c>, so a non-<see cref="string"/> member
+    /// marked secret silently produces a schema-invalid config document AND a SchemaForm password
+    /// branch that writes a JSON string back into a numeric field.
+    ///
+    /// This test walks the REAL <see cref="PlatformConfig"/> graph, resolves every discovered
+    /// scalar secret path back to the CLR member that produced it, and asserts that member is
+    /// string-typed. A future numeric/boolean field annotated <c>Secret = true</c> reddens this
+    /// test BY NAME rather than becoming a silent redaction target.
+    /// </summary>
+    [Fact]
+    public void EveryScalarSecretPath_ResolvesToAStringTypedMember()
+    {
+        var offenders = new List<string>();
+
+        foreach (var path in ConfigSecretMerge.DiscoverSecretPaths(typeof(PlatformConfig)))
+        {
+            if (path.Terminal != ConfigSecretMerge.SecretTerminal.Scalar)
+                continue;
+
+            var rendered = string.Join('.', path.Segments);
+            var resolved = ResolveMemberType(typeof(PlatformConfig), path.Segments);
+
+            // A path the walk emitted must be resolvable; an unresolvable one is itself a defect.
+            resolved.ShouldNotBeNull($"Discovered secret path '{rendered}' did not resolve to a member.");
+
+            var underlying = Nullable.GetUnderlyingType(resolved!) ?? resolved!;
+            if (underlying != typeof(string))
+                offenders.Add($"{rendered} : {underlying.Name}");
+        }
+
+        offenders.ShouldBeEmpty(
+            "Every scalar secret path must resolve to a string-typed member, because redaction " +
+            "replaces the node with the string placeholder \"***\". Non-string offenders: " +
+            string.Join(", ", offenders));
+    }
+
+    /// <summary>
+    /// Resolves a discovered secret path (camelCase JSON segments, with <c>"*"</c> standing for a
+    /// dictionary key) back to the CLR type of the terminal member, mirroring the name resolution
+    /// in <c>ConfigSecretMerge.ResolveJsonName</c>. Returns null when a segment cannot be matched.
+    /// </summary>
+    private static Type? ResolveMemberType(Type root, IReadOnlyList<string> segments)
+    {
+        var current = root;
+        Type? terminal = null;
+
+        foreach (var segment in segments)
+        {
+            if (current is null)
+                return null;
+
+            if (segment == "*")
+            {
+                // Dictionary key wildcard: descend into the dictionary's value type.
+                var valueType = DictionaryValueType(current);
+                if (valueType is null)
+                    return null;
+                current = valueType;
+                terminal = valueType;
+                continue;
+            }
+
+            var property = current
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(p => string.Equals(JsonName(p), segment, StringComparison.Ordinal));
+
+            if (property is null)
+                return null;
+
+            terminal = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+            current = terminal;
+        }
+
+        return terminal;
+    }
+
+    private static string JsonName(PropertyInfo property)
+    {
+        var attribute = property.GetCustomAttribute<JsonPropertyNameAttribute>();
+        return attribute is not null
+            ? attribute.Name
+            : JsonNamingPolicy.CamelCase.ConvertName(property.Name);
+    }
+
+    private static Type? DictionaryValueType(Type type)
+    {
+        var candidates = type.IsInterface ? new[] { type }.Concat(type.GetInterfaces()) : type.GetInterfaces();
+        foreach (var candidate in candidates)
+        {
+            if (candidate.IsGenericType &&
+                candidate.GetGenericTypeDefinition() == typeof(IDictionary<,>) &&
+                candidate.GetGenericArguments()[0] == typeof(string))
+            {
+                return candidate.GetGenericArguments()[1];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// #3654 AC5: the redaction applied by every <c>GET /api/config</c> read path must leave the
+    /// numeric compaction knobs as JSON numbers matching <c>docs/botnexus-config.schema.json</c>
+    /// (<c>tokenThresholdRatio</c>: number/double, <c>contextWindowTokens</c>: integer/int32),
+    /// rather than overwriting them with the string placeholder.
+    /// </summary>
+    [Fact]
+    public void Redact_LeavesNumericCompactionFieldsAsJsonNumbers()
+    {
+        var config = Parse("""
+            {
+              "apiKey": "sk-top-level-REAL",
+              "compaction": {
+                "tokenThresholdRatio": 0.7,
+                "contextWindowTokens": 200000,
+                "preservedTurns": 3
+              }
+            }
+            """);
+
+        ConfigSecretMerge.Redact(config);
+
+        // The genuine credential is still redacted - this test does not weaken the secret contract.
+        config["apiKey"]!.GetValue<string>().ShouldBe(ConfigSecretMerge.Placeholder);
+
+        var ratio = config["compaction"]!["tokenThresholdRatio"]!;
+        var window = config["compaction"]!["contextWindowTokens"]!;
+
+        ratio.GetValueKind().ShouldBe(JsonValueKind.Number);
+        window.GetValueKind().ShouldBe(JsonValueKind.Number);
+        ratio.GetValue<double>().ShouldBe(0.7);
+        window.GetValue<int>().ShouldBe(200_000);
     }
 
     // The production Redact/RestoreSecrets cache the PlatformConfig path set, so these helpers
