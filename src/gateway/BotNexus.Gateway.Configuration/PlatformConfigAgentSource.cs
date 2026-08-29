@@ -186,6 +186,7 @@ public sealed class PlatformConfigAgentSource(
                     DisplayName = effectiveConfig.DisplayName ?? agentId,
                     Emoji = effectiveConfig.Emoji,
                     Description = effectiveConfig.Description,
+                    Summary = effectiveConfig.Summary,
                     ModelId = effectiveConfig.Model ?? string.Empty,
                     ApiProvider = effectiveConfig.Provider ?? string.Empty,
                     SystemPromptFile = effectiveConfig.SystemPromptFile,

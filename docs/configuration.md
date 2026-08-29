@@ -544,7 +544,8 @@ overrides the corresponding `agents.defaults` value. The `Inherits` column state
 | `provider` | string | `null` | `ScalarOverride` | Provider name (for example `copilot`) |
 | `displayName` | string | `null` | `LocalOnly` | Human-readable display name shown for this agent in clients |
 | `emoji` | string | `null` | `LocalOnly` | Optional emoji shown alongside the agent name |
-| `description` | string | `null` | `LocalOnly` | Description of the agent's purpose |
+| `description` | string | `null` | `LocalOnly` | Description of the agent's purpose. Human-owned - written once at registration and never rewritten by the agent |
+| `summary` | string | `null` | `LocalOnly` | Agent-maintained account of what the agent is *currently* doing. Written by the agent itself through `update_agent`, and only for its own id - a cross-agent summary write is refused with a policy denial. Length is bounded by `gateway.agentSummary.maxLength` (default 500); a longer summary is refused rather than truncated. When unset the field is omitted from every projection entirely |
 | `model` | string | `null` | `ScalarOverride` | Model identifier (for example `gpt-4.1`) |
 | `allowedModels` | array | `null` | `ReplaceAsUnit` | Model ids this agent may use. Null means unrestricted within the provider allowlist |
 | `systemPromptFiles` | array | `null` | `ReplaceAsUnit` | Ordered list of files to load as the system prompt. Empty means the default order |
@@ -1005,6 +1006,28 @@ Gateway HTTP server settings.
 | `SecretRedaction.Patterns` | string[] | _(none)_ | Additional operator-supplied .NET regular expressions whose matches are replaced with `[REDACTED]`. Applied **in addition to** the built-in credential patterns — never instead of them. Validated at startup (issue #2727). |
 | `SecretRedaction.MatchTimeoutMilliseconds` | int | 100 | Per-pattern match timeout for operator patterns, so a catastrophic-backtracking expression cannot hang the logging path. Must be greater than zero. |
 | `EnableProviderRequestLogging` | bool | false | When true, every provider HTTP request and response is logged at **Debug** level for observability (issue #453). Auth headers (`x-api-key`, `Authorization`, `Proxy-Authorization`) are always redacted by name, and request/response bodies are additionally passed through the shared `SecretRedactor` so leaked keys/tokens are scrubbed. Non-streamed responses also log a best-effort token `usage` summary and elapsed ms. Streaming (`text/event-stream`) responses log status + headers + duration only — the body is never buffered, so streaming is never broken. Off by default; enable only for debugging unexpected provider responses (never at Info in production). |
+
+
+#### Agent summary bound
+
+`gateway.agentSummary` bounds the agent-maintained `summary` field (see the per-agent
+`summary` property above). The summary is projected into the agent listing that every peer reads
+before delegating, so an unbounded self-written summary would inflate every other agent's system
+prompt. The bound therefore lives on the write seam - one place - rather than at each projection.
+
+```json
+{
+  "gateway": {
+    "agentSummary": {
+      "maxLength": 500
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `maxLength` | int | 500 | Maximum length, in characters, of an agent-written summary. A longer summary is **refused, not truncated** - a silently cut summary reads as a complete statement and the agent gets no signal that its words were altered. |
 
 
 #### Trusted per-parent sub-agent budgets

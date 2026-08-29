@@ -82,6 +82,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<SubAgentWorkspaceSweepOptions>();
         services.AddOptions<SessionWarmupOptions>();
         services.AddOptions<DelayToolOptions>();
+        services.AddOptions<AgentSummaryOptions>();
         services.AddOptions<FileWatcherToolOptions>();
         services.AddOptions<CompactionOptions>();
         services.AddOptions<SqliteWalCheckpointOptions>();
@@ -96,6 +97,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<SessionWarmupOptions>(config.GetSection("gateway:sessionWarmup"));
             services.Configure<SubAgentOptions>(config.GetSection("gateway:subAgents"));
             services.Configure<DelayToolOptions>(config.GetSection("gateway:delayTool"));
+            services.Configure<AgentSummaryOptions>(config.GetSection("gateway:agentSummary"));
             services.Configure<FileWatcherToolOptions>(config.GetSection("gateway:fileWatcherTool"));
             services.Configure<AgentExchangeOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<AgentExchangeBudgetOptions>(config.GetSection("gateway:agentExchange"));

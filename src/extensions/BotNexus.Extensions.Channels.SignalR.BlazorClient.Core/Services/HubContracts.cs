@@ -15,12 +15,18 @@ public sealed record ConnectedPayload(
     [property: JsonPropertyName("capabilities")] HubCapabilities Capabilities);
 
 /// <summary>Agent identity summary included in <see cref="ConnectedPayload"/>.</summary>
+/// <remarks>
+/// #3596: <c>summary</c> is the agent-maintained counterpart to the human-owned
+/// <c>description</c>. Appended last with a null default so a payload from a server that does
+/// not send it still binds, and vice versa.
+/// </remarks>
 public sealed record AgentSummary(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("displayName")] string DisplayName,
     [property: JsonPropertyName("emoji")] string? Emoji = null,
     [property: JsonPropertyName("description")] string? Description = null,
-    [property: JsonPropertyName("isBuiltIn")] bool IsBuiltIn = false);
+    [property: JsonPropertyName("isBuiltIn")] bool IsBuiltIn = false,
+    [property: JsonPropertyName("summary")] string? Summary = null);
 
 /// <summary>Hub capabilities advertised on connect.</summary>
 public sealed record HubCapabilities(
