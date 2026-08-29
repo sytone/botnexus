@@ -18,8 +18,9 @@ namespace BotNexus.Gateway.Tools;
 /// persisted on the conversation row (<see cref="Conversation.TodoJson"/>, added in step 1),
 /// not as free-text prose. This is the structural complement to the <c>&lt;tool_use&gt;</c>
 /// anti-narration trip-wire (#1463): narration cannot flip a checkbox; only a real tool result can.
-/// The model's job each turn becomes "advance ONE item from <c>[ ]</c> to <c>[x]</c>", and step 4
-/// couples a <c>done</c> transition to a same-turn accomplishing tool result so it has teeth.
+/// The list is a working plan, not a per-turn budget - an agent advances as many items as it can in a
+/// turn and revises the list as it learns - and step 4 couples a <c>done</c> transition to a same-turn
+/// accomplishing tool result so the anti-fabrication rule has teeth.
 /// </remarks>
 public sealed class TodoTool(
     ConversationId? conversationId,

@@ -8,8 +8,10 @@ namespace BotNexus.Gateway.Prompts;
 /// </summary>
 /// <remarks>
 /// Re-injecting the todo list verbatim every turn makes the plan a durable spine that summarization
-/// (compaction) cannot blur, and turns the model's job each turn into "advance ONE item from
-/// <c>[ ]</c> to <c>[x]</c>". The checklist boxes mirror the tool's own status vocabulary:
+/// (compaction) cannot blur. The list is a working plan, not a per-turn budget: an agent continues to
+/// the next item in the same turn, and revises the list as investigation reveals the real shape of the
+/// work. The only hard constraint is anti-fabrication (#1463) -- a <c>done</c> transition requires an
+/// accomplishing tool result in the same turn. The checklist boxes mirror the tool's own status vocabulary:
 /// <c>[ ]</c> pending, <c>[~]</c> in_progress, <c>[x]</c> done, <c>[-]</c> cancelled.
 /// </remarks>
 public static class TodoPromptFormatter
@@ -79,7 +81,9 @@ public static class TodoPromptFormatter
         if (agenda.Count > 0)
         {
             lines.Add(SectionHeading);
-            lines.Add("Advance ONE item per turn; only a tool result this turn may flip an item to [x] done -- narration cannot.");
+            lines.Add("Only a tool result this turn may flip an item to [x] done -- narration cannot.");
+            lines.Add("There is no per-turn item budget: when an item is finished, continue to the next one in the same turn until the user's request is complete, subject to normal safety, approval and destructive-action boundaries.");
+            lines.Add("Revise this list as you learn: add, split, reprioritize or cancel items when investigation reveals work the original plan missed.");
             lines.AddRange(agenda.Select(static item => $"- {Box(item.Status)} {item.Text}"));
         }
 
