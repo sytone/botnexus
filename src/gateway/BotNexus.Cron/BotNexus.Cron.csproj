@@ -52,6 +52,8 @@
     <Compile Include="CronSelfPacingBound.cs" />
     <Compile Include="CronErrorProjection.cs" />
     <Compile Include="CronJobOwnership.cs" />
+    <Compile Include="CronJobOwnershipExpectation.cs" />
+    <Compile Include="CronJobOwnershipChangedException.cs" />
   </ItemGroup>
 
   <ItemGroup>

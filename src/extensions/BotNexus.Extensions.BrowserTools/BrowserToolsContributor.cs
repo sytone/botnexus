@@ -228,20 +228,20 @@ public sealed class BrowserToolsContributor : IAgentToolContributor
             return null;
         }
 
-        try
+        // An empty object is a valid grant that takes every default; only a MISSING key means
+        // "not granted". Returning null for `{}` would make an operator's minimal opt-in
+        // silently do nothing.
+        //
+        // Malformed config stays null (treated as absent) rather than falling back to defaults:
+        // that would grant browser access off the back of a typo. Bind returns null for both
+        // malformed and JSON-null, so the empty-object case is distinguished by the ValueKind
+        // check rather than by the bind result.
+        if (element.ValueKind is System.Text.Json.JsonValueKind.Object)
         {
-            // An empty object is a valid grant that takes every default; only a MISSING key means
-            // "not granted". Returning null for `{}` would make an operator's minimal opt-in
-            // silently do nothing.
-            return JsonSerializer.Deserialize<BrowserToolsExtensionConfig>(element.GetRawText())
-                ?? new BrowserToolsExtensionConfig();
+            return ExtensionConfigBinder.Bind<BrowserToolsExtensionConfig>(element);
         }
-        catch (JsonException)
-        {
-            // Malformed config is treated as absent. Falling back to DEFAULTS here would grant
-            // browser access off the back of a typo.
-            return null;
-        }
+
+        return null;
     }
 }
 

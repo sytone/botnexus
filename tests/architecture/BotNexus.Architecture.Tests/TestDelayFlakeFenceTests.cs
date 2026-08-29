@@ -13,8 +13,10 @@ public class TestDelayFlakeFenceTests : ArchitectureTest
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private const string BaselineFileName = "TestDelayFlakeBaseline.baseline";
-    private const int ExpectedBaselineEntryCount = 110;
-    private const int ExpectedBaselineViolationCount = 149;
+    // #3625 ratchet: CrossWorldFederationControllerTests' single finite wait (a 25ms Task.Delay
+    // poll loop) was replaced with an awaited signal, so its baseline entry was removed entirely.
+    private const int ExpectedBaselineEntryCount = 109;
+    private const int ExpectedBaselineViolationCount = 148;
 
     /// <summary>
     /// Pins the lexical boundary so cancellation sentinels remain valid while finite sleeps are caught.

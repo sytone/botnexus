@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
+using BotNexus.Gateway.Abstractions.Text;
 
 namespace BotNexus.Domain.Text;
 
@@ -112,11 +113,19 @@ public static class UntrustedContentSanitizer
         if (string.IsNullOrEmpty(content))
             return content;
 
-        // Fast-path: skip all regex work when no marker-introducing character class is present.
-        if (!MightContainMarkup(content))
-            return content;
+        // The envelope-fence pass runs BEFORE and OUTSIDE the MightContainMarkup fast path, and that
+        // ordering is the whole point of #3628. A forged fence is a line of hyphens, spaces and
+        // capitals: it contains no '<', '\', '&', '|', U+FF5C or NO_REPLY, so the fast path returned
+        // it verbatim and no regex here ever saw it. Widening MightContainMarkup to admit '-' would
+        // defeat the optimisation for essentially all prose; running this one cheap pass
+        // unconditionally costs a regex scan only on text that actually contains a fence-shaped line.
+        var text = NeutraliseFences(content);
 
-        var text = content;
+        // Fast-path: skip the remaining regex work when no marker-introducing character class is
+        // present. Evaluated on the fence-neutralised text so the two passes cannot disagree.
+        if (!MightContainMarkup(text))
+            return text;
+
         text = EscapedMarkupNormalizer.ReplaceMatches(text, SpecialTokenPattern);
         text = EscapedMarkupNormalizer.ReplaceMatches(text, ToolCallBlockPattern);
         text = EscapedMarkupNormalizer.ReplaceMatches(text, RoleBlockPattern);
@@ -128,6 +137,23 @@ public static class UntrustedContentSanitizer
 
         return text;
     }
+
+    /// <summary>
+    /// Defuses any envelope fence the untrusted text carries, so page content can neither close the
+    /// envelope containing it nor open a counterfeit one (#3628).
+    /// </summary>
+    /// <remarks>
+    /// The fence line is DEFUSED rather than deleted: the rails are broken with a zero-width-free
+    /// visible marker so the reader still sees that the page said something fence-shaped, while the
+    /// line no longer matches <see cref="UntrustedContentFence.MarkerPattern"/>. Deleting it would
+    /// destroy evidence of an injection attempt at exactly the moment it is most worth keeping.
+    /// This is belt-and-braces beneath the per-envelope id: the id alone already makes a forged
+    /// fence non-matching, and neutralisation means a reader scanning by eye is not misled either.
+    /// </remarks>
+    private static string NeutraliseFences(string content)
+        => UntrustedContentFence.MarkerPattern.IsMatch(content)
+            ? UntrustedContentFence.MarkerPattern.Replace(content, "[neutralised untrusted-content fence]")
+            : content;
 
     private static bool MightContainMarkup(string text)
     {

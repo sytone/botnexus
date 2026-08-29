@@ -1691,6 +1691,20 @@ public sealed class AgentDefinitionConfig
         Order = 8)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 8)]
     public string? Description { get; set; }
+
+    /// <summary>Agent-maintained summary of what the agent is currently doing (#3596).</summary>
+    /// <remarks>
+    /// Written by the agent itself through <c>update_agent</c>, not by a human editing config.
+    /// It is persisted here so it survives a gateway restart on the same path as every other
+    /// descriptor mutation, rather than needing a second store.
+    /// </remarks>
+    [Display(
+        Name = "Summary",
+        Description = "Agent-maintained summary of what this agent is currently doing. Written by the agent itself; the static description stays human-owned.",
+        GroupName = "Agent",
+        Order = 32)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 32)]
+    public string? Summary { get; set; }
     /// <summary>Model identifier (e.g. 'gpt-4.1').</summary>
     [Display(
         Name = "Model",

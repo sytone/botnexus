@@ -69,6 +69,26 @@ public static class BuiltInArchetypes
         };
 
     /// <summary>
+    /// The tool ids that give a sub-agent the means to actually USE a write grant (#3562). A write
+    /// grant - <c>grantedWritePaths</c> or <c>shareWorkspace</c> - is only meaningful if the child
+    /// holds at least one of these; otherwise the grant is unusable and the contradiction surfaces
+    /// only when the worker tries to produce its deliverable, after its whole budget is spent.
+    /// </summary>
+    /// <remarks>
+    /// <c>exec</c> is included because a shell-only archetype (e.g. <c>analyst</c>) can legitimately
+    /// produce files by running a command, so rejecting it would be a false positive. Deliberately
+    /// NOT reused by <c>WarnOnUnwritableGrantedPaths</c>, whose narrower <c>write</c>/<c>edit</c>
+    /// notion of write-capability is pinned by its own tests and must not shift (#2650).
+    /// </remarks>
+    public static IReadOnlySet<string> WriteCapableToolIds { get; } =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "write",
+            "edit",
+            "exec",
+        };
+
+    /// <summary>
     /// Returns <see langword="true"/> when <paramref name="id"/> is a reserved archetype/worker-role
     /// id that may not be used as a real conversational agent id.
     /// </summary>

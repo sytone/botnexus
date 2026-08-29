@@ -59,6 +59,12 @@ public static class TransientErrorClassifier
         new(@"\bEAI_AGAIN\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
         new(@"\bENOTFOUND\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
         new("getaddrinfo", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+        // Bare network-failure vocabulary (#3567; mirrors OpenCode 40282c1d widening /network error/
+        // to /network[-_\s]error/). The only pre-existing pattern containing "network" was anchored
+        // to a timeout, so a provider that said "network_error" -- including the finish_reason this
+        // issue raises as an exception -- matched nothing and was never retried. Disjoint from the
+        // exhaustion table by construction: no exhaustion pattern contains the word "network".
+        new(@"network[-_\s]?error", RegexOptions.IgnoreCase | RegexOptions.Compiled),
 
         // Retryable HTTP status codes, as bare numbers in free-form provider text.
         new(@"\b(?:429|500|502|503|504|524)\b", RegexOptions.Compiled),

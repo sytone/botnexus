@@ -36,11 +36,17 @@ public sealed record ConnectedPayload(
     [property: JsonPropertyName("capabilities")] HubCapabilities Capabilities);
 
 /// <summary>Agent identity summary included in <see cref="ConnectedPayload"/>.</summary>
+/// <remarks>
+/// #3596: <c>summary</c> is appended last with a null default so a client built against the
+/// previous shape still deserialises the payload - the field is additive and optional, never
+/// required, and is omitted from the wire entirely when the agent has never written one.
+/// </remarks>
 public sealed record AgentSummary(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("displayName")] string DisplayName,
     [property: JsonPropertyName("emoji")] string? Emoji = null,
-    [property: JsonPropertyName("description")] string? Description = null);
+    [property: JsonPropertyName("description")] string? Description = null,
+    [property: JsonPropertyName("summary")] string? Summary = null);
 
 /// <summary>Hub capabilities advertised on connect.</summary>
 public sealed record HubCapabilities(

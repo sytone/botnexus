@@ -23,10 +23,41 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     private IChannelDispatcher? _dispatcher;
     private bool _isRunning;
 
+    private IReadOnlyList<string> _allowList = [];
+    private HashSet<string> _allowSet = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Allow-list of sender IDs. If empty, all senders are allowed.
     /// </summary>
-    protected IReadOnlyList<string> AllowList { get; init; } = [];
+    /// <remarks>
+    /// #3593: the list is retained for shape (count, enumeration, diagnostics) but membership is
+    /// tested through <see cref="IsSenderAllowed"/> against an <see cref="StringComparer.OrdinalIgnoreCase"/>
+    /// set. Testing <c>IReadOnlyList&lt;string&gt;.Contains</c> directly resolves to the default
+    /// ordinal comparer, which silently drops a legitimate sender whose channel-reported identifier
+    /// differs only in case from the configured entry.
+    /// </remarks>
+    protected IReadOnlyList<string> AllowList
+    {
+        get => _allowList;
+        init
+        {
+            _allowList = value ?? [];
+            _allowSet = new HashSet<string>(_allowList, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>
+    /// Decides whether an inbound sender identifier satisfies the configured allow-list.
+    /// </summary>
+    /// <remarks>
+    /// Default semantics are case-insensitive ordinal, because every identifier shape that actually
+    /// reaches this seam is case-insensitive in its own namespace: SMTP addresses (ServiceBus,
+    /// Agent365), Matrix MXIDs, Telegram <c>@handles</c>, and the synthetic ids used by the Test and
+    /// Tui adapters. A channel whose identifiers are genuinely case-significant must override this
+    /// method explicitly rather than relying on an implicit comparer.
+    /// </remarks>
+    protected virtual bool IsSenderAllowed(string senderId) =>
+        _allowSet.Count == 0 || (senderId is not null && _allowSet.Contains(senderId));
 
     protected ChannelAdapterBase(ILogger logger) => Logger = logger;
 
@@ -123,7 +154,7 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     /// </summary>
     protected async Task DispatchInboundAsync(InboundMessage message, CancellationToken cancellationToken)
     {
-        if (AllowList.Count > 0 && !AllowList.Contains(message.SenderId))
+        if (!IsSenderAllowed(message.SenderId))
         {
             // #3501 AC4: this is a total blackhole for the blocked sender. At LogDebug a wrong
             // non-empty allow-list drops every message with no operator-visible signal at all,

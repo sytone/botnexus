@@ -77,6 +77,7 @@ export default defineConfig({
           { text: 'Conversations', link: '/user-guide/conversations' },
           { text: 'Automation', link: '/user-guide/automation' },
           { text: 'Configuration', link: '/user-guide/configuration' },
+          { text: 'Servers, Credentials and Agents', link: '/user-guide/secrets-and-locations' },
           { text: 'Extensions', link: '/user-guide/extensions' },
           {
             text: 'Channels',
@@ -163,6 +164,7 @@ export default defineConfig({
           { text: 'LLM Request Lifecycle', link: '/development/llm-request-lifecycle' },
           { text: 'Normalized LLM Event Audit', link: '/development/normalized-llm-event-audit' },
           { text: 'Prompt Pipeline', link: '/development/prompt-pipeline' },
+          { text: 'Connection Registry and Secrets', link: '/development/connection-registry-and-secrets' },
           { text: 'Session Stores', link: '/development/session-stores' },
           { text: 'Workspace and Memory', link: '/development/workspace-and-memory' },
           { text: 'DDD Patterns', link: '/development/ddd-patterns' },

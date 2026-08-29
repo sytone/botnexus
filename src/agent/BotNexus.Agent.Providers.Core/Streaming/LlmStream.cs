@@ -151,6 +151,43 @@ public sealed class LlmStream : IAsyncEnumerable<AssistantMessageEvent>
     }
 
     /// <summary>
+    /// Terminate the stream as FAULTED: the event channel is completed with
+    /// <paramref name="exception"/> so a consumer enumerating the stream observes the throw, and the
+    /// result task is faulted with the same exception (#3567).
+    /// </summary>
+    /// <param name="exception">The failure that terminated the turn.</param>
+    /// <remarks>
+    /// <para>
+    /// This is the seam that lets a provider-layer failure reach the agent loop's retry lane at all.
+    /// <c>AgentLoopRunner.ExecuteWithRetryAsync</c> retries only inside a <c>catch</c>, so a producer
+    /// that reports a transport failure as a returned <see cref="Models.StopReason.Error"/> message -
+    /// which is what <c>EmitError</c> does - is structurally invisible to it. Faulting the channel
+    /// re-raises the exception inside the consumer's <c>await foreach</c>, where the existing
+    /// classification, backoff and jitter machinery applies with no changes.
+    /// </para>
+    /// <para>
+    /// The result task's exception is explicitly observed. It is normally nobody's to await once the
+    /// enumeration has thrown, and an unobserved faulted task would be re-raised on the finalizer
+    /// thread as a <c>TaskScheduler.UnobservedTaskException</c> - the #3382 failure mode.
+    /// </para>
+    /// </remarks>
+    public void EndFaulted(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        _done = true;
+        if (_resultTcs.TrySetException(exception))
+        {
+            _ = _resultTcs.Task.ContinueWith(
+                static t => _ = t.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        _channel.Writer.TryComplete(exception);
+    }
+
+    /// <summary>
     /// Iterate over streaming events as they arrive.
     /// </summary>
     public async IAsyncEnumerator<AssistantMessageEvent> GetAsyncEnumerator(

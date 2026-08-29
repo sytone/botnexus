@@ -77,29 +77,19 @@ public sealed class QmdToolContributor(
             return new QmdConfig();
         }
 
-        try
+        // Bind returns null for malformed input as well as explicit JSON null, so both converge
+        // here on the same fail-closed path. The diagnostic still names the offending block and
+        // its ValueKind, which is what makes a silent misconfiguration findable.
+        var parsed = ExtensionConfigBinder.Bind<QmdConfig>(element);
+        if (parsed is null)
         {
-            var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-            var parsed = JsonSerializer.Deserialize<QmdConfig>(element.GetRawText(), options);
-            if (parsed is null)
-            {
-                (logger ?? NullLogger.Instance).LogWarning(
-                    "QMD extension config 'botnexus-qmd' for agent '{AgentId}' deserialized to null; failing closed to disabled.",
-                    descriptor.AgentId.Value);
-                return new QmdConfig();
-            }
-
-            return parsed;
-        }
-        catch (JsonException ex)
-        {
-            // Malformed config must fail closed to disabled, not enabled. Emit useful diagnostics.
             (logger ?? NullLogger.Instance).LogWarning(
-                ex,
-                "QMD extension config 'botnexus-qmd' for agent '{AgentId}' is malformed and was ignored; failing closed to disabled. Fix the extension config or remove it. Raw JSON kind: {ValueKind}.",
+                "QMD extension config 'botnexus-qmd' for agent '{AgentId}' is null or malformed and was ignored; failing closed to disabled. Fix the extension config or remove it. Raw JSON kind: {ValueKind}.",
                 descriptor.AgentId.Value,
                 element.ValueKind);
             return new QmdConfig();
         }
+
+        return parsed;
     }
 }
