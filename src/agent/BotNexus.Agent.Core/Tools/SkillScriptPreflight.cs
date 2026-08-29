@@ -1,5 +1,7 @@
 namespace BotNexus.Agent.Core.Tools;
 
+using System.Management.Automation.Language;
+
 /// <summary>
 /// Preflight for file-based script invocations (<c>pwsh -File &lt;path&gt;</c>) that turns a missing
 /// skill wrapper into an actionable diagnosis instead of <c>pwsh</c>'s bare usage banner (issue #2758).
@@ -91,6 +93,13 @@ public static class SkillScriptPreflight
     /// Extracts the <c>-File</c> target from a pre-split argument array. Returns
     /// <see langword="false"/> when the invocation is not file-based or the flag has no operand.
     /// </summary>
+    /// <remarks>
+    /// The array form is already tokenised by the caller, so no parsing is required here: an element
+    /// is either exactly the flag or it is not. The caller is nevertheless responsible for checking
+    /// that the executable really is <c>pwsh</c>/<c>powershell</c> (issue #3566, clause 5) - a
+    /// <c>-File</c> element belonging to some other command (<c>Get-ChildItem -File</c>) is a switch,
+    /// not a script path.
+    /// </remarks>
     public static bool TryGetFileTarget(IReadOnlyList<string> args, out string path)
     {
         path = string.Empty;
@@ -114,10 +123,39 @@ public static class SkillScriptPreflight
     }
 
     /// <summary>
-    /// Extracts the <c>-File</c> target from a raw shell command line. Quote-aware: a <c>-File</c>
-    /// that appears <i>inside</i> a quoted argument (e.g. <c>echo '-File x.ps1'</c>) is text, not a
-    /// flag, and is ignored.
+    /// Extracts the <c>-File</c> target from a raw shell command line by <b>parsing</b> it with
+    /// PowerShell's own parser, binding the flag only when it is a parameter of a
+    /// <c>pwsh</c>/<c>powershell</c> command and its argument is a literal string. Returns
+    /// <see langword="false"/> - i.e. <b>fails open</b> - in every other case.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the real parser (issue #3566).</b> This method used to split the command line on
+    /// whitespace and take the token after the literal text <c>-File</c>. That is not PowerShell's
+    /// tokenisation, so everything that terminates a command element - <c>;</c>, <c>|</c>, <c>)</c>,
+    /// a redirect - was swallowed into the "path", and the preflight then refused the call claiming a
+    /// file that plainly exists does not:
+    /// <c>Script not found: C:\...\get-farnsworth-token.ps1;</c>. It also matched the <i>text</i>
+    /// <c>-File</c> anywhere, so <c>Get-ChildItem &lt;dir&gt; -File | ...</c> bound the pipe character
+    /// as a filename. Over a 7-day corpus this produced <b>206 false refusals out of 316</b>, across
+    /// 22 agents - each costing a full turn and pointing the agent at the wrong problem.
+    /// </para>
+    /// <para>
+    /// This is the third appearance of the same anti-pattern in the shell preflight (#2757 nested
+    /// quoting, #2905 terminators/here-strings, now <c>-File</c> extraction), so the fix is
+    /// deliberately <i>not</i> a fourth heuristic: <c>Parser.ParseInput</c> is the oracle. It builds
+    /// an AST only - no runspace, nothing executed.
+    /// </para>
+    /// <para>
+    /// <b>Fail open, always.</b> A preflight that blocks execution must be at least as accurate as
+    /// the shell it guards, so anything short of a confident binding lets the command run and lets
+    /// the shell report its own native error: a command that does not parse, a <c>-File</c> whose
+    /// argument is a variable or subexpression rather than a literal, a parser that throws. The only
+    /// outcome that can lead to a refusal is a literal path bound to a real <c>pwsh</c> invocation -
+    /// and because the value comes from the AST, the reported path can never carry a trailing
+    /// separator or redirect character.
+    /// </para>
+    /// </remarks>
     public static bool TryGetFileTargetFromCommandLine(string? command, out string path)
     {
         path = string.Empty;
@@ -126,26 +164,100 @@ public static class SkillScriptPreflight
             return false;
         }
 
-        var tokens = Tokenize(command);
-        for (var i = 0; i < tokens.Count; i++)
+        ScriptBlockAst ast;
+        ParseError[] errors;
+        try
         {
-            var (text, quoted) = tokens[i];
-            if (quoted || !IsFileFlag(text))
+            ast = Parser.ParseInput(command, out _, out errors);
+        }
+        catch
+        {
+            // Fail open: an unexpected parser failure is not evidence about the agent's command.
+            return false;
+        }
+
+        // Clause 7: a command that cannot be parsed is allowed to run. We cannot bind a path with
+        // confidence in a broken AST, and guessing is precisely what produced this defect.
+        if (ast is null || (errors is not null && errors.Length > 0))
+        {
+            return false;
+        }
+
+        foreach (var node in ast.FindAll(n => n is CommandAst, searchNestedScriptBlocks: true))
+        {
+            if (node is CommandAst commandAst && TryBindFileArgument(commandAst, out path))
+            {
+                return true;
+            }
+        }
+
+        path = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// Binds the <c>-File</c> argument of a single parsed command, or returns <see langword="false"/>
+    /// when this command is not a PowerShell invocation, carries no <c>-File</c> parameter, or its
+    /// argument is not a literal path.
+    /// </summary>
+    private static bool TryBindFileArgument(CommandAst commandAst, out string path)
+    {
+        path = string.Empty;
+
+        var elements = commandAst.CommandElements;
+        if (elements.Count == 0)
+        {
+            return false;
+        }
+
+        // Clause 5: -File is a script path ONLY on pwsh/powershell. On any other command it is that
+        // command's own switch (Get-ChildItem -File) and means nothing to this preflight.
+        if (elements[0] is not StringConstantExpressionAst executable
+            || !IsPowerShellExecutable(executable.Value))
+        {
+            return false;
+        }
+
+        for (var i = 1; i < elements.Count; i++)
+        {
+            if (elements[i] is not CommandParameterAst parameter || !IsFileParameterName(parameter.ParameterName))
             {
                 continue;
             }
 
-            if (i + 1 >= tokens.Count)
+            // `-File:script.ps1` binds its argument to the parameter itself; `-File script.ps1`
+            // leaves it as the following element.
+            var argument = parameter.Argument ?? (i + 1 < elements.Count ? elements[i + 1] as ExpressionAst : null);
+
+            // Only a literal string is a path we can probe. A variable, a subexpression or an
+            // expandable string could resolve to anything at run time, so fail open.
+            if (argument is not StringConstantExpressionAst literal || string.IsNullOrWhiteSpace(literal.Value))
             {
                 return false;
             }
 
-            path = tokens[i + 1].Text;
-            return !string.IsNullOrWhiteSpace(path);
+            path = literal.Value;
+            return true;
         }
 
         return false;
     }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="name"/> is how PowerShell's own parameter
+    /// binder would spell <c>-File</c>: the full name or any unambiguous prefix of it (<c>-f</c>,
+    /// <c>-fi</c>, …), case-insensitively.
+    /// </summary>
+    private static bool IsFileParameterName(string? name) =>
+        !string.IsNullOrEmpty(name)
+        && "file".StartsWith(name, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="executable"/> names PowerShell
+    /// (<c>pwsh</c> or <c>powershell</c>), ignoring any directory, extension, or case.
+    /// </summary>
+    private static bool IsPowerShellExecutable(string? executable) =>
+        PowerShellPreflight.IsPowerShellExecutable(executable);
 
     /// <summary>
     /// Returns the closest existing script names to <paramref name="requested"/>, nearest first,
@@ -393,63 +505,6 @@ public static class SkillScriptPreflight
         }
 
         return false;
-    }
-
-    private static List<(string Text, bool Quoted)> Tokenize(string command)
-    {
-        var tokens = new List<(string, bool)>();
-        var current = new System.Text.StringBuilder();
-        var quoteChar = '\0';
-        var quoted = false;
-        var started = false;
-
-        void Flush()
-        {
-            if (started)
-            {
-                tokens.Add((current.ToString(), quoted));
-                current.Clear();
-                quoted = false;
-                started = false;
-            }
-        }
-
-        foreach (var c in command)
-        {
-            if (quoteChar != '\0')
-            {
-                if (c == quoteChar)
-                {
-                    quoteChar = '\0';
-                }
-                else
-                {
-                    current.Append(c);
-                }
-
-                continue;
-            }
-
-            if (c is '\'' or '"')
-            {
-                quoteChar = c;
-                quoted = true;
-                started = true;
-                continue;
-            }
-
-            if (char.IsWhiteSpace(c))
-            {
-                Flush();
-                continue;
-            }
-
-            started = true;
-            current.Append(c);
-        }
-
-        Flush();
-        return tokens;
     }
 
     /// <summary>

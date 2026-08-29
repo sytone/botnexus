@@ -247,7 +247,12 @@ public sealed class ExecTool : IAgentTool
         // an ARGUMENT-parsing error plus its generic usage banner, naming neither the skill nor any
         // candidate. Diagnose it here instead - name the skill and the closest existing wrapper names
         // enumerated from the skill's scripts/ directory. A near match is reported, never substituted.
-        if (SkillScriptPreflight.TryGetFileTarget(processArgs, out var scriptTarget))
+        //
+        // Issue #3566, clause 5: -File is only a script path on pwsh/powershell. Without this guard a
+        // `-File` element belonging to any other command (e.g. `Get-ChildItem <dir> -File`) was bound
+        // as a filename and the call refused for a script that never existed in the command at all.
+        if (PowerShellPreflight.IsPowerShellExecutable(fileName)
+            && SkillScriptPreflight.TryGetFileTarget(processArgs, out var scriptTarget))
         {
             var probeRoot = workingDir ?? _workingDirectory;
             var resolvedTarget = Path.IsPathRooted(scriptTarget) || string.IsNullOrWhiteSpace(probeRoot)
