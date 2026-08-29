@@ -117,4 +117,40 @@ public sealed class AssistantTextSanitizerTests
         Assert.Null(AssistantTextSanitizer.StripLeakedToolCalls(null));
         Assert.Equal("clean text", AssistantTextSanitizer.StripLeakedToolCalls("clean text"));
     }
+
+    // #3578: the collapse used the fixed-width quantifier \n{3}, which matches EXACTLY three
+    // newlines over non-overlapping matches, so a 7-newline run collapsed to 5 rather than 2.
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(7)]
+    [InlineData(12)]
+    public void Sanitize_CollapsesBlankLineRunOfAnyLengthToOneBlankLine(int newlineCount)
+    {
+        var text = "a<thinking>plan</thinking>" + new string('\n', newlineCount) + "b";
+
+        var result = AssistantTextSanitizer.Sanitize(text);
+
+        Assert.Equal("a\n\nb", result);
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(7)]
+    public void StripThinkingTags_CollapsesBlankLineRunOfAnyLengthToOneBlankLine(int newlineCount)
+    {
+        var text = "a<thinking>plan</thinking>" + new string('\n', newlineCount) + "b";
+
+        var result = AssistantTextSanitizer.StripThinkingTags(text);
+
+        Assert.Equal("a\n\nb", result);
+    }
+
+    [Fact]
+    public void Sanitize_PreservesASingleBlankLine()
+    {
+        var result = AssistantTextSanitizer.Sanitize("a<thinking>plan</thinking>\n\nb");
+
+        Assert.Equal("a\n\nb", result);
+    }
 }

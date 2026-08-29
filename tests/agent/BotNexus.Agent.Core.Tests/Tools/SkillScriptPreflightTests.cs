@@ -239,6 +239,95 @@ public class SkillScriptPreflightTests
         SkillScriptPreflight.TryGetFileTargetFromCommandLine(command, out _).ShouldBeFalse();
     }
 
+    // === Issue #3566: -File extraction must be PARSED, not text-split ===
+    //
+    // The extractor used to split on whitespace and take the token after the literal text "-File".
+    // That is not PowerShell's tokenisation, so any command element terminator following the path -
+    // ';', '|', ')' or a redirect - was swallowed into the "path" and the call was refused claiming a
+    // file that demonstrably exists does not. 206 of 316 weekly refusals across 22 agents were this
+    // false positive. These tests pin clauses 1-7 of the issue.
+
+    [Theory]
+    // Clause 1: a statement separator terminates the path token.
+    [InlineData("pwsh -NoProfile -File 'C:\\s\\get-token.ps1'; \"len=1\"", "C:\\s\\get-token.ps1")]
+    // Clause 2: a pipe terminates the path token.
+    [InlineData("pwsh -NoProfile -File 'C:\\s\\get-token.ps1' | Select-Object -First 1", "C:\\s\\get-token.ps1")]
+    // Clause 3: a redirect terminates the path token.
+    [InlineData("pwsh -NoProfile -File 'C:\\s\\get-token.ps1' 2>&1", "C:\\s\\get-token.ps1")]
+    // Clause 4: a call-operator invocation inside a parenthesised assignment still binds cleanly.
+    [InlineData("$x = (& pwsh -NoProfile -File 'C:\\s\\get-token.ps1')", "C:\\s\\get-token.ps1")]
+    public void TryGetFileTargetFromCommandLine_TerminatorAfterPath_BindsPathWithoutTheTerminator(
+        string command,
+        string expected)
+    {
+        SkillScriptPreflight.TryGetFileTargetFromCommandLine(command, out var path).ShouldBeTrue();
+
+        path.ShouldBe(expected);
+
+        // Non-vacuity (issue #3566, clause 6): asserting only "a path was bound" would pass even for
+        // the defective text-split. The point of the fix is that NO terminator or redirect character
+        // can survive into the reported path.
+        path.ShouldNotEndWith(";");
+        path.ShouldNotEndWith("|");
+        path.ShouldNotEndWith(")");
+        path.IndexOfAny([';', '|', ')', '(', '>', '<', '&']).ShouldBe(-1);
+    }
+
+    [Theory]
+    // Clause 5: -File is another command's own switch, not a script path. The defective extractor
+    // bound the pipe character here and resolved it against the workspace root.
+    [InlineData("Get-ChildItem 'C:\\s' -Filter '*.ps1' -File | Select-Object -First 2")]
+    [InlineData("Get-ChildItem -Path 'C:\\s' -File")]
+    // A -File on a non-PowerShell executable is equally not a script path.
+    [InlineData("git ls-files -File")]
+    public void TryGetFileTargetFromCommandLine_FileSwitchOnAnotherCommand_ReturnsFalse(string command)
+    {
+        SkillScriptPreflight.TryGetFileTargetFromCommandLine(command, out var path).ShouldBeFalse();
+
+        path.ShouldBeEmpty();
+    }
+
+    [Theory]
+    // Clause 7: an unparseable command is allowed to run so the shell reports its own native error.
+    [InlineData("pwsh -NoProfile -File 'C:\\s\\x.ps1")]                 // unterminated string
+    [InlineData("foreach ($x in $xs) { $x } | Sort-Object")]            // statement piped from
+    [InlineData("pwsh -NoProfile -File (Get-Thing 'a'")]                // unclosed parenthesis
+    public void TryGetFileTargetFromCommandLine_UnparseableCommand_FailsOpen(string command)
+    {
+        SkillScriptPreflight.TryGetFileTargetFromCommandLine(command, out var path).ShouldBeFalse();
+
+        path.ShouldBeEmpty();
+    }
+
+    [Theory]
+    // A path that is not a literal cannot be probed with confidence, so the preflight must fail open
+    // rather than guess - a variable or subexpression can resolve to a real file at run time.
+    [InlineData("pwsh -NoProfile -File $scriptPath")]
+    [InlineData("pwsh -NoProfile -File (Join-Path $dir 'x.ps1')")]
+    public void TryGetFileTargetFromCommandLine_NonLiteralPath_FailsOpen(string command)
+    {
+        SkillScriptPreflight.TryGetFileTargetFromCommandLine(command, out var path).ShouldBeFalse();
+
+        path.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TryGetFileTargetFromCommandLine_MissingScriptAfterSeparator_StillRefusesWithACleanPath()
+    {
+        // Clause 6: a genuinely missing script is STILL refused - the fix must not turn the preflight
+        // off - and the path it reports carries no trailing separator.
+        const string command = "pwsh -NoProfile -File 'C:\\s\\missing.ps1'; Get-Date";
+
+        SkillScriptPreflight.TryGetFileTargetFromCommandLine(command, out var path).ShouldBeTrue();
+        path.ShouldBe("C:\\s\\missing.ps1");
+
+        var message = SkillScriptPreflight.Validate(path, _ => false, _ => Array.Empty<string>());
+
+        message.ShouldNotBeNull();
+        message.ShouldContain("C:\\s\\missing.ps1");
+        message.ShouldNotContain("missing.ps1;");
+    }
+
     // === Near-match ranking ===
 
     [Fact]

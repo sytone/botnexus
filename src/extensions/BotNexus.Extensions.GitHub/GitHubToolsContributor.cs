@@ -87,17 +87,12 @@ public sealed class GitHubToolsContributor : IAgentToolContributor
         if (!descriptor.ExtensionConfig.TryGetValue(GitHubToolsConfig.ExtensionId, out var element))
             return null;
 
-        GitHubToolsConfig? config;
-        try
-        {
-            config = JsonSerializer.Deserialize<GitHubToolsConfig>(element.GetRawText(), GitHubJson.RequestOptions);
-        }
-        catch (JsonException)
-        {
-            // Malformed config yields no tools rather than tools with silently wrong bounds. A
-            // page-size of 0 smuggled in through bad JSON would look like an empty repository.
-            return null;
-        }
+        GitHubToolsConfig? config = ExtensionConfigBinder.Bind<GitHubToolsConfig>(element);
+
+        // Malformed config yields no tools rather than tools with silently wrong bounds. A
+        // page-size of 0 smuggled in through bad JSON would look like an empty repository.
+        // Bind returns null for malformed input, so that case and an explicit JSON null converge
+        // on the same fail-closed path.
 
         if (config is null)
             return null;

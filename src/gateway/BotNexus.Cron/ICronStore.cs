@@ -17,7 +17,25 @@ public interface ICronStore
     /// <see cref="SetNextRunAtAsync"/> call. Returns the re-read job, or <c>null</c> if the
     /// job no longer exists.
     /// </summary>
-    Task<CronJob?> UpdateDefinitionAsync(CronJob job, CancellationToken ct = default);
+    /// <param name="job">The definition to write.</param>
+    /// <param name="expectedOwnership">
+    /// The ownership state the CALLER's authorization decision was made against (#3573). When
+    /// supplied, implementers must make the write conditional on the stored <c>created_by</c> and
+    /// <c>agent_id</c> still matching it, and throw <see cref="CronJobOwnershipChangedException"/>
+    /// when they do not - rather than committing an update authorized against an owner who has
+    /// since been replaced. Comparison must be NULL-SAFE in both columns, or every edit of an
+    /// untargeted job would be rejected.
+    /// <para>
+    /// Passing <c>null</c> keeps the pre-#3573 unconditional write and is correct only for callers
+    /// that are not acting on behalf of an agent and therefore hold no stale authorization
+    /// decision - the scheduler's own reconciliation and the system-job provisioners.
+    /// </para>
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<CronJob?> UpdateDefinitionAsync(
+        CronJob job,
+        CronJobOwnershipExpectation? expectedOwnership = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Scheduler-owned narrow write of <c>NextRunAt</c> only. Used for initialization,

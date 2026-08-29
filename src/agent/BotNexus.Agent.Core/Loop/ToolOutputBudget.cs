@@ -1,5 +1,6 @@
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Gateway.Abstractions.Text;
 using System.Text;
 
 namespace BotNexus.Agent.Core.Loop;
@@ -189,6 +190,18 @@ public static class ToolOutputBudget
             }
 
             var (prefix, retainedBytes) = TakeRuneSafePrefix(block.Value, remaining);
+
+            // #3628 leg 2: the byte cut is structure-blind, so it can land halfway through a fence
+            // line and leave the model "--- END UNTRUSTED WEB CO" - neither content nor a
+            // delimiter, and completable by whatever bytes follow. Clip the fragment away before
+            // anything else looks at the prefix.
+            var partialAt = UntrustedContentFence.PartialFenceStart(prefix);
+            if (partialAt >= 0)
+            {
+                prefix = prefix[..partialAt];
+                retainedBytes = Encoding.UTF8.GetByteCount(prefix);
+            }
+
             if (prefix.Length > 0)
             {
                 bounded.Add(new AgentToolContent(AgentToolContentType.Text, prefix));
@@ -222,7 +235,56 @@ public static class ToolOutputBudget
 
         bounded.Add(new AgentToolContent(AgentToolContentType.Text, marker.ToString()));
 
+        RepairUnterminatedFence(bounded);
+
         return result with { Content = bounded };
+    }
+
+    /// <summary>
+    /// Re-emits a closing fence when the bounded projection opens an untrusted-content envelope it
+    /// no longer closes (issue #3628).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The invariant "an opening fence implies a closing fence" was previously owned by nobody:
+    /// <c>BrowserSnapshotEnvelope</c> establishes it at wrap time and has no knowledge that a
+    /// downstream cut exists, while this seam is a generic byte budget with no knowledge of any
+    /// structured payload. Truncating an envelope open hands the model attacker-controlled page text
+    /// whose provenance framing has been destroyed - the exact outcome the envelope exists to
+    /// prevent - so the budget now owns the repair.
+    /// </para>
+    /// <para>
+    /// <b>Layering.</b> This does NOT couple the agent loop to the browser extension. The fence
+    /// vocabulary lives in <see cref="UntrustedContentFence"/> in the zero-dependency
+    /// <c>BotNexus.Domain.Wire</c> leaf that this assembly already references transitively; the
+    /// budget knows only that a fenced region exists and how to terminate one. Referencing
+    /// <c>BotNexus.Extensions.BrowserTools</c> from here would invert the dependency graph - a core
+    /// loop seam depending on an extension it loads dynamically - so it is deliberately not done.
+    /// </para>
+    /// <para>
+    /// The repair is appended AFTER the truncation marker so the marker itself sits inside the
+    /// envelope it belongs to and cannot be read as trusted narration that the page authored.
+    /// </para>
+    /// </remarks>
+    private static void RepairUnterminatedFence(List<AgentToolContent> bounded)
+    {
+        var projection = new StringBuilder();
+        foreach (var block in bounded)
+        {
+            if (block.Type == AgentToolContentType.Text)
+            {
+                projection.Append(block.Value).Append('\n');
+            }
+        }
+
+        if (!UntrustedContentFence.TryFindUnterminatedFence(projection.ToString(), out var id))
+        {
+            return;
+        }
+
+        bounded.Add(new AgentToolContent(
+            AgentToolContentType.Text,
+            UntrustedContentFence.Render(closing: true, id)));
     }
 
     /// <summary>

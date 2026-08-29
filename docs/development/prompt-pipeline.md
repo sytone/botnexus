@@ -175,7 +175,7 @@ public sealed class PromptPipeline
 }
 ```
 
-See [PromptPipeline.cs](../../src/prompts/BotNexus.Prompts/PromptPipeline.cs)
+See [PromptPipeline.cs](../../src/gateway/BotNexus.Gateway.Prompts/PromptPipeline.cs)
 
 **Ordering Strategy:**
 

@@ -33,7 +33,10 @@ internal sealed class FakeCronStore : ICronStore
     public Task<CronJob?> GetAsync(JobId jobId, CancellationToken ct = default) =>
         Task.FromResult(_jobs.TryGetValue(jobId.Value, out var job) ? job : null);
 
-    public Task<CronJob?> UpdateDefinitionAsync(CronJob job, CancellationToken ct = default)
+    public Task<CronJob?> UpdateDefinitionAsync(
+        CronJob job,
+        CronJobOwnershipExpectation? expectedOwnership = null,
+        CancellationToken ct = default)
     {
         _jobs[job.Id.Value] = job;
         return Task.FromResult<CronJob?>(job);

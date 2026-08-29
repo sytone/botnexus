@@ -443,4 +443,31 @@ public sealed class MemoryEmbeddingCompositionTests : IAsyncLifetime
         composed.StoreLocationExists(AgentId.From("agent")).ShouldBe(original.StoreLocationExists(AgentId.From("agent")));
         composed.StoreLocationExists(AgentId.From("agent")).ShouldBeTrue();
     }
+
+    [Fact]
+    public async Task EmbeddingAwareFactory_CachedStoreDoesNotMaskAReapedWorkspace()
+    {
+        // #3542: this factory is the one actually registered in the gateway, and its cache used to
+        // short-circuit the #2608 guard to true. Parity with MemoryStoreFactory is asserted on both
+        // sides of the sweep so the two decisions cannot diverge again.
+        var agentDirectory = Path.Combine(_tempDirectory, "agents", "agent");
+        var dbPath = Path.Combine(agentDirectory, "data", "memory.sqlite");
+        Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+
+        await using var composed = new EmbeddingAwareMemoryStoreFactory(
+            _ => dbPath, MemoryEmbeddingService.Disabled, new FileSystem());
+        await using var original = new MemoryStoreFactory(_ => dbPath, new FileSystem());
+
+        var store = composed.Create(AgentId.From("agent"));
+        await store.InitializeAsync();
+        _ = original.Create(AgentId.From("agent"));
+        composed.StoreLocationExists(AgentId.From("agent")).ShouldBeTrue();
+
+        await store.DisposeAsync();
+        SqlitePoolCleanup.ClearPoolFor(dbPath);
+        Directory.Delete(agentDirectory, recursive: true);
+
+        composed.StoreLocationExists(AgentId.From("agent")).ShouldBeFalse();
+        composed.StoreLocationExists(AgentId.From("agent")).ShouldBe(original.StoreLocationExists(AgentId.From("agent")));
+    }
 }

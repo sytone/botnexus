@@ -73,6 +73,13 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                 stream.End(abortedMessage);
                 activity?.SetStatus(ActivityStatusCode.Error, "Operation canceled");
             }
+            catch (ProviderTransientFinishReasonException ex)
+            {
+                // #3567: same reasoning as the Completions engine -- a transport-level finish reason
+                // has to arrive at AgentLoopRunner as an exception, or the retry lane never sees it.
+                stream.EndFaulted(ex);
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            }
             catch (Exception ex)
             {
                 var errorMessage = CreateErrorMessage(model, ex.Message);
@@ -292,8 +299,21 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         return JsonNode.Parse(element.GetRawText());
     }
 
+    /// <summary>
+    /// Maps this transport's <c>finish_reason</c> to a <see cref="StopReason"/>.
+    /// </summary>
+    /// <remarks>
+    /// <c>network_error</c> THROWS <see cref="ProviderTransientFinishReasonException"/> rather than
+    /// returning a terminal tuple (#3567): it is a transport failure, and the agent loop's retry lane
+    /// only ever inspects exceptions, so the previous <c>(StopReason.Error, ...)</c> mapping ended the
+    /// run without spending a single retry attempt. Every other failure-style reason is unchanged and
+    /// still terminal on the first occurrence.
+    /// </remarks>
     private static (StopReason StopReason, string? ErrorMessage) MapStopReason(string? reason, bool hasToolCalls)
-        => reason switch
+    {
+        TransientFinishReasons.ThrowIfTransient(reason);
+
+        return reason switch
         {
             "stop" => (StopReason.Stop, null),
             "end" => (StopReason.Stop, null),
@@ -301,10 +321,10 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
             "function_call" => (StopReason.ToolUse, null),
             "tool_calls" => (StopReason.ToolUse, null),
             "content_filter" => (StopReason.Error, "Provider finish_reason: content_filter"),
-            "network_error" => (StopReason.Error, "Provider finish_reason: network_error"),
             null => hasToolCalls ? (StopReason.ToolUse, null) : (StopReason.Stop, null),
             _ => (StopReason.Error, $"Provider finish_reason: {reason}")
         };
+    }
 
     private static List<Dictionary<string, object?>> BuildMessages(
         Context context, OpenAICompletionsCompat compat, LlmModel model)

@@ -63,13 +63,30 @@ public class CompletionsStreamEngineTests
     [InlineData("tool_calls", StopReason.ToolUse, null)]
     [InlineData("refusal", StopReason.Refusal, null)]
     [InlineData("content_filter", StopReason.Sensitive, "Content filtered by provider")]
-    [InlineData("network_error", StopReason.Error, "Provider finish_reason: network_error")]
     [InlineData(null, StopReason.Stop, null)]
     public void MapStopReason_MapsKnownReasons(string? reason, StopReason expected, string? expectedMessage)
     {
         var (stopReason, message) = CompletionsStreamEngine.MapStopReason(reason);
         stopReason.ShouldBe(expected);
         message.ShouldBe(expectedMessage);
+    }
+
+    /// <summary>
+    /// #3567, AC6. This case previously lived as an <c>[InlineData]</c> row above asserting
+    /// <c>(StopReason.Error, "Provider finish_reason: network_error")</c>. It is not deleted -- it is
+    /// RESTATED here with its changed expectation: the mapping now throws, because a returned
+    /// terminal message can never reach the loop's exception-only retry lane.
+    /// </summary>
+    [Fact]
+    public void MapStopReason_NetworkError_ThrowsSoTheRetryLaneCanSeeIt()
+    {
+        var ex = Should.Throw<ProviderTransientFinishReasonException>(
+            () => CompletionsStreamEngine.MapStopReason("network_error"));
+
+        ex.FinishReason.ShouldBe("network_error");
+        // The message text is load-bearing: it is what TransientErrorClassifier matches on, and
+        // what names the cause once the attempt budget is exhausted.
+        ex.Message.ShouldBe("Provider finish_reason: network_error");
     }
 
     [Fact]

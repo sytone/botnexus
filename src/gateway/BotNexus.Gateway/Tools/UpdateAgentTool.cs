@@ -7,6 +7,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Gateway.Tools;
 
@@ -17,7 +18,9 @@ public sealed class UpdateAgentTool(
     IAgentRegistry agentRegistry,
     IAgentConfigurationWriter configurationWriter,
     IEnumerable<IAgentChangeNotifier> changeNotifiers,
-    ModelRegistry? modelRegistry = null) : IAgentTool
+    ModelRegistry? modelRegistry = null,
+    AgentId? callerAgentId = null,
+    AgentSummaryOptions? summaryOptions = null) : IAgentTool
 {
     public string Name => "update_agent";
     public string Label => "Update Agent";
@@ -43,6 +46,10 @@ public sealed class UpdateAgentTool(
                 "description": {
                   "type": "string",
                   "description": "New description."
+                },
+                "summary": {
+                  "type": "string",
+                  "description": "Agent-maintained summary of what you are currently doing. You may set this only on YOUR OWN agent id; setting it on another agent is refused. Pass an empty string to clear it."
                 },
                 "emoji": {
                   "type": "string",
@@ -113,6 +120,37 @@ public sealed class UpdateAgentTool(
             updated = updated with { DisplayName = dn };
         if (arguments.ContainsKey("description"))
             updated = updated with { Description = ReadString(arguments, "description") };
+
+        // #3596: the summary is agent-owned, so writes are self-only. The check is a policy denial
+        // on the ARGUMENT, not on the whole call - every other field keeps its existing reach, and
+        // an unattributed caller (no caller id supplied, i.e. a non-agent host) cannot use this
+        // field to reach any agent at all.
+        if (arguments.ContainsKey("summary"))
+        {
+            if (callerAgentId is not { } caller
+                || !string.Equals(caller.Value, agentId.Value, StringComparison.OrdinalIgnoreCase))
+            {
+                return Error(
+                    $"Policy denial: 'summary' may only be updated by the agent it belongs to. "
+                    + $"Caller '{callerAgentId?.Value ?? "(unattributed)"}' cannot write the summary of agent '{id}'.");
+            }
+
+            var rawSummary = ReadString(arguments, "summary");
+            var maxLength = summaryOptions?.MaxLength ?? AgentSummaryOptions.DefaultMaxLength;
+            if (rawSummary is not null && rawSummary.Length > maxLength)
+            {
+                // Refused, never truncated: a silently cut summary reads as a complete statement
+                // and the agent has no signal that its words were altered.
+                return Error(
+                    $"Summary is {rawSummary.Length} characters; the maximum is {maxLength}. "
+                    + "Shorten it and call again; it was not saved.");
+            }
+
+            // `with` (not in-place assignment) because `updated` may still alias the registry's
+            // live descriptor here, and #2065 requires persistence to succeed before any runtime
+            // state changes.
+            updated = updated with { Summary = string.IsNullOrWhiteSpace(rawSummary) ? null : rawSummary };
+        }
         if (arguments.ContainsKey("emoji"))
             updated = updated with { Emoji = ReadString(arguments, "emoji") };
         if (arguments.ContainsKey("modelId") && ReadString(arguments, "modelId") is { } mid)

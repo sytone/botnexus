@@ -43,7 +43,7 @@ public sealed class SubAgentSpawnTool(
                   "description": "Optional behavioral archetype for the sub-agent."
                 },
                 "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent. Descriptor overrides (model, apiProvider, tools, systemPrompt, archetype) are refused alongside it; the run-scoped name, maxTurns and timeoutSeconds are accepted." },
-                "shareWorkspace": { "type": "boolean", "description": "When true, grant the sub-agent read/write access to the parent agent's workspace. Default: false (isolated)." },
+                "shareWorkspace": { "type": "boolean", "description": "When true, grant the sub-agent read/write access to the parent agent's workspace. Default: false (isolated). The archetype must leave the child a write-capable tool (write, edit or exec) or the spawn is rejected." },
                 "grantedPaths": {
                   "type": "array",
                   "items": { "type": "string" },
@@ -52,7 +52,7 @@ public sealed class SubAgentSpawnTool(
                 "grantedWritePaths": {
                   "type": "array",
                   "items": { "type": "string" },
-                  "description": "Optional list of absolute paths the sub-agent is granted READ AND WRITE access to beyond its own workspace. Use this when the sub-agent must produce files in a specific directory (for example a git worktree) without granting the entire parent workspace."
+                  "description": "Optional list of absolute paths the sub-agent is granted READ AND WRITE access to beyond its own workspace. Use this when the sub-agent must produce files in a specific directory (for example a git worktree) without granting the entire parent workspace. NOTE: an archetype may restrict the toolset such that a write grant is unusable - the read-only archetypes (researcher, reviewer) have no write, edit or exec tool, so a write grant combined with one of them is REJECTED at spawn time. Choose a write-capable archetype (coder, writer, planner, analyst) or supply write/edit/exec via the tools override."
                 }
               },
               "required": ["task"]

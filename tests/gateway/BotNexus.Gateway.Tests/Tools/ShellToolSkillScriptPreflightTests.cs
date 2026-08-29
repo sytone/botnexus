@@ -88,6 +88,100 @@ public sealed class ShellToolSkillScriptPreflightTests : IDisposable
         result.Content[0].Value.ShouldContain("inline-ok");
     }
 
+    // === Issue #3566: the preflight must not refuse commands whose path is followed by a terminator ===
+    //
+    // Each of these is a shape that WAS refused in production with "Script not found: <path>;" for a
+    // script that exists, because the extractor text-split on "-File" instead of parsing. Together
+    // they cover clauses 1-5. They assert the command actually RAN (its output is present), which is
+    // the only proof that no pre-execution refusal occurred.
+
+    [Theory]
+    [InlineData("pwsh -NoProfile -File '{0}'; Write-Output 'after-semicolon'", "after-semicolon")]   // clause 1
+    [InlineData("pwsh -NoProfile -File '{0}' | Select-Object -First 1", "wrapper-ok")]              // clause 2
+    [InlineData("pwsh -NoProfile -File '{0}' 2>&1", "wrapper-ok")]                                  // clause 3
+    [InlineData("$x = (& pwsh -NoProfile -File '{0}'); Write-Output $x", "wrapper-ok")]             // clause 4
+    public async Task ExecuteAsync_ExistingScriptFollowedByATerminator_Executes(string template, string expected)
+    {
+        var scripts = CreateTeamsSkill();
+        var real = Path.Combine(scripts, "Echo.ps1");
+        File.WriteAllText(real, "Write-Output 'wrapper-ok'");
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+
+        var result = await tool.ExecuteAsync(
+            "terminator-ok",
+            new Dictionary<string, object?>
+            {
+                ["command"] = string.Format(System.Globalization.CultureInfo.InvariantCulture, template, real)
+            });
+
+        result.Content[0].Value.ShouldContain(expected);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FileSwitchOnAnotherCommand_IsNeverAScriptPath()
+    {
+        // Clause 5. This exact command was refused with
+        // "Script not found: <workspace>\|" - the extractor took the PIPE as a filename because
+        // -File here is Get-ChildItem's own switch and there is no script path in the command at all.
+        var scripts = CreateTeamsSkill();
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+
+        var result = await tool.ExecuteAsync(
+            "gci-file-switch",
+            new Dictionary<string, object?>
+            {
+                ["command"] = $"Get-ChildItem '{scripts}' -Filter '*.ps1' -File | Select-Object -First 1 -ExpandProperty Name"
+            });
+
+        result.Content[0].Value.ShouldContain(".ps1");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MissingScriptFollowedByASeparator_StillRefusesWithACleanPath()
+    {
+        // Clause 6. The fix must not weaken the guard: a genuinely absent script is still refused.
+        // Non-vacuity: asserting only "it was refused" would also pass for the defective text-split,
+        // so the reported path is asserted to carry NO trailing separator or redirect character -
+        // the exact corruption ("...ps1;") that made 206 of 316 weekly refusals false positives.
+        Directory.CreateDirectory(_root);
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var missing = Path.Combine(_root, "fq.ps1");
+
+        var ex = await Should.ThrowAsync<ArgumentException>(() => tool.ExecuteAsync(
+            "missing-with-separator",
+            new Dictionary<string, object?>
+            {
+                ["command"] = $"pwsh -NoProfile -File '{missing}'; Write-Output 'tail'"
+            }));
+
+        ex.Message.ShouldContain(missing);
+        ex.Message.ShouldNotContain(missing + ";");
+        ex.Message.ShouldNotContain(missing + "|");
+        ex.Message.ShouldNotContain(missing + ")");
+        ex.Message.ShouldNotContain(missing + " 2>&1");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UnparseableCommand_IsAllowedToRunAndReportsItsOwnNativeError()
+    {
+        // Clause 7. The -File preflight must fail open on a command it cannot parse rather than
+        // refuse it on a guess. (The command is invalid, so it fails - but at the SHELL, in the
+        // result, not as a pre-execution ArgumentException from this preflight.)
+        Directory.CreateDirectory(_root);
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var missing = Path.Combine(_root, "nope.ps1");
+
+        var ex = await Record.ExceptionAsync(() => tool.ExecuteAsync(
+            "unparseable",
+            new Dictionary<string, object?> { ["command"] = $"pwsh -NoProfile -File '{missing}" }));
+
+        // Whatever happens, it must NOT be this preflight's "Script not found" refusal.
+        if (ex is ArgumentException argumentException)
+        {
+            argumentException.Message.ShouldNotContain("Script not found");
+        }
+    }
+
     public void Dispose()
     {
         try

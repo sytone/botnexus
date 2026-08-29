@@ -58,7 +58,8 @@ public sealed class StdioMcpTransport : IMcpTransport
     /// </summary>
     internal ProcessStartInfo BuildStartInfo()
     {
-        var (fileName, processArgs) = ResolveCommand(_command, _args);
+        var launch = ResolveCommand(_command, _args);
+        var fileName = launch.FileName;
 
         var startInfo = new ProcessStartInfo
         {
@@ -75,10 +76,9 @@ public sealed class StdioMcpTransport : IMcpTransport
             startInfo.WorkingDirectory = _workingDirectory;
         }
 
-        foreach (var arg in processArgs)
-        {
-            startInfo.ArgumentList.Add(arg);
-        }
+        // Never loop over the argument list by hand here: a Windows .cmd/.bat shim resolves to a
+        // RAW cmd.exe line that must not be re-escaped through ArgumentList (#3642).
+        launch.ApplyArgumentsTo(startInfo);
 
         // When inheritEnv is false, clear inherited environment so the subprocess
         // only sees explicitly configured variables.
@@ -399,63 +399,13 @@ public sealed class StdioMcpTransport : IMcpTransport
     /// <summary>
     /// Resolves command and arguments, handling Windows .cmd/.bat shims.
     /// </summary>
-    internal static (string FileName, IReadOnlyList<string> Args) ResolveCommand(
-        string command, IReadOnlyList<string> args)
-    {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return (command, args);
-
-        var resolved = ResolveWindowsExecutable(command);
-        if (resolved is not null && IsWindowsBatchFile(resolved))
-        {
-            var cmdArgs = new List<string> { "/d", "/s", "/c", BuildCmdCommandLine(resolved, args) };
-            return (Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", cmdArgs);
-        }
-
-        return (resolved ?? command, args);
-    }
-
-    private static string? ResolveWindowsExecutable(string command)
-    {
-        if (Path.HasExtension(command))
-            return command;
-
-        string[] extensions = [".exe", ".cmd", ".bat"];
-        var pathDirs = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-
-        foreach (var ext in extensions)
-        {
-            var candidate = command + ext;
-            foreach (var dir in pathDirs)
-            {
-                var fullPath = Path.Combine(dir, candidate);
-                if (File.Exists(fullPath))
-                    return fullPath;
-            }
-        }
-
-        return null;
-    }
-
-    private static bool IsWindowsBatchFile(string path)
-    {
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        return ext is ".cmd" or ".bat";
-    }
-
-    private static string BuildCmdCommandLine(string command, IReadOnlyList<string> args)
-    {
-        var parts = new List<string> { QuoteForCmd(command) };
-        foreach (var arg in args)
-            parts.Add(QuoteForCmd(arg));
-        return string.Join(' ', parts);
-    }
-
-    private static string QuoteForCmd(string arg)
-    {
-        if (!arg.Contains(' ') && !arg.Contains('"'))
-            return arg;
-        return $"\"{arg.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
-    }
+    /// <remarks>
+    /// Delegates to the shared <see cref="WindowsShimLaunch"/> seam. This method used to carry a
+    /// private copy of the PATH probe and the cmd.exe quoting rules; that copy assembled the
+    /// <c>/d /s /c</c> payload as a fourth <see cref="ProcessStartInfo.ArgumentList"/> entry, which
+    /// .NET then CRT-escaped into <c>\"</c> - so every npx-launched stdio MCP server on Windows
+    /// failed to start (#3642). One seam, so the two copies cannot drift apart again.
+    /// </remarks>
+    internal static ProcessLaunch ResolveCommand(string command, IReadOnlyList<string> args)
+        => WindowsShimLaunch.Resolve(command, args);
 }

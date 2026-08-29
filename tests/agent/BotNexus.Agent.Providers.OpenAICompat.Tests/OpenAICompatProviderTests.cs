@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Core.Compatibility;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Streaming;
 
 namespace BotNexus.Agent.Providers.OpenAICompat.Tests;
 
@@ -29,7 +30,6 @@ public class OpenAICompatProviderTests
     [InlineData("end", StopReason.Stop, null)]
     [InlineData("function_call", StopReason.ToolUse, null)]
     [InlineData("content_filter", StopReason.Error, "Provider finish_reason: content_filter")]
-    [InlineData("network_error", StopReason.Error, "Provider finish_reason: network_error")]
     public void MapStopReason_MapsExtendedFinishReasons(string finishReason, StopReason expectedReason, string? expectedError)
     {
         var method = typeof(OpenAICompatProvider).GetMethod(
@@ -41,6 +41,28 @@ public class OpenAICompatProviderTests
 
         mapped.StopReason.ShouldBe(expectedReason);
         mapped.ErrorMessage.ShouldBe(expectedError);
+    }
+
+    /// <summary>
+    /// #3567, AC6. Previously an <c>[InlineData]</c> row on the theory above asserting
+    /// <c>(StopReason.Error, "Provider finish_reason: network_error")</c>. Restated, not deleted:
+    /// the mapping now THROWS for this reason so <c>AgentLoopRunner</c>'s exception-only retry lane
+    /// can classify and retry it. <c>content_filter</c> above is untouched and stays terminal.
+    /// </summary>
+    [Fact]
+    public void MapStopReason_NetworkError_ThrowsSoTheRetryLaneCanSeeIt()
+    {
+        var method = typeof(OpenAICompatProvider).GetMethod(
+            "MapStopReason",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        method.ShouldNotBeNull();
+
+        var thrown = Should.Throw<TargetInvocationException>(
+            () => method!.Invoke(null, ["network_error", false]));
+
+        var inner = thrown.InnerException.ShouldBeOfType<ProviderTransientFinishReasonException>();
+        inner.FinishReason.ShouldBe("network_error");
+        inner.Message.ShouldBe("Provider finish_reason: network_error");
     }
 
     [Theory]

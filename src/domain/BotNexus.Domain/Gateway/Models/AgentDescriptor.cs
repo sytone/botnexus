@@ -64,6 +64,27 @@ public sealed record AgentDescriptor : ICitizen
     public string? Description { get; init; }
 
     /// <summary>
+    /// Optional agent-maintained account of what this agent is currently doing (#3596).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately <b>settable</b> where <see cref="Description"/> is init-only, because the two
+    /// have different owners. <see cref="Description"/> is human-written intent fixed at
+    /// registration; <c>Summary</c> is written by the agent about itself as its capability drifts,
+    /// so peer agents discovering it through <c>list_agents</c> read something current rather than
+    /// whatever was typed once at creation time.
+    /// </para>
+    /// <para>
+    /// Null means "no summary", and every projection omits the field entirely in that case - an
+    /// empty string or placeholder would put noise into every peer's system prompt for agents that
+    /// never write one. Length is bounded at the write seam
+    /// (<c>UpdateAgentTool</c> / <c>AgentSummaryOptions.MaxLength</c>) rather than here, so the
+    /// descriptor stays a plain carrier and configuration remains the single place the bound lives.
+    /// </para>
+    /// </remarks>
+    public string? Summary { get; set; }
+
+    /// <summary>
     /// Optional display order. Lower values sort first. When null the agent sorts
     /// alphabetically after all agents that have an explicit order value.
     /// </summary>

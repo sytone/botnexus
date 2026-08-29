@@ -209,6 +209,61 @@ public sealed partial class CronControllerTests
         result.Result.ShouldBeOfType<NotFoundResult>();
     }
 
+    /// <summary>
+    /// #3573 / AC5: the REST seam is covered by the SAME store-level guard as the tool seam. The
+    /// 403 is decided against a snapshot and an awaited alert-target validation runs before the
+    /// write, so an ownership transfer landing in that window must reject the commit rather than
+    /// let a caller who WAS authorized rewrite created_by/agent_id under a stale decision.
+    /// </summary>
+    [Fact]
+    public async Task Update_WhenOwnershipChangesAfterTheAuthorizationCheck_ReturnsConflictAndKeepsOwnership()
+    {
+        var store = new OwnershipTransferringFakeCronStore(transferTo: "agent-thief");
+        await store.CreateAsync(CreateJob("job-raced"));
+        var controller = CreateScopedController(store, "agent-a");
+
+        var result = await controller.Update(
+            "job-raced",
+            CreateJob("job-raced") with
+            {
+                Name = "Committed under a stale owner",
+                AgentId = AgentId.From("agent-a"),
+                CreatedBy = "agent-a"
+            },
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<ConflictObjectResult>();
+
+        var stored = await store.GetAsync(JobId.From("job-raced"));
+        stored.ShouldNotBeNull();
+        stored!.CreatedBy.ShouldBe("agent-thief");
+        stored.AgentId!.Value.Value.ShouldBe("agent-thief");
+        stored.Name.ShouldNotBe("Committed under a stale owner");
+    }
+
+    /// <summary>
+    /// Transfers ownership the first time the controller reads the job, reproducing a transfer
+    /// landing inside the read-authorize-write window deterministically rather than by timing luck.
+    /// </summary>
+    private sealed class OwnershipTransferringFakeCronStore(string transferTo) : FakeCronStore
+    {
+        private int _reads;
+
+        public override async Task<CronJob?> GetAsync(JobId jobId, CancellationToken ct = default)
+        {
+            var job = await base.GetAsync(jobId, ct);
+            if (job is not null && Interlocked.Increment(ref _reads) == 1)
+            {
+                await base.UpdateDefinitionAsync(
+                    job with { CreatedBy = transferTo, AgentId = AgentId.From(transferTo) },
+                    expectedOwnership: null,
+                    ct);
+            }
+
+            return job;
+        }
+    }
+
     private static CronController CreateScopedController(FakeCronStore store, string agentId)
     {
         var controller = CreateController(store, new RecordingAction(), new CronOptions());

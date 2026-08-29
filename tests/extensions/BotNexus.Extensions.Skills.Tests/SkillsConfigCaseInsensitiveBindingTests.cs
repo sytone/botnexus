@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Gateway.Models;
 using BotNexus.Extensions.Skills;
 using BotNexus.Gateway.Abstractions.Models;
 
@@ -43,7 +44,7 @@ public sealed class SkillsConfigCaseInsensitiveBindingTests
             { "allowSharedSkillManagement": true }
             """);
 
-        var config = SkillsExtensionJson.ResolveSkillsConfig(descriptor);
+        var config = ExtensionConfigBinder.Bind<SkillsConfig>(descriptor, SkillsExtensionJson.ExtensionId);
 
         config.ShouldNotBeNull();
         config.AllowSharedSkillManagement.ShouldBeTrue(
@@ -142,7 +143,7 @@ public sealed class SkillsConfigCaseInsensitiveBindingTests
             { "maxLoadedSkills": "not-a-number" }
             """);
 
-        SkillsExtensionJson.ResolveSkillsConfig(descriptor).ShouldBeNull();
+        ExtensionConfigBinder.Bind<SkillsConfig>(descriptor, SkillsExtensionJson.ExtensionId).ShouldBeNull();
     }
 
     /// <summary>An agent with no skills config block binds to null, not to a phantom instance.</summary>
@@ -157,7 +158,7 @@ public sealed class SkillsConfigCaseInsensitiveBindingTests
             ApiProvider = "test-provider",
         };
 
-        SkillsExtensionJson.ResolveSkillsConfig(descriptor).ShouldBeNull();
+        ExtensionConfigBinder.Bind<SkillsConfig>(descriptor, SkillsExtensionJson.ExtensionId).ShouldBeNull();
     }
 
     // ── Harness ─────────────────────────────────────────────────────────────────
