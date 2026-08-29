@@ -36,30 +36,34 @@ public sealed class AskUserCheckpointReconciliationService(
     {
         try
         {
-            var conversations = await conversationStore.ListAsync(agentId: null, cancellationToken).ConfigureAwait(false);
+            // #3660: this MUST NOT be IConversationStore.ListAsync. Reconciliation used to
+            // materialise every conversation and discard all but the handful with a checkpoint on
+            // the first line of the loop body, which on a real store meant 3,964 hydrated
+            // aggregates to find 3 - a blocking IHostedService operation that delayed Kestrel's
+            // port bind by ~3.5 minutes. The narrow store query below scales with the number of
+            // pending checkpoints instead, and the fence in
+            // AskUserReconciliationScanArchitectureTests fails if ListAsync is reintroduced here.
+            var checkpoints = await conversationStore.GetPendingAskUserCheckpointsAsync(cancellationToken).ConfigureAwait(false);
             var rehydrated = 0;
-            foreach (var conversation in conversations)
+            foreach (var checkpoint in checkpoints)
             {
-                if (string.IsNullOrEmpty(conversation.PendingAskUserJson))
-                    continue;
-
                 AskUserRequest? pending;
                 try
                 {
-                    pending = JsonSerializer.Deserialize<AskUserRequest>(conversation.PendingAskUserJson, JsonOptions);
+                    pending = JsonSerializer.Deserialize<AskUserRequest>(checkpoint.PendingAskUserJson, JsonOptions);
                 }
                 catch (JsonException ex)
                 {
                     logger.LogWarning(ex,
                         "Skipping unparseable pending ask_user checkpoint for conversation {ConversationId} during reconciliation.",
-                        conversation.ConversationId);
+                        checkpoint.ConversationId);
                     continue;
                 }
 
                 if (pending is null || string.IsNullOrWhiteSpace(pending.RequestId))
                     continue;
 
-                if (registry.Rehydrate(conversation.ConversationId, pending.RequestId))
+                if (registry.Rehydrate(checkpoint.ConversationId, pending.RequestId))
                     rehydrated++;
             }
 

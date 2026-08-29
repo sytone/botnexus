@@ -177,6 +177,7 @@ public sealed class WebhookInboundConversationReuseTests : IAsyncLifetime
         public Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
             => inner.PatchOverrideAsync(conversationId, patch, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default) => inner.GetSummariesAsync(ct);
+        public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default) => inner.GetPendingAskUserCheckpointsAsync(ct);
         public Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default) => inner.GetCanvasStateAsync(conversationId, ct);
         public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, JsonElement value, CancellationToken ct = default) => inner.SetCanvasStateKeyAsync(conversationId, key, value, ct);
         public Task DeleteCanvasStateKeyAsync(ConversationId conversationId, string key, CancellationToken ct = default) => inner.DeleteCanvasStateKeyAsync(conversationId, key, ct);

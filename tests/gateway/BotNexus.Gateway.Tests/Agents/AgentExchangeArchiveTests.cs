@@ -594,6 +594,8 @@ public sealed class AgentExchangeArchiveTests
             => _inner.PatchOverrideAsync(conversationId, patch, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => _inner.GetSummariesAsync(ct);
+        public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+            => _inner.GetPendingAskUserCheckpointsAsync(ct);
         public Task<Dictionary<string, System.Text.Json.JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
             => _inner.GetCanvasStateAsync(conversationId, ct);
         public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, System.Text.Json.JsonElement value, CancellationToken ct = default)

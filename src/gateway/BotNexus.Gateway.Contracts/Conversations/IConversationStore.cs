@@ -248,6 +248,33 @@ public interface IConversationStore
     /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// Returns every conversation that currently holds a non-empty durable pending <c>ask_user</c>
+    /// checkpoint, projected to the conversation id and the checkpoint JSON only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the startup-reconciliation query (issue #3660). Its cost must scale with the number
+    /// of <em>pending checkpoints</em>, not with the total conversation population — implementations
+    /// must filter in the store, never materialise all conversations and filter in memory. The
+    /// SQLite implementation therefore issues a
+    /// <c>WHERE pending_ask_user_json IS NOT NULL AND pending_ask_user_json &lt;&gt; ''</c> query and
+    /// does not go through full-conversation materialisation.
+    /// </para>
+    /// <para>
+    /// Rows whose checkpoint column is <c>NULL</c> or empty are omitted, so a caller never has to
+    /// re-check emptiness. Malformed checkpoint <em>content</em> is not the store's concern — the
+    /// payload is returned verbatim and the caller decides how to handle a parse failure.
+    /// </para>
+    /// <para>
+    /// Conversations in any status are returned. A checkpoint on an archived conversation is still
+    /// a waiter that must be rehydrated, because #2047's mis-dispatch hazard does not care about
+    /// the conversation's lifecycle state.
+    /// </para>
+    /// </remarks>
+    /// <param name="ct">Cancellation token.</param>
+    Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default);
+
     // ── Canvas State ───────────────────────────────────────────────────────
 
     /// <summary>

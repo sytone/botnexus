@@ -377,6 +377,22 @@ public sealed class FileConversationStore : IConversationStore
             .Select(ToSummary)];
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+    {
+        // #3660 (criterion 6): cancellation must surface rather than resolve to an empty list.
+        ct.ThrowIfCancellationRequested();
+        // #3660: the file store has no queryable index, so the enumeration cost is inherent to the
+        // backing format rather than to this call. The observable contract still matches SQLite:
+        // only non-empty checkpoints are surfaced, projected to id + payload.
+        var all = await ListAsync(null, ct).ConfigureAwait(false);
+        return [.. all
+            .Where(c => !string.IsNullOrEmpty(c.PendingAskUserJson))
+            .OrderByDescending(c => c.UpdatedAt)
+            .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
+            .Select(c => new PendingAskUserCheckpoint(c.ConversationId, c.PendingAskUserJson!))];
+    }
+
     private async Task<IReadOnlyList<Conversation>> EnumerateAsync(AgentId? agentId, CancellationToken ct)
     {
         var results = new List<Conversation>();

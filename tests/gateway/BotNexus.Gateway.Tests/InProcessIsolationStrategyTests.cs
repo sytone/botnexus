@@ -909,6 +909,8 @@ file sealed class CountingConversationStore(IConversationStore inner) : IConvers
 
     public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
         => inner.GetSummariesAsync(ct);
+    public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+        => inner.GetPendingAskUserCheckpointsAsync(ct);
 
     public Task<Dictionary<string, System.Text.Json.JsonElement>?> GetCanvasStateAsync(BotNexus.Domain.Primitives.ConversationId conversationId, CancellationToken ct = default)
         => inner.GetCanvasStateAsync(conversationId, ct);

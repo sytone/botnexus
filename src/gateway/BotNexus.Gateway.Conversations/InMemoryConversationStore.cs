@@ -327,6 +327,24 @@ public sealed class InMemoryConversationStore : IConversationStore
         return Task.FromResult(summaries);
     }
 
+    /// <inheritdoc />
+    public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+    {
+        // #3660 (criterion 6): cancellation must surface rather than resolve to an empty list.
+        // A silently-empty result would skip rehydration and reintroduce the #2047 mis-dispatch,
+        // so this synchronous implementation checks the token explicitly.
+        ct.ThrowIfCancellationRequested();
+        // #3660: parity with the SQLite filtered query. There is no cheaper projection available
+        // over a dictionary of live objects, but the contract is the same - only non-empty
+        // checkpoints are surfaced, so the caller never re-checks emptiness.
+        IReadOnlyList<PendingAskUserCheckpoint> checkpoints = [.. _conversations.Values
+            .Where(c => !string.IsNullOrEmpty(c.PendingAskUserJson))
+            .OrderByDescending(c => c.UpdatedAt)
+            .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
+            .Select(c => new PendingAskUserCheckpoint(c.ConversationId, c.PendingAskUserJson!))];
+        return Task.FromResult(checkpoints);
+    }
+
     // World-id stamping/back-fill is shared across all three conversation stores — see
     // ConversationStoreShared (#1383). These forwarders thread this store's world context
     // into the shared logic while keeping the existing call-site signatures unchanged.

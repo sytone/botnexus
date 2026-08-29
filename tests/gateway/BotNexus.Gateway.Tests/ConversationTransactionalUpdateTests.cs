@@ -238,6 +238,7 @@ public sealed class ConversationTransactionalUpdateTests : IDisposable
         public Task TouchAsync(ConversationId conversationId, CancellationToken ct = default) => inner.TouchAsync(conversationId, ct);
         public Task<Conversation?> ResolveByBindingAsync(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default) => inner.ResolveByBindingAsync(agentId, channelType, channelAddress, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default) => inner.GetSummariesAsync(ct);
+        public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default) => inner.GetPendingAskUserCheckpointsAsync(ct);
         public Task<bool> MoveBindingAsync(ConversationId fromConversationId, ConversationId toConversationId, BindingId bindingId, CancellationToken ct = default) => inner.MoveBindingAsync(fromConversationId, toConversationId, bindingId, ct);
         public Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default) => inner.GetCanvasStateAsync(conversationId, ct);
         public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, JsonElement value, CancellationToken ct = default) => inner.SetCanvasStateKeyAsync(conversationId, key, value, ct);

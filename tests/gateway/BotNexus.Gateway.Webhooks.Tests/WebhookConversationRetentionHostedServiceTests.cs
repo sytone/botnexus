@@ -64,6 +64,8 @@ public sealed class WebhookConversationRetentionHostedServiceTests
             => throw new NotSupportedException();
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<ConversationSummary>>([]);
+        public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<PendingAskUserCheckpoint>>([]);
         public Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
             => Task.FromResult<Dictionary<string, JsonElement>?>(null);
         public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, JsonElement value, CancellationToken ct = default)

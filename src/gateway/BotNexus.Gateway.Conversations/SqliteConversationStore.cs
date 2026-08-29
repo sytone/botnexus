@@ -1067,6 +1067,40 @@ public sealed class SqliteConversationStore : IConversationStore
         return summaries;
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+    {
+        using var activity = ActivitySource.StartActivity("conversation.get_pending_ask_user_checkpoints", ActivityKind.Internal);
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        // #3660: filter in SQL and project two columns. Deliberately NOT routed through
+        // MaterializeOrderedAsync - that path is correct but hydrates the entire conversation
+        // aggregate for every id it is handed, which is exactly the cost this query removes.
+        // On the store that motivated the issue this reads 3 rows instead of 3,964.
+        command.CommandText = """
+            SELECT id, pending_ask_user_json
+            FROM conversations
+            WHERE pending_ask_user_json IS NOT NULL AND pending_ask_user_json <> ''
+            ORDER BY updated_at DESC
+            """;
+
+        var checkpoints = new List<PendingAskUserCheckpoint>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            checkpoints.Add(new PendingAskUserCheckpoint(
+                ConversationId.From(reader.GetString(0)),
+                reader.GetString(1)));
+        }
+
+        activity?.SetTag("botnexus.conversation.pending_ask_user_count", checkpoints.Count);
+        return checkpoints;
+    }
+
     /// <summary>
     /// Loads the participant rosters for every active conversation in a single query so
     /// <see cref="GetSummariesAsync"/> can attach them without an N+1 per-conversation lookup.

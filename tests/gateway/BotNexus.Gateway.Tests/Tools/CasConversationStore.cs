@@ -138,6 +138,8 @@ internal sealed class CasConversationStore : IConversationStore
 
     public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
         => _inner.GetSummariesAsync(ct);
+    public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+        => _inner.GetPendingAskUserCheckpointsAsync(ct);
 
     public Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
         => _inner.GetCanvasStateAsync(conversationId, ct);

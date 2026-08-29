@@ -83,6 +83,104 @@ public abstract class ConversationStoreContractTests
         result.ShouldBeNull();
     }
 
+    // ── GetPendingAskUserCheckpointsAsync (#3660) ──────────────────────────────
+
+    /// <summary>
+    /// #3660 acceptance criterion 4: seed many conversations of which exactly one carries a
+    /// pending checkpoint, and assert the store surfaces exactly that one. This is the parity
+    /// expression of "conversations without a checkpoint are never materialised" — the
+    /// SQLite-specific proof that the filter runs in SQL lives in
+    /// <c>SqliteConversationStorePendingAskUserQueryTests</c>.
+    /// </summary>
+    [Fact]
+    public async Task GetPendingAskUserCheckpointsAsync_ReturnsOnlyConversationsWithACheckpoint()
+    {
+        var store = CreateStore();
+        const int NoiseCount = 25;
+        for (var i = 0; i < NoiseCount; i++)
+            await store.CreateAsync(MakeConversation(title: $"noise-{i}"));
+
+        var withCheckpoint = MakeConversation(title: "pending");
+        withCheckpoint.PendingAskUserJson = """{"requestId":"req-1"}""";
+        await store.CreateAsync(withCheckpoint);
+
+        // Non-vacuity: the noise rows really are in the store, so returning one result is a
+        // filter working rather than an empty store.
+        (await store.ListAsync()).Count.ShouldBe(NoiseCount + 1);
+
+        var checkpoints = await store.GetPendingAskUserCheckpointsAsync();
+
+        checkpoints.Count.ShouldBe(1);
+        checkpoints[0].ConversationId.ShouldBe(withCheckpoint.ConversationId);
+        checkpoints[0].PendingAskUserJson.ShouldBe("""{"requestId":"req-1"}""");
+    }
+
+    /// <summary>
+    /// #3660 acceptance criterion 2: the projection omits <c>NULL</c> and empty payloads, so the
+    /// caller never has to re-check emptiness. An empty-string checkpoint is the case the old
+    /// in-memory <c>string.IsNullOrEmpty</c> guard covered; the filter must cover it now.
+    /// </summary>
+    [Fact]
+    public async Task GetPendingAskUserCheckpointsAsync_OmitsNullAndEmptyPayloads()
+    {
+        var store = CreateStore();
+
+        var nullPayload = MakeConversation(title: "null-payload");
+        await store.CreateAsync(nullPayload);
+
+        var emptyPayload = MakeConversation(title: "empty-payload");
+        emptyPayload.PendingAskUserJson = string.Empty;
+        await store.CreateAsync(emptyPayload);
+
+        var checkpoints = await store.GetPendingAskUserCheckpointsAsync();
+
+        checkpoints.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// #3660 acceptance criterion 6: multiple pending checkpoints are all surfaced, so the #2047
+    /// waiter map is rebuilt completely rather than for whichever row happened to sort first.
+    /// </summary>
+    [Fact]
+    public async Task GetPendingAskUserCheckpointsAsync_ReturnsEveryPendingCheckpoint()
+    {
+        var store = CreateStore();
+        var expected = new List<ConversationId>();
+        for (var i = 0; i < 3; i++)
+        {
+            var conv = MakeConversation(title: $"pending-{i}");
+            conv.PendingAskUserJson = $$"""{"requestId":"req-{{i}}"}""";
+            await store.CreateAsync(conv);
+            expected.Add(conv.ConversationId);
+        }
+
+        await store.CreateAsync(MakeConversation(title: "clean"));
+
+        var checkpoints = await store.GetPendingAskUserCheckpointsAsync();
+
+        checkpoints.Count.ShouldBe(3);
+        checkpoints.Select(c => c.ConversationId).ShouldBe(expected, ignoreOrder: true);
+    }
+
+    /// <summary>
+    /// #3660 acceptance criterion 6: cancellation propagates rather than being swallowed into an
+    /// empty result, which would silently skip rehydration and reintroduce the #2047 mis-dispatch.
+    /// </summary>
+    [Fact]
+    public async Task GetPendingAskUserCheckpointsAsync_PropagatesCancellation()
+    {
+        var store = CreateStore();
+        var conv = MakeConversation(title: "pending");
+        conv.PendingAskUserJson = """{"requestId":"req-1"}""";
+        await store.CreateAsync(conv);
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => store.GetPendingAskUserCheckpointsAsync(cts.Token));
+    }
+
     [Fact]
     public async Task GetAsync_ReturnsConversation_AfterCreate()
     {

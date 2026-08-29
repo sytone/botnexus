@@ -228,6 +228,9 @@ public sealed class GatewayHubDisconnectCleanupTokenTests
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
         { Check(ct); return inner.GetSummariesAsync(ct); }
 
+        public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+        { Check(ct); return inner.GetPendingAskUserCheckpointsAsync(ct); }
+
         public Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId id, CancellationToken ct = default)
         { Check(ct); return inner.GetCanvasStateAsync(id, ct); }
 
