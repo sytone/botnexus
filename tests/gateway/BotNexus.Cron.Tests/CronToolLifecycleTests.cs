@@ -238,9 +238,9 @@ public sealed class CronToolLifecycleTests
         var captured = new Box<CronJob>();
         store.Setup(value => value.GetAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(existing);
-        store.Setup(value => value.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
-            .Callback((CronJob job, CancellationToken _) => captured.Value = job)
-            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        store.Setup(value => value.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()))
+            .Callback((CronJob job, CronJobOwnershipExpectation? _, CancellationToken _) => captured.Value = job)
+            .ReturnsAsync((CronJob job, CronJobOwnershipExpectation? _, CancellationToken _) => job);
         return (store, captured);
     }
 

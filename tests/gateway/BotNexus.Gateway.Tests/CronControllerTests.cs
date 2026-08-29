@@ -519,7 +519,7 @@ public sealed partial class CronControllerTests
         }
     }
 
-    private sealed class FakeCronStore : ICronStore
+    internal class FakeCronStore : ICronStore
     {
         private readonly Dictionary<string, CronJob> _jobs = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, CronRun> _runs = new(StringComparer.OrdinalIgnoreCase);
@@ -536,7 +536,7 @@ public sealed partial class CronControllerTests
             return Task.FromResult(created);
         }
 
-        public Task<CronJob?> GetAsync(JobId jobId, CancellationToken ct = default)
+        public virtual Task<CronJob?> GetAsync(JobId jobId, CancellationToken ct = default)
             => Task.FromResult(_jobs.GetValueOrDefault(jobId.Value));
 
         public Task<IReadOnlyList<CronJob>> ListAsync(AgentId? agentId = null, CancellationToken ct = default)
@@ -547,13 +547,25 @@ public sealed partial class CronControllerTests
             return Task.FromResult(jobs);
         }
 
-        public Task<CronJob?> UpdateDefinitionAsync(CronJob job, CancellationToken ct = default)
+        public virtual Task<CronJob?> UpdateDefinitionAsync(
+            CronJob job,
+            CronJobOwnershipExpectation? expectedOwnership = null,
+            CancellationToken ct = default)
         {
             // Mirror the SQLite narrow definition write: preserve scheduler-owned runtime
             // bookkeeping (LastRun*/NextRunAt) and the CAS-pinned conversation from the stored
             // row; only the caller-authored definition columns are overwritten (#2133).
             if (!_jobs.TryGetValue(job.Id.Value, out var existing))
                 return Task.FromResult<CronJob?>(null);
+
+            // #3573: mirror the store's commit-time ownership predicate too, so the controller
+            // test double cannot pass a case the real SQLite store would reject.
+            if (expectedOwnership is { } expected
+                && (!string.Equals(existing.CreatedBy, expected.CreatedBy, StringComparison.Ordinal)
+                    || !string.Equals(existing.AgentId?.Value, expected.AgentId, StringComparison.Ordinal)))
+            {
+                throw new CronJobOwnershipChangedException(job.Id);
+            }
 
             var merged = job with
             {

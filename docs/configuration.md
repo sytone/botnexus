@@ -441,7 +441,7 @@ world-level defaults that are field-merged into every agent; every other key def
 
 #### `agents.defaults` properties
 
-Backed by `AgentDefaultsConfig`. Only these four keys exist - a default that is not listed here is not
+Backed by `AgentDefaultsConfig`. Only these five keys exist - a default that is not listed here is not
 merged, because there is no property to merge it into.
 
 | Property | Type | Default | Description |
@@ -544,7 +544,8 @@ overrides the corresponding `agents.defaults` value. The `Inherits` column state
 | `provider` | string | `null` | `ScalarOverride` | Provider name (for example `copilot`) |
 | `displayName` | string | `null` | `LocalOnly` | Human-readable display name shown for this agent in clients |
 | `emoji` | string | `null` | `LocalOnly` | Optional emoji shown alongside the agent name |
-| `description` | string | `null` | `LocalOnly` | Description of the agent's purpose |
+| `description` | string | `null` | `LocalOnly` | Description of the agent's purpose. Human-owned - written once at registration and never rewritten by the agent |
+| `summary` | string | `null` | `LocalOnly` | Agent-maintained account of what the agent is *currently* doing. Written by the agent itself through `update_agent`, and only for its own id - a cross-agent summary write is refused with a policy denial. Length is bounded by `gateway.agentSummary.maxLength` (default 500); a longer summary is refused rather than truncated. When unset the field is omitted from every projection entirely |
 | `model` | string | `null` | `ScalarOverride` | Model identifier (for example `gpt-4.1`) |
 | `allowedModels` | array | `null` | `ReplaceAsUnit` | Model ids this agent may use. Null means unrestricted within the provider allowlist |
 | `systemPromptFiles` | array | `null` | `ReplaceAsUnit` | Ordered list of files to load as the system prompt. Empty means the default order |
@@ -1007,6 +1008,28 @@ Gateway HTTP server settings.
 | `EnableProviderRequestLogging` | bool | false | When true, every provider HTTP request and response is logged at **Debug** level for observability (issue #453). Auth headers (`x-api-key`, `Authorization`, `Proxy-Authorization`) are always redacted by name, and request/response bodies are additionally passed through the shared `SecretRedactor` so leaked keys/tokens are scrubbed. Non-streamed responses also log a best-effort token `usage` summary and elapsed ms. Streaming (`text/event-stream`) responses log status + headers + duration only — the body is never buffered, so streaming is never broken. Off by default; enable only for debugging unexpected provider responses (never at Info in production). |
 
 
+#### Agent summary bound
+
+`gateway.agentSummary` bounds the agent-maintained `summary` field (see the per-agent
+`summary` property above). The summary is projected into the agent listing that every peer reads
+before delegating, so an unbounded self-written summary would inflate every other agent's system
+prompt. The bound therefore lives on the write seam - one place - rather than at each projection.
+
+```json
+{
+  "gateway": {
+    "agentSummary": {
+      "maxLength": 500
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `maxLength` | int | 500 | Maximum length, in characters, of an agent-written summary. A longer summary is **refused, not truncated** - a silently cut summary reads as a complete statement and the agent gets no signal that its words were altered. |
+
+
 #### Trusted per-parent sub-agent budgets
 
 `gateway.subAgents` defines global spawn defaults and ceilings. `parentOverrides` may grant a
@@ -1052,6 +1075,30 @@ or `parent-override`) so operators can audit which authorization tier applied.
 | `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
 | `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
+
+#### Agent Exchange (`agentExchange`)
+
+Governs agent-to-agent conversations started with the `agent_converse` tool. Bound from `gateway:agentExchange`.
+
+```json
+{
+  "gateway": {
+    "agentExchange": {
+      "accessPolicy": "open",
+      "maxTurnsCeiling": 30,
+      "maxInboundQueueDepth": 8
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AgentExchange.AccessPolicy` | string | `open` | Which agents may initiate conversations with others. `open` lets any registered agent converse with any other; `whitelist` requires the initiator to have the target in its `SubAgentIds` list or a matching `SubAgentRoles` grant. Compared case-insensitively. |
+| `AgentExchange.MaxTurnsCeiling` | int | 30 | Upper bound applied to the `maxTurns` argument of a single `agent_converse` call, regardless of the value the agent requests. This is what stops one tool call from driving an unbounded number of provider round-trips — the conversation budget tracker caps exchanges per agent pair, not turns within an exchange. Values below 1 are treated as 1, so a misconfiguration can never disable exchanges entirely. |
+| `AgentExchange.MaxInboundQueueDepth` | int | 8 | How many inbound exchanges may **wait** for one agent's single execution slot before further callers are refused with explicit backpressure. An in-process agent runs one turn at a time; without a bound, a busy agent accumulates waiters until each expires on its own caller-side deadline, which is precisely the silent message loss this setting makes visible. The in-flight exchange itself does not count toward the bound — only genuinely blocked callers do. Values below 1 are treated as 1. |
+
+See [Agent Exchange](features/agent-exchange.md) for the tool surface and the budget system.
 
 #### SignalR Hub Limits
 

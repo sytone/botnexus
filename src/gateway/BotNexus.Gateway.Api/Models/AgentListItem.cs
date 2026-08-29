@@ -46,6 +46,11 @@ using BotNexus.Gateway.Abstractions.Models;
 /// <param name="IsBuiltIn">Whether this is a built-in platform archetype agent.</param>
 /// <param name="ApiProvider">Provider instance key; rendered as a column by <c>Agents.razor:92</c>.</param>
 /// <param name="ModelId">Model identifier; rendered as a column by <c>Agents.razor:93</c>.</param>
+/// <param name="Summary">
+/// Optional agent-maintained summary of current capability (#3596). Appended last with a null
+/// default so an existing consumer of this DTO keeps binding unchanged, and omitted from the JSON
+/// when null so an agent that has never written one costs the list payload nothing.
+/// </param>
 public sealed record AgentListItem(
     string AgentId,
     string DisplayName,
@@ -53,7 +58,13 @@ public sealed record AgentListItem(
     string? Description,
     bool IsBuiltIn,
     string ApiProvider,
-    string ModelId)
+    string ModelId,
+    // #3596: omitted from the wire when null so an agent that has never written a summary renders
+    // exactly as it did before this field existed - no empty field, no placeholder - and costs the
+    // boot payload nothing.
+    [property: System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? Summary = null)
 {
     /// <summary>
     /// Projects a full <see cref="AgentDescriptor"/> down to its list-view fields.
@@ -69,5 +80,6 @@ public sealed record AgentListItem(
         descriptor.Description,
         descriptor.IsBuiltIn,
         descriptor.ApiProvider,
-        descriptor.ModelId);
+        descriptor.ModelId,
+        descriptor.Summary);
 }

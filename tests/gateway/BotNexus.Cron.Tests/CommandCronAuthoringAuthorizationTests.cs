@@ -152,7 +152,7 @@ public sealed class CommandCronAuthoringAuthorizationTests
                 ["shellCommand"] = "./evil.ps1"
             }));
 
-        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never());
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()), Times.Never());
     }
 
     [Fact]
@@ -171,7 +171,7 @@ public sealed class CommandCronAuthoringAuthorizationTests
                 ["shellCommand"] = "./switched.ps1"
             }));
 
-        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never());
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()), Times.Never());
     }
 
     [Fact]
@@ -192,7 +192,7 @@ public sealed class CommandCronAuthoringAuthorizationTests
         // The retained command is re-checked: a policy tightened after creation takes effect on
         // the next edit rather than being grandfathered in.
         authorizer.AuthoringCommands.ShouldContain("./check.ps1");
-        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Once());
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()), Times.Once());
     }
 
     [Fact]
@@ -209,7 +209,7 @@ public sealed class CommandCronAuthoringAuthorizationTests
             ["message"] = "Updated prompt"
         });
 
-        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Once());
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()), Times.Once());
     }
 
     // ---------------------------------------------------------------------
@@ -228,8 +228,8 @@ public sealed class CommandCronAuthoringAuthorizationTests
     private static void SetupExisting(Mock<ICronStore> store, CronJob initial)
     {
         store.Setup(s => s.GetAsync(initial.Id, It.IsAny<CancellationToken>())).ReturnsAsync(initial);
-        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
-            .Returns<CronJob, CancellationToken>((job, _) => Task.FromResult<CronJob?>(job));
+        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()))
+            .Returns<CronJob, CronJobOwnershipExpectation?, CancellationToken>((job, _, _) => Task.FromResult<CronJob?>(job));
         store.Setup(s => s.SetNextRunAtAsync(It.IsAny<JobId>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }

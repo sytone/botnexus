@@ -102,7 +102,7 @@ public sealed class CronModelPreflightIntegrationTests
 
         var ex = await act.ShouldThrowAsync<ArgumentException>();
         ex.Message.ShouldContain("acme");
-        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never);
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -114,8 +114,8 @@ public sealed class CronModelPreflightIntegrationTests
         var existing = CreateJob("job-1") with { Model = "legacy/decommissioned" };
         store.Setup(s => s.GetAsync(JobId.From("job-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(existing);
-        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CronJob job, CronJobOwnershipExpectation? _, CancellationToken _) => job);
         var tool = CreateTool(store, CronModelPreflightTests.BuildRegistry());
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
@@ -125,7 +125,7 @@ public sealed class CronModelPreflightIntegrationTests
             ["name"] = "Renamed"
         });
 
-        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Once);
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

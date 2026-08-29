@@ -1,4 +1,5 @@
 using BotNexus.Domain.Text;
+using BotNexus.Gateway.Abstractions.Text;
 
 namespace BotNexus.Extensions.BrowserTools;
 
@@ -21,10 +22,22 @@ namespace BotNexus.Extensions.BrowserTools;
 /// </remarks>
 public static class BrowserSnapshotEnvelope
 {
-    /// <summary>Opening fence of the untrusted-content envelope.</summary>
+    /// <summary>
+    /// Opening fence of the untrusted-content envelope, WITHOUT the per-snapshot id.
+    /// </summary>
+    /// <remarks>
+    /// Retained for diagnostics and for tests that assert the human-readable framing is present. It
+    /// is NOT what <see cref="Wrap"/> emits and must never be used to decide whether an envelope is
+    /// open or closed: an id-less constant published in a public repository is exactly the forgeable
+    /// delimiter #3628 removed. Use <see cref="UntrustedContentFence"/> to render or recognise a
+    /// live fence.
+    /// </remarks>
     public const string BeginMarker = "--- BEGIN UNTRUSTED WEB CONTENT ---";
 
-    /// <summary>Closing fence of the untrusted-content envelope.</summary>
+    /// <summary>
+    /// Closing fence of the untrusted-content envelope, WITHOUT the per-snapshot id. See the remarks
+    /// on <see cref="BeginMarker"/>: not emitted, not authoritative.
+    /// </summary>
     public const string EndMarker = "--- END UNTRUSTED WEB CONTENT ---";
 
     /// <summary>
@@ -49,9 +62,13 @@ public static class BrowserSnapshotEnvelope
     {
         var sanitized = UntrustedContentSanitizer.Sanitize(content) ?? string.Empty;
 
+        // A fresh id per snapshot. The page cannot guess it, so a fence the page forges - even the
+        // exact historical constant - never matches the fence that frames it (#3628 AC2).
+        var id = UntrustedContentFence.NewId();
+
         var lines = new List<string>
         {
-            BeginMarker,
+            UntrustedContentFence.Render(closing: false, id),
             $"source: {url}",
             Advisory,
         };
@@ -64,7 +81,7 @@ public static class BrowserSnapshotEnvelope
 
         lines.Add(string.Empty);
         lines.Add(sanitized);
-        lines.Add(EndMarker);
+        lines.Add(UntrustedContentFence.Render(closing: true, id));
 
         return string.Join('\n', lines);
     }

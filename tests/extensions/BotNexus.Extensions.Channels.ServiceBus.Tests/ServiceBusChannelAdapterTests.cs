@@ -183,6 +183,106 @@ public sealed class ServiceBusChannelAdapterTests
             Times.Once);
     }
 
+    // ── #3593: allow-list matching is case-insensitive ordinal ────────────────
+
+    /// <summary>
+    /// #3593 AC1: the configured entry and the channel-reported sender differ only in case. Before
+    /// the fix <c>IReadOnlyList&lt;string&gt;.Contains</c> resolved to the ordinal comparer and this
+    /// message was blackholed. Email local-parts and domains are not case-significant, and upstream
+    /// directories routinely emit mixed case, so this must dispatch.
+    /// </summary>
+    [Fact]
+    public async Task HandleMessageBodyAsync_SenderDiffersOnlyInCase_Dispatches()
+    {
+        var options = new ServiceBusChannelOptions
+        {
+            ConnectionString = "Endpoint=sb://fake/;SharedAccessKeyName=x;SharedAccessKey=y=",
+            InboundQueueName = "q",
+            DefaultReplyQueueName = "q-out",
+        };
+        options.AllowedSenderIds.Add("allowed@domain.com");
+
+        var adapter = CreateAdapter(options, new FakeServiceBusAdapterClientFactory());
+        var dispatcher = StartAdapter(adapter);
+
+        var json = """{ "content": "hello", "senderId": "Allowed@Domain.COM" }""";
+
+        await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
+
+        var dispatched = dispatcher.Invocations
+            .Where(i => i.Method.Name == nameof(IChannelDispatcher.DispatchAsync))
+            .Select(i => (InboundMessage)i.Arguments[0])
+            .Single();
+
+        // The sender id is passed through verbatim; only the membership test is case-insensitive.
+        dispatched.SenderId.ShouldBe("Allowed@Domain.COM");
+    }
+
+    /// <summary>
+    /// #3593 AC2: relaxing the comparer must not relax membership. A sender genuinely absent from a
+    /// non-empty allow-list is still blocked, including one that is a case-variant of a near-miss.
+    /// </summary>
+    [Fact]
+    public async Task HandleMessageBodyAsync_SenderAbsentFromAllowList_StillBlockedRegardlessOfCase()
+    {
+        var options = new ServiceBusChannelOptions
+        {
+            ConnectionString = "Endpoint=sb://fake/;SharedAccessKeyName=x;SharedAccessKey=y=",
+            InboundQueueName = "q",
+            DefaultReplyQueueName = "q-out",
+        };
+        options.AllowedSenderIds.Add("allowed@domain.com");
+
+        var adapter = CreateAdapter(options, new FakeServiceBusAdapterClientFactory());
+        var dispatcher = StartAdapter(adapter);
+
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "blocked", "senderId": "AlIowed@Domain.COM" }""",
+            null,
+            null,
+            CancellationToken.None);
+
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "blocked", "senderId": "allowed@example.com" }""",
+            null,
+            null,
+            CancellationToken.None);
+
+        dispatcher.Verify(
+            d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// #3593 AC3: an empty allow-list is "allow all", and moving the membership test behind
+    /// <c>IsSenderAllowed</c> must preserve that. This is the default deployment shape, so a
+    /// regression here would close every channel.
+    /// </summary>
+    [Fact]
+    public async Task HandleMessageBodyAsync_EmptyAllowList_PermitsAnySender()
+    {
+        var options = new ServiceBusChannelOptions
+        {
+            ConnectionString = "Endpoint=sb://fake/;SharedAccessKeyName=x;SharedAccessKey=y=",
+            InboundQueueName = "q",
+            DefaultReplyQueueName = "q-out",
+        };
+        options.AllowedSenderIds.Count.ShouldBe(0);
+
+        var adapter = CreateAdapter(options, new FakeServiceBusAdapterClientFactory());
+        var dispatcher = StartAdapter(adapter);
+
+        await adapter.HandleMessageBodyAsync(
+            """{ "content": "hello", "senderId": "AnYoNe@ExAmPlE.com" }""",
+            null,
+            null,
+            CancellationToken.None);
+
+        dispatcher.Verify(
+            d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
     // ── Test 4: SendAsync routes to replyTo queue when present ────────────────
 
     [Fact]

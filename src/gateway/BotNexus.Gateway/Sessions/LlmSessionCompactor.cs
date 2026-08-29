@@ -99,6 +99,11 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// usage, and for any session whose first turn has not completed yet. Absence must therefore be
     /// treated as "unavailable" and never as zero - a fabricated zero would make the ratio
     /// computable and wrong.
+    ///
+    /// #3592: the LIFETIME of this key is "last completed provider request", which stops describing
+    /// the current context the moment a successful compaction mutates history between two requests.
+    /// <see cref="CompactAsync"/> therefore REMOVES it at the successful commit point (and only
+    /// there - a Skipped/Failed outcome sheds nothing, so its measurement is still accurate).
     /// </summary>
     internal const string ProviderPromptTokensMetadataKey = "lastProviderPromptTokens";
 
@@ -608,6 +613,22 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
         // Reset circuit breaker on success.
         _breaker.TryRemove(sessionKey, out _);
+
+        // #3592: the provider prompt-token count describes the LAST COMPLETED PROVIDER REQUEST, not
+        // the current context. This cut has just shed context, so from here until the next completed
+        // provider turn the stored number describes a transcript that no longer exists. Its only
+        // writer (ProviderTokenUsageRecorder.Record) refuses to store a non-positive value, so no
+        // code path can reset it through the producer - leaving it in place kept `providerTrigger`
+        // true on the stale measurement, re-engaging the #1574 `toSummarize.Count == 0` fallback and
+        // walking PreservedTurns down to 1 trying to shed context that is already shed.
+        //
+        // Clear ONLY here, at the successful commit point. Skipped/Failed outcomes leave history
+        // unchanged, so their measurement is still accurate and must survive. Absence is already the
+        // well-defined "unavailable" state on the read side (ReadProviderPromptTokens returns null,
+        // MeasureTokens renders `providerPromptTokens=unavailable`), so the session degrades to
+        // estimate-only triggering for exactly one turn - never to a zero masquerading as a
+        // measurement. Remove is a no-op when the key was never present.
+        session.Metadata.Remove(ProviderPromptTokensMetadataKey);
 
         return CompactionResult.ForSuccess(
             summary,

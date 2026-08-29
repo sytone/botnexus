@@ -77,6 +77,10 @@ internal static class AgentDescriptorFingerprint
         builder.Append(d.Kind).Append('\u001f');
         builder.Append(d.Emoji).Append('\u001f');
         builder.Append(d.Description).Append('\u001f');
+        // #3596: the agent-owned summary participates in the fingerprint like every other persisted
+        // field. A member the fingerprint ignores is judged 'unchanged' on config hot-reload and
+        // silently never applies - the #2383 fileAccess defect.
+        builder.Append(d.Summary).Append('\u001f');
         builder.Append(d.Order).Append('\u001f');
         builder.Append(d.ModelId).Append('\u001f');
         builder.Append(d.ApiProvider).Append('\u001f');

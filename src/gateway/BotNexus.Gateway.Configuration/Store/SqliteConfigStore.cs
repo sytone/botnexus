@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using System.Text.Json.Nodes;
 using BotNexus.Persistence.Sqlite;
 using Microsoft.Data.Sqlite;
@@ -43,6 +44,23 @@ namespace BotNexus.Gateway.Configuration.Store;
 /// instances opening a fresh database concurrently do not race. There must not be a second migration
 /// mechanism in this codebase.
 /// </para>
+///
+/// <para>
+/// <b>The database file is narrowed to owner-only here, not at the call sites (#3414).</b>
+/// <c>config.db</c> holds a full copy of every value in <c>config.json</c> - provider API keys and
+/// channel bot tokens included - so it needs exactly the treatment #2392 gave the JSON document. The
+/// narrowing lives in the store because there are five construction sites, not the two the original
+/// report named, and a per-call-site <c>RestrictToOwner</c> guarantees the sixth one forgets. Doing it
+/// here covers every present and future constructor by construction.
+/// </para>
+///
+/// <para>
+/// <b>And the WAL/SHM sidecars, after every write.</b> WAL mode means recently written pages live in
+/// <c>config.db-wal</c> before they are checkpointed, so a sidecar left at the umask default leaks the
+/// same secrets as the database itself. SQLite creates the sidecars lazily - they do not exist when
+/// the schema is first created - which is why the narrowing runs after each write path rather than
+/// only at initialisation.
+/// </para>
 /// </summary>
 public sealed class SqliteConfigStore(string connectionString) : IConfigStore
 {
@@ -51,6 +69,85 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
 
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private bool _initialised;
+
+    /// <summary>
+    /// The database file plus the two WAL-mode sidecars, all of which carry configuration data and so
+    /// all of which must be owner-only (#3414). A sidecar that does not exist yet is skipped by the
+    /// helper rather than being an error.
+    /// </summary>
+    private static readonly string[] StoreFileSuffixes = ["", "-wal", "-shm"];
+
+    private readonly IFileSystem _fileSystem = new FileSystem();
+
+    /// <summary>
+    /// The on-disk path behind <c>Data Source=</c>, or <see langword="null"/> when the connection
+    /// string addresses no file (an in-memory database, which has nothing to narrow).
+    /// </summary>
+    private readonly string? _databasePath = ResolveDatabasePath(connectionString);
+
+    /// <summary>
+    /// Extracts the physical database path from the connection string so the permission narrowing can
+    /// address the file and its sidecars.
+    ///
+    /// <para>
+    /// Parsed with <see cref="SqliteConnectionStringBuilder"/> rather than by string-splitting on
+    /// <c>Data Source=</c>: the keyword has documented aliases (<c>Filename</c>, <c>DataSource</c>) and
+    /// values may be quoted, so hand-parsing would silently fail to narrow a validly-configured store.
+    /// In-memory and URI sources return <see langword="null"/> - there is no file to secure.
+    /// </para>
+    /// </summary>
+    private static string? ResolveDatabasePath(string connectionString)
+    {
+        try
+        {
+            var source = new SqliteConnectionStringBuilder(connectionString).DataSource;
+            if (string.IsNullOrWhiteSpace(source)
+                || string.Equals(source, ":memory:", StringComparison.OrdinalIgnoreCase)
+                || source.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return Path.GetFullPath(source);
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or NotSupportedException)
+        {
+            // An unparseable connection string will fail loudly at Open() with a far better message
+            // than anything thrown from here. Narrowing simply has no target.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Narrows the database file and its WAL/SHM sidecars to owner-only through the single #2392
+    /// helper (#3414).
+    ///
+    /// <para>
+    /// <b>Why the central helper and not a chmod here.</b> The raw POSIX mode API throws
+    /// <see cref="PlatformNotSupportedException"/> on Windows, so a hand-rolled call would be a
+    /// fix that secures one OS and breaks the other. <c>SecureFilePermissions.RestrictToOwner</c>
+    /// already carries both branches - POSIX 0600 and a real non-inherited Windows DACL - and
+    /// <c>SecretFilePermissionFenceArchitectureTests</c> fails the build on any raw platform call.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Never fatal.</b> The helper swallows platform failures and returns an outcome instead of
+    /// throwing: a store whose permissions could not be narrowed must still serve configuration rather
+    /// than take down the gateway.
+    /// </para>
+    /// </summary>
+    private void RestrictStoreFiles()
+    {
+        if (_databasePath is null)
+        {
+            return;
+        }
+
+        foreach (var suffix in StoreFileSuffixes)
+        {
+            SecureFilePermissions.RestrictToOwner(_fileSystem, _databasePath + suffix);
+        }
+    }
 
     /// <summary>
     /// Additive column migrations for <c>config_entries</c>, in application order.
@@ -130,6 +227,10 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+        // The WAL/SHM sidecars are created lazily by SQLite, so the first write is the earliest point
+        // at which they can be narrowed (#3414).
+        RestrictStoreFiles();
     }
 
     /// <inheritdoc />
@@ -210,6 +311,9 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+        // Sidecars again (#3414) - this is the hot edit path and the one that keeps -wal populated.
+        RestrictStoreFiles();
     }
 
     private async Task EnsureInitialisedAsync(CancellationToken cancellationToken)
@@ -264,6 +368,9 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
         {
             _initLock.Release();
         }
+
+        // Outside the lock: the file exists from here on, and narrowing never throws.
+        RestrictStoreFiles();
     }
 
     /// <summary>
