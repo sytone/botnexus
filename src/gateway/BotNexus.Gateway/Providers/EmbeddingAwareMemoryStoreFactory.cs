@@ -19,11 +19,10 @@ namespace BotNexus.Gateway.Providers;
 /// store are both already visible.
 /// </para>
 /// <para>
-/// Existence probing is DELEGATED to an inner <c>MemoryStoreFactory</c> rather than reimplemented.
-/// <c>StoreLocationExists</c> encodes hard-won knowledge about reaped sub-agent workspaces (#2237,
-/// #2608); a second copy of that logic here would drift from the original the first time either
-/// changed. The inner factory's own <c>Create</c> is never called, so it holds no stores and there
-/// is exactly one store instance per agent.
+/// Existence probing is DELEGATED to the shared <c>MemoryStoreLocationProbe</c> rather than
+/// reimplemented. That probe encodes hard-won knowledge about reaped sub-agent workspaces (#2237,
+/// #2608, #3542); a second copy of that logic here would drift from the original the first time
+/// either changed.
 /// </para>
 /// </remarks>
 public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsyncDisposable
@@ -31,7 +30,6 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
     private readonly Func<string, string> _dbPathResolver;
     private readonly IFileSystem _fileSystem;
     private readonly IMemoryEmbeddingService _embeddingService;
-    private readonly MemoryStoreFactory _existenceProbe;
     private readonly ILoggerFactory? _loggerFactory;
     private readonly ConcurrentDictionary<string, IMemoryStore> _stores = new(StringComparer.OrdinalIgnoreCase);
 
@@ -55,7 +53,6 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
         _embeddingService = embeddingService;
         _fileSystem = fileSystem ?? new FileSystem();
         _loggerFactory = loggerFactory;
-        _existenceProbe = new MemoryStoreFactory(dbPathResolver, _fileSystem);
     }
 
     /// <inheritdoc />
@@ -78,9 +75,10 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentId.Value);
 
-        // An already-created store is live regardless of what the filesystem looks like now; the
-        // inner probe cannot know about stores this factory created, so answer that case here.
-        return _stores.ContainsKey(agentId.Value) || _existenceProbe.StoreLocationExists(agentId);
+        // #3542: routed through the same shared probe as MemoryStoreFactory so the two cannot
+        // diverge. A cached store instance is deliberately NOT consulted: the reaped sub-agent
+        // this guard exists for is cached first and swept afterwards.
+        return MemoryStoreLocationProbe.Exists(_fileSystem, _dbPathResolver(agentId.Value));
     }
 
     /// <inheritdoc />
@@ -90,6 +88,5 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
             await pair.Value.DisposeAsync().ConfigureAwait(false);
 
         _stores.Clear();
-        await _existenceProbe.DisposeAsync().ConfigureAwait(false);
     }
 }
