@@ -441,7 +441,7 @@ world-level defaults that are field-merged into every agent; every other key def
 
 #### `agents.defaults` properties
 
-Backed by `AgentDefaultsConfig`. Only these four keys exist - a default that is not listed here is not
+Backed by `AgentDefaultsConfig`. Only these five keys exist - a default that is not listed here is not
 merged, because there is no property to merge it into.
 
 | Property | Type | Default | Description |

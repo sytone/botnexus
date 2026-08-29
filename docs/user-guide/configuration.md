@@ -194,11 +194,16 @@ leaves the decision to you.
 
 ## Agent Configuration
 
-Agents are defined in the `agents` section, keyed by agent ID.
+Agents are defined in the `agents` section, keyed by agent ID. One key is reserved: `defaults` holds
+world-level values that are merged into every agent, so it is not itself an agent.
 
 ```json
 {
   "agents": {
+    "defaults": {
+      "toolTimeoutSeconds": 300,
+      "toolIds": ["read_file", "write_file"]
+    },
     "assistant": {
       "displayName": "Assistant",
       "description": "General-purpose AI assistant",
@@ -310,6 +315,21 @@ The value supports `~` (home directory) and environment-variable expansion and i
 | `fileAccess.allowedReadPaths` | array | `[]` | Paths the agent can read (exact or glob). Workspace always readable |
 | `fileAccess.allowedWritePaths` | array | `[]` | Paths the agent can write (exact or glob). Workspace always writable |
 | `fileAccess.deniedPaths` | array | `[]` | Paths explicitly denied even if otherwise allowed |
+
+### `agents.defaults`
+
+The reserved `defaults` key holds world-level values merged into every agent. Only these five keys
+exist - a default that is not listed here is not merged, because there is no property to merge it
+into. See the [comprehensive configuration reference](../configuration#agents-defaults-properties)
+for the per-property inheritance policies.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `toolIds` | array | `null` | Default tool ids for agents that do not set their own `toolIds` |
+| `toolTimeoutSeconds` | int | `300` | Default per-tool timeout in seconds |
+| `memory` | object | `null` | Default memory configuration inherited by agents |
+| `heartbeat` | object | `null` | Default heartbeat configuration inherited by agents |
+| `fileAccess` | object | `null` | Default file access policy inherited by agents |
 
 ### Shell Execution
 
