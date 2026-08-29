@@ -1304,6 +1304,59 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     }
 
     /// <summary>
+    /// #3609: reports an undeliverable steer back to the originating channel and as an
+    /// <see cref="GatewayActivityType.Error"/> activity, so a discarded control message is
+    /// user-visible rather than a silent accept.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <see cref="SendSessionStatusRejectedAsync"/> deliberately: the two are the same
+    /// concern (an inbound message the gateway will not process) and must not diverge in how the
+    /// user learns about it. Best-effort on the channel leg - a channel that refuses the send must
+    /// not turn a discarded steer into a faulted turn - but the Error activity and the caller's
+    /// Warning are unconditional, so the event is never lost even when no adapter can deliver it.
+    /// </remarks>
+    private async Task SendSteeringUndeliverableAsync(
+        InboundMessage message,
+        AgentId typedAgentId,
+        SessionId typedSessionId,
+        CancellationToken cancellationToken)
+    {
+        const string StatusMessage =
+            "Your steering message could not be delivered: this session has no running agent turn to steer. "
+            + "Send it as a normal message to start a new turn.";
+
+        if (ResolveChannelAdapter(message.ChannelType) is { } channel)
+        {
+            try
+            {
+                await channel.SendAsync(new OutboundMessage
+                {
+                    ChannelType = message.ChannelType,
+                    ChannelAddress = message.ChannelAddress,
+                    Content = StatusMessage,
+                    SessionId = typedSessionId.Value
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to deliver the undeliverable-steer notice for session '{SessionId}' over channel "
+                    + "'{ChannelType}'; the Error activity below still records it (#3609).",
+                    typedSessionId.Value, message.ChannelType);
+            }
+        }
+
+        await _activity.PublishAsync(new GatewayActivity
+        {
+            Type = GatewayActivityType.Error,
+            AgentId = typedAgentId.Value,
+            SessionId = typedSessionId.Value,
+            Message = StatusMessage
+        }, cancellationToken);
+    }
+
+    /// <summary>
     /// Injects a steering message into a running turn and publishes the corresponding
     /// conversation-scoped activity event.
     /// </summary>
@@ -1337,11 +1390,32 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
         // If no handle exists at all, we can't inject. Return false so the
         // caller discards the control message (it can't be delivered).
+        //
+        // #3609 (clause 7 of #3600): this branch is reachable on ANY long-running conversation,
+        // because SessionCompactionCoordinator.CompactAsync step 4 evicts the cached handle via
+        // IAgentSupervisor.StopAsync on every applied compaction. That eviction is a CACHE drop,
+        // not a teardown: DefaultAgentSupervisor.StopAsync touches no ISessionStore, so the store
+        // legitimately still reports sessions.status = Active with a live
+        // conversations.active_session_id, and the ordinary data path
+        // (GatewayHost -> IAgentSupervisor.GetOrCreateAsync -> CreateEntryAsync, which reloads
+        // existingSession.History) rehydrates from exactly that state. The control path did not.
+        //
+        // Rehydrating HERE would be worse than discarding, and deliberately is not done:
+        // DefaultInboundDeliveryResolver documents that a steer injected into a freshly minted,
+        // idle handle lands in a PendingMessageQueue that nothing will ever drain - a silent loss
+        // one layer further down. So this keeps the discard (AC2's "fail loudly" branch) and makes
+        // it observable instead of silent: a Warning naming the session, and a user-visible message
+        // through the originating channel. The previous LogInformation + SteeringQueued activity
+        // was invisible to the user and below most production log thresholds, which is precisely
+        // the "permanently write-only conversation" symptom #3600 was filed for.
         if (handle is null)
         {
-            _logger.LogInformation(
-                "Steering received but no agent handle exists for session {SessionId}. Discarding.",
-                typedSessionId.Value);
+            _logger.LogWarning(
+                "Steering discarded for agent '{AgentId}' session '{SessionId}': no agent handle exists. "
+                + "The handle is an in-memory cache and is evicted after compaction; the control path "
+                + "cannot rehydrate it because a steer injected into an idle handle would never be "
+                + "drained. Send the message as a normal (non-steer) message to rehydrate and run it (#3609).",
+                typedAgentId.Value, typedSessionId.Value);
 
             await _activity.PublishAsync(new GatewayActivity
             {
@@ -1350,6 +1424,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 SessionId = typedSessionId.Value,
                 ConversationId = conversationId.Value
             }, cancellationToken);
+
+            await SendSteeringUndeliverableAsync(message, typedAgentId, typedSessionId, cancellationToken)
+                .ConfigureAwait(false);
 
             return false;
         }

@@ -35,7 +35,7 @@ public sealed class ListAgentsTool(
               "properties": {
                 "filter": {
                   "type": "string",
-                  "description": "Optional free-text filter applied to agent ID, display name, or description (case-insensitive)."
+                  "description": "Optional free-text filter applied to agent ID, display name, description, or agent-maintained summary (case-insensitive)."
                 },
                 "capability": {
                   "type": "string",
@@ -77,6 +77,7 @@ public sealed class ListAgentsTool(
                 AgentId: d.AgentId.ToString(),
                 DisplayName: d.DisplayName,
                 Description: d.Description,
+                Summary: d.Summary,
                 Emoji: d.Emoji,
                 Capabilities: ResolveCapabilities(d),
                 CanConverse: isOpenPolicy
@@ -96,7 +97,8 @@ public sealed class ListAgentsTool(
             return true;
         return d.AgentId.ToString().Contains(filter, StringComparison.OrdinalIgnoreCase)
             || d.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
-            || (d.Description?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false);
+            || (d.Description?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (d.Summary?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false);
     }
 
     private static bool MatchesCapability(AgentDescriptor d, string? capability)
@@ -105,7 +107,8 @@ public sealed class ListAgentsTool(
             return true;
         var caps = ResolveCapabilities(d);
         return caps.Any(c => c.Contains(capability, StringComparison.OrdinalIgnoreCase))
-            || (d.Description?.Contains(capability, StringComparison.OrdinalIgnoreCase) ?? false);
+            || (d.Description?.Contains(capability, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (d.Summary?.Contains(capability, StringComparison.OrdinalIgnoreCase) ?? false);
     }
 
     private static IReadOnlyList<string> ResolveCapabilities(AgentDescriptor d)
@@ -166,6 +169,10 @@ public sealed class ListAgentsTool(
         string AgentId,
         string DisplayName,
         string? Description,
+        // #3596: the agent-maintained account of current capability, alongside the static
+        // human-written description. Serialised with WhenWritingNull, so an agent that has never
+        // written one renders exactly as it did before this field existed.
+        string? Summary,
         string? Emoji,
         IReadOnlyList<string> Capabilities,
         bool CanConverse);

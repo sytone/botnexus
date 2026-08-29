@@ -128,6 +128,79 @@ public sealed class SecretFilePermissionCheckTests : IDisposable
             "reporting Healthy would mean the check mutated the file behind the operator's back.");
     }
 
+    /// <summary>
+    /// #3414 AC7: <c>config.db</c> is a full copy of config.json's secrets, so a broadly-readable
+    /// store must be reported. This is the mutation-verified clause - dropping "config.db" from
+    /// <c>SecretFilePermissionCheck.ConfigStoreFileNames</c> must fail this test by name, because the
+    /// file then falls out of the inspected set entirely and the check reports Healthy.
+    /// </summary>
+    [Fact]
+    public async Task BroadlyReadableConfigStore_IsReportedEvenWhenJsonConfigIsSecure()
+    {
+        WriteSecret("config.json");
+        Secure("config.json");
+        WriteSecret("config.db");
+        Loosen("config.db");
+
+        var result = await RunAsync(Context());
+
+        result.Outcome.ShouldBe(
+            DoctorOutcome.Warning,
+            "config.db holds every value config.json holds, secrets included (#3414). A secure " +
+            "config.json does not make an exposed store safe, and doctor exists precisely to make " +
+            "that exposure visible.");
+        string.Join("\n", result.Details).ShouldContain("config.db");
+    }
+
+    /// <summary>
+    /// #3414 AC2/AC3: the WAL and SHM sidecars carry recently written pages, so each must be
+    /// inspected in its own right rather than being assumed safe because the database is.
+    /// </summary>
+    [Theory]
+    [InlineData("config.db-wal")]
+    [InlineData("config.db-shm")]
+    public async Task BroadlyReadableStoreSidecar_IsReported(string sidecar)
+    {
+        WriteSecret("config.db");
+        Secure("config.db");
+        WriteSecret(sidecar);
+        Loosen(sidecar);
+
+        var result = await RunAsync(Context());
+
+        result.Outcome.ShouldBe(
+            DoctorOutcome.Warning,
+            $"'{sidecar}' carries configuration pages that have not been checkpointed into config.db " +
+            "yet, so it leaks the same secrets and must be inspected (#3414).");
+        string.Join("\n", result.Details).ShouldContain(sidecar);
+    }
+
+    /// <summary>
+    /// Non-vacuity companion to the two tests above: a correctly narrowed store must NOT be
+    /// reported, so the sidecar findings cannot be an artefact of the check flagging config.db
+    /// unconditionally.
+    /// </summary>
+    [Fact]
+    public async Task OwnerOnlyConfigStore_IsHealthyAndIsActuallyInspected()
+    {
+        foreach (var name in new[] { "config.db", "config.db-wal", "config.db-shm" })
+        {
+            WriteSecret(name);
+            Secure(name);
+        }
+
+        var result = await RunAsync(Context());
+
+        result.Outcome.ShouldBe(
+            DoctorOutcome.Healthy,
+            "An owner-only store is the correct state and must not be reported. Details: " +
+            string.Join(" | ", result.Details));
+        result.Summary.ShouldContain(
+            "3 secret-bearing file(s) are owner-only",
+            Case.Sensitive,
+            "Non-vacuity: the summary count proves all three store files were actually inspected " +
+            "rather than skipped, which a bare Healthy outcome would not distinguish (#3414).");
+    }
     private void WriteSecret(string name)
         => File.WriteAllText(
             Path.Combine(_home, name),

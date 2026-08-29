@@ -105,7 +105,7 @@ The CodingAgent ships with seven tools. Six of them are scoped to the working di
 |-----------|-------|---------------|---------|
 | read | `ReadTool` | `"read"` | Read files and directories with line numbers |
 | ls | `ListDirectoryTool` | `"ls"` | List directory entries up to 2 levels deep |
-| write | `WriteTool` | `"write"` | Write complete files (full replacement) |
+| write | `WriteTool` | `"write"` | Write complete files (full replacement), or append with `append: true` |
 | edit | `EditTool` | `"edit"` | Surgical find-and-replace edits with fuzzy matching |
 | bash | `ShellTool` | `"bash"` | Shell command execution (Windows: PowerShell, Unix: bash) |
 | grep | `GrepTool` | `"grep"` | Regex search with context lines |
@@ -149,11 +149,26 @@ private static IReadOnlyList<IAgentTool> CreateTools(
 - **Images:** Base64-encoded with MIME type (for multimodal models)
 - **Limits:** Max 2,000 lines or 50 KB per read; truncated content includes continuation instructions
 
-### `write` — Write complete files
+### `write` — Write complete files, or append to one
 
-**Parameters:** `path` (required), `content` (required)
+**Parameters:** `path` (required), `content` (required), `append` (optional, default `false`)
 
-**Behavior:** Full-file replacement. Auto-creates parent directories. Returns byte count written.
+**Behavior:** Full-file replacement by default. Auto-creates parent directories. Returns byte count written.
+
+**Append (issue #3571):** set `append: true` and `content` is appended verbatim to the end of the file
+instead of replacing it. This is the **sanctioned append path** for append-only files — run logs, memory
+notes, playbook history, audit trails. It takes no anchor, so it can never fail on ambiguity, it creates
+the file (and its parents) when absent, and it writes only the supplied bytes — no re-reading and
+re-emitting the whole file.
+
+```json
+{ "path": "logs/daily/2026-08-28.md", "content": "\n## Run 04:15Z\nresult: clean\n", "append": true }
+```
+
+> **Do not fake an append with `edit`.** Anchoring `oldText` on a log's last line and repeating it at the
+> head of `newText` fails with `found N` as soon as that boilerplate recurs — and in an append-only log it
+> recurs by design, so the failure rate grows every day. `edit` now detects that shape (an `oldText` that
+> is an exact prefix of `newText` matching more than once) and points back here.
 
 ### `edit` — Surgical edits
 

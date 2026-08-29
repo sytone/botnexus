@@ -117,19 +117,5 @@ public sealed class McpToolContributor(ILoggerFactory loggerFactory) : IAgentToo
         => ResolveExtensionConfig<McpExtensionConfig>(descriptor, "botnexus-mcp");
 
     private static T? ResolveExtensionConfig<T>(AgentDescriptor descriptor, string extensionId) where T : class
-    {
-        if (descriptor.ExtensionConfig.TryGetValue(extensionId, out var element))
-        {
-            try
-            {
-                return System.Text.Json.JsonSerializer.Deserialize<T>(element.GetRawText());
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        return null;
-    }
+        => ExtensionConfigBinder.Bind<T>(descriptor, extensionId);
 }

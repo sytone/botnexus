@@ -188,6 +188,39 @@ public sealed class AgentsListProjectionTests
             "Either a fat field was added to AgentListItem or the projection was removed (#2755).");
     }
 
+    // ── #3596: the agent-maintained summary is additive and absent-when-unset ───
+
+    [Fact]
+    public void ListResponse_AgentWithoutSummary_OmitsTheFieldEntirely()
+    {
+        // AC6: an agent with no summary must render exactly as it did before the field existed.
+        // ListResponse_ContainsExactlyTheListViewFields already pins the field set; this states the
+        // omission as its own named clause so a regression to `"summary": null` is unmissable.
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateFatDescriptor("agent-a"));
+        var controller = CreateController(registry);
+
+        var json = SerialiseList(controller.List());
+        using var doc = JsonDocument.Parse(json);
+
+        doc.RootElement[0].TryGetProperty("summary", out _).ShouldBeFalse(
+            "An unset summary must not appear on the wire - no empty field, no placeholder (#3596 AC6).");
+    }
+
+    [Fact]
+    public void ListResponse_AgentWithSummary_ProjectsItAlongsideDescription()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var descriptor = CreateFatDescriptor("agent-a");
+        descriptor.Summary = "Currently running the maintenance loop.";
+        registry.Register(descriptor);
+        var controller = CreateController(registry);
+
+        var item = ExtractItems(controller.List()).Single();
+        item.Summary.ShouldBe("Currently running the maintenance loop.");
+        item.Description.ShouldBe("a description", "the static description is untouched by #3596.");
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────────
 
     private static readonly JsonSerializerOptions SerializerOptions = new()

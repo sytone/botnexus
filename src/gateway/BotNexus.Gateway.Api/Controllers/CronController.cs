@@ -229,7 +229,28 @@ public sealed class CronController(
         // conversation. If the caller changed the schedule, recompute NextRunAt via the
         // separate narrow SetNextRunAtAsync write so a paused/racing edit cannot regress a
         // concurrent run's status, timestamps, next run, or conversation pin.
-        var saved = await store.UpdateDefinitionAsync(updated, cancellationToken);
+        // #3573: the 403 above was decided against `existing`, and an awaited alert-target
+        // validation has already run. Carry that ownership snapshot into the store's WHERE clause
+        // so a transfer landing in the window rejects the commit rather than letting it rewrite
+        // created_by/agent_id under a stale authorization. 409, not 403: the caller WAS authorized
+        // and the correct remedy is to re-read and retry, which is a different answer from "you
+        // may not touch this job".
+        CronJob? saved;
+        try
+        {
+            saved = await store.UpdateDefinitionAsync(
+                updated,
+                CronJobOwnershipExpectation.From(existing),
+                cancellationToken);
+        }
+        catch (CronJobOwnershipChangedException ex)
+        {
+            logger.LogWarning(
+                "Cron job update rejected via API: {JobId} changed ownership mid-request.",
+                typedJobId.Value);
+            return Conflict(new { error = ex.Message });
+        }
+
         if (saved is null)
             return NotFound();
 

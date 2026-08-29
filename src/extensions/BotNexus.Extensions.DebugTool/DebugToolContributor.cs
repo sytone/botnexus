@@ -50,21 +50,8 @@ public sealed class DebugToolContributor : IAgentToolContributor
     }
 
     private static DebugToolConfig ResolveConfig(AgentDescriptor descriptor)
-    {
-        if (descriptor.ExtensionConfig.TryGetValue("botnexus-debug-tool", out var element))
-        {
-            try
-            {
-                var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                return System.Text.Json.JsonSerializer.Deserialize<DebugToolConfig>(element.GetRawText(), options)
-                       ?? new DebugToolConfig();
-            }
-            catch
-            {
-                return new DebugToolConfig();
-            }
-        }
-
-        return new DebugToolConfig();
-    }
+        // Absent or malformed config both fall back to defaults; the debug tool is diagnostic-only,
+        // so a typo should not change what it exposes.
+        => ExtensionConfigBinder.Bind<DebugToolConfig>(descriptor, "botnexus-debug-tool")
+           ?? new DebugToolConfig();
 }

@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration.Store;
 using Shouldly;
@@ -185,6 +186,65 @@ public sealed class SqliteConfigStoreTests : IDisposable
         var entries = await CreateStore().ReadEntriesAsync();
 
         entries.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// #3414: the store file holds a full copy of every config.json value - provider API keys and
+    /// channel bot tokens included - so it must be narrowed to owner-only exactly as config.json is.
+    ///
+    /// <para>
+    /// Asserted through <c>SecureFilePermissions.IsReadableByOthers</c>, the same predicate the doctor
+    /// check uses, so the test measures what an operator would be told rather than a mode constant.
+    /// This is the mutation-verified clause: deleting the <c>RestrictStoreFiles()</c> call from
+    /// <c>EnsureInitialisedAsync</c> must fail this test by name on Linux.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task CreatingTheStore_NarrowsTheDatabaseFileToOwnerOnly()
+    {
+        await CreateStore().WriteDocumentAsync(Obj("""{ "providers": { "openai": { "apiKey": "sk-secret" } } }"""));
+
+        File.Exists(_dbPath).ShouldBeTrue("the store must have created its database file");
+        SecureFilePermissions.IsReadableByOthers(new FileSystem(), _dbPath).ShouldBeFalse(
+            "config.db holds every provider API key and channel bot token, so it must be owner-only " +
+            "just like config.json (#2392, #3414). If this fails, the RestrictToOwner call has been " +
+            "removed from SqliteConfigStore and enabling the config store silently writes a " +
+            "world-readable copy of every platform secret.");
+    }
+
+    /// <summary>
+    /// #3414 AC2: the WAL and SHM sidecars carry recently written pages that have not been
+    /// checkpointed into the main database yet, so an unnarrowed sidecar leaks the same secrets.
+    /// Only sidecars that actually exist are asserted - SQLite creates them lazily and a checkpointed
+    /// store may legitimately have none.
+    /// </summary>
+    [Fact]
+    public async Task WritingToTheStore_NarrowsTheWalAndShmSidecars()
+    {
+        var store = CreateStore();
+        await store.WriteDocumentAsync(Obj("""{ "providers": { "openai": { "apiKey": "sk-secret" } } }"""));
+        await store.ApplyChangesAsync(new ConfigChangeSet(
+            [new ConfigEntry("providers.openai.apiKey", ConfigValueState.Value, "\"sk-rotated\"")],
+            []));
+
+        var fileSystem = new FileSystem();
+        var inspected = 0;
+        foreach (var suffix in new[] { "-wal", "-shm" })
+        {
+            var sidecar = _dbPath + suffix;
+            if (!File.Exists(sidecar))
+                continue;
+
+            inspected++;
+            SecureFilePermissions.IsReadableByOthers(fileSystem, sidecar).ShouldBeFalse(
+                $"'{Path.GetFileName(sidecar)}' carries recently written configuration pages, so it " +
+                "must be owner-only alongside config.db itself (#3414).");
+        }
+
+        inspected.ShouldBeGreaterThan(
+            0,
+            "Non-vacuity: WAL mode is enabled by the store, so at least one sidecar must exist after " +
+            "two writes. If none do, this test is asserting nothing.");
     }
 }
 

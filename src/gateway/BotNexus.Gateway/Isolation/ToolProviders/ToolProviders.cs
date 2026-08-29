@@ -604,7 +604,8 @@ internal sealed class AgentManagementToolProvider(
     BotNexusHome? botNexusHome,
     IEnumerable<IAgentChangeNotifier> changeNotifiers,
     IOptions<PlatformConfig>? platformConfigOptions,
-    LlmClient llmClient) : IToolProvider
+    LlmClient llmClient,
+    IOptions<AgentSummaryOptions>? agentSummaryOptions = null) : IToolProvider
 {
     /// <inheritdoc />
     public bool ShouldInclude(ToolProviderContext context)
@@ -624,8 +625,11 @@ internal sealed class AgentManagementToolProvider(
 
         if (context.ToolAllowed("update_agent"))
         {
+            // #3596: the caller id is what makes the summary write self-only; without it the tool
+            // refuses every summary write rather than defaulting to permitting them.
             tools.Add(new UpdateAgentTool(
-                agentRegistry!, configurationWriter!, changeNotifiers, llmClient.Models));
+                agentRegistry!, configurationWriter!, changeNotifiers, llmClient.Models,
+                context.AgentId, agentSummaryOptions?.Value));
         }
 
         return Task.FromResult<IReadOnlyList<IAgentTool>>(tools);

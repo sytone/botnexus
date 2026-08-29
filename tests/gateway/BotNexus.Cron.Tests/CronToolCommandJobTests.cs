@@ -208,7 +208,7 @@ public sealed class CronToolCommandJobTests
             }));
 
         ex.Message.ShouldContain("shellCommand");
-        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never());
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()), Times.Never());
     }
 
     [Fact]
@@ -302,7 +302,7 @@ public sealed class CronToolCommandJobTests
             }));
 
         ex.Message.ShouldContain("templateName");
-        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()), Times.Never());
+        store.Verify(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()), Times.Never());
     }
 
     [Fact]
@@ -337,8 +337,8 @@ public sealed class CronToolCommandJobTests
         var holder = new[] { initial };
         store.Setup(s => s.GetAsync(initial.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => holder[0]);
-        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
-            .Returns<CronJob, CancellationToken>((job, _) =>
+        store.Setup(s => s.UpdateDefinitionAsync(It.IsAny<CronJob>(), It.IsAny<CronJobOwnershipExpectation?>(), It.IsAny<CancellationToken>()))
+            .Returns<CronJob, CronJobOwnershipExpectation?, CancellationToken>((job, _, _) =>
             {
                 var existing = holder[0];
                 var merged = job with

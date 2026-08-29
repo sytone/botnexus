@@ -42,7 +42,7 @@ namespace BotNexus.Extensions.Channels.ServiceBus;
 /// <see cref="ServiceBusServiceCollectionExtensions.AddBotNexusServiceBusChannel"/>.
 /// </para>
 /// </remarks>
-public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter
+public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter, IAddressableChannelAdapter
 {
     // Metadata keys stored in InboundMessage.Metadata for use by the outbound path.
     internal const string MetaReplyTo = "servicebus.replyTo";
@@ -885,7 +885,8 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
             message,
             inheritedConversationId,
             isExactPendingMatch,
-            hasBorrowedContext);
+            hasBorrowedContext,
+            TryDescribeNonExternalDestination);
 
         // 5. #2815 validity: the resolved value must be an external wire destination.
         if (TryDescribeNonExternalDestination(resolved) is { } reason)
@@ -926,15 +927,60 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         return null;
     }
 
+    /// <summary>
+    /// #3518: reports whether a fan-out to <paramref name="channelAddress"/> could ever be
+    /// addressed on this transport. A gateway-created binding addressed by AGENT ID has no
+    /// external Service Bus destination and no pending inbound request to inherit one from, so
+    /// the deliverer should skip it rather than build an envelope the #2815 guard must refuse.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately conservative: it answers <c>true</c> whenever a pending reply context exists
+    /// for the address, because that context can supply a genuine external conversation. Only an
+    /// address that is itself non-external AND has no pending context is reported undeliverable.
+    /// The outbound guard remains the authority - this never widens it.
+    /// </remarks>
+    public bool CanDeliverTo(ChannelAddress channelAddress, out string? reason)
+    {
+        reason = null;
+
+        if (string.IsNullOrWhiteSpace(channelAddress.Value))
+            return true;
+
+        var nonExternal = TryDescribeNonExternalDestination(channelAddress.Value);
+        if (nonExternal is null)
+            return true;
+
+        // A registered inbound request for this address can still supply an external destination.
+        if (_pendingQueue.TryGetValue(channelAddress.Value, out var queue) && !queue.IsEmpty)
+            return true;
+
+        reason = $"'{channelAddress.Value}' is {nonExternal} and no inbound Service Bus request is "
+            + "pending for it, so no external destination can be resolved";
+        return false;
+    }
+
     private static string ResolveOutboundConversationIdCore(
         OutboundMessage message,
         string? inheritedConversationId,
         bool isExactPendingMatch,
-        bool hasBorrowedContext)
+        bool hasBorrowedContext,
+        Func<string, string?> describeNonExternal)
     {
-        // 1. The producing session's own destination always wins.
+        // 1. The producing session's own destination wins - PROVIDED it is a destination at all.
+        //
+        //    #3518: the gateway fan-out (OutboundResponseDeliverer, since #3418) stamps the
+        //    INTERNAL 'c_<guid>' conversation id here. That value is a routing key inside the
+        //    gateway, never an external wire address, so adopting it at step 1 short-circuits
+        //    the remaining precedence rules and hands step 5 a value it can only refuse -
+        //    31 refused envelopes in a 24h window, with the genuine external address sitting
+        //    unused in the pending reply context all along. Skipping a non-external own-id lets
+        //    rules 2-4 supply the real address instead. This is strictly NARROWER than the old
+        //    behaviour: nothing that used to be emitted stops being emitted, and the #2815
+        //    validity clause is untouched, so an envelope with no external address anywhere is
+        //    still refused rather than delivered (see TryDescribeNonExternalDestination).
         if (message.ConversationId is { Length: > 0 } ownConversationId
-            && !string.IsNullOrWhiteSpace(ownConversationId))
+            && !string.IsNullOrWhiteSpace(ownConversationId)
+            && describeNonExternal(ownConversationId) is null)
         {
             return ownConversationId;
         }

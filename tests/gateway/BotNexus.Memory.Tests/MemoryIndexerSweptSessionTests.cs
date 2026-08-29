@@ -193,6 +193,88 @@ public sealed class MemoryIndexerSweptSessionTests
         attempts.ShouldBe(3);
     }
 
+    [Fact]
+    public void MemoryStoreFactory_StoreLocationExists_IsFalseWhenDirectoryReapedAfterStoreCached()
+    {
+        // #3542: the cached instance used to short-circuit true, which is exactly the state of a
+        // reaped sub-agent — created, cached, THEN swept.
+        var fileSystem = new MockFileSystem();
+        var root = fileSystem.Path.Combine(fileSystem.Path.GetTempPath(), "botnexus-3542", "agents");
+        fileSystem.Directory.CreateDirectory(fileSystem.Path.Combine(root, "swept-agent", "data"));
+        var factory = new MemoryStoreFactory(
+            agentId => fileSystem.Path.Combine(root, agentId, "data", "memory.sqlite"),
+            fileSystem);
+
+        _ = factory.Create(AgentId.From("swept-agent"));
+        factory.StoreLocationExists(AgentId.From("swept-agent")).ShouldBeTrue();
+
+        fileSystem.Directory.Delete(fileSystem.Path.Combine(root, "swept-agent"), recursive: true);
+
+        factory.StoreLocationExists(AgentId.From("swept-agent")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void MemoryStoreFactory_StoreLocationExists_StaysTrueForCachedStoreWhoseDirectorySurvives()
+    {
+        // Control for the clause above: a long-lived agent whose directory is intact is still live.
+        var fileSystem = new MockFileSystem();
+        var root = fileSystem.Path.Combine(fileSystem.Path.GetTempPath(), "botnexus-3542", "agents");
+        fileSystem.Directory.CreateDirectory(fileSystem.Path.Combine(root, "live-agent", "data"));
+        var factory = new MemoryStoreFactory(
+            agentId => fileSystem.Path.Combine(root, agentId, "data", "memory.sqlite"),
+            fileSystem);
+
+        _ = factory.Create(AgentId.From("live-agent"));
+
+        factory.StoreLocationExists(AgentId.From("live-agent")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task OnSessionClosed_WhenWorkspaceReapedAfterStoreWasCached_SkipsBeforeSqlite()
+    {
+        // #3542 end-to-end over a REAL SQLite store: create and initialize the store (so it is
+        // cached and _initialized, and will therefore not recreate its own directory), then sweep
+        // the agent directory the way #2237 does. Before the fix this reached SQLite and threw
+        // SQLITE_CANTOPEN (SQLite Error 14) into the indexer's catch.
+        var root = Path.Combine(Path.GetTempPath(), "botnexus-3542-" + Guid.NewGuid().ToString("N"));
+        var agentDirectory = Path.Combine(root, "agents", "agent-reaped");
+        Directory.CreateDirectory(Path.Combine(agentDirectory, "data"));
+
+        await using var factory = new MemoryStoreFactory(
+            agentId => Path.Combine(root, "agents", agentId, "data", "memory.sqlite"));
+
+        var store = factory.Create(AgentId.From("agent-reaped"));
+        await store.InitializeAsync();
+
+        SqlitePoolCleanup.ClearPoolFor(Path.Combine(agentDirectory, "data", "memory.sqlite"));
+        Directory.Delete(agentDirectory, recursive: true);
+
+        var lifecycle = new TestSessionLifecycleEvents();
+        var logger = new RecordingLogger();
+        var indexer = new MemoryIndexer(new ThrowingMemoryFactory(), factory, lifecycle, logger);
+        await indexer.StartAsync(CancellationToken.None);
+
+        try
+        {
+            var session = CreateSession("reaped-1", "agent-reaped");
+            await lifecycle.RaiseAsync(new SessionLifecycleEvent(
+                "reaped-1", "agent-reaped", SessionLifecycleEventType.Closed, session));
+
+            var record = await logger.WaitForAsync(LogLevel.Debug);
+
+            record.Message.ShouldContain("reaped-1");
+            logger.Records.ShouldNotContain(entry => entry.Level == LogLevel.Error);
+            logger.Records.ShouldNotContain(entry => entry.Exception is SqliteException);
+        }
+        finally
+        {
+            await indexer.StopAsync(CancellationToken.None);
+            SqlitePoolCleanup.ClearPoolsUnder(root);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static GatewaySession CreateSession(string sessionId, string agentId)
     {
         var session = new GatewaySession

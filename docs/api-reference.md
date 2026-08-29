@@ -2642,6 +2642,19 @@ A `name` in the body is optional, but when present it must match the route name 
 rejected with `400`. Returns `404` when the location does not exist. Read-rebuild-write happens
 under the writer lock, so a concurrent mutation of a different location cannot be erased.
 
+**Fields the request body cannot express are preserved, not reset.** `UpsertLocationRequest` models
+only `name`, `type`, `value` and `description`. The update starts from the persisted entry and copies
+the remaining `LocationConfig` fields forward - `username`, `credentialRef`, `verifyTls`, `tags` and
+`properties` - so editing a description cannot silently unauthenticate a location or downgrade its
+TLS verification. The copy is written field-by-field rather than as a serialization round trip: a
+round trip would silently acquire any future property, including one that must *not* be carried
+forward, so adding a property to `LocationConfig` forces an explicit decision and a fence test fails
+until that decision is made.
+
+Because the credential fields are not part of the request shape, this endpoint cannot *change* them.
+Use `botnexus secret set` and the `credentialRef` binding described in
+[Secrets and Locations](./user-guide/secrets-and-locations) to rotate a credential.
+
 #### Delete a Location
 
 ```http
