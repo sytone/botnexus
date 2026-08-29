@@ -209,6 +209,7 @@ export default defineConfig({
           { text: 'Per-Conversation Todo', link: '/features/todo' },
           { text: 'Agent Exchange', link: '/features/agent-exchange' },
           { text: 'Security-Event Diagnostics', link: '/features/security-event-diagnostics' },
+          { text: 'File-Backed Secrets', link: '/features/file-backed-secrets' },
           { text: 'Tool-Audit Write-Ahead', link: '/features/tool-audit-write-ahead' },
           { text: 'Per-Session Tool Overrides', link: '/features/session-tool-overrides' },
           { text: 'Cron Session Targets', link: '/features/cron-session-targets' },

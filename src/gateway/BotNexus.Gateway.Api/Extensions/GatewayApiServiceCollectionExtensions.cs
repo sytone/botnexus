@@ -1,9 +1,11 @@
+using System.IO.Abstractions;
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Api.Filters;
 using BotNexus.Gateway.Api.Logging;
 using BotNexus.Gateway.Api.Triggers;
 using BotNexus.Gateway.Api.Workspace;
+using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -27,6 +29,16 @@ public static class GatewayApiServiceCollectionExtensions
         // a DI ILoggerProvider: UseSerilog replaces the host ILoggerFactory, so a provider
         // registered here would never be attached and the buffer stayed empty (issue #2390).
         services.AddGatewayRecentLogStore();
+
+        // #3528: the file-per-secret store behind SecretsController. Distinct from the
+        // ISecretProvider set the gateway registers - those RESOLVE a declared credential reference
+        // the platform schema knows about; this is an open, user-named key space with no schema
+        // entry, write-only from the UI. Registered here rather than in the gateway core because
+        // its only consumer is this API layer's controller, and a store with no read path has no
+        // business being reachable from anywhere that does not mediate access.
+        services.TryAddSingleton<IFileSecretStore>(provider => new FileSecretStore(
+            provider.GetRequiredService<BotNexusHome>(),
+            provider.GetRequiredService<IFileSystem>()));
         services.AddSingleton<CronTrigger>();
         services.AddSingleton<CronSessionStartupReconciler>();
         services.AddSingleton<IHostedService>(provider => provider.GetRequiredService<CronSessionStartupReconciler>());

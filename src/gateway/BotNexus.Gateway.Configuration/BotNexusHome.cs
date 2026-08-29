@@ -206,6 +206,19 @@ public sealed class BotNexusHome : IVerifiedHome
     public string AgentsPath => Path.Combine(DataPath, "agents");
 
     /// <summary>
+    /// File-per-secret directory: each file's NAME is the key and its CONTENT is the raw value
+    /// (#3528). Sits alongside <see cref="AgentsPath"/> under <see cref="DataPath"/> so it honours
+    /// <c>BOTNEXUS_HOME</c> / <c>BOTNEXUS_DATA_DIR</c> like every other runtime directory.
+    /// </summary>
+    /// <remarks>
+    /// Exposed here rather than composed at each call site on purpose: a hand-built
+    /// <c>Path.Combine(home, "secrets")</c> in one component silently stops honouring a data-dir
+    /// override the moment one is configured, which is how a secret store ends up split across two
+    /// directories with only one of them owner-only.
+    /// </remarks>
+    public string SecretsPath => Path.Combine(DataPath, "secrets");
+
+    /// <summary>
     /// The world this home was verified against, or <see langword="null"/> when no identity was
     /// supplied and the sentinel guard is inert (#2836).
     /// </summary>
