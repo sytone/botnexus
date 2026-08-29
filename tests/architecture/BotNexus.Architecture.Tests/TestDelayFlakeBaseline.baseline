@@ -55,7 +55,6 @@ tests/gateway/BotNexus.Gateway.Tests/Configuration/PlatformAgentReconciliationSe
 tests/gateway/BotNexus.Gateway.Tests/Configuration/PlatformConfigWriterNoOpTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/ConversationAutoTitleServiceTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/ConversationScopedEventAttributionTests.cs|1
-tests/gateway/BotNexus.Gateway.Tests/CrossWorldFederationControllerTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/DefaultAgentRegistryTests.cs|2
 tests/gateway/BotNexus.Gateway.Tests/DefaultAgentSupervisorTests.cs|2
 tests/gateway/BotNexus.Gateway.Tests/Diagnostics/MemoryPressureMonitorTests.cs|1
