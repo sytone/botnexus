@@ -69,6 +69,73 @@ public sealed class SubAgentTargetAgentIdTests
         registeredDescriptor.ShouldNotBeNull();
         registeredDescriptor!.ModelId.ShouldBe("claude-sonnet-4");
         registeredDescriptor.SystemPrompt.ShouldBe("You are Farnsworth, a coding assistant.");
+        // #3570 clause 4: targetAgentId alone still reports no run label.
+        result.Name.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// #3570 clauses 1 + 2 end-to-end: <c>targetAgentId</c> plus a run label spawns the target's
+    /// descriptor VERBATIM and the resulting run reports the SUPPLIED name instead of null. This
+    /// combination previously threw before any sub-agent was created, failing an automated
+    /// PR-review workflow on every invocation.
+    /// </summary>
+    [Fact]
+    public async Task SpawnAsync_WithTargetAgentIdAndRunName_MirrorsDescriptor_AndReportsSuppliedName()
+    {
+        var childHandle = CreateHandle();
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(childHandle.Object);
+
+        AgentDescriptor? registeredDescriptor = null;
+        var registry = new Mock<IAgentRegistry>();
+        registry
+            .Setup(r => r.Get(AgentId.From("nova")))
+            .Returns(new AgentDescriptor
+            {
+                AgentId = AgentId.From("nova"),
+                DisplayName = "Nova",
+                ModelId = "gpt-4o",
+                ApiProvider = "openai",
+                SystemPrompt = "You are Nova."
+            });
+        registry
+            .Setup(r => r.Get(AgentId.From("farnsworth")))
+            .Returns(new AgentDescriptor
+            {
+                AgentId = AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "claude-sonnet-4",
+                ApiProvider = "anthropic",
+                SystemPrompt = "You are Farnsworth, a coding assistant."
+            });
+        registry.Setup(r => r.Contains(It.IsAny<AgentId>())).Returns(false);
+        registry
+            .Setup(r => r.Register(It.IsAny<AgentDescriptor>()))
+            .Callback<AgentDescriptor>(d => registeredDescriptor = d);
+
+        var manager = CreateManager(supervisor.Object, registry.Object);
+
+        var request = new SubAgentSpawnRequest
+        {
+            ParentAgentId = AgentId.From("nova"),
+            ParentSessionId = SessionId.From("nova-session"),
+            Task = "Review PR #11",
+            TimeoutSeconds = 600,
+            Mode = new Mirror(AgentId.From("farnsworth"), "pr-review-run"),
+            InheritedConversationId = ConversationId.From("inherited-conv")
+        };
+
+        var result = await manager.SpawnAsync(request);
+
+        // Clause 2, non-vacuous: the SUPPLIED label, not merely a non-null one.
+        result.Name.ShouldBe("pr-review-run");
+        // Clause 1: the descriptor is still the target's, verbatim.
+        registeredDescriptor.ShouldNotBeNull();
+        registeredDescriptor!.ModelId.ShouldBe("claude-sonnet-4");
+        registeredDescriptor.ApiProvider.ShouldBe("anthropic");
+        registeredDescriptor.SystemPrompt.ShouldBe("You are Farnsworth, a coding assistant.");
     }
 
     [Fact]

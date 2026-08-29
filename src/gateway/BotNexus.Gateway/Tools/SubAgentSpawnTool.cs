@@ -25,7 +25,7 @@ public sealed class SubAgentSpawnTool(
               "type": "object",
               "properties": {
                 "task": { "type": "string", "description": "Task prompt for the sub-agent." },
-                "name": { "type": "string", "description": "Optional friendly name for this sub-agent run." },
+                "name": { "type": "string", "description": "Optional friendly label for this sub-agent RUN. Accepted in every mode, including alongside targetAgentId - it titles the run, it does not customise the agent's descriptor." },
                 "model": { "type": "string", "description": "Optional model override for the sub-agent run." },
                 "apiProvider": { "type": "string", "description": "Optional API provider override for the sub-agent run." },
                 "tools": {
@@ -42,7 +42,7 @@ public sealed class SubAgentSpawnTool(
                   "enum": ["researcher", "coder", "planner", "reviewer", "writer", "general"],
                   "description": "Optional behavioral archetype for the sub-agent."
                 },
-                "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent." },
+                "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent. Descriptor overrides (model, apiProvider, tools, systemPrompt, archetype) are refused alongside it; the run-scoped name, maxTurns and timeoutSeconds are accepted." },
                 "shareWorkspace": { "type": "boolean", "description": "When true, grant the sub-agent read/write access to the parent agent's workspace. Default: false (isolated)." },
                 "grantedPaths": {
                   "type": "array",
@@ -93,9 +93,12 @@ public sealed class SubAgentSpawnTool(
 
         // Phase 5 / F-6 step 3 (#562): Mode rejects mode-mixing.
         // When the caller asks to mirror an existing named agent, none of the
-        // embody-only customisation fields may be supplied — Mirror is strict
+        // embody-only DESCRIPTOR fields may be supplied — Mirror is strict
         // pass-through of the target's full descriptor. Build the Mode union
         // here so DefaultSubAgentManager can prefer it over the legacy bag.
+        // #3570: `name` is deliberately NOT in that set — it labels the run, not
+        // the descriptor, exactly like maxTurns/timeoutSeconds which were always
+        // accepted here.
         var mode = BuildSpawnMode(
             targetAgentId: targetAgentId,
             name: name,
@@ -197,8 +200,10 @@ public sealed class SubAgentSpawnTool(
     {
         if (!string.IsNullOrWhiteSpace(targetAgentId))
         {
-            var conflicts = new List<string>(6);
-            if (!string.IsNullOrWhiteSpace(name)) conflicts.Add("name");
+            var conflicts = new List<string>(5);
+            // #3570: `name` is absent by design. It is a run label, not a descriptor
+            // customisation, and rejecting it broke an automated PR-review workflow on
+            // 100% of its invocations. Only genuine descriptor fields belong here.
             if (!string.IsNullOrWhiteSpace(modelOverride)) conflicts.Add("model");
             if (!string.IsNullOrWhiteSpace(apiProviderOverride)) conflicts.Add("apiProvider");
             if (toolIds is { Count: > 0 }) conflicts.Add("tools");
@@ -210,10 +215,11 @@ public sealed class SubAgentSpawnTool(
                 throw new ArgumentException(
                     $"targetAgentId is incompatible with embody-only fields: {string.Join(", ", conflicts)}. "
                     + "Mirror mode runs the target agent's full descriptor verbatim — supply targetAgentId alone, "
-                    + "or omit it and customise via embody fields.");
+                    + "or omit it and customise via embody fields. The run-scoped name, maxTurns and "
+                    + "timeoutSeconds are accepted alongside targetAgentId.");
             }
 
-            return new Mirror(AgentId.From(targetAgentId));
+            return new Mirror(AgentId.From(targetAgentId), string.IsNullOrWhiteSpace(name) ? null : name);
         }
 
         var archetype = ResolveArchetype(archetypeRaw);

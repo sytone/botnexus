@@ -87,8 +87,17 @@ public sealed record Embody : SubAgentSpawnMode
 /// descriptor (system prompt, model, tools, display name) is used as-is. Only
 /// the delegated <see cref="SubAgentSpawnRequest.Task"/> (top-level on the spawn
 /// request) differs from the named agent's normal operation. By design no
-/// per-spawn overrides are accepted; the agent-facing JSON tool returns a tool
-/// error when callers mix <c>targetAgentId</c> with override fields.
+/// per-spawn <i>descriptor</i> overrides are accepted; the agent-facing JSON tool
+/// returns a tool error when callers mix <c>targetAgentId</c> with override fields.
+///
+/// <para>#3570: <see cref="RunName"/> is the one exception, and it is not an
+/// exception to the rule at all — it labels the <i>run</i>, not the descriptor.
+/// The mirrored agent's identity, model, tools and system prompt are still passed
+/// through verbatim; only the human-facing title of this particular run changes.
+/// Classifying it as an embody-only field refused an entire automated PR-review
+/// workflow on every invocation while <c>maxTurns</c> and <c>timeoutSeconds</c> —
+/// equally run-scoped — were accepted without complaint.</para>
 /// </summary>
 /// <param name="TargetAgentId">Identifier of the registered agent to mirror. Must resolve in the agent registry at spawn time.</param>
-public sealed record Mirror(AgentId TargetAgentId) : SubAgentSpawnMode;
+/// <param name="RunName">Optional friendly label for this run. Titles the child conversation and is reported back as the run's name; does not alter the mirrored descriptor.</param>
+public sealed record Mirror(AgentId TargetAgentId, string? RunName = null) : SubAgentSpawnMode;

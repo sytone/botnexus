@@ -172,10 +172,51 @@ public sealed class SubAgentToolTests
 
         var mirror = captured.Mode.ShouldBeOfType<Mirror>();
         mirror.TargetAgentId.Value.ShouldBe("alex");
+        mirror.RunName.ShouldBeNull(
+            "targetAgentId alone must not synthesise a run label (#3570 clause 4 - unchanged behaviour).");
+    }
+
+    /// <summary>
+    /// #3570 clause 1 + 2: `name` labels the RUN, not the descriptor, so it must be
+    /// accepted alongside `targetAgentId` and carried through to the Mirror mode as the
+    /// run label. Previously this pair was refused outright, failing an automated
+    /// PR-review workflow on 100% of its invocations.
+    /// </summary>
+    [Fact]
+    public async Task SpawnTool_BuildsMode_AsMirror_CarryingRunName_WhenTargetAgentIdAndNameSupplied()
+    {
+        var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
+        {
+            ["task"] = "T",
+            ["targetAgentId"] = "alex",
+            ["name"] = "pr-review-run"
+        });
+
+        var mirror = captured.Mode.ShouldBeOfType<Mirror>();
+        mirror.TargetAgentId.Value.ShouldBe("alex",
+            "the target's descriptor must still be mirrored verbatim - a run label changes nothing about identity.");
+        // Non-vacuity: the SUPPLIED name, not merely non-null.
+        mirror.RunName.ShouldBe("pr-review-run");
+    }
+
+    /// <summary>
+    /// #3570 clause 2: a whitespace-only name is not a label. It must normalise to null
+    /// rather than titling the run with blanks.
+    /// </summary>
+    [Fact]
+    public async Task SpawnTool_MirrorRunName_IsNull_WhenNameIsWhitespace()
+    {
+        var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
+        {
+            ["task"] = "T",
+            ["targetAgentId"] = "alex",
+            ["name"] = "   "
+        });
+
+        captured.Mode.ShouldBeOfType<Mirror>().RunName.ShouldBeNull();
     }
 
     [Theory]
-    [InlineData("name", "my-mirror")]
     [InlineData("model", "gpt-5-mini")]
     [InlineData("apiProvider", "openai")]
     [InlineData("systemPrompt", "Custom")]
@@ -221,7 +262,6 @@ public sealed class SubAgentToolTests
         {
             ["task"] = "T",
             ["targetAgentId"] = "alex",
-            ["name"] = "x",
             ["model"] = "y",
             ["systemPrompt"] = "z"
         };
@@ -230,9 +270,44 @@ public sealed class SubAgentToolTests
         var ex = await Should.ThrowAsync<ArgumentException>(
             () => tool.ExecuteAsync("call-1", args));
 
-        ex.Message.ShouldContain("name");
         ex.Message.ShouldContain("model");
         ex.Message.ShouldContain("systemPrompt");
+    }
+
+    /// <summary>
+    /// #3570 clause 3: the refusal must enumerate only the descriptor fields the caller
+    /// actually supplied. A run label supplied alongside them is accepted, so it must not
+    /// appear in the conflict list, and neither may a descriptor field that was never sent.
+    /// </summary>
+    [Fact]
+    public async Task SpawnTool_RejectsMixing_NamesOnlyTheFieldsActuallySupplied()
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["task"] = "T",
+            ["targetAgentId"] = "alex",
+            ["name"] = "pr-review-run",
+            ["model"] = "gpt-5-mini"
+        };
+        var tool = CreateSpawnTool(out _);
+
+        var ex = await Should.ThrowAsync<ArgumentException>(
+            () => tool.ExecuteAsync("call-1", args));
+
+        // Parse the enumerated conflict list out of the message so the assertion is exact
+        // rather than a substring smell test: "...embody-only fields: a, b. Mirror mode..."
+        var marker = "embody-only fields: ";
+        var start = ex.Message.IndexOf(marker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "the refusal must enumerate the conflicting fields.");
+        var listStart = start + marker.Length;
+        var listEnd = ex.Message.IndexOf('.', listStart);
+        listEnd.ShouldBeGreaterThan(listStart);
+        var reported = ex.Message[listStart..listEnd]
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        reported.ShouldBe(new[] { "model" },
+            "only the descriptor fields actually supplied may be named. 'name' is a run label " +
+            "and is accepted; apiProvider/tools/systemPrompt/archetype were never supplied.");
     }
 
     private static SubAgentSpawnTool CreateSpawnTool(out Mock<ISubAgentManager> manager)

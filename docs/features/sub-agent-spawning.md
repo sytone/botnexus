@@ -135,7 +135,7 @@ Spawns a new background sub-agent session.
 | Parameter | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `task` | string | Yes | — | Task description and initial prompt for the sub-agent |
-| `name` | string | No | auto-generated | Human-readable label for identification |
+| `name` | string | No | auto-generated | Human-readable label for this **run** (not the agent). Accepted in every mode, including alongside `targetAgentId` |
 | `model` | string | No | parent's model | LLM model override (e.g., `gpt-4.1`, `claude-sonnet-4.5`) |
 | `apiProvider` | string | No | parent's provider | API provider override for the sub-agent run |
 | `tools` | string[] | No | parent's tools minus `spawn_subagent` | Explicit tool allowlist |
@@ -167,11 +167,15 @@ refused mid-run (#2650).
 #### Embody vs mirror: `targetAgentId` is exclusive
 
 A spawn is either **embody** (a role, optionally customised) or **mirror** (an existing named
-agent, verbatim) - never both. Supplying `targetAgentId` together with any embody-only field
-(`name`, `model`, `apiProvider`, `tools`, `systemPrompt`, `archetype`) is rejected with an error
-naming the conflicting fields. Mirror mode is strict pass-through of the target's descriptor;
-only `task` differs from that agent's normal operation. Reserved archetype ids are never valid
-`targetAgentId` values.
+agent, verbatim) - never both. Supplying `targetAgentId` together with any embody-only
+**descriptor** field (`model`, `apiProvider`, `tools`, `systemPrompt`, `archetype`) is rejected
+with an error naming only the conflicting fields actually supplied. Mirror mode is strict
+pass-through of the target's descriptor; only `task` differs from that agent's normal operation.
+Reserved archetype ids are never valid `targetAgentId` values.
+
+`name` is **not** a descriptor field and is accepted in mirror mode (#3570): it labels the *run*
+(titling the child conversation and coming back on the run's `name`), exactly like the
+run-scoped `maxTurns` and `timeoutSeconds`, and changes nothing about the mirrored agent.
 
 #### Archetypes and shell access
 

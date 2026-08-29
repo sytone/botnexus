@@ -646,7 +646,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     Archetype: SubAgentArchetype.General,
                     BaseDescriptor: targetDescriptor,
                     ChildAgentId: AgentId.From($"{request.ParentAgentId}--subagent--{mirror.TargetAgentId.Value}--{uniqueId}"),
-                    Name: null,
+                    // #3570: the run label, NOT a descriptor customisation. Everything below stays
+                    // null because Mirror remains strict pass-through of the target's descriptor.
+                    Name: string.IsNullOrWhiteSpace(mirror.RunName) ? null : mirror.RunName,
                     ModelOverride: null,
                     ApiProviderOverride: null,
                     ToolIds: null,

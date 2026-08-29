@@ -129,6 +129,47 @@ public sealed class DefaultSubAgentManagerPlanTests
         plan.ToolIds.ShouldBeNull();
     }
 
+    /// <summary>
+    /// #3570: a Mirror run label flows into the plan's <c>Name</c> (which titles the child
+    /// conversation and is reported back on the run) WITHOUT disturbing strict descriptor
+    /// pass-through. Naming a run is not customising an agent.
+    /// </summary>
+    [Fact]
+    public void ResolveSpawnPlan_Mirror_CarriesRunName_WithoutDisturbingDescriptorPassThrough()
+    {
+        var parent = Descriptor("nova", "gpt-4o", "openai", "You are Nova.");
+        var target = Descriptor("farnsworth", "claude-sonnet-4", "anthropic", "You are Farnsworth.");
+        var manager = BuildManager(parent, target);
+        var request = Request("nova", new Mirror(AgentId.From("farnsworth"), "pr-review-run"));
+
+        var plan = manager.ResolveSpawnPlan(request, parent, Uid);
+
+        plan.Name.ShouldBe("pr-review-run");
+        // Descriptor pass-through is unchanged: the label must not leak into any override slot.
+        plan.BaseDescriptor.AgentId.ShouldBe(AgentId.From("farnsworth"));
+        plan.BaseDescriptor.ModelId.ShouldBe("claude-sonnet-4");
+        plan.BaseDescriptor.SystemPrompt.ShouldBe("You are Farnsworth.");
+        plan.ModelOverride.ShouldBeNull();
+        plan.ApiProviderOverride.ShouldBeNull();
+        plan.ToolIds.ShouldBeNull();
+        plan.SystemPromptOverride.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// #3570: a whitespace-only run label is not a label - it must normalise to null so the
+    /// child conversation falls back to its default title rather than being titled with blanks.
+    /// </summary>
+    [Fact]
+    public void ResolveSpawnPlan_Mirror_WhitespaceRunName_NormalisesToNull()
+    {
+        var parent = Descriptor("nova", "gpt-4o", "openai");
+        var target = Descriptor("farnsworth", "claude-sonnet-4", "anthropic");
+        var manager = BuildManager(parent, target);
+        var request = Request("nova", new Mirror(AgentId.From("farnsworth"), "   "));
+
+        manager.ResolveSpawnPlan(request, parent, Uid).Name.ShouldBeNull();
+    }
+
     [Fact]
     public void ResolveSpawnPlan_Mirror_UnknownTarget_ThrowsKeyNotFound()
     {
