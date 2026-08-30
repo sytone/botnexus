@@ -76,3 +76,16 @@ cognitive-coverage/
 
 # In-app user guide: copied from docs/user-guide at build time (see CopyUserGuide).
 src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/wwwroot/guide/
+
+# macOS filesystem metadata.
+#
+# "._name" AppleDouble sidecars are written by macOS on filesystems with no native
+# resource-fork support - exFAT, NTFS, most network shares - which includes the
+# external volume this repository is often cloned onto. There were 4737 of them in a
+# working tree at one point, one per file, and they cause real damage rather than just
+# noise: they are not valid UTF-8, so any tool that globs a directory and reads what it
+# finds dies on a decode error. scripts/generate-icons.py did exactly that.
+#
+# Clear them with:  find . -path ./.git -prune -o -name '._*' -print -delete
+._*
+.DS_Store
