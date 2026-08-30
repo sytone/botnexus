@@ -3561,11 +3561,38 @@ details[open] > .thinking-summary::before {
     font-size: var(--text-heading);
 }
 
+/* ── THE FIELD LAYOUT RULE ─────────────────────────────────────────────────
+   A form uses ONE of two layouts, and which one is decided by the fields, not
+   by the screen it happens to live on:
+
+     TWO-COLUMN (this rule) - a single column of fields whose values are long
+       and varied: paths, prompts, ids, free text. The label needs to sit beside
+       its control or the eye loses the pairing over a tall form.
+
+     STACKED - fields that are short and uniform enough to pack into a
+       responsive multi-column grid (the cron editor's schedule parts, the tools
+       filter row). A label column there would spend horizontal space that the
+       grid needs for a second and third field.
+
+   Below --bp-mobile every form is stacked regardless: a label column and a
+   usable control do not both fit.
+
+   .schema-field and .agents-form-grid had byte-identical column definitions and
+   differed only in row gap - two copies that already agreed. They are one rule
+   now, which also gives the agent editor the narrow collapse it never had: it
+   kept a 12rem label column on a phone and squeezed the control to nothing.
+   ──────────────────────────────────────────────────────────────────────── */
+.schema-field,
 .agents-form-grid {
     display: grid;
+    /* Label column bounded at both ends: wide enough to read, narrow enough to
+       leave the control the majority of the row. */
     grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr);
-    gap: 0.65rem 1rem;
+    gap: 0.5rem 1rem;
     align-items: start;
+}
+
+.agents-form-grid {
     margin-bottom: 1rem;
 }
 
@@ -6858,14 +6885,6 @@ h3.conversation-title.editable:hover {
 
 /* ── Field rows ───────────────────────────────────────────────────────────── */
 
-.schema-field {
-    display: grid;
-    /* Label column is bounded at both ends: it has to be wide enough to read and narrow
-       enough to leave the control the majority of the row. */
-    grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr);
-    gap: 0.35rem 1rem;
-    align-items: start;
-}
 
 .schema-field-label {
     /* Optical alignment with the first line of the control, which carries input padding. */
@@ -7033,14 +7052,17 @@ h3.conversation-title.editable:hover {
 /* ── Narrow layouts ───────────────────────────────────────────────────────── */
 
 /* Below this the two-column row leaves the control too little room to be usable, so the
-   label sits above its input instead. Mobile Settings renders this same component. */
-@media (max-width: 720px) {
-    .schema-field {
+   label sits above its input instead. Mobile Settings renders this same component.
+   --bp-mobile, the canonical boundary; this was 720px, one of four one-off values. */
+@media (max-width: 768px) {
+    .schema-field,
+    .agents-form-grid {
         grid-template-columns: minmax(0, 1fr);
         gap: 0.2rem;
     }
 
-    .schema-field-label {
+    .schema-field-label,
+    .agents-form-grid > label {
         padding-top: 0;
     }
 
