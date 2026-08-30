@@ -304,6 +304,15 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         var adapter = _channelManager.Get(channelType);
         if (adapter is null)
         {
+            // #3541: a non-deliverable channel type (cron / exchange / webhook) has no adapter by
+            // design, so "notification dropped" is the expected outcome, not a fault. Reached
+            // through the single OutboundResponseDeliverer seam rather than a local copy of the set.
+            if (OutboundResponseDeliverer.IsNonDeliverableChannel(channelType))
+            {
+                _logger.LogDebug("Skipping compaction notification for non-deliverable channel type '{ChannelType}' (session {SessionId}).", channelType, sessionId);
+                return false;
+            }
+
             _logger.LogWarning("No channel adapter found for type '{ChannelType}' — compaction notification dropped for session {SessionId}.", channelType, sessionId);
             return false;
         }

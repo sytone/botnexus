@@ -1927,6 +1927,20 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         if (adapter is not null)
             return adapter;
 
+        // #3541: #3167 taught only the fan-out path (OutboundResponseDeliverer.DeliverToBindingAsync)
+        // that some channel types have no adapter BY DESIGN. This path — 8 call sites — kept warning,
+        // so the by-design condition still produced ~54 WARNINGs/day and drowned genuine adapter
+        // outages, which use the same message. The classification is reached through the single
+        // existing seam (IsNonDeliverableChannel -> OutboundResponseDeliverer) rather than copied.
+        if (IsNonDeliverableChannel(channelType))
+        {
+            _logger.LogDebug(
+                "Skipping non-deliverable channel type '{ChannelType}' (adapterId: '{AdapterId}'); no adapter is registered by design.",
+                channelType,
+                adapterId ?? "<any>");
+            return null;
+        }
+
         _logger.LogWarning("No channel adapter found for type '{ChannelType}' (adapterId: '{AdapterId}'). Available: {Available}",
             channelType,
             adapterId ?? "<any>",
