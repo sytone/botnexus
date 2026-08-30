@@ -231,6 +231,25 @@ public sealed class CopilotResponsesProvider : IApiProvider
                 throw parseFailure;
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
+        catch (Exception ex) when (TryClassifyAuthFailure(ex) is int authStatus && !semanticOutput)
+        {
+            // #3674: an auth failure is TERMINAL, not transport degradation. SSE would present the
+            // same rejected credential to the same provider, so the fallback is guaranteed to fail -
+            // it only buys a second round trip, a misleading transport-health WRN as the first signal
+            // of a credential problem, and a delayed terminal error. Short-circuit instead.
+            var failure = new ProviderAuthenticationException(
+                ProviderAuthenticationException.BuildMessage("Copilot Responses", authStatus, string.Empty, _secretRedactor),
+                authStatus,
+                "Copilot Responses");
+            activity?.SetTag("botnexus.provider.transport.fallback", "none");
+            activity?.SetTag("botnexus.provider.transport.auth_failure_status", authStatus);
+            _logger.LogError(ex,
+                "Copilot Responses WebSocket handshake was rejected with HTTP {StatusCode} for {Model}; "
+                + "this is an authentication failure, so the SSE fallback is suppressed",
+                authStatus, model.Id);
+            ResponsesStreamEngine.EmitError(output, Api, model, failure.Message, partial?.Content);
+            activity?.SetStatus(ActivityStatusCode.Error, failure.Message);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException && !semanticOutput)
         {
             activity?.SetTag("botnexus.provider.transport.fallback", "sse");
@@ -250,6 +269,35 @@ public sealed class CopilotResponsesProvider : IApiProvider
             ResponsesStreamEngine.EmitError(output, Api, model, ex.Message, partial?.Content);
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Returns the HTTP status when <paramref name="ex"/> is a WebSocket handshake rejection that means
+    /// the credential was refused (401/403), or <see langword="null"/> for every other failure.
+    /// </summary>
+    /// <remarks>
+    /// #3674. This is the control-flow counterpart to <see cref="DescribeFallbackReason"/>: #3366 added
+    /// classification but attached it only as a telemetry tag, so nothing ever <em>decided</em> on it.
+    /// The check keys off the typed status carried by
+    /// <see cref="CopilotResponsesWebSocketHandshakeException"/>, not off the exception's message, so a
+    /// runtime wording change cannot silently re-route auth failures back into the SSE fallback.
+    /// <see cref="OperationCanceledException"/> is excluded explicitly: a cancelled turn must keep
+    /// reaching its own handler and must never be reported as an auth failure.
+    /// </remarks>
+    private static int? TryClassifyAuthFailure(Exception ex)
+    {
+        if (ex is OperationCanceledException)
+            return null;
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is CopilotResponsesWebSocketHandshakeException handshake
+                && CopilotResponsesHandshakeStatus.IsAuthFailure(handshake.StatusCode))
+            {
+                return handshake.StatusCode;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

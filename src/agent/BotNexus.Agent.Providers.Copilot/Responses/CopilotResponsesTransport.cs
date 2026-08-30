@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace BotNexus.Agent.Providers.Copilot.Responses;
 
@@ -79,10 +80,74 @@ internal sealed class CopilotResponsesWebSocketClosedException(CopilotResponsesC
     public CopilotResponsesCloseFrame? Close { get; } = close;
 }
 
+/// <summary>
+/// Raised when the Copilot Responses WebSocket <em>upgrade handshake</em> is rejected with an HTTP
+/// status rather than the expected <c>101</c>, carrying that status so the caller can decide whether
+/// the failure is transport-degradation or terminal (#3674).
+/// </summary>
+/// <remarks>
+/// Why a distinct type from <see cref="CopilotResponsesWebSocketClosedException"/>: a close frame
+/// means the socket was established and later hung up, which is plausibly transient. A rejected
+/// handshake means the socket was never established at all, and when the rejection is a 401/403 it is
+/// a rejected <b>credential</b> - re-presenting that same credential over SSE cannot succeed. The
+/// status has to survive as structured data, because the alternative (re-sniffing the CLR message at
+/// each decision point) is exactly the string-matching the provider must not depend on.
+/// <para>
+/// Derives from <see cref="IOException"/> for the same reason as its sibling: <see cref="WebSocketException"/>
+/// is sealed and cannot be extended.
+/// </para>
+/// </remarks>
+internal sealed class CopilotResponsesWebSocketHandshakeException(int statusCode, string message, Exception? innerException)
+    : IOException(message, innerException)
+{
+    /// <summary>The HTTP status the server returned instead of <c>101 Switching Protocols</c>.</summary>
+    public int StatusCode { get; } = statusCode;
+}
+
+/// <summary>
+/// Extracts and classifies the HTTP status of a rejected WebSocket upgrade handshake.
+/// </summary>
+/// <remarks>
+/// Two sources, in order of trustworthiness. <see cref="ClientWebSocket.HttpStatusCode"/> is the
+/// structured one and is populated only when <c>CollectHttpResponseDetails</c> was set before the
+/// connect, so the transport opts in. <see cref="TryParseStatus"/> is the fallback for the case where
+/// the property is unavailable or unset: the CLR's own handshake failure message embeds the status,
+/// and reading it is strictly better than discarding the evidence entirely. The parse is pinned by a
+/// unit test so a runtime message change is a test failure rather than a silent regression to the
+/// old "everything is transport" behaviour.
+/// </remarks>
+internal static partial class CopilotResponsesHandshakeStatus
+{
+    [GeneratedRegex(@"status code '(?<status>\d{3})' when status code '101' was expected", RegexOptions.CultureInvariant)]
+    private static partial Regex StatusPattern();
+
+    /// <summary>Reads the rejected-handshake status out of a CLR WebSocket failure message, if present.</summary>
+    internal static int? TryParseStatus(string? message)
+    {
+        if (string.IsNullOrEmpty(message))
+            return null;
+        var match = StatusPattern().Match(message);
+        return match.Success && int.TryParse(match.Groups["status"].Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var status)
+            ? status
+            : null;
+    }
+
+    /// <summary>
+    /// True when the status means the credential was rejected. 401 and 403 only: a 429 is a rate
+    /// limit and a 5xx is a server fault, and both of those remain legitimately retryable over SSE.
+    /// </summary>
+    internal static bool IsAuthFailure(int statusCode) => statusCode is 401 or 403;
+}
+
 internal sealed class CopilotResponsesWebSocketTransport : ICopilotResponsesWebSocketTransport
 {
     private const int MaxMessageBytes = 16 * 1024 * 1024;
-    private readonly ClientWebSocket _socket = new();
+    private readonly ClientWebSocket _socket = new()
+    {
+        // #3674: without this the handshake status is thrown away and a 403 is indistinguishable
+        // from a dropped connection. The provider needs the status to refuse a pointless SSE retry.
+        Options = { CollectHttpResponseDetails = true }
+    };
 
     /// <inheritdoc />
     public CopilotResponsesCloseFrame? LastClose { get; private set; }
@@ -91,7 +156,25 @@ internal sealed class CopilotResponsesWebSocketTransport : ICopilotResponsesWebS
     {
         foreach (var (key, value) in headers)
             _socket.Options.SetRequestHeader(key, value);
-        await _socket.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _socket.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
+        }
+        catch (WebSocketException ex)
+        {
+            // Prefer the structured status collected by the client; fall back to the status the CLR
+            // embedded in its own message. Only wrap when a status is actually known - a handshake
+            // that failed with no HTTP response at all (DNS, TLS, reset) is a genuine transport fault
+            // and must keep propagating as-is so the SSE fallback still covers it.
+            var collected = (int)_socket.HttpStatusCode;
+            var status = collected != 0 ? collected : CopilotResponsesHandshakeStatus.TryParseStatus(ex.Message);
+            if (status is not int rejected)
+                throw;
+            throw new CopilotResponsesWebSocketHandshakeException(
+                rejected,
+                $"Copilot Responses WebSocket handshake was rejected with HTTP {rejected.ToString(System.Globalization.CultureInfo.InvariantCulture)}.",
+                ex);
+        }
     }
 
     public ValueTask SendAsync(string payload, CancellationToken cancellationToken)
