@@ -11,7 +11,31 @@
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="apple-touch-icon" href="icon-192.png" />
     <link rel="manifest" href="manifest.json" crossorigin="use-credentials" />
+    <!-- Inter, shipped from the shared .Core project. Mobile previously had no webfont
+         at all and fell back to system-ui, so the product rendered in a different
+         typeface depending on which surface you opened. -->
+    <link rel="preload" href="_content/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- The shared platform foundation MUST parse before mobile.css, which consumes its
+         tokens. This is the single source of colour and type for the whole product. -->
+    <link rel="stylesheet" href="_content/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/css/tokens.css" />
     <link rel="stylesheet" href="css/mobile.css" />
+    <script>
+        // Applied BEFORE first paint. The portal is served from the same origin, so this
+        // reads the SAME localStorage blob PortalPreferencesService writes there: a user who
+        // chose light in the portal gets light here without setting it twice. Dark stays the
+        // default and lives on :root, so it is the absence of the attribute.
+        // Mobile ships no theme toggle of its own yet - this only honours the preference.
+        (function () {
+            try {
+                var raw = localStorage.getItem('botnexus.portal.prefs');
+                if (raw && JSON.parse(raw).Theme === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch (e) {
+                // Unparseable or unavailable storage - dark is the default, so do nothing.
+            }
+        })();
+    </script>
 </head>
 <body>
     <div id="app">
