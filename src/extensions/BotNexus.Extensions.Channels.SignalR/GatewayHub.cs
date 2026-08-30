@@ -112,6 +112,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <returns>The available sessions at subscribe time, for UI initialisation.</returns>
     public async Task<SubscribeAllResult> SubscribeAll()
     {
+        // #3679: this token is deliberately Context.ConnectionAborted -- a client that navigates
+        // away should not keep a session-store read alive. The resulting OperationCanceledException
+        // on a NORMAL disconnect is absorbed at Debug by ConnectionAbortHubFilter, which is
+        // registered globally for this hub; a genuine store failure, and any cancellation not
+        // attributable to this connection's abort, still escapes and is logged at Error.
         var sessions = await _app.GetAvailableSessionsAsync(Context.ConnectionAborted);
 
         // Distinct conversation group keys across the returned sessions. Each session

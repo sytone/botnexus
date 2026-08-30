@@ -24,6 +24,11 @@ public static class SignalRTestServiceExtensions
         services.AddSingleton<IUserIdProvider, ClaimsUserIdProvider>();
         services.AddSignalRAuthPolicy();
 
+        // #3679: mirror production's global connection-abort filter registration.
+        services.AddSingleton<ConnectionAbortHubFilter>();
+        services.AddOptions<HubOptions<GatewayHub>>()
+            .Configure<ConnectionAbortHubFilter>((options, filter) => options.AddFilter(filter));
+
         // GatewayHub now resolves the gateway application collaborators through a single facade
         // (registered in production by SignalRServiceContributor). Register the same facade here
         // so the test host can construct the hub. IConversationResetService is optional, matching

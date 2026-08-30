@@ -16,6 +16,7 @@ The BotNexus platform uses **Serilog** for structured logging and **OpenTelemetr
 6. [Local Development Setup](#local-development-setup)
 7. [Adding New Spans](#adding-new-spans)
 8. [Troubleshooting](#troubleshooting)
+9. [Client Disconnects Are Not Errors](#client-disconnects-are-not-errors)
 
 ---
 
@@ -468,6 +469,36 @@ logger.LogInformation("Processing started");  // This log is correlated with the
 
 2. **Check that Activity is flowing in async code:**
    Ensure all async operations inherit Activity.Current (this is automatic in .NET 5+)
+
+---
+
+## Client Disconnects Are Not Errors
+
+A client going away mid-request is routine, not a server fault, and BotNexus keeps it out of the
+`ERR` channel so that channel stays worth reading. Two seams enforce this, one per transport:
+
+| Transport | Seam | Behaviour on client abort |
+|---|---|---|
+| HTTP | `RequestCancellationMiddleware` (#2387) | Absorbs the cancellation, logs at `Debug`, responds `499 Client Closed Request` |
+| SignalR hub | `ConnectionAbortHubFilter` (#3679) | Absorbs the cancellation, logs at `Debug`, returns no completion |
+
+Both seams thread the request/connection cancellation token all the way down to the store, which is
+deliberate — an abandoned client should not keep a SQLite read alive. What they change is only the
+*severity* of the resulting `OperationCanceledException`.
+
+**Neither seam is a blanket catch.** Each attributes the cancellation to the client only when the
+exception's own token matches the abort token, or when no other token was signalled at all. An
+internal timeout, a distinct linked token, or any non-cancellation exception is rethrown untouched
+and still surfaces at `Error` with its stack attached. That distinction is what keeps a genuine
+session-store outage visible: before #3679, a normal portal reconnect produced an `ERR` line
+byte-identical to a real `SqliteSessionStore` failure.
+
+`ConnectionAbortHubFilter` is registered as a **global** hub filter for `GatewayHub`, so every hub
+verb that passes `Context.ConnectionAborted` into a store call is covered by the one seam and no
+new verb has to remember to opt in.
+
+To see these events during diagnosis, drop the log level to `Debug`; the absorbed aborts are
+recorded, not discarded.
 
 ---
 
