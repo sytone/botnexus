@@ -449,6 +449,8 @@ public sealed class CronHumanConversationAdoptionTests
             => _unused.PatchOverrideAsync(conversationId, patch, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => _unused.GetSummariesAsync(ct);
+        public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+            => _unused.GetPendingAskUserCheckpointsAsync(ct);
         public Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
             => _unused.GetCanvasStateAsync(conversationId, ct);
         public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, JsonElement value, CancellationToken ct = default)
