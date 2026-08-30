@@ -330,7 +330,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.15s;
+    transition: background var(--motion-fast) var(--ease-standard);
 }
 
 .send-btn:hover:not(:disabled) { background: var(--color-accent-hover); }
@@ -366,7 +366,7 @@ body {
     align-self: flex-start;
     max-width: 90%;
     text-align: left;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
     white-space: nowrap;
     overflow: hidden;
     margin: 2px 0;
@@ -600,7 +600,7 @@ body {
     display: flex;
     flex-direction: column;
     transform: translateY(100%);
-    transition: transform 0.2s ease;
+    transition: transform var(--motion-base) var(--ease-standard);
 }
 
 .canvas-sheet--open {

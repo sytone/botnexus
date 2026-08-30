@@ -523,9 +523,25 @@
 }
 
 /* ── Typography roles ─────────────────────────────────────────────────────
-   Applied as classes so markup states intent ("this is a title") rather than
-   a size. Weight is declared inside each role so a role can be reused at a
-   different weight without redefining the size. */
+   THERE ARE TWO WAYS TO TAKE A TYPE ROLE, AND THE CSS ONE IS CANONICAL.
+
+     font-size: var(--text-body)   in a component's own rule. This is how the
+                                   product does it - around 270 declarations.
+     class="t-body"                in markup, for text that has no component
+                                   class of its own to hang the size on. About
+                                   28 uses, all in ProviderUsagePanel and Guide.
+
+   Both resolve to the same token, so neither is wrong; what was wrong is that
+   nothing said which to reach for, and a second mechanism spreading across the
+   codebase would make the source of any given size harder to find, not easier.
+   Reach for the class only when there is no component rule to put the token in.
+
+   Weight is declared inside each role so a role can be reused at a different
+   weight without redefining the size.
+
+   One deliberate exception, in .msg-content: rendered markdown sizes its
+   headings and inline code in `em` so they scale with whatever container the
+   markdown sits in. Those are relative on purpose and are not drift. */
 .t-display { font-size: var(--text-display); line-height: var(--text-display-lh); font-weight: var(--weight-semibold); }
 .t-title   { font-size: var(--text-title);   line-height: var(--text-title-lh);   font-weight: var(--weight-semibold); }
 .t-heading { font-size: var(--text-heading); line-height: var(--text-heading-lh); font-weight: var(--weight-semibold); }
