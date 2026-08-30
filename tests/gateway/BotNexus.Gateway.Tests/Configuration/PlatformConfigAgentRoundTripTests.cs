@@ -191,6 +191,19 @@ public sealed class PlatformConfigAgentRoundTripTests : IDisposable
     // Field-parity fitness function
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// Property-classification fence: every settable descriptor property must carry an explicit
+    /// persistence decision.
+    /// </summary>
+    /// <remarks>
+    /// #3560: this is NOT a key-preservation guarantee and must not be read as one. It answers "has
+    /// someone made a decision about this property?", not "does a save preserve what was already
+    /// stored?". The live #3547 incident deleted eleven keys from an agent whose every affected
+    /// property (ExtensionConfig, MaxConcurrentSessions, FileAccess) was correctly classified here,
+    /// so this test was GREEN on the losing commit. Key preservation is fenced separately by
+    /// <see cref="PlatformConfigAgentKeyPreservationTests"/>. Both guarantees are required and
+    /// neither substitutes for the other.
+    /// </remarks>
     [Fact]
     public void FieldParity_EveryDescriptorProperty_HasAnExplicitPersistenceDecision()
     {
