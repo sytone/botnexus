@@ -18,13 +18,17 @@ public static class IconLibrary
                 """
                 <path d="M3 12h3l2.1-5.2 3.7 10.4 2.5-6.2 1.7 3h5"/>
                 """),
-            ["agents"] = new("url(#bn-agents-g)",
+            ["add"] = new("currentColor",
                 """
-                <defs><linearGradient id="bn-agents-g" x1="5" y1="3" x2="19" y2="21" gradientUnits="userSpaceOnUse"><stop stop-color="#3B82F6"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient></defs><path d="M12 7v4M8.5 16l3.5-5 3.5 5"/><circle cx="12" cy="5" r="3"/><circle cx="7" cy="18" r="3"/><circle cx="17" cy="18" r="3"/>
+                <path d="M12 5v14M5 12h14"/>
                 """),
-            ["assistant"] = new("url(#bn-assistant-g)",
+            ["agents"] = new("currentColor",
                 """
-                <defs><linearGradient id="bn-assistant-g" x1="4" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse"><stop stop-color="#8B5CF6"/><stop offset="1" stop-color="#3B82F6"/></linearGradient></defs><path d="m12 2 1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/>
+                <path d="M12 7v4M8.5 16l3.5-5 3.5 5"/><circle cx="12" cy="5" r="3"/><circle cx="7" cy="18" r="3"/><circle cx="17" cy="18" r="3"/>
+                """),
+            ["assistant"] = new("currentColor",
+                """
+                <path d="m12 2 1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/>
                 """),
             ["attach"] = new("currentColor",
                 """
@@ -38,13 +42,21 @@ public static class IconLibrary
                 """
                 <defs><linearGradient id="bn-bot-g" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse"><stop stop-color="#06B6D4"/><stop offset="1" stop-color="#3B82F6"/></linearGradient></defs><rect x="4" y="6" width="16" height="13" rx="4"/><path d="M12 6V3M9 3h6M8 12h.01M16 12h.01M9 16h6"/>
                 """),
-            ["canvas"] = new("url(#bn-canvas-g)",
+            ["canvas"] = new("currentColor",
                 """
-                <defs><linearGradient id="bn-canvas-g" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse"><stop stop-color="#8B5CF6"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 4v16M15 13l2 2-2 2"/>
+                <rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 4v16M15 13l2 2-2 2"/>
                 """),
             ["chat"] = new("currentColor",
                 """
                 <path d="M20 15a3 3 0 0 1-3 3H9l-5 3v-6a3 3 0 0 1-1-2.2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3Z"/>
+                """),
+            ["check"] = new("currentColor",
+                """
+                <path d="M20 6 9 17l-5-5"/>
+                """),
+            ["close"] = new("currentColor",
+                """
+                <path d="M18 6 6 18M6 6l12 12"/>
                 """),
             ["configuration"] = new("currentColor",
                 """
@@ -53,6 +65,10 @@ public static class IconLibrary
             ["conversation"] = new("currentColor",
                 """
                 <path d="M14 5H6a3 3 0 0 0-3 3v5a3 3 0 0 0 3 3h1v3l4-3h3a3 3 0 0 0 3-3V8a3 3 0 0 0-3-3Z"/><path d="M17 8h1a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3h-1v2l-3-2"/>
+                """),
+            ["copy"] = new("currentColor",
+                """
+                <rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                 """),
             ["cron-jobs"] = new("currentColor",
                 """
@@ -70,6 +86,10 @@ public static class IconLibrary
                 """
                 <path d="M4 5.5A3.5 3.5 0 0 1 7.5 4H11v15H7.5A3.5 3.5 0 0 0 4 20.5ZM20 5.5A3.5 3.5 0 0 0 16.5 4H13v15h3.5a3.5 3.5 0 0 1 3.5 1.5Z"/>
                 """),
+            ["help"] = new("currentColor",
+                """
+                <circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a3 3 0 0 1 5.8 1c0 2-3 2.7-3 4.2"/><path d="M12 17.8h.01"/>
+                """),
             ["home"] = new("currentColor",
                 """
                 <path d="M3.5 10.5 12 3.5l8.5 7"/><path d="M5.5 9.2V20h13V9.2"/><path d="M9.5 20v-6h5v6"/>
@@ -86,13 +106,17 @@ public static class IconLibrary
                 """
                 <circle cx="12" cy="12" r="9"/><path d="M9.5 8.5v7M14.5 8.5v7"/>
                 """),
+            ["pending"] = new("currentColor",
+                """
+                <path d="M6 2h12M6 22h12"/><path d="M17 22v-3.8a2 2 0 0 0-.6-1.5L12 12 7.6 16.7a2 2 0 0 0-.6 1.5V22"/><path d="M7 2v3.8a2 2 0 0 0 .6 1.5L12 12l4.4-4.7a2 2 0 0 0 .6-1.5V2"/>
+                """),
             ["pin"] = new("currentColor",
                 """
                 <path d="m9 3 6 6-2 2 4 4-2 2-4-4-2 2-6-6 2-2 2 2 4-4-2-2ZM8 16l-5 5"/>
                 """),
-            ["plugins"] = new("url(#bn-plugins-g)",
+            ["plugins"] = new("currentColor",
                 """
-                <defs><linearGradient id="bn-plugins-g" x1="6" y1="3" x2="17" y2="21" gradientUnits="userSpaceOnUse"><stop stop-color="#14B8A6"/><stop offset="1" stop-color="#3B82F6"/></linearGradient></defs><path d="M8 3v5M16 3v5M6 8h12v2a6 6 0 0 1-6 6v5M9 12h6"/>
+                <path d="M8 3v5M16 3v5M6 8h12v2a6 6 0 0 1-6 6v5M9 12h6"/>
                 """),
             ["reports"] = new("currentColor",
                 """
@@ -102,13 +126,17 @@ public static class IconLibrary
                 """
                 <path d="m3 11 18-8-8 18-2-8-8-2Z"/><path d="m11 13 5-5"/>
                 """),
-            ["skills"] = new("url(#bn-skills-g)",
+            ["skills"] = new("currentColor",
                 """
-                <defs><linearGradient id="bn-skills-g" x1="5" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse"><stop stop-color="#8B5CF6"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs><path d="M8.5 4.5 10 7l2.5 1.5L10 10l-1.5 2.5L7 10 4.5 8.5 7 7Z"/><path d="m15 11 1.3 3.2L19.5 15l-3.2 1.3L15 19.5l-1.3-3.2-3.2-1.3 3.2-.8Z"/><path d="m19 3 .7 1.3L21 5l-1.3.7L19 7l-.7-1.3L17 5l1.3-.7Z"/>
+                <path d="M8.5 4.5 10 7l2.5 1.5L10 10l-1.5 2.5L7 10 4.5 8.5 7 7Z"/><path d="m15 11 1.3 3.2L19.5 15l-3.2 1.3L15 19.5l-1.3-3.2-3.2-1.3 3.2-.8Z"/><path d="m19 3 .7 1.3L21 5l-1.3.7L19 7l-.7-1.3L17 5l1.3-.7Z"/>
                 """),
             ["stop"] = new("currentColor",
                 """
                 <circle cx="12" cy="12" r="9"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/>
+                """),
+            ["thinking"] = new("currentColor",
+                """
+                <rect x="4" y="4" width="16" height="11" rx="5"/><path d="M9 9.5h.01M12 9.5h.01M15 9.5h.01"/><circle cx="7" cy="18.2" r="1.5"/><circle cx="3.6" cy="21.2" r="1"/>
                 """),
             ["todo"] = new("currentColor",
                 """
@@ -126,6 +154,10 @@ public static class IconLibrary
                 """
                 <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="3"/>
                 """),
+            ["warning"] = new("currentColor",
+                """
+                <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4.5M12 17.3h.01"/>
+                """),
             ["workspace"] = new("currentColor",
                 """
                 <rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M9 9v11"/>
@@ -136,6 +168,7 @@ public static class IconLibrary
     public static IReadOnlyList<string> Names { get; } =
     [
         "activity",
+        "add",
         "agents",
         "assistant",
         "attach",
@@ -143,26 +176,33 @@ public static class IconLibrary
         "bot",
         "canvas",
         "chat",
+        "check",
+        "close",
         "configuration",
         "conversation",
+        "copy",
         "cron-jobs",
         "dark-mode",
         "delete",
         "guide",
+        "help",
         "home",
         "light-mode",
         "move",
         "pause",
+        "pending",
         "pin",
         "plugins",
         "reports",
         "send",
         "skills",
         "stop",
+        "thinking",
         "todo",
         "tools",
         "usage",
         "visibility",
+        "warning",
         "workspace",
     ];
 }
