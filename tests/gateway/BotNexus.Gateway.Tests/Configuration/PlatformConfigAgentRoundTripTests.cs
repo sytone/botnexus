@@ -6,6 +6,7 @@ using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Agents;
@@ -188,6 +189,106 @@ public sealed class PlatformConfigAgentRoundTripTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // Key-preservation fitness function (#3560)
+    //
+    // Distinct from FieldParity_EveryDescriptorProperty_HasAnExplicitPersistenceDecision
+    // below, and BOTH are required. That fence asks "has someone made a decision about this
+    // descriptor property?" - it is a property-CLASSIFICATION guarantee. These tests ask
+    // "does a save preserve the keys that were already stored?" - a key-PRESERVATION
+    // guarantee.
+    //
+    // The distinction is not academic. On 2026-08-26 a single-scalar PUT /api/agents/aurum
+    // removed eleven stored keys (the whole extensions bag, maxConcurrentSessions: 0) and
+    // rewrote @-aliased fileAccess paths to machine-specific absolutes. ExtensionConfig,
+    // MaxConcurrentSessions and FileAccess are all in the Persisted set, so the parity fence
+    // was GREEN across that defect and would be green across any future variant of it. The
+    // property was classified; the round trip was lossy.
+    //
+    // Expectations below derive from the seeded document, not from a hardcoded property
+    // list, so a key added to config in future is covered without editing these tests.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Update_ChangingOneScalar_LosesNoStoredKeyUnderTheAgent()
+    {
+        SeedConfigWithUnmodelledAgentKeys();
+        var before = FlattenAgent("fence-agent");
+
+        await ChangeOneScalarAsync("fence-agent", "Renamed Via Portal");
+
+        var after = FlattenAgent("fence-agent");
+        var lost = before.Keys.Except(after.Keys).OrderBy(k => k, StringComparer.Ordinal).ToList();
+
+        lost.ShouldBeEmpty(
+            "A save must not remove stored configuration the AgentDescriptor does not model. " +
+            "Lost keys: " + string.Join(", ", lost) +
+            ". This is the #3547 defect class - see PlatformConfigAgentWriter's SetExtensions, " +
+            "SetOptionalInt and SetFileAccess.");
+    }
+
+    [Fact]
+    public async Task Update_ChangingOneScalar_RewritesNoUntouchedValue()
+    {
+        SeedConfigWithUnmodelledAgentKeys();
+        var before = FlattenAgent("fence-agent");
+
+        await ChangeOneScalarAsync("fence-agent", "Renamed Via Portal");
+
+        var after = FlattenAgent("fence-agent");
+
+        // displayName is the one key the edit targets; everything else must be byte-identical.
+        // A normalise-on-read / write-back-resolved asymmetry (alias -> absolute path) fails
+        // here rather than passing silently, because the VALUE changed even though the KEY
+        // survived. Key-presence alone would not catch it.
+        var rewritten = before.Keys
+            .Where(k => k != "displayName")
+            .Where(k => after.TryGetValue(k, out var now) && now != before[k])
+            .Select(k => $"{k}: '{before[k]}' -> '{after[k]}'")
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToList();
+
+        rewritten.ShouldBeEmpty(
+            "A save must not rewrite stored values it was not asked to change. Rewritten: " +
+            string.Join("; ", rewritten));
+    }
+
+    [Fact]
+    public async Task Update_ChangingOneScalar_PreservesFalsyButLegitimateScalars()
+    {
+        SeedConfigWithUnmodelledAgentKeys();
+
+        await ChangeOneScalarAsync("fence-agent", "Renamed Via Portal");
+
+        var after = FlattenAgent("fence-agent");
+
+        // 0 / false / "" are legitimate stored values, not "unset". SetOptionalInt's <= 0
+        // sentinel treated maxConcurrentSessions: 0 as absent and deleted it (#3547).
+        // enabled:true is required - PlatformConfigAgentSource skips disabled agents on load
+        // (PlatformConfigAgentSource.cs:165), so a disabled seed cannot be read back to edit.
+        // The falsy-scalar coverage this fence needs is carried by maxConcurrentSessions: 0 and
+        // extensions.custom-ext.{emptyString,zero,flag} below.
+        after.ShouldContainKeyAndValue("maxConcurrentSessions", "0");
+        after.ShouldContainKeyAndValue("extensions.custom-ext.emptyString", "");
+        after.ShouldContainKeyAndValue("extensions.custom-ext.zero", "0");
+        after.ShouldContainKeyAndValue("extensions.custom-ext.flag", "false");
+    }
+
+    [Fact]
+    public async Task Update_ChangingOneScalar_PreservesPathAliasesRatherThanResolvedPaths()
+    {
+        SeedConfigWithUnmodelledAgentKeys();
+
+        await ChangeOneScalarAsync("fence-agent", "Renamed Via Portal", FenceLocationResolver.Instance);
+
+        var after = FlattenAgent("fence-agent");
+
+        // The source resolves @alias -> absolute on read; without preservation the writer
+        // persists the resolved form, silently making a portable config machine-specific.
+        after.ShouldContainKeyAndValue("fileAccess.allowedReadPaths.0", "@fence-location");
+        after.ShouldContainKeyAndValue("fileAccess.allowedWritePaths.0", "@fence-location");
+    }
+
+    // ------------------------------------------------------------------
     // Field-parity fitness function
     // ------------------------------------------------------------------
 
@@ -235,6 +336,134 @@ public sealed class PlatformConfigAgentRoundTripTests : IDisposable
         return setMethod.ReturnParameter
             .GetRequiredCustomModifiers()
             .Any(t => t.FullName == "System.Runtime.CompilerServices.IsExternalInit");
+    }
+
+    private void SeedConfigWithUnmodelledAgentKeys()
+    {
+        // Deliberately contains keys AgentDescriptor does not model at all
+        // (extensions.custom-ext.*, extensions.botnexus-skills.unknownNested.*), a modelled
+        // section carrying an unknown child, and falsy-but-legitimate scalars. The
+        // assertions above derive from THIS document rather than a property list, so adding
+        // a key here extends coverage without touching the tests.
+        const string seed = """
+            {
+              "version": 1,
+              "agents": {
+                "fence-agent": {
+                  "provider": "github-copilot",
+                  "model": "reasoning-model",
+                  "displayName": "Fence Agent",
+                  "enabled": true,
+                  "maxConcurrentSessions": 0,
+                  "fileAccess": {
+                    "allowedReadPaths": [ "@fence-location" ],
+                    "allowedWritePaths": [ "@fence-location" ]
+                  },
+                  "extensions": {
+                    "custom-ext": {
+                      "emptyString": "",
+                      "zero": 0,
+                      "flag": false,
+                      "nested": { "deep": "keep-me" }
+                    },
+                    "botnexus-skills": {
+                      "allowSkillCreation": true,
+                      "unknownNested": { "alsoKeepMe": "yes" }
+                    }
+                  }
+                }
+              }
+            }
+            """;
+        _fileSystem.File.WriteAllText(_configPath, seed);
+    }
+
+    /// <summary>
+    /// Performs a real read-modify-write: loads the agent through the production
+    /// <see cref="PlatformConfigAgentSource"/>, changes exactly one scalar, and saves it back
+    /// through the production <see cref="PlatformConfigAgentWriter"/>. This is the shape of
+    /// the portal edit that lost eleven keys on 2026-08-26.
+    /// </summary>
+    private async Task ChangeOneScalarAsync(
+        string agentId,
+        string newDisplayName,
+        ILocationResolver? locationResolver = null)
+    {
+        var loaded = await PlatformConfigLoader.LoadAsync(
+            _configPath, CancellationToken.None, validateOnLoad: false, fileSystem: _fileSystem);
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(loaded),
+            _rootPath,
+            new NullLogger<PlatformConfigAgentSource>(),
+            locationResolver: locationResolver,
+            modelRegistry: MakeModelRegistry());
+
+        var descriptor = (await source.LoadAsync()).Single(d => d.AgentId.Value == agentId)
+            with { DisplayName = newDisplayName };
+
+        var writer = new PlatformConfigAgentWriter(
+            new PlatformConfigWriter(_configPath, _fileSystem), _home, locationResolver);
+        await writer.SaveAsync(descriptor, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Flattens one agent's stored subtree to dotted key -> raw value, so assertions compare
+    /// key sets and values rather than object graphs.
+    /// </summary>
+    private Dictionary<string, string> FlattenAgent(string agentId)
+    {
+        var agent = ReadConfigRoot()["agents"]!.AsObject()[agentId]!;
+        var flat = new Dictionary<string, string>(StringComparer.Ordinal);
+        Flatten(agent, prefix: string.Empty, flat);
+        return flat;
+    }
+
+    private static void Flatten(JsonNode? node, string prefix, Dictionary<string, string> into)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                foreach (var (key, child) in obj)
+                    Flatten(child, prefix.Length == 0 ? key : $"{prefix}.{key}", into);
+                break;
+            case JsonArray arr:
+                for (var i = 0; i < arr.Count; i++)
+                    Flatten(arr[i], $"{prefix}.{i}", into);
+                break;
+            default:
+                into[prefix] = node?.ToJsonString().Trim('"') ?? "null";
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Minimal <see cref="ILocationResolver"/> exposing one filesystem location, so the
+    /// alias-preservation assertion exercises the real resolve-on-read path rather than a
+    /// null-resolver shortcut.
+    /// </summary>
+    private sealed class FenceLocationResolver : ILocationResolver
+    {
+        internal static readonly FenceLocationResolver Instance = new();
+
+        private static readonly string ResolvedPath =
+            Path.Combine(Path.GetTempPath(), "botnexus-fence-location");
+
+        public Location? Resolve(string locationName)
+            => locationName == "fence-location"
+                ? new Location
+                {
+                    Name = "fence-location",
+                    Type = LocationType.FileSystem,
+                    Path = ResolvedPath
+                }
+                : null;
+
+        public string? ResolvePath(string locationName)
+            => locationName == "fence-location" ? ResolvedPath : null;
+
+        public IReadOnlyList<Location> GetAll()
+            => [Resolve("fence-location")!];
     }
 
     private void SeedConfigWithUnrelatedSections()
