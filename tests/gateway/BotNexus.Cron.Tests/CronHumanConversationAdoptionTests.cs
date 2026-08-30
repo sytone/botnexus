@@ -425,6 +425,9 @@ public sealed class CronHumanConversationAdoptionTests
             => _unused.ListAsync(agentId, ct);
         public Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default)
             => _unused.ListForCitizenAsync(citizen, ct);
+
+        public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+            => _unused.GetPendingAskUserCheckpointsAsync(ct);
         public Task AddParticipantsAsync(ConversationId conversationId, IEnumerable<SessionParticipant> participants, CancellationToken ct = default)
             => _unused.AddParticipantsAsync(conversationId, participants, ct);
         public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
