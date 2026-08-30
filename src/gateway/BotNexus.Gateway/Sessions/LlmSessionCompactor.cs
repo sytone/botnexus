@@ -111,6 +111,29 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     internal const string ProviderPromptTokensMetadataKey = "lastProviderPromptTokens";
 
     /// <summary>
+    /// #3681: session metadata key recording the fingerprint of a visible-entry population that a
+    /// SUCCESSFUL compaction failed to shrink below <see cref="CompactionOptions.LargestEntryBytesThreshold"/>.
+    ///
+    /// The #1599 bloat trigger evaluates the largest LLM-visible entry, but <see cref="SplitHistory"/>
+    /// always preserves the most recent <c>PreservedTurns</c> user turns. When the oversized entry sits
+    /// inside that preserved tail the cut SUCCEEDS - it sheds the older entries, resets the circuit
+    /// breaker, and leaves the oversized entry visible and still the maximum. <see cref="ShouldCompact"/>
+    /// then returns true again on the next turn for the same reason, forever, with the transcript growing
+    /// each cycle. Because the cut is a success, neither the circuit breaker nor the #2460 no-split guard
+    /// engages.
+    ///
+    /// The recorded value fingerprints the oversized population rather than a boolean latch, so the
+    /// suppression is scoped to the UNCHANGED entry: a new oversized entry, or the oversized entry
+    /// becoming historical / being removed, changes the fingerprint and re-arms the trigger. Only the
+    /// BYTE signal is suppressed - token-estimate and provider-token pressure are untouched.
+    ///
+    /// Written and cleared only at the successful commit point in <see cref="CompactAsync"/>, alongside
+    /// <see cref="ProviderPromptTokensMetadataKey"/>, so a Skipped/Failed outcome (history unchanged)
+    /// records nothing. A lifecycle reset starts a new session with fresh metadata, which clears it.
+    /// </summary>
+    internal const string IneffectiveByteCompactionMetadataKey = "ineffectiveByteCompactionSignature";
+
+    /// <summary>
     /// #2522 measure-first: the two token numbers a compaction decision is made against, and their
     /// ratio. <paramref name="EstimatedTokens"/> is the local <see cref="TokenEstimator"/> estimate
     /// over LLM-visible entries only - CJK code points weighted at ~1 token each and other characters
@@ -289,7 +312,32 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // low-value entries (e.g. a raw transcript dump) whose total still sits under the token
         // threshold. Make a single oversized *visible* entry eligible for compaction on its own.
         // Additive: whichever of the token-count or per-entry-byte signal trips first wins.
-        var (bloatTrigger, largestEntryBytes) = EvaluateLargestVisibleEntryBytes(session, options.LargestEntryBytesThreshold);
+        var (rawBloatTrigger, largestEntryBytes) = EvaluateLargestVisibleEntryBytes(session, options.LargestEntryBytesThreshold);
+
+        // #3681: suppress the byte signal when the previous SUCCESSFUL compaction already proved it
+        // cannot be acted upon - i.e. the oversized entry is in the preserved tail, so a cut sheds the
+        // older entries and leaves the maximum exactly where it was. Comparing FINGERPRINTS (not a
+        // boolean latch) keeps the suppression scoped to the unchanged population: a new oversized
+        // entry, or the recorded one going historical, changes the signature and re-arms the trigger.
+        var currentSignature = BuildOversizedSignature(session.History, options.LargestEntryBytesThreshold);
+        var suppressedSignature = ReadIneffectiveByteCompactionSignature(session);
+        var bloatSuppressed = rawBloatTrigger
+            && currentSignature is not null
+            && string.Equals(currentSignature, suppressedSignature, StringComparison.Ordinal);
+        var bloatTrigger = rawBloatTrigger && !bloatSuppressed;
+
+        if (bloatSuppressed)
+        {
+            _logger.LogInformation(
+                "Byte-based compaction trigger suppressed for session {SessionId}: the previous successful " +
+                "compaction did not reduce the largest visible entry ({LargestBytes} bytes, threshold " +
+                "{ByteThreshold}) - it sits inside the preserved tail. Signature {Signature}. Token and " +
+                "provider-token pressure remain active.",
+                session.SessionId,
+                largestEntryBytes,
+                options.LargestEntryBytesThreshold,
+                currentSignature);
+        }
 
         var shouldCompact = tokenTrigger || providerTrigger || bloatTrigger;
 
@@ -635,6 +683,33 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // estimate-only triggering for exactly one turn - never to a zero masquerading as a
         // measurement. Remove is a no-op when the key was never present.
         session.Metadata.Remove(ProviderPromptTokensMetadataKey);
+
+        // #3681: record whether this SUCCESSFUL cut actually moved the byte signal. The #1599 bloat
+        // trigger evaluates the largest LLM-visible entry, but SplitHistory always preserves the most
+        // recent PreservedTurns user turns - so an oversized entry inside that tail survives the cut and
+        // remains the maximum. That makes ShouldCompact return true again next turn for the same reason,
+        // with the transcript growing each cycle, and because the cut SUCCEEDED neither the circuit
+        // breaker (cleared just above) nor the #2460 no-split guard can bound it.
+        //
+        // Record the fingerprint of the still-oversized visible population so the byte signal alone is
+        // suppressed for exactly that unchanged population; clear it when the cut did work, so the
+        // suppression can never outlive the condition that justified it.
+        var residualSignature = BuildOversizedSignature(newHistory, options.LargestEntryBytesThreshold);
+        if (residualSignature is not null)
+        {
+            session.Metadata[IneffectiveByteCompactionMetadataKey] = residualSignature;
+            _logger.LogInformation(
+                "Compaction of session {SessionId} succeeded but did not reduce the largest visible entry " +
+                "below the {ByteThreshold}-byte threshold (the oversized entry is inside the preserved " +
+                "tail). Suppressing the byte trigger for this unchanged entry; token and provider-token " +
+                "pressure remain active.",
+                session.SessionId,
+                options.LargestEntryBytesThreshold);
+        }
+        else
+        {
+            session.Metadata.Remove(IneffectiveByteCompactionMetadataKey);
+        }
 
         return CompactionResult.ForSuccess(
             summary,
@@ -1221,6 +1296,10 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// </summary>
     /// <returns>A tuple of (whether the bloat trigger fires, the largest visible entry's byte size).</returns>
     private static (bool exceeds, long largestBytes) EvaluateLargestVisibleEntryBytes(Session session, int thresholdBytes)
+        => EvaluateLargestVisibleEntryBytes(session.History, thresholdBytes);
+
+    /// <inheritdoc cref="EvaluateLargestVisibleEntryBytes(Session, int)"/>
+    private static (bool exceeds, long largestBytes) EvaluateLargestVisibleEntryBytes(IEnumerable<SessionEntry> entries, int thresholdBytes)
     {
         if (thresholdBytes <= 0)
         {
@@ -1228,7 +1307,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         }
 
         long largest = 0;
-        foreach (var entry in session.History)
+        foreach (var entry in entries)
         {
             if (!SessionContextProjector.IsVisibleInLiveContext(entry))
             {
@@ -1250,6 +1329,78 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         }
 
         return (largest >= thresholdBytes, largest);
+    }
+
+    /// <summary>
+    /// #3681: measures a single entry exactly as the #1599/#3536 bloat trigger does - Content plus
+    /// ToolArgs plus ThinkingContent, in UTF-8 bytes - so the signature and the trigger can never
+    /// disagree about which entries are oversized.
+    /// </summary>
+    private static long MeasureEntryBytes(SessionEntry entry)
+        => Encoding.UTF8.GetByteCount(entry.Content ?? string.Empty)
+            + Encoding.UTF8.GetByteCount(entry.ToolArgs ?? string.Empty)
+            + Encoding.UTF8.GetByteCount(entry.ThinkingContent ?? string.Empty);
+
+    /// <summary>
+    /// #3681: builds a stable fingerprint of the LLM-VISIBLE entries that are at or above
+    /// <paramref name="thresholdBytes"/>, or <c>null</c> when there are none (or the byte signal is
+    /// disabled).
+    ///
+    /// The fingerprint is what makes the suppression recorded by
+    /// <see cref="IneffectiveByteCompactionMetadataKey"/> scoped to the UNCHANGED oversized entry
+    /// rather than a blanket latch. It folds in the threshold itself, so raising or lowering the
+    /// threshold re-arms the trigger, and a content hash per oversized entry, so an entry that is
+    /// removed, edited, or marked <c>IsHistory</c> (and therefore no longer visible) changes the
+    /// fingerprint and the byte trigger fires again.
+    /// </summary>
+    internal static string? BuildOversizedSignature(IEnumerable<SessionEntry> entries, int thresholdBytes)
+    {
+        if (thresholdBytes <= 0)
+        {
+            return null;
+        }
+
+        var parts = new List<string>();
+        foreach (var entry in entries)
+        {
+            if (!SessionContextProjector.IsVisibleInLiveContext(entry))
+            {
+                continue;
+            }
+
+            var bytes = MeasureEntryBytes(entry);
+            if (bytes < thresholdBytes)
+            {
+                continue;
+            }
+
+            var material = string.Concat(
+                entry.Role.Value, "\u0001",
+                entry.Content ?? string.Empty, "\u0001",
+                entry.ToolArgs ?? string.Empty, "\u0001",
+                entry.ThinkingContent ?? string.Empty);
+            var hash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+            parts.Add($"{bytes}:{hash}");
+        }
+
+        return parts.Count == 0 ? null : $"t{thresholdBytes}|{string.Join(",", parts)}";
+    }
+
+    /// <summary>
+    /// #3681: reads the recorded ineffective-byte-compaction fingerprint, or <c>null</c> when none is
+    /// recorded. Absence means "never suppressed", exactly like the provider-token read - it is never
+    /// fabricated into a match.
+    /// </summary>
+    private static string? ReadIneffectiveByteCompactionSignature(Session session)
+    {
+        if (session.Metadata is null ||
+            !session.Metadata.TryGetValue(IneffectiveByteCompactionMetadataKey, out var raw))
+        {
+            return null;
+        }
+
+        return raw as string is { Length: > 0 } value ? value : null;
     }
 
     /// <summary>

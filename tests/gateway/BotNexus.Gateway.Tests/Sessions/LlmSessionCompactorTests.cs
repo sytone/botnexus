@@ -772,6 +772,227 @@ public sealed class LlmSessionCompactorTests
             "a multibyte entry under the char threshold but over the byte threshold must trigger");
     }
 
+    // ─── Issue #3681: byte-triggered compaction must not re-fire forever ────────────
+
+    /// <summary>
+    /// #3681 regression (fails against main): the oversized entry sits inside the tail that
+    /// <c>SplitHistory</c> always preserves, so a byte-triggered compaction SUCCEEDS - it sheds the
+    /// older entries, resets the circuit breaker - and leaves the oversized entry visible and still
+    /// the maximum. On main <c>ShouldCompact</c> therefore returns true again immediately, forever,
+    /// with the transcript growing each cycle; neither the breaker nor the #2460 no-split guard can
+    /// bound it because the cut was a success.
+    /// </summary>
+    [Fact]
+    public async Task ShouldCompact_AfterIneffectiveByteCompaction_DoesNotReFireOnBytes()
+    {
+        var oversized = new string('x', 70 * 1024);
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+            ("tool", oversized));   // newer than the preserved boundary => always survives the cut
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions
+        {
+            PreservedTurns = 1,
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024,
+            SummarizationModel = TestModel.Id
+        };
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeTrue(
+            "the oversized entry must trip the #1599 bloat trigger the first time");
+
+        var result = await compactor.CompactAsync(session, options);
+        result.Succeeded.ShouldBeTrue("this is the success path, not an aborted no-split cut");
+        session.ReplaceHistory(result.CompactedHistory!);
+
+        // The cut really did happen and really did NOT shed the oversized entry.
+        session.GetHistorySnapshot()
+            .Where(SessionContextProjector.IsVisibleInLiveContext)
+            .ShouldContain(e => e.Content == oversized);
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse(
+            "a successful compaction that left the largest visible entry unchanged must not re-fire " +
+            "the byte trigger on that same unchanged entry");
+    }
+
+    /// <summary>
+    /// #3681 AC2: the suppression is scoped to the BYTE signal only. Normal token pressure must still
+    /// trigger compaction on a session whose byte trigger has been suppressed.
+    /// </summary>
+    [Fact]
+    public async Task ShouldCompact_AfterIneffectiveByteCompaction_TokenPressureStillTriggers()
+    {
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+            ("tool", new string('x', 70 * 1024)));
+        var compactor = CreateCompactor("summary");
+        var byteOnlyOptions = new CompactionOptions
+        {
+            PreservedTurns = 1,
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024,
+            SummarizationModel = TestModel.Id
+        };
+
+        var result = await compactor.CompactAsync(session, byteOnlyOptions);
+        result.Succeeded.ShouldBeTrue();
+        session.ReplaceHistory(result.CompactedHistory!);
+        compactor.ShouldCompact(session.Session, byteOnlyOptions).ShouldBeFalse();
+
+        // Same session, same suppressed byte signature - but now genuinely over the token budget.
+        var tokenPressureOptions = byteOnlyOptions with
+        {
+            ContextWindowTokens = 1_000,
+            TokenThresholdRatio = 0.5
+        };
+
+        compactor.ShouldCompact(session.Session, tokenPressureOptions).ShouldBeTrue(
+            "suppressing the byte signal must not suppress token-count pressure");
+    }
+
+    /// <summary>
+    /// #3681 AC3: the suppression fingerprints the oversized population, so it does not survive a
+    /// change to it. A NEW entry above the threshold must re-arm the byte trigger.
+    /// </summary>
+    [Fact]
+    public async Task ShouldCompact_NewOversizedEntryAfterSuppression_TriggersAgain()
+    {
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+            ("tool", new string('x', 70 * 1024)));
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions
+        {
+            PreservedTurns = 1,
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024,
+            SummarizationModel = TestModel.Id
+        };
+
+        var result = await compactor.CompactAsync(session, options);
+        result.Succeeded.ShouldBeTrue();
+        session.ReplaceHistory(result.CompactedHistory!);
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
+
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool,
+            Content = new string('y', 80 * 1024)   // a DIFFERENT oversized entry
+        });
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeTrue(
+            "a new entry above the byte threshold must re-arm the trigger despite the suppression");
+    }
+
+    /// <summary>
+    /// #3681 AC3 (second clause): when the recorded oversized entry becomes historical it is no longer
+    /// LLM-visible, the fingerprint changes, and the stale suppression must not linger to mask a
+    /// genuinely oversized successor that IS shrinkable.
+    /// </summary>
+    [Fact]
+    public async Task ShouldCompact_SuppressedEntryGoesHistorical_ReArmsTrigger()
+    {
+        var oversized = new string('x', 70 * 1024);
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+            ("tool", oversized));
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions
+        {
+            PreservedTurns = 1,
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024,
+            SummarizationModel = TestModel.Id
+        };
+
+        var result = await compactor.CompactAsync(session, options);
+        result.Succeeded.ShouldBeTrue();
+        session.ReplaceHistory(result.CompactedHistory!);
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
+
+        // Fold the oversized entry away, and add a fresh oversized one in its place.
+        var folded = session.GetHistorySnapshot()
+            .Select(e => e.Content == oversized ? e with { IsHistory = true } : e)
+            .ToList();
+        folded.Add(new SessionEntry { Role = MessageRole.Tool, Content = new string('z', 70 * 1024) });
+        session.ReplaceHistory(folded);
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeTrue(
+            "once the recorded oversized entry is no longer visible the suppression must not apply");
+    }
+
+    /// <summary>
+    /// #3681 AC4: a lifecycle reset produces a session with fresh metadata, so no suppression state
+    /// carries across. An oversized entry on a brand-new session always triggers.
+    /// </summary>
+    [Fact]
+    public void ShouldCompact_LifecycleReset_ClearsSuppressionState()
+    {
+        var session = CreateSession(
+            ("user", "tiny"),
+            ("tool", new string('x', 70 * 1024)),
+            ("user", "latest"));
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024
+        };
+
+        session.Session.Metadata.ShouldNotContainKey(
+            LlmSessionCompactor.IneffectiveByteCompactionMetadataKey,
+            "a freshly reset session carries no compaction suppression state");
+        compactor.ShouldCompact(session.Session, options).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// #3681 AC6: an EFFECTIVE byte compaction - one that does shed the oversized entry - must record
+    /// no suppression at all, so the byte trigger stays fully armed for whatever comes next.
+    /// </summary>
+    [Fact]
+    public async Task CompactAsync_EffectiveByteCompaction_RecordsNoSuppression()
+    {
+        // PreservedTurns = 1 splits at "u2", so the oversized tool result (older than that boundary)
+        // is summarised away and the byte signal genuinely clears.
+        var session = CreateSession(
+            ("user", "u1"),
+            ("tool", new string('x', 70 * 1024)),
+            ("user", "u2"),
+            ("assistant", "a2"));
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions
+        {
+            PreservedTurns = 1,
+            ContextWindowTokens = 1_000_000,
+            TokenThresholdRatio = 0.5,
+            LargestEntryBytesThreshold = 64 * 1024,
+            SummarizationModel = TestModel.Id
+        };
+
+        var result = await compactor.CompactAsync(session, options);
+        result.Succeeded.ShouldBeTrue();
+        session.ReplaceHistory(result.CompactedHistory!);
+
+        session.Session.Metadata.ShouldNotContainKey(
+            LlmSessionCompactor.IneffectiveByteCompactionMetadataKey,
+            "a compaction that actually shed the oversized entry must record no suppression");
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse(
+            "the oversized entry is now historical, so the byte trigger is legitimately quiet");
+    }
+
     // ─── Issue #665: Session compactor continuity audit ──────────────────────
 
     /// <summary>

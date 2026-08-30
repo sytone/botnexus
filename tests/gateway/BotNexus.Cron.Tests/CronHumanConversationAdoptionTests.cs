@@ -421,6 +421,12 @@ public sealed class CronHumanConversationAdoptionTests
             => ArchiveAsync(conversationId, ct);
 
         // Everything below is untouched by the delete path and delegates to an empty double.
+        // #3681 drive-by: main did not compile. #3676 added this member to IConversationStore and
+        // #3689 added this double; the two PRs merged independently and neither build saw the other,
+        // so BotNexus.Cron.Tests was left with CS0535 on main. Delegating to the empty double keeps
+        // the delete-path assertions untouched.
+        public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
+            => _unused.GetPendingAskUserCheckpointsAsync(ct);
         public Task<IReadOnlyList<Conversation>> ListAsync(AgentId? agentId = null, CancellationToken ct = default)
             => _unused.ListAsync(agentId, ct);
         public Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default)
