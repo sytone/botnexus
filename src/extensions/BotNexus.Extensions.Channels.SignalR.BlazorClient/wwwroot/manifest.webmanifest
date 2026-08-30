@@ -4,8 +4,8 @@
   "start_url": "/",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone"],
-  "background_color": "#1a1a2e",
-  "theme_color": "#4f46e5",
+  "background_color": "#0e1116",
+  "theme_color": "#151a21",
   "description": "BotNexus AI agent platform",
   "icons": [
     { "src": "icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },

@@ -822,7 +822,6 @@ html, body, #app {
 }
 
 .agent-dropdown-select:focus {
-    outline: none;
     border-color: var(--accent);
 }
 
@@ -2134,7 +2133,6 @@ html, body, #app {
     resize: none;
     min-height: 40px;
     max-height: 120px;
-    outline: none;
     transition: border-color 0.15s;
 }
 
@@ -3373,7 +3371,6 @@ details[open] > .thinking-summary::before {
 
 .config-select:focus {
     border-color: var(--accent);
-    outline: none;
 }
 
 .config-error {
@@ -4048,7 +4045,6 @@ details[open] > .thinking-summary::before {
 .cron-edit-field select:focus,
 .cron-edit-field textarea:focus {
     border-color: var(--accent);
-    outline: none;
 }
 .cron-edit-field textarea { resize: vertical; }
 .cron-edit-field-inline > label {
@@ -4134,7 +4130,6 @@ details[open] > .thinking-summary::before {
 .cfg-input:focus,
 .cfg-textarea:focus {
     border-color: var(--accent);
-    outline: none;
 }
 
 .cfg-input:disabled,
@@ -4318,13 +4313,13 @@ details[open] > .thinking-summary::before {
 
 .world-default-badge {
     display: inline-block;
-    padding: 0.1rem 0.45rem;
+    padding: 0.1rem 0.4rem;
     border-radius: var(--radius-pill);
     font-size: var(--text-caption);
     font-weight: 500;
-    background: var(--color-wash);
-    color: var(--text-secondary);
-    border: 1px solid var(--color-hairline);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
     margin-left: 0.4rem;
     vertical-align: middle;
     white-space: nowrap;
@@ -4856,7 +4851,6 @@ h3.conversation-title.editable:hover {
     color: inherit;
     padding: 0.1rem 0.3rem;
     margin: 0;
-    outline: none;
     width: 100%;
     max-width: 24rem;
 }
@@ -5750,18 +5744,6 @@ h3.conversation-title.editable:hover {
     background: var(--bg-surface);
 }
 
-.world-default-badge {
-    display: inline-block;
-    font-size: var(--text-caption);
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-pill);
-    padding: 0.1rem 0.4rem;
-    color: var(--text-muted);
-    margin-left: 0.4rem;
-    vertical-align: middle;
-}
-
 /* ── Steering Queue Panel (#705) ───────────────────────────────────────── */
 
 .steering-queue-panel {
@@ -6023,7 +6005,6 @@ h3.conversation-title.editable:hover {
 .activity-row:hover,
 .activity-row:focus {
     background: var(--surface-2);
-    outline: none;
 }
 
 .activity-row td {
@@ -7461,7 +7442,6 @@ h3.conversation-title.editable:hover {
 .schema-field-control > input:focus,
 .schema-field-control > select:focus {
     border-color: var(--accent);
-    outline: none;
 }
 
 /* A checkbox is its own control; stretching it to the field width would be absurd. */
@@ -7551,7 +7531,6 @@ h3.conversation-title.editable:hover {
 .dict-newkey:focus,
 .dict-rename-input:focus {
     border-color: var(--accent);
-    outline: none;
 }
 
 /* ── Collection buttons ───────────────────────────────────────────────────── */

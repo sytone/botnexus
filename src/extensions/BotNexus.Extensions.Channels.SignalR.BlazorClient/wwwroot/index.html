@@ -6,7 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials" />
-    <meta name="theme-color" content="#4f46e5" />
+    <!-- Dark is the portal default; the boot script below re-reads this from --color-surface
+         once the stylesheet has parsed, so the browser chrome always matches the top bar. -->
+    <meta name="theme-color" content="#151a21" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -19,7 +21,7 @@
          only after app.css parses would guarantee a visible swap. latin-ext is deliberately
          NOT preloaded - it is fetched on demand via unicode-range. -->
     <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="stylesheet" href="css/app.css?v=ds13" />
+    <link rel="stylesheet" href="css/app.css?v=ds14" />
     <script>
         // Applied BEFORE first paint and before Blazor boots. The WASM runtime takes seconds to
         // start; without this a light-theme user would stare at a fully dark portal until it did,
@@ -32,6 +34,18 @@
                 }
             } catch (e) {
                 // Unparseable or unavailable storage - dark is the default, so do nothing.
+            }
+
+            // The browser chrome should match the app's top bar, which is --color-surface.
+            // Read it from the stylesheet rather than repeating the hex here, so the meta
+            // tag and the theme can never drift apart.
+            try {
+                var meta = document.querySelector('meta[name="theme-color"]');
+                var surface = getComputedStyle(document.documentElement)
+                    .getPropertyValue('--color-surface').trim();
+                if (meta && surface) { meta.setAttribute('content', surface); }
+            } catch (e) {
+                // No computed style yet - the static meta value stands.
             }
         })();
     </script>

@@ -180,6 +180,21 @@ window.portalPrefs = {
         } else {
             document.documentElement.removeAttribute('data-theme');
         }
+        window.portalPrefs.syncThemeColor();
+    },
+
+    // Keep the browser/PWA chrome on the same colour as the top bar. The value is read back
+    // from --color-surface rather than restated here, so a token change carries automatically.
+    // Mirrors the pre-first-paint block in index.html.
+    syncThemeColor: function () {
+        try {
+            var meta = document.querySelector('meta[name="theme-color"]');
+            var surface = getComputedStyle(document.documentElement)
+                .getPropertyValue('--color-surface').trim();
+            if (meta && surface) { meta.setAttribute('content', surface); }
+        } catch (e) {
+            // Non-fatal: the chrome keeps its previous colour.
+        }
     }
 };
 
