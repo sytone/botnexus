@@ -6,10 +6,10 @@
 
 <PageTitle>BotNexus &mdash; Plugins</PageTitle>
 
-<div class="agents-page" data-testid="plugins-page">
+<div class="page" data-testid="plugins-page">
 
     <header class="agents-toolbar">
-        <h2 class="page-heading"><Icon Name="plugins" Size="@IconSize.Large" /><span>Plugins</span></h2>
+        <h1 class="page-heading"><Icon Name="plugins" Size="@IconSize.Large" /><span>Plugins</span></h1>
         <a class="help-link" href="guide/extensions" title="About plugins" aria-label="About plugins" data-testid="help-link-plugins">?</a>
         <div class="agents-toolbar-actions">
             @if (!string.IsNullOrEmpty(_statusMessage))
@@ -63,7 +63,7 @@
                 @foreach (var plugin in _plugins)
                 {
                     <tr data-testid="plugin-row" data-plugin-id="@plugin.Name"
-                        class="@(IsSelected(plugin) ? "selected" : null)">
+                        class="@(IsSelected(plugin) ?"selected" : null)">
                         <td class="agents-id">
                             <a href="plugins/@plugin.Name" data-testid="plugin-link">@plugin.Name</a>
                         </td>
@@ -89,7 +89,7 @@
         @if (_selected is not null)
         {
             <section class="cron-page-card" data-testid="plugin-detail">
-                <h3 data-testid="plugin-detail-name">@_selected.Name</h3>
+                <h2 data-testid="plugin-detail-name">@_selected.Name</h2>
                 <dl class="plugin-detail-list">
                     <dt>Source</dt>
                     <dd data-testid="plugin-detail-source">@_selected.Source</dd>

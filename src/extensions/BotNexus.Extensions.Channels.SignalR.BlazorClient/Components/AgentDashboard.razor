@@ -14,7 +14,7 @@
         <div class="agent-card-grid">
             @foreach (var (agentId, agent) in OrderedAgents())
             {
-                <div class="agent-card @(agent.IsStreaming ? "agent-card--active" : "")"
+                <div class="agent-card @(agent.IsStreaming ?"agent-card--active" : "")"
                      data-testid="agent-card"
                      data-agent-id="@agentId"
                      @onclick="() => NavigateToAgent(agent)">
@@ -25,7 +25,7 @@
                         </span>
                         <div class="agent-card-identity">
                             <span class="agent-card-name">@agent.DisplayName</span>
-                            <span class="agent-card-status @(agent.IsStreaming ? "status-active" : "status-idle")">
+                            <span class="agent-card-status @(agent.IsStreaming ?"status-active" : "status-idle")">
                                 @(agent.IsStreaming ? "● Active" : "○ Idle")
                             </span>
                         </div>

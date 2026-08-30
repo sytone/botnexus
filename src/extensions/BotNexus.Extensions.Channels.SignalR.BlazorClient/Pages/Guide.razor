@@ -8,9 +8,9 @@
 
 <PageTitle>BotNexus &mdash; Guide</PageTitle>
 
-<div class="platform-config-page">
+<div class="page-app">
     <header class="platform-config-toolbar">
-        <h2 class="page-heading"><Icon Name="guide" Size="@IconSize.Large" /><span>Guide</span></h2>
+        <h1 class="page-heading"><Icon Name="guide" Size="@IconSize.Large" /><span>Guide</span></h1>
         <input class="guide-search t-body"
                type="search"
                placeholder="Search the guide…"
@@ -41,7 +41,7 @@
                 {
                     @foreach (var s in Matches)
                     {
-                        <button class="guide-nav-item @(s.Id == _currentId ? "active" : "")"
+                        <button class="guide-nav-item @(s.Id == _currentId ?"active" : "")"
                                 data-testid="guide-nav-@s.Id"
                                 title="@s.Blurb"
                                 @onclick="() => SelectAsync(s.Id)">
@@ -56,7 +56,7 @@
                         {
                             @foreach (var c in s.Children)
                             {
-                                <button class="guide-nav-item is-child @(c.Id == _currentId ? "active" : "")"
+                                <button class="guide-nav-item is-child @(c.Id == _currentId ?"active" : "")"
                                         @onclick="() => SelectAsync(c.Id)">
                                     <span class="guide-nav-title t-caption">@c.Title</span>
                                 </button>

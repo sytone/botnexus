@@ -33,7 +33,7 @@
                 <button class="section-collapse-toggle" data-testid="section-collapse-toggle"
                         title="@(section.IsCollapsed ? "Expand" : "Collapse")"
                         @onclick="() => SectionsState.ToggleCollapseAsync(section)">
-                    <span class="group-chevron @(section.IsCollapsed ? "" : "expanded")">&#x25B6;</span>
+                    <span class="group-chevron @(section.IsCollapsed ?"" : "expanded")">&#x25B6;</span>
                 </button>
 
                 @if (_editingId == section.SectionId)

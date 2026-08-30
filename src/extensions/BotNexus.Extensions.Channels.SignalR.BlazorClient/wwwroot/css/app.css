@@ -3007,10 +3007,6 @@ details[open] > .thinking-summary::before {
 
 /* ── Platform Configuration Page ────────────────────────────────────── */
 
-.platform-config-page {
-    display: flex;
-    flex-direction: column;
-}
 
 .platform-config-toolbar {
     display: flex;
@@ -3022,7 +3018,7 @@ details[open] > .thinking-summary::before {
     flex-shrink: 0;
 }
 
-.platform-config-toolbar h2 {
+.platform-config-toolbar h1 {
     margin: 0;
     font-size: var(--text-title);
     font-weight: 600;
@@ -3126,14 +3122,49 @@ details[open] > .thinking-summary::before {
 /* =====================================================
    Agents page
    ===================================================== */
-.agents-page {
+/* ── THE PAGE ARCHETYPE RULE ───────────────────────────────────────────────
+   Two shells, and which one a page takes is decided by what the page IS, not
+   by who wrote it:
+
+     .page      a DOCUMENT. A single column read top to bottom, whose actions
+                belong beside its heading. Centred on a measure, padded, and it
+                scrolls as one thing. Agents, Cron Jobs, Plugins, Tools, Home.
+
+     .page-app  a WORKSPACE. Its own scrolling regions and actions that must
+                stay reachable while you scroll one of them, so the header is a
+                bar rather than a heading and the shell is full-bleed.
+                Configuration, Guide, Platform, Skills.
+
+   The names used to be .agents-page and .platform-config-page - each named
+   after the page that happened to need it first, which is why new pages picked
+   one essentially at random.
+
+   width:100% is load-bearing: these are flex items of .main-canvas, and a flex
+   item shrink-wraps its content, so max-width and auto margins do nothing
+   without it.
+   ──────────────────────────────────────────────────────────────────────── */
+.page {
     padding: 1.5rem;
-    max-width: 960px;
+    max-width: var(--page-width);
     margin: 0 auto;
-    /* A flex item shrink-wraps its content, so max-width and auto margins do nothing
-       without this. Matches .home-page, which already had it. */
     width: 100%;
     box-sizing: border-box;
+}
+
+/* Only for a page whose content is a data table. */
+.page-wide {
+    max-width: var(--page-width-wide);
+}
+
+.page-app {
+    display: flex;
+    flex-direction: column;
+    /* Same flex-item trap as .page: .main-canvas is a flex container, so without
+       this the whole workspace shrink-wraps its content and leaves dead space
+       down the right. .agents-page was fixed for this years ago and
+       .platform-config-page never was. */
+    width: 100%;
+    min-width: 0;
 }
 
 .agents-toolbar {
@@ -3144,7 +3175,7 @@ details[open] > .thinking-summary::before {
     gap: 1rem;
 }
 
-.agents-toolbar h2 {
+.agents-toolbar h1 {
     margin: 0;
     font-size: var(--text-title);
 }
@@ -3419,7 +3450,7 @@ details[open] > .thinking-summary::before {
     margin-bottom: 1.25rem;
 }
 
-.agents-form-card h3 {
+.agents-form-card h2, .agents-form-card h3 {
     margin: 0 0 1rem;
     font-size: var(--text-heading);
 }
@@ -5118,13 +5149,6 @@ h3.conversation-title.editable:hover {
 }
 
 /* ── Home / Activity dashboard (#1888) ─────────────────────────────────────── */
-.activity-dashboard {
-    padding: 1.5rem;
-    max-width: 1100px;
-    margin: 0 auto;
-    width: 100%;
-    box-sizing: border-box;
-}
 
 .activity-dashboard-header {
     display: flex;
@@ -5635,7 +5659,7 @@ h3.conversation-title.editable:hover {
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--border);
 }
-.cron-page-card-header h3 { margin: 0; font-size: var(--text-heading); }
+.cron-page-card-header h2 { margin: 0; font-size: var(--text-heading); }
 .cron-page-card-subtitle,
 .cron-page-actions {
     display: flex;
@@ -6027,15 +6051,11 @@ h3.conversation-title.editable:hover {
     }
 }
 /* ── Home landing page (#2037) ─────────────────────────────────────────────── */
+/* Keeps only the stacking rhythm its sections need; the measure is the page's. */
 .home-page {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
-    padding: 1.5rem;
-    max-width: 60rem;
-    margin: 0 auto;
-    width: 100%;
-    box-sizing: border-box;
 }
 
 .home-summary {

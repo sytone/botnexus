@@ -53,17 +53,17 @@
             }
         </div>
         <div class="chat-header-actions">
-            <button class="toggle-btn @(!ShowThinking ? "toggled-off" : "")" data-testid="chat-thinking-toggle"
+            <button class="toggle-btn @(!ShowThinking ?"toggled-off" : "")" data-testid="chat-thinking-toggle"
                     @onclick="ToggleThinking" title="Toggle thinking visibility">
                 <Icon Name="thinking" Size="@IconSize.Small" />
             </button>
-            <button class="toggle-btn @(!ShowTools ? "toggled-off" : "")" data-testid="chat-tools-toggle"
+            <button class="toggle-btn @(!ShowTools ?"toggled-off" : "")" data-testid="chat-tools-toggle"
                     @onclick="ToggleTools" title="Toggle tool visibility">
                 <Icon Name="tools" Size="@IconSize.Small" />
             </button>
             @if (CanManageActiveConversation)
             {
-                <button class="conversation-header-action @(ActiveConversation?.IsPinned == true ? "pinned" : "")"
+                <button class="conversation-header-action @(ActiveConversation?.IsPinned == true ?"pinned" : "")"
                         data-testid="chat-pin-conversation-btn"
                         title="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
                         aria-label="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
@@ -101,19 +101,19 @@
             @if (_showMobileActionsMenu)
             {
                 <div class="chat-header-overflow-menu">
-                    <button class="toggle-btn @(!ShowThinking ? "toggled-off" : "")"
+                    <button class="toggle-btn @(!ShowThinking ?"toggled-off" : "")"
                             @onclick="ToggleThinkingFromMenu"
                             title="Toggle thinking visibility">
                         <Icon Name="thinking" Size="@IconSize.Small" />
                     </button>
-                    <button class="toggle-btn @(!ShowTools ? "toggled-off" : "")"
+                    <button class="toggle-btn @(!ShowTools ?"toggled-off" : "")"
                             @onclick="ToggleToolsFromMenu"
                             title="Toggle tool visibility">
                         <Icon Name="tools" Size="@IconSize.Small" />
                     </button>
                     @if (CanManageActiveConversation)
                     {
-                        <button class="conversation-header-action @(ActiveConversation?.IsPinned == true ? "pinned" : "")"
+                        <button class="conversation-header-action @(ActiveConversation?.IsPinned == true ?"pinned" : "")"
                                 title="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
                                 aria-label="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
                                 aria-pressed="@(ActiveConversation?.IsPinned == true ? "true" : "false")"
@@ -189,7 +189,7 @@
     {
         <div class="read-only-banner" role="status" aria-label="Read-only sub-agent session view">
             <span class="read-only-badge"><Icon Name="visibility" Size="@IconSize.Small" /> Sub-agent session</span>
-            <span class="read-only-status @(IsStreaming ? "" : "completed")"><Icon Name="@(IsStreaming ? "pending" : "check")" Size="@IconSize.Small" /> @GetSubAgentStatus()</span>
+            <span class="read-only-status @(IsStreaming ?"" : "completed")"><Icon Name="@(IsStreaming ? "pending" : "check")" Size="@IconSize.Small" /> @GetSubAgentStatus()</span>
             <span class="read-only-label">Read-only — you can observe but not interact</span>
         </div>
     }
@@ -266,7 +266,7 @@
                render fine on reload-from-store). display:contents keeps layout unchanged. *@
             <div @key="msg.Id"
                  style="@(msg.IsFolded && !_showFoldedHistory ? "display:none" : "display:contents")"
-                 class="@(msg.IsFolded ? "folded-history-entry" : null)"
+                 class="@(msg.IsFolded ?"folded-history-entry" : null)"
                  data-folded="@(msg.IsFolded ? "true" : null)">
             @if (msg.IsBoundary)
             {
@@ -290,7 +290,7 @@
             }
             else if (msg.IsToolCall)
             {
-                <div class="message tool @(msg.ToolIsError == true ? "tool-error" : "") @(_expandedTools.Contains(msg.Id) ? "expanded" : "") @(!ShowTools ? "visibility-hidden" : "")"
+                <div class="message tool @(msg.ToolIsError == true ?"tool-error" : "") @(_expandedTools.Contains(msg.Id) ? "expanded" : "") @(!ShowTools ? "visibility-hidden" : "")"
                      style="@(!ShowTools ? "display:none" : "")">
                     <div class="tool-header" @onclick="() => ToggleToolDetails(msg.Id)">
                         <span class="tool-icon"><Icon Name="@(msg.ToolResult is null ? "pending" : msg.ToolIsError == true ? "avoid" : "check")" Size="@IconSize.Small" /></span>
@@ -360,7 +360,7 @@
             {
                 @if (msg.Role == "Assistant" && !string.IsNullOrEmpty(msg.ThinkingContent))
                 {
-                    <div class="thinking-block @(!ShowThinking ? "visibility-hidden" : "")"
+                    <div class="thinking-block @(!ShowThinking ?"visibility-hidden" : "")"
                          style="@(!ShowThinking ? "display:none" : "")">
                         <details open>
                             <summary class="thinking-summary"><Icon Name="thinking" Size="@IconSize.Small" /> Thinking…</summary>
@@ -381,7 +381,7 @@
                             <span class="message-time">@FormatTimestamp(msg.Timestamp)</span>
                             @if (msg.Role == "Assistant" && !string.IsNullOrWhiteSpace(msg.Content))
                             {
-                                <button class="msg-copy-btn @(_copiedMessageId == msg.Id ? "copied" : "")"
+                                <button class="msg-copy-btn @(_copiedMessageId == msg.Id ?"copied" : "")"
                                         type="button"
                                         title="@(_copiedMessageId == msg.Id ? "Copied!" : "Copy message")"
                                         aria-label="@(_copiedMessageId == msg.Id ? "Copied!" : "Copy message")"
@@ -427,7 +427,7 @@
 
         @if (IsMessageStreaming && !string.IsNullOrEmpty(ThinkingBuffer))
         {
-            <div class="thinking-block live @(!ShowThinking ? "visibility-hidden" : "")"
+            <div class="thinking-block live @(!ShowThinking ?"visibility-hidden" : "")"
                  style="@(!ShowThinking ? "display:none" : "")">
                 <details open>
                     <summary class="thinking-summary"><Icon Name="thinking" Size="@IconSize.Small" /> Thinking… <span class="streaming-indicator">●</span></summary>
@@ -460,7 +460,7 @@
         <div class="command-palette" data-testid="command-palette">
             @foreach (var cmd in _filteredCommands)
             {
-                <button class="command-item @(cmd.Name == _selectedCommand ? "selected" : "")"
+                <button class="command-item @(cmd.Name == _selectedCommand ?"selected" : "")"
                         @onclick="() => ExecuteCommand(cmd)">
                     <span class="command-name">@cmd.Name</span>
                     <span class="command-desc">@cmd.Description</span>

@@ -7,9 +7,9 @@
 
 <PageTitle>BotNexus - Cron Jobs</PageTitle>
 
-<div class="agents-page" data-testid="cron-jobs-page">
+<div class="page" data-testid="cron-jobs-page">
     <header class="agents-toolbar">
-        <h2 class="page-heading"><Icon Name="cron-jobs" Size="@IconSize.Large" /><span>Cron Jobs</span></h2>
+        <h1 class="page-heading"><Icon Name="cron-jobs" Size="@IconSize.Large" /><span>Cron Jobs</span></h1>
         <div class="agents-toolbar-actions">
             @if (!string.IsNullOrEmpty(_statusMessage))
             {
@@ -78,7 +78,7 @@
                     <div class="cron-rich-select-menu" role="listbox" aria-label="Cron jobs">
                         @foreach (var job in _jobs)
                         {
-                            <button type="button" class="cron-rich-select-option @(job.Id == _selectedJob?.Id ? "selected" : "")"
+                            <button type="button" class="cron-rich-select-option @(job.Id == _selectedJob?.Id ?"selected" : "")"
                                     role="option" aria-selected="@(job.Id == _selectedJob?.Id)"
                                     data-testid="cron-job-option" @onclick="() => SelectJobAsync(job)">
                                 <span class="cron-selector-option-main">
@@ -107,7 +107,7 @@
             <section class="cron-page-card" data-testid="cron-job-editor">
                 <header class="cron-page-card-header">
                     <div>
-                        <h3>Edit Cron Job</h3>
+                        <h2>Edit Cron Job</h2>
                         <div class="cron-page-card-subtitle">
                             <span class="agents-id">@_editJob.Id</span>
                             @if (_editJob.System) { <span class="badge badge-system">System</span> }
@@ -206,7 +206,7 @@
             </section>
 
             <section class="cron-page-card cron-history-card">
-                <header class="cron-page-card-header"><h3>Execution History</h3></header>
+                <header class="cron-page-card-header"><h2>Execution History</h2></header>
                 <div class="cron-page-card-body">
                     @if (_loadingRuns)
                     {

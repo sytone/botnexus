@@ -9,7 +9,7 @@
     <nav class="agent-tab-bar agent-panel-tab-strip" role="tablist" aria-label="Agent sections">
         @foreach (var tab in VisibleTabs)
         {
-            <button class="agent-tab agent-panel-tab @(IsActiveTab(tab.Key) ? "active" : "")"
+            <button class="agent-tab agent-panel-tab @(IsActiveTab(tab.Key) ?"active" : "")"
                     data-testid="agent-tab-@tab.Key.ToString().ToLowerInvariant()"
                     data-tab="@tab.Key.ToString().ToLowerInvariant()"
                     role="tab"
@@ -27,7 +27,7 @@
     <div class="agent-tab-content">
         <section id="@GetPanelId(AgentPanelTab.Conversation)"
                  data-testid="agent-panel-conversation"
-                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Conversation) ? "active" : "")"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Conversation) ?"active" : "")"
                  role="tabpanel">
             <ChatPanel AgentId="@AgentId" ConversationId="@EffectiveConversationId" />
         </section>
@@ -35,7 +35,7 @@
         @if (!IsSubAgent)
         {
         <section id="@GetPanelId(AgentPanelTab.Workspace)"
-                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Workspace) ? "active" : "")"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Workspace) ?"active" : "")"
                  role="tabpanel">
             <WorkspacePanel AgentId="@AgentId" Store="Store" />
         </section>
@@ -44,7 +44,7 @@
         @if (!IsSubAgent)
         {
         <section id="@GetPanelId(AgentPanelTab.Reports)"
-                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Reports) ? "active" : "")"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Reports) ?"active" : "")"
                  role="tabpanel">
             <ReportsPanel AgentId="@AgentId" Store="Store" />
         </section>
@@ -52,14 +52,14 @@
 
         <section id="@GetPanelId(AgentPanelTab.Canvas)"
                  data-testid="agent-panel-canvas"
-                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Canvas) ? "active" : "")"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Canvas) ?"active" : "")"
                  role="tabpanel">
             <CanvasPanel AgentId="@AgentId" ConversationId="@EffectiveConversationId" />
         </section>
 
         <section id="@GetPanelId(AgentPanelTab.Todo)"
                  data-testid="agent-panel-todo"
-                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Todo) ? "active" : "")"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Todo) ?"active" : "")"
                  role="tabpanel">
             <TodoPanel AgentId="@AgentId" ConversationId="@EffectiveConversationId" />
         </section>

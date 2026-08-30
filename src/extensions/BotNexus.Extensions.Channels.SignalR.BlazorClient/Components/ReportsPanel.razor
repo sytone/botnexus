@@ -24,7 +24,7 @@
                 {
                     <li>
                         <button type="button"
-                                class="reports-list-row @(_selectedReportName == report.Name ? "selected" : null)"
+                                class="reports-list-row @(_selectedReportName == report.Name ?"selected" : null)"
                                 data-report-name="@report.Name"
                                 @onclick="() => SelectReportAsync(report)">
                             <span class="reports-list-name">@report.Name</span>

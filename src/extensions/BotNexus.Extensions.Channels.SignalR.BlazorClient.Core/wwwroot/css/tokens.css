@@ -608,6 +608,14 @@
     --z-reconnect: 1100;
     --z-settings: 2000;
 
+    /* Page measure. Two, and the second has to justify itself: prose and forms are
+       read, so they take the narrow measure; a page whose content is a data table
+       takes the wide one because columns need room the reader is not "reading"
+       across. The portal had three widths, but two of them - 960px and 60rem -
+       were the same number written in different units. */
+    --page-width: 60rem;        /* 960px - prose, forms, cards */
+    --page-width-wide: 68.75rem; /* 1100px - data tables */
+
     --bp-compact: 544px;
     --bp-mobile: 768px;
     --bp-wide: 900px;

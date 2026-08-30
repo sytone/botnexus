@@ -15,7 +15,7 @@
 
     <div class="activity-filter-bar" role="group" aria-label="Filter conversation cost" data-testid="activity-cost-filter-bar">
         <button type="button"
-                class="activity-filter-btn @(_filter.IncludeCron ? "active" : "")"
+                class="activity-filter-btn @(_filter.IncludeCron ?"active" : "")"
                 data-testid="activity-cost-filter-cron"
                 aria-pressed="@_filter.IncludeCron"
                 title="Show scheduled (cron) conversations"
@@ -88,7 +88,7 @@
                 @foreach (var cost in rows)
                 {
                     var row = cost.Row;
-                    <tr class="activity-row @(row.IsCron ? "activity-row-cron" : "")"
+                    <tr class="activity-row @(row.IsCron ?"activity-row-cron" : "")"
                         data-testid="activity-cost-row"
                         data-conversation-id="@cost.ConversationId"
                         tabindex="0"
@@ -113,10 +113,10 @@
                         </td>
                         <td class="activity-cell-channels" data-testid="activity-cost-sessions">@cost.SessionCount</td>
                         <td class="activity-cell-channels" data-testid="activity-cost-messages">@cost.MessageCount</td>
-                        <td class="activity-cell-channels @(cost.CompactionSummaryCount is null ? "activity-cost-unmeasured" : "")"
+                        <td class="activity-cell-channels @(cost.CompactionSummaryCount is null ?"activity-cost-unmeasured" : "")"
                             data-testid="activity-cost-compactions"
                             data-measured="@Measured(cost.CompactionSummaryCount is not null)">@ActivityCostProjection.FormatCount(cost.CompactionSummaryCount)</td>
-                        <td class="activity-cell-channels @(cost.TotalTokens is null ? "activity-cost-unmeasured" : "")"
+                        <td class="activity-cell-channels @(cost.TotalTokens is null ?"activity-cost-unmeasured" : "")"
                             data-testid="activity-cost-total"
                             data-measured="@Measured(cost.TotalTokens is not null)">@ActivityCostProjection.FormatCount(cost.TotalTokens)</td>
                     </tr>

@@ -40,7 +40,7 @@ else
 
     @foreach (var (agentId, _) in Store.Agents)
     {
-        <div class="chat-panel-wrapper @(agentId == Store.ActiveAgentId ? "active" : "hidden")">
+        <div class="chat-panel-wrapper @(agentId == Store.ActiveAgentId ?"active" : "hidden")">
             <AgentPanel AgentId="@agentId" RoutedConversationId="@RoutedConversationIdFor(agentId)" />
         </div>
     }

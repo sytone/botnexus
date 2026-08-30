@@ -27,7 +27,7 @@ else
     <nav class="activity-subnav" data-testid="activity-subnav" aria-label="Activity sections">
         @foreach (var entry in KnownSections)
         {
-            <a class="activity-subnav-item @(string.Equals(entry.Key, ActiveSection, StringComparison.OrdinalIgnoreCase) ? "active" : "")"
+            <a class="activity-subnav-item @(string.Equals(entry.Key, ActiveSection, StringComparison.OrdinalIgnoreCase) ?"active" : "")"
                data-testid="activity-subnav-item"
                data-section="@entry.Key"
                href="@SectionHref(entry.Key)">@entry.Label</a>

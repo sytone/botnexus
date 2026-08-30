@@ -6,9 +6,9 @@
 
 <PageTitle>BotNexus - Configuration</PageTitle>
 
-<div class="platform-config-page">
+<div class="page-app">
     <header class="platform-config-toolbar">
-        <h2>Platform Configuration</h2>
+        <h1>Platform Configuration</h1>
         <a class="help-link" href="guide/configuration" title="Configuration reference" aria-label="Configuration reference" data-testid="help-link-configuration">?</a>
         <div class="platform-config-actions">
             @if (!string.IsNullOrEmpty(_statusMessage))
@@ -45,7 +45,7 @@
                 @foreach (var (key, label) in Sections)
                 {
                     <button type="button"
-                            class="config-sidebar-item @(string.Equals(key, ActiveSection, StringComparison.OrdinalIgnoreCase) ? "active" : "")"
+                            class="config-sidebar-item @(string.Equals(key, ActiveSection, StringComparison.OrdinalIgnoreCase) ?"active" : "")"
                             data-section="@key"
                             @onclick="() => SelectSection(key)">
                         @label

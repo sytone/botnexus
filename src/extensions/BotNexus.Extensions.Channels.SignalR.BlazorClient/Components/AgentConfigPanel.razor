@@ -45,7 +45,7 @@
                                 else
                                 {
                                     <div class="config-field-with-badge">
-                                        <span class="config-value @(IsMono(field.Key) ? "mono" : "")">@field.Display</span>
+                                        <span class="config-value @(IsMono(field.Key) ?"mono" : "")">@field.Display</span>
                                         @if (field.IsInherited)
                                         {
                                             <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>

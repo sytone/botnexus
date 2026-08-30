@@ -5,7 +5,7 @@
 @inject IServiceProvider Services
 @implements IDisposable
 
-<div class="activity-dashboard" data-testid="activity-dashboard">
+<div class="page page-wide" data-testid="activity-dashboard">
     <div class="activity-dashboard-header">
         <h1 class="activity-dashboard-title">Activity</h1>
         <span class="activity-dashboard-subtitle">Active conversations across the platform</span>
@@ -15,7 +15,7 @@
     {
         <div class="activity-summary-strip" data-testid="activity-summary-strip" role="group" aria-label="Activity summary">
             <button type="button"
-                    class="activity-summary-stat activity-summary-stat--action @(HasActiveFilters ? "active" : "")"
+                    class="activity-summary-stat activity-summary-stat--action @(HasActiveFilters ?"active" : "")"
                     data-testid="activity-summary-conversations"
                     aria-label="Clear activity filters"
                     title="Clear all filters"
@@ -24,7 +24,7 @@
                 <span class="activity-summary-label">@(summary.ConversationCount == 1 ? "conversation" : "conversations")</span>
             </button>
             <button type="button"
-                    class="activity-summary-stat activity-summary-stat--action @(_filter.AgentId is not null ? "active" : "")"
+                    class="activity-summary-stat activity-summary-stat--action @(_filter.AgentId is not null ?"active" : "")"
                     data-testid="activity-summary-agents"
                     aria-label="Jump to the agent filter"
                     title="Filter by a specific agent"
@@ -33,7 +33,7 @@
                 <span class="activity-summary-label">@(summary.AgentCount == 1 ? "agent" : "agents")</span>
             </button>
             <button type="button"
-                    class="activity-summary-stat activity-summary-stat--action @(_filter.IncludeCron ? "active" : "")"
+                    class="activity-summary-stat activity-summary-stat--action @(_filter.IncludeCron ?"active" : "")"
                     data-testid="activity-summary-scheduled"
                     aria-pressed="@_filter.IncludeCron"
                     title="@(_filter.IncludeCron ? "Hide scheduled (cron) conversations" : "Show scheduled (cron) conversations")"
@@ -42,7 +42,7 @@
                 <span class="activity-summary-label">scheduled</span>
             </button>
             <button type="button"
-                    class="activity-summary-stat activity-summary-stat--action activity-summary-stat--live @(_filter.Live == ActivityLiveFilter.Live ? "active" : "")"
+                    class="activity-summary-stat activity-summary-stat--action activity-summary-stat--live @(_filter.Live == ActivityLiveFilter.Live ?"active" : "")"
                     data-testid="activity-summary-live"
                     aria-pressed="@(_filter.Live == ActivityLiveFilter.Live)"
                     title="@(_filter.Live == ActivityLiveFilter.Live ? "Show conversations in any state" : "Show only conversations running right now")"
@@ -59,7 +59,7 @@
 
     <div class="activity-filter-bar" role="group" aria-label="Filter activity" data-testid="activity-filter-bar">
         <button type="button"
-                class="activity-filter-btn @(_filter.IncludeCron ? "active" : "")"
+                class="activity-filter-btn @(_filter.IncludeCron ?"active" : "")"
                 data-testid="activity-filter-cron"
                 aria-pressed="@_filter.IncludeCron"
                 title="Show scheduled (cron) conversations"
@@ -155,7 +155,7 @@
             <tbody>
                 @foreach (var row in rows)
                 {
-                    <tr class="activity-row @(row.IsCron ? "activity-row-cron" : "") @(row.IsPinned ? "activity-row-pinned" : "") @(row.IsLive ? "activity-row-live" : "")"
+                    <tr class="activity-row @(row.IsCron ?"activity-row-cron" : "") @(row.IsPinned ? "activity-row-pinned" : "") @(row.IsLive ? "activity-row-live" : "")"
                         data-testid="activity-row"
                         data-conversation-id="@row.ConversationId"
                         tabindex="0"

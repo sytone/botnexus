@@ -4,7 +4,7 @@
     sidebar row. The label span is kept in the DOM (visually hidden in Dot mode) so assistive tech
     and existing assertions can still read the state text.
 *@
-<div class="connection-indicator @CssClass @(Dot ? "connection-indicator-dot" : "")"
+<div class="connection-indicator @CssClass @(Dot ?"connection-indicator-dot" : "")"
      data-testid="connection-status"
      role="status"
      aria-live="polite"

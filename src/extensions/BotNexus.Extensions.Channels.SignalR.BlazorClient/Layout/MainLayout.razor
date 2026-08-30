@@ -86,7 +86,7 @@
             <div class="sidebar-overlay" @onclick="CloseSidebar"></div>
         }
 
-        <aside class="main-sidebar @(_sidebarOpen ? "sidebar-open" : "sidebar-closed")">
+        <aside class="main-sidebar @(_sidebarOpen ?"sidebar-open" : "sidebar-closed")">
             @* #2441: connection status moved to the top bar as a dot; the sidebar row is gone. *@
             @* Nav links -- rendered in the user's configured order (#2236). The whole nav is driven
                by a single ordering model: every built-in item has a default order number and the
@@ -112,7 +112,7 @@
 
                 @if (UpdateStatus.Status?.IsUpdateAvailable == true)
                 {
-                    <div class="update-badge @(UpdateStatus.Status.IsUpdateInProgress ? "update-badge-in-progress" : "")"
+                    <div class="update-badge @(UpdateStatus.Status.IsUpdateInProgress ?"update-badge-in-progress" : "")"
                          @onclick="ShowUpdateConfirm"
                          title="Update to @UpdateStatus.Status.LatestCommitShort">
                         @if (UpdateStatus.Status.IsUpdateInProgress)
@@ -423,7 +423,7 @@
                         aria-expanded="@(!_toolsGroupCollapsed ? "true" : "false")"
                         title="@(_toolsGroupCollapsed ? "Expand tools" : "Collapse tools")"
                         @onclick="ToggleToolsGroup">
-                    <span class="group-chevron @(!_toolsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                    <span class="group-chevron @(!_toolsGroupCollapsed ?"expanded" : "")">&#x25B6;</span>
                 </button>
             }
         </div>
@@ -544,7 +544,7 @@
                                             aria-expanded="@(!_pinnedGroupCollapsed ? "true" : "false")"
                                             title="@(_pinnedGroupCollapsed ? "Expand pinned" : "Collapse pinned")"
                                             @onclick="TogglePinnedGroup">
-                                        <span class="group-chevron @(!_pinnedGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                                        <span class="group-chevron @(!_pinnedGroupCollapsed ?"expanded" : "")">&#x25B6;</span>
                                         <span class="conversation-group-label"><Icon Name="pin" Size="@IconSize.Small" /> Pinned</span>
                                         <span class="conversation-group-count" data-testid="pinned-group-count">@pinnedConversations.Count</span>
                                     </button>
@@ -568,24 +568,24 @@
                                         aria-expanded="@(!_conversationsGroupCollapsed ? "true" : "false")"
                                         title="@(_conversationsGroupCollapsed ? "Expand conversations" : "Collapse conversations")"
                                         @onclick="ToggleConversationsGroup">
-                                    <span class="group-chevron @(!_conversationsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                                    <span class="group-chevron @(!_conversationsGroupCollapsed ?"expanded" : "")">&#x25B6;</span>
                                     <span class="conversation-group-count" data-testid="conversations-group-count">@normalConversations.Count</span>
                                 </button>
                                 <div class="conversation-filter-bar" role="group" aria-label="Filter conversations by recent activity" data-testid="conversation-filter-bar">
                                     <button type="button"
-                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.None ? "active" : "")"
+                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.None ?"active" : "")"
                                             data-testid="conversation-filter-none"
                                             aria-pressed="@(_activityFilter == ConversationActivityFilter.None)"
                                             title="Show all conversations"
                                             @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.None)">None</button>
                                     <button type="button"
-                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.Today ? "active" : "")"
+                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.Today ?"active" : "")"
                                             data-testid="conversation-filter-today"
                                             aria-pressed="@(_activityFilter == ConversationActivityFilter.Today)"
                                             title="Conversations updated today"
                                             @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.Today)">Today</button>
                                     <button type="button"
-                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.ThisWeek ? "active" : "")"
+                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.ThisWeek ?"active" : "")"
                                             data-testid="conversation-filter-week"
                                             aria-pressed="@(_activityFilter == ConversationActivityFilter.ThisWeek)"
                                             title="Conversations updated in the last 7 days"
@@ -608,7 +608,7 @@
                             {
                                 <div class="conversation-group conversation-group-scheduled" data-testid="conversation-group-scheduled">
                                     <button class="conversation-group-header conversation-group-header-toggle" data-testid="cron-group-toggle" @onclick="ToggleCronGroup">
-                                        <span class="group-chevron @(!_cronGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                                        <span class="group-chevron @(!_cronGroupCollapsed ?"expanded" : "")">&#x25B6;</span>
                                         <span class="conversation-group-label"><Icon Name="cron-jobs" Size="@IconSize.Small" /> Scheduled</span>
                                         <span class="conversation-group-count" data-testid="cron-group-count">@cronConversations.Count</span>
                                     </button>
@@ -633,7 +633,7 @@
                                             aria-expanded="@(!_webhookGroupCollapsed ? "true" : "false")"
                                             title="@(_webhookGroupCollapsed ? "Expand webhooks" : "Collapse webhooks")"
                                             @onclick="ToggleWebhookGroup">
-                                        <span class="group-chevron @(!_webhookGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                                        <span class="group-chevron @(!_webhookGroupCollapsed ?"expanded" : "")">&#x25B6;</span>
                                         <span class="conversation-group-label"><Icon Name="link" Size="@IconSize.Small" /> Webhooks</span>
                                         <span class="conversation-group-count" data-testid="webhook-group-count">@webhookConversations.Count</span>
                                     </button>
@@ -652,7 +652,7 @@
                         @foreach (var sub in activeAgent.SubAgents.Values
                             .Where(s => s.Status is "Running" or "Completed"))
                         {
-                            <div class="agent-session-item @(IsSubAgentActive(sub) ? "active" : "")"
+                            <div class="agent-session-item @(IsSubAgentActive(sub) ?"active" : "")"
                                   @onclick="() => ViewSubAgentAsync(sub)"
                                   style="cursor: pointer;"
                                   title="@($"{sub.Task} (read-only)")">
@@ -682,13 +682,13 @@
                         data-testid="sections-group-toggle"
                         aria-expanded="@(!_sectionsGroupCollapsed ? "true" : "false")"
                         @onclick="ToggleSectionsGroup">
-                    <span class="group-chevron @(!_sectionsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
+                    <span class="group-chevron @(!_sectionsGroupCollapsed ?"expanded" : "")">&#x25B6;</span>
                     <span class="conversation-group-label"><Icon Name="workspace" Size="@IconSize.Small" /> My sections</span>
                 </button>
                 @* Collapse hides the body via a class rather than unmounting, so the panel keeps its
                    transient UI state (in-progress create / rename). Section data itself now lives in
                    the scoped ConversationSectionsState service (#2325), not in this component. *@
-                <div class="chat-nav-child-body @(_sectionsGroupCollapsed ? "collapsed" : "")"
+                <div class="chat-nav-child-body @(_sectionsGroupCollapsed ?"collapsed" : "")"
                      data-testid="chat-sections-body">
                     <ConversationSectionsPanel AgentId="@sectionsAgent.AgentId"
                                                TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
@@ -1199,7 +1199,7 @@
     private RenderFragment RenderConversationItem(AgentState agent, ConversationState conversation) => __builder =>
     {
         <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
-            <a class="conversation-list-item-btn @(conversation.ConversationId == agent.ActiveConversationId ? "active" : "")"
+            <a class="conversation-list-item-btn @(conversation.ConversationId == agent.ActiveConversationId ?"active" : "")"
                href="agent/@Uri.EscapeDataString(agent.AgentId)/conversation/@Uri.EscapeDataString(conversation.ConversationId)"
                @onclick="() => SelectConversationAsync(agent.AgentId, conversation.ConversationId)"
                @onclick:preventDefault="true">
@@ -1237,7 +1237,7 @@
                    section menu stays outside the strip: it positions against the row. *@
                 <div class="conversation-row-actions">
                     @RenderSectionButton(conversation)
-                    <button class="conversation-pin-btn @(conversation.IsPinned ? "pinned" : "")" data-testid="conversation-pin-btn"
+                    <button class="conversation-pin-btn @(conversation.IsPinned ?"pinned" : "")" data-testid="conversation-pin-btn"
                             title="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
                             aria-label="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
                             aria-pressed="@(conversation.IsPinned ? "true" : "false")"
@@ -1290,14 +1290,14 @@
             var sections = SectionsState.Sections;
             var currentSectionId = GetAssignedSectionId(conversation.ConversationId);
             <div class="conversation-section-menu" data-testid="conversation-section-menu" role="menu">
-                <button class="conversation-section-menu-item @(currentSectionId is null ? "active" : "")"
+                <button class="conversation-section-menu-item @(currentSectionId is null ?"active" : "")"
                         role="menuitem"
                         data-testid="conversation-section-menu-none"
                         @onclick:stopPropagation="true"
                         @onclick="() => UnassignConversationSectionAsync(agent.AgentId, conversation.ConversationId)">None</button>
                 @foreach (var section in sections)
                 {
-                    <button class="conversation-section-menu-item @(string.Equals(currentSectionId, section.SectionId, StringComparison.Ordinal) ? "active" : "")"
+                    <button class="conversation-section-menu-item @(string.Equals(currentSectionId, section.SectionId, StringComparison.Ordinal) ?"active" : "")"
                             role="menuitem"
                             data-testid="conversation-section-menu-item"
                             data-section-id="@(section.SectionId)"

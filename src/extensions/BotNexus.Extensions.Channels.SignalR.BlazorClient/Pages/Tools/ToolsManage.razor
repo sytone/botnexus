@@ -5,9 +5,9 @@
 
 <PageTitle>BotNexus &mdash; Tools</PageTitle>
 
-<div class="agents-page tools-manage-page" data-testid="tools-manage-page">
+<div class="tools-manage-page page" data-testid="tools-manage-page">
     <header class="agents-toolbar">
-        <h2 class="page-heading"><Icon Name="tools" Size="@IconSize.Large" /><span>Tools</span></h2>
+        <h1 class="page-heading"><Icon Name="tools" Size="@IconSize.Large" /><span>Tools</span></h1>
         <div class="agents-toolbar-actions">
             @if (!string.IsNullOrEmpty(_statusMessage))
             {
@@ -50,7 +50,7 @@
         {
             <section class="cron-page-card tools-editor" data-testid="tools-editor">
                 <header class="cron-page-card-header">
-                    <h3>@(_isNew ? "Add Tool" : "Edit Tool")</h3>
+                    <h2>@(_isNew ? "Add Tool" : "Edit Tool")</h2>
                 </header>
 
                 <div class="tools-form">

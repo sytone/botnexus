@@ -67,7 +67,7 @@
                 {
                     var cost = row.Cost;
                     var unmeasured = cost.MeasuredRunCount == 0;
-                    <tr class="activity-row @(unmeasured ? "activity-cost-unmeasured" : "")"
+                    <tr class="activity-row @(unmeasured ?"activity-cost-unmeasured" : "")"
                         data-testid="cron-cost-row"
                         data-job-id="@row.JobId"
                         data-measured="@Measured(!unmeasured)"
@@ -80,23 +80,23 @@
                         </td>
                         <td class="activity-cell-channels" data-testid="cron-cost-runs">@cost.RunCount</td>
                         <td class="activity-cell-channels" data-testid="cron-cost-measured-runs">@cost.MeasuredRunCount</td>
-                        <td class="activity-cell-channels @(cost.TotalTokens is null ? "activity-cost-unmeasured" : "")"
+                        <td class="activity-cell-channels @(cost.TotalTokens is null ?"activity-cost-unmeasured" : "")"
                             data-testid="cron-cost-total-tokens"
                             data-measured="@Measured(cost.TotalTokens is not null)">@CronCostProjection.FormatCount(cost.TotalTokens)</td>
-                        <td class="activity-cell-channels @(cost.TotalToolCalls is null ? "activity-cost-unmeasured" : "")"
+                        <td class="activity-cell-channels @(cost.TotalToolCalls is null ?"activity-cost-unmeasured" : "")"
                             data-testid="cron-cost-total-tool-calls"
                             data-measured="@Measured(cost.TotalToolCalls is not null)">@CronCostProjection.FormatCount(cost.TotalToolCalls)</td>
-                        <td class="activity-cell-channels @(cost.TotalTurns is null ? "activity-cost-unmeasured" : "")"
+                        <td class="activity-cell-channels @(cost.TotalTurns is null ?"activity-cost-unmeasured" : "")"
                             data-testid="cron-cost-total-turns"
                             data-measured="@Measured(cost.TotalTurns is not null)">@CronCostProjection.FormatCount(cost.TotalTurns)</td>
-                        <td class="activity-cell-channels @(cost.TotalDurationMs is null ? "activity-cost-unmeasured" : "")"
+                        <td class="activity-cell-channels @(cost.TotalDurationMs is null ?"activity-cost-unmeasured" : "")"
                             data-testid="cron-cost-total-duration"
                             data-measured="@Measured(cost.TotalDurationMs is not null)">@CronCostProjection.FormatDuration(cost.TotalDurationMs)</td>
-                        <td class="activity-cell-channels @(cost.AverageTokensPerRun is null ? "activity-cost-unmeasured" : "")"
+                        <td class="activity-cell-channels @(cost.AverageTokensPerRun is null ?"activity-cost-unmeasured" : "")"
                             data-testid="cron-cost-avg-tokens"
                             data-measured="@Measured(cost.AverageTokensPerRun is not null)">@CronCostProjection.FormatAverage(cost.AverageTokensPerRun)</td>
                         @* The derived column - the reason this subsection exists. *@
-                        <td class="activity-cell-channels @(row.ToolCallsPerTurn is null ? "activity-cost-unmeasured" : "")"
+                        <td class="activity-cell-channels @(row.ToolCallsPerTurn is null ?"activity-cost-unmeasured" : "")"
                             data-testid="cron-cost-tool-calls-per-turn"
                             data-measured="@Measured(row.ToolCallsPerTurn is not null)">@CronCostProjection.FormatRatio(row.ToolCallsPerTurn)</td>
                     </tr>

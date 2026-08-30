@@ -22,19 +22,19 @@
         else if (_snapshot is not null)
         {
             <div class="session-debug-tabs" data-testid="session-debug-tabs">
-                <button class="session-debug-tab @(_activeTab == "overview" ? "active" : "")"
+                <button class="session-debug-tab @(_activeTab =="overview" ? "active" : "")"
                         data-testid="session-debug-tab-overview"
                         @onclick='() => _activeTab = "overview"'>Overview</button>
-                <button class="session-debug-tab @(_activeTab == "metadata" ? "active" : "")"
+                <button class="session-debug-tab @(_activeTab =="metadata" ? "active" : "")"
                         data-testid="session-debug-tab-metadata"
                         @onclick='() => _activeTab = "metadata"'>Metadata</button>
-                <button class="session-debug-tab @(_activeTab == "system-prompt" ? "active" : "")"
+                <button class="session-debug-tab @(_activeTab =="system-prompt" ? "active" : "")"
                         data-testid="session-debug-tab-system-prompt"
                         @onclick='() => _activeTab = "system-prompt"'>System Prompt</button>
-                <button class="session-debug-tab @(_activeTab == "history" ? "active" : "")"
+                <button class="session-debug-tab @(_activeTab =="history" ? "active" : "")"
                         data-testid="session-debug-tab-history"
                         @onclick='() => SelectHistoryTabAsync()'>History</button>
-                <button class="session-debug-tab @(_activeTab == "sub-agents" ? "active" : "")"
+                <button class="session-debug-tab @(_activeTab =="sub-agents" ? "active" : "")"
                         data-testid="session-debug-tab-sub-agents"
                         @onclick='() => SelectSubAgentsTabAsync()'>Sub-Agents</button>
             </div>
