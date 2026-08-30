@@ -22,7 +22,7 @@
     <div class="portal-loading">
         @if (PortalLoad.LoadError is not null)
         {
-            <div class="portal-load-error">&#x26A0; @PortalLoad.LoadError</div>
+            <div class="portal-load-error"><Icon Name="warning" Size="@IconSize.Small" /> @PortalLoad.LoadError</div>
         }
         else
         {
@@ -59,7 +59,7 @@ else
         @if (!PortalLoad.IsSignalRConnected)
         {
             <div class="disconnected-bar" data-testid="disconnected-bar">
-                &#x26A0; Disconnected
+                <Icon Name="warning" Size="@IconSize.Small" /> Disconnected
                 <button class="reconnect-inline-btn" @onclick="ManualRefreshAsync" disabled="@_isRefreshing" aria-label="Reconnect">
                     @(_isRefreshing ? "↻" : "Reconnect")
                 </button>
@@ -130,7 +130,7 @@ else
                 <div class="history-load-more" data-testid="mobile-load-more">
                     @if (_isLoadingMore)
                     {
-                        <span class="history-load-more-spinner">&#x21BB;</span>
+                        <span class="history-load-more-spinner"><Icon Name="refresh" Size="@IconSize.Small" /></span>
                         <span>Loading older messages&#x2026;</span>
                     }
                     else
@@ -149,7 +149,7 @@ else
                 }
                 else if (msg.IsToolCall)
                 {
-                    var toolIcon = msg.ToolIsError == true ? "&#x274C;" : msg.ToolResult is not null ? "&#x2705;" : "&#x23F3;";
+                    var toolIcon = msg.ToolIsError == true ? "avoid" : msg.ToolResult is not null ? "check" : "pending";
                     var toolDuration = msg.ToolDuration is not null ? $" {msg.ToolDuration.Value.TotalSeconds:F1}s" : "";
                     @* Render the tool pill as a <div role="button"> so every branch in this
                        loop shares a <div> root. Combined with @key this prevents Blazor from
@@ -162,7 +162,7 @@ else
                          @onclick="() => OpenToolModal(msg)"
                          @onkeydown="(e) => OnToolPillKeyDown(e, msg)"
                          title="Tap to view details">
-                        <span class="tool-pill-icon">@((MarkupString)toolIcon)</span>
+                        <span class="tool-pill-icon"><Icon Name="@toolIcon" Size="@IconSize.Small" /></span>
                         <span class="tool-pill-name">@msg.ToolName</span>
                         @if (!string.IsNullOrEmpty(toolDuration))
                         {
@@ -290,8 +290,8 @@ else
         <div class="tool-modal-backdrop" @onclick="CloseToolModal"></div>
         <div class="tool-modal" role="dialog" aria-modal="true" aria-label="Tool call details">
             <div class="tool-modal-header">
-                <span class="tool-modal-name">&#x1F527; @_modalToolMessage.ToolName</span>
-                <button class="tool-modal-close" @onclick="CloseToolModal" aria-label="Close">&#x2715;</button>
+                <span class="tool-modal-name"><Icon Name="tools" Size="@IconSize.Small" /> @_modalToolMessage.ToolName</span>
+                <button class="tool-modal-close" @onclick="CloseToolModal" aria-label="Close"><Icon Name="close" Size="@IconSize.Small" /></button>
             </div>
             @if (!string.IsNullOrEmpty(_modalToolMessage.ToolArgs))
             {

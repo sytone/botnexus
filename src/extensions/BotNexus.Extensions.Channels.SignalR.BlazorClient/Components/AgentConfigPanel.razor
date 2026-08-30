@@ -13,8 +13,8 @@
     <div class="config-overlay" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
         <div class="config-dialog" role="dialog" aria-modal="true" aria-labelledby="agent-config-title" @onclick:stopPropagation="true">
             <div class="config-header">
-                <h3 id="agent-config-title">⚙ Agent Configuration</h3>
-                <button class="config-close-btn" @onclick="Close">✕</button>
+                <h3 id="agent-config-title"><Icon Name="configuration" /> Agent Configuration</h3>
+                <button class="config-close-btn" @onclick="Close" aria-label="Close"><Icon Name="close" Size="@IconSize.Small" /></button>
             </div>
 
             @if (_loading)
@@ -78,7 +78,7 @@
 
                 <div class="config-actions">
                     <button class="config-copy-btn" @onclick="CopyConfig" title="Copy the full configuration as JSON">
-                        @(_copied ? "Copied!" : "📋 Copy")
+                        @if (_copied) { <text>Copied!</text> } else { <Icon Name="copy" Size="@IconSize.Small" /><text> Copy</text> }
                     </button>
                     @if (_availableModels.Count > 0 && _selectedModel != _snapshot?.Field(AgentConfigSnapshotBuilder.ModelKey)?.Value)
                     {

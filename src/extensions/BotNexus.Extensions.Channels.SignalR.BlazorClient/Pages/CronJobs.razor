@@ -15,7 +15,7 @@
             {
                 <span class="agents-status @_statusClass" role="status">@_statusMessage</span>
             }
-            <button class="toolbar-btn" @onclick="LoadJobsAsync" disabled="@_loading" title="Refresh cron job list">&#x21BB; Reload</button>
+            <button class="toolbar-btn" @onclick="LoadJobsAsync" disabled="@_loading" title="Refresh cron job list"><Icon Name="refresh" Size="@IconSize.Small" /> Reload</button>
         </div>
     </header>
 
@@ -28,7 +28,7 @@
     }
     else if (_error is not null)
     {
-        <div class="agents-error" role="alert">&#x26A0;&#xFE0F; @_error</div>
+        <div class="agents-error" role="alert"><Icon Name="warning" Size="@IconSize.Small" /> @_error</div>
     }
     else if (_jobs.Count == 0)
     {
@@ -118,10 +118,10 @@
                     <div class="cron-page-actions">
                         @if (ConversationLink(_editJob) is { } conversationLink)
                         {
-                            <a class="toolbar-btn" href="@conversationLink">&#x1F4AC; Related conversation</a>
+                            <a class="toolbar-btn" href="@conversationLink"><Icon Name="conversation" Size="@IconSize.Small" /> Related conversation</a>
                         }
                         <button class="toolbar-btn" @onclick="() => RunNowAsync(_editJob)" disabled="@_busy"
-                                aria-label="Run @_editJob.Name now">&#x25B6;&#xFE0F; Run now</button>
+                                aria-label="Run @_editJob.Name now"><Icon Name="send" Size="@IconSize.Small" /> Run now</button>
                         <button class="toolbar-btn danger" @onclick="() => RequestDelete(_editJob)" disabled="@_busy"
                                 aria-label="Delete @_editJob.Name">Delete</button>
                     </div>

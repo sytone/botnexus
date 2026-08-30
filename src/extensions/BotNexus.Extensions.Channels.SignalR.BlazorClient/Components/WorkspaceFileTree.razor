@@ -26,12 +26,12 @@ else
                         @if (isDirectory)
                         {
                             <span class="workspace-tree-chevron" aria-hidden="true">@(isExpanded ? "▾" : "▸")</span>
-                            <span class="workspace-tree-icon" aria-hidden="true">📁</span>
+                            <span class="workspace-tree-icon"><Icon Name="workspace" Size="@IconSize.Small" Class="bn-icon-inherit" /></span>
                         }
                         else
                         {
                             <span class="workspace-tree-chevron spacer" aria-hidden="true"></span>
-                            <span class="workspace-tree-icon" aria-hidden="true">📄</span>
+                            <span class="workspace-tree-icon"><Icon Name="file" Size="@IconSize.Small" /></span>
                         }
                         <span class="workspace-tree-name">@entry.Name</span>
                     </button>
@@ -47,7 +47,7 @@ else
                             disabled="@isProtected"
                             @onclick:stopPropagation="true"
                             @onclick="() => { if (!isProtected) OnDeleteRequested.InvokeAsync(fullPath); }">
-                        🗑
+                        <Icon Name="delete" Size="@IconSize.Small" />
                     </button>
                 </div>
 

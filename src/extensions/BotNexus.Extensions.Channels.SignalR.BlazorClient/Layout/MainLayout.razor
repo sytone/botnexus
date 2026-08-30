@@ -28,7 +28,7 @@
                 <span class="burger-line"></span>
             </button>
             <a href="" class="banner-home-link" data-testid="banner-home-link" title="Home" @onclick="CloseSidebar">
-                <span class="banner-logo">&#x1F916;</span>
+                <Icon Name="bot" />
                 <span class="banner-title">BotNexus</span>
             </a>
 
@@ -55,11 +55,11 @@
                     @onclick="ToggleTheme"
                     title="@(IsLightTheme ? "Switch to dark theme" : "Switch to light theme")"
                     aria-label="@(IsLightTheme ? "Switch to dark theme" : "Switch to light theme")"
-                    data-testid="banner-theme-btn">@(IsLightTheme ? "\u263E" : "\u2600")</button>
-            <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn">&#x2699;</button>
+                    data-testid="banner-theme-btn"><Icon Name="@(IsLightTheme ? "dark-mode" : "light-mode")" /></button>
+            <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings" data-testid="banner-settings-btn"><Icon Name="configuration" /></button>
             @if (Prefs.Current.DebugModeEnabled)
             {
-                <button class="banner-debug-btn" @onclick="OpenDebug" title="Debug inspector" data-testid="banner-debug-btn">&#x1F50D;</button>
+                <button class="banner-debug-btn" @onclick="OpenDebug" title="Debug inspector" data-testid="banner-debug-btn"><Icon Name="visibility" /></button>
             }
         </div>
     </header>
@@ -72,7 +72,7 @@
             {
                 <div class="announcement-item @ann.Type">
                     <span class="announcement-content">@ann.Text</span>
-                    <button class="announcement-dismiss" @onclick="() => DismissAnnouncement(ann.Id)">&#x2715;</button>
+                    <button class="announcement-dismiss" @onclick="() => DismissAnnouncement(ann.Id)"><Icon Name="close" Size="@IconSize.Small" /></button>
                 </div>
             }
         </div>
@@ -117,7 +117,7 @@
                          title="Update to @UpdateStatus.Status.LatestCommitShort">
                         @if (UpdateStatus.Status.IsUpdateInProgress)
                         {
-                            <span>&#x231B; Updating&#x2026;</span>
+                            <span><Icon Name="pending" Size="@IconSize.Small" /> Updating&#x2026;</span>
                         }
                         else
                         {
@@ -545,7 +545,7 @@
                                             title="@(_pinnedGroupCollapsed ? "Expand pinned" : "Collapse pinned")"
                                             @onclick="TogglePinnedGroup">
                                         <span class="group-chevron @(!_pinnedGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                                        <span class="conversation-group-label">&#x1F4CC; Pinned</span>
+                                        <span class="conversation-group-label"><Icon Name="pin" Size="@IconSize.Small" /> Pinned</span>
                                         <span class="conversation-group-count" data-testid="pinned-group-count">@pinnedConversations.Count</span>
                                     </button>
                                     @if (!_pinnedGroupCollapsed)
@@ -609,7 +609,7 @@
                                 <div class="conversation-group conversation-group-scheduled" data-testid="conversation-group-scheduled">
                                     <button class="conversation-group-header conversation-group-header-toggle" data-testid="cron-group-toggle" @onclick="ToggleCronGroup">
                                         <span class="group-chevron @(!_cronGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                                        <span class="conversation-group-label">&#x23F0; Scheduled</span>
+                                        <span class="conversation-group-label"><Icon Name="cron-jobs" Size="@IconSize.Small" /> Scheduled</span>
                                         <span class="conversation-group-count" data-testid="cron-group-count">@cronConversations.Count</span>
                                     </button>
                                     @if (!_cronGroupCollapsed)
@@ -634,7 +634,7 @@
                                             title="@(_webhookGroupCollapsed ? "Expand webhooks" : "Collapse webhooks")"
                                             @onclick="ToggleWebhookGroup">
                                         <span class="group-chevron @(!_webhookGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                                        <span class="conversation-group-label">&#x1F517; Webhooks</span>
+                                        <span class="conversation-group-label"><Icon Name="link" Size="@IconSize.Small" /> Webhooks</span>
                                         <span class="conversation-group-count" data-testid="webhook-group-count">@webhookConversations.Count</span>
                                     </button>
                                     @if (!_webhookGroupCollapsed)
@@ -683,7 +683,7 @@
                         aria-expanded="@(!_sectionsGroupCollapsed ? "true" : "false")"
                         @onclick="ToggleSectionsGroup">
                     <span class="group-chevron @(!_sectionsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                    <span class="conversation-group-label">&#x1F4C1; My sections</span>
+                    <span class="conversation-group-label"><Icon Name="workspace" Size="@IconSize.Small" /> My sections</span>
                 </button>
                 @* Collapse hides the body via a class rather than unmounting, so the panel keeps its
                    transient UI state (in-progress create / rename). Section data itself now lives in

@@ -17,7 +17,7 @@
                     aria-controls="@GetPanelId(tab.Key)"
                     title="@tab.Hint"
                     @onclick="() => SelectTab(tab.Key)">
-                <span class="agent-tab-icon" aria-hidden="true">@tab.Icon</span>
+                <span class="agent-tab-icon"><Icon Name="@tab.Icon" Size="@IconSize.Small" /></span>
                 <span class="agent-tab-label">@tab.Label</span>
             </button>
         }
@@ -120,11 +120,11 @@
 
     private static readonly (AgentPanelTab Key, string Label, string Icon, string Hint)[] s_tabs =
     [
-        (AgentPanelTab.Conversation, "Conversation", "💬", "Chat with this agent"),
-        (AgentPanelTab.Workspace, "Workspace", "📁", "Files this agent can read and write"),
-        (AgentPanelTab.Reports, "Reports", "📊", "Reports this agent has produced"),
-        (AgentPanelTab.Canvas, "Canvas", "🎨", "Shared canvas for this conversation"),
-        (AgentPanelTab.Todo, "Todo", "✅", "This agent's task list")
+        (AgentPanelTab.Conversation, "Conversation", "conversation", "Chat with this agent"),
+        (AgentPanelTab.Workspace, "Workspace", "workspace", "Files this agent can read and write"),
+        (AgentPanelTab.Reports, "Reports", "reports", "Reports this agent has produced"),
+        (AgentPanelTab.Canvas, "Canvas", "canvas", "Shared canvas for this conversation"),
+        (AgentPanelTab.Todo, "Todo", "todo", "This agent's task list")
     ];
 
     private AgentState? CurrentAgent => Store.GetAgent(AgentId);

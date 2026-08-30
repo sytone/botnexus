@@ -16,7 +16,7 @@
             {
                 <span class="agents-status @_statusClass" role="status" data-testid="plugins-status">@_statusMessage</span>
             }
-            <button class="toolbar-btn" @onclick="LoadAsync" disabled="@_loading" title="Refresh plugin list">&#x21BB; Reload</button>
+            <button class="toolbar-btn" @onclick="LoadAsync" disabled="@_loading" title="Refresh plugin list"><Icon Name="refresh" Size="@IconSize.Small" /> Reload</button>
         </div>
     </header>
 
@@ -39,7 +39,7 @@
     }
     else if (_error is not null)
     {
-        <div class="agents-error" role="alert" data-testid="plugins-error">&#x26A0;&#xFE0F; @_error</div>
+        <div class="agents-error" role="alert" data-testid="plugins-error"><Icon Name="warning" Size="@IconSize.Small" /> @_error</div>
     }
     else if (_plugins.Count == 0)
     {

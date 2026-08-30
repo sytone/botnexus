@@ -51,7 +51,7 @@
                 @if (_deleteIsNonEmptyDir)
                 {
                     <p class="workspace-delete-warning">
-                        ⚠️ <strong>@_deleteConfirmPath</strong> is a non-empty directory. All contents will be permanently deleted.
+                        <Icon Name="warning" Size="@IconSize.Small" /> <strong>@_deleteConfirmPath</strong> is a non-empty directory. All contents will be permanently deleted.
                     </p>
                 }
                 else

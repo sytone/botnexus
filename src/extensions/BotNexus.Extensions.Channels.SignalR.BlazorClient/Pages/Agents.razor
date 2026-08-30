@@ -29,7 +29,7 @@ else
             {
                 <span class="agents-status @_statusClass" role="status">@_statusMessage</span>
             }
-            <button class="toolbar-btn" @onclick="LoadAgentsAsync" disabled="@_loading" title="Refresh agent list">&#x21BB; Reload</button>
+            <button class="toolbar-btn" @onclick="LoadAgentsAsync" disabled="@_loading" title="Refresh agent list"><Icon Name="refresh" Size="@IconSize.Small" /> Reload</button>
             <button class="toolbar-btn primary" @onclick="ShowAddForm" title="Add a new agent">+ Add Agent</button>
         </div>
     </header>
@@ -43,7 +43,7 @@ else
     }
     else if (_error is not null)
     {
-        <div class="agents-error" role="alert">&#x26A0;&#xFE0F; @_error</div>
+        <div class="agents-error" role="alert"><Icon Name="warning" Size="@IconSize.Small" /> @_error</div>
     }
     else
     {
@@ -93,9 +93,9 @@ else
                             <td>@agent.ApiProvider</td>
                             <td>@agent.ModelId</td>
                             <td class="agents-actions">
-                                <button class="agents-btn-edit" @onclick="() => EditAgent(agent)" title="Edit @agent.AgentId" aria-label="Edit @agent.AgentId">&#x270F;&#xFE0F;</button>
-                                <button class="agents-btn-clone" @onclick="() => CloneAgent(agent)" title="Clone @agent.AgentId" aria-label="Clone @agent.AgentId">&#x1F4CB;</button>
-                                <button class="agents-btn-delete" @onclick="() => RequestDelete(agent.AgentId!)" title="Delete @agent.AgentId" aria-label="Delete @agent.AgentId">&#x1F5D1;&#xFE0F;</button>
+                                <button class="agents-btn-edit" @onclick="() => EditAgent(agent)" title="Edit @agent.AgentId" aria-label="Edit @agent.AgentId"><Icon Name="edit" Size="@IconSize.Small" /></button>
+                                <button class="agents-btn-clone" @onclick="() => CloneAgent(agent)" title="Clone @agent.AgentId" aria-label="Clone @agent.AgentId"><Icon Name="copy" Size="@IconSize.Small" /></button>
+                                <button class="agents-btn-delete" @onclick="() => RequestDelete(agent.AgentId!)" title="Delete @agent.AgentId" aria-label="Delete @agent.AgentId"><Icon Name="delete" Size="@IconSize.Small" /></button>
                             </td>
                         </tr>
                     }

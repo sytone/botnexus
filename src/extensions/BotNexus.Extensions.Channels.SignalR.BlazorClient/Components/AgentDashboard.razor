@@ -19,7 +19,10 @@
                      data-agent-id="@agentId"
                      @onclick="() => NavigateToAgent(agent)">
                     <div class="agent-card-header">
-                        <span class="agent-card-emoji">@(agent.Emoji ?? "🤖")</span>
+                        <span class="agent-card-emoji">
+                            @if (agent.Emoji is { Length: > 0 }) { @agent.Emoji }
+                            else { <Icon Name="bot" /> }
+                        </span>
                         <div class="agent-card-identity">
                             <span class="agent-card-name">@agent.DisplayName</span>
                             <span class="agent-card-status @(agent.IsStreaming ? "status-active" : "status-idle")">

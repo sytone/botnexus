@@ -26,6 +26,10 @@ public static class IconLibrary
                 """
                 <path d="M12 7v4M8.5 16l3.5-5 3.5 5"/><circle cx="12" cy="5" r="3"/><circle cx="7" cy="18" r="3"/><circle cx="17" cy="18" r="3"/>
                 """),
+            ["archive"] = new("currentColor",
+                """
+                <rect x="2.5" y="3" width="19" height="5" rx="1.5"/><path d="M4.5 8v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>
+                """),
             ["assistant"] = new("currentColor",
                 """
                 <path d="m12 2 1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/>
@@ -82,6 +86,14 @@ public static class IconLibrary
                 """
                 <path d="M4 7h16M9 3h6l1 4M7 7l1 14h8l1-14M10 11v6M14 11v6"/>
                 """),
+            ["edit"] = new("currentColor",
+                """
+                <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+                """),
+            ["file"] = new("currentColor",
+                """
+                <path d="M14 2H6.5A2.5 2.5 0 0 0 4 4.5v15A2.5 2.5 0 0 0 6.5 22h11a2.5 2.5 0 0 0 2.5-2.5V8Z"/><path d="M14 2v6h6"/>
+                """),
             ["guide"] = new("currentColor",
                 """
                 <path d="M4 5.5A3.5 3.5 0 0 1 7.5 4H11v15H7.5A3.5 3.5 0 0 0 4 20.5ZM20 5.5A3.5 3.5 0 0 0 16.5 4H13v15h3.5a3.5 3.5 0 0 1 3.5 1.5Z"/>
@@ -97,6 +109,10 @@ public static class IconLibrary
             ["light-mode"] = new("currentColor",
                 """
                 <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+                """),
+            ["link"] = new("currentColor",
+                """
+                <path d="M10.5 13.5a4.5 4.5 0 0 0 6.7.5l2.5-2.5a4.5 4.5 0 0 0-6.4-6.4L11.9 6.5"/><path d="M13.5 10.5a4.5 4.5 0 0 0-6.7-.5l-2.5 2.5a4.5 4.5 0 0 0 6.4 6.4l1.4-1.4"/>
                 """),
             ["move"] = new("currentColor",
                 """
@@ -117,6 +133,10 @@ public static class IconLibrary
             ["plugins"] = new("currentColor",
                 """
                 <path d="M8 3v5M16 3v5M6 8h12v2a6 6 0 0 1-6 6v5M9 12h6"/>
+                """),
+            ["refresh"] = new("currentColor",
+                """
+                <path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M20.5 3.5V9H15"/>
                 """),
             ["reports"] = new("currentColor",
                 """
@@ -170,6 +190,7 @@ public static class IconLibrary
         "activity",
         "add",
         "agents",
+        "archive",
         "assistant",
         "attach",
         "avoid",
@@ -184,15 +205,19 @@ public static class IconLibrary
         "cron-jobs",
         "dark-mode",
         "delete",
+        "edit",
+        "file",
         "guide",
         "help",
         "home",
         "light-mode",
+        "link",
         "move",
         "pause",
         "pending",
         "pin",
         "plugins",
+        "refresh",
         "reports",
         "send",
         "skills",

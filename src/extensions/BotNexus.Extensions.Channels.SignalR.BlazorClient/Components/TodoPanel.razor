@@ -28,7 +28,7 @@
         {
             var inProgress = InProgressCount(items);
             <div class="todo-closeout-warning" data-testid="todo-closeout-warning" role="status">
-                <span class="todo-closeout-icon" aria-hidden="true">⚠</span>
+                <span class="todo-closeout-icon" aria-hidden="true"><Icon Name="warning" Size="@IconSize.Small" /></span>
                 <span class="todo-closeout-text">
                     The run ended with <strong>@inProgress</strong>
                     @(inProgress == 1 ? "item" : "items") still in progress.

@@ -11,19 +11,19 @@ else
 {
     <div class="global-error-boundary" data-testid="error-boundary">
         <div class="error-boundary-banner">
-            <span class="error-boundary-icon" aria-hidden="true">&#x26A0;&#xFE0F;</span>
+            <span class="error-boundary-icon"><Icon Name="warning" Size="@IconSize.Large" /></span>
             <span class="error-boundary-message">An error occurred in the portal UI.</span>
             <button class="error-boundary-toggle" @onclick="ToggleDetail" aria-expanded="@_showDetail">
                 @(_showDetail ? "Hide details" : "Show details")
             </button>
-            <button class="error-boundary-dismiss" @onclick="RecoverFromError" title="Dismiss">&#x2715;</button>
+            <button class="error-boundary-dismiss" @onclick="RecoverFromError" title="Dismiss"><Icon Name="close" Size="@IconSize.Small" /></button>
         </div>
 
         @if (_showDetail)
         {
             <div class="error-boundary-detail">
                 <pre class="error-boundary-stack" data-testid="error-detail">@FormatException(CurrentException)</pre>
-                <button class="error-boundary-copy" @onclick="CopyToClipboardAsync">&#x1F4CB; Copy</button>
+                <button class="error-boundary-copy" @onclick="CopyToClipboardAsync"><Icon Name="copy" Size="@IconSize.Small" /> Copy</button>
             </div>
         }
     </div>
