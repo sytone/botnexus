@@ -18,9 +18,13 @@
     <base href="/" />
     <link rel="preload" id="webassembly" />
     <!-- Preload the latin subset: it is needed for the very first paint, and discovering it
-         only after app.css parses would guarantee a visible swap. latin-ext is deliberately
-         NOT preloaded - it is fetched on demand via unicode-range. -->
-    <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+         only after the foundation parses would guarantee a visible swap. latin-ext is
+         deliberately NOT preloaded - it is fetched on demand via unicode-range. Inter now
+         ships from the shared .Core project so the mobile client gets the same typeface. -->
+    <link rel="preload" href="_content/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- The shared platform foundation MUST parse before app.css: app.css consumes its tokens,
+         and the pre-first-paint script below reads --color-surface back off it. -->
+    <link rel="stylesheet" href="_content/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/css/tokens.css?v=ds14" />
     <link rel="stylesheet" href="css/app.css?v=ds14" />
     <script>
         // Applied BEFORE first paint and before Blazor boots. The WASM runtime takes seconds to

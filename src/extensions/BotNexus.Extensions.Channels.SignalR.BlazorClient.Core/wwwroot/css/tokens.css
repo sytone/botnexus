@@ -1,0 +1,550 @@
+/* ── BotNexus design foundation ───────────────────────────────────────────
+   THE platform's colour, type, shape, motion and focus layer. Shared by every
+   BotNexus web surface: the desktop portal and the mobile client both link this
+   file, so there is exactly one palette and one type scale across the product.
+
+   It ships from the shared .Core project as a static web asset, which is why
+   both apps reference it as
+       _content/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/css/tokens.css
+   Add a token here rather than a value in an app's own stylesheet; anything
+   declared downstream of this file cannot be themed and cannot be shared.
+
+   Load order matters: this file must come BEFORE an app's own stylesheet, and
+   before any script that reads a token via getComputedStyle.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* ── Inter ────────────────────────────────────────────────────────────────
+   Self-hosted rather than loaded from the Google Fonts CDN: the portal is
+   reachable on a LAN (and offline via the service worker), so text must not
+   depend on an internet round-trip to render.
+
+   One variable file per subset covers weights 400-700, so the four weights the
+   type scale uses cost a single download rather than four. The unicode-range
+   split means latin-ext (85 KB) is fetched only if a page actually renders a
+   glyph from it; the common path is the 48 KB latin file alone.
+
+   font-display: swap - text paints immediately in the fallback and reflows to
+   Inter when it arrives. The alternative (block) hides text for up to 3s, which
+   is a worse failure than a brief metric shift.
+
+   Inter is licensed under the SIL Open Font License 1.1.
+   ──────────────────────────────────────────────────────────────────────── */
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('../fonts/inter-latin-ext.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+                   U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF,
+                   U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('../fonts/inter-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+                   U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+                   U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── Design tokens ────────────────────────────────────────────────────────
+   The single source of truth for colour, type, radius, elevation, material,
+   motion and focus. Nothing below this block should contain a raw hex value,
+   a bare pixel radius, or an ad-hoc shadow — add a token here instead.
+
+   Informed by Apple's Human Interface Guidelines and Microsoft's Fluent 2,
+   taking what the two agree on rather than blending their surfaces:
+
+     - HIG "deference": chrome recedes so content leads. Depth comes from the
+       surface ladder, not from decorating every card with a shadow.
+     - HIG hit targets: 44px for touch. Fluent's desktop minimum is 32px.
+       Both are encoded below; the portal's compact density previously used
+       28px controls, under both.
+     - Fluent elevation: a small ramp of named tiers, not one shadow and not
+       a shadow per component.
+     - Fluent/HIG materials: floating chrome is translucent and blurred so the
+       layer beneath stays legible as context (acrylic / vibrancy).
+     - Fluent motion: named durations with distinct easing for entering vs.
+       exiting. Motion explains a change; it is never decorative.
+     - Both are emphatic about a visible keyboard focus indicator. One is
+       defined here and applied globally, rather than left to each control.
+
+   Themes: dark is the default and lives on :root, because dark was the only
+   theme this portal ever had and an existing user must not be repainted by
+   upgrading. Light is opt-in via [data-theme="light"] on <html>.
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root {
+    /* ── 1. Colour ─────────────────────────────────────────────────────── */
+
+    /* Surface ladder. Each step is a lightness increment on a near-neutral
+       slate, NOT a different hue. The previous palette used a saturated blue
+       (#0f3460) as its surface, which competed with the accent for attention
+       and is the main reason the shell read as dated. Per HIG deference,
+       surfaces recede and content carries the colour. */
+    --color-canvas: #0e1116;
+    --color-surface: #151a21;
+    --color-surface-2: #1c232c;
+    --color-hairline: #273039;
+
+    /* Text roles. Named "ink" rather than "text" so utility-style class names
+       never read as text-text-*. */
+    --color-ink: #e6edf3;
+    --color-ink-muted: #9aa7b4;
+    /* Lightened from #6b7885: that failed WCAG AA on all three dark surfaces (3.51-4.19).
+       Verified >= 4.6:1 against canvas, surface and surface-2. */
+    --color-ink-faint: #818c97;
+
+    /* ONE saturated colour. Primary actions, focus rings and the active nav
+       item only — never decoration, never a section heading. BotNexus's
+       established cyan is kept as the brand accent; the neutrals around it
+       are what changed. */
+    --color-accent: #00b4d8;
+    --color-accent-hover: #2bc9e8;
+    /* Text sitting directly ON a filled accent or danger surface. Never
+       --color-ink here: it flips between themes and will not reliably
+       contrast against a mid-tone fill. Cyan is light, so this is dark. */
+    --color-on-accent: #04222a;
+    --color-accent-ring: rgba(0, 180, 216, 0.45);
+    --color-accent-wash: rgba(0, 180, 216, 0.10);
+
+    /* Status. Three tokens per status, not one: a solid value for dot
+       indicators, plus a background/foreground pair for pills. Pills use the
+       pair rather than opacity tinting so they stay legible on any surface. */
+    --color-success: #3fb950;
+    --color-success-bg: #10261a;
+    --color-success-text: #56d364;
+
+    --color-warning: #d29922;
+    --color-warning-bg: #2a2009;
+    --color-warning-text: #e3b341;
+
+    --color-danger: #f85149;
+    /* A SOLID danger button carrying --color-on-solid needs a darker red than the dot/border
+       value: white on #f85149 is only 3.35:1. This clears 4.6:1 while staying recognisably the
+       same red. --color-danger stays bright where it is a 1px border or an 8px dot and
+       contrast against text does not apply. */
+    --color-danger-fill: #ce433d;
+    --color-danger-bg: #2c1315;
+    --color-danger-text: #ff7b72;
+
+    --color-info: #58a6ff;
+    --color-info-bg: #0d2136;
+    --color-info-text: #79c0ff;
+
+    /* ── 2. Typography ─────────────────────────────────────────────────── */
+    /* Seven roles. Components reference these, never a raw font-size.
+       Line-heights sit on the 4px grid so vertical rhythm survives mixing.
+       Sizes are in rem so an OS text-size preference still scales them —
+       the practical web equivalent of HIG's Dynamic Type. */
+    --text-display: 1.75rem;      /* 28px */
+    --text-display-lh: 2.25rem;   /* 36px */
+    --text-title: 1.25rem;        /* 20px */
+    --text-title-lh: 1.75rem;     /* 28px */
+    --text-heading: 1rem;         /* 16px */
+    --text-heading-lh: 1.5rem;    /* 24px */
+    --text-body: 0.875rem;        /* 14px */
+    --text-body-lh: 1.25rem;      /* 20px */
+    --text-label: 0.8125rem;      /* 13px */
+    --text-label-lh: 1.25rem;     /* 20px */
+    --text-caption: 0.75rem;      /* 12px */
+    --text-caption-lh: 1rem;      /* 16px */
+    --text-mono: 0.8125rem;       /* 13px */
+    --text-mono-lh: 1.25rem;      /* 20px */
+
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+
+    /* ── 3. Shape ──────────────────────────────────────────────────────── */
+    /* Two radii. Small controls take -sm; containers take -lg. The pill radius
+       is a shape, not a third size — status pills and avatars need it.
+       (HIG's continuous "squircle" curvature has no portable CSS equivalent
+       yet; plain border-radius is the honest approximation.) */
+    --radius-sm: 6px;
+    --radius-lg: 12px;
+    --radius-pill: 999px;
+
+    /* ── 4. Hit targets ────────────────────────────────────────────────── */
+    /* HIG asks for 44px on touch; Fluent's desktop pointer minimum is 32px.
+       Both are provided so a control can pick the one matching its input
+       modality rather than splitting the difference and satisfying neither. */
+    --hit-touch: 44px;
+
+    /* Glyph sizes for icon controls. Separate from the type roles on purpose: those describe
+       running text, and an emoji rendered at body size is not legible as a symbol. An icon has to
+       be recognised by SHAPE at a glance, which needs more size than a letterform does to be read
+       in a word. */
+    --icon-sm: 1rem;      /* 16px - secondary glyphs that sit inside dense rows */
+    --icon-md: 1.125rem;  /* 18px - primary action glyphs */
+    --hit-pointer: 32px;
+
+    /* ── 5. Elevation ──────────────────────────────────────────────────── */
+    /* Flat content — cards, tables, lists — carries NO shadow and is
+       separated by the surface ladder alone. Only floating chrome may use
+       these, and only the tier matching how far it sits from the page:
+         -raised  popovers, dropdowns, menus, tooltips
+         -overlay dialogs, command palette, toasts
+       Two tiers, not Fluent's full ramp: this portal has exactly two classes
+       of floating thing, and unused tiers invite arbitrary picking. */
+    --shadow-raised: 0 4px 12px rgba(0, 0, 0, 0.32);
+    --shadow-overlay: 0 16px 40px rgba(0, 0, 0, 0.48);
+
+    /* ── 6. Material ───────────────────────────────────────────────────── */
+    /* Fluent acrylic / HIG vibrancy: floating chrome is translucent and
+       blurred so the layer beneath reads as context rather than being
+       replaced. Applied via .material-* below, never ad-hoc, because blur is
+       expensive and must stay confined to chrome. */
+    --material-tint: rgba(21, 26, 33, 0.82);
+    --material-blur: 20px;
+    /* The opaque stand-in for browsers without backdrop-filter, and for the
+       reduced-transparency preference. */
+    --material-fallback: #171d25;
+
+    /* ── 7. Motion ─────────────────────────────────────────────────────── */
+    /* Fluent's insight worth keeping: entering and exiting are not the same
+       gesture. Entering decelerates (arrives and settles); exiting
+       accelerates (leaves decisively). Durations stay short — anything past
+       ~200ms on UI chrome reads as sluggish rather than smooth. */
+    --motion-fast: 100ms;    /* hover / press feedback */
+    --motion-base: 160ms;    /* open / close */
+    --motion-slow: 240ms;    /* larger surfaces: drawers, panels */
+    --ease-enter: cubic-bezier(0.1, 0.9, 0.2, 1);
+    --ease-exit: cubic-bezier(0.7, 0, 0.84, 0);
+    --ease-standard: cubic-bezier(0.33, 0, 0.67, 1);
+
+    /* ── 8. Focus ──────────────────────────────────────────────────────── */
+    /* One focus treatment, defined once and applied globally below. Both HIG
+       and Fluent treat a visible keyboard focus indicator as non-negotiable;
+       leaving it to each control is how portals end up with controls that
+       cannot be reached by keyboard at all. The offset keeps the ring clear
+       of the control's own border so it stays visible on any surface. */
+    --focus-ring-width: 2px;
+    --focus-ring-offset: 2px;
+    --focus-ring-color: var(--color-accent);
+
+    /* ── 10. Compatibility aliases for previously-undeclared tokens ────── */
+    /* 34 names the stylesheet referenced with an inline hex fallback but never
+       declared. The fallbacks were hardcoded, so these could not theme.
+       Declaring them maps 74 call sites onto the semantic roles at once. */
+    --text: var(--color-ink);
+    --surface: var(--color-surface);
+    --surface-2: var(--color-surface-2);
+    --surface-3: var(--color-surface-2);
+    --surface-hover: var(--color-surface-2);
+    --surface-raised: var(--color-surface);
+    --surface-sunken: var(--color-canvas);
+    --panel-bg: var(--color-surface);
+    --input-bg: var(--color-surface);
+    --bg-tertiary: var(--color-surface-2);
+    --bg-elevated: var(--color-surface-2);
+    --bg-hover: var(--color-surface-2);
+    --hover-bg: var(--color-surface-2);
+    --border-color: var(--color-hairline);
+    --border-color-subtle: var(--color-hairline);
+    --border-subtle: var(--color-hairline);
+    --sidebar-border: var(--color-hairline);
+    --border-focus: var(--color-accent);
+    --accent-fg: var(--color-on-accent);
+    --danger: var(--color-danger);
+    --color-error: var(--color-danger);
+    --error-color: var(--color-danger);
+    --status-green: var(--color-success);
+
+    /* ── 11. Category palette ──────────────────────────────────────────── */
+    /* Distinct hues that identify a KIND of thing (a live run, a pinned item,
+       a webhook) rather than signalling status or inviting an action. They are
+       deliberately not the UI accent: the accent means "act here", and reusing
+       it for classification would dilute that. Kept desaturated so a screen
+       showing several at once stays calm. */
+    --cat-live: #2ea36a;
+    --cat-pinned: #a3823c;
+    --cat-agent: #6c6c80;
+    --cat-subagent: #4f8570;
+    --cat-a2a: #96714a;
+    --cat-webhook: #8272a8;
+    --cat-blue: #60a5fa;
+    --cat-blue-bg: #16304f;
+    --cat-purple: #a78bfa;
+    --cat-purple-bg: #281a45;
+    --cat-muted: #5b6b80;
+
+    /* Legacy names for the category palette. */
+    --accent-live: var(--cat-live);
+    --accent-pinned: var(--cat-pinned);
+    --accent-agent: var(--cat-agent);
+    --accent-subagent: var(--cat-subagent);
+    --accent-a2a: var(--cat-a2a);
+    --accent-webhook: var(--cat-webhook);
+    --accent-blue: var(--cat-blue);
+    --accent-blue-bg: var(--cat-blue-bg);
+    --accent-purple: var(--cat-purple);
+    --accent-purple-bg: var(--cat-purple-bg);
+    --accent-muted: var(--cat-muted);
+
+    /* ── 12. Fills, washes and scrims ──────────────────────────────────── */
+    /* Text or a knob sitting on a SATURATED fill — status pills, category
+       badges. Distinct from --color-on-accent because the accent is a light
+       cyan needing dark text, while status and category fills are mid-to-dark
+       and need light text. One token cannot serve both. */
+    --color-on-solid: #ffffff;
+
+    /* Iframe canvases hosting third-party HTML (tool output, embedded docs).
+       Deliberately NOT themed: the content inside assumes a white page, and
+       darkening the frame would leave black-on-black text. */
+    --color-embed-surface: #ffffff;
+
+    /* Scrims sit BEHIND floating chrome and dim the page. */
+    --color-scrim: rgba(0, 0, 0, 0.60);
+    --color-scrim-soft: rgba(0, 0, 0, 0.30);
+
+    /* Neutral washes: hover and selected states that must not read as status.
+       Expressed as translucent white on dark so they compose over any surface
+       step; the light theme flips them to translucent black. */
+    --color-wash: rgba(255, 255, 255, 0.06);
+    --color-wash-soft: rgba(255, 255, 255, 0.03);
+
+    /* Tinted washes, for a row or panel that carries a meaning. */
+    --color-accent-wash-soft: rgba(0, 180, 216, 0.06);
+    --color-accent-wash-strong: rgba(0, 180, 216, 0.22);
+    --color-success-wash: rgba(63, 185, 80, 0.14);
+    --color-warning-wash: rgba(210, 153, 34, 0.14);
+    --color-danger-wash: rgba(248, 81, 73, 0.14);
+    --color-info-wash: rgba(88, 166, 255, 0.14);
+
+    /* ── 9. Back-compatibility aliases ─────────────────────────────────── */
+    /* The pre-token names, remapped onto the semantic roles above, so the
+       rest of this stylesheet keeps working while component families migrate
+       one at a time. Prefer the --color-* names in new code; these retire
+       once no rule references them. */
+    --bg-primary: var(--color-canvas);
+    --bg-secondary: var(--color-surface);
+    --bg-surface: var(--color-surface-2);
+    --bg-input: var(--color-surface);
+    --text-primary: var(--color-ink);
+    --text-secondary: var(--color-ink-muted);
+    --text-muted: var(--color-ink-faint);
+    --accent: var(--color-accent);
+    --accent-hover: var(--color-accent-hover);
+    --border: var(--color-hairline);
+    --error: var(--color-danger);
+    --success: var(--color-success);
+    --warning: var(--color-warning);
+    /* Most of the 75 existing var(--radius) uses are small controls, so the
+       legacy alias resolves to the small token; containers move to
+       --radius-lg explicitly as each family migrates. */
+    --radius: var(--radius-sm);
+
+    --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    /* Inter first, with the platform stack behind it so text is legible during the swap
+       and if the woff2 fails to load entirely. */
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ── Light theme ──────────────────────────────────────────────────────────
+   Only tokens change; no component rule is duplicated. Contrast is tuned
+   rather than inverted — the accent darkens so it still passes against white,
+   and --color-on-accent flips to suit it. */
+[data-theme="light"] {
+    --color-canvas: #f6f8fa;
+    --color-surface: #ffffff;
+    --color-surface-2: #eef2f6;
+    --color-hairline: #d5dde5;
+
+    --color-ink: #10161d;
+    --color-ink-muted: #4d5a67;
+    /* Darkened from #6e7c8a: that failed AA on all three light surfaces (3.80-4.27). */
+    --color-ink-faint: #626e7b;
+
+    /* Darkened from #0b7f99: failed AA as text on canvas (4.37) and surface-2 (4.14).
+       Also improves white-on-accent for filled buttons, 4.66 -> 5.18. */
+    --color-accent: #0a7790;
+    --color-accent-hover: #086274;
+    --color-on-accent: #ffffff;
+    --color-accent-ring: rgba(10, 119, 144, 0.40);
+    --color-accent-wash: rgba(10, 119, 144, 0.08);
+
+    --color-success: #1a7f37;
+    --color-success-bg: #dcfce7;
+    --color-success-text: #14632c;
+
+    --color-warning: #9a6700;
+    --color-warning-bg: #fdf1d4;
+    --color-warning-text: #7d5300;
+
+    --color-danger: #cf222e;
+    --color-danger-fill: #cf222e;
+    --color-danger-bg: #fbe3e4;
+    --color-danger-text: #a40e26;
+
+    --color-info: #0969da;
+    --color-info-bg: #ddf0ff;
+    --color-info-text: #0a4f9e;
+
+    --color-on-solid: #ffffff;
+    --color-embed-surface: #ffffff;
+    --color-scrim: rgba(16, 22, 29, 0.45);
+    --color-scrim-soft: rgba(16, 22, 29, 0.22);
+    --color-wash: rgba(16, 22, 29, 0.05);
+    --color-wash-soft: rgba(16, 22, 29, 0.03);
+    --color-accent-wash-soft: rgba(10, 119, 144, 0.05);
+    --color-accent-wash-strong: rgba(10, 119, 144, 0.18);
+    --color-success-wash: rgba(26, 127, 55, 0.12);
+    --color-warning-wash: rgba(154, 103, 0, 0.12);
+    --color-danger-wash: rgba(207, 34, 46, 0.12);
+    --color-info-wash: rgba(9, 105, 218, 0.12);
+
+    /* Category palette, darkened so each still reads against a white surface. */
+    --cat-live: #1a7f52;
+    --cat-pinned: #8a6a24;
+    --cat-agent: #5b6472;
+    --cat-subagent: #3d6b58;
+    --cat-a2a: #7a5a34;
+    --cat-webhook: #6a5a90;
+    --cat-blue: #1f6feb;
+    --cat-blue-bg: #ddeaff;
+    --cat-purple: #7c4ddc;
+    --cat-purple-bg: #ede4ff;
+    --cat-muted: #64748b;
+
+    --shadow-raised: 0 4px 12px rgba(16, 22, 29, 0.10);
+    --shadow-overlay: 0 16px 40px rgba(16, 22, 29, 0.18);
+
+    --material-tint: rgba(255, 255, 255, 0.80);
+    --material-fallback: #ffffff;
+}
+
+/* ── Global focus indicator ───────────────────────────────────────────────
+   :focus-visible rather than :focus, so a pointer click does not leave a ring
+   behind while keyboard traversal always shows one. */
+:focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+    border-radius: var(--radius-sm);
+}
+
+/* ── Material (floating chrome only) ──────────────────────────────────── */
+.material-raised,
+.material-overlay {
+    background-color: var(--material-fallback);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .material-raised,
+    .material-overlay {
+        background-color: var(--material-tint);
+        -webkit-backdrop-filter: blur(var(--material-blur)) saturate(140%);
+        backdrop-filter: blur(var(--material-blur)) saturate(140%);
+    }
+}
+
+.material-raised { box-shadow: var(--shadow-raised); }
+.material-overlay { box-shadow: var(--shadow-overlay); }
+
+/* Translucency is an aesthetic, legibility is not. Honour the OS preference
+   by dropping to the opaque fallback. */
+@media (prefers-reduced-transparency: reduce) {
+    .material-raised,
+    .material-overlay {
+        background-color: var(--material-fallback);
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
+}
+
+/* Motion is an explanation, so removing it must never remove meaning — only
+   the movement. Anything conveyed by animation alone is a bug. */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ── Typography roles ─────────────────────────────────────────────────────
+   Applied as classes so markup states intent ("this is a title") rather than
+   a size. Weight is declared inside each role so a role can be reused at a
+   different weight without redefining the size. */
+.t-display { font-size: var(--text-display); line-height: var(--text-display-lh); font-weight: var(--weight-semibold); }
+.t-title   { font-size: var(--text-title);   line-height: var(--text-title-lh);   font-weight: var(--weight-semibold); }
+.t-heading { font-size: var(--text-heading); line-height: var(--text-heading-lh); font-weight: var(--weight-semibold); }
+.t-body    { font-size: var(--text-body);    line-height: var(--text-body-lh);    font-weight: var(--weight-regular); }
+.t-label   { font-size: var(--text-label);   line-height: var(--text-label-lh);   font-weight: var(--weight-medium); }
+.t-caption { font-size: var(--text-caption); line-height: var(--text-caption-lh); font-weight: var(--weight-regular); }
+.t-mono    { font-size: var(--text-mono);    line-height: var(--text-mono-lh);    font-weight: var(--weight-regular); font-family: var(--font-mono); }
+
+/* ── Density tokens (#2441) ──────────────────────────────────────────────
+   Every piece of portal chrome spacing is expressed through these custom
+   properties rather than hard-coded numbers, so the whole shell retunes from
+   one place and themes can override the set. Two presets ship: "compact" (the
+   default, and what :root carries so the tokens are defined even if the
+   data-density attribute never lands) and "comfortable".
+
+   Token meanings:
+     --density-row-pad-y / -x  vertical / horizontal padding of a chrome row
+     --density-gap             inline gap between items inside a chrome row
+     --density-control-h       min-height of an interactive chrome row (tab, nav item)
+     --density-bar-h           min-height of a bar (top bar, tab strip)
+     --density-font-sm / -xs   chrome text sizes
+     --density-nav-pad-y / -x  sidebar nav item padding
+     --density-subnav-indent   sidebar sub-item indent
+     --density-group-pad-y     conversation/section group header padding
+------------------------------------------------------------------------- */
+:root,
+[data-density="compact"] {
+    --density-row-pad-y: 0.2rem;
+    --density-row-pad-x: 0.7rem;
+    --density-gap: 0.4rem;
+    --density-control-h: var(--hit-pointer);
+    --density-bar-h: 32px;
+    --density-font-sm: 0.8rem;
+    --density-font-xs: 0.68rem;
+    --density-nav-pad-y: 0.22rem;
+    --density-nav-pad-x: 0.5rem;
+    --density-subnav-indent: 1rem;
+    --density-group-pad-y: 0.15rem;
+}
+
+[data-density="comfortable"] {
+    --density-row-pad-y: 0.5rem;
+    --density-row-pad-x: 1rem;
+    --density-gap: 0.7rem;
+    --density-control-h: var(--hit-touch);
+    --density-bar-h: 46px;
+    --density-font-sm: 0.88rem;
+    --density-font-xs: 0.75rem;
+    --density-nav-pad-y: 0.45rem;
+    --density-nav-pad-x: 0.65rem;
+    --density-subnav-indent: 1.25rem;
+    --density-group-pad-y: 0.35rem;
+}
+
+/* ── Breakpoints ──────────────────────────────────────────────────────────
+   A custom property cannot be used inside a media query, so these cannot be
+   var() references — the scale is enforced by convention and review instead of
+   by the cascade. Use one of these three and nothing else:
+
+     --bp-compact   544px   phone portrait; stack anything two-column
+     --bp-mobile    768px   THE mobile boundary: sidebar off-canvas, single column
+     --bp-wide      900px   opt-in enhancements for a genuinely wide canvas
+
+   Recorded as custom properties as well so a script or a container query can
+   read the same numbers the media queries use.
+
+   Known drift as of this file's creation: app.css also carries 720px, 700px and
+   640px boundaries, each chosen for one component. They are deliberately NOT
+   collapsed here, because moving a breakpoint changes where a layout reflows and
+   that needs to be checked against a rendered page, not a stylesheet. */
+:root {
+    --bp-compact: 544px;
+    --bp-mobile: 768px;
+    --bp-wide: 900px;
+}
