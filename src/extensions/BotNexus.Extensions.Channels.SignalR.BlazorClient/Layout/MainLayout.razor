@@ -131,8 +131,8 @@
         @* Update confirmation overlay *@
         @if (_showUpdateConfirm)
         {
-            <div class="update-confirm-overlay" @onclick="CancelUpdate">
-                <div class="update-confirm-dialog" @onclick:stopPropagation="true">
+            <div class="update-confirm-overlay scrim" @onclick="CancelUpdate">
+                <div class="update-confirm-dialog modal modal-confirm" @onclick:stopPropagation="true">
                     <p>Update BotNexus to <strong>@UpdateStatus.Status?.LatestCommitShort</strong>?</p>
                     <p class="text-muted">The gateway will restart. You will reconnect automatically.</p>
                     <div class="update-confirm-actions">

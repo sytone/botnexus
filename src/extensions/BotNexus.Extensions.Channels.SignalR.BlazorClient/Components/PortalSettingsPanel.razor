@@ -4,8 +4,8 @@
 
 @if (_show)
 {
-    <div class="portal-settings-overlay" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
-        <div class="portal-settings-panel" role="dialog" aria-modal="true" aria-labelledby="portal-settings-title" data-testid="portal-settings-panel" @onclick:stopPropagation="true">
+    <div class="portal-settings-overlay scrim" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
+        <div class="portal-settings-panel modal" role="dialog" aria-modal="true" aria-labelledby="portal-settings-title" data-testid="portal-settings-panel" @onclick:stopPropagation="true">
             <div class="portal-settings-header">
                 <h3 id="portal-settings-title">Portal Settings</h3>
                 <button class="portal-settings-close" @onclick="Close" title="Close" data-testid="portal-settings-close"><Icon Name="close" Size="@IconSize.Small" /></button>

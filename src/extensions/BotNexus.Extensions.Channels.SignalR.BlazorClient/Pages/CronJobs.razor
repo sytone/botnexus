@@ -38,8 +38,8 @@
     {
         @if (_confirmDeleteId is not null)
         {
-            <div class="agents-confirm-overlay" @onclick="CancelDelete">
-                <div class="agents-confirm-dialog" @onclick:stopPropagation="true" role="alertdialog"
+            <div class="agents-confirm-overlay scrim" @onclick="CancelDelete">
+                <div class="agents-confirm-dialog modal modal-confirm" @onclick:stopPropagation="true" role="alertdialog"
                      aria-labelledby="cron-delete-confirm-title">
                     <h4 id="cron-delete-confirm-title">Delete Cron Job</h4>
                     <p>Are you sure you want to delete cron job <strong>@_confirmDeleteName</strong>? This cannot be undone.</p>

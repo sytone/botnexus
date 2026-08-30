@@ -242,8 +242,8 @@ else
     <!-- NEW SESSION CONFIRM OVERLAY -->
     @if (_showNewSessionConfirm)
     {
-        <div class="reset-confirm-overlay" @onclick="CancelNewSession">
-            <div class="reset-confirm-box" @onclick:stopPropagation="true">
+        <div class="reset-confirm-overlay scrim" @onclick="CancelNewSession">
+            <div class="reset-confirm-box modal modal-confirm" @onclick:stopPropagation="true">
                 <p>Start a new session? Prior messages will remain visible but the agent will start with a fresh context.</p>
                 <div class="reset-confirm-actions">
                     <button class="cancel-btn" @onclick="CancelNewSession">Cancel</button>
@@ -255,8 +255,8 @@ else
     <!-- ARCHIVE CONVERSATION CONFIRM OVERLAY -->
     @if (_archiveTarget is { } archiveTarget)
     {
-        <div class="reset-confirm-overlay" @onclick="CancelArchive">
-            <div class="reset-confirm-box" @onclick:stopPropagation="true">
+        <div class="reset-confirm-overlay scrim" @onclick="CancelArchive">
+            <div class="reset-confirm-box modal modal-confirm" @onclick:stopPropagation="true">
                 <p>
                     @if (IsUnattended(archiveTarget))
                     {

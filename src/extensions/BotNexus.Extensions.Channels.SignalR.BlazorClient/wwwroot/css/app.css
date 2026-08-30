@@ -1761,22 +1761,11 @@ html, body, #app {
 /* ── Reset confirmation dialog ──────────────────────────────────────── */
 
 .reset-confirm-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--color-scrim);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     z-index: 100;
 }
 
 .reset-confirm-dialog {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     padding: 1.5rem;
-    max-width: 400px;
-    width: 90%;
 }
 
 .reset-confirm-dialog p {
@@ -1963,26 +1952,12 @@ html, body, #app {
 }
 
 .tool-modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--color-scrim);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     z-index: 200;
     padding: 2rem;
 }
 
 .tool-modal-dialog {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    width: min(900px, 90vw);
-    max-height: 80vh;
-    display: flex;
-    flex-direction: column;
     outline: none;
-    box-shadow: var(--shadow-overlay);
 }
 
 .tool-modal-header {
@@ -2711,23 +2686,11 @@ details[open] > .thinking-summary::before {
 /* ── Agent config panel (modal overlay) ─────────────────────────────── */
 
 .config-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--color-scrim);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     z-index: 100;
 }
 
 .config-dialog {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     padding: 0;
-    max-width: 480px;
-    width: 90%;
-    max-height: 80vh;
     overflow-y: auto;
 }
 
@@ -3105,23 +3068,11 @@ details[open] > .thinking-summary::before {
 
 /* Validation dialog */
 .validation-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--color-scrim);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     z-index: 100;
 }
 
 .validation-dialog {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     padding: 1.25rem;
-    max-width: 560px;
-    width: 90%;
-    max-height: 70vh;
     overflow-y: auto;
 }
 
@@ -3612,22 +3563,11 @@ details[open] > .thinking-summary::before {
 }
 
 .agents-confirm-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--color-scrim);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     z-index: 1000;
 }
 
 .agents-confirm-dialog {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     padding: 1.5rem;
-    max-width: 400px;
-    width: 90%;
 }
 
 .agents-confirm-dialog h4 {
@@ -4417,22 +4357,11 @@ h3.conversation-title.editable:hover {
 }
 
 .update-confirm-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--color-scrim);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     z-index: 100;
 }
 
 .update-confirm-dialog {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     padding: 1.5rem;
-    max-width: 400px;
-    width: 90%;
 }
 
 .update-confirm-dialog p {
@@ -4670,31 +4599,12 @@ h3.conversation-title.editable:hover {
 /* ── Modal Panel Shared ────────────────────────────────────────── */
 .portal-settings-overlay,
 .session-debug-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--color-scrim);
     z-index: 2000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     padding: 2rem;
-}
-.portal-settings-panel,
-.session-debug-panel {
-    background: var(--panel-bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    width: 90vw;
-    max-width: 720px;
-    max-height: 85vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
 }
 
 /* ── Portal Settings Modal ─────────────────────────────────────── */
 .portal-settings-panel {
-    max-width: 480px;
     max-height: 60vh;
 }
 .portal-settings-header {
@@ -4732,7 +4642,6 @@ h3.conversation-title.editable:hover {
 
 /* ── Session Debug Modal ───────────────────────────────────────── */
 .session-debug-panel {
-    max-width: 900px;
     max-height: 85vh;
 }
 .session-debug-header {

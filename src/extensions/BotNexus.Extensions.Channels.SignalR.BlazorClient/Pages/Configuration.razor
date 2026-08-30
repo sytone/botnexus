@@ -63,8 +63,8 @@
 
     @if (_validationResult is not null)
     {
-        <div class="validation-overlay" @onclick="@(() => _validationResult = null)">
-            <div class="validation-dialog" @onclick:stopPropagation="true">
+        <div class="validation-overlay scrim" @onclick="@(() => _validationResult = null)">
+            <div class="validation-dialog modal" @onclick:stopPropagation="true">
                 <h3>@(_validationResult.IsValid ? "Configuration Valid" : "Validation Errors")</h3>
                 @if (_validationResult.ConfigPath is not null)
                 {

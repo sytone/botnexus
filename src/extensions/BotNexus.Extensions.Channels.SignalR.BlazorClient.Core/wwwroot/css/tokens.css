@@ -478,13 +478,15 @@
 
 /* ── Material (floating chrome only) ──────────────────────────────────── */
 .material-raised,
-.material-overlay {
+.material-overlay,
+.modal {
     background-color: var(--material-fallback);
 }
 
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
     .material-raised,
-    .material-overlay {
+    .material-overlay,
+    .modal {
         background-color: var(--material-tint);
         -webkit-backdrop-filter: blur(var(--material-blur)) saturate(140%);
         backdrop-filter: blur(var(--material-blur)) saturate(140%);
@@ -492,13 +494,15 @@
 }
 
 .material-raised { box-shadow: var(--shadow-raised); }
-.material-overlay { box-shadow: var(--shadow-overlay); }
+.material-overlay,
+.modal { box-shadow: var(--shadow-overlay); }
 
 /* Translucency is an aesthetic, legibility is not. Honour the OS preference
    by dropping to the opaque fallback. */
 @media (prefers-reduced-transparency: reduce) {
     .material-raised,
-    .material-overlay {
+    .material-overlay,
+    .modal {
         background-color: var(--material-fallback);
         -webkit-backdrop-filter: none;
         backdrop-filter: none;
@@ -593,6 +597,17 @@
    collapsed here, because moving a breakpoint changes where a layout reflows and
    that needs to be checked against a rendered page, not a stylesheet. */
 :root {
+    /* The stacking ladder as it stands. These are the values already in use, given
+       names so a new layer can be placed rather than guessed at. Renumbering is a
+       separate job - see the modal chrome note. */
+    --z-sidebar-scrim: 99;
+    --z-modal: 100;
+    --z-modal-tool: 200;
+    --z-sheet: 900;
+    --z-confirm: 1000;
+    --z-reconnect: 1100;
+    --z-settings: 2000;
+
     --bp-compact: 544px;
     --bp-mobile: 768px;
     --bp-wide: 900px;
@@ -674,6 +689,51 @@ button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* ── Modal chrome ─────────────────────────────────────────────────────────
+   Nine dialog families, each bringing its own scrim and its own panel. The
+   scrims were byte-identical apart from z-index; the panels apart from
+   max-width - and only two of the nine carried a shadow, so a confirmation
+   dialog floated with no separation from the page behind it.
+
+   .modal joins the material rules above rather than restating them, which is
+   what the overlay tier was defined FOR: "dialogs, command palette, toasts".
+   That tier had exactly one consumer until now. Acrylic degrades to an opaque
+   fallback where backdrop-filter is unsupported or the reader has asked for
+   reduced transparency - handled once, up there, not per dialog.
+
+   z-index is deliberately NOT collapsed here. The nine families use 99 through
+   2000 and the relative order between them is load-bearing (a settings panel
+   over a debug panel over a tool modal over a sidebar scrim). Renumbering that
+   safely needs every pair opened together, which is a separate job; the ladder
+   is documented as tokens below so at least the values have names.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.scrim {
+    position: fixed;
+    inset: 0;
+    background: var(--color-scrim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.modal {
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-lg);
+    width: 90%;
+    max-width: 32rem;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Sizes named for what they hold, not for a pixel count. */
+.modal-confirm { max-width: 25rem; }   /* a question and two buttons */
+.modal-wide    { max-width: 45rem; }   /* a form or a settings panel */
+.modal-full    { max-width: 56rem; }   /* a transcript or a payload dump */
 
 /* ── Empty states ─────────────────────────────────────────────────────────
    "Nothing here yet" is the most repeated state in the product - roughly two

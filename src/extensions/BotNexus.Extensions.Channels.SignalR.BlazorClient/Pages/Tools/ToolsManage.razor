@@ -31,8 +31,8 @@
     {
         @if (_confirmDeleteId is not null)
         {
-            <div class="agents-confirm-overlay" @onclick="CancelDelete">
-                <div class="agents-confirm-dialog" @onclick:stopPropagation="true" role="alertdialog"
+            <div class="agents-confirm-overlay scrim" @onclick="CancelDelete">
+                <div class="agents-confirm-dialog modal modal-confirm" @onclick:stopPropagation="true" role="alertdialog"
                      aria-labelledby="tools-delete-confirm-title" data-testid="tools-delete-confirm">
                     <h4 id="tools-delete-confirm-title">Remove Tool</h4>
                     <p>Remove <strong>@_confirmDeleteName</strong> from your tools? This cannot be undone.</p>

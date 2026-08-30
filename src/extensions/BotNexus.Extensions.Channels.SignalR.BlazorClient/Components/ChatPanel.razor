@@ -150,8 +150,8 @@
 
     @if (_showNewSessionConfirm)
     {
-        <div class="reset-confirm-overlay" @onclick="CancelNewSession">
-            <div class="reset-confirm-dialog" @onclick:stopPropagation="true">
+        <div class="reset-confirm-overlay scrim" @onclick="CancelNewSession">
+            <div class="reset-confirm-dialog modal modal-confirm" @onclick:stopPropagation="true">
                 <p>Start a new session for <strong>@DisplayName</strong>?</p>
                 <p class="text-muted">The current session will be sealed. History stays in this conversation.</p>
                 <div class="reset-confirm-actions">
@@ -164,11 +164,11 @@
 
     @if (_toolModalOpen)
     {
-        <div class="tool-modal-overlay" data-testid="tool-modal-overlay"
+        <div class="tool-modal-overlay scrim" data-testid="tool-modal-overlay"
              @onclick="CloseToolModal"
              @onkeydown="ToolModalKeyDown"
              tabindex="-1">
-            <div class="tool-modal-dialog" role="dialog" aria-modal="true"
+            <div class="tool-modal-dialog modal modal-full" role="dialog" aria-modal="true"
                  aria-label="@($"Tool {_toolModalTitle}")"
                  data-testid="tool-modal"
                  @onclick:stopPropagation="true"

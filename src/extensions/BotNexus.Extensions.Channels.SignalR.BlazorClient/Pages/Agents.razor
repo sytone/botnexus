@@ -50,8 +50,8 @@ else
         @* Delete confirmation dialog *@
         @if (_confirmDeleteId is not null)
         {
-            <div class="agents-confirm-overlay" @onclick="CancelDelete">
-                <div class="agents-confirm-dialog" @onclick:stopPropagation="true" role="alertdialog"
+            <div class="agents-confirm-overlay scrim" @onclick="CancelDelete">
+                <div class="agents-confirm-dialog modal modal-confirm" @onclick:stopPropagation="true" role="alertdialog"
                      aria-labelledby="delete-confirm-title">
                     <h4 id="delete-confirm-title">Delete Agent</h4>
                     <p>Are you sure you want to delete agent <strong>@_confirmDeleteId</strong>? This cannot be undone.</p>

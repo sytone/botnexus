@@ -546,22 +546,11 @@ body {
 
 /* ── New session confirmation overlay ─────────────────────────────────────── */
 .reset-confirm-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--color-scrim);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     z-index: 1000;
 }
 
 .reset-confirm-box {
-    background: var(--surface);
-    border-radius: var(--radius-lg);
     padding: 1.5rem;
-    max-width: 320px;
-    width: 90%;
-    box-shadow: var(--shadow-overlay);
 }
 
 .reset-confirm-box p {
@@ -948,30 +937,18 @@ body {
    above all app chrome (below only modal z-indexes) and self-dismisses once the hub is
    live again. Styled to match the mobile dark chat theme. */
 .reconnect-overlay {
-    position: fixed;
-    inset: 0;
     z-index: 1100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     padding: 24px;
-    background: var(--color-scrim);
+    /* This one blurs the page behind it on purpose: a reconnect is a modal moment
+       and the stale UI underneath should read as unavailable, not merely dimmed. */
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
     animation: reconnectFadeIn 0.2s ease;
 }
 
 .reconnect-overlay-card {
-    background: var(--color-surface);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-lg);
     padding: 24px 22px;
-    max-width: 320px;
-    width: 100%;
     text-align: center;
-    box-shadow: var(--shadow-overlay);
-    display: flex;
-    flex-direction: column;
     align-items: center;
     gap: 12px;
 }

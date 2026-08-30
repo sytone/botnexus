@@ -13,8 +13,8 @@
    intact; this only changes the *user-visible* surface, not the genuine-failure reporting. *@
 @if (_visible)
 {
-    <div class="reconnect-overlay" data-testid="reconnect-overlay" role="alertdialog" aria-live="polite" aria-label="Reconnecting to BotNexus">
-        <div class="reconnect-overlay-card">
+    <div class="reconnect-overlay scrim" data-testid="reconnect-overlay" role="alertdialog" aria-live="polite" aria-label="Reconnecting to BotNexus">
+        <div class="reconnect-overlay-card modal modal-confirm">
             <div class="reconnect-overlay-spinner" aria-hidden="true"></div>
             <div class="reconnect-overlay-title">Reconnecting&#x2026;</div>
             <div class="reconnect-overlay-detail">
