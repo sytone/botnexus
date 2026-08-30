@@ -188,7 +188,7 @@ internal sealed class AgentConfigurationHostedService(
             _logger.LogInformation("Removed agent '{AgentId}' (no longer in config sources).", removedId);
         }
 
-        int added = 0, updated = 0, unchanged = 0;
+        int added = 0, updated = 0, unchanged = 0, adopted = 0;
         foreach (var (agentId, descriptor) in merged)
         {
             if (_appliedConfigDescriptors.TryGetValue(agentId, out var existingDescriptor))
@@ -213,8 +213,34 @@ internal sealed class AgentConfigurationHostedService(
             var typedId = AgentId.From(agentId);
             if (_registry.Contains(typedId))
             {
+                // The id is in the registry but this reload has never applied it. Two very different
+                // situations reach here and they must not share a diagnosis (#3561):
+                //
+                //  a) The ordinary create path. POST /api/agents registers the descriptor AND writes it
+                //     to config in one operation; the reload watcher then observes it ~2s later. Nothing
+                //     is shadowing anything - this reload is simply the first to see an agent that config
+                //     already owns. Adopt it so config remains the owner of record, otherwise a later
+                //     config-driven EDIT re-takes this first-seen branch instead of the update branch and
+                //     the edit is silently dropped.
+                //
+                //  b) Genuine shadowing. Something registered a differently-shaped descriptor under this
+                //     id, so config edits for this agent will not take effect. That is worth a warning.
+                //
+                // Only (b) gets the warning, and it names the observation (a shape mismatch) rather than
+                // inferring a "non-config source" that, in case (a), does not exist.
+                var registeredDescriptor = _registry.Get(typedId);
+                if (registeredDescriptor is not null && DescriptorsEqual(registeredDescriptor, descriptor))
+                {
+                    _appliedConfigDescriptors[agentId] = descriptor;
+                    adopted++;
+                    _logger.LogDebug(
+                        "Adopting config-based agent '{AgentId}': it is already registered with an equivalent descriptor from an earlier write.",
+                        agentId);
+                    continue;
+                }
+
                 _logger.LogWarning(
-                    "Skipping config-based agent '{AgentId}' because it is already registered by a non-config source.",
+                    "Config-based agent '{AgentId}' is already registered with a different descriptor, so config changes for this agent are not being applied. Unregister the shadowing registration or reconcile it with the config entry.",
                     agentId);
                 continue;
             }
@@ -230,11 +256,12 @@ internal sealed class AgentConfigurationHostedService(
                 "Agent configuration applied: {Added} added, {Updated} updated, {Removed} removed, {Unchanged} unchanged.",
                 added, updated, removedIds.Length, unchanged);
         }
-        else if (unchanged > 0)
+        else if (unchanged > 0 || adopted > 0)
         {
             _logger.LogDebug(
-                "Agent configuration reload: no changes detected ({Unchanged} agents unchanged).",
-                unchanged);
+                "Agent configuration reload: no changes detected ({Unchanged} agents unchanged, {Adopted} adopted).",
+                unchanged,
+                adopted);
         }
     }
 
