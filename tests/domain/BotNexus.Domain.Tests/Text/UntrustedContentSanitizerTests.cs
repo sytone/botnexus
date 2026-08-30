@@ -89,6 +89,32 @@ public class UntrustedContentSanitizerTests
     }
 
     [Fact]
+    public void FullwidthPipeSpecialToken_Stripped()
+    {
+        // #3682 AC1: the fullwidth-pipe (U+FF5C) special-token form must be stripped exactly like the
+        // ASCII form. Before the widening this returned the token verbatim.
+        UntrustedContentSanitizer.Sanitize("a<\uFF5Cim_start\uFF5C>b").ShouldBe("ab");
+    }
+
+    [Theory]
+    // #3682 AC2: the two delimiters are independent, so mixed spellings must match too.
+    [InlineData("a<|im_start\uFF5C>b")]
+    [InlineData("a<\uFF5Cim_start|>b")]
+    public void MixedPipeSpecialToken_Stripped(string input)
+    {
+        UntrustedContentSanitizer.Sanitize(input).ShouldBe("ab");
+    }
+
+    [Theory]
+    // #3682 AC4: ordinary angle-bracket prose is not injection markup and must survive untouched.
+    [InlineData("a < b && c > d")]
+    [InlineData("<div>hello</div>")]
+    public void OrdinaryAngleBracketText_IsPreserved(string input)
+    {
+        UntrustedContentSanitizer.Sanitize(input).ShouldBe(input);
+    }
+
+    [Fact]
     public void FullwidthPipeDsmlDirective_Stripped()
     {
         // Fullwidth pipe (U+FF5C) variant used to evade ASCII-only filters.

@@ -74,8 +74,11 @@ public sealed class WebToolSanitizationBoundaryArchitectureTests : ArchitectureT
     {
         // Marker-shaped literals that only appear in code whose purpose is to recognise injection
         // markup. Deliberately narrow: matching bare "<" or "|" would fire on ordinary parsing.
+        // The delimiter class covers the ASCII pipe AND the fullwidth pipe U+FF5C so a provider that
+        // hand-rolled the fullwidth spelling is caught too, and so this assertion cannot drift apart
+        // from UntrustedContentSanitizer.SpecialTokenPattern (#3682 AC6).
         var markerShapes = new Regex(
-            @"im_start|im_end|endoftext|reserved_special_token|<\s*\|.*\|\s*>|</?\s*(?:system|assistant|tool_call|tool_use|function_calls)\s*>",
+            "im_start|im_end|endoftext|reserved_special_token|<\\s*[|\uFF5C].*[|\uFF5C]\\s*>|</?\\s*(?:system|assistant|tool_call|tool_use|function_calls)\\s*>",
             RegexOptions.IgnoreCase);
 
         var offenders = new List<string>();

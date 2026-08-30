@@ -59,8 +59,16 @@ public static class UntrustedContentSanitizer
 {
     // Special-token literals of the <|...|> family (im_start, im_end, endoftext, reserved_special_token_N,
     // fim_prefix, ...). Non-greedy, single line — these literals never span newlines.
+    //
+    // Either delimiter may be the ASCII pipe '|' OR the fullwidth pipe U+FF5C '｜', independently, so
+    // the mixed spellings <|im_start｜> and <｜im_start|> are matched too (issue #3682). Real providers
+    // emit the fullwidth form and an attacker can author it trivially; an ASCII-only class let the
+    // token survive sanitization and be persisted as trusted text. DsmlDirectivePattern below already
+    // spelled [|\uFF5C] for exactly this reason — that widening was simply never applied to the
+    // special-token family beside it. The negated class must exclude BOTH delimiters, otherwise a
+    // fullwidth closing delimiter would be swallowed by the body.
     private static readonly Regex SpecialTokenPattern = new(
-        @"<\|[^|>\r\n]*\|>",
+        "<[|\uFF5C][^|\uFF5C>\r\n]*[|\uFF5C]>",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Tool-call / function-call directive blocks. Match an open tag through its matching close tag

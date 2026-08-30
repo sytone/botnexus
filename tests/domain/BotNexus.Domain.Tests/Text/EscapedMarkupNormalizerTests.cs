@@ -11,7 +11,11 @@ namespace BotNexus.Domain.Tests.Text;
 /// </summary>
 public class EscapedMarkupNormalizerTests
 {
-    private static readonly Regex SpecialToken = new(@"<\|[^|>\r\n]*\|>", RegexOptions.IgnoreCase);
+    // Mirrors UntrustedContentSanitizer.SpecialTokenPattern, including the fullwidth-pipe (U+FF5C)
+    // delimiter class (#3682). Keep the two spellings identical — an ASCII-only mirror here is what
+    // let the production gap reproduce in the tests instead of being caught by them.
+    private static readonly Regex SpecialToken =
+        new("<[|\uFF5C][^|\uFF5C>\r\n]*[|\uFF5C]>", RegexOptions.IgnoreCase);
 
     [Fact]
     public void LiteralMarker_IsRemoved()
@@ -36,6 +40,14 @@ public class EscapedMarkupNormalizerTests
     public void HtmlEntityMarker_IsRemovedFromTheOriginalSpan()
     {
         EscapedMarkupNormalizer.ReplaceMatches("a&lt;|im_start|&gt;b", SpecialToken).ShouldBe("ab");
+    }
+
+    [Fact]
+    public void HtmlEntityFullwidthPipeMarker_IsRemovedFromTheOriginalSpan()
+    {
+        // #3682 AC5: the escaped/entity-encoded fullwidth form must be normalised and removed too.
+        EscapedMarkupNormalizer.ReplaceMatches("a&lt;\uFF5Cim_start\uFF5C&gt;b", SpecialToken)
+            .ShouldBe("ab");
     }
 
     [Fact]
