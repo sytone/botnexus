@@ -41,6 +41,10 @@
 else
 {
     <div class="home-page page" data-testid="home-page">
+        @* The home page has no visible title - its sections are the content. It still
+           needs a root for the heading outline, or the three section h2s hang off
+           nothing and a screen reader has no name for the page. *@
+        <h1 class="sr-only">Home</h1>
         <section class="home-summary" data-testid="home-summary" aria-label="Site and agent summary">
             <PlatformStatsPanel />
             <div class="home-agent-summary">

@@ -33,6 +33,12 @@
 }
 else
 {
+    @* The chat route has no visible page title, and it can render SEVERAL agent
+       panels at once - so promoting a conversation title to h1 would emit more
+       than one. A hidden root names the page instead, and the per-conversation
+       headings stay where they are. *@
+    <h1 class="sr-only">Chat</h1>
+
     @if (Store.ActiveAgentId is null)
     {
         <AgentDashboard />
