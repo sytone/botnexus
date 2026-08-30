@@ -127,15 +127,15 @@
 
     @if (_isLoading && _rows is null)
     {
-        <div class="activity-loading" data-testid="activity-loading">Loading activity&#x2026;</div>
+        <div class="activity-loading empty-state" data-testid="activity-loading">Loading activity&#x2026;</div>
     }
     else if (_loadError)
     {
-        <div class="activity-error" data-testid="activity-error">Could not load activity. Retrying&#x2026;</div>
+        <div class="activity-error empty-state" data-testid="activity-error">Could not load activity. Retrying&#x2026;</div>
     }
     else if (_rows is { Count: 0 })
     {
-        <div class="activity-empty" data-testid="activity-empty">
+        <div class="activity-empty empty-state" data-testid="activity-empty">
             No active conversations match the current filters.
         </div>
     }

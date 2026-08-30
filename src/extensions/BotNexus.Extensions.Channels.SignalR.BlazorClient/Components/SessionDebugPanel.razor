@@ -13,7 +13,7 @@
 
         @if (_isLoading)
         {
-            <div class="session-debug-loading">Loading session…</div>
+            <div class="session-debug-loading empty-state">Loading session…</div>
         }
         else if (_loadError is not null)
         {
@@ -59,7 +59,7 @@
             {
                 @if (_snapshot.Metadata is null || _snapshot.Metadata.Count == 0)
                 {
-                    <div class="session-debug-empty" data-testid="session-debug-metadata-empty">No metadata entries.</div>
+                    <div class="session-debug-empty empty-state" data-testid="session-debug-metadata-empty">No metadata entries.</div>
                 }
                 else
                 {
@@ -83,7 +83,7 @@
             {
                 @if (string.IsNullOrWhiteSpace(_snapshot.SystemPrompt))
                 {
-                    <div class="session-debug-empty" data-testid="session-debug-system-prompt-empty">System prompt not yet captured.</div>
+                    <div class="session-debug-empty empty-state" data-testid="session-debug-system-prompt-empty">System prompt not yet captured.</div>
                 }
                 else
                 {
@@ -104,11 +104,11 @@
             {
                 @if (_isLoadingHistory)
                 {
-                    <div class="session-debug-loading" data-testid="session-debug-history-loading">Loading history…</div>
+                    <div class="session-debug-loading empty-state" data-testid="session-debug-history-loading">Loading history…</div>
                 }
                 else if (_history is null || _history.Entries is null || _history.Entries.Count == 0)
                 {
-                    <div class="session-debug-empty" data-testid="session-debug-history-empty">No history entries.</div>
+                    <div class="session-debug-empty empty-state" data-testid="session-debug-history-empty">No history entries.</div>
                 }
                 else
                 {
@@ -174,11 +174,11 @@
             {
                 @if (_isLoadingSubAgents)
                 {
-                    <div class="session-debug-loading" data-testid="session-debug-subagents-loading">Loading sub-agents…</div>
+                    <div class="session-debug-loading empty-state" data-testid="session-debug-subagents-loading">Loading sub-agents…</div>
                 }
                 else if (_subAgents is null || _subAgents.Count == 0)
                 {
-                    <div class="session-debug-empty" data-testid="session-debug-subagents-empty">No sub-agents for this session.</div>
+                    <div class="session-debug-empty empty-state" data-testid="session-debug-subagents-empty">No sub-agents for this session.</div>
                 }
                 else
                 {

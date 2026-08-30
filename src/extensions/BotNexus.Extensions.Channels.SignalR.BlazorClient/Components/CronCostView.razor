@@ -33,15 +33,15 @@
 
     @if (_isLoading && _rows is null)
     {
-        <div class="activity-loading" data-testid="cron-cost-loading">Loading cron cost&#x2026;</div>
+        <div class="activity-loading empty-state" data-testid="cron-cost-loading">Loading cron cost&#x2026;</div>
     }
     else if (_loadError)
     {
-        <div class="activity-error" data-testid="cron-cost-error">Could not load cron cost.</div>
+        <div class="activity-error empty-state" data-testid="cron-cost-error">Could not load cron cost.</div>
     }
     else if (_rows is { Count: 0 })
     {
-        <div class="activity-empty" data-testid="cron-cost-empty">
+        <div class="activity-empty empty-state" data-testid="cron-cost-empty">
             No cron runs were recorded in this window.
         </div>
     }

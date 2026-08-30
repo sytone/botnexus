@@ -501,13 +501,6 @@ body {
     color: var(--color-ink-faint);
 }
 
-.tool-modal-empty {
-    padding: 16px;
-    color: var(--color-ink-faint);
-    font-size: var(--text-label);
-    text-align: center;
-}
-
 /* ── Refresh button (mobile header) ─────────────────────────────────────── */
 .refresh-btn {
     background: none;
@@ -644,10 +637,6 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--color-ink-faint);
-    font-size: var(--text-body);
-    padding: 24px;
-    text-align: center;
 }
 
 .canvas-sheet .canvas-frame {
@@ -859,9 +848,6 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 32px 16px;
-    color: var(--color-ink-muted);
-    text-align: center;
 }
 
 /* Shared SchemaForm markup, mobile-styled. Class names come from the Core SchemaForm
@@ -953,12 +939,6 @@ body {
 .settings-body .schema-field-error {
     font-size: var(--text-caption);
     color: var(--color-danger-text);
-}
-
-.settings-body .schema-form-empty {
-    padding: 24px 12px;
-    text-align: center;
-    color: var(--color-ink-muted);
 }
 
 /* ── Auto-retrying reconnect overlay (#1839) ──────────────────────────────────

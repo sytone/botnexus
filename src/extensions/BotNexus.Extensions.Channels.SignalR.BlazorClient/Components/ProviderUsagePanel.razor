@@ -27,11 +27,11 @@
 
             @if (_error is not null)
             {
-                <p class="usage-empty t-body">@_error</p>
+                <p class="usage-empty t-body empty-state-inline">@_error</p>
             }
             else if (_current is null)
             {
-                <p class="usage-empty t-body">
+                <p class="usage-empty t-body empty-state-inline">
                     No provider calls observed yet. Send a message and the limits will appear here.
                 </p>
             }
@@ -45,7 +45,7 @@
 
                     @if (_current.Limits.Count == 0)
                     {
-                        <p class="usage-empty t-caption">This provider reports no rate-limit headers.</p>
+                        <p class="usage-empty t-caption empty-state-inline">This provider reports no rate-limit headers.</p>
                     }
                     else
                     {
@@ -95,7 +95,7 @@
 
                     @if (_current.Burn.Models.Count == 0)
                     {
-                        <p class="usage-empty t-caption">Nothing in this window.</p>
+                        <p class="usage-empty t-caption empty-state-inline">Nothing in this window.</p>
                     }
                     else
                     {

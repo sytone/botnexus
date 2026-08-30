@@ -33,13 +33,13 @@
     <div class="settings-body">
         @if (_loading)
         {
-            <div class="settings-loading" data-testid="settings-loading">
+            <div class="settings-loading empty-state" data-testid="settings-loading">
                 <span>Loading configuration&#x2026;</span>
             </div>
         }
         else if (_config is null || _schema is null)
         {
-            <div class="settings-empty" data-testid="settings-load-error">Failed to load configuration.</div>
+            <div class="settings-empty empty-state" data-testid="settings-load-error">Failed to load configuration.</div>
         }
         else
         {

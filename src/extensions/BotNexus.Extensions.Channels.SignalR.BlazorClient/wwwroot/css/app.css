@@ -863,11 +863,7 @@ html, body, #app {
 
 .canvas-empty-state {
     margin: 0.9rem;
-    padding: 0.9rem;
-    border: 1px dashed var(--border);
     border-radius: var(--radius);
-    color: var(--text-secondary);
-    font-size: var(--text-label);
 }
 
 .canvas-frame {
@@ -894,11 +890,7 @@ html, body, #app {
 
 .todo-empty-state {
     margin: 0;
-    padding: 0.9rem;
-    border: 1px dashed var(--border);
     border-radius: var(--radius);
-    color: var(--text-secondary);
-    font-size: var(--text-label);
 }
 
 .todo-progress {
@@ -1338,8 +1330,6 @@ html, body, #app {
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: var(--text-muted);
-    font-size: var(--text-body);
 }
 
 /* ── Chat panel ─────────────────────────────────────────────────────── */
@@ -2187,10 +2177,6 @@ html, body, #app {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 2rem 1rem;
-    color: var(--text-muted);
-    font-size: var(--text-body);
-    text-align: center;
 }
 
 .chat-empty-state-error {
@@ -2432,7 +2418,6 @@ html, body, #app {
 
     .canvas-empty-state {
         margin: 0.75rem;
-        padding: 0.75rem;
     }
 
     .workspace-panel.mobile-tree .workspace-viewer-pane {
@@ -3230,9 +3215,6 @@ details[open] > .thinking-summary::before {
 
 .agents-error,
 .agents-empty {
-    padding: 1.5rem;
-    text-align: center;
-    color: var(--text-muted);
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -3399,12 +3381,6 @@ details[open] > .thinking-summary::before {
     color: var(--color-danger-text);
     font-size: var(--text-label);
     word-break: break-word;
-}
-.cron-detail-empty {
-    font-size: var(--text-body);
-    color: var(--text-muted);
-    font-style: italic;
-    padding: 0.5rem 0;
 }
 .cron-runs-table { width: 100%; }
 
@@ -3826,15 +3802,6 @@ details[open] > .thinking-summary::before {
     line-height: 1;
 }
 
-/* Loading / empty states */
-.conversation-list-loading,
-.conversation-list-empty {
-    padding: 0.5rem 0.75rem;
-    font-size: var(--text-label);
-    font-style: italic;
-    color: var(--text-muted);
-}
-
 /* Individual conversation item */
 .conversation-list-item {
     position: relative;
@@ -4064,12 +4031,6 @@ details[open] > .thinking-summary::before {
 
 .conversation-section-menu-item.active {
     color: var(--accent);
-}
-
-.conversation-section-menu-empty {
-    color: var(--text-muted);
-    font-size: var(--text-caption);
-    padding: 0.25rem 0.4rem;
 }
 
 /* ── Conversation Group Headers ───────────────────────────────────────────────────────── */
@@ -4536,8 +4497,6 @@ h3.conversation-title.editable:hover {
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: var(--text-muted);
-    font-size: var(--text-body);
 }
 
 .agent-card-grid {
@@ -5357,14 +5316,6 @@ h3.conversation-title.editable:hover {
     color: var(--color-on-accent);
 }
 
-.activity-loading,
-.activity-error,
-.activity-empty {
-    padding: 2rem;
-    text-align: center;
-    color: var(--text-muted);
-}
-
 .activity-error {
     color: var(--danger, var(--color-danger));
 }
@@ -5955,9 +5906,7 @@ h3.conversation-title.editable:hover {
 }
 
 .conversation-section-empty {
-    font-size: var(--text-caption);
     opacity: 0.5;
-    padding: 0.15rem 0.5rem;
 }
 
 .conversation-section-item {
@@ -6432,7 +6381,6 @@ h3.conversation-title.editable:hover {
 .usage-model-row span:not(.usage-model-name) { font-variant-numeric: tabular-nums; }
 
 .usage-empty {
-    color: var(--color-ink-faint);
     margin: 0.4rem 0;
 }
 
@@ -6703,12 +6651,6 @@ h3.conversation-title.editable:hover {
     /* Config text is read, not scanned. Past this width the label column and its control
        drift too far apart to associate at a glance. */
     max-width: 900px;
-}
-
-.schema-form-empty {
-    color: var(--text-muted);
-    font-size: var(--text-body);
-    padding: 1rem;
 }
 
 .schema-group {

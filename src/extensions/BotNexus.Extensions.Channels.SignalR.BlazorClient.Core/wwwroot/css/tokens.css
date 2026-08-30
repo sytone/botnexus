@@ -675,6 +675,60 @@ button:disabled {
     cursor: not-allowed;
 }
 
+/* ── Empty states ─────────────────────────────────────────────────────────
+   "Nothing here yet" is the most repeated state in the product - roughly two
+   dozen classes carried it - and it looked different almost everywhere: padding
+   ranged over 0.15, 0.25, 0.4, 0.5, 0.75, 0.9, 1, 1.5 and 2rem plus 16, 24 and
+   32px, in four different ink roles, some italic, some carded, some bare.
+
+   Reading them, that spread was hiding THREE real roles rather than one message
+   styled twelve ways. Each is a different claim about what is empty:
+
+     .empty-state        a panel or page has nothing to show. Centred, generous,
+                         it owns the space it sits in.
+     .empty-state-inline a row region inside a populated view is empty - a list
+                         with no matches, a field with no value. Small and
+                         italic: it must not look like a heading in a list.
+     .empty-state-card   a feature area that is not populated YET. A dashed
+                         border says "content belongs here", which a bare
+                         sentence does not.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.empty-state,
+.empty-state-inline,
+.empty-state-card {
+    color: var(--color-ink-muted);
+}
+
+.empty-state {
+    padding: 2rem 1rem;
+    text-align: center;
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+}
+
+.empty-state-inline {
+    padding: 0.5rem 0.75rem;
+    font-size: var(--text-label);
+    line-height: var(--text-label-lh);
+    font-style: italic;
+}
+
+.empty-state-card {
+    padding: 0.9rem;
+    border: 1px dashed var(--color-hairline);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-label);
+    line-height: var(--text-label-lh);
+    text-align: center;
+}
+
+/* An empty state that is empty because something FAILED is not the same message.
+   It keeps its role's shape and takes the danger ink. */
+.empty-state-error {
+    color: var(--color-danger-text);
+}
+
 /* ── Button intent ────────────────────────────────────────────────────────
    The base above says what a button IS; these say what it MEANS. Four intents,
    because the portal only ever had four -- read out of the 53 button classes it

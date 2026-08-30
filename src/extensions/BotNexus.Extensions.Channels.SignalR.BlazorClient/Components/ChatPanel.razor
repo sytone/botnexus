@@ -221,20 +221,20 @@
 
         @if (!HasActiveConversation && !IsLoadingConversations)
         {
-            <div class="chat-empty-state">
+            <div class="chat-empty-state empty-state">
                 Select a conversation or start a new one.
             </div>
         }
 
         @if (HasActiveConversation && !IsLoadingHistory && HistoryLoadFailed && !HasMessages)
         {
-            <div class="chat-empty-state chat-empty-state-error" data-testid="chat-history-error" role="alert">
+            <div class="chat-empty-state chat-empty-state-error empty-state" data-testid="chat-history-error" role="alert">
                 Could not load messages for this conversation. Try selecting it again or refreshing.
             </div>
         }
         else if (HasActiveConversation && !IsLoadingHistory && !HasMessages)
         {
-            <div class="chat-empty-state chat-empty-state-empty" data-testid="chat-no-messages" role="status">
+            <div class="chat-empty-state chat-empty-state-empty empty-state" data-testid="chat-no-messages" role="status">
                 No messages yet. Send a message to get started.
             </div>
         }

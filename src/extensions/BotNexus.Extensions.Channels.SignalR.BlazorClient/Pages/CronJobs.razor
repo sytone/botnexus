@@ -32,7 +32,7 @@
     }
     else if (_jobs.Count == 0)
     {
-        <div class="agents-empty"><p>No cron jobs configured.</p></div>
+        <div class="agents-empty empty-state"><p>No cron jobs configured.</p></div>
     }
     else
     {
@@ -98,7 +98,7 @@
 
         @if (_selectedJob is null || _editJob is null)
         {
-            <div class="agents-empty cron-selection-empty">
+            <div class="agents-empty cron-selection-empty empty-state">
                 <p>Select a cron job above to view its settings and execution history.</p>
             </div>
         }
@@ -214,7 +214,7 @@
                     }
                     else if (_runs.Count == 0)
                     {
-                        <div class="cron-detail-empty">No execution history recorded yet.</div>
+                        <div class="cron-detail-empty empty-state-inline">No execution history recorded yet.</div>
                     }
                     else
                     {

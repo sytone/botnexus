@@ -498,11 +498,11 @@
                     <div class="conversation-list-scroll">
                         @if (activeAgent.IsLoadingConversations)
                         {
-                            <div class="conversation-list-loading">Loading conversations&#x2026;</div>
+                            <div class="conversation-list-loading empty-state-inline">Loading conversations&#x2026;</div>
                         }
                         else if (activeAgent.Conversations.Count == 0)
                         {
-                            <div class="conversation-list-empty">No conversations yet.</div>
+                            <div class="conversation-list-empty empty-state-inline">No conversations yet.</div>
                         }
                         else
                         {
@@ -595,7 +595,7 @@
                                 {
                                     @if (normalConversations.Count == 0 && _activityFilter != ConversationActivityFilter.None)
                                     {
-                                        <div class="conversation-list-empty" data-testid="conversation-filter-empty">No conversations in this range.</div>
+                                        <div class="conversation-list-empty empty-state-inline" data-testid="conversation-filter-empty">No conversations in this range.</div>
                                     }
                                     @foreach (var conversation in normalConversations)
                                     {
@@ -1306,7 +1306,7 @@
                 }
                 @if (sections.Count == 0)
                 {
-                    <div class="conversation-section-menu-empty" data-testid="conversation-section-menu-empty">No sections yet.</div>
+                    <div class="conversation-section-menu-empty empty-state-inline" data-testid="conversation-section-menu-empty">No sections yet.</div>
                 }
             </div>
         }

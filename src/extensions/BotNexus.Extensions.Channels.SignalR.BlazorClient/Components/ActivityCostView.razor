@@ -58,15 +58,15 @@
 
     @if (_isLoading && _rows is null)
     {
-        <div class="activity-loading" data-testid="activity-cost-loading">Loading conversation cost&#x2026;</div>
+        <div class="activity-loading empty-state" data-testid="activity-cost-loading">Loading conversation cost&#x2026;</div>
     }
     else if (_loadError)
     {
-        <div class="activity-error" data-testid="activity-cost-error">Could not load conversation cost.</div>
+        <div class="activity-error empty-state" data-testid="activity-cost-error">Could not load conversation cost.</div>
     }
     else if (_rows is { Count: 0 })
     {
-        <div class="activity-empty" data-testid="activity-cost-empty">
+        <div class="activity-empty empty-state" data-testid="activity-cost-empty">
             No conversations match the current filters.
         </div>
     }

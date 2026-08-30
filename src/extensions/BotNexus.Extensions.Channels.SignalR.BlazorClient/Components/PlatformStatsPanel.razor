@@ -50,11 +50,11 @@
             <div id="active-loop-details" class="platform-loop-details" data-testid="active-loop-details" role="region" aria-label="Active agent loop details">
                 @if (!_loaded)
                 {
-                    <div class="platform-loop-loading" data-testid="active-loop-loading">Loading active loops...</div>
+                    <div class="platform-loop-loading empty-state" data-testid="active-loop-loading">Loading active loops...</div>
                 }
                 else if (_stats.ActiveLoopDetails.Count == 0)
                 {
-                    <div class="platform-loop-empty" data-testid="active-loop-empty">No agent loops are currently running.</div>
+                    <div class="platform-loop-empty empty-state" data-testid="active-loop-empty">No agent loops are currently running.</div>
                 }
                 else
                 {
