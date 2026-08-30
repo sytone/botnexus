@@ -25,8 +25,31 @@ CS_OUT = os.path.join(
     "Components", "IconLibrary.g.cs")
 CSS_OUT = os.path.join(
     ROOT, "src", "extensions",
-    "BotNexus.Extensions.Channels.SignalR.BlazorClient",
-    "wwwroot", "css", "app.css")
+    "BotNexus.Extensions.Channels.SignalR.BlazorClient.Core",
+    "wwwroot", "css", "tokens.css")
+
+# The artwork's hues, mapped to the tokens declared in tokens.css. Emitting a raw hex
+# here is what made the icon tones the last unthemeable colour in the portal, so an
+# artwork colour that is NOT in this map is a hard error rather than a silent
+# passthrough: add a token to tokens.css (both themes) and a line here.
+TONES = {
+    "#22C55E": "green",  "#3B82F6": "blue",   "#8B5CF6": "purple",
+    "#EF4444": "red",    "#06B6D4": "cyan",   "#F59E0B": "amber",
+    "#6366F1": "indigo", "#14B8A6": "teal",
+}
+
+
+def tone_token(name, value):
+    """Map an artwork colour onto its --icon-tone-* token."""
+    key = value.strip().upper()
+    if key not in TONES:
+        raise SystemExit(
+            "%s: tone %s has no --icon-tone-* token.\n"
+            "Add it to tokens.css under BOTH :root and [data-theme=\"light\"], then to\n"
+            "TONES in this script. Icon tones must not be raw hex - they cannot theme."
+            % (name, value))
+    return "var(--icon-tone-%s)" % TONES[key]
+
 
 CSS_BEGIN = "/* BEGIN generated icon tones -- scripts/generate-icons.py */"
 CSS_END = "/* END generated icon tones */"
@@ -70,7 +93,12 @@ def parse(path, name):
 
 
 def main():
-    names = sorted(f[:-4] for f in os.listdir(SVG_DIR) if f.endswith(".svg"))
+    # "._name.svg" is an AppleDouble sidecar, not artwork: macOS writes one per file on
+    # filesystems without native resource-fork support (exFAT, NTFS, many network shares).
+    # They are untracked junk, but os.listdir sees them and they are not valid UTF-8, so
+    # without this the script dies on a decode error rather than on anything real.
+    names = sorted(f[:-4] for f in os.listdir(SVG_DIR)
+                   if f.endswith(".svg") and not f.startswith("._"))
     if not names:
         raise SystemExit("no SVGs in %s" % SVG_DIR)
 
@@ -124,12 +152,13 @@ def main():
     io.open(CS_OUT, "w", encoding="utf-8").write("\n".join(cs))
 
     css = [CSS_BEGIN,
-           "/* The tone each icon was drawn in. Kept here rather than on the element so any",
+           "/* The tone each icon was drawn in, as a token reference so it themes and so the",
+           "   value is declared once. Kept on a class rather than on the element so any",
            "   context can override it -- a disabled control, a selected nav row, a button",
            "   that needs the icon to match its label. */"]
     for name, _stroke, tone, _body in parsed:
         if tone:
-            css.append(".bn-icon-%s { color: %s; }" % (name, tone))
+            css.append(".bn-icon-%s { color: %s; }" % (name, tone_token(name, tone)))
 
     # These have to be emitted *after* the per-icon tones. They are single-class selectors
     # like the tones are, so ordering is the only thing that decides which wins; written

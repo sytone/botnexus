@@ -7103,20 +7103,7 @@ h3.conversation-title.editable:hover {
     }
 }
 
-/* =====================================================
-   Icons
-
-   The set is inline SVG (see Icon.razor) so each icon can inherit and override colour.
-   Structure lives here; the per-icon tone is generated below from the artwork.
-   ===================================================== */
-
-.bn-icon {
-    display: inline-block;
-    flex-shrink: 0;
-    /* The glyphs sit on a 24px grid with 2px strokes and read as optically centred
-       against text when their box is aligned to the text box rather than the baseline. */
-    vertical-align: -0.125em;
-}
+/* The icon set - box, tones and modifiers - lives in the shared foundation. */
 
 /* A page heading pairs its icon with the title. The emoji these replaced sat in the text
    run, so the gap between glyph and word was whatever the font gave it. */
@@ -7126,40 +7113,3 @@ h3.conversation-title.editable:hover {
     gap: 0.5rem;
 }
 
-/* BEGIN generated icon tones -- scripts/generate-icons.py */
-/* The tone each icon was drawn in. Kept here rather than on the element so any
-   context can override it -- a disabled control, a selected nav row, a button
-   that needs the icon to match its label. */
-.bn-icon-activity { color: #22C55E; }
-.bn-icon-agents { color: #3B82F6; }
-.bn-icon-assistant { color: #8B5CF6; }
-.bn-icon-avoid { color: #EF4444; }
-.bn-icon-bot { color: #06B6D4; }
-.bn-icon-canvas { color: #8B5CF6; }
-.bn-icon-chat { color: #3B82F6; }
-.bn-icon-conversation { color: #3B82F6; }
-.bn-icon-cron-jobs { color: #F59E0B; }
-.bn-icon-dark-mode { color: #6366F1; }
-.bn-icon-delete { color: #EF4444; }
-.bn-icon-guide { color: #3B82F6; }
-.bn-icon-light-mode { color: #F59E0B; }
-.bn-icon-pause { color: #F59E0B; }
-.bn-icon-pin { color: #F59E0B; }
-.bn-icon-plugins { color: #14B8A6; }
-.bn-icon-reports { color: #14B8A6; }
-.bn-icon-send { color: #3B82F6; }
-.bn-icon-skills { color: #8B5CF6; }
-.bn-icon-stop { color: #EF4444; }
-.bn-icon-todo { color: #22C55E; }
-.bn-icon-tools { color: #F59E0B; }
-.bn-icon-usage { color: #22C55E; }
-.bn-icon-workspace { color: #6366F1; }
-
-/* Drop a gradient for the icon's flat tone, for a context with its own colour.
-   Beats the root's stroke="url(#...)" because any declaration outranks a
-   presentation attribute, and the children inherit stroke from the root. */
-.bn-icon-flat { stroke: currentColor; }
-
-/* Where an icon must read as part of its label rather than as its own object. */
-.bn-icon-inherit { color: inherit; stroke: currentColor; }
-/* END generated icon tones */

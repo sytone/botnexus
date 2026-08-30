@@ -273,6 +273,27 @@
     --cat-purple-bg: #281a45;
     --cat-muted: #5b6b80;
 
+    /* ── 11b. Icon tones ───────────────────────────────────────────────── */
+    /* The eight hues the icon artwork is drawn in. They were 24 hardcoded hex
+       values in the generated block at the foot of app.css - the last raw colour
+       in the portal, and the one thing that survived a theme switch unchanged.
+
+       Named by hue rather than by role on purpose: they are a decorative palette,
+       not a semantic one, and naming them "success"/"info" would imply a meaning
+       the artwork does not carry. That they need naming by hue at all is the
+       argument for retiring them - twenty-four vivid colours sit badly beside this
+       file's own rule that ONE saturated colour means "act here". Settling that is
+       an icon-standard decision, not a token one; until then they are at least
+       declared once and can theme. */
+    --icon-tone-green: #22C55E;
+    --icon-tone-blue: #3B82F6;
+    --icon-tone-purple: #8B5CF6;
+    --icon-tone-red: #EF4444;
+    --icon-tone-cyan: #06B6D4;
+    --icon-tone-amber: #F59E0B;
+    --icon-tone-indigo: #6366F1;
+    --icon-tone-teal: #14B8A6;
+
     /* Legacy names for the category palette. */
     --accent-live: var(--cat-live);
     --accent-pinned: var(--cat-pinned);
@@ -411,6 +432,16 @@
     --cat-purple-bg: #ede4ff;
     --cat-muted: #64748b;
 
+    /* Icon tones, one step darker so a 2px stroke still reads on a white surface. */
+    --icon-tone-green: #16A34A;
+    --icon-tone-blue: #2563EB;
+    --icon-tone-purple: #7C3AED;
+    --icon-tone-red: #DC2626;
+    --icon-tone-cyan: #0891B2;
+    --icon-tone-amber: #D97706;
+    --icon-tone-indigo: #4F46E5;
+    --icon-tone-teal: #0D9488;
+
     --shadow-raised: 0 4px 12px rgba(16, 22, 29, 0.10);
     --shadow-overlay: 0 16px 40px rgba(16, 22, 29, 0.18);
 
@@ -548,3 +579,55 @@
     --bp-mobile: 768px;
     --bp-wide: 900px;
 }
+
+/* ── Icons ────────────────────────────────────────────────────────────────
+   The set is inline SVG (see Icon.razor) so each icon can inherit and override
+   colour. Structure here; the per-icon tone is generated below from the artwork.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.bn-icon {
+    display: inline-block;
+    flex-shrink: 0;
+    /* The glyphs sit on a 24px grid with 2px strokes and read as optically centred
+       against text when their box is aligned to the text box rather than the baseline. */
+    vertical-align: -0.125em;
+}
+
+/* BEGIN generated icon tones -- scripts/generate-icons.py */
+/* The tone each icon was drawn in, as a token reference so it themes and so the
+   value is declared once. Kept on a class rather than on the element so any
+   context can override it -- a disabled control, a selected nav row, a button
+   that needs the icon to match its label. */
+.bn-icon-activity { color: var(--icon-tone-green); }
+.bn-icon-agents { color: var(--icon-tone-blue); }
+.bn-icon-assistant { color: var(--icon-tone-purple); }
+.bn-icon-avoid { color: var(--icon-tone-red); }
+.bn-icon-bot { color: var(--icon-tone-cyan); }
+.bn-icon-canvas { color: var(--icon-tone-purple); }
+.bn-icon-chat { color: var(--icon-tone-blue); }
+.bn-icon-conversation { color: var(--icon-tone-blue); }
+.bn-icon-cron-jobs { color: var(--icon-tone-amber); }
+.bn-icon-dark-mode { color: var(--icon-tone-indigo); }
+.bn-icon-delete { color: var(--icon-tone-red); }
+.bn-icon-guide { color: var(--icon-tone-blue); }
+.bn-icon-light-mode { color: var(--icon-tone-amber); }
+.bn-icon-pause { color: var(--icon-tone-amber); }
+.bn-icon-pin { color: var(--icon-tone-amber); }
+.bn-icon-plugins { color: var(--icon-tone-teal); }
+.bn-icon-reports { color: var(--icon-tone-teal); }
+.bn-icon-send { color: var(--icon-tone-blue); }
+.bn-icon-skills { color: var(--icon-tone-purple); }
+.bn-icon-stop { color: var(--icon-tone-red); }
+.bn-icon-todo { color: var(--icon-tone-green); }
+.bn-icon-tools { color: var(--icon-tone-amber); }
+.bn-icon-usage { color: var(--icon-tone-green); }
+.bn-icon-workspace { color: var(--icon-tone-indigo); }
+
+/* Drop a gradient for the icon's flat tone, for a context with its own colour.
+   Beats the root's stroke="url(#...)" because any declaration outranks a
+   presentation attribute, and the children inherit stroke from the root. */
+.bn-icon-flat { stroke: currentColor; }
+
+/* Where an icon must read as part of its label rather than as its own object. */
+.bn-icon-inherit { color: inherit; stroke: currentColor; }
+/* END generated icon tones */
