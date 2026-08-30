@@ -220,7 +220,7 @@ else
                 @onkeydown="OnKeyDown"
                 disabled="@_isSending">
             </textarea>
-            <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
+            <button class="send-btn btn-primary" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
                 &#x21A6;
             </button>
         </div>
@@ -247,7 +247,7 @@ else
                 <p>Start a new session? Prior messages will remain visible but the agent will start with a fresh context.</p>
                 <div class="reset-confirm-actions">
                     <button class="cancel-btn" @onclick="CancelNewSession">Cancel</button>
-                    <button class="confirm-btn" data-testid="new-session-confirm-btn" @onclick="DoNewSession">New session</button>
+                    <button class="confirm-btn btn-danger" data-testid="new-session-confirm-btn" @onclick="DoNewSession">New session</button>
                 </div>
             </div>
         </div>
@@ -269,7 +269,7 @@ else
                 </p>
                 <div class="reset-confirm-actions">
                     <button class="cancel-btn" data-testid="archive-cancel-btn" @onclick="CancelArchive">Cancel</button>
-                    <button class="confirm-btn" data-testid="archive-confirm-btn" @onclick="DoArchive">
+                    <button class="confirm-btn btn-danger" data-testid="archive-confirm-btn" @onclick="DoArchive">
                         @(IsUnattended(archiveTarget) ? "Close" : "Archive")
                     </button>
                 </div>

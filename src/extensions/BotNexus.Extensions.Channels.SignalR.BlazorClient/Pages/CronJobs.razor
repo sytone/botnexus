@@ -44,7 +44,7 @@
                     <h4 id="cron-delete-confirm-title">Delete Cron Job</h4>
                     <p>Are you sure you want to delete cron job <strong>@_confirmDeleteName</strong>? This cannot be undone.</p>
                     <div class="agents-confirm-actions">
-                        <button class="toolbar-btn danger" @onclick="ConfirmDeleteAsync" disabled="@_busy">@(_busy ? "Deleting." : "Delete")</button>
+                        <button class="toolbar-btn btn-tonal-danger" @onclick="ConfirmDeleteAsync" disabled="@_busy">@(_busy ? "Deleting." : "Delete")</button>
                         <button class="toolbar-btn" @onclick="CancelDelete" disabled="@_busy">Cancel</button>
                     </div>
                 </div>
@@ -122,7 +122,7 @@
                         }
                         <button class="toolbar-btn" @onclick="() => RunNowAsync(_editJob)" disabled="@_busy"
                                 aria-label="Run @_editJob.Name now"><Icon Name="send" Size="@IconSize.Small" /> Run now</button>
-                        <button class="toolbar-btn danger" @onclick="() => RequestDelete(_editJob)" disabled="@_busy"
+                        <button class="toolbar-btn btn-tonal-danger" @onclick="() => RequestDelete(_editJob)" disabled="@_busy"
                                 aria-label="Delete @_editJob.Name">Delete</button>
                     </div>
                 </header>
@@ -199,7 +199,7 @@
                     </div>
                 </div>
                 <footer class="cron-page-card-footer">
-                    <button class="toolbar-btn primary" @onclick="SaveEditAsync" disabled="@_busy"
+                    <button class="toolbar-btn btn-primary" @onclick="SaveEditAsync" disabled="@_busy"
                             aria-label="Save @_editJob.Name">@(_busy ? "Saving." : "Save changes")</button>
                     <button class="toolbar-btn" @onclick="ResetEdit">Reset</button>
                 </footer>

@@ -82,7 +82,7 @@
                     </button>
                     @if (_availableModels.Count > 0 && _selectedModel != _snapshot?.Field(AgentConfigSnapshotBuilder.ModelKey)?.Value)
                     {
-                        <button class="config-save-btn" @onclick="SaveModel" disabled="@_saving">
+                        <button class="config-save-btn btn-primary" @onclick="SaveModel" disabled="@_saving">
                             @(_saving ? "Saving…" : "Save Model")
                         </button>
                     }

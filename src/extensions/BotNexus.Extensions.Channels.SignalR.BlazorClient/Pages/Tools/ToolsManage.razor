@@ -15,7 +15,7 @@
             }
             <button class="toolbar-btn" data-testid="tools-reload-btn" @onclick="LoadAsync" disabled="@_loading"
                     title="Reload the tool list"><Icon Name="refresh" Size="@IconSize.Small" /> Reload</button>
-            <button class="toolbar-btn primary" data-testid="tools-add-btn" @onclick="StartCreate" disabled="@_loading"
+            <button class="toolbar-btn btn-primary" data-testid="tools-add-btn" @onclick="StartCreate" disabled="@_loading"
                     title="Add a new tool">+ Add Tool</button>
         </div>
     </header>
@@ -37,7 +37,7 @@
                     <h4 id="tools-delete-confirm-title">Remove Tool</h4>
                     <p>Remove <strong>@_confirmDeleteName</strong> from your tools? This cannot be undone.</p>
                     <div class="agents-confirm-actions">
-                        <button class="toolbar-btn danger" data-testid="tools-delete-confirm-btn"
+                        <button class="toolbar-btn btn-tonal-danger" data-testid="tools-delete-confirm-btn"
                                 @onclick="ConfirmDeleteAsync" disabled="@_busy">@(_busy ? "Removing\u2026" : "Remove")</button>
                         <button class="toolbar-btn" data-testid="tools-delete-cancel-btn"
                                 @onclick="CancelDelete" disabled="@_busy">Cancel</button>
@@ -101,7 +101,7 @@
                 }
 
                 <div class="cron-page-actions">
-                    <button class="toolbar-btn primary" data-testid="tools-form-save" @onclick="SaveAsync"
+                    <button class="toolbar-btn btn-primary" data-testid="tools-form-save" @onclick="SaveAsync"
                             disabled="@_busy">@(_busy ? "Saving\u2026" : "Save")</button>
                     <button class="toolbar-btn" data-testid="tools-form-cancel" @onclick="CancelEdit"
                             disabled="@_busy">Cancel</button>
@@ -140,7 +140,7 @@
                         <span class="tools-list-actions">
                             <button class="toolbar-btn" data-testid="tools-edit-btn"
                                     @onclick="() => StartEdit(tool)" title="Edit this tool">Edit</button>
-                            <button class="toolbar-btn danger" data-testid="tools-remove-btn"
+                            <button class="toolbar-btn btn-tonal-danger" data-testid="tools-remove-btn"
                                     @onclick="() => RequestDelete(tool)" title="Remove this tool">Remove</button>
                         </span>
                     </li>

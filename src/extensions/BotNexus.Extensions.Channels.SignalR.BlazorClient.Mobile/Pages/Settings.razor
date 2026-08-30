@@ -24,7 +24,7 @@
                 <span class="settings-status @_statusClass">@_statusMessage</span>
             }
             <button class="toolbar-btn" @onclick="LoadConfig" disabled="@_loading" data-testid="settings-reload-btn">Reload</button>
-            <button class="toolbar-btn primary" @onclick="SaveAll" disabled="@(!_dirty || _saving)" data-testid="settings-save-btn">
+            <button class="toolbar-btn btn-primary" @onclick="SaveAll" disabled="@(!_dirty || _saving)" data-testid="settings-save-btn">
                 @(_saving ? "Saving..." : "Save")
             </button>
         </div>

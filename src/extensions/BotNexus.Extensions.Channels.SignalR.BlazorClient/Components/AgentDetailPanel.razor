@@ -19,7 +19,7 @@
             }
         </div>
         <div class="agent-detail-header-right">
-            <button class="toolbar-btn primary" @onclick="SaveAsync" disabled="@(_saving || !CanSave)">
+            <button class="toolbar-btn btn-primary" @onclick="SaveAsync" disabled="@(_saving || !CanSave)">
                 @(_saving ? "Saving..." : SaveLabel)
             </button>
             <button class="toolbar-btn" @onclick="GoBack">&#x2190; Back to list</button>
@@ -200,7 +200,7 @@
                                        @oninput="@(e => OnSpfInput(idx, e))" />
                                 <button class="toolbar-btn" @onclick="@(() => MoveSpfUp(idx))">&#x2191;</button>
                                 <button class="toolbar-btn" @onclick="@(() => MoveSpfDown(idx))">&#x2193;</button>
-                                <button class="toolbar-btn danger" @onclick="@(() => RemoveSpf(idx))"><Icon Name="close" Size="@IconSize.Small" /></button>
+                                <button class="toolbar-btn btn-tonal-danger" @onclick="@(() => RemoveSpf(idx))"><Icon Name="close" Size="@IconSize.Small" /></button>
                             </div>
                         }
                         <button class="toolbar-btn" @onclick="AddSpf">+ Add File</button>
@@ -536,12 +536,12 @@
             <div class="agent-danger-zone">
                 @if (!_showDeleteConfirm)
                 {
-                    <button class="toolbar-btn danger" @onclick="() => _showDeleteConfirm = true">Delete Agent</button>
+                    <button class="toolbar-btn btn-tonal-danger" @onclick="() => _showDeleteConfirm = true">Delete Agent</button>
                 }
                 else
                 {
                     <span>Are you sure you want to delete <strong>@AgentId</strong>? This cannot be undone.</span>
-                    <button class="toolbar-btn danger" @onclick="DeleteAsync" disabled="@_deleting">
+                    <button class="toolbar-btn btn-tonal-danger" @onclick="DeleteAsync" disabled="@_deleting">
                         @(_deleting ? "Deleting..." : "Yes, Delete")
                     </button>
                     <button class="toolbar-btn" @onclick="() => _showDeleteConfirm = false">Cancel</button>

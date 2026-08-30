@@ -30,7 +30,7 @@ else
                 <span class="agents-status @_statusClass" role="status">@_statusMessage</span>
             }
             <button class="toolbar-btn" @onclick="LoadAgentsAsync" disabled="@_loading" title="Refresh agent list"><Icon Name="refresh" Size="@IconSize.Small" /> Reload</button>
-            <button class="toolbar-btn primary" @onclick="ShowAddForm" title="Add a new agent">+ Add Agent</button>
+            <button class="toolbar-btn btn-primary" @onclick="ShowAddForm" title="Add a new agent">+ Add Agent</button>
         </div>
     </header>
 
@@ -56,7 +56,7 @@ else
                     <h4 id="delete-confirm-title">Delete Agent</h4>
                     <p>Are you sure you want to delete agent <strong>@_confirmDeleteId</strong>? This cannot be undone.</p>
                     <div class="agents-confirm-actions">
-                        <button class="toolbar-btn danger" @onclick="ConfirmDeleteAsync" disabled="@_deleting">
+                        <button class="toolbar-btn btn-tonal-danger" @onclick="ConfirmDeleteAsync" disabled="@_deleting">
                             @(_deleting ? "Deleting." : "Delete")
                         </button>
                         <button class="toolbar-btn" @onclick="CancelDelete" disabled="@_deleting">Cancel</button>

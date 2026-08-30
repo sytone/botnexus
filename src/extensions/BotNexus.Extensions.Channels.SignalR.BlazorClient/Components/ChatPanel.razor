@@ -156,7 +156,7 @@
                 <p class="text-muted">The current session will be sealed. History stays in this conversation.</p>
                 <div class="reset-confirm-actions">
                     <button class="cancel-btn" @onclick="CancelNewSession">Cancel</button>
-                    <button class="confirm-btn" @onclick="DoNewSession">New session</button>
+                    <button class="confirm-btn btn-danger" @onclick="DoNewSession">New session</button>
                 </div>
             </div>
         </div>
@@ -504,13 +504,13 @@
 
                 @if (IsStreaming)
                 {
-                    <button class="steer-btn" data-testid="chat-steer-btn"
+                    <button class="steer-btn btn-tonal-accent" data-testid="chat-steer-btn"
                             @onclick="SteerAgent"
                             disabled="@(string.IsNullOrWhiteSpace(_inputText))"
                             title="Steer: inject this guidance at the next turn boundary (Enter)">
                         <Icon Name="move" Size="@IconSize.Small" /> Steer
                     </button>
-                    <button class="interrupt-steer-btn" data-testid="chat-redirect-btn"
+                    <button class="interrupt-steer-btn btn-tonal-accent" data-testid="chat-redirect-btn"
                             @onclick="InterruptAndSteer"
                             disabled="@(string.IsNullOrWhiteSpace(_inputText))"
                             title="Redirect: stop the current step and steer with this message right away">
@@ -522,7 +522,7 @@
                             title="Follow Up: queue this message to run after the agent finishes the whole loop">
                         <Icon Name="add" Size="@IconSize.Small" /> Follow Up
                     </button>
-                    <button class="abort-btn" data-testid="chat-abort-btn"
+                    <button class="abort-btn btn-tonal-danger" data-testid="chat-abort-btn"
                             @onclick="AbortAgent"
                             title="Stop the agent (Escape)">
                         <Icon Name="stop" Size="@IconSize.Small" /> Stop
@@ -530,7 +530,7 @@
                 }
                 else
                 {
-                    <button class="send-btn"
+                    <button class="send-btn btn-primary"
                             data-testid="chat-send"
                             @onclick="SendMessage"
                             disabled="@(!IsConnected || (string.IsNullOrWhiteSpace(_inputText) && _attachments.Count == 0))">

@@ -666,9 +666,84 @@ button {
                 border-color var(--motion-fast) var(--ease-standard);
 }
 
+button:hover:not(:disabled) {
+    background: var(--color-wash);
+}
+
 button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+/* ── Button intent ────────────────────────────────────────────────────────
+   The base above says what a button IS; these say what it MEANS. Four intents,
+   because the portal only ever had four -- read out of the 53 button classes it
+   had accumulated, not invented here:
+
+     primary       the one action this view exists for. Filled accent.
+     danger        destructive and irreversible. Filled danger.
+     tonal-accent  a strong action that is not THE action - steer, follow-up.
+                   Coloured border and wash rather than a second solid fill
+                   competing with primary.
+     tonal-danger  the destructive member of that pair - abort.
+
+   Anything else is the base: a secondary button. There is no .btn-secondary
+   because not declaring an intent already means that.
+
+   Three copies of the filled-accent button existed (.config-save-btn,
+   .update-confirm-btn, .send-btn) and had already drifted apart on font-weight -
+   600, 500, 600. That is what one definition prevents.
+
+   Text on a filled intent takes --color-on-accent / --color-on-solid, never
+   --color-ink: ink flips between themes and will not contrast against a
+   mid-tone fill.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.btn-primary,
+.btn-danger,
+.btn-tonal-accent,
+.btn-tonal-danger {
+    font-weight: var(--weight-semibold);
+}
+
+.btn-primary {
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    border-color: transparent;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: var(--color-accent-hover);
+}
+
+.btn-danger {
+    background: var(--color-danger-fill);
+    color: var(--color-on-solid);
+    border-color: transparent;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: var(--color-danger);
+}
+
+.btn-tonal-accent {
+    background: var(--color-accent-wash);
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+}
+
+.btn-tonal-accent:hover:not(:disabled) {
+    background: var(--color-accent-wash-strong);
+}
+
+.btn-tonal-danger {
+    background: var(--color-danger-wash);
+    color: var(--color-danger-text);
+    border-color: var(--color-danger);
+}
+
+.btn-tonal-danger:hover:not(:disabled) {
+    background: var(--color-danger-bg);
 }
 
 /* A textarea grows down, never sideways: horizontal resize breaks any layout

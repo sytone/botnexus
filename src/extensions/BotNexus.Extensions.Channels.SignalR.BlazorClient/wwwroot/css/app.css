@@ -1648,14 +1648,6 @@ html, body, #app {
 
 .send-btn {
     padding: 0.6rem 1.25rem;
-    border: none;
-    border-radius: var(--radius);
-    background: var(--accent);
-    color: var(--color-on-accent);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
     align-self: flex-end;
 }
 
@@ -1825,17 +1817,6 @@ html, body, #app {
 
 .confirm-btn {
     padding: 0.4rem 1rem;
-    border: none;
-    border-radius: var(--radius);
-    background: var(--color-danger-fill);
-    color: var(--color-on-solid);
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-
-.confirm-btn:hover {
-    background: var(--color-danger);
 }
 
 /* ── Tool call display ──────────────────────────────────────────────── */
@@ -2061,14 +2042,6 @@ html, body, #app {
 
 .steer-btn {
     padding: 0.6rem 1rem;
-    border: 1px solid var(--accent);
-    border-radius: var(--radius);
-    background: var(--color-accent-wash);
-    color: var(--accent);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
     align-self: flex-end;
     white-space: nowrap;
 }
@@ -2128,14 +2101,6 @@ html, body, #app {
 }
 .abort-btn {
     padding: 0.6rem 0.85rem;
-    border: 1px solid var(--error);
-    border-radius: var(--radius);
-    background: var(--color-danger-wash);
-    color: var(--error);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
     align-self: flex-end;
     white-space: nowrap;
 }
@@ -2880,17 +2845,6 @@ details[open] > .thinking-summary::before {
 
 .config-save-btn {
     padding: 0.4rem 1rem;
-    border: none;
-    border-radius: var(--radius);
-    background: var(--accent);
-    color: var(--color-on-accent);
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-
-.config-save-btn:hover:not(:disabled) {
-    background: var(--accent-hover);
 }
 
 .config-save-btn:disabled {
@@ -3140,37 +3094,19 @@ details[open] > .thinking-summary::before {
 .platform-config-status.success { color: var(--success); }
 .platform-config-status.error { color: var(--error); }
 
+/* Geometry only. Colour is the button base's, or the intent's when one is set -
+   declaring a background here is what stopped .btn-primary applying. */
 .toolbar-btn {
     padding: 0.35rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: transparent;
-    color: var(--text-primary);
     font-size: var(--text-label);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
 }
 
-.toolbar-btn:hover:not(:disabled) {
-    background: var(--bg-surface);
-    border-color: var(--accent);
-}
 
 .toolbar-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
 }
 
-.toolbar-btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--color-on-accent);
-    font-weight: 600;
-}
-
-.toolbar-btn.primary:hover:not(:disabled) {
-    background: var(--accent-hover);
-}
 
 .platform-config-sections {
     flex: 1;
@@ -3734,15 +3670,6 @@ details[open] > .thinking-summary::before {
     gap: 0.5rem;
 }
 
-.toolbar-btn.danger {
-    background: var(--color-danger-wash);
-    color: var(--color-danger-text);
-    border-color: var(--color-danger);
-}
-
-.toolbar-btn.danger:hover {
-    background: var(--color-danger-wash);
-}
 
 .sr-only {
     position: absolute;
@@ -4561,13 +4488,6 @@ h3.conversation-title.editable:hover {
 
 .update-confirm-btn {
     padding: 0.4rem 1rem;
-    border: none;
-    border-radius: var(--radius);
-    background: var(--accent);
-    color: var(--color-on-accent);
-    cursor: pointer;
-    font-weight: 500;
-    transition: background 0.15s;
 }
 
 .update-confirm-btn:disabled {
@@ -6327,8 +6247,6 @@ h3.conversation-title.editable:hover {
 .home-send-btn {
     margin-left: auto;
     padding: 0.5rem 1.25rem;
-    font: inherit;
-    cursor: pointer;
 }
 
 .home-send-btn:disabled {

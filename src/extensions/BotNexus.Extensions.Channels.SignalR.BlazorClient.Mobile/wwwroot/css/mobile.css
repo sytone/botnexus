@@ -322,10 +322,6 @@ body {
 .input-textarea:disabled { opacity: 0.5; }
 
 .send-btn {
-    background: var(--color-accent);
-    color: var(--color-on-accent);
-    border: none;
-    border-radius: var(--radius-sm);
     width: 44px;
     height: 44px;
     font-size: var(--icon-md);
@@ -599,12 +595,6 @@ body {
 
 .reset-confirm-actions .confirm-btn {
     padding: 0.5rem 1rem;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: var(--accent);
-    color: var(--color-on-accent);
-    font-weight: 600;
-    cursor: pointer;
 }
 
 /* ── Canvas Bottom Sheet ──────────────────────────────────────────────────── */
@@ -771,12 +761,6 @@ body {
 
 .ask-user-actions .send-btn {
     padding: 8px 16px;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: var(--color-accent);
-    color: var(--color-on-accent);
-    font-size: var(--text-body);
-    cursor: pointer;
 }
 
 .ask-user-actions .send-btn:disabled,
@@ -862,12 +846,6 @@ body {
     cursor: not-allowed;
 }
 
-.mobile-settings-page .toolbar-btn.primary {
-    background: var(--color-accent);
-    border-color: var(--color-accent);
-    color: var(--color-on-accent);
-    font-weight: 600;
-}
 
 .settings-body {
     flex: 1;
@@ -1041,19 +1019,12 @@ body {
 
 .reconnect-overlay-btn {
     margin-top: 4px;
-    background: var(--color-accent);
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--color-on-accent);
-    font-size: var(--text-body);
-    font-weight: 600;
     padding: 9px 18px;
     cursor: pointer;
     touch-action: manipulation;
     min-width: 120px;
 }
 
-.reconnect-overlay-btn:hover:not(:disabled) { background: var(--color-accent-hover); }
 .reconnect-overlay-btn:disabled { opacity: 0.55; cursor: default; }
 
 @keyframes reconnectSpin {
