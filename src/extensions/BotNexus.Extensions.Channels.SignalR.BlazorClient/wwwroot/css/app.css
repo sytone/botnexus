@@ -6570,7 +6570,7 @@ h3.conversation-title.editable:hover {
 .banner-usage-dot.is-warning { background: var(--color-warning); }
 .banner-usage-dot.is-critical { background: var(--color-danger); }
 
-@media (max-width: 34rem) {
+@media (max-width: 544px) {
     .usage-panel { right: 6px; width: calc(100vw - 12px); }
 }
 
@@ -6773,7 +6773,7 @@ h3.conversation-title.editable:hover {
     color: var(--color-accent);
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 768px) {
     .guide-layout { flex-direction: column; }
     .guide-nav { flex: 0 0 auto; max-height: 12rem; border-right: none; border-bottom: 1px solid var(--color-hairline); }
 }
