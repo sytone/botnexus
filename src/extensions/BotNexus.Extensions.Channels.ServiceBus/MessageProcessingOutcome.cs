@@ -17,6 +17,13 @@ internal enum MessageProcessingOutcome
     AbandonedForShutdown,
 
     /// <summary>
+    /// The adapter was stopped, so the message was never dispatched to the routing pipeline and was
+    /// abandoned for redelivery after restart (#3594). Distinct from
+    /// <see cref="AbandonedAfterHandlerFailure"/>: nothing failed, the work simply never started.
+    /// </summary>
+    AbandonedNotDispatched,
+
+    /// <summary>
     /// The handler succeeded but the lock had expired, so completion failed. No abandon is
     /// attempted because the lock is already invalid; the broker will redeliver.
     /// </summary>

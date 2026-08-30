@@ -22,6 +22,15 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     protected readonly ILogger Logger;
     private IChannelDispatcher? _dispatcher;
     private bool _isRunning;
+    private int _inFlightDispatches;
+
+    /// <summary>
+    /// Upper bound on how long <see cref="StopAsync"/> waits for in-flight dispatches to finish
+    /// before releasing the dispatcher anyway (#3594). Shutdown must not hang on a wedged turn;
+    /// anything still running past this point falls back to the pre-#3594 behaviour, which the
+    /// durable-channel abandon path already covers.
+    /// </summary>
+    private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(5);
 
     private IReadOnlyList<string> _allowList = [];
     private HashSet<string> _allowSet = new(StringComparer.OrdinalIgnoreCase);
@@ -135,10 +144,38 @@ public abstract class ChannelAdapterBase : IChannelAdapter
         activity?.SetTag("botnexus.channel.type", ChannelType);
         activity?.SetTag("botnexus.correlation.id", Activity.Current?.TraceId.ToString());
 
+        // #3594: stop receiving first, then DRAIN, then release. Nulling `_dispatcher` immediately
+        // after OnStopAsync tore the reference out from under callbacks that had already passed the
+        // allow-list check but had not yet reached DispatchAsync - those messages were dropped while
+        // their durable channel acknowledged them as processed.
         await OnStopAsync(cancellationToken);
+        await DrainInFlightDispatchesAsync();
         _isRunning = false;
         _dispatcher = null;
         Logger.LogInformation("Channel adapter '{ChannelType}' stopped", ChannelType);
+    }
+
+    /// <summary>
+    /// Waits, bounded by <see cref="DrainTimeout"/>, for inbound dispatches that are already past
+    /// the dispatcher read to complete (#3594).
+    /// </summary>
+    private async Task DrainInFlightDispatchesAsync()
+    {
+        var deadline = DateTimeOffset.UtcNow + DrainTimeout;
+        while (Volatile.Read(ref _inFlightDispatches) > 0)
+        {
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                Logger.LogWarning(
+                    "Channel adapter '{ChannelType}' still had {InFlightCount} inbound dispatch(es) in flight after {DrainSeconds}s; releasing the dispatcher anyway",
+                    ChannelType,
+                    Volatile.Read(ref _inFlightDispatches),
+                    DrainTimeout.TotalSeconds);
+                return;
+            }
+
+            await Task.Delay(10);
+        }
     }
 
     /// <inheritdoc />
@@ -152,7 +189,7 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     /// Dispatches an inbound message to the Gateway routing pipeline.
     /// Checks the allow-list before dispatching.
     /// </summary>
-    protected async Task DispatchInboundAsync(InboundMessage message, CancellationToken cancellationToken)
+    protected async Task<ChannelDispatchOutcome> DispatchInboundAsync(InboundMessage message, CancellationToken cancellationToken)
     {
         if (!IsSenderAllowed(message.SenderId))
         {
@@ -165,16 +202,50 @@ public abstract class ChannelAdapterBase : IChannelAdapter
                 message.SenderId,
                 ChannelType,
                 AllowList.Count);
-            return;
+            return ChannelDispatchOutcome.BlockedByAllowList;
         }
 
-        if (_dispatcher is null)
+        Interlocked.Increment(ref _inFlightDispatches);
+        try
         {
-            Logger.LogWarning("Channel '{ChannelType}' received message but no dispatcher is registered", ChannelType);
-            return;
-        }
+            var dispatcher = _dispatcher;
+            if (dispatcher is null)
+            {
+                // #3594 AC5: say that the message was DISCARDED, not merely received. The previous
+                // wording described the arrival and stayed silent about the drop, so the operator's
+                // only trace of a lost message read like a benign lifecycle note.
+                Logger.LogWarning(
+                    "Channel '{ChannelType}' discarded inbound message from '{SenderId}': the adapter is stopped and no dispatcher is registered, so the message was never routed",
+                    ChannelType,
+                    message.SenderId);
+                return ChannelDispatchOutcome.AdapterStopped;
+            }
 
-        await _dispatcher.DispatchAsync(message, cancellationToken);
+            await dispatcher.DispatchAsync(message, cancellationToken);
+            return ChannelDispatchOutcome.Dispatched;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _inFlightDispatches);
+        }
+    }
+
+    /// <summary>
+    /// Dispatches an inbound message and throws <see cref="ChannelStoppedException"/> when the
+    /// adapter is stopped, for channels whose settlement is derived from whether the handler threw
+    /// (#3594).
+    /// </summary>
+    /// <remarks>
+    /// An allow-list block still returns normally: it is a policy drop, and redelivering a blocked
+    /// message would only block it again. Only the not-dispatched case becomes a failure.
+    /// </remarks>
+    protected async Task<ChannelDispatchOutcome> DispatchInboundOrThrowAsync(InboundMessage message, CancellationToken cancellationToken)
+    {
+        var outcome = await DispatchInboundAsync(message, cancellationToken);
+        if (outcome == ChannelDispatchOutcome.AdapterStopped)
+            throw new ChannelStoppedException(ChannelType.ToString());
+
+        return outcome;
     }
 
     /// <summary>

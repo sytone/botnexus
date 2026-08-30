@@ -73,7 +73,23 @@ var inbound = new InboundMessage
 await DispatchInboundAsync(inbound, cancellationToken);
 ```
 
-The base class automatically checks the allow-list before dispatching. Messages from senders not in the allow-list are silently dropped with a debug log.
+The base class automatically checks the allow-list before dispatching. Messages from senders not in the allow-list are dropped with a warning that names the configured entries.
+
+`DispatchInboundAsync` returns a `ChannelDispatchOutcome` (#3594) so the caller can tell a routed
+message from a dropped one:
+
+| Outcome | Meaning | Durable channel should |
+|---|---|---|
+| `Dispatched` | The message reached the routing pipeline. | Settle it. |
+| `BlockedByAllowList` | Deliberate policy drop. | Settle it — redelivery would only block again. |
+| `AdapterStopped` | No dispatcher; the message was never routed. | **Abandon it** so the broker redelivers after restart. |
+
+Adapters backed by a broker that settles on the handler returning without throwing should call
+`DispatchInboundOrThrowAsync` instead, which raises `ChannelStoppedException` on `AdapterStopped`
+while leaving an allow-list block on the success path.
+
+`StopAsync` drains in-flight dispatches (bounded to 5s) before releasing the dispatcher, so a
+callback already past the dispatcher read is not cut off mid-flight.
 
 ### Registering with DI
 

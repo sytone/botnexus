@@ -613,7 +613,10 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
             return;
         }
 
-        await DispatchInboundAsync(inbound, cancellationToken);
+        // #3594: throw rather than return on the not-dispatched path. `ProcessMessageCoreAsync`
+        // settles on the handler returning without throwing, so a silent drop here acknowledged a
+        // message that was never routed and the broker never redelivered it.
+        await DispatchInboundOrThrowAsync(inbound, cancellationToken);
 
         // Recorded only after the dispatch returns. A handler that threw propagates out of this
         // method, is abandoned by the caller, and must still be retried on redelivery.
@@ -667,6 +670,19 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         try
         {
             await handleAsync(cancellationToken);
+        }
+        catch (ChannelStoppedException ex)
+        {
+            // #3594: the adapter was stopped, so the message never reached the routing pipeline.
+            // Nothing was done, so it must be abandoned rather than completed - completing here is
+            // the silent-loss defect this branch exists to prevent.
+            _logger.LogWarning(
+                "{DisplayName} could not dispatch Service Bus message {MessageId} because the channel is stopped; the message was NOT processed and will be abandoned for redelivery ({Reason})",
+                DisplayName,
+                messageId,
+                ex.Message);
+            await abandonAsync();
+            return MessageProcessingOutcome.AbandonedNotDispatched;
         }
         catch (OperationCanceledException)
         {
