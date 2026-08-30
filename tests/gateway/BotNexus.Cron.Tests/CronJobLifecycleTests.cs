@@ -148,6 +148,12 @@ public sealed class CronJobLifecycleTests
         await using var context = await CronStoreTestContext.CreateAsync();
         var archived = new List<ConversationId>();
         var conversations = new Mock<IConversationStore>();
+        // #3521: the archive is now conditional on OWNERSHIP - the pinned conversation must carry
+        // the cron provenance this job stamped when it minted it, or the delete correctly skips.
+        conversations
+            .Setup(store => store.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ConversationId id, CancellationToken _) =>
+                ConversationFactory.CreateForCron(id, AgentId.From("agent-a"), sourceId: "job-1"));
         conversations
             .Setup(store => store.ArchiveAsync(
                 It.IsAny<ConversationId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

@@ -5,6 +5,7 @@ using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Cron.Tools;
 
@@ -17,7 +18,9 @@ public sealed class CronTool(
     ICommandCronAuthorizer? commandAuthorizer = null,
     ICronAlertTargetResolver? alertTargetResolver = null,
     ConversationId? creatingConversationId = null,
-    CronOptions? cronOptions = null) : IAgentTool
+    CronOptions? cronOptions = null,
+    ConversationKind? creatingConversationKind = null,
+    bool creatingConversationIsDefault = false) : IAgentTool
 {
     private readonly AgentId _agentId = agentId;
 
@@ -34,6 +37,18 @@ public sealed class CronTool(
     /// with no conversation context, which is what preserves the <c>isolated</c> default for them.
     /// </summary>
     private readonly ConversationId? _creatingConversationId = creatingConversationId;
+
+    /// <summary>
+    /// #3521: the creating conversation's PROVENANCE, read from the same conversation row that
+    /// yielded <see cref="_creatingConversationId"/>. Without it the binding default cannot tell an
+    /// agent- or cron-owned conversation (bind, #2412) from a human's own thread (never adopt).
+    /// <c>null</c> means the row could not be read, which deliberately preserves the pre-#3521
+    /// behaviour rather than disabling the binding for every caller that does not supply it.
+    /// </summary>
+    private readonly ConversationKind? _creatingConversationKind = creatingConversationKind;
+
+    /// <summary>#3521: whether the creating conversation is the agent's default home thread.</summary>
+    private readonly bool _creatingConversationIsDefault = creatingConversationIsDefault;
 
     /// <summary>
     /// #2462 (AUTHORING half): every create/update that would persist a <c>shellCommand</c> is
@@ -301,7 +316,11 @@ public sealed class CronTool(
                 actionType,
                 isSystemJob: false,
                 explicitConversationId: null,
-                creatingConversationId: _creatingConversationId),
+                creatingConversationId: _creatingConversationId,
+                // #3521: a human's own thread is never ADOPTED as a job's output target - the job
+                // stays unbound and the first-run CAS mints a cronconv: conversation instead.
+                creatingConversationKind: _creatingConversationKind,
+                creatingConversationIsDefault: _creatingConversationIsDefault),
             TimeZone = timeZone,
             CreatedBy = _agentId.Value,
             CreatedAt = now,

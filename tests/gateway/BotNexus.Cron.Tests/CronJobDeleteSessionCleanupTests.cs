@@ -175,6 +175,13 @@ public sealed class CronJobDeleteSessionCleanupTests
 
         var archived = new List<ConversationId>();
         var conversations = new Mock<IConversationStore>();
+        // #3521: the archive is now conditional on OWNERSHIP, so the conversation this job pinned
+        // must actually carry the cron provenance the job would have stamped when it minted it.
+        // Without this the store returns null and the (correct) new behaviour is "do not archive".
+        conversations
+            .Setup(store => store.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ConversationId id, CancellationToken _) =>
+                ConversationFactory.CreateForCron(id, AgentId.From("agent-a"), sourceId: "job-1"));
         conversations
             .Setup(store => store.ArchiveAsync(
                 It.IsAny<ConversationId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

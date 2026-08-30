@@ -135,6 +135,25 @@ internal sealed class CronToolProvider(
             ? await context.ResolveConversationId(conversationStore).ConfigureAwait(false)
             : null;
 
+        // #3521: the binding decision needs the conversation's PROVENANCE, not just its id. The id
+        // alone cannot distinguish an agent-owned or cron-owned conversation (bind, #2412) from a
+        // human's own long-running thread (never adopt - adopting one relocates it into the portal's
+        // Cron bucket and makes it an archive target when the job is deleted). Read the row once,
+        // here, at the same seam that already resolved the id. A row that cannot be read leaves the
+        // provenance null, which preserves the pre-#3521 behaviour rather than silently disabling
+        // the #2412 binding.
+        ConversationKind? creatingConversationKind = null;
+        var creatingConversationIsDefault = false;
+        if (conversationStore is not null && creatingConversationId is { } bound)
+        {
+            var conversation = await conversationStore.GetAsync(bound).ConfigureAwait(false);
+            if (conversation is not null)
+            {
+                creatingConversationKind = conversation.Kind;
+                creatingConversationIsDefault = conversation.IsDefault;
+            }
+        }
+
         IReadOnlyList<IAgentTool> tools =
             // #2462: the command-authoring gate is threaded in here so the model-facing cron tool
             // refuses to persist a shellCommand the exec-tool policy would deny. A null authorizer
@@ -145,7 +164,7 @@ internal sealed class CronToolProvider(
             // #3338: the configured self-pacing bound is threaded in so the `next_check` clamp uses
             // the operator's floor/ceiling. A null options object falls back to the built-in default
             // bound inside CronSelfPacingBound - never to an unbounded self-pacing surface.
-            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer, alertTargetResolver, creatingConversationId, cronOptions)];
+            [new CronTool(cronStore!, cronScheduler!, context.AgentId, allowCrossAgentCron, modelRegistry, commandAuthorizer, alertTargetResolver, creatingConversationId, cronOptions, creatingConversationKind, creatingConversationIsDefault)];
         return tools;
     }
 

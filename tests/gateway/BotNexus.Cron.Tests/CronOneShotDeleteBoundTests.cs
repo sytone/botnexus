@@ -291,6 +291,13 @@ public sealed class CronOneShotDeleteBoundTests
         private IConversationStore BuildStore()
         {
             var mock = new Mock<IConversationStore>();
+            // #3521: DeleteJobAsync now archives only a conversation the job OWNS, so these
+            // fixtures must present the cron provenance a job stamps when it mints its own
+            // conversation. Without it the archive is legitimately skipped and every assertion
+            // about the retry bound below would pass for the wrong reason.
+            mock.Setup(store => store.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((ConversationId id, CancellationToken _) =>
+                    ConversationFactory.CreateForCron(id, AgentId.From("agent-a"), sourceId: "job-1"));
             mock.Setup(store => store.ArchiveAsync(
                     It.IsAny<ConversationId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .Returns((ConversationId id, string _, string? _, string _, CancellationToken _) =>

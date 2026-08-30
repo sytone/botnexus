@@ -448,6 +448,12 @@ public sealed class CronActiveRunCancellationTests
         var action = new BlockingAction("test-action", sequence);
         long? archivedAt = null;
         var conversations = new Mock<IConversationStore>();
+        // #3521: ownership gate - the pinned conversation must be one this job minted, otherwise
+        // the (correct) new behaviour is to skip the archive and this ordering test would be vacuous.
+        conversations
+            .Setup(store => store.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ConversationId id, CancellationToken _) =>
+                ConversationFactory.CreateForCron(id, AgentId.From("agent-a"), sourceId: "job-1"));
         conversations
             .Setup(store => store.ArchiveAsync(
                 It.IsAny<ConversationId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

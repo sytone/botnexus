@@ -152,6 +152,12 @@ public sealed class CronScheduler(
     /// because a still-live run holds the conversation's write stripe and the archive is then
     /// guaranteed to fail. Aborting the delete on that guaranteed failure is what produced the
     /// unbounded retry loop.
+    /// #3521: the archive is also skipped when the job merely ADOPTED the conversation instead of
+    /// minting it. Ownership is the typed pair <c>(Source == Cron, SourceId == jobId)</c> stamped at
+    /// creation by <c>ConversationFactory.CreateForCron</c>; anything else is somebody else's thread
+    /// - in the reported incident, a human's 6,324-message default conversation. The skip logs at
+    /// Information (an adopted binding is a normal state, not a fault) and must NOT throw, or it
+    /// would re-enter the #3517 retry loop it was written alongside.
     /// </remarks>
     public async Task DeleteJobAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
@@ -192,11 +198,36 @@ public sealed class CronScheduler(
             {
                 using var scope = _scopeFactory.CreateScope();
                 var conversations = scope.ServiceProvider.GetRequiredService<IConversationStore>();
-                await conversations.ArchiveAsync(existing.ConversationId.Value, "cron-delete-after-run", jobId.Value, "system", cancellationToken).ConfigureAwait(false);
-                _logger.LogInformation(
-                    "Archived conversation '{ConversationId}' for deleted cron job '{JobId}'.",
-                    existing.ConversationId.Value,
-                    jobId);
+
+                // #3521: archive ONLY a conversation this job owns. `ConversationId` records where
+                // the job writes, which is not the same claim as "this job minted it" - #2412 also
+                // binds a job to a conversation that already existed. Ownership is read from the
+                // conversation's own write-once provenance rather than inferred from the id, because
+                // an id prefix is a convention and provenance is a fact.
+                //
+                // Every failure mode here is fail-OPEN by design: an unreadable row, a store that
+                // throws on the read, or a non-owned binding all SKIP the archive and let the delete
+                // proceed. Throwing would re-arm the unbounded MaybeDeleteOneShotJobAsync retry loop
+                // of #3517, and leaving a conversation active is trivially recoverable whereas
+                // archiving a human's thread is not.
+                if (!await OwnsConversationAsync(conversations, existing.ConversationId.Value, jobId, cancellationToken).ConfigureAwait(false))
+                {
+                    _logger.LogInformation(
+                        "Not archiving conversation '{ConversationId}' for cron job '{JobId}': the job ADOPTED this "
+                        + "conversation rather than minting it (its provenance is not Source=Cron with SourceId='{JobId}'). "
+                        + "The job is being deleted; the conversation is left active because it belongs to whoever created it.",
+                        existing.ConversationId.Value,
+                        jobId,
+                        jobId);
+                }
+                else
+                {
+                    await conversations.ArchiveAsync(existing.ConversationId.Value, "cron-delete-after-run", jobId.Value, "system", cancellationToken).ConfigureAwait(false);
+                    _logger.LogInformation(
+                        "Archived conversation '{ConversationId}' for deleted cron job '{JobId}'.",
+                        existing.ConversationId.Value,
+                        jobId);
+                }
             }
             catch (Exception ex)
             {
@@ -212,6 +243,60 @@ public sealed class CronScheduler(
         await DeleteOwnedRunSessionsAsync(existing, cancellationToken).ConfigureAwait(false);
 
         await _cronStore.DeleteAsync(jobId, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// #3521: whether <paramref name="conversationId"/> was MINTED by <paramref name="jobId"/>, as
+    /// opposed to merely bound to it by the #2412 mid-conversation default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Ownership is the write-once pair <see cref="Conversation.Source"/> ==
+    /// <see cref="ConversationSource.Cron"/> AND <see cref="Conversation.SourceId"/> == the job id,
+    /// exactly as <c>ConversationFactory.CreateForCron</c> stamps it. The <c>SourceId</c> half is
+    /// load-bearing: without it, deleting job A would happily archive a conversation minted by job B.
+    /// </para>
+    /// <para>
+    /// Returns <c>false</c> - never throws - when the conversation cannot be read or the store
+    /// itself fails. A delete must not be blocked by an ownership check that could not be evaluated,
+    /// and an unarchived conversation is a recoverable state while a wrongly archived human thread
+    /// and an unbounded retry loop (#3517) are not.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> OwnsConversationAsync(
+        IConversationStore conversations,
+        ConversationId conversationId,
+        JobId jobId,
+        CancellationToken cancellationToken)
+    {
+        Conversation? conversation;
+        try
+        {
+            conversation = await conversations.GetAsync(conversationId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(
+                ex,
+                "Could not read conversation '{ConversationId}' to determine whether cron job '{JobId}' owns it; "
+                + "skipping the archive rather than risking one that was never the job's to make.",
+                conversationId,
+                jobId);
+            return false;
+        }
+
+        if (conversation is null)
+        {
+            // Already hard-deleted, or a dangling binding. Nothing to archive either way.
+            _logger.LogInformation(
+                "Conversation '{ConversationId}' bound to cron job '{JobId}' no longer exists; nothing to archive.",
+                conversationId,
+                jobId);
+            return false;
+        }
+
+        return conversation.Source == ConversationSource.Cron
+               && string.Equals(conversation.SourceId, jobId.Value, StringComparison.Ordinal);
     }
 
     /// <summary>
