@@ -10,6 +10,7 @@ using BotNexus.Agent.Core.Hooks;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Resolution;
 using BotNexus.Cron;
+using BotNexus.Domain.Text;
 using BotNexus.Cron.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
@@ -1091,33 +1092,56 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             _ => 0
         });
 
+        // #3655: the TOKEN figures below are script-weighted through the shared estimator, so a CJK
+        // transcript is not reported at a quarter of its real cost. The CHARACTER figures beside
+        // them stay raw - they are a different unit and the report shows both.
+        var userAssistantUnits = state.Messages.Sum(static message => message switch
+        {
+            AgentCoreUserMessage user => TokenEstimator.WeightedCharUnits(user.Content),
+            AssistantAgentMessage assistant => TokenEstimator.WeightedCharUnits(assistant.Content),
+            SystemAgentMessage system => TokenEstimator.WeightedCharUnits(system.Content),
+            SubAgentCompletionMessage subAgent => TokenEstimator.WeightedCharUnits(subAgent.Content),
+            _ => 0L
+        });
+
         var toolResultChars = state.Messages.Sum(static message => message switch
         {
             ToolResultAgentMessage tool => tool.Result.Content.Sum(static c => c.Value?.Length ?? 0),
             _ => 0
         });
 
+        var toolResultUnits = state.Messages.Sum(static message => message switch
+        {
+            ToolResultAgentMessage tool => tool.Result.Content.Sum(static c => TokenEstimator.WeightedCharUnits(c.Value)),
+            _ => 0L
+        });
+
+        var systemPromptUnits = TokenEstimator.WeightedCharUnits(state.SystemPrompt);
+        var toolDefinitionChars = toolDefinitions.Sum(static t => t.SchemaChars);
         var historyChars = userAssistantChars + toolResultChars;
-        var totalChars = systemPromptChars
-            + toolDefinitions.Sum(static t => t.SchemaChars + t.Name.Length + (t.Description?.Length ?? 0))
-            + historyChars;
-        var estimatedTokens = totalChars / 4;
+        var historyUnits = userAssistantUnits + toolResultUnits;
+        var totalUnits = systemPromptUnits
+            + ((long)toolDefinitions.Sum(static t => t.SchemaChars + t.Name.Length + (t.Description?.Length ?? 0)))
+            + historyUnits;
+        var estimatedTokens = TokenEstimator.TokensFromUnits(totalUnits);
 
         return new ContextDiagnostics
         {
             SystemPromptChars = systemPromptChars,
-            SystemPromptTokens = systemPromptChars / 4,
+            SystemPromptTokens = TokenEstimator.TokensFromUnits(systemPromptUnits),
             ToolCount = state.Tools.Count,
-            ToolDefinitionChars = toolDefinitions.Sum(static t => t.SchemaChars),
-            ToolDefinitionTokens = toolDefinitions.Sum(static t => t.SchemaChars) / 4,
+            ToolDefinitionChars = toolDefinitionChars,
+            // Tool schemas are JSON emitted by the runtime: structurally ASCII, so the script-blind
+            // ratio is the right estimate and inspecting them would cost a scan for no accuracy.
+            ToolDefinitionTokens = TokenEstimator.EstimateTokensFromCharCount(toolDefinitionChars),
             Tools = toolDefinitions,
             HistoryEntryCount = historyEntries,
             HistoryChars = historyChars,
-            HistoryTokens = historyChars / 4,
+            HistoryTokens = TokenEstimator.TokensFromUnits(historyUnits),
             UserAssistantChars = userAssistantChars,
-            UserAssistantTokens = userAssistantChars / 4,
+            UserAssistantTokens = TokenEstimator.TokensFromUnits(userAssistantUnits),
             ToolResultChars = toolResultChars,
-            ToolResultTokens = toolResultChars / 4,
+            ToolResultTokens = TokenEstimator.TokensFromUnits(toolResultUnits),
             TotalEstimatedTokens = estimatedTokens,
             SystemPrompt = state.SystemPrompt
         };

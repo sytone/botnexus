@@ -1,4 +1,5 @@
 using System.Text;
+using BotNexus.Domain.Text;
 using BotNexus.Gateway.Abstractions.Extensions;
 using System.IO.Abstractions;
 
@@ -226,8 +227,8 @@ public sealed class SkillsCommandContributor : ICommandContributor
 
         var maxLoaded = config.MaxLoadedSkills < 0 ? int.MaxValue : config.MaxLoadedSkills;
         var maxChars = config.MaxSkillContentChars < 0 ? int.MaxValue : config.MaxSkillContentChars;
-        var usedTokens = state.Resolution.Loaded.Sum(skill => EstimateTokens(skill.Content.Length));
-        var budgetTokens = maxChars == int.MaxValue ? int.MaxValue : EstimateTokens(maxChars);
+        var usedTokens = state.Resolution.Loaded.Sum(skill => EstimateTokens(skill.Content));
+        var budgetTokens = maxChars == int.MaxValue ? int.MaxValue : TokenEstimator.EstimateTokensFromCharCount(maxChars);
 
         var body = new StringBuilder();
         body.AppendLine($"Skills for {agentId ?? "current agent"}");
@@ -277,7 +278,7 @@ public sealed class SkillsCommandContributor : ICommandContributor
                       Description:   {skill.Description}
                       Source:        {MapSource(skill.Source)} ({skill.SourcePath})
                       Status:        {status}
-                      Size:          ~{EstimateTokens(skill.Content.Length):N0} tokens
+                      Size:          ~{EstimateTokens(skill.Content):N0} tokens
                       License:       {skill.License ?? "--"}
                       Allowed Tools: {allowedTools}
                       Files:         {files}
@@ -325,7 +326,7 @@ public sealed class SkillsCommandContributor : ICommandContributor
         return new CommandResult
         {
             Title = $"Skill Loaded: {skill.Name}",
-            Body = $"Loaded '{skill.Name}' (~{EstimateTokens(skill.Content.Length):N0} tokens).",
+            Body = $"Loaded '{skill.Name}' (~{EstimateTokens(skill.Content):N0} tokens).",
             IsError = false
         };
     }
@@ -468,7 +469,14 @@ public sealed class SkillsCommandContributor : ICommandContributor
             _ => source.ToString()
         };
 
-    private static int EstimateTokens(int chars) => (int)Math.Ceiling(chars / 4.0d);
+    /// <summary>
+    /// Script-aware token estimate for skill markdown, via the single shared seam (#3655). Skill
+    /// content is authored prose and may be CJK, where a character is roughly a token rather than a
+    /// quarter of one; the previous flat divide understated such a skill's cost fourfold in the
+    /// operator-facing budget line. The character BUDGET beside it stays script-blind because it
+    /// bounds a string length, not a token count.
+    /// </summary>
+    private static int EstimateTokens(string? content) => TokenEstimator.EstimateTokens(content);
 
     private static string Truncate(string? text, int maxLength)
     {

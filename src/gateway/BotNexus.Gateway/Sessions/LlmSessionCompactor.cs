@@ -71,7 +71,10 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// <summary>
     /// Maximum total characters for the summarization prompt.
     /// If the prompt exceeds this after truncation, older entries are dropped.
-    /// Based on ~80% of a 128K token model's input capacity (chars/4 ≈ tokens).
+    /// Based on ~80% of a 128K token model's input capacity at the Latin-script ratio of ~4 chars
+    /// per token. This is a CHARACTER cap on the prompt, not a token estimate, so it is deliberately
+    /// script-blind: a CJK prompt of this length costs more tokens and is bounded by the model's own
+    /// input limit rather than by this constant.
     /// </summary>
     internal const int MaxSummarizationPromptChars = 400_000;
     public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null, IOptionsMonitor<PlatformConfig>? platformConfig = null, GatewayAuthManager? authManager = null, Func<GatewaySession, HistorySnapshot>? historySnapshotReader = null)
@@ -109,9 +112,11 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
     /// <summary>
     /// #2522 measure-first: the two token numbers a compaction decision is made against, and their
-    /// ratio. <paramref name="EstimatedTokens"/> is the local <c>chars/4</c> estimate over
-    /// LLM-visible entries only — it excludes the system prompt, tool schemas and workspace-injected
-    /// files, so it systematically UNDER-counts real context.
+    /// ratio. <paramref name="EstimatedTokens"/> is the local <see cref="TokenEstimator"/> estimate
+    /// over LLM-visible entries only - CJK code points weighted at ~1 token each and other characters
+    /// at ~1/4 (#3655). It excludes the system prompt, tool schemas and workspace-injected files, so
+    /// it still systematically UNDER-counts real context; script weighting removes a fourth,
+    /// multiplicative source of under-count, it does not make the estimate exact.
     /// <paramref name="ProviderPromptTokens"/> is the provider's reported prompt-token count when one
     /// is reachable (see <see cref="ProviderPromptTokensMetadataKey"/>), else <c>null</c>.
     /// <paramref name="Ratio"/> is provider/estimated when both are usable, else <c>null</c>.
@@ -151,7 +156,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
     /// <summary>
     /// #2522: minimum provider/estimate ratio that counts as a real UNIT MISMATCH rather than
-    /// estimator noise. The local chars/4 estimator is inherently approximate (tokenizer variance,
+    /// estimator noise. The local script-weighted estimator is inherently approximate (tokenizer variance,
     /// message framing overhead), so ratios in the 1.0-1.5 band are expected even when nothing is
     /// missing from the estimator's view. Only above this do we treat the divergence as evidence
     /// that the trigger fired on context the split walk cannot see, and normalise the cut plan.
@@ -183,7 +188,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// <summary>
     /// #2522 unit normalisation: the compaction trigger fires in one unit (provider prompt tokens,
     /// which include the system prompt, tool schemas and workspace-injected files) while the split
-    /// walk plans the retained tail in another (the local chars/4 estimate over LLM-visible entries).
+    /// walk plans the retained tail in another (the local script-weighted estimate over LLM-visible entries).
     /// When the measured provider/estimate ratio is materially above 1 the requested keep-recent
     /// budget is divided by that ratio so the retained tail is sized in the units the trigger used.
     ///
@@ -245,9 +250,10 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The estimate trigger is the historical one: the local <c>chars/4</c> count over LLM-visible
-    /// entries. It systematically UNDER-counts, because it cannot see the system prompt, the tool
-    /// schemas, or workspace-injected files.
+    /// The estimate trigger is the historical one: the local <see cref="TokenEstimator"/> count over
+    /// LLM-visible entries (CJK ~1 token per code point, other characters ~1/4 - #3655). It still
+    /// UNDER-counts, because it cannot see the system prompt, the tool schemas, or
+    /// workspace-injected files.
     /// </para>
     /// <para>
     /// The provider trigger (#3534) closes exactly that blind spot. <c>lastProviderPromptTokens</c>
@@ -1183,20 +1189,26 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         return null;
     }
 
+    /// <summary>
+    /// The estimate-side token count over LLM-visible entries, script-weighted via
+    /// <see cref="TokenEstimator"/> (#3655).
+    /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="SessionContextProjector.GetLiveContextTokenUnits"/> so selection and
+    /// cost remain one decision (#3536) and the ratio is defined once (#3655) rather than re-typed
+    /// here as a literal divide by four. Units are summed across all entries and converted once, so
+    /// no per-entry remainder is discarded.
+    /// </remarks>
     private static int EstimateVisibleTokenCount(Session session)
-    {
-        var totalChars = session.History
-            .Where(SessionContextProjector.IsVisibleInLiveContext)
-            .Sum(SessionContextProjector.GetLiveContextCharCost);
-        return (int)Math.Min(totalChars / 4, int.MaxValue);
-    }
+        => EstimateVisibleTokenCountFromEntries(session.History);
 
+    /// <inheritdoc cref="EstimateVisibleTokenCount"/>
     private static int EstimateVisibleTokenCountFromEntries(IEnumerable<SessionEntry> entries)
     {
-        var totalChars = entries
+        var units = entries
             .Where(SessionContextProjector.IsVisibleInLiveContext)
-            .Sum(SessionContextProjector.GetLiveContextCharCost);
-        return (int)Math.Min(totalChars / 4, int.MaxValue);
+            .Sum(SessionContextProjector.GetLiveContextTokenUnits);
+        return TokenEstimator.TokensFromUnits(units);
     }
 
     /// <summary>

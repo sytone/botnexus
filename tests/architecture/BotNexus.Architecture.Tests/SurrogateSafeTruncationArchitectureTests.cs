@@ -88,6 +88,10 @@ public sealed class SurrogateSafeTruncationArchitectureTests : ArchitectureTest
             "Sanitisation, not truncation: walks pairs to copy or replace them, never picks a length.",
         [Path.Combine("gateway", "BotNexus.Tools", "EditTool.cs")] =
             "Normalisation index map: emits both halves of a pair together; no length limit involved.",
+        [Path.Combine("domain", "BotNexus.Domain", "Text", "TokenEstimator.cs")] =
+            "Classification, not truncation (#3655): combines a pair to read its code point so an " +
+            "astral-plane CJK ideograph is weighted as one token rather than two non-CJK halves. It " +
+            "never slices, never picks a length, and returns a count rather than a string.",
     };
 
     [Fact]

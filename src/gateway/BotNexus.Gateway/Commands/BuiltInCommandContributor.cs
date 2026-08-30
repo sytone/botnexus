@@ -325,7 +325,10 @@ internal sealed class BuiltInCommandContributor(
         sb.AppendLine($"{"Remaining",-28} {Fmt(remaining),9}");
         sb.AppendLine();
         sb.AppendLine($"History: {diag.HistoryEntryCount} message(s)  |  Tools: {diag.ToolCount}");
-        sb.AppendLine("Note: token counts are estimates (chars / 4). Actual provider usage may differ.");
+        sb.AppendLine(
+            "Note: token counts are estimates - CJK characters are weighted at ~1 token each and " +
+            "other characters at ~1/4 (#3655). This is a heuristic, not a tokenizer; actual provider " +
+            "usage may differ.");
 
         return new CommandResult
         {

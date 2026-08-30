@@ -36,11 +36,11 @@ namespace BotNexus.Memory;
 public static class MemoryPromptBudget
 {
     /// <summary>
-    /// Characters per token in the rough estimate used throughout memory assembly. This mirrors
-    /// the estimator that already produced <see cref="AgentMemoryContext.ApproximateTokenCount"/>,
-    /// so the budget is enforced in the same units the context reports.
+    /// Characters per token in the rough estimate used throughout memory assembly. Re-exported from
+    /// <see cref="TokenEstimator.CharsPerToken"/> (#3655) rather than declared here, so the ratio has
+    /// exactly one definition; callers and tests that key off this constant are unaffected.
     /// </summary>
-    public const int CharsPerToken = 4;
+    public const int CharsPerToken = TokenEstimator.CharsPerToken;
 
     /// <summary>
     /// Stable leading text of the disclosure line. Tests and callers match on this rather than on
@@ -63,6 +63,10 @@ public static class MemoryPromptBudget
         ArgumentNullException.ThrowIfNull(notes);
 
         var totalChars = notes.Sum(static note => note.Content?.Length ?? 0);
+        // #3655: the CHARACTER budget stays script-blind - it bounds the size of the string that is
+        // spliced into the prompt, and a CJK note must not be cut four times shorter than a Latin
+        // one of the same length. The reported TOKEN count is script-weighted below, because that
+        // number is compared against a token budget rather than used to slice.
 
         // long arithmetic: a caller may legitimately pass int.MaxValue to mean "no practical cap",
         // and multiplying that by CharsPerToken in int would wrap negative and trim everything.
@@ -70,7 +74,7 @@ public static class MemoryPromptBudget
 
         if (maxTokenBudget <= 0 || totalChars <= charBudget)
         {
-            return new BudgetedMemoryContent(notes, totalChars / CharsPerToken, WasTrimmed: false);
+            return new BudgetedMemoryContent(notes, EstimateNoteTokens(notes), WasTrimmed: false);
         }
 
         // Reserve the widest disclosure this input could produce before spending any budget on
@@ -126,8 +130,22 @@ public static class MemoryPromptBudget
             kept[^1] = last with { Content = last.Content + disclosure };
         }
 
-        var keptChars = kept.Sum(static note => note.Content.Length);
-        return new BudgetedMemoryContent(kept, keptChars / CharsPerToken, WasTrimmed: true);
+        return new BudgetedMemoryContent(kept, EstimateNoteTokens(kept), WasTrimmed: true);
+    }
+
+    /// <summary>
+    /// Script-weighted token estimate over note content, via the single shared estimator seam
+    /// (#3655). Units are summed across notes and converted once so no per-note remainder is lost.
+    /// </summary>
+    private static int EstimateNoteTokens(IReadOnlyList<AgentMemoryDailyNote> notes)
+    {
+        var units = 0L;
+        foreach (var note in notes)
+        {
+            units += TokenEstimator.WeightedCharUnits(note.Content);
+        }
+
+        return TokenEstimator.TokensFromUnits(units);
     }
 
     /// <summary>

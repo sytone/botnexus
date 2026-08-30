@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Text;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Sessions;
@@ -97,6 +98,40 @@ public static class SessionContextProjector
         return (long)(entry.Content?.Length ?? 0)
             + (entry.ToolArgs?.Length ?? 0)
             + (entry.ThinkingContent?.Length ?? 0);
+    }
+
+    /// <summary>
+    /// The script-weighted token cost of a single entry, in <see cref="TokenEstimator"/> quarter-token
+    /// units (#3655).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the same selection-and-cost pairing as <see cref="GetLiveContextCharCost"/> - the same
+    /// three payload-bearing fields, charged in the same one place - measured in a unit that is not
+    /// blind to script. A raw character count treats a Han ideograph and an ASCII letter as equal,
+    /// which under-counts a CJK transcript by roughly four times and lets it exhaust its real context
+    /// window while the estimate still reads as comfortably under threshold.
+    /// </para>
+    /// <para>
+    /// Units, not tokens: callers sum across every visible entry and convert once with
+    /// <see cref="TokenEstimator.TokensFromUnits"/>. Rounding per entry would discard up to three
+    /// quarter-tokens each time and reintroduce a systematic under-count.
+    /// </para>
+    /// <para>
+    /// <see cref="GetLiveContextCharCost"/> is retained rather than replaced: the #1599 bloat trigger
+    /// measures a single entry's raw size, which is a genuinely different question from what a
+    /// transcript costs in tokens.
+    /// </para>
+    /// </remarks>
+    /// <param name="entry">The entry to size. Null-safe on every field.</param>
+    /// <returns>Weighted token units this entry contributes to the next provider call.</returns>
+    public static long GetLiveContextTokenUnits(SessionEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        return TokenEstimator.WeightedCharUnits(entry.Content)
+            + TokenEstimator.WeightedCharUnits(entry.ToolArgs)
+            + TokenEstimator.WeightedCharUnits(entry.ThinkingContent);
     }
 
     /// <summary>

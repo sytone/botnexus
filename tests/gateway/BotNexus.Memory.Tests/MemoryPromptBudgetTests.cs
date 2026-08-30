@@ -224,4 +224,39 @@ public sealed class MemoryPromptBudgetTests
         result.Notes.ShouldBeEmpty();
         result.ApproximateTokenCount.ShouldBe(0);
     }
+
+    /// <summary>
+    /// #3655 AC1: the reported token count consults the shared script-aware estimator, so a CJK note
+    /// is not reported at a quarter of its real cost. Non-vacuous by construction - under the flat
+    /// <c>chars / 4</c> the two counts below are EQUAL, because raw length is script-blind.
+    /// </summary>
+    [Fact]
+    public void Apply_CjkContent_ReportsMoreTokensThanLatinOfEqualLength_Ac1()
+    {
+        var latin = MemoryPromptBudget.Apply([Note("2026-08-13", 400, 'a')], maxTokenBudget: 0);
+        var cjk = MemoryPromptBudget.Apply([Note("2026-08-13", 400, '\u6587')], maxTokenBudget: 0);
+
+        latin.ApproximateTokenCount.ShouldBe(400 / Cpt);
+        cjk.ApproximateTokenCount.ShouldBeGreaterThan(latin.ApproximateTokenCount,
+            "400 Han ideographs cost ~400 tokens, not 100 - a flat chars/4 reports both as 100 (#3655)");
+        cjk.ApproximateTokenCount.ShouldBeInRange(200, 600);
+    }
+
+    /// <summary>
+    /// The CHARACTER budget stays script-blind on purpose: it bounds the length of the string spliced
+    /// into the prompt. If CJK content were trimmed against a script-weighted character budget, a CJK
+    /// note would be cut four times shorter than a Latin one of the same size for no reason.
+    /// </summary>
+    [Fact]
+    public void Apply_CjkContent_TrimsAgainstTheSameCharacterBudgetAsLatin_Ac1()
+    {
+        const int budget = 50;
+        var latin = MemoryPromptBudget.Apply([Note("2026-08-13", 4_000, 'a')], budget);
+        var cjk = MemoryPromptBudget.Apply([Note("2026-08-13", 4_000, '\u6587')], budget);
+
+        latin.WasTrimmed.ShouldBeTrue();
+        cjk.WasTrimmed.ShouldBeTrue();
+        string.Concat(cjk.Notes.Select(n => n.Content)).Length
+            .ShouldBe(string.Concat(latin.Notes.Select(n => n.Content)).Length);
+    }
 }
