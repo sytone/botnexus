@@ -318,9 +318,6 @@ html, body, #app {
     cursor: pointer;
 }
 
-.agent-dropdown-select:focus {
-    border-color: var(--accent);
-}
 
 /* ── Session list ───────────────────────────────────────────────────── */
 
@@ -2855,20 +2852,14 @@ details[open] > .thinking-summary::before {
     word-break: break-all;
 }
 
+/* Model ids are compared character by character, so this select keeps the mono
+   role; everything else comes from the base. */
 .config-select {
-    padding: 0.4rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-input);
-    color: var(--text-primary);
     font-size: var(--text-mono);
     font-family: var(--font-mono);
     cursor: pointer;
 }
 
-.config-select:focus {
-    border-color: var(--accent);
-}
 
 .config-error {
     padding: 0.5rem 0.75rem;
@@ -3527,23 +3518,8 @@ details[open] > .thinking-summary::before {
 .cron-edit-field select,
 .cron-edit-field textarea {
     width: 100%;
-    box-sizing: border-box;
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text-primary);
-    padding: 0.35rem 0.6rem;
-    font-size: var(--text-body);
-    font-family: var(--font-sans);
-    transition: border-color 0.15s;
 }
 
-.cron-edit-field input[type="text"]:focus,
-.cron-edit-field select:focus,
-.cron-edit-field textarea:focus {
-    border-color: var(--accent);
-}
-.cron-edit-field textarea { resize: vertical; }
 .cron-edit-field-inline > label {
     flex-direction: row;
     display: flex;
@@ -3604,30 +3580,21 @@ details[open] > .thinking-summary::before {
 
 .required { color: var(--color-danger-text); }
 
+/* Look and feel come from the control base in the foundation; these carry only
+   what is specific to this form. */
 .cfg-input,
 .cfg-textarea {
     width: 100%;
-    padding: 0.35rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: var(--text-body);
-    font-family: var(--font-sans);
-    transition: border-color 0.15s;
 }
 
+/* Agent config values are ids, paths and JSON fragments — read character by
+   character, so they take the mono role. */
 .cfg-textarea {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     font-size: var(--text-mono);
     line-height: 1.5;
-    resize: vertical;
 }
 
-.cfg-input:focus,
-.cfg-textarea:focus {
-    border-color: var(--accent);
-}
 
 .cfg-input:disabled,
 .cfg-textarea:disabled {
@@ -6188,13 +6155,9 @@ h3.conversation-title.editable:hover {
     opacity: 0.75;
 }
 
+/* This one had already drifted off the shared values - its own padding, its own
+   radius, font:inherit. It takes the base like every other control now. */
 .tools-form-input {
-    padding: 0.4rem 0.55rem;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-color);
-    background: var(--input-bg);
-    color: inherit;
-    font: inherit;
     min-width: 0;
 }
 
@@ -6305,13 +6268,13 @@ h3.conversation-title.editable:hover {
     font-size: var(--text-title);
 }
 
+/* This rule set a size and nothing else, so the box rendered as a raw browser
+   default - white on the dark theme. The base now supplies its look. */
 .home-message-input {
     width: 100%;
     box-sizing: border-box;
-    resize: vertical;
     min-height: 6rem;
     padding: 0.75rem;
-    font: inherit;
 }
 
 .home-starter-controls {
@@ -6925,21 +6888,11 @@ h3.conversation-title.editable:hover {
 .schema-field-control > input[type="number"],
 .schema-field-control > select {
     width: 100%;
+    /* Config text is read, not scanned: past this width a value drifts too far
+       from the label that names it. */
     max-width: 26rem;
-    padding: 0.35rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: var(--text-body);
-    font-family: var(--font-sans);
-    transition: border-color 0.15s;
 }
 
-.schema-field-control > input:focus,
-.schema-field-control > select:focus {
-    border-color: var(--accent);
-}
 
 /* A checkbox is its own control; stretching it to the field width would be absurd. */
 .schema-field-toggle .schema-field-control > input[type="checkbox"] {
@@ -7025,10 +6978,6 @@ h3.conversation-title.editable:hover {
     font-family: var(--font-sans);
 }
 
-.dict-newkey:focus,
-.dict-rename-input:focus {
-    border-color: var(--accent);
-}
 
 /* ── Collection buttons ───────────────────────────────────────────────────── */
 

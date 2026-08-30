@@ -79,6 +79,13 @@
    ──────────────────────────────────────────────────────────────────────── */
 
 :root {
+    /* Tells the browser which way to draw the controls IT owns - checkbox and
+       radio glyphs, the select dropdown list, scrollbars, spinners. Without it a
+       checkbox is a stark white square on the dark theme no matter what CSS says,
+       because none of those parts are reachable from a stylesheet. This is the
+       one line that themes them. */
+    color-scheme: dark;
+
     /* ── 1. Colour ─────────────────────────────────────────────────────── */
 
     /* Surface ladder. Each step is a lightness increment on a near-neutral
@@ -380,6 +387,8 @@
    rather than inverted — the accent darkens so it still passes against white,
    and --color-on-accent flips to suit it. */
 [data-theme="light"] {
+    color-scheme: light;
+
     --color-canvas: #f6f8fa;
     --color-surface: #ffffff;
     --color-surface-2: #eef2f6;
@@ -587,6 +596,107 @@
     --bp-compact: 544px;
     --bp-mobile: 768px;
     --bp-wide: 900px;
+}
+
+/* ── Form controls ────────────────────────────────────────────────────────
+   ONE definition of what an editable control looks like, declared on the
+   ELEMENT rather than on a class.
+
+   Why the element and not a .field-control class: the portal shipped five
+   near-identical copies of these declarations (.cfg-input, .cron-edit-field,
+   .schema-field-control, .tools-form-input, and mobile's .settings-body) and
+   still had controls rendering as raw browser defaults wherever someone forgot
+   to add the class -- the landing page's message box was a white rectangle on
+   the dark theme for exactly that reason. A class cannot fix the ones nobody
+   remembered to mark up; the element can.
+
+   Specificity makes this safe to layer under everything: an element selector is
+   (0,0,1) and every existing component rule is at least (0,1,0), so this is a
+   floor that any component still overrides. It is a base, not an override.
+
+   Checkboxes, radios, ranges, colour and file pickers are deliberately excluded.
+   They are drawn by the platform, and giving them a padding and a background is
+   how you get a 13px glyph floating in a stretched box.
+   ──────────────────────────────────────────────────────────────────────── */
+
+input:not([type]),
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="search"],
+input[type="email"],
+input[type="url"],
+input[type="tel"],
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+textarea,
+select {
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+    transition: border-color var(--motion-fast) var(--ease-standard);
+}
+
+/* Buttons have the same disease the inputs had: the portal has 46 button classes
+   and no base, so a button whose class forgets a background falls back to the
+   user agent's grey -- rgb(239,239,239) on the dark theme, which is how the
+   landing page's Send button and the platform stat disclosure were rendering.
+
+   This is safe to layer for the same specificity reason, plus one more: the UA
+   default for a button is `buttonface` grey, never transparent. A button that
+   currently LOOKS bare must already be setting its own background, so it still
+   wins. This can only replace grey, never flatten a deliberate treatment. */
+button {
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-2);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-standard),
+                border-color var(--motion-fast) var(--ease-standard);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* A textarea grows down, never sideways: horizontal resize breaks any layout
+   that gave it a column. */
+textarea { resize: vertical; }
+
+/* Focus is TWO signals and they are not interchangeable. The border tint says
+   "this is the active field" to everyone; the ring from :focus-visible says
+   "your keyboard is here". Do not add outline:none next to a border-colour
+   change -- that trade is what removed the keyboard indicator product-wide. */
+input:focus,
+textarea:focus,
+select:focus {
+    border-color: var(--color-accent);
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Placeholder text is a hint, not content, so it takes the faintest ink role.
+   opacity:1 because Firefox dims placeholders again on top of the colour. */
+::placeholder {
+    color: var(--color-ink-faint);
+    opacity: 1;
 }
 
 /* ── Icons ────────────────────────────────────────────────────────────────

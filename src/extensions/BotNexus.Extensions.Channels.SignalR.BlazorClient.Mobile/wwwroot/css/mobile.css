@@ -64,12 +64,8 @@ body {
 .agent-select,
 .conv-select {
     flex: 1;
-    background: var(--color-surface);
-    color: var(--color-ink);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-sm);
-    padding: 6px 8px;
-    font-size: var(--text-body);
+    /* Roomier than the shared default: this is a tap target, not a pointer one. */
+    padding: 8px 10px;
     appearance: none;
     -webkit-appearance: none;
     /* KNOWN GAP: a custom property cannot reach inside a data URI, so this arrow is
@@ -314,13 +310,7 @@ body {
 
 .input-textarea {
     flex: 1;
-    background: var(--color-surface);
-    color: var(--color-ink);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-sm);
     padding: 8px 12px;
-    font-size: var(--text-body);
-    font-family: inherit;
     resize: none;
     line-height: 1.4;
     max-height: 120px;
@@ -328,9 +318,6 @@ body {
     field-sizing: content; /* auto-expand where supported */
 }
 
-.input-textarea:focus {
-    border-color: var(--color-accent);
-}
 
 .input-textarea:disabled { opacity: 0.5; }
 
@@ -753,22 +740,13 @@ body {
 
 .ask-user-free-form {
     width: 100%;
-    background: var(--color-surface);
-    color: var(--color-ink);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-sm);
     padding: 8px 12px;
-    font-size: var(--text-body);
-    font-family: inherit;
     resize: none;
     min-height: 56px;
     line-height: 1.4;
     box-sizing: border-box;
 }
 
-.ask-user-free-form:focus {
-    border-color: var(--color-accent);
-}
 
 .ask-user-error {
     font-size: var(--text-label);
@@ -984,12 +962,7 @@ body {
 .settings-body .schema-field input[type="password"],
 .settings-body .schema-field select {
     width: 100%;
-    background: var(--color-canvas);
-    color: var(--color-ink);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-sm);
     padding: 9px 10px;
-    font-size: var(--text-body);
 }
 
 .settings-body .schema-field input[type="checkbox"] {
