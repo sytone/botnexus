@@ -102,6 +102,16 @@ def main():
     if not names:
         raise SystemExit("no SVGs in %s" % SVG_DIR)
 
+    # Tones and modifiers share the .bn-icon-<x> namespace, so an icon called "sm" would
+    # emit a rule that silently fights the small-size class. Cheap to assert, impossible
+    # to debug from the rendered page.
+    RESERVED = {"sm", "md", "lg", "flat", "inherit"}
+    clash = RESERVED.intersection(names)
+    if clash:
+        raise SystemExit(
+            "icon name(s) %s collide with a reserved .bn-icon-* modifier (%s). Rename the SVG."
+            % (sorted(clash), ", ".join(sorted(RESERVED))))
+
     parsed = [(n,) + parse(os.path.join(SVG_DIR, n + ".svg"), n) for n in names]
 
     # Every generated id must be unique across the whole set, or the collision we are

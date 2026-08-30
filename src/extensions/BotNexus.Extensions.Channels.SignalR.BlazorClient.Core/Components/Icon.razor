@@ -19,9 +19,13 @@
     [Parameter, EditorRequired]
     public string Name { get; set; } = default!;
 
-    /// <summary>Edge length in px. The set is drawn on a 24px grid for 16/20/24/32.</summary>
+    /// <summary>
+    /// Which of the three sizes to draw at. Not a pixel count: the values live in
+    /// tokens.css as --icon-sm|md|lg, and this maps to the matching class so the
+    /// stylesheet stays the source of truth.
+    /// </summary>
     [Parameter]
-    public int Size { get; set; } = 20;
+    public IconSize Size { get; set; } = IconSize.Medium;
 
     /// <summary>Extra classes, e.g. "bn-icon-flat" to drop a gradient for a flat tone.</summary>
     [Parameter]
@@ -45,12 +49,22 @@
 
         var slug = Name.Trim().ToLowerInvariant();
         var css = string.IsNullOrWhiteSpace(Class) ? "" : " " + Encode(Class);
+        var size = Size switch
+        {
+            IconSize.Small => "sm",
+            IconSize.Large => "lg",
+            _ => "md",
+        };
         var labelling = string.IsNullOrWhiteSpace(Title)
             ? """aria-hidden="true" focusable="false" """
             : $"""role="img" aria-label="{Encode(Title)}" """;
 
+        // width/height are presentation attributes, so the .bn-icon-{size} rule outranks them.
+        // They are still emitted as a floor: an SVG with a viewBox and no intrinsic size
+        // resolves to 100% of its container, which is a full-width glyph rather than a
+        // missing one if the stylesheet has not arrived.
         return $"""
-            <svg class="bn-icon bn-icon-{Encode(slug)}{css}" width="{Size}" height="{Size}"
+            <svg class="bn-icon bn-icon-{size} bn-icon-{Encode(slug)}{css}" width="20" height="20"
                  viewBox="0 0 24 24" fill="none" stroke="{def.Stroke}" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round" {labelling}>{def.Body}</svg>
             """;

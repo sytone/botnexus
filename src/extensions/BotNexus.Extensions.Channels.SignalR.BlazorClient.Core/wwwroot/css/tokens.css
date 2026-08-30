@@ -176,11 +176,20 @@
     --hit-touch: 44px;
 
     /* Glyph sizes for icon controls. Separate from the type roles on purpose: those describe
-       running text, and an emoji rendered at body size is not legible as a symbol. An icon has to
+       running text, and a glyph rendered at body size is not legible as a symbol. An icon has to
        be recognised by SHAPE at a glance, which needs more size than a letterform does to be read
-       in a word. */
-    --icon-sm: 1rem;      /* 16px - secondary glyphs that sit inside dense rows */
-    --icon-md: 1.125rem;  /* 18px - primary action glyphs */
+       in a word.
+
+       THREE sizes, matching IconSize in the shared component. The scale used to describe
+       something nothing used: 16 and 18 were declared while call sites passed 16, 20 and 24 as
+       raw pixel counts, so the 18 was dead and the 20 and 24 were known to no token. These are
+       the sizes the product actually draws at.
+
+       In rem so an OS text-size preference still scales a glyph the way it scales the label
+       beside it; the numbers are the px equivalents at the default root size. */
+    --icon-sm: 1rem;      /* 16px - secondary glyphs inside a dense row: a pin, a row action */
+    --icon-md: 1.25rem;   /* 20px - the default: a nav row marker, a primary action glyph */
+    --icon-lg: 1.5rem;    /* 24px - a page heading, where the icon is an object not a marker */
     --hit-pointer: 32px;
 
     /* ── 5. Elevation ──────────────────────────────────────────────────── */
@@ -592,6 +601,13 @@
        against text when their box is aligned to the text box rather than the baseline. */
     vertical-align: -0.125em;
 }
+
+/* The three sizes, driven by the tokens rather than by a width attribute on the element.
+   A presentation attribute loses to any declaration, so these outrank the width/height the
+   component emits and the scale stays defined in exactly one place. */
+.bn-icon-sm { width: var(--icon-sm); height: var(--icon-sm); }
+.bn-icon-md { width: var(--icon-md); height: var(--icon-md); }
+.bn-icon-lg { width: var(--icon-lg); height: var(--icon-lg); }
 
 /* BEGIN generated icon tones -- scripts/generate-icons.py */
 /* The tone each icon was drawn in, as a token reference so it themes and so the

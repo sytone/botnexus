@@ -1243,7 +1243,7 @@
                             aria-pressed="@(conversation.IsPinned ? "true" : "false")"
                             @onclick:stopPropagation="true"
                             @onclick="() => SetConversationPinnedAsync(agent.AgentId, conversation.ConversationId, !conversation.IsPinned)">
-                        <Icon Name="pin" Size="16" />
+                        <Icon Name="pin" Size="@IconSize.Small" />
                     </button>
                     <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
                             title="@(IsUnattendedConversation(conversation) ? "Close conversation \u2014 reopens on next trigger" : "Archive conversation")"
@@ -1252,7 +1252,7 @@
                         @* An unattended conversation reopens on its next trigger, so closing it
                            pauses it rather than discarding it. *@
                         <Icon Name="@(IsUnattendedConversation(conversation) ? "pause" : "delete")"
-                              Size="16" Class="bn-icon-inherit" />
+                              Size="@IconSize.Small" Class="bn-icon-inherit" />
                     </button>
                 </div>
                 @RenderSectionMenu(agent, conversation)
@@ -1275,7 +1275,7 @@
                 aria-expanded="@(isOpen ? "true" : "false")"
                 @onclick:stopPropagation="true"
                 @onclick="() => ToggleSectionMenu(conversation.ConversationId)">
-            <Icon Name="move" Size="16" />
+            <Icon Name="move" Size="@IconSize.Small" />
         </button>
     };
 
