@@ -1,8 +1,9 @@
 # Break-Glass Gateway Recovery
 
-When the BotNexus gateway fails to start or become healthy, the built-in BotNexus
-helper agent (Nexus Trailguide) cannot help you — the gateway that hosts the agent
-runtime is the very thing that is down. The CLI only surfaces a generic 10-second
+When the BotNexus gateway fails to start or become healthy, the bundled BotNexus
+helper agent ([Nexus Trailguide](../user-guide/agents.md#bundled-agents)) cannot help you —
+it is an ordinary config-defined agent, so the gateway that hosts the agent runtime is the
+very thing that is down. The CLI only surfaces a generic 10-second
 `/health` timeout, which **hides the real fault**.
 
 `scripts/recover-gateway.ps1` is a standalone break-glass tool that runs independently

@@ -629,6 +629,34 @@ Reconciliation exists because neither `install` (clone and build) nor `update` (
 restart) is a migration point, so an *existing* installation would otherwise never receive a
 newly shipped agent.
 
+### What Trailguide is — and is not
+
+Trailguide is an **ordinary config-defined agent**, not a code-owned built-in. Its complete
+definition lives in your `config.json` under `agents.nexus-trailguide`, and you can read,
+edit, disable or re-point it with exactly the same keys as any agent you wrote yourself.
+Nothing about it is immutable.
+
+The entry the gateway inserts is deliberately minimal. It carries only:
+
+| Key | Source |
+| --- | --- |
+| `displayName` | shipped template (`Nexus Trailguide`) |
+| `emoji` | shipped template |
+| `description` | shipped template |
+| `provider`, `model` | adopted from your configuration — see below |
+| `enabled` | `true`, or `false` when no provider/model could be resolved |
+| `definitionVersion` | stamped by the reconciler |
+
+That is the whole entry. In particular the shipped template declares **no `toolIds` and no
+Skills configuration**, so Trailguide inherits whatever `agents.defaults` your installation
+applies, the same as any other agent that omits those keys. A curated workspace, a
+least-privilege tool allowlist and bundled onboarding skills are planned but **have not
+shipped yet**; do not expect them in the entry you see today. If you want Trailguide
+constrained, set `toolIds` on it yourself — it is your entry to edit.
+
+Because the reconciler is insert-only, any key you add is permanent: the gateway will never
+come back and rewrite it.
+
 ### Insert-only, never overwrite
 
 The contract is deliberately narrow:
@@ -658,11 +686,32 @@ A newly inserted entry copies provider and model from your own configuration, in
    telling you to set `provider` and `model` on `agents.nexus-trailguide` and flip
    `enabled` to `true`.
 
-### Removing it
+### Disabling versus deleting
 
-Deleting the key is not permanent — the next startup sees a missing entry and re-inserts it.
-To keep the agent out of the way, set `"enabled": false` on it instead; the insert-only rule
-guarantees that choice is never overwritten.
+These two look similar and behave completely differently. Pick deliberately:
+
+| Action | Effect |
+| --- | --- |
+| `"enabled": false` on `agents.nexus-trailguide` | **Persistent opt-out.** The agent is not registered and does not appear in the UI. The key still exists, so the insert-only rule guarantees the gateway never overwrites your choice — it survives every restart and update. |
+| Delete the `agents.nexus-trailguide` key | **Temporary.** The next startup sees a missing entry and re-inserts a fresh one, adopting provider and model again. |
+
+If you want Trailguide gone, disable it. Deleting it is a way to *reset* it, not to remove it.
+
+Disabling an agent changes only whether it is registered. It does **not** delete its
+workspace directory under `~/.botnexus/agents/nexus-trailguide/`, its memory files, or any
+skills stored there — that content is left untouched on disk, and re-enabling the agent picks
+it back up unchanged.
+
+::: warning `doctor agents --cleanup-orphans` does not spare disabled agents
+`botnexus doctor agents` classifies a workspace as *orphaned* by comparing the directories
+under the agents root against the **enabled** agents in `config.json`. A disabled agent's
+workspace therefore shows up as orphaned, and running the command with `--cleanup-orphans`
+(or approving the interactive prompt) **will delete it**.
+
+Without that flag the command only prints the plan and deletes nothing, so an ordinary
+`botnexus doctor` run is safe. If you keep an agent disabled but want its workspace, do not
+opt in to orphan cleanup.
+:::
 
 ---
 
