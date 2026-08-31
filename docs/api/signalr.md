@@ -79,6 +79,7 @@ marked `-` (no scope assertion in code).
 | Method | Returns | Scope |
 |--------|---------|-------|
 | `SubscribeAll()` | `SubscribeAllResult` | - |
+| `SubscribeAgents(agentIds)` | `Task` | - |
 | `GetAgents()` | `AgentDescriptor[]` | - |
 | `GetAgentStatus(agentId, sessionId)` | `AgentInstance?` | `gateway:read` |
 | `Ping()` | `long` | - |
@@ -92,6 +93,15 @@ marked `-` (no scope assertion in code).
 - **`GetAgentStatus(agentId, sessionId)`** returns the live `AgentInstance` from the supervisor,
   or `null` when no instance is running. This is a synchronous read; it is the hub counterpart
   of `GET /api/agents/{agentId}/sessions/{sessionId}/status`.
+- **`SubscribeAgents(IReadOnlyList<string> agentIds)`** joins the connection to the per-agent
+  notification group of each named agent, so it receives `ConversationChanged` for those agents
+  and no others (#2541). This is a deliberately separate verb from `SubscribeAll()`: the groups
+  `SubscribeAll` joins are derived from *existing* sessions, so they can never cover a
+  conversation that has not been created yet - and `created` is one of the change types the
+  event carries. The agent is the smallest scope that can name a not-yet-existing conversation.
+  Blank entries are ignored, and the call is idempotent (SignalR's group join is a no-op for a
+  connection already in the group), so reconnect and rebuild paths may call it on every dial
+  without accumulating anything.
 - **`Ping()`** returns `DateTimeOffset.UtcNow.UtcTicks`. It is a no-op round trip used to prove
   the transport is genuinely alive rather than a zombie socket.
 
@@ -101,19 +111,39 @@ marked `-` (no scope assertion in code).
 |--------|---------|-------|
 | `SendMessage(agentId, channelType, content, conversationId?)` | `SendMessageResult` | `gateway:control` |
 | `SendMessageWithMedia(agentId, channelType, content, contentParts, conversationId?)` | `SendMessageResult` | `gateway:control` |
+| `SubmitCanvasPrompt(agentId, channelType, content, conversationId)` | `SendMessageResult` | `gateway:control` |
 
 `SendMessageWithMedia` takes `IReadOnlyList<MediaContentPartDto> contentParts`. It throws
 `ArgumentException` when `content` is blank *and* `contentParts` is empty — a message must
 carry text or at least one attachment.
+
+**`SubmitCanvasPrompt`** injects a canvas `submitToAgent` click into a conversation as a genuine
+user turn, stamped with `MessageKind.CanvasSubmission` so the transcript records why the message
+exists (#2449). It is a separate verb from `SendMessage` for exactly one reason: the provenance
+kind must be stamped by the server from the transport surface the call arrived on, never taken
+from a caller-supplied field - reusing `SendMessage` with a kind argument would make provenance
+forgeable by any client. Unlike `SendMessage`, `conversationId` is **required** and blank is
+rejected: a canvas is attached to a conversation and may target only that conversation.
 
 ### Steering a running agent
 
 | Method | Returns | Scope |
 |--------|---------|-------|
 | `Steer(agentId, sessionId, content, conversationId)` | `SendMessageResult` | `gateway:control` |
+| `SteerWithMedia(agentId, sessionId, content, contentParts, conversationId)` | `SendMessageResult` | `gateway:control` |
 | `InterruptAndSteer(agentId, sessionId, message)` | `bool` | `gateway:control` |
+| `InterruptAndSteerWithMedia(agentId, sessionId, message, contentParts)` | `bool` | `gateway:control` |
 | `FollowUp(agentId, sessionId, content)` | `Task` | `gateway:control` |
+| `FollowUpWithMedia(agentId, sessionId, content, contentParts)` | `Task` | `gateway:control` |
 | `Abort(agentId, sessionId)` | `Task` | `gateway:control` |
+
+The three `*WithMedia` overloads carry draft attachments (#2484); each no-media method delegates
+to its overload with an empty part list, so the two forms share one dispatch path rather than
+diverging. Content parts are folded through the shared `AgentUserMessageComposer` - the same seam
+the normal send path uses - so every dispatch path delivers attachments identically. Each
+overload throws `ArgumentException` when the text is blank *and* the part list is empty. Note
+the scope assertions name the base methods (`Steer`, `InterruptAndSteer`, `FollowUp`), because
+the overload is what both forms execute.
 
 ### Session control
 
@@ -230,7 +260,13 @@ Returned by `SendMessage` and `SendMessageWithMedia`.
 | `capabilities` | `HubCapabilities` | Advertised hub capabilities. |
 
 **AgentSummary**: `agentId` (string), `displayName` (string), `emoji` (string \| null),
-`description` (string \| null).
+`description` (string \| null), `summary` (string \| null).
+
+`summary` is the agent-maintained account of what the agent is *currently* doing, written by the
+agent itself through the `update_agent` tool and bounded by `gateway.agentSummary.maxLength`
+(#3596). It is appended last with a null default, so a client built against the previous shape
+still deserialises the payload; the field is omitted from the wire entirely when the agent has
+never written one.
 
 **HubCapabilities**: `multiSession` (bool).
 

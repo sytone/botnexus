@@ -278,5 +278,6 @@ To maximize the value of context file discovery:
 ## Related documentation
 
 - **[Coding Agent — System Prompt](03-coding-agent.md#system-prompt-construction)** — How discovered files are integrated into the full system prompt
-- **[SystemPromptBuilder.cs](../src/coding-agent/BotNexus.CodingAgent/SystemPromptBuilder.cs)** — Source implementation
-- **[ContextFileDiscovery.cs](../src/coding-agent/BotNexus.CodingAgent/Utils/ContextFileDiscovery.cs)** — Source implementation
+- **[SystemPromptBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/SystemPromptBuilder.cs)** — Source implementation
+- **[WorkspaceContextBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/WorkspaceContextBuilder.cs)** — Loads the workspace context files and delegates prompt assembly
+- **[AgentsMdPromptHookHandler.cs](../../src/gateway/BotNexus.Gateway/Agents/AgentsMdPromptHookHandler.cs)** — Pull-based `AGENTS.md` discovery via the `get_agent_files` tool

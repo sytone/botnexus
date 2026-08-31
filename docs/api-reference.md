@@ -17,7 +17,8 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 11. [Session Management](#session-management)
 12. [System & Status](#system--status)
 13. [Error Handling](#error-handling)
-14. [Webhooks](#webhooks)
+14. [Secrets](#secrets)
+15. [Webhooks](#webhooks)
 
 ---
 
@@ -3252,6 +3253,65 @@ Iteration 2: search_files("") → BLOCKED (count: 2 >= MaxRepeatedToolCalls: 2)
 - **Exploratory/research agents:** Use `MaxToolIterations=50+, MaxRepeatedToolCalls=3-5`
 
 For detailed configuration guidance, see [Configuration Guide § Agent Iteration & Loop Detection](configuration.md#agent-iteration--loop-detection).
+
+---
+
+## Secrets
+
+A write-only REST surface over the [file-backed secrets directory](./features/file-backed-secrets)
+(#3528). Each secret is one file under `~/.botnexus/secrets/`: the file name is the key, the file
+content is the value.
+
+**There is deliberately no read-by-key action.** That is the feature, not a gap. The
+`ConfigSecretMerge` scheme used for schema-declared secrets has to keep a read/restore channel
+open so a redacted `***` can round-trip back to the real value on save; this store has no such
+channel. An architecture test asserts by reflection that no action here returns secret content, so
+a future refactor cannot quietly turn a documented security property into a convenience feature.
+Recovering a forgotten value requires filesystem access on the gateway host.
+
+Keys must match `^[A-Za-z0-9._-]{1,128}$`; `.` and `..` are rejected outright. The charset is an
+allowlist, so `/`, `\` and `:` are not merely filtered but unrepresentable - a directory
+separator, a traversal segment and a drive-qualified path cannot be expressed. A rejected key
+writes nothing, anywhere.
+
+### GET /api/secrets
+
+**Description:** Lists stored secret keys with their timestamps and size, ordered by key. Every
+field is derived from the file name or its filesystem metadata - never from the file's content.
+There is no value, no prefix, no masked form (a mask leaks the length) and no hash (a hash is an
+offline-guessable oracle for a short secret).
+
+**Response:** `200 OK` with an array of secret descriptors.
+
+### PUT /api/secrets/{key}
+
+**Description:** Creates a secret, or overwrites an existing one wholesale. No part of the previous
+value is read, returned, or merged, so the caller must supply the complete new value.
+
+**Request body:** `{ "value": "<complete new value>" }`
+
+**Response:** `200 OK` with the written secret's descriptor.
+
+| Status | Condition |
+|--------|-----------|
+| `400 Bad Request` | No body was supplied, or the key does not match the permitted charset. |
+
+The key is written to the log; the value never is.
+
+### DELETE /api/secrets/{key}
+
+**Description:** Deletes the secret file. The key stops appearing in the list immediately.
+
+| Status | Condition |
+|--------|-----------|
+| `204 No Content` | Deleted. |
+| `404 Not Found` | No secret with that key exists. |
+| `400 Bad Request` | The key does not match the permitted charset. |
+
+> Secrets are files, not configuration. They do not appear in `GET /api/config`, they are not
+> copied into the config backup set, and they are not part of the config revision digest - so
+> nothing about a secret can leak through the config document. They are protected by owner-only
+> filesystem permissions and are **not** encrypted at rest.
 
 ---
 
