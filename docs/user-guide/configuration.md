@@ -762,7 +762,8 @@ Bridges the Microsoft 365 Agents SDK `Activity` protocol to BotNexus (Register t
 round-trip only). Inbound activities arrive on `inboundRoute` (default `/agent365/messages`); replies
 are sent through the SDK connector authenticated with the Entra app client credentials. BotNexus
 remains the response engine. See the extension page `docs/extensions/agent365.md` for the full config
-surface.
+surface, and [docs/features/agent365-onboarding.md](../features/agent365-onboarding.md) for tenant
+prerequisites, licensing, and blueprint provisioning.
 
 **TUI (Terminal UI):**
 ```json

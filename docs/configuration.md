@@ -897,7 +897,9 @@ The Agent 365 adapter bridges the Microsoft 365 Agents SDK `Activity` protocol t
 tier). It binds directly from the `channels:agent365` section (it does **not** use the generic
 `Channels.Instances` shape). The real option names come from `Agent365GatewayOptions`. See
 [docs/extensions/agent365.md](extensions/agent365.md) for the full surface and the Microsoft.Agents.*
-package / Microsoft.Extensions.* pin design note.
+package / Microsoft.Extensions.* pin design note, and
+[docs/features/agent365-onboarding.md](features/agent365-onboarding.md) for tenant prerequisites,
+licensing, and blueprint provisioning.
 
 ```json
 {

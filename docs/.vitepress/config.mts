@@ -222,6 +222,7 @@ export default defineConfig({
           { text: 'Model-Specific Instruction Files', link: '/features/model-specific-instruction-files' },
           { text: 'Model Awareness', link: '/features/model-awareness' },
           { text: 'Agent 365 Observability', link: '/features/agent365-observability' },
+          { text: 'Agent 365 Admin & Onboarding', link: '/features/agent365-onboarding' },
           { text: 'Session Consistency', link: '/features/session-consistency' },
           { text: 'Conversation Provenance', link: '/features/conversation-provenance' },
           { text: 'Conversation Cost', link: '/features/conversation-cost' },

@@ -97,6 +97,8 @@ which headers are set.
 
 ## Related
 
+- [Agent 365 Admin and Onboarding Guide](./agent365-onboarding.md) — tenant prerequisites, licensing,
+  blueprint provisioning, execution modes, and capability tiers.
 - [`docs/configuration.md`](../configuration.md) — full `telemetry` section reference.
 - [`docs/observability.md`](../observability.md) — the platform observability architecture.
 - [`docs/extensions/telemetry.md`](../extensions/telemetry.md) — the extension telemetry seam.
