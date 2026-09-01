@@ -2,17 +2,19 @@
 
 > **Audience:** Developers building coding agents or custom tools who need to understand how BotNexus enforces security boundaries.
 > **Prerequisites:** C#/.NET, familiarity with [agent events](agent-events.md) and [provider system](01-providers.md).
-> **Source code:** `src/coding-agent/BotNexus.CodingAgent/Utils/`, `Hooks/`, and `Tools/`
+> **Source code:** `src/gateway/BotNexus.Tools/` (the built-in tools and `Utils/PathUtils.cs`),
+> `src/gateway/BotNexus.Gateway/Security/` (path policy enforcement),
+> `src/agent/BotNexus.Agent.Core/Hooks/` (the tool-call hook contracts).
 
 ## What you'll learn
 
 1. Path containment (how tools are sandboxed)
 2. Symlink resolution and escape prevention
-3. Blocked paths and blocked commands
+3. The file access policy (allowed and denied paths)
 4. File mutation queue (serialized file access)
 5. Shell command safety
 6. Audit logging
-7. How to add safety hooks to a custom coding agent
+7. How to add safety hooks to a custom agent
 
 ---
 
@@ -22,50 +24,45 @@ BotNexus enforces a defense-in-depth model with three layers:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Layer 1: SafetyHooks (BeforeToolCall)              │
-│  ● Path containment validation                      │
-│  ● Blocked path enforcement                         │
-│  ● Shell command filtering                          │
-│  ● Payload size limits                              │
+│  Layer 1: BeforeToolCall hook                       │
+│  ● Policy interception before execution             │
+│  ● Can Block, or return Indeterminate (fails closed)│
 ├─────────────────────────────────────────────────────┤
 │  Layer 2: Tool-level enforcement                    │
-│  ● PathUtils.ResolvePath in every file tool         │
+│  ● IPathValidator.ValidateAndResolve in file tools  │
+│  ● PathUtils.ResolvePath for workspace containment  │
 │  ● FileMutationQueue for serialized writes          │
-│  ● Output truncation (2000 lines, 50 KB)           │
+│  ● Output truncation (2000 lines, 50 KB)            │
 │  ● Process timeout and tree kill                    │
 ├─────────────────────────────────────────────────────┤
-│  Layer 3: AuditHooks (AfterToolCall)                │
-│  ● Timing and call counting                         │
-│  ● Console logging of every tool execution          │
+│  Layer 3: AfterToolCall hook + IToolAuditSink       │
+│  ● Result transformation and redaction              │
+│  ● Durable tool-audit rows in session history       │
 └─────────────────────────────────────────────────────┘
 ```
 
-The hook chain in `CodingAgent.CreateAsync` wires these together:
+The hook contracts live in `src/agent/BotNexus.Agent.Core/Hooks/` and are invoked by
+`src/agent/BotNexus.Agent.Core/Loop/ToolExecutor.cs`. A hook is a delegate on `AgentOptions`:
 
 ```csharp
-// Simplified from CodingAgent.cs
-BeforeToolCall = async (context, ct) =>
+// BeforeToolCallContext / BeforeToolCallResult, verbatim shapes:
+public record BeforeToolCallContext(
+    AssistantAgentMessage AssistantMessage,
+    ToolCallContent ToolCallRequest,
+    IReadOnlyDictionary<string, object?> ValidatedArgs,
+    AgentContext AgentContext);
+
+public record BeforeToolCallResult(bool Block, string? Reason = null)
 {
-    // 1. SafetyHooks — can block the call
-    var safetyResult = await SafetyHooks.ValidateAsync(context, config);
-    if (safetyResult is { Block: true }) return safetyResult;
-
-    // 2. Extension hooks — can observe but don't block writes
-    var extensionResult = await extensionRunner.OnToolCallAsync(context, ct);
-    return extensionResult;
-};
-
-AfterToolCall = async (context, ct) =>
-{
-    // 3. AuditHooks — logs and times the call
-    var auditResult = await auditHooks.AuditAsync(context);
-
-    // 4. Extension post-hooks
-    var extensionResult = await extensionRunner.OnToolResultAsync(context, ct);
-
-    return MergeAfterResults(auditResult, extensionResult);
-};
+    public bool IsIndeterminate { get; init; }
+    public bool IsUnambiguousAllow => !Block && !IsIndeterminate;
+    public static BeforeToolCallResult Indeterminate(string? reason = null);
+}
 ```
+
+Returning `null` means "no opinion, allow". `Block: true` is a positive deny. `Indeterminate` is the
+*absence* of a decision — introduced by issue #2476 so an approval provider whose quorum failed
+cannot have its silence coerced into an auto-approve. The executor fails closed on it.
 
 ---
 
@@ -73,7 +70,8 @@ AfterToolCall = async (context, ct) =>
 
 ### PathUtils.ResolvePath
 
-`PathUtils.ResolvePath()` (`Utils/PathUtils.cs`) is the core security gate. Every file tool calls it before any file operation.
+`PathUtils.ResolvePath()` (`src/gateway/BotNexus.Tools/Utils/PathUtils.cs`) is the workspace
+containment gate. Every file tool calls it before any file operation.
 
 ```csharp
 public static string ResolvePath(string relative, string workingDirectory)
@@ -92,8 +90,8 @@ public static string ResolvePath(string relative, string workingDirectory)
 
 ```csharp
 // Working directory: /home/user/project
-PathUtils.ResolvePath("src/main.cs", "/home/user/project");
-// → "/home/user/project/src/main.cs" ✅
+PathUtils.ResolvePath("notes/todo.txt", "/home/user/project");
+// → "/home/user/project/notes/todo.txt" ✅
 
 PathUtils.ResolvePath("../../etc/passwd", "/home/user/project");
 // → throws InvalidOperationException ❌ (escapes working directory)
@@ -139,95 +137,69 @@ All built-in tools validate paths through `ResolvePath` before any operation:
 | `GrepTool` | `ResolvePath(args["path"], workingDir)` before searching |
 | `GlobTool` | `ResolvePath(args["path"], workingDir)` before globbing |
 | `ListDirectoryTool` | `ResolvePath(args["path"], workingDir)` before listing |
-| `ShellTool` | Not path-based, but constrained by command filtering |
+| `ShellTool` | Not path-based, but constrained by the working directory and timeouts |
+
+Every one of those six tools also calls `IPathValidator.ValidateAndResolve` — that is the policy
+gate, described next. `ResolvePath` answers "is this inside the workspace"; `ValidateAndResolve`
+answers "does the configured policy permit this access".
 
 ---
 
-## Blocked paths and blocked commands
+## File access policy
 
-### Blocked paths
+### The policy record
 
-`CodingAgentConfig.BlockedPaths` defines paths that tools cannot write to or edit, even if they're within the working directory:
-
-```json
-// .botnexus-agent/config.json
-{
-  "blockedPaths": [
-    ".env",
-    "secrets/",
-    "/etc/passwd"
-  ]
-}
-```
-
-Paths can be:
-- **Relative** — resolved against the working directory (e.g., `.env` → `/project/.env`)
-- **Absolute** — used as-is (e.g., `/etc/passwd`)
-- **Directory prefixes** — blocks everything under that directory (e.g., `secrets/` blocks `secrets/api-key.txt`)
-
-**Enforcement** in `SafetyHooks.ValidateAsync`:
+Path permissions are carried by `FileAccessPolicy`
+(`src/domain/BotNexus.Domain/Gateway/Security/FileAccessPolicy.cs`), which has exactly three members:
 
 ```csharp
-// Simplified from SafetyHooks.cs
-public async Task<BeforeToolCallResult?> ValidateAsync(
-    BeforeToolCallContext context, CodingAgentConfig config)
+public sealed record FileAccessPolicy
 {
-    if (context.ToolCallRequest.Name is "write" or "edit")
-    {
-        var path = context.ValidatedArgs["path"]?.ToString();
-        var resolved = PathUtils.ResolvePath(path, config.WorkingDirectory());
-
-        // Check blocked paths
-        if (IsBlockedPath(resolved, config))
-            return new BeforeToolCallResult(Block: true,
-                Reason: $"Path is blocked by configuration: {path}");
-
-        // Check escape
-        // (redundant with ResolvePath, but defense-in-depth)
-    }
-    return null;
+    public IReadOnlyList<string> AllowedReadPaths { get; init; } = [];
+    public IReadOnlyList<string> AllowedWritePaths { get; init; } = [];
+    public IReadOnlyList<string> DeniedPaths { get; init; } = [];
 }
 ```
 
-The `IsBlockedPath` method compares the resolved absolute path against each entry in `BlockedPaths` using a `StartsWith` check with directory boundary awareness.
+It is attached to an agent via `AgentDescriptor` and surfaced through the platform config
+(`src/gateway/BotNexus.Gateway.Configuration/`). Workspace-relative entries are re-anchored onto the
+agent's workspace path, so a policy keeps its meaning when copied onto a different agent.
 
-### Blocked commands
+### Enforcement
 
-`SafetyHooks` blocks hardcoded dangerous shell patterns:
+`DefaultPathValidator` (`src/gateway/BotNexus.Gateway/Security/DefaultPathValidator.cs`) implements
+`IPathValidator`:
 
 ```csharp
-// Hardcoded blocked patterns (case-insensitive):
-"rm -rf /"
-"format"
-"del /s /q"
-```
-
-### Allowed commands whitelist
-
-`CodingAgentConfig.AllowedCommands` provides an optional whitelist. When set (non-empty), only commands whose prefix matches an entry are permitted:
-
-```json
-// .botnexus-agent/config.json
+public interface IPathValidator
 {
-  "allowedCommands": [
-    "dotnet",
-    "git",
-    "npm"
-  ]
+    bool CanRead(string absolutePath);
+    bool CanWrite(string absolutePath);
+    string? ValidateAndResolve(string rawPath, FileAccessMode mode);
 }
 ```
 
-If `AllowedCommands` is empty (the default), all commands are allowed except the hardcoded blocked patterns.
+`ValidateAndResolve` returns `null` on refusal — there is no exception to swallow, so a caller that
+ignores the result silently loses the check. Its two phases matter:
 
-### Payload size limits
+1. **Lexical resolution and policy check.** `Path.GetFullPath` collapses `..` segments, then
+   `CanRead`/`CanWrite` tests the result against the allow lists and `DeniedPaths`.
+2. **Link-following re-check.** `Path.GetFullPath` collapses `..` *lexically, without resolving
+   links*, so `<symlink>/../<target>` can appear to stay inside the root while the OS resolves the
+   link first and lands outside it. The validator re-walks the raw path segment by segment,
+   following links as the OS would, and re-checks containment on the real final target.
 
-`SafetyHooks` warns (but doesn't block) when a write tool payload exceeds 1 MB.
+When no policy is supplied (or the policy is empty), the validator operates in **workspace-only**
+mode: the agent's workspace is the entire permitted surface.
+
+Path comparison is platform-aware here — `OrdinalIgnoreCase` on Windows, `Ordinal` on Unix.
 
 ---
 
 ## File mutation queue
 
-`FileMutationQueue` (`Tools/FileMutationQueue.cs`) prevents concurrent writes to the same file. This is critical when `ToolExecutionMode.Parallel` is enabled.
+`FileMutationQueue` (`src/gateway/BotNexus.Tools/FileMutationQueue.cs`) prevents concurrent writes to
+the same file. This is critical when `ToolExecutionMode.Parallel` is enabled.
 
 ```csharp
 public sealed class FileMutationQueue
@@ -270,24 +242,31 @@ public async Task<AgentToolResult> ExecuteAsync(
 
 ## Shell command safety
 
-`ShellTool` (`Tools/ShellTool.cs`) executes shell commands with multiple safety layers.
+`ShellTool` (`src/gateway/BotNexus.Tools/ShellTool.cs`) executes shell commands with multiple safety
+layers.
 
 ### Platform detection
 
-```csharp
-// Windows: prefers Git Bash, falls back to PowerShell with warning
-// Unix/macOS: uses /bin/bash
-```
+The shell is chosen by a `ShellPreference`, which also determines the tool's advertised name
+(`shell` for `Pwsh`, `bash` otherwise):
 
-On Windows, the tool checks for Git Bash at `C:\Program Files\Git\bin\bash.exe`. If unavailable, it falls back to PowerShell and logs a warning.
+| `ShellPreference` | Behaviour |
+|---|---|
+| `Auto` (default) | Tries bash first; falls back to pwsh with a warning |
+| `Pwsh` | Uses PowerShell Core (`pwsh`) on all platforms |
+| `Bash` | Always bash; falls back to pwsh with a warning if not found |
+
+On Windows the bash probe checks `C:\Program Files\Git\bin\bash.exe` and the `(x86)` variant. If
+neither is present, it falls back to pwsh and prefixes the output with a warning.
 
 ### Timeout enforcement
 
-Every command has a configurable timeout (default: 600 seconds):
+Every command has a configurable timeout (default: 600 seconds), clamped to a ceiling of
+`ShellTool.DefaultMaxTimeoutSeconds` (3600):
 
 ```csharp
 // Tool parameters include:
-// "timeout" (optional, int) — seconds, default: 600
+// "timeout" (optional, int) — seconds, default: 600, ceiling: 3600
 ```
 
 When a command exceeds its timeout:
@@ -298,9 +277,9 @@ When a command exceeds its timeout:
 
 ### Output truncation
 
-Shell output is capped at:
+Shell output is capped at `MaxOutputLines` and `MaxOutputBytes`:
 - **2,000 lines maximum**
-- **50 KB maximum**
+- **51,200 bytes (50 KB) maximum**
 
 If output exceeds these limits, it is truncated with a notification appended.
 
@@ -320,64 +299,54 @@ This is attached to the `AgentToolResult.Details` field for inspection by hooks 
 
 ### Exit code capture
 
-The `AfterToolCall` hook in `CodingAgent.cs` reads the exit code from `ShellToolDetails` for audit logging:
+An `AfterToolCall` hook reads the exit code from `ShellToolDetails`, which is attached to
+`AgentToolResult.Details`:
 
 ```csharp
-// Simplified from CodingAgent.ExecuteAfterHookAsync
-if (context.ToolCallRequest.Name == "bash" && context.Result.Details is ShellToolDetails details)
+if (context.Result.Details is ShellToolDetails details)
 {
-    // Exit code available for audit
+    // details.ExitCode, details.TimedOut, details.IsError
 }
 ```
+
+Note the tool's name is `shell` under `ShellPreference.Pwsh` and `bash` otherwise, so a hook that
+matches on the name must handle both.
 
 ---
 
 ## Audit logging
 
-`AuditHooks` (`Hooks/AuditHooks.cs`) logs every tool execution for observability.
+Durable tool auditing is the responsibility of `IToolAuditSink`
+(`src/gateway/BotNexus.Gateway/Audit/IToolAuditSink.cs`), introduced by issue #2614. It is the
+**single execution-layer sink** both transports write through:
 
-### How it works
+- **Streaming callers** use the start/result/incomplete renderers as events arrive.
+- **Blocking `PromptAsync` callers** hand the settled `ToolInvocationRecord` timeline (the #2613
+  shared record) to `ProjectBlockingRun`.
 
-```csharp
-public sealed class AuditHooks
-{
-    public AuditHooks(bool verbose = true);
+Both routes emit `MessageRole.Tool` session-history rows of the same shape, so removing the sink call
+from either path removes the audit record entirely — which is exactly what the #2614 mutation tests
+assert. Before #2614 the audit guarantee depended on which transport the caller happened to pick.
 
-    public bool Verbose { get; }
-    public int ToolCallCount { get; }  // Atomically incremented
+Write-ahead behaviour (so an interrupted invocation still leaves a record) lives in
+`ToolAuditWriteAhead.cs` alongside it. A tool may be exempted from auditing with
+`ToolAuditExemptAttribute`.
 
-    public void RegisterToolCallStart(string toolCallId);
-    public Task<AfterToolCallResult?> AuditAsync(AfterToolCallContext context);
-}
-```
+### Adding your own observability
 
-1. **Before execution:** `RegisterToolCallStart(toolCallId)` records the start time in a `ConcurrentDictionary`.
-2. **After execution:** `AuditAsync(context)` calculates duration, increments the call counter, and logs.
-
-### Log format
-
-When `Verbose` is enabled, each tool call produces a console log:
-
-```
-[audit] tool=read status=succeeded durationMs=45 calls=3
-[audit] tool=bash status=failed durationMs=5023 calls=4
-```
-
-### Integrating with custom logging
-
-Since `AuditHooks` is wired as an `AfterToolCall` hook, you can replace or extend it:
+The audit sink is a gateway concern and should not be replaced. To add per-call logging on top,
+attach an `AfterToolCall` hook — it can observe, transform, filter or redact the result before it
+reaches the LLM, and returning `null` leaves the result untouched:
 
 ```csharp
 AfterToolCall = async (context, ct) =>
 {
-    // Your custom logging
     await myLogger.LogToolCallAsync(
         context.ToolCallRequest.Name,
         context.IsError,
         context.Result);
 
-    // Still run the built-in audit
-    return await auditHooks.AuditAsync(context);
+    return null; // do not alter the result
 };
 ```
 
@@ -390,7 +359,7 @@ All file-reading and searching tools enforce consistent output limits:
 | Tool | Line limit | Size limit | Per-line limit |
 |---|---|---|---|
 | `ReadTool` | 2,000 lines | 50 KB | — |
-| `GrepTool` | 100 matches | 50 KB | 500 chars |
+| `GrepTool` | 100 matches (default), 1,000 max | 50 KB | 500 chars |
 | `GlobTool` | 1,000 matches | — | — |
 | `ListDirectoryTool` | 500 entries | 50 KB | — |
 | `ShellTool` | 2,000 lines | 50 KB | — |
@@ -413,7 +382,7 @@ These limits prevent the LLM context from being flooded with large tool outputs.
 
 ---
 
-## How to add safety hooks to a custom coding agent
+## How to add safety hooks to a custom agent
 
 ### Step 1: Define your safety policy
 
@@ -549,7 +518,9 @@ var agent = new Agent(new AgentOptions
 
 When implementing a custom `IAgentTool`:
 
-- [ ] **Call `PathUtils.ResolvePath`** for any file path argument before using it
+- [ ] **Call `IPathValidator.ValidateAndResolve`** for any file path argument, and treat a `null`
+      return as a refusal — it is the only signal you get
+- [ ] **Call `PathUtils.ResolvePath`** for workspace containment before using a path
 - [ ] **Use `FileMutationQueue.Shared`** for any file write operation
 - [ ] **Set process timeouts** for any subprocess execution
 - [ ] **Kill the process tree** when cancelling subprocesses, not just the parent
@@ -563,6 +534,6 @@ When implementing a custom `IAgentTool`:
 ## Further reading
 
 - [Agent event system](agent-events.md) — hook system and event lifecycle
-- [Building your own agent](04-building-your-own.md) — how CodingAgent wires safety
+- [Building your own agent](04-building-your-own.md) — how an agent wires safety hooks
 - [Provider system](01-providers.md) — LLM communication layer
 - [Glossary](05-glossary.md) — all key terms
