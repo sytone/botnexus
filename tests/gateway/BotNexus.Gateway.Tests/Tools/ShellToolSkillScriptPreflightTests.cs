@@ -100,6 +100,12 @@ public sealed class ShellToolSkillScriptPreflightTests : IDisposable
     [InlineData("pwsh -NoProfile -File '{0}' | Select-Object -First 1", "wrapper-ok")]              // clause 2
     [InlineData("pwsh -NoProfile -File '{0}' 2>&1", "wrapper-ok")]                                  // clause 3
     [InlineData("$x = (& pwsh -NoProfile -File '{0}'); Write-Output $x", "wrapper-ok")]             // clause 4
+    // Issue #3754 (AC3): the chain operators, previously named in the acceptance criteria but never
+    // exercised end-to-end through the tool. `&&` short-circuits on success, so 'after-and' proves
+    // the wrapper ran AND the preflight did not refuse the call.
+    [InlineData("pwsh -NoProfile -File '{0}' && Write-Output 'after-and'", "after-and")]
+    // An unquoted path before a separator - the corpus-dominant shape (671 absorbed ';').
+    [InlineData("pwsh -NoProfile -File {0}; Write-Output 'after-bare-semicolon'", "after-bare-semicolon")]
     public async Task ExecuteAsync_ExistingScriptFollowedByATerminator_Executes(string template, string expected)
     {
         var scripts = CreateTeamsSkill();
@@ -137,6 +143,32 @@ public sealed class ShellToolSkillScriptPreflightTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_FileSwitchBeforeAChainOperator_IsNeverAScriptPath()
+    {
+        // Issue #3754. `-File` as the LAST element of a non-pwsh command, immediately before `&&`,
+        // is the worst case for a text-splitting extractor: there is no following token in the same
+        // command at all, so the naive reader reaches across the operator into the next command.
+        //
+        // Non-vacuity: asserting only "no exception" would pass for an extractor that bound nothing
+        // for an unrelated reason, so the assertion requires the OUTPUT of both sides of the chain -
+        // the directory listing and the right-hand command - proving the whole line executed.
+        var scripts = CreateTeamsSkill();
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+
+        var result = await tool.ExecuteAsync(
+            "gci-file-switch-chain",
+            new Dictionary<string, object?>
+            {
+                ["command"] = $"Get-ChildItem '{scripts}' -File | Select-Object -First 1 -ExpandProperty Name && Write-Output 'chain-ran'"
+            });
+
+        var output = result.Content[0].Value;
+        output.ShouldContain(".ps1");
+        output.ShouldContain("chain-ran");
+        output.ShouldNotContain("Script not found");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_MissingScriptFollowedByASeparator_StillRefusesWithACleanPath()
     {
         // Clause 6. The fix must not weaken the guard: a genuinely absent script is still refused.
@@ -159,6 +191,9 @@ public sealed class ShellToolSkillScriptPreflightTests : IDisposable
         ex.Message.ShouldNotContain(missing + "|");
         ex.Message.ShouldNotContain(missing + ")");
         ex.Message.ShouldNotContain(missing + " 2>&1");
+        // Issue #3754 (AC3): the chain operators must not survive into the reported path either.
+        ex.Message.ShouldNotContain(missing + "&&");
+        ex.Message.ShouldNotContain(missing + " &&");
     }
 
     [Fact]

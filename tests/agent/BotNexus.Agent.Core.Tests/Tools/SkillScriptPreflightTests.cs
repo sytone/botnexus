@@ -256,6 +256,16 @@ public class SkillScriptPreflightTests
     [InlineData("pwsh -NoProfile -File 'C:\\s\\get-token.ps1' 2>&1", "C:\\s\\get-token.ps1")]
     // Clause 4: a call-operator invocation inside a parenthesised assignment still binds cleanly.
     [InlineData("$x = (& pwsh -NoProfile -File 'C:\\s\\get-token.ps1')", "C:\\s\\get-token.ps1")]
+    // Issue #3754 (AC3): the pipeline-chain operators. `&&` and `||` were named in #3566's
+    // acceptance criteria but never pinned by a test, so nothing prevented a future extractor
+    // regression from gluing "&&" onto the path exactly as ";" and "|" once were.
+    [InlineData("pwsh -NoProfile -File 'C:\\s\\get-token.ps1' && Write-Output 'ok'", "C:\\s\\get-token.ps1")]
+    [InlineData("pwsh -NoProfile -File 'C:\\s\\get-token.ps1' || Write-Output 'fallback'", "C:\\s\\get-token.ps1")]
+    // An UNQUOTED path followed by a separator is the shape that dominated the corpus: 671 of the
+    // absorbed characters were ';', and an unquoted token is precisely what a text-splitter runs
+    // together with the separator that follows it.
+    [InlineData("pwsh -NoProfile -File C:\\s\\get-token.ps1; Get-Date", "C:\\s\\get-token.ps1")]
+    [InlineData("pwsh -NoProfile -File C:\\s\\get-token.ps1 | Select-Object -First 1", "C:\\s\\get-token.ps1")]
     public void TryGetFileTargetFromCommandLine_TerminatorAfterPath_BindsPathWithoutTheTerminator(
         string command,
         string expected)
@@ -280,6 +290,14 @@ public class SkillScriptPreflightTests
     [InlineData("Get-ChildItem -Path 'C:\\s' -File")]
     // A -File on a non-PowerShell executable is equally not a script path.
     [InlineData("git ls-files -File")]
+    // Issue #3754 (AC2): the VERBATIM command from the reproduction, character for character,
+    // including the -ExpandProperty tail. This is the command that produced
+    // "Script not found: <workspace>\|" on the running gateway.
+    [InlineData("Get-ChildItem 'C:\\Users\\jobullen\\.botnexus\\scripts' -Filter '*.ps1' -File | Select-Object -First 2 -ExpandProperty Name")]
+    // -File as a trailing switch immediately before a chain operator: nothing may be bound from the
+    // operator, nor from the command on its right-hand side.
+    [InlineData("Get-ChildItem -Recurse -File && Write-Output 'ok'")]
+    [InlineData("Get-ChildItem -Recurse -File; Get-Date")]
     public void TryGetFileTargetFromCommandLine_FileSwitchOnAnotherCommand_ReturnsFalse(string command)
     {
         SkillScriptPreflight.TryGetFileTargetFromCommandLine(command, out var path).ShouldBeFalse();
