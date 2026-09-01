@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using BotNexus.Agent.Providers.Core.Utilities;
@@ -80,9 +81,13 @@ public static class CopilotOAuth
 
         // Step 3: Poll for authorization
         var pollInterval = Math.Max(interval, 1);
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
+        // #3738: the device-code window is bounded monotonically. A backwards host clock step would
+        // otherwise extend polling past the code's real expiry (the server rejects the code anyway, so
+        // the loop would spin until cancelled); a forward step would abandon a still-valid code early.
+        var expiry = TimeSpan.FromSeconds(expiresIn);
+        var elapsed = Stopwatch.StartNew();
 
-        while (DateTimeOffset.UtcNow < deadline)
+        while (elapsed.Elapsed < expiry)
         {
             ct.ThrowIfCancellationRequested();
             await Task.Delay(TimeSpan.FromSeconds(pollInterval), ct);

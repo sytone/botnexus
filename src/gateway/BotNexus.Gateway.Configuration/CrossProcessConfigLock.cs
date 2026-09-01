@@ -60,18 +60,47 @@ internal sealed class CrossProcessConfigLock : IDisposable
     /// Acquires the cross-process lock guarding <paramref name="configPath"/>, retrying with
     /// bounded backoff until the timeout elapses.
     /// </summary>
+    /// <param name="timeProvider">
+    /// Clock source for the acquisition bound. Defaults to <see cref="TimeProvider.System"/>; only the
+    /// MONOTONIC surface (<see cref="TimeProvider.GetTimestamp"/>) is consulted, never
+    /// <see cref="TimeProvider.GetUtcNow"/>. Exposed as a test seam so a regression test can step the
+    /// wall clock independently of elapsed time (#3738).
+    /// </param>
+    /// <param name="timeoutMsOverride">
+    /// Acquisition budget in milliseconds, bypassing <see cref="TimeoutEnvironmentVariable"/>. A test
+    /// seam: the environment variable is process-global, so a test that mutated it would race every
+    /// other test in the same assembly.
+    /// </param>
+    /// <remarks>
+    /// <para><b>#3738 - the bound is measured monotonically.</b> This previously computed an absolute
+    /// <c>DateTime.UtcNow.AddMilliseconds(timeoutMs)</c> instant and compared <c>UtcNow</c> against it.
+    /// The wall clock is not monotonic: an NTP correction, a VM resume, or a container host time sync
+    /// can step it. A BACKWARDS step pushes the deadline further away in wall-clock terms, so a
+    /// 10-second bounded acquire becomes an unbounded one - the loop polls forever and the config write
+    /// path hangs. A FORWARDS step expires the wait early and raises
+    /// <see cref="PlatformConfigLockTimeoutException"/> for a lock that was never contended for the
+    /// declared duration. Elapsed time is now read from the monotonic timestamp source, which no clock
+    /// adjustment can move. This matches the already-correct sibling drain in
+    /// <c>SupervisorSessionRunDrain</c>.</para>
+    /// </remarks>
     /// <exception cref="PlatformConfigLockTimeoutException">The lock was still held at timeout.</exception>
     public static async Task<CrossProcessConfigLock> AcquireAsync(
-        string configPath, IFileSystem fileSystem, CancellationToken ct)
+        string configPath,
+        IFileSystem fileSystem,
+        CancellationToken ct,
+        TimeProvider? timeProvider = null,
+        int? timeoutMsOverride = null)
     {
+        var clock = timeProvider ?? TimeProvider.System;
         var lockPath = ResolveLockPath(configPath, fileSystem);
-        var timeoutMs = ResolveTimeoutMs();
+        var timeoutMs = timeoutMsOverride ?? ResolveTimeoutMs();
 
         var directory = fileSystem.Path.GetDirectoryName(lockPath);
         if (!string.IsNullOrWhiteSpace(directory))
             fileSystem.Directory.CreateDirectory(directory);
 
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        var startedAt = clock.GetTimestamp();
+        var timeout = TimeSpan.FromMilliseconds(timeoutMs);
         var delayMs = 5;
         while (true)
         {
@@ -84,7 +113,7 @@ internal sealed class CrossProcessConfigLock : IDisposable
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                if (DateTime.UtcNow >= deadline)
+                if (clock.GetElapsedTime(startedAt) >= timeout)
                     throw new PlatformConfigLockTimeoutException(configPath, timeoutMs, ex);
             }
 

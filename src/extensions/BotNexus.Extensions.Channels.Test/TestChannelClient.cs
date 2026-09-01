@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -143,11 +144,13 @@ public sealed class TestChannelClient : IDisposable
         TimeSpan? pollInterval = null,
         CancellationToken cancellationToken = default)
     {
-        var deadline = DateTimeOffset.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
+        // #3738: bounded monotonically so a host clock step cannot extend or shorten the wait.
+        var budget = timeout ?? TimeSpan.FromSeconds(5);
+        var elapsed = Stopwatch.StartNew();
         var interval = pollInterval ?? TimeSpan.FromMilliseconds(100);
         IReadOnlyList<TestChannelOutboundRecord> seen = [];
 
-        while (DateTimeOffset.UtcNow < deadline)
+        while (elapsed.Elapsed < budget)
         {
             seen = await GetOutboundAsync(address, cancellationToken);
 

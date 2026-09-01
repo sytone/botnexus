@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -564,13 +565,22 @@ public sealed class LocationsController(
         return false;
     }
 
+    /// <summary>
+    /// Polls <paramref name="predicate"/> against the current config for up to two seconds, so a caller
+    /// observes its own write after the options monitor has reloaded.
+    /// </summary>
+    /// <remarks>
+    /// #3738: the two-second bound is measured with <see cref="Stopwatch"/>, not a
+    /// <c>DateTimeOffset.UtcNow</c>-derived absolute instant, so a host wall-clock step (NTP correction,
+    /// VM resume, container host time sync) can neither extend this wait nor expire it early.
+    /// </remarks>
     private async Task WaitForConfigConditionAsync(Func<PlatformConfig, bool> predicate, CancellationToken cancellationToken)
     {
         if (predicate(configOptions.CurrentValue))
             return;
 
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-        while (DateTimeOffset.UtcNow < deadline)
+        var elapsed = Stopwatch.StartNew();
+        while (elapsed.Elapsed < TimeSpan.FromSeconds(2))
         {
             cancellationToken.ThrowIfCancellationRequested();
             await Task.Delay(50, cancellationToken);

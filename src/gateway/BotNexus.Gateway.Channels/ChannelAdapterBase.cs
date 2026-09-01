@@ -159,12 +159,20 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     /// Waits, bounded by <see cref="DrainTimeout"/>, for inbound dispatches that are already past
     /// the dispatcher read to complete (#3594).
     /// </summary>
+    /// <remarks>
+    /// #3738: the bound is measured with <see cref="Stopwatch"/> rather than a
+    /// <c>DateTimeOffset.UtcNow</c>-derived absolute instant. The wall clock can be stepped by an NTP
+    /// correction, a VM resume, or a container host time sync; a BACKWARDS step moves the deadline
+    /// further away and this loop - which polls every 10ms and has no other exit - would never reach
+    /// it, hanging channel stop and therefore gateway shutdown past its declared 5s bound.
+    /// <see cref="Stopwatch"/> is monotonic and no clock adjustment can move it.
+    /// </remarks>
     private async Task DrainInFlightDispatchesAsync()
     {
-        var deadline = DateTimeOffset.UtcNow + DrainTimeout;
+        var elapsed = Stopwatch.StartNew();
         while (Volatile.Read(ref _inFlightDispatches) > 0)
         {
-            if (DateTimeOffset.UtcNow >= deadline)
+            if (elapsed.Elapsed >= DrainTimeout)
             {
                 Logger.LogWarning(
                     "Channel adapter '{ChannelType}' still had {InFlightCount} inbound dispatch(es) in flight after {DrainSeconds}s; releasing the dispatcher anyway",

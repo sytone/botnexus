@@ -449,8 +449,10 @@ internal sealed class ServeCommand
         for (var i = seconds; i > 0; i--)
         {
             Console.Write($"\r   Restarting in {i}... ");
-            var deadline = DateTime.UtcNow.AddSeconds(1);
-            while (DateTime.UtcNow < deadline)
+            // #3738: the one-second tick is measured monotonically. A backwards host clock step would
+            // otherwise stall this inner spin indefinitely, wedging the restart countdown.
+            var tick = Stopwatch.StartNew();
+            while (tick.Elapsed < TimeSpan.FromSeconds(1))
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
