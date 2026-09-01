@@ -85,7 +85,7 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
       "allowedOrigins": ["http://localhost:3000", "https://app.example.com"]
     },
     "rateLimit": {
-      "requestsPerMinute": 60,
+      "requestsPerMinute": 300,
       "windowSeconds": 60
     },
     "logLevel": "Information",
@@ -117,7 +117,7 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `auxiliary.titling.model` | string | `gpt-5.6-luna` | Auxiliary model ID for title generation; defaults to a fast non-reasoning model. Null uses the first registered model (unsafe with a reasoning model — it yields an empty title) |
 | `auxiliary.titling.timeoutSeconds` | int | `30` | Per-call titling timeout; non-positive falls back to 30 |
 | `cors.allowedOrigins` | array | `[]` | Allowed CORS origins for browser clients |
-| `rateLimit.requestsPerMinute` | int | `60` | Max requests per client per minute |
+| `rateLimit.requestsPerMinute` | int | `300` | Max requests per client per minute |
 | `rateLimit.windowSeconds` | int | `60` | Rate limit window size in seconds |
 | `rateLimit.maxEntries` | int | `10000` | Max distinct client windows tracked in memory; bounds the per-client dictionary so a flood of distinct clients cannot exhaust gateway memory. Actively rate-limited windows are never evicted. Non-positive disables the cap. |
 | `logLevel` | string | `Information` | Logging level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical` |
@@ -1068,7 +1068,7 @@ A background cleanup service expires and prunes old sessions.
 {
   "gateway": {
     "rateLimit": {
-      "requestsPerMinute": 60,
+      "requestsPerMinute": 300,
       "windowSeconds": 60
     }
   }

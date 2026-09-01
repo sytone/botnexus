@@ -136,7 +136,7 @@ The `/health` endpoint is exempt from rate limiting.
 {
   "gateway": {
     "rateLimit": {
-      "requestsPerMinute": 60,
+      "requestsPerMinute": 300,
       "windowSeconds": 60
     }
   }
