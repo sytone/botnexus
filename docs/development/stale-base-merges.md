@@ -51,10 +51,22 @@ every rule class that a stale base can defeat.
 
 ### `main-health` (schedule / manual)
 
-Runs every 15 minutes. It reads the latest `CI: Build & Test` conclusion for `main` and, if it
-is `failure`, emits a workflow `::error::` annotation naming the red commit and run ID, and
-fails. A red `main` therefore announces itself within one gate cycle instead of being discovered
-by whoever happens to open the next unrelated PR.
+Scheduled at `*/15 * * * *`. It reads the latest `CI: Build & Test` conclusion for `main` and,
+if it is `failure`, emits a workflow `::error::` annotation naming the red commit and run ID,
+and fails. A red `main` therefore announces itself on its own, instead of waiting to be
+discovered by whoever happens to open the next unrelated PR.
+
+**The cadence is best-effort, and in practice it is far below the declared one.** GitHub queues
+`schedule` events on a best-effort basis and drops them under load. Measured over a 147-hour
+window this workflow fired **46** scheduled runs against the ~588 implied by `*/15` — about 8%
+of its nominal rate — with observed gaps between consecutive runs ranging from **2.2 to 11.4
+hours**. In the 2026-08-30 incident the break landed at 20:59Z and the first failing probe ran
+at 22:46Z, 1 h 47 m later.
+
+So treat this job as a **multi-hour backstop, not a 15-minute alarm**. In particular, the
+absence of a recent failing run is not evidence that `main` is green — it is at least as likely
+that the probe has not run. Check the newest `CI: Build & Test` conclusion for `main` directly
+when freshness matters. See #3715 for the measurement and the proposed fix.
 
 ### Inherited vs introduced
 
