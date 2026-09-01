@@ -1244,9 +1244,9 @@ dotnet run -- --agent mybot "What's in SOUL.md?"
 
 ## Implementation References
 
-- **AgentWorkspace**: `src/BotNexus.Agent/AgentWorkspace.cs`
-- **WorkspaceContextBuilder**: `src/BotNexus.Agent/WorkspaceContextBuilder.cs`
-- **MemoryStore**: `src/BotNexus.Agent/MemoryStore.cs`
-- **Memory Tools**: `src/BotNexus.Agent/Tools/MemorySearchTool.cs`, `MemorySaveTool.cs`, `MemoryGetTool.cs`
-- **Configuration**: `src/BotNexus.Core/Configuration/AgentConfig.cs`, `BotNexusHome.cs`
-- **Abstractions**: `src/BotNexus.Core/Abstractions/IAgentWorkspace.cs`, `IContextBuilder.cs`, `IMemoryStore.cs`
+- **AgentWorkspace**: `src/gateway/BotNexus.Gateway.Contracts/Agents/AgentWorkspace.cs`
+- **WorkspaceContextBuilder**: `src/gateway/BotNexus.Gateway/Agents/WorkspaceContextBuilder.cs`
+- **Memory store**: `src/gateway/BotNexus.Memory/SqliteMemoryStore.cs` (the concrete store; there is no `MemoryStore.cs`)
+- **Memory Tools**: `src/gateway/BotNexus.Memory/Tools/MemorySearchTool.cs`, `MemorySaveTool.cs`, `MemoryGetTool.cs`
+- **Configuration**: `src/gateway/BotNexus.Gateway.Configuration/BotNexusHome.cs`, `AgentConfigurationHostedService.cs`
+- **Abstractions**: `src/gateway/BotNexus.Gateway.Contracts/Agents/IContextBuilder.cs`, `src/gateway/BotNexus.Memory/IMemoryStore.cs`
