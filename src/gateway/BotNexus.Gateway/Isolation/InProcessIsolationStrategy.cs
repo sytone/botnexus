@@ -614,7 +614,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         };
         IAgentHandle handle = inProcessHandle;
 
-        _logger.LogWarning(
+        // #3746: Debug, not Warning. This sits unconditionally on the SUCCESS return path - there is
+        // no failure semantics here for an operator to act on, and at fleet scale it produced 44% of
+        // every warning the gateway emitted (671 lines/day), making the WRN channel useless as a
+        // health signal. Information would still be redundant: the caller already records the same
+        // lifecycle event at INFO ("Created agent instance '{AgentId}' for session '{SessionId}'
+        // (isolation: in-process)"). What this line adds over that one is the resolved tool roster,
+        // which is diagnostic detail - exactly what Debug is for. Same defect class as #2751.
+        _logger.LogDebug(
             "Created agent handle for '{AgentId}' session '{SessionId}' with {ToolCount} tools: {ToolNames}",
             descriptor.AgentId, context.SessionId, tools.Count,
             string.Join(", ", tools.Select(t => t.Name)));
