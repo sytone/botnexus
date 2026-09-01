@@ -2053,8 +2053,8 @@ botnexus prompt run <TEMPLATE> [OPTIONS]
 | Option | Description |
 |---|---|
 | `--param <KEY=VALUE>` | Template parameter as `key=value`. Repeat for multiple values. |
-| `--agent <ID>` | Target agent ID. Falls back to `gateway.defaultAgentId` if not specified. |
-| `--session <ID>` | Optional session ID for conversation continuity. If omitted, a new session is created. |
+| `--agent <ID>` | Target agent ID. Falls back to `gateway.defaultAgentId` if not specified. Supplying the flag with a blank value is an error (issue #3739). |
+| `--session <ID>` | Optional session ID for conversation continuity. If omitted, a new session is created. Supplying the flag with a blank value is an error (issue #3739). |
 | `--config <PATH>` | Explicit path to `config.json`. Defaults to `~/.botnexus/config.json`. |
 | `--target <DIR>` | BotNexus home directory (config, workspace, extensions). Defaults to `~/.botnexus/`. |
 | `--gateway-url <URL>` | Override gateway URL. Defaults to `gateway.listenUrl` from config (or `http://localhost:5005`). |
@@ -2087,6 +2087,19 @@ botnexus prompt run weekly-status --param project=Gateway --param owner=Bender
 
 ```powershell
 botnexus prompt run daily-standup --session my-session-123
+```
+
+**Blank selectors are rejected, not ignored:**
+
+Omitting `--agent` or `--session` is fine and keeps the fallback behaviour above. Passing either flag
+with an empty or whitespace-only value - what an unset shell variable expands to - fails with a
+non-zero exit before the turn is dispatched, rather than silently running against the default agent
+or a freshly minted session the caller has no id for.
+
+```powershell
+# $SESSION_ID is unset: refused instead of starting an invisible new session
+botnexus prompt run daily-standup --session "$SESSION_ID"
+# Error: --session was supplied but is blank. Pass a value, or omit the flag entirely.
 ```
 
 **Execute against a non-default gateway:**

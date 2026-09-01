@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text;
 using BotNexus.Cli.Commands;
 using BotNexus.Gateway.Configuration;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Tests.Commands;
 
@@ -431,6 +432,206 @@ public sealed class PromptCommandsTests
         {
             if (Directory.Exists(tempHome))
                 Directory.Delete(tempHome, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3739: a present-but-blank <c>--agent</c> or <c>--session</c> used to be indistinguishable from
+    /// an omitted one, because every downstream consumer tests <c>IsNullOrWhiteSpace</c>. The blank
+    /// <c>--agent</c> resolved to <c>gateway.defaultAgentId</c> and the blank <c>--session</c> made the
+    /// gateway mint a session the caller has no id for, so the turn ran somewhere the caller never saw.
+    /// </summary>
+    [Theory]
+    [InlineData("", null, "--agent")]
+    [InlineData("   ", null, "--agent")]
+    [InlineData("\t", null, "--agent")]
+    [InlineData(null, "", "--session")]
+    [InlineData(null, "   ", "--session")]
+    [InlineData(null, "\t", "--session")]
+    public async Task ExecuteRunAsync_RejectsBlankSelector_WithoutDispatchingATurn(
+        string? agentId,
+        string? sessionId,
+        string expectedFlagInMessage)
+    {
+        using var harness = await BlankSelectorHarness.CreateAsync();
+        // PromptCommands writes diagnostics through Spectre's AnsiConsole, which binds its writer at
+        // construction - Console.SetOut after the fact captures nothing. Swap AnsiConsole.Console
+        // itself, the pattern the rest of this test project already uses.
+        var writer = new StringWriter();
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Out = new AnsiConsoleOutput(writer),
+            Interactive = InteractionSupport.No
+        });
+
+        try
+        {
+            var result = await new PromptCommands().ExecuteRunAsync(
+                harness.ConfigPath,
+                agentId,
+                "status-report",
+                ["project=BotNexus"],
+                sessionId,
+                gatewayUrlOverride: harness.GatewayUrl,
+                verbose: false,
+                CancellationToken.None);
+
+            result.ShouldBe(1,
+                $"A present-but-blank {expectedFlagInMessage} is a caller error and must fail the run. " +
+                "Exit 0 means the turn was silently redirected to the default agent or a freshly " +
+                "minted session. See #3739.");
+
+            // Non-vacuity: exit 1 on its own is satisfiable by a config-load or render failure, neither
+            // of which is this defect. These two assertions pin the actual contract - nothing reached
+            // the gateway, and the message names the flag the caller got wrong.
+            harness.RequestWasReceived.ShouldBeFalse(
+                "The refusal must happen before the turn is dispatched, not after the gateway has " +
+                "already run it against the wrong target.");
+            writer.ToString().ShouldContain(expectedFlagInMessage);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    /// <summary>
+    /// #3739 AC3: only a <em>present-and-blank</em> selector is rejected. An omitted selector is
+    /// <c>null</c> and keeps its existing meaning - default agent, gateway-minted session. Without this
+    /// test a validator that also rejected <c>null</c> would satisfy the theory above while breaking
+    /// every ordinary invocation.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteRunAsync_OmittedSelectors_StillResolveDefaultAgentAndNullSession()
+    {
+        using var harness = await BlankSelectorHarness.CreateAsync();
+        var writer = new StringWriter();
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Out = new AnsiConsoleOutput(writer),
+            Interactive = InteractionSupport.No
+        });
+
+        try
+        {
+            var result = await new PromptCommands().ExecuteRunAsync(
+                harness.ConfigPath,
+                agentId: null,
+                "status-report",
+                ["project=BotNexus"],
+                sessionId: null,
+                gatewayUrlOverride: harness.GatewayUrl,
+                verbose: false,
+                CancellationToken.None);
+
+            result.ShouldBe(0);
+            harness.RequestWasReceived.ShouldBeTrue("An omitted selector must not block the turn.");
+
+            var payload = JsonSerializer.Deserialize<Dictionary<string, string?>>(harness.CapturedBody!);
+            payload.ShouldNotBeNull();
+            payload["agentId"].ShouldBe("agent-a", "An omitted --agent still resolves gateway.defaultAgentId.");
+            (payload.TryGetValue("sessionId", out var sentSessionId) ? sentSessionId : null)
+                .ShouldBeNull("An omitted --session is still the gateway's job to mint.");
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    /// <summary>
+    /// Loopback gateway that records whether <c>prompt run</c> dispatched anything. A real listener is
+    /// used rather than an unreachable address so that "nothing was sent" is a positive observation
+    /// about the CLI rather than an artefact of a host that could not be contacted anyway.
+    /// </summary>
+    private sealed class BlankSelectorHarness : IDisposable
+    {
+        private readonly string _tempHome;
+        private readonly HttpListener _listener;
+
+        private BlankSelectorHarness(string tempHome, string configPath, string gatewayUrl, HttpListener listener)
+        {
+            _tempHome = tempHome;
+            _listener = listener;
+            ConfigPath = configPath;
+            GatewayUrl = gatewayUrl;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var context = await _listener.GetContextAsync();
+                    using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding))
+                    {
+                        CapturedBody = await reader.ReadToEndAsync();
+                    }
+
+                    var responseBytes = Encoding.UTF8.GetBytes(
+                        "{\"sessionId\":\"session-minted\",\"content\":\"gateway reply\"}");
+                    context.Response.StatusCode = 200;
+                    context.Response.ContentType = "application/json";
+                    context.Response.ContentLength64 = responseBytes.Length;
+                    await context.Response.OutputStream.WriteAsync(responseBytes);
+                    context.Response.Close();
+                }
+                catch (HttpListenerException)
+                {
+                    // Listener closed with no request pending - the expected blank-selector outcome.
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            });
+        }
+
+        public string ConfigPath { get; }
+
+        public string GatewayUrl { get; }
+
+        public string? CapturedBody { get; private set; }
+
+        public bool RequestWasReceived => CapturedBody is not null;
+
+        public static async Task<BlankSelectorHarness> CreateAsync()
+        {
+            var tempHome = Path.Combine(Path.GetTempPath(), $"botnexus-prompt-blank-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path.Combine(tempHome, "prompts"));
+            await File.WriteAllTextAsync(
+                Path.Combine(tempHome, "prompts", "status-report.prompt.md"),
+                "---\nname: status-report\n---\nStatus for {{project}}\n");
+
+            var configPath = Path.Combine(tempHome, "config.json");
+            await File.WriteAllTextAsync(
+                configPath,
+                JsonSerializer.Serialize(
+                    new PlatformConfig { Gateway = new GatewaySettingsConfig { DefaultAgentId = "agent-a" } },
+                    new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+
+            var probe = new TcpListener(IPAddress.Loopback, 0);
+            probe.Start();
+            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            listener.Start();
+
+            return new BlankSelectorHarness(tempHome, configPath, $"http://127.0.0.1:{port}", listener);
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                _listener.Close();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            if (Directory.Exists(_tempHome))
+                Directory.Delete(_tempHome, recursive: true);
         }
     }
 }

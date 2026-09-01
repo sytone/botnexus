@@ -276,6 +276,18 @@ internal sealed class PromptCommands
         CancellationToken cancellationToken,
         string? token = null)
     {
+        // #3739: a present-but-blank selector is a caller error (typically an unset shell variable
+        // expanding to ""), not an omission. Both fall through IsNullOrWhiteSpace fallbacks further
+        // down -- --agent into gateway.defaultAgentId, --session into a freshly minted gateway
+        // session -- so the turn silently runs somewhere the caller never sees. Reject here, before
+        // any config load, template render or gateway call. null still means "omitted".
+        if (!TryValidateSelector(agentId, "--agent", out var selectorError)
+            || !TryValidateSelector(sessionId, "--session", out selectorError))
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(selectorError)}");
+            return 1;
+        }
+
         var config = await LoadConfigAsync(configPath, cancellationToken);
         if (config is null)
             return 1;
@@ -433,6 +445,24 @@ internal sealed class PromptCommands
     private static string ResolveHomePath(string configPath)
         => Path.GetDirectoryName(Path.GetFullPath(configPath))
            ?? PlatformConfigLoader.DefaultHomePath;
+
+    /// <summary>
+    /// Distinguishes an omitted selector flag (<c>null</c>, legitimate) from one that was supplied
+    /// with a blank or whitespace-only value (a caller error). #3739: without this the two cases are
+    /// indistinguishable downstream, because every consumer tests <c>IsNullOrWhiteSpace</c> and
+    /// silently substitutes a fallback target.
+    /// </summary>
+    internal static bool TryValidateSelector(string? value, string flagName, out string error)
+    {
+        if (value is not null && string.IsNullOrWhiteSpace(value))
+        {
+            error = $"{flagName} was supplied but is blank. Pass a value, or omit the flag entirely.";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
 
     private static string? ResolveAgentId(string? agentId, PlatformConfig config)
         => string.IsNullOrWhiteSpace(agentId) ? config.Gateway?.DefaultAgentId : agentId;
