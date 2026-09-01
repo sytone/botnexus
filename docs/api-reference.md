@@ -600,54 +600,17 @@ X-Api-Key: your-api-key
 
 ### List Agent Skills
 
-**Endpoint:** `GET /api/agents/{name}/skills`
+> **Removed.** There is no per-agent skills endpoint. `AgentsController` declares no `skills`
+> action, and the skills surface is registered as a single extension route group
+> (`SkillsEndpointContributor`) with no per-agent variant. Use
+> [`GET /api/skills`](#list-global-skills), which returns every discovered skill; per-agent
+> resolution and `DisabledSkills` filtering happen inside the agent loop, not at the API.
 
-**Description:** Retrieve all skills (global + per-agent) loaded for a specific agent, respecting `DisabledSkills` configuration.
-
-**Parameters:**
-- `name` (string, path) — Agent name
-
-**Request:**
-```http
-GET /api/agents/code-reviewer/skills
-X-Api-Key: your-api-key
-```
-
-**Response:** 200 OK
-```json
-[
-  {
-    "name": "code-review-criteria",
-    "description": "Code review standards for this project",
-    "version": "1.0.0",
-    "scope": "Agent",
-    "alwaysLoad": false,
-    "sourcePath": "/home/user/.botnexus/agents/code-reviewer/skills/code-review-criteria/SKILL.md",
-    "contentPreview": "# Code Review Criteria\n\nReviewers should check:\n1. Functionality\n2. Code style\n3. Tests\n..."
-  },
-  {
-    "name": "git-workflow",
-    "description": "Git workflow and commit conventions for BotNexus",
-    "version": "1.0.0",
-    "scope": "Global",
-    "alwaysLoad": false,
-    "sourcePath": "/home/user/.botnexus/skills/git-workflow/SKILL.md"
-  }
-]
-```
-
-**Response Fields:**
-- All fields from [List Global Skills](#list-global-skills), plus:
-- `contentPreview` (string) — First 200 characters of skill markdown content (agent endpoint only)
-
-**Skill Resolution Order:**
+**Skill Resolution Order** (applied by the agent loop, not by an endpoint):
 1. Global skills from `~/.botnexus/skills/`
 2. Per-agent skills from `~/.botnexus/agents/{name}/skills/` (override global if same name)
 3. Filtered by agent's `DisabledSkills` configuration
 4. Sorted alphabetically by name
-
-**Error Responses:**
-- `404 Not Found` — Agent does not exist
 
 **Notes:**
 - Agent skills override global skills with the same name
@@ -2227,44 +2190,20 @@ X-Api-Key: your-api-key
 
 ### Doctor/Diagnostics
 
-> **Note:** The diagnostics endpoint is provided by the main BotNexus application host, not the Gateway API project.
-
-**Endpoint:** `GET /api/doctor`
-
-**Description:** Run comprehensive health diagnostics with auto-fix recommendations.
-
-**Request:**
-```http
-GET /api/doctor
-X-Api-Key: your-api-key
-```
-
-**Response:** 200 OK
-```json
-{
-  "timestamp": "2026-01-15T11:50:00Z",
-  "checks": [
-    {
-      "name": "Configuration File",
-      "category": "startup",
-      "status": "healthy",
-      "message": "Config file exists and is valid"
-    },
-    {
-      "name": "OAuth Tokens",
-      "category": "authentication",
-      "status": "warning",
-      "message": "Copilot token expires in 2 days",
-      "suggestedFix": "Run 'botnexus login' to refresh"
-    }
-  ],
-  "summary": {
-    "healthy": 11,
-    "warnings": 1,
-    "errors": 0
-  }
-}
-```
+> **Removed.** There is no `GET /api/doctor` endpoint. `doctor` exists only as a CLI command tree
+> (`botnexus doctor ...`, `src/gateway/BotNexus.Cli/Commands/Doctor/`); the literal `api/doctor`
+> appears nowhere in `src/`, `tests/` or `examples/`. The HTTP diagnostics surface is
+> `DiagnosticsController` at `api/diagnostics/*`, documented in the sections below:
+>
+> | Endpoint | Purpose |
+> |---|---|
+> | `GET /api/diagnostics/log-patterns` | Recurring warning/error patterns from the log ring buffer |
+> | `GET /api/diagnostics/memory-pressure` | Current memory-pressure assessment |
+> | `GET /api/diagnostics/memory-pressure/history` | Historical memory-pressure samples |
+> | `GET /api/diagnostics/threadpool` | Thread pool health metrics |
+> | `GET /api/diagnostics/activity` | Last activity timestamp and inactivity duration |
+> | `GET /api/diagnostics/loops` | Detected agent-loop anomalies |
+> | `GET /api/diagnostics/security-events` | Admin-gated security event snapshot (separate controller) |
 
 ---
 

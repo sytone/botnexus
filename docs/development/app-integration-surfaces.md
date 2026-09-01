@@ -67,7 +67,7 @@ missing is a caller.
 | Manifest parse and schema validation | Wired | `PluginManifestParser` loads the checked-in JSON Schema |
 | Skills from `plugins/*/skills/` | Wired | `SkillsToolContributor`, `SkillPromptHookHandler` → `PluginSkillRootResolver` |
 | Read API and portal page | Wired | `botnexus-plugins-api` deploys and loads; `GET /api/plugins`, portal `/plugins` |
-| Install / update / remove | **No caller** | `PluginLifecycleManager` is referenced only by its own tests; no `plugin` verb in the CLI, no `POST /api/plugins` |
+| Install / update / remove | **No caller** | `PluginLifecycleManager` is referenced only by its own tests; there is no `plugin` verb in the CLI and no write route on `api/plugins` beyond `PUT /api/plugins/{name}/update-preference` |
 | Plugin-declared MCP servers | **No caller** | `PluginMcpServerRegistrar` is referenced only by its own tests |
 | Plugin agents / commands / hooks | **Not built** | Nothing in `src/` discovers those directories |
 

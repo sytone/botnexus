@@ -1105,8 +1105,9 @@ Both must be set: enabling alerts without a conversation id delivers nothing and
 There is deliberately **no** implicit fallback to the job's own `conversationId`, so turning alerts
 on can never accidentally retarget a job's long-lived run conversation.
 
-Both fields are writable from **every** authoring surface: the config file, `POST`/`PUT /api/cron`,
-and the agent-facing `cron` tool's `create` and `update` actions (#2838). Before #2838 the tool
+Both fields are writable from **every** authoring surface: the config file, `POST /api/cron` (create)
+and `PUT /api/cron/{jobId}` (update), and the agent-facing `cron` tool's `create` and `update`
+actions (#2838). Before #2838 the tool
 declared neither parameter, so no agent-created job could ever be made alertable - silent cron
 death was the default failure mode for the only surface agents have.
 

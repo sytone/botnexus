@@ -2178,7 +2178,7 @@ botnexus config schema
 # Output: docs\botnexus-config.schema.json
 ```
 
-**Validating at the gateway:** Use the `POST /api/config/validate` endpoint (or `botnexus validate --remote`) to validate against the running gateway.
+**Validating at the gateway:** Use the `GET /api/config/validate` endpoint (or `botnexus validate --remote`) to validate against the running gateway.
 
 ### Error severity: survivability, not scope
 
