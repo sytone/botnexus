@@ -324,12 +324,13 @@ See [HookDispatcher](../../src/gateway/BotNexus.Gateway/Hooks/HookDispatcher.cs)
 
 **Gateway Tools:**
 
-- `session`: Session management (save, list, archive)
+- `sessions`: Session management (save, list, archive)
+- `conversation`: Conversation metadata, purpose and instructions
 - `agent_converse`: Peer agent conversations
-- `subagent_spawn`: Spawn task-specific sub-agents
-- `subagent_list`: List running sub-agents
-- `subagent_manage`: Control sub-agent lifecycle
-- `file_watcher`: Watch files for changes
+- `spawn_subagent`: Spawn task-specific sub-agents
+- `list_subagents`: List running sub-agents
+- `manage_subagent`: Control sub-agent lifecycle
+- `watch_file`: Watch files for changes
 - `delay`: Scheduled delays/reminders
 - `cron`: Register cron jobs
 

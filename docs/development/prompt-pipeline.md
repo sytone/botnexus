@@ -277,7 +277,7 @@ You have access to the following tools:
 
 ## Gateway
 
-- `session`: Manage session history and metadata
+- `sessions`: Manage session history and metadata
 - `agent_converse`: Talk to other registered agents
 
 Use tools when needed. Always validate paths and commands.
