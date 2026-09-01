@@ -9,7 +9,7 @@ The existing process-based integration tests (`BotNexus.Integration.Tests` witho
 1. A multi-stage `Dockerfile` at the repo root builds `BotNexus.Gateway.Api` and produces a small runtime image.
 2. A `docker-compose.yml` wraps it for local developer use — mount your `~/.botnexus` directory and the gateway starts with your existing configuration.
 3. The integration test runner (`BotNexus.Integration.Tests`) accepts a `--gateway-url` flag. When set it skips spawning a local gateway process and connects directly to the container.
-4. A GitHub Actions workflow (`container-integration.yml`) builds the image in CI, starts the container with secrets injected as environment variables, then runs the scenario suite.
+4. A GitHub Actions workflow (`ci-container-integration.yml`) builds the image in CI, starts the container with secrets injected as environment variables, then runs the scenario suite.
 
 ## Quick Start (Local)
 
@@ -149,7 +149,7 @@ docker run -d --name botnexus-gateway \
 
 ## Smoke Scenarios (No LLM Required)
 
-`tests/scenarios/container/scenarios/smoke.json` validates the gateway API surface without making LLM calls. These run in CI on every push without provider secrets:
+`tests/scenarios/container/scenarios/smoke.json` validates the gateway API surface without making LLM calls. They need no provider secrets, so they can run anywhere - but nothing runs them automatically: in CI they execute only via the manually dispatched `container-smoke` job (see [CI](#ci) below). To run them locally:
 
 ```bash
 dotnet run --project tests/scenarios/BotNexus.Integration.Tests -- \
@@ -159,7 +159,7 @@ dotnet run --project tests/scenarios/BotNexus.Integration.Tests -- \
 
 ## CI
 
-The `container-integration.yml` workflow has two jobs:
+The `ci-container-integration.yml` workflow has two jobs. It is `workflow_dispatch`-only - neither job is triggered by a push or a pull request:
 
 | Job | Trigger | Requires secrets |
 |---|---|---|
