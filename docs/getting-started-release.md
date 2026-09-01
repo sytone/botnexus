@@ -406,10 +406,11 @@ Shows version, health, and configuration status.
 ### View logs
 
 ```bash
-botnexus logs --follow
+botnexus debug logs tail --limit 200
 ```
 
-View logs in real-time. Use `--lines N` to limit output.
+Read the log files directly - no running gateway required. Use `botnexus debug logs errors` for
+recent errors only, or `botnexus debug logs search --term "<text>"` to search across log files.
 
 ### Stop the gateway
 
