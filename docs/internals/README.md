@@ -67,14 +67,21 @@ These standalone documents cover specific topics in depth with full code example
 
 ```
 src/
-├── providers/
+├── agent/
+│   ├── BotNexus.Agent.Core/                 # Agent loop, tools, hooks, state
 │   ├── BotNexus.Agent.Providers.Core/       # Models, streaming, registry
 │   ├── BotNexus.Agent.Providers.Anthropic/  # Anthropic Claude provider
 │   ├── BotNexus.Agent.Providers.OpenAI/     # OpenAI provider
-│   ├── BotNexus.Agent.Providers.Copilot/    # GitHub Copilot provider (static utility)
+│   ├── BotNexus.Agent.Providers.Copilot/    # GitHub Copilot provider
 │   └── BotNexus.Agent.Providers.OpenAICompat/ # OpenAI-compatible endpoints
-├── agent/
-│   └── BotNexus.Agent.Core/            # Agent loop, tools, hooks, state
-└── coding-agent/
-    └── BotNexus.CodingAgent/          # Coding agent factory, tools, sessions
+├── domain/                                  # Domain records and wire contracts
+├── gateway/
+│   ├── BotNexus.Gateway/                    # Host, security, audit, agents
+│   ├── BotNexus.Tools/                      # Built-in tools and PathUtils
+│   └── ...                                  # Cli, Cron, Sessions, Memory, ...
+├── extensions/                              # Channels, plugins, optional tools
+└── persistence/                             # SQLite persistence
+
+examples/
+└── BotNexus.CodingAgent/          # Sample coding agent: factory, hooks, sessions
 ```

@@ -4,17 +4,20 @@
 > **Prerequisites:** C#/.NET, familiarity with [agent events](agent-events.md) and [provider system](01-providers.md).
 > **Source code:** `src/gateway/BotNexus.Tools/` (the built-in tools and `Utils/PathUtils.cs`),
 > `src/gateway/BotNexus.Gateway/Security/` (path policy enforcement),
-> `src/agent/BotNexus.Agent.Core/Hooks/` (the tool-call hook contracts).
+> `src/agent/BotNexus.Agent.Core/Hooks/` (the tool-call hook contracts),
+> `examples/BotNexus.CodingAgent/` (the sample coding agent: `Hooks/SafetyHooks.cs`,
+> `Hooks/AuditHooks.cs`, `CodingAgentConfig.cs`).
 
 ## What you'll learn
 
 1. Path containment (how tools are sandboxed)
 2. Symlink resolution and escape prevention
 3. The file access policy (allowed and denied paths)
-4. File mutation queue (serialized file access)
-5. Shell command safety
-6. Audit logging
-7. How to add safety hooks to a custom agent
+4. The sample coding agent's blocked paths and blocked commands
+5. File mutation queue (serialized file access)
+6. Shell command safety
+7. Audit logging
+8. How to add safety hooks to a custom agent
 
 ---
 
@@ -192,7 +195,56 @@ ignores the result silently loses the check. Its two phases matter:
 When no policy is supplied (or the policy is empty), the validator operates in **workspace-only**
 mode: the agent's workspace is the entire permitted surface.
 
-Path comparison is platform-aware here — `OrdinalIgnoreCase` on Windows, `Ordinal` on Unix.
+Path comparison is platform-aware here - `OrdinalIgnoreCase` on Windows, `Ordinal` on Unix.
+
+---
+
+## Blocked paths and blocked commands (sample coding agent)
+
+The platform gate above is `IPathValidator` + `FileAccessPolicy`. The **sample** coding agent under
+`examples/BotNexus.CodingAgent/` layers a second, simpler policy of its own on top, driven by
+`CodingAgentConfig` (`examples/BotNexus.CodingAgent/CodingAgentConfig.cs`) and enforced by
+`SafetyHooks` (`examples/BotNexus.CodingAgent/Hooks/SafetyHooks.cs`). This is example code, not the
+gateway's production path - read it as a worked illustration of a `BeforeToolCall` hook.
+
+### Blocked paths
+
+`CodingAgentConfig.BlockedPaths` lists paths the `write` and `edit` tools may not touch, even inside
+the working directory:
+
+```json
+// .botnexus-agent/config.json
+{
+  "blockedPaths": [".env", "secrets/", "/etc/passwd"]
+}
+```
+
+Relative entries are resolved against the working directory; absolute entries are used as-is; a
+trailing-slash entry blocks the whole subtree. `IsBlockedPath` compares the resolved absolute path
+against each entry with `StartsWith(..., OrdinalIgnoreCase)`.
+
+### Blocked commands
+
+`SafetyHooks.DefaultBlockedCommands` is a hardcoded, case-insensitive substring deny list applied to
+the `shell` command argument.
+
+### Allowed commands allowlist
+
+`CodingAgentConfig.AllowedCommands` is an optional allowlist. When non-empty, only commands whose
+lowercased text *starts with* one of the entries is permitted; when empty (the default) every command
+is allowed except the hardcoded blocked patterns.
+
+```json
+// .botnexus-agent/config.json
+{
+  "allowedCommands": ["dotnet", "git", "npm"]
+}
+```
+
+### Payload size limits
+
+`SafetyHooks` warns - it does **not** block - when a write payload exceeds
+`LargeWriteThresholdBytes` (1 MiB).
 
 ---
 
