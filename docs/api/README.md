@@ -143,6 +143,27 @@ derived from `Controllers/`:
 
 ---
 
+## Routes registered outside the controller set
+
+**The controller reference above is not a complete inventory of `/api/*`.** Some route groups are
+registered through the `IEndpointContributor` seam - `MapGroup`/`MapGet`/`MapPut` minimal-API
+registrations contributed by an extension or a gateway sub-assembly - rather than as a controller in
+`src/gateway/BotNexus.Gateway.Api/Controllers/`. This is deliberate: a gateway project may not
+reference an extension project (enforced by `GatewayProjectDependencyBoundaryTests`), so a surface
+that needs extension types cannot live in a controller.
+
+The practical consequence is that every controller-derived audit - including the table above - is
+structurally blind to these routes. They are nonetheless real, authenticated `/api/*` routes subject
+to the same API-key rules as everything else.
+
+| Route group | Contributor | Reference |
+|-------------|-------------|-----------|
+| `api/plugins` | `PluginsEndpointContributor` | [Plugins Management](../api-reference.md#plugins-management) |
+| `api/skills` | `SkillsEndpointContributor` | [Skills Management](../api-reference.md#skills-management) |
+| `api/telemetry` | `TelemetryEndpointContributor` | [Telemetry Metrics](../api-reference.md#telemetry-metrics) |
+
+---
+
 ## Deferred
 
 The following are explicitly **out of scope** for this slice and tracked as

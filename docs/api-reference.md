@@ -12,15 +12,14 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 6. [Skills Management](#skills-management)
 7. [Channels Management](#channels-management)
 8. [Extensions Management](#extensions-management)
-9. [Chat](#chat)
-10. [Commands](#commands)
-11. [Session Management](#session-management)
-12. [System & Status](#system--status)
-13. [Error Handling](#error-handling)
-14. [Secrets](#secrets)
-15. [Webhooks](#webhooks)
-16. [Plugins](#plugins)
-17. [Telemetry](#telemetry)
+9. [Plugins Management](#plugins-management)
+10. [Telemetry Metrics](#telemetry-metrics)
+11. [Chat](#chat)
+12. [Commands](#commands)
+13. [Session Management](#session-management)
+14. [System & Status](#system--status)
+15. [Error Handling](#error-handling)
+16. [Webhooks](#webhooks)
 
 ---
 
@@ -875,6 +874,258 @@ X-Api-Key: your-api-key
 **Notes:**
 - The report reflects the **startup** load pass, so it is stable for the lifetime of the process.
 - The non-200 status code makes this endpoint usable directly as a container or deployment readiness probe.
+
+---
+
+## Plugins Management
+
+The `/api/plugins` routes are registered by `PluginsEndpointContributor` through the
+`IEndpointContributor` seam rather than as a gateway controller, because a gateway project may not
+reference an extension project. They are ordinary authenticated `/api/*` routes and obey the same
+API-key rules as every controller route.
+
+This surface is **read plus preference toggle only**. Installing, updating and removing a plugin
+remain CLI operations, so there is deliberately no `POST /api/plugins` and no `DELETE`.
+
+### List Plugins
+
+**Endpoint:** `GET /api/plugins`
+
+**Description:** List every installed plugin, ordered by name so the rendered row order is stable across reloads rather than following the state file's write order.
+
+**Request:**
+```http
+GET /api/plugins
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "name": "botnexus-qmd",
+    "source": "https://github.com/example/botnexus-qmd.git",
+    "reference": "main",
+    "resolvedVersion": "9f1c0a4e0c6b6f1a7f6d2b3c4e5f60718293a4b5",
+    "manifestVersion": "1.2.0",
+    "updatesEnabled": true,
+    "installedAtUtc": "2026-08-14T09:12:44.113Z",
+    "fileCount": 18,
+    "trustState": "Unverified",
+    "trustDetail": "All recorded files are present. Content hashes are not yet catalogued.",
+    "updateState": "Unknown",
+    "availableVersion": null,
+    "updateProbeError": null
+  }
+]
+```
+
+### Get Plugin
+
+**Endpoint:** `GET /api/plugins/{name}`
+
+**Description:** Return one installed plugin by name.
+
+**Request:**
+```http
+GET /api/plugins/botnexus-qmd
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK - a single `PluginPortalRow` object with the fields listed below.
+
+**Response:** 400 Bad Request - the name segment is empty or whitespace
+```json
+{ "error": "A plugin name is required." }
+```
+
+**Response:** 404 Not Found - no plugin is installed under that name
+```json
+{ "error": "Plugin 'botnexus-qmd' is not installed." }
+```
+
+An unknown name is a `404` rather than an empty `200`: the portal distinguishes "not installed" from
+"installed with nothing to show", and collapsing the two would make a typo indistinguishable from an
+empty plugin.
+
+### Set Update Preference
+
+**Endpoint:** `PUT /api/plugins/{name}/update-preference`
+
+**Description:** Set whether scheduled updates may replace this plugin's content. The change is written back to the installed record, not held in memory, so it survives a gateway restart.
+
+**Request:**
+```http
+PUT /api/plugins/botnexus-qmd/update-preference
+X-Api-Key: your-api-key
+Content-Type: application/json
+
+{
+  "updatesEnabled": false
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `updatesEnabled` | boolean | Yes | Whether scheduled updates may replace this plugin's content |
+
+**Response:** 200 OK - the updated `PluginPortalRow`. Note that setting `updatesEnabled` to `false` moves `updateState` to `"Pinned"`.
+
+**Response:** 400 Bad Request - the name segment is empty, or the request body is missing.
+
+**Response:** 404 Not Found - no plugin is installed under that name.
+
+The write preserves every other field of the installed record, including the recorded file set. That
+file list is the only description of what the plugin owns, so a preference write that dropped it
+would orphan every file the install wrote.
+
+### PluginPortalRow Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Plugin identifier, and the route parameter that addresses it |
+| `source` | string | Marketplace source the content was fetched from |
+| `reference` | string \| null | Branch or tag requested at install time; `null` for the source's default branch |
+| `resolvedVersion` | string | Exact revision currently on disk - a commit SHA for a git source |
+| `manifestVersion` | string \| null | Version the plugin's own manifest advertises; `null` when unversioned |
+| `updatesEnabled` | boolean | Whether a scheduled update may replace this plugin's content |
+| `installedAtUtc` | string (ISO 8601) | When the content currently on disk was materialised |
+| `fileCount` | int | Number of files the install recorded, so a modified count is interpretable |
+| `trustState` | string | Integrity state of the content on disk - see below |
+| `trustDetail` | string \| null | Why the trust state is what it is, in operator-readable terms; `null` when there is nothing to explain |
+| `updateState` | string | Update availability at the plugin's source - see below |
+| `availableVersion` | string \| null | Revision the source currently resolves to, when it was probed |
+| `updateProbeError` | string \| null | Why the update probe failed, when `updateState` is `"ProbeFailed"` |
+
+#### `trustState` - three states, not a boolean
+
+| Value | Meaning |
+|-------|---------|
+| `Unverified` | No content hash catalog exists for this plugin, so integrity cannot be attested. This is the expected state until the install-time trust catalog lands. |
+| `Verified` | Every file install recorded is present, and every hashed file matches its catalog entry. |
+| `Modified` | Content diverges from the installed record - a recorded file is missing, or a hashed file's content no longer matches the catalog. |
+
+**Why three states and not a boolean.** "We did not look" and "we looked and it is fine" are
+different answers, and collapsing them would present an unverifiable plugin as a trusted one. When
+several distinguishable states fold into one outcome there is no defect left to report - which is
+exactly the collapse this enum exists to prevent. A `Modified` plugin is *reported*, never silently
+repaired: re-materialising content would destroy the evidence an operator needs.
+
+Integrity is judged against the **recorded** file set, never against a directory scan. A file the
+user dropped alongside plugin content is not a modification of the plugin, and treating it as one
+would cry wolf on exactly the content removal this check is careful to preserve.
+
+#### `updateState` - five states, not a boolean
+
+| Value | Meaning |
+|-------|---------|
+| `Unknown` | The source was not probed, so update availability is genuinely unknown. This is the default. |
+| `Current` | The source resolves to the revision already on disk. |
+| `UpdateAvailable` | The source resolves to a different revision than the one on disk. |
+| `Pinned` | Updates are disabled for this plugin, so the source is not probed at all. |
+| `ProbeFailed` | The source could not be probed; `updateProbeError` says why. |
+
+**Why `Unknown` is not collapsed into "up to date".** Answering the update question costs a network
+round trip against the source, so the list view does not pay it: probing every source on every page
+render would make a list cost N git clones, and the answer would still be stale by the time it
+rendered. Reporting `Current` without having looked would be a claim rather than a finding.
+`Pinned` is likewise a complete and final answer rather than a placeholder for an unmade check - a
+pinned plugin would not be replaced by whatever the probe found.
+
+---
+
+## Telemetry Metrics
+
+Like `/api/plugins`, `/api/telemetry` is registered through the `IEndpointContributor` seam
+(`TelemetryEndpointContributor`) rather than as a gateway controller.
+
+### Get Metrics Snapshot
+
+**Endpoint:** `GET /api/telemetry/metrics`
+
+**Description:** Return a JSON snapshot of current instrument values, so operators and the portal can inspect hot-path metrics locally **without** an external OpenTelemetry collector. Only instruments on the canonical `BotNexus` meter scope are observed; the ASP.NET Core and HTTP instrumentation meters are ignored.
+
+Observable instruments (gauges) are sampled synchronously as part of the request, so gauge values
+reflect the state at the moment of the call rather than the last export interval.
+
+**Request:**
+```http
+GET /api/telemetry/metrics
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+{
+  "generatedAt": "2026-09-01T18:04:21.552Z",
+  "scope": "BotNexus",
+  "instruments": [
+    {
+      "name": "botnexus.turns.total",
+      "kind": "counter",
+      "unit": "{turn}",
+      "description": "Agent turns started",
+      "measurements": [
+        {
+          "tags": { "agent.id": "farnsworth" },
+          "value": 412,
+          "count": null,
+          "sum": null,
+          "min": null,
+          "max": null
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `generatedAt` | string (ISO 8601) | UTC timestamp the snapshot was produced |
+| `scope` | string | The instrumentation scope the snapshot was collected from - always `BotNexus` |
+| `instruments` | object[] | Every instrument observed since collection started, ordered by instrument name |
+
+Each entry of `instruments`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Instrument name, e.g. `botnexus.turns.total` |
+| `kind` | string | One of `counter`, `updowncounter`, `histogram`, `gauge` |
+| `unit` | string \| null | Optional UCUM unit string reported by the instrument |
+| `description` | string \| null | Optional human-readable instrument description |
+| `measurements` | object[] | One row per distinct tag combination observed for this instrument |
+
+Each entry of `measurements`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tags` | object | The bounded tag dimensions attached to this measurement stream |
+| `value` | number | Counters and up/down counters: the running total. Gauges: the latest sampled value. Histograms: the sum of all recorded values |
+| `count` | int \| null | Number of recorded values - histograms only, `null` otherwise |
+| `sum` | number \| null | Sum of recorded values - histograms only, `null` otherwise |
+| `min` | number \| null | Smallest recorded value - histograms only, `null` otherwise |
+| `max` | number \| null | Largest recorded value - histograms only, `null` otherwise |
+
+**Empty snapshot when telemetry is disabled.** When no `MetricsSnapshotCollector` is registered, the
+endpoint still returns `200 OK` with a well-formed but empty snapshot - a current `generatedAt`, the
+canonical `scope`, and `"instruments": []`. It never returns `404` or `503`, so a UI consumer can
+render the metrics view unconditionally instead of branching on whether telemetry happens to be on:
+
+```json
+{
+  "generatedAt": "2026-09-01T18:04:21.552Z",
+  "scope": "BotNexus",
+  "instruments": []
+}
+```
+
+This is a deliberately lightweight in-process aggregator, not a full OpenTelemetry SDK: counters and
+up/down counters accumulate a running sum per tag-set, histograms accumulate count/sum/min/max, and
+observable gauges hold their latest sampled value. Accumulation spans the whole process lifetime and
+resets when the gateway restarts.
 
 ---
 
