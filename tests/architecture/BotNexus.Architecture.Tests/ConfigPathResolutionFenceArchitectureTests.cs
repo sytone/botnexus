@@ -187,6 +187,76 @@ public sealed class ConfigPathResolutionFenceArchitectureTests : ArchitectureTes
             "gets fences weakened.");
     }
 
+    /// <summary>
+    /// #3765 AC1: a <c>JsonObject</c> local that merely happens to be NAMED like a document root,
+    /// but was parsed from an arbitrary payload, is not a configuration read.
+    ///
+    /// <para>
+    /// This is the live shape from <c>OpenAICompatErrorText.cs</c>: an OpenAI HTTP error body. The
+    /// old name-only predicate reported <c>error</c> as an unresolvable path on
+    /// <c>PlatformConfig</c>, blocking the base-freshness gate on any PR that parsed JSON into a
+    /// conventionally-named local.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Extraction_DoesNotFlag_ARootNamedLocalParsedFromAnArbitraryPayload()
+    {
+        const string source = """
+                              if (JsonNode.Parse(body) is JsonObject root && root["error"] is JsonObject error)
+                              {
+                                  message = error["message"]?.GetValue<string>();
+                              }
+                              var document = JsonSerializer.Deserialize<JsonObject>(webhookPayload);
+                              var envelope = document["headers"];
+                              """;
+
+        ConfigPathFence.ExtractFromText(source).ShouldBeEmpty(
+            "#3765: an identifier name is not provenance. A JsonObject parsed from an HTTP response " +
+            "body or a webhook envelope is not the platform configuration document, and reporting " +
+            "its keys as config paths misdescribes correct code as a configuration defect.");
+    }
+
+    /// <summary>
+    /// Non-vacuity guard for the case above. Both literals sit in indexers over root-named locals,
+    /// so they ARE candidates for the root-indexer pattern - the exclusion is doing real work rather
+    /// than the source failing to match anything in the first place. Rename the locals away from the
+    /// payload parse and the identical indexers are extracted again.
+    /// </summary>
+    [Fact]
+    public void Extraction_StillFlags_TheSameIndexersWhenProvenanceIsAbsent()
+    {
+        const string source = """
+                              var value = root["error"];
+                              var header = document["headers"];
+                              """;
+
+        var paths = ConfigPathFence.ExtractFromText(source);
+
+        paths.ShouldContain("error",
+            "without a visible arbitrary-payload parse, a bare document-root indexer is still the " +
+            "#2764 shape and must be extracted - otherwise the #3765 narrowing gutted the fence.");
+        paths.ShouldContain("headers",
+            "same for the second identifier; the exclusion must key on provenance, not on the key.");
+    }
+
+    /// <summary>
+    /// The other side of the discriminator: a root parsed from the configuration document itself is
+    /// still a configuration read. Without this, the #3765 narrowing could be satisfied by dropping
+    /// every parsed root, which would be a fence that no longer sees the defect it exists for.
+    /// </summary>
+    [Fact]
+    public void Extraction_StillFlags_ARootParsedFromTheConfigurationDocument()
+    {
+        const string source = """
+                              var root = JsonNode.Parse(configJson) as JsonObject;
+                              var compaction = root["compaction"] as JsonObject;
+                              """;
+
+        ConfigPathFence.ExtractFromText(source).ShouldContain("compaction",
+            "a root parsed from the configuration document is exactly the #2764 shape and must " +
+            "still be reported.");
+    }
+
     private static HashSet<string> LoadBaseline()
     {
         var assemblyDir = Path.GetDirectoryName(

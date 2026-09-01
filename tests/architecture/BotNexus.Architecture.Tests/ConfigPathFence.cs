@@ -46,7 +46,34 @@ internal static class ConfigPathFence
     /// arbitrary dictionary elsewhere is not swept in.
     /// </summary>
     private static readonly Regex RootIndexer = new(
-        @"\b(?:root|configRoot|rootObject|document)\s*\??\[\s*""(?<path>[^""]+)""\s*\]",
+        @"\b(?<name>root|configRoot|rootObject|document)\s*\??\[\s*""(?<path>[^""]+)""\s*\]",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Identifier names <see cref="RootIndexer"/> recognises as a document root.
+    /// </summary>
+    private const string RootIdentifierAlternation = "root|configRoot|rootObject|document";
+
+    /// <summary>
+    /// A root-named local bound from a <c>Parse</c>/<c>Deserialize</c> of some other value, in the
+    /// pattern-match form - <c>JsonNode.Parse(body) is JsonObject root</c>.
+    ///
+    /// <para>
+    /// <b>Why this exists (#3765).</b> An identifier name is not provenance. <c>root</c> is the most
+    /// natural name for the result of ANY <c>JsonNode.Parse</c>, so name-only matching reported an
+    /// OpenAI HTTP error body as a configuration read. These two regexes recover the missing
+    /// evidence: they find where the root-named local was BOUND, and what it was parsed FROM.
+    /// </para>
+    /// </summary>
+    private static readonly Regex ParsedRootPatternMatch = new(
+        @"(?:JsonNode|JsonDocument|JsonObject|JsonSerializer)\s*\.\s*(?:Parse|Deserialize\s*<[^>]*>)\s*\(\s*(?<arg>[A-Za-z_][A-Za-z0-9_.]*)[^;{]{0,200}?\bis\s+(?:not\s+)?(?:JsonObject|JsonNode)\s+(?<name>" + RootIdentifierAlternation + @")\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// The same binding in assignment form - <c>var root = JsonNode.Parse(body)...</c>.
+    /// </summary>
+    private static readonly Regex ParsedRootAssignment = new(
+        @"\b(?:var|JsonObject|JsonNode)\s+(?<name>" + RootIdentifierAlternation + @")\s*=\s*(?:[A-Za-z_][A-Za-z0-9_.]*\s*\.\s*)?(?:Parse|Deserialize\s*<[^>]*>)\s*\(\s*(?<arg>[A-Za-z_][A-Za-z0-9_.]*)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>
@@ -160,11 +187,21 @@ internal static class ConfigPathFence
 
         var paths = new List<string>();
 
+        var arbitraryRoots = FindArbitrarilyParsedRoots(text);
+
         foreach (Match match in RootIndexer.Matches(text))
         {
             var group = match.Groups["path"];
-            if (group.Success)
-                paths.Add(group.Value);
+            if (!group.Success)
+                continue;
+
+            // #3765: the local carries a root-ish NAME, but the file shows it was parsed from an
+            // arbitrary payload (a response body, a tool result, a webhook envelope). That is not
+            // the platform configuration document, so indexing it is not a config read.
+            if (arbitraryRoots.Contains(match.Groups["name"].Value))
+                continue;
+
+            paths.Add(group.Value);
         }
 
         foreach (Match match in AccessSurfaceArgument.Matches(text))
@@ -181,6 +218,39 @@ internal static class ConfigPathFence
             .Where(p => p.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .ToList();
+    }
+
+    /// <summary>
+    /// Root-named locals in this text that were demonstrably parsed from something OTHER than the
+    /// configuration document.
+    ///
+    /// <para>
+    /// <b>The discriminator, and why it fails safe.</b> A binding counts as configuration only when
+    /// the value being parsed is itself named for configuration (<c>configJson</c>, <c>configText</c>,
+    /// <c>ConfigPath</c>). Anything else - <c>body</c>, <c>payload</c>, <c>responseText</c> - is an
+    /// arbitrary payload. Crucially, a root-named local with NO visible binding at all is left
+    /// ALONE: the canonical #2764 shape is a bare <c>root["compaction"]</c> whose document came from
+    /// elsewhere, and dropping those would gut the fence. So the change only ever REMOVES a usage
+    /// when the file supplies positive evidence of a non-config parse.
+    /// </para>
+    /// </summary>
+    private static ISet<string> FindArbitrarilyParsedRoots(string text)
+    {
+        var arbitrary = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var regex in new[] { ParsedRootPatternMatch, ParsedRootAssignment })
+        {
+            foreach (Match match in regex.Matches(text))
+            {
+                var argument = match.Groups["arg"].Value;
+                if (argument.Contains("config", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                arbitrary.Add(match.Groups["name"].Value);
+            }
+        }
+
+        return arbitrary;
     }
 
     /// <summary>
