@@ -69,6 +69,9 @@ end with no blank lines between them, so `git interpret-trailers` and changelog 
 - `Co-authored-by:` — attribute agent authorship honestly. Reviewers calibrate their depth on this.
 - `BREAKING CHANGE:` — a footer, not a trailer; full prose describing the migration.
 
+This replacement is **manual today** — see [Enforcement](#enforcement) for why the repository setting
+that would automate it is not yet applied, and what happens when the textarea is left untouched.
+
 Worked example:
 
 ```
@@ -269,9 +272,24 @@ exists to hold to the standard.
 `/allow-pr-convention-exception <head-sha>`. The waiver is bound to the current head SHA, so pushing a new
 commit invalidates it.
 
-**One gap CI cannot close:** the squash body is typed into the merge-button textarea *after* every check
-has passed. Set the repository squash-merge default commit message to **"pull request title and
-description"** so a conformant PR body flows into the squash commit automatically.
+**One gap CI cannot close, and it is currently open.** The squash body is typed into the merge-button
+textarea *after* every check has passed, so no workflow can enforce it. The repository setting that would
+close it — squash-merge default commit message set to **"pull request title and description"**
+(`squash_merge_commit_message: PR_BODY`) — is **not applied**. The live value is `COMMIT_MESSAGES`:
+
+```console
+$ gh api repos/Sytone/botnexus --jq .squash_merge_commit_message
+COMMIT_MESSAGES
+```
+
+With `COMMIT_MESSAGES` and the single-commit branches this repo ships, GitHub pre-fills the textarea with
+the subject line only, so a merge performed without editing it lands a commit with an **empty body** — no
+why-paragraph, no `Refs:`, no `Validated-by:`, no `Co-authored-by:`. Measured over the last 40 commits on
+`main`: 30 had a body on their source branch and none of them retained it.
+
+Until the setting is changed, **the merger must paste the PR body into the squash textarea by hand.**
+Applying the setting is tracked by [#3731](https://github.com/Sytone/botnexus/issues/3731); it is a
+repository-settings change, so it cannot be made from inside the repo.
 
 ## Reviewer inspection order
 
