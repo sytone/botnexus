@@ -35,18 +35,39 @@ The standard hook command always uses strict mode. When `BOTNEXUS_VALIDATION_MOD
 Modes:
 
 ```powershell
-# Default authoritative gate: full build, impacted/architecture/scenario, and strict Playwright
+# Recommended for ordinary non-portal work: full tree build, then every test project
+# EXCEPT the quarantined browser/E2E ones. Carries a 12,000 minimum test total.
+./scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core
+
+# Every test project including the quarantined browser/E2E ones. Also floors at 12,000,
+# but those projects are what push a run into the replica timeout described below.
+./scripts/repo/Invoke-AzureBuildTest.ps1 -Mode full
+
+# Full build, impacted/architecture/scenario, and strict Playwright.
+# Minimum test total is 0 - see the note below before treating it as authoritative.
 ./scripts/repo/Invoke-AzureBuildTest.ps1 -Mode strict
 
 # Full solution build plus impacted, architecture, and scenario tests
 ./scripts/repo/Invoke-AzureBuildTest.ps1 -Mode impacted
 
-# Full solution test suite
-./scripts/repo/Invoke-AzureBuildTest.ps1 -Mode full
-
 # Integration E2E suite with Playwright Chromium available
 ./scripts/repo/Invoke-AzureBuildTest.ps1 -Mode playwright
 ```
+
+These five values are the whole set the runner accepts; anything else is rejected by the
+`ValidateSet` on the `-Mode` parameter in `scripts/repo/Invoke-AzureBuildTest.ps1`.
+
+**`core` excludes exactly two projects.** The runner filters on
+`FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E`, so
+`BotNexus.Integration.E2E` and `BotNexus.E2E` are the only things `core` drops relative to
+`full`. They are quarantined rather than deleted, and they are passed to the completeness
+check as known exclusions so a filtered run never accuses a project it deliberately skipped.
+
+**`strict` validates less than its name suggests, and is not the mode to reach for by default.**
+The runner's minimum-test-total map is `full = 12000`, `core = 12000`, `strict = 0`,
+`playwright = 0`. A `core` or `full` run therefore fails closed when the executed count
+collapses; a `strict` run has no floor at all and cannot detect that failure. Prefer `core`
+for non-portal changes and `full` when the browser/E2E projects genuinely need to run.
 
 Results are downloaded to `artifacts/azure-buildtest/<run-id>/`. The script returns a failing exit status when the Azure execution or test process fails.
 
