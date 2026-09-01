@@ -47,17 +47,23 @@ The Azure Service Bus channel is deployed via the BotNexus CLI. Configure it by 
 
 ### Secure configuration: Environment variables
 
-To keep secrets out of `config.json`, set the `BOTNEXUS_CHANNELS__SERVICEBUS__CONNECTIONSTRING` environment variable instead. BotNexus will use this value and override any connection string in your config file.
+To keep secrets out of `config.json`, set the connection string in the environment instead. The
+variable name is the configuration path with `__` between levels and **no prefix** - see
+[Environment Variable Overrides](../../configuration.md#environment-variable-overrides).
 
 On Linux / macOS:
 ```bash
-export BOTNEXUS_CHANNELS__SERVICEBUS__CONNECTIONSTRING="Endpoint=sb://..."
+export channels__servicebus__connectionString="Endpoint=sb://..."
 ```
 
 On Windows (PowerShell):
 ```powershell
-$env:BOTNEXUS_CHANNELS__SERVICEBUS__CONNECTIONSTRING = "Endpoint=sb://..."
+$env:channels__servicebus__connectionString = "Endpoint=sb://..."
 ```
+
+> **Leave `connectionString` out of `config.json` entirely for this to take effect.** `config.json`
+> is added to the configuration pipeline *after* the environment source, so where a key is present in
+> both, the file wins and the environment variable is ignored.
 
 Alternatively, for Azure deployments, use **managed identity** with `DefaultAzureCredential` (see [Managed identity / Azure Key Vault](#managed-identity--azure-key-vault) below).
 
@@ -65,7 +71,9 @@ Alternatively, for Azure deployments, use **managed identity** with `DefaultAzur
 
 ## Configuration reference
 
-All options are configured via `~/.botnexus/config.json` under the `channels.servicebus` section. Options can also be overridden via environment variables with the prefix `BOTNEXUS_CHANNELS__SERVICEBUS__`.
+All options are configured via `~/.botnexus/config.json` under the `channels.servicebus` section. An
+option can instead be supplied as an environment variable named `channels__servicebus__<property>`,
+which is read only when that key is absent from `config.json`.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|

@@ -153,18 +153,19 @@ BotNexus follows a **defaults → overrides** pattern:
 
 1. **Defaults** — Built-in constants in code (e.g., `Model = "gpt-4o"`)
 2. **Configuration file** — `~/.botnexus/config.json` (or `${BOTNEXUS_HOME}/config.json` when set)
-3. **Environment variables** — Override any setting (see [Environment Variable Overrides](#environment-variable-overrides))
+3. **Environment variables** — Supply a setting whose key is absent from `config.json` (see [Environment Variable Overrides](#environment-variable-overrides))
 4. **Named agent overrides** — Per-agent customization in `Agents.Named` dict
 
 **Example:**
 ```text
 Global Model (config.json) = "gpt-4o"
   ↓
+Environment variable (agents__named__planner__model) = "claude-3-5-sonnet"
+  — ignored, because the key is also set in config.json
+  ↓
 Agent "planner" override (Agents.Named.planner.Model) = "gpt-4-turbo"
   ↓
-Environment variable (BotNexus__Agents__Named__planner__Model) = "claude-3-5-sonnet"
-  ↓
-**Final result:** Claude 3.5 Sonnet for the "planner" agent
+**Final result:** GPT-4 Turbo for the "planner" agent
 ```
 
 ---
@@ -2420,7 +2421,7 @@ Options:
   ```
 - **Environment variables** (production):
   ```bash
-  export BotNexus__providers__openai__apiKey=sk-...
+  export providers__openai__apiKey=sk-...
   ```
 - **Secret management** (Azure Key Vault, HashiCorp Vault, etc.)
 

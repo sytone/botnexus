@@ -25,16 +25,22 @@ BotNexus uses a layered configuration model:
 1. **Code defaults** — Built-in constants in the codebase
 2. **`appsettings.json`** — Project-level defaults (in `src/gateway/BotNexus.Gateway.Api/`)
 3. **`~/.botnexus/config.json`** — User configuration (primary)
-4. **Environment variables** — Override any setting via `BotNexus__Section__Key` format
+4. **Environment variables** - Override a setting whose key is absent from `config.json`, using the
+   configuration path with `__` between levels and **no prefix**
 
 **Environment Variable Override Example:**
 ```bash
 # Override the listen URL
-export BotNexus__Gateway__ListenUrl="http://localhost:8080"
+export gateway__listenUrl="http://localhost:8080"
 
 # Override an agent's model
-export BotNexus__Agents__assistant__Model="claude-opus-4.6"
+export agents__assistant__model="claude-opus-4.6"
 ```
+
+> `config.json` is added to the pipeline *after* the environment source, so where a key is set in
+> both, the file wins. See
+> [Environment Variable Overrides](../configuration.md#environment-variable-overrides) for the
+> canonical rules.
 
 **Custom Home Directory:**
 ```bash

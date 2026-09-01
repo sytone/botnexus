@@ -282,10 +282,13 @@ Override with `$env:BOTNEXUS_HOME = "C:\custom\path"`.
 
 Settings resolve in priority order (highest first):
 
-1. **Environment variables** — `BotNexus__Gateway__ListenUrl`, etc.
-2. **`~/.botnexus/config.json`** — User configuration
-3. **`appsettings.json`** — Project defaults
-4. **Code defaults** — Built-in constants
+1. **`~/.botnexus/config.json`** - User configuration
+2. **Environment variables** - the configuration path with `__` between levels and no prefix, e.g.
+   `gateway__listenUrl`. Read only where the key is absent from `config.json`, which is added to the
+   pipeline after the environment source. See
+   [Environment Variable Overrides](configuration.md#environment-variable-overrides).
+3. **`appsettings.json`** - Project defaults
+4. **Code defaults** - Built-in constants
 
 ### Environment variables
 
