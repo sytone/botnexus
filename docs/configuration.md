@@ -1915,7 +1915,9 @@ Configuration for the CodingAgent component (used when running BotNexus as a cod
 }
 ```
 
-**Note:** The `DefaultShellTimeoutSeconds` controls the CodingAgent's `bash` tool timeout. This is separate from `Tools.Exec.Timeout` which controls the Gateway's built-in shell tool. Set to `null` to allow unlimited execution time (process runs until the agent cancels it).
+**Note:** `DefaultShellTimeoutSeconds` belongs to the CodingAgent **sample** (`examples/BotNexus.CodingAgent/CodingAgentConfig.cs`) and controls only the shell tool that sample constructs. Set it to `null` to allow unlimited execution time (the process runs until the agent cancels it).
+
+It has no counterpart on the gateway. The gateway's built-in `exec` tool takes **no configuration key at all**: its timeout is the per-call `timeoutMs` argument, defaulting to `120000` ms (2 minutes), hardcoded at `src/extensions/BotNexus.Extensions.ExecTool/ExecTool.cs`. To change it, pass `timeoutMs` on the call - there is no `config.json` setting that raises the default.
 
 ### Telemetry: TelemetryConfig
 
