@@ -445,27 +445,48 @@ Runs health checkups across configuration, security, connectivity, extensions, p
 
 ## 9. Back Up Your Data
 
-Your agents, conversation history, and configuration are stored in `~/.botnexus/`. Back it up:
+Everything BotNexus owns lives under `~/.botnexus/`. The CLI has a backup surface for **one** part
+of that — `config.json` — and nothing else. Know which half you get for free and which half you have
+to copy yourself.
 
-### Create a backup
+### What the CLI backs up: `config.json`, automatically
 
-```bash
-botnexus backup create
-```
-
-Creates an archive at `~/.botnexus-backups/` with a timestamp.
+There is no "create a backup" command, because there is no manual creation step. Every supported
+configuration mutation writes a timestamped copy of `config.json` into `~/.botnexus/backups/`
+*before* it writes the new document.
 
 ### List backups
 
 ```bash
-botnexus backup list
+botnexus config backups list
 ```
+
+Lists the retained `config.json` backups with a validity verdict for each — so you can see whether a
+backup still loads against the current schema before you rely on it.
 
 ### Restore from a backup
 
 ```bash
-botnexus backup restore <backup-name>
+botnexus config restore <id>
 ```
+
+`<id>` is a backup id from `botnexus config backups list`. **Restore previews by default and writes
+nothing.** Add `--commit` when you have read the preview and want it applied:
+
+```bash
+botnexus config restore <id> --commit
+```
+
+### What the CLI does NOT back up
+
+The backup surface covers configuration only. These are **not** included and need an ordinary
+filesystem backup of `~/.botnexus/`:
+
+- agent workspaces (`~/.botnexus/agents/<agentId>/workspace/`), including `SOUL.md`, `AGENTS.md` and
+  the `memory/` notes
+- `sessions.db` — conversation and session history
+- `cron.sqlite` — scheduled jobs and their run history
+- stored secrets and provider credentials
 
 ---
 

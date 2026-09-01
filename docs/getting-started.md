@@ -103,7 +103,7 @@ See the [CLI Reference](cli-reference.md) for all available commands.
 |---|---|---|
 | `%LOCALAPPDATA%\BotNexus` (Windows) or `/usr/local/bin` (macOS/Linux) | Installed binaries (CLI, gateway, extensions) | Release guide |
 | `~/.botnexus/` | User data (config, agents, tokens, logs) | Both paths |
-| `~/.botnexus-backups/` | Backup archives | Both paths |
+| `~/.botnexus/backups/` | Timestamped `config.json` backups, written automatically before each config mutation | Both paths |
 
 ---
 
