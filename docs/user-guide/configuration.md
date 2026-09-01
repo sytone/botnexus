@@ -78,8 +78,8 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
       "connectionString": "Data Source=~/.botnexus/sessions.sqlite"
     },
     "compaction": {
-      "maxMessagesBeforeCompaction": 100,
-      "retainLastMessages": 20
+      "preservedTurns": 3,
+      "tokenThresholdRatio": 0.6
     },
     "cors": {
       "allowedOrigins": ["http://localhost:3000", "https://app.example.com"]
@@ -111,8 +111,9 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `sessionStore.type` | string | _(inferred)_ | Session store backend: `InMemory`, `File`, or `Sqlite`. When unset it resolves to `File` if `sessionsDirectory` is set, otherwise `Sqlite`. `InMemory` loses all data on restart. |
 | `sessionStore.filePath` | string | `null` | Directory for the `File` store. Required when `type` is `File`; a relative path resolves against the writable data directory. |
 | `sessionStore.connectionString` | string | `null` | SQLite connection string (when type=Sqlite). Defaults to `sessions.sqlite` in the writable data directory. |
-| `compaction.maxMessagesBeforeCompaction` | int | `100` | Trigger compaction after this many messages |
-| `compaction.retainLastMessages` | int | `20` | Keep this many recent messages after compaction |
+| `compaction.preservedTurns` | int | `3` | Most recent user turns preserved verbatim, never summarised |
+| `compaction.tokenThresholdRatio` | double | `0.6` | Fraction of the context window at which the token-count trigger fires |
+| `compaction.contextWindowTokens` | int | `128000` | Fallback context window (tokens) when no scoped window resolves |
 | `auxiliary.titling.enabled` | bool | `true` | Enable conversation auto-titling after the first exchange; false keeps the default title until renamed |
 | `auxiliary.titling.model` | string | `gpt-5.6-luna` | Auxiliary model ID for title generation; defaults to a fast non-reasoning model. Null uses the first registered model (unsafe with a reasoning model — it yields an empty title) |
 | `auxiliary.titling.timeoutSeconds` | int | `30` | Per-call titling timeout; non-positive falls back to 30 |
@@ -926,8 +927,8 @@ Sessions are persisted to a SQLite database by default.
       "connectionString": "Data Source=~/.botnexus/sessions.sqlite"
     },
     "compaction": {
-      "maxMessagesBeforeCompaction": 100,
-      "retainLastMessages": 20
+      "preservedTurns": 3,
+      "tokenThresholdRatio": 0.6
     }
   }
 }
@@ -977,8 +978,12 @@ The gateway warns after prolonged inactivity and verifies the runtime scheduler 
    ```
 
 **Compaction Settings:**
-- `maxMessagesBeforeCompaction`: Trigger compaction after this many messages
-- `retainLastMessages`: Keep this many recent messages after compaction
+- `preservedTurns`: Most recent user turns preserved verbatim, never summarised
+- `tokenThresholdRatio`: Fraction of the context window at which compaction triggers
+- `contextWindowTokens`: Fallback context window size in tokens
+
+See [Configuration reference](../configuration.md#session-compaction) for the full set, including the
+additive per-entry byte trigger `largestEntryBytesThreshold`.
 
 ### Session Cleanup
 
@@ -1130,8 +1135,8 @@ A production-ready configuration with multiple agents, providers, and extensions
       "connectionString": "Data Source=~/.botnexus/sessions.sqlite"
     },
     "compaction": {
-      "maxMessagesBeforeCompaction": 100,
-      "retainLastMessages": 20
+      "preservedTurns": 3,
+      "tokenThresholdRatio": 0.6
     },
     "cors": {
       "allowedOrigins": ["http://localhost:3000"]

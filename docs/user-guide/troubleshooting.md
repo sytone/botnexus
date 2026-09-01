@@ -495,17 +495,18 @@ tail -f ~/.botnexus/logs/gateway.log
 **Increase SignalR timeout** (if applicable):
 ```json
 {
-  "channels": {
-    "webui": {
-      "type": "signalr",
-      "settings": {
-        "keepAliveIntervalSeconds": 15,
-        "clientTimeoutSeconds": 30
-      }
+  "gateway": {
+    "signalR": {
+      "keepAliveIntervalSeconds": 15,
+      "clientTimeoutIntervalSeconds": 60
     }
   }
 }
 ```
+
+These are gateway-wide SignalR hub settings, not per-channel ones. `clientTimeoutIntervalSeconds`
+is coerced up to at least twice `keepAliveIntervalSeconds`, so a single dropped ping cannot
+terminate the connection.
 
 ---
 
@@ -719,8 +720,8 @@ dotnet list package --include-transitive
 {
   "gateway": {
     "compaction": {
-      "maxMessagesBeforeCompaction": 50,
-      "retainLastMessages": 10
+      "tokenThresholdRatio": 0.4,
+      "preservedTurns": 3
     }
   }
 }
@@ -798,16 +799,8 @@ tail -f ~/.botnexus/logs/gateway.log | grep -i mcp
 }
 ```
 
-**Enable caching** (if provider supports):
-```json
-{
-  "providers": {
-    "anthropic": {
-      "enablePromptCaching": true
-    }
-  }
-}
-```
+Provider-side prompt caching is not exposed as a BotNexus configuration setting; there is no
+`providers.*` key that turns it on.
 
 ---
 
