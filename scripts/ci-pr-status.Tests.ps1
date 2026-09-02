@@ -376,3 +376,45 @@ Describe 'AC6 (#2978) - the script cannot post the ack itself' {
         $script:SourceText | Should -Match 'DELIBERATE NON-CAPABILITY'
     }
 }
+
+Describe 'AC1/AC2 (#3773) - every gh list call carries an explicit --limit' {
+    # gh applies a default --limit 30 to list verbs and emits no page-boundary
+    # signal. A truncated board is indistinguishable from a small one, so the
+    # only durable defence is a source-text assertion that the flag is present.
+    # These tests read the script's own source and assert on the CALL SITE, not
+    # on any live data shape, so they cannot go vacuously green when the board
+    # happens to be under 30.
+    BeforeAll {
+        $script:GhListLines = @(
+            Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ci-pr-status.ps1') |
+                Where-Object { $_ -match 'gh\s+(pr|issue|run|release|repo|search)\s+list' -and $_ -notmatch '^\s*#' }
+        )
+    }
+
+    It 'still contains the gh pr list call site these tests pin' {
+        $script:GhListLines.Count | Should -BeGreaterThan 0
+    }
+
+    It 'passes an explicit --limit on the gh pr list invocation' {
+        $prList = @($script:GhListLines | Where-Object { $_ -match 'gh\s+pr\s+list' })
+        $prList.Count | Should -BeGreaterThan 0
+        foreach ($line in $prList) { $line | Should -Match '--limit\s+\d+' }
+    }
+
+    It 'uses a --limit of at least 200 so the live board cannot truncate' {
+        foreach ($line in $script:GhListLines) {
+            # Do NOT rely on $Matches from Should -Match: the automatic variable
+            # is left over from whichever -match ran most recently in this
+            # scope (the Where-Object filter's own capture group), which
+            # silently yields the verb name instead of the limit.
+            $m = [regex]::Match($line, '--limit\s+(\d+)')
+            $m.Success | Should -BeTrue -Because "unbounded gh list call: $line"
+            [int]$m.Groups[1].Value | Should -BeGreaterOrEqual 200
+        }
+    }
+
+    It 'has no unbounded gh list call anywhere in the script' {
+        $unbounded = @($script:GhListLines | Where-Object { $_ -notmatch '--limit\s+\d+' })
+        ($unbounded -join "`n") | Should -BeNullOrEmpty
+    }
+}

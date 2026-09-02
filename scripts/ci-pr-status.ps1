@@ -219,7 +219,14 @@ function Get-CiPrStatusReport {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Repo)
 
-    $prs = gh pr list --repo $Repo --state open --json number,title,headRefName,headRefOid,mergeable | ConvertFrom-Json
+    # --limit is MANDATORY. gh defaults 'pr list' to 30 items and emits no
+    # page-boundary signal, so omitting it truncates the board silently and
+    # indistinguishably from "there are exactly 30 open PRs" (#3773). 500 is an
+    # order of magnitude above the observed board (31) and above the sibling
+    # convention of 100 used by Get-PrFailureCause.ps1 / Invoke-IssueClaim.ps1,
+    # which is deliberate: this is the instrument the whole maintenance loop
+    # reads its open-PR count from, and that count gates dispatch.
+    $prs = gh pr list --repo $Repo --state open --limit 500 --json number,title,headRefName,headRefOid,mergeable | ConvertFrom-Json
 
     if (-not $prs -or @($prs).Count -eq 0) { return @() }
 
