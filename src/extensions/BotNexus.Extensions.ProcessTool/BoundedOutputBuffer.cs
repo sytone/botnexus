@@ -101,13 +101,20 @@ internal sealed class BoundedOutputBuffer
         var headSpan = head.AsSpan();
 
         // Locate the first char index whose removal sheds at least the overage in real UTF-8 bytes.
+        // The walk advances by whole grapheme clusters, so the cut index is inherently a safe
+        // boundary and this code performs NO surrogate inspection of its own (#2924): the boundary
+        // policy stays sole-sourced from GraphemeSafeTruncation / StringInfo.
         var cut = 0;
         long shed = 0;
         while (cut < headSpan.Length && shed < overage)
         {
-            var width = char.IsHighSurrogate(headSpan[cut]) && cut + 1 < headSpan.Length && char.IsLowSurrogate(headSpan[cut + 1])
-                ? 2
-                : 1;
+            var width = StringInfo.GetNextTextElementLength(headSpan[cut..]);
+            if (width <= 0)
+            {
+                break;
+            }
+
+            width = Math.Min(width, headSpan.Length - cut);
             shed += Encoding.UTF8.GetByteCount(headSpan.Slice(cut, width));
             cut += width;
         }
