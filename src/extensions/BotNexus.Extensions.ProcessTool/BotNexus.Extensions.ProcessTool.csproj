@@ -3,6 +3,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
+    <!-- #3704: the retention fallback cut resolves to the product-wide grapheme-boundary policy in
+         GraphemeSafeTruncation rather than to a third local rule. Wire is dependency-free. -->
+    <ProjectReference Include="..\..\domain\BotNexus.Domain.Wire\BotNexus.Domain.Wire.csproj" />
   </ItemGroup>
 
   <ItemGroup>

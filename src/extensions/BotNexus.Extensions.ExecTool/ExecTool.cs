@@ -19,7 +19,7 @@ namespace BotNexus.Extensions.ExecTool;
 public sealed class ExecTool : IAgentTool
 {
     private const int DefaultTimeoutMs = 120_000;
-    private const int MaxOutputBytes = 100 * 1024;
+    private const int MaxOutputBytes = OutputRetentionPolicy.MaxOutputBytes;
 
     /// <summary>
     /// Retention cap on captured child output, in bytes. Exposed internally so tests can drive a
@@ -594,7 +594,7 @@ public sealed class ExecTool : IAgentTool
     /// Leading token every truncation banner starts with. Tests and callers match on this rather
     /// than on the full sentence so the wording can evolve without becoming unrecognisable.
     /// </summary>
-    internal const string TruncationBannerPrefix = "[output truncated:";
+    internal const string TruncationBannerPrefix = OutputRetentionPolicy.TruncationBannerPrefix;
 
     /// <summary>
     /// Renders the retention-cap banner for issue #2895.
@@ -610,12 +610,13 @@ public sealed class ExecTool : IAgentTool
     /// <param name="discardedBytes">Bytes produced by the child but dropped once the cap was hit.</param>
     internal static string FormatTruncationBanner(int retainedBytes, int discardedBytes)
     {
-        var produced = (long)retainedBytes + discardedBytes;
-
         // Collection is head-first: lines are appended until one no longer fits, after which every
-        // subsequent line is dropped. The surviving portion is therefore always the head.
-        return $"{TruncationBannerPrefix} retained {retainedBytes} bytes (head) of {produced} bytes produced, " +
-               $"discarded {discardedBytes} bytes (tail) at the {MaxOutputBytes / 1024}KB cap]";
+        // subsequent line is dropped. The surviving portion is therefore always the head. The
+        // wording itself is the shared one (#3704) so the process path cannot word it differently.
+        return OutputRetentionPolicy.FormatTruncationBanner(
+            retainedBytes,
+            discardedBytes,
+            RetainedOutputPortion.Head);
     }
 
     /// <summary>

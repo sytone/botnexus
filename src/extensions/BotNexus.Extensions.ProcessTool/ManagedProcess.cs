@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using BotNexus.Agent.Core.Tools;
 
 namespace BotNexus.Extensions.ProcessTool;
@@ -10,7 +9,7 @@ namespace BotNexus.Extensions.ProcessTool;
 /// </summary>
 public class ManagedProcess : IDisposable
 {
-    internal const int MaxOutputBytes = 100 * 1024; // 100 KB
+    internal const int MaxOutputBytes = OutputRetentionPolicy.MaxOutputBytes;
 
     /// <summary>
     /// Message used when the OS declined to create the child (#2726). It states the retry-safe
@@ -22,7 +21,7 @@ public class ManagedProcess : IDisposable
         "It is safe to retry once the cause is resolved.";
 
     private readonly Process _process;
-    private readonly StringBuilder _outputBuffer = new();
+    private readonly BoundedOutputBuffer _outputBuffer = new();
     private readonly object _lock = new();
     private bool _disposed;
 
@@ -151,17 +150,24 @@ public class ManagedProcess : IDisposable
     public string GetOutput(int? tailLines = null)
     {
         string snapshot;
+        string banner;
         lock (_lock)
         {
-            snapshot = _outputBuffer.ToString();
+            snapshot = _outputBuffer.RawSnapshot();
+            banner = _outputBuffer.FormatBanner();
         }
 
-        if (tailLines is null or <= 0)
-            return snapshot;
+        if (tailLines is > 0)
+        {
+            var lines = snapshot.Split('\n');
+            var start = Math.Max(0, lines.Length - tailLines.Value);
+            snapshot = string.Join('\n', lines.AsSpan(start));
+        }
 
-        var lines = snapshot.Split('\n');
-        var start = Math.Max(0, lines.Length - tailLines.Value);
-        return string.Join('\n', lines.AsSpan(start));
+        // The banner leads the payload so the loss is visible before any output is read, and is
+        // emitted ONLY when the cap actually discarded something - an untruncated buffer must stay
+        // byte-identical to its pre-#3704 form.
+        return banner.Length == 0 ? snapshot : $"{banner}\n{snapshot}";
     }
 
     /// <summary>Writes content to the process stdin if it is still running.</summary>
@@ -253,30 +259,10 @@ public class ManagedProcess : IDisposable
         var clean = AnsiStripper.Strip(e.Data);
         lock (_lock)
         {
+            // Cap enforcement, real UTF-8 byte accounting, grapheme-safe cutting and discarded-byte
+            // tracking all live in BoundedOutputBuffer, which shares its disclosure wording with
+            // ExecTool via OutputRetentionPolicy (#3704).
             _outputBuffer.AppendLine(clean);
-            TrimBuffer();
         }
-    }
-
-    private void TrimBuffer()
-    {
-        // Approximate byte count via char length (sufficient for bounded buffer).
-        if (_outputBuffer.Length * sizeof(char) <= MaxOutputBytes)
-            return;
-
-        var excess = _outputBuffer.Length - (MaxOutputBytes / sizeof(char));
-        // Find the next newline after the excess to trim on a line boundary.
-        var newlineIndex = -1;
-        for (var i = excess; i < _outputBuffer.Length; i++)
-        {
-            if (_outputBuffer[i] == '\n')
-            {
-                newlineIndex = i;
-                break;
-            }
-        }
-
-        var removeCount = newlineIndex >= 0 ? newlineIndex + 1 : excess;
-        _outputBuffer.Remove(0, (int)removeCount);
     }
 }
