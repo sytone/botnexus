@@ -442,12 +442,21 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             // skip here and re-trigger on the next turn forever - reintroducing the exact cascade
             // #1574 exists to prevent. Sharing EvaluateTokenTriggers makes that divergence
             // unrepresentable.
+            // #3707: the loop below must be allowed to reach 0. A session whose visible history
+            // contains exactly ONE user entry (at index 0) yields splitIndex = 0 from SplitHistory
+            // for EVERY preservedTurns >= 1, so toSummarize is empty at every value the loop used to
+            // try -- it floored at 1. SplitHistory already handles preservedTurns <= 0 correctly by
+            // returning the whole history as summarizable, so the one input that resolves the
+            // degenerate case was the one value the loop was structurally forbidden from trying.
+            // The token trigger above still gates this: a below-threshold session never gets here,
+            // so summarising everything only happens when the session is genuinely over budget and
+            // has no smaller split available.
             var fallbackMeasurement = MeasureTokens(session.Session, visibleTokens);
             var (fallbackEstimateTrigger, fallbackProviderTrigger, threshold) =
                 EvaluateTokenTriggers(fallbackMeasurement, options);
             if (fallbackEstimateTrigger || fallbackProviderTrigger)
             {
-                for (var fallbackTurns = effectivePreservedTurns - 1; fallbackTurns >= 1; fallbackTurns--)
+                for (var fallbackTurns = effectivePreservedTurns - 1; fallbackTurns >= 0; fallbackTurns--)
                 {
                     var (fallbackSummarize, fallbackPreserve) = SplitHistory(visible, fallbackTurns);
                     if (fallbackSummarize.Count > 0)
