@@ -230,6 +230,58 @@ internal static class ToolExecutor
         return resultSlots.Where(result => result is not null).Select(result => result!).ToList();
     }
 
+    /// <summary>
+    /// Walks the timeline backwards for the most recent successful <c>read</c> tool call and
+    /// returns the <c>path</c> it targeted, so a later call that omits <c>path</c> can be told
+    /// which file the caller most likely meant (issue #3711).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately read-only and best-effort: it feeds a diagnostic suggestion, never an
+    /// applied argument, so a stale or wrong answer costs a slightly less useful error message
+    /// and nothing more. Failed reads are skipped — suggesting a path whose read errored would
+    /// point the caller at a file that may not exist.
+    /// </remarks>
+    private static string? FindMostRecentlyReadPath(IReadOnlyList<AgentMessage> messages)
+    {
+        // Correlate backwards: find the newest read whose result was not an error, then recover
+        // the path from the assistant message that requested it.
+        var failedReadCallIds = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            if (messages[i] is ToolResultAgentMessage { IsError: true } failed &&
+                string.Equals(failed.ToolName, "read", StringComparison.OrdinalIgnoreCase))
+            {
+                failedReadCallIds.Add(failed.ToolCallId);
+                continue;
+            }
+
+            if (messages[i] is not AssistantAgentMessage { ToolCalls: { Count: > 0 } toolCalls })
+            {
+                continue;
+            }
+
+            for (var c = toolCalls.Count - 1; c >= 0; c--)
+            {
+                var call = toolCalls[c];
+                if (!string.Equals(call.Name, "read", StringComparison.OrdinalIgnoreCase) ||
+                    failedReadCallIds.Contains(call.Id))
+                {
+                    continue;
+                }
+
+                if (call.Arguments.TryGetValue("path", out var value) &&
+                    value?.ToString() is { } path &&
+                    !string.IsNullOrWhiteSpace(path))
+                {
+                    return path;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static async Task<ToolPreparation> PrepareToolCallAsync(
         AgentContext context,
         AssistantAgentMessage assistantMessage,
@@ -249,7 +301,8 @@ internal static class ToolExecutor
         }
 
         var argumentElement = JsonSerializer.SerializeToElement(rawArgs);
-        var (isValid, errors) = ToolCallValidator.Validate(argumentElement, tool.Definition.Parameters, out var coercedElement);
+        var validationContext = new ToolCallValidationContext(FindMostRecentlyReadPath(context.Messages));
+        var (isValid, errors) = ToolCallValidator.Validate(argumentElement, tool.Definition.Parameters, out var coercedElement, validationContext);
         if (!isValid)
         {
             return new ToolPreparation(

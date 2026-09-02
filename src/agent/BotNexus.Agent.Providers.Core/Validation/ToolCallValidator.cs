@@ -51,11 +51,17 @@ public static class ToolCallValidator
     /// The arguments after coercion. Equal to <paramref name="arguments"/> when no
     /// coercion was applicable (or when arguments are not a JSON object).
     /// </param>
+    /// <param name="validationContext">
+    /// Optional ambient session facts used to make a rejection actionable — currently the
+    /// most recently read file path, suggested as a probable target when <c>path</c> is
+    /// missing (issue #3711). Never applied to the arguments, only reported.
+    /// </param>
     /// <returns>A tuple containing validation status and any validation errors.</returns>
     public static (bool IsValid, string[] Errors) Validate(
         JsonElement arguments,
         JsonElement parameterSchema,
-        out JsonElement coercedArguments)
+        out JsonElement coercedArguments,
+        ToolCallValidationContext? validationContext = null)
     {
         coercedArguments = arguments;
 
@@ -68,7 +74,7 @@ public static class ToolCallValidator
 
         var errors = new List<string>();
 
-        ValidateRequired(coercedArguments, parameterSchema, errors);
+        ValidateRequired(coercedArguments, parameterSchema, errors, validationContext);
         ValidateTopLevelProperties(coercedArguments, parameterSchema, errors);
         ValidateAdditionalProperties(coercedArguments, parameterSchema, errors);
 
@@ -370,7 +376,11 @@ public static class ToolCallValidator
         return bool.TryParse(text, out value);
     }
 
-    private static void ValidateRequired(JsonElement arguments, JsonElement schema, ICollection<string> errors)
+    private static void ValidateRequired(
+        JsonElement arguments,
+        JsonElement schema,
+        ICollection<string> errors,
+        ToolCallValidationContext? validationContext = null)
     {
         if (!schema.TryGetProperty("required", out var requiredElement) || requiredElement.ValueKind != JsonValueKind.Array)
         {
@@ -398,7 +408,8 @@ public static class ToolCallValidator
 
             if (!arguments.TryGetProperty(name, out _))
             {
-                errors.Add($"Missing required property '{name}'.{DescribeRequiredSignature(arguments, requiredElement)}");
+                errors.Add($"Missing required property '{name}'.{DescribeRequiredSignature(arguments, requiredElement)}"
+                           + DescribeProbableTarget(name, validationContext));
             }
         }
     }
@@ -433,6 +444,39 @@ public static class ToolCallValidator
         var skeleton = string.Join(", ", required.Select(name => $"\"{name}\": ..."));
         return $"{clause} This tool's required: {string.Join(", ", required)}."
                + $" Minimal valid payload: {{ {skeleton} }}.";
+    }
+
+    /// <summary>
+    /// Builds the optional trailing clause naming the session's most recently read file as the
+    /// probable target of a call that omitted <c>path</c>. Issue #3711: ~20 <c>edit</c> calls a
+    /// week arrive with a complete <c>edits</c> array and no target, and each one discards a
+    /// fully-formed multi-line payload that must then be regenerated — the most token-expensive
+    /// failure shape measured. The tool already knows which file the caller has open, so the
+    /// refusal can carry enough to fix the call in one step instead of a re-derivation.
+    /// </summary>
+    /// <remarks>
+    /// This <b>suggests</b> and never substitutes. The returned text is diagnostic only and the
+    /// call still fails: applying an edit to a path the caller did not supply is a destructive
+    /// write, and a wrong inference would silently corrupt an unrelated file. The clause says so
+    /// explicitly, so a model reading the error cannot conclude the edit was already retargeted.
+    /// Scoped to <c>path</c> — a different missing property has no relationship to the read.
+    /// </remarks>
+    private static string DescribeProbableTarget(string name, ToolCallValidationContext? validationContext)
+    {
+        if (!string.Equals(name, "path", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        var candidate = validationContext?.MostRecentlyReadPath;
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return string.Empty;
+        }
+
+        return $" The file most recently read in this session is '{candidate}'"
+               + " — if that is the intended target, resend with it as 'path'."
+               + " It is not applied automatically, because editing a file you did not name would be a destructive write.";
     }
 
     private static void ValidateTopLevelProperties(JsonElement arguments, JsonElement schema, ICollection<string> errors)
