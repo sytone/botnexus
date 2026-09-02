@@ -188,6 +188,38 @@ public sealed class LlmSessionCompactorTests
     }
 
     [Fact]
+    public async Task CompactAsync_SingleUserTurnHugeTailAboveThreshold_SummarizesInsteadOfLoopingForever()
+    {
+        // #3707: the degenerate case the #1574 fallback cannot reach. With exactly ONE user entry at
+        // index 0, SplitHistory finds splitIndex = 0 for every preservedTurns >= 1, so toSummarize is
+        // always empty. The fallback loop counted down to 1 and stopped, never trying the
+        // preservedTurns <= 0 path that SplitHistory already handles correctly (whole history is
+        // summarizable). The session therefore stayed permanently above threshold, shed nothing, and
+        // tripped the circuit breaker (observed live: 554,888 visible tokens vs a 120,000 threshold,
+        // 1,457 entries preserved, zero shed).
+        var hugeTail = new string('a', 4_000); // ~1000 tokens (chars/4), far above the 50-token threshold
+        var session = CreateSession(
+            ("user", "the only user message"),
+            ("assistant", hugeTail),
+            ("tool", hugeTail));
+        var compactor = CreateCompactor("summary of the whole degenerate session");
+
+        var result = await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 1,                 // the value the old fallback loop floored at
+            ContextWindowTokens = 100,
+            TokenThresholdRatio = 0.5,          // threshold = 50 tokens; visible tail ~2000 >> 50
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue(
+            "a single-user-turn session above the compaction threshold must shed context, not loop");
+        result.CompactedHistory.ShouldNotBeNull();
+        result.EntriesSummarized.ShouldBeGreaterThan(0);
+        result.TokensAfter.ShouldBeLessThan(result.TokensBefore);
+    }
+
+    [Fact]
     public async Task CompactAsync_FewUserTurnsSmallTailBelowThreshold_StillSkipped()
     {
         // The genuine no-op case must be preserved: when the visible tail is below the threshold
