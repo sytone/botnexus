@@ -988,6 +988,7 @@ Gateway HTTP server settings.
 | `Port` | int | 5005 | Listen port for gateway server |
 | `ApiKey` | string | null | Optional API key for authentication (recommended for production) |
 | `DefaultAgent` | string | null | Default agent name if message has no agent metadata |
+| `DefaultTimezone` | string | null | Server-wide default IANA timezone ID (for example `America/Los_Angeles`) used when an agent has no `soul.timezone` of its own. It is the third rung of the injected-datetime chain — agent `dateTimeInjection.timezone`, then the world-level `dateTimeInjection.timezone`, then this, then UTC — and it is also what seeds a new agent's timezone when one is created through the `create_agent` tool. A blank or unrecognised zone id falls back to UTC rather than failing the turn. |
 | `BroadcastWhenAgentUnspecified` | bool | false | If true, route to all agents when agent not specified |
 | `Heartbeat.Enabled` | bool | true | Enable heartbeat/keepalive messages |
 | `Heartbeat.IntervalSeconds` | int | 1800 | Heartbeat interval (30 minutes) |

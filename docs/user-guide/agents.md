@@ -701,6 +701,47 @@ Remove an agent by:
 
 Session history is preserved in `~/.botnexus/sessions.sqlite` (session data only — agent memory is stored as workspace Markdown files).
 
+### Updating an agent with the `update_agent` tool
+
+Registration and removal are file-driven, but an agent that holds the `update_agent` tool
+can amend a **registered** agent's descriptor in place. Only the fields you pass are
+changed; everything omitted is preserved.
+
+| Parameter | Type | Notes |
+|-----------|------|-------|
+| `id` | string | **Required.** The agent to update. |
+| `displayName` | string | New human-readable display name. |
+| `description` | string | New description. |
+| `summary` | string | Agent-maintained account of what the agent is currently doing. Self-only — see below. Empty string clears it. |
+| `emoji` | string | New emoji. |
+| `modelId` | string | Persisted as `model`. Must be registered for the agent's provider. |
+| `apiProvider` | string | Provider **instance key** (`github-copilot`, `anthropic`), not an API contract name. Persisted as `provider`. |
+| `systemPrompt` | string | New system prompt. |
+| `toolIds` | string | A JSON array string; **replaces** the existing list rather than merging into it. |
+| `thinking` | string | `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or an empty string to clear. |
+| `contextWindow` | int | New default window in tokens, or `0` to clear. |
+
+Four rules are worth knowing before you call it:
+
+- **Reserved archetype ids are refused.** The [sub-agent archetypes](../features/built-in-agents.md)
+  are implementation-only roles, not named agents, so updating one is rejected outright.
+- **`summary` is self-only.** An agent may write the summary of its own id and no other;
+  a caller with a different id — or no id at all, as when the host rather than an agent
+  invokes the tool — is refused. The denial applies to that *argument*, so every other
+  field keeps its normal reach. An over-long summary is **refused, never truncated**,
+  because a silently cut summary reads as a complete statement. The bound is
+  `gateway.agentSummary.maxLength`.
+- **The merged descriptor is validated, not just your edit.** Model/provider resolvability
+  and the thinking and context-window capabilities are checked against the descriptor
+  *after* your changes are applied, so a provider-only or model-only edit that breaks the
+  pair is caught rather than persisted.
+- **Config is written before runtime state changes.** If persisting to disk fails, the
+  agent is left untouched and the tool reports the failure — the runtime registry can
+  never end up ahead of `config.json`.
+
+Use `create_agent` to register a new agent; `update_agent` only amends one that already
+exists and reports an error otherwise.
+
 ---
 
 ## Best Practices

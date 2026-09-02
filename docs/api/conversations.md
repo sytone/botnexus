@@ -5,9 +5,14 @@ manage conversations, their channel bindings, per-conversation model overrides,
 pinning, history, and audit log.
 
 All endpoints are served under the base route `api/conversations` and require the
-gateway API key (see [Authentication](README.md#authentication)).
+gateway API key (see [Authentication](README.md#authentication)). A handful of routes
+are mounted under `api/agents/{agentId}/conversations/...` instead - those are marked
+in the table below.
 
-Source: `src/gateway/BotNexus.Gateway.Api/Controllers/ConversationsController.cs`.
+Sources: `src/gateway/BotNexus.Gateway.Api/Controllers/ConversationsController.cs` and
+`src/gateway/BotNexus.Gateway.Api/Controllers/ConversationCanvasController.cs`. The
+canvas concern was extracted into its own controller (#1688) but deliberately keeps the
+`api/conversations` base route, so it is part of this surface rather than a separate one.
 
 ---
 
@@ -16,6 +21,7 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/ConversationsController.cs
 | Verb | Route | Purpose |
 |------|-------|---------|
 | GET | `/api/conversations` | List conversations (optionally filtered by agent). |
+| GET | `/api/conversations/costs` | Aggregate per-conversation cost roll-up. |
 | GET | `/api/conversations/{conversationId}` | Get a conversation with its bindings. |
 | POST | `/api/conversations` | Create a conversation. |
 | PATCH | `/api/conversations/{conversationId}` | Update title / purpose / instructions. |
@@ -26,6 +32,7 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/ConversationsController.cs
 | POST | `/api/conversations/{conversationId}/bindings/{bindingId}/move` | Move a channel binding to another conversation. |
 | GET | `/api/conversations/{conversationId}/history` | Get assembled cross-session history. |
 | GET | `/api/conversations/{conversationId}/audit` | Get the audit log. |
+| GET | `/api/conversations/{conversationId}/export/{format}` | Download the whole conversation as a Markdown or HTML transcript. |
 | PUT | `/api/conversations/{conversationId}/override` | Set model / thinking / context override. |
 | DELETE | `/api/conversations/{conversationId}/override` | Clear all overrides. |
 | POST | `/api/conversations/{conversationId}/pin` | Pin the conversation. |
@@ -33,6 +40,12 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/ConversationsController.cs
 | GET | `/api/agents/{agentId}/conversations/{conversationId}/todo` | Get per-conversation todo state. |
 | GET | `/api/agents/{agentId}/conversations/{conversationId}/pending-ask-user` | Get pending `ask_user` prompt. |
 | POST | `/api/agents/{agentId}/conversations/{conversationId}/messages` | Post a message into an existing conversation. |
+| GET | `/api/agents/{agentId}/conversations/{conversationId}/canvas` | Get the rendered canvas HTML. |
+| PUT | `/api/agents/{agentId}/conversations/{conversationId}/canvas` | Replace the canvas HTML. |
+| GET | `/api/conversations/{conversationId}/canvas-state` | Get the whole canvas state dictionary. |
+| GET | `/api/conversations/{conversationId}/canvas-state/{key}` | Get one canvas state key. |
+| POST | `/api/conversations/{conversationId}/canvas-state/{key}` | Upsert one canvas state key. |
+| DELETE | `/api/conversations/{conversationId}/canvas-state/{key}` | Delete one canvas state key. |
 
 ---
 
@@ -215,6 +228,62 @@ Clears all three overrides back to the agent default. Returns `200 OK`, or
 ### `POST` / `DELETE /api/conversations/{conversationId}/pin`
 
 Pin / unpin a conversation. Returns `204 No Content`, or `404 Not Found`.
+
+### `GET /api/conversations/{conversationId}/export/{format}`
+
+| Parameter | In | Type | Notes |
+|-----------|----|------|-------|
+| `format` | path | string | `markdown` or `html`. Anything else is `400 Bad Request`. |
+| `firstEntryId` | query | string | Optional. Entry id — not an index — of the first included entry. |
+| `lastEntryId` | query | string | Optional. Entry id of the last included entry. |
+
+Renders the whole conversation — every linked session, with visible session boundary
+markers — as a downloadable transcript assembled from the same projection that serves
+`GET /api/conversations/{conversationId}/history`, so a download always agrees with what
+the portal shows. Secret redaction is always on, and the HTML output is self-contained
+(one inline `<style>` block, no `<script>`, no remote asset reference).
+
+Returns `200 OK` with a `text/markdown` or `text/html` file attachment named
+`<slug>-<yyyy-MM-dd>.<ext>`, or `404 Not Found`. An empty conversation still returns a
+valid document carrying the header and an explicit "no messages" note; archived
+conversations remain exportable and report their archived status.
+
+The two range parameters are bound by `ExportRangeBinding`, shared with the session
+export route so both spell the rule identically: **supply both or neither**. Supplying
+only one is rejected with `400 Bad Request` and `{ "error": "range_incomplete", ... }`
+rather than being completed from the transcript bounds, because inferring the missing
+endpoint would hand back a document covering a range the caller never named. See
+[Partial-range export](../api-reference.md#partial-range-export) for the full rejection
+set.
+
+Unlike the session surface, this route has **no** legacy literal-segment sibling — there
+is no `/export/markdown` action competing with `{format}` here, so `markdown` binds to
+this route and does accept the range parameters.
+
+### Canvas and canvas state
+
+Served by `ConversationCanvasController`, which keeps the `api/conversations` base route
+deliberately: the iframe canvas bridge posts to `api/conversations/{id}/canvas-state/{key}`,
+and a token-expanded `api/ConversationCanvas/...` base once 404'd every iframe write while
+the agent tool path — which writes to the store directly rather than over HTTP — kept
+working and hid the break (#1900).
+
+| Verb | Route | Behaviour |
+|------|-------|-----------|
+| GET | `/api/agents/{agentId}/conversations/{conversationId}/canvas` | `200 OK` with `text/html`; `204 No Content` when the conversation has no canvas; `404 Not Found`. |
+| PUT | `/api/agents/{agentId}/conversations/{conversationId}/canvas` | Body is the HTML string; an empty body clears it. `204 No Content`, or `404 Not Found`. |
+| GET | `/api/conversations/{conversationId}/canvas-state` | `200 OK` with the state dictionary, `{}` when none has been set; `404 Not Found` when the conversation does not exist. |
+| GET | `/api/conversations/{conversationId}/canvas-state/{key}` | `200 OK` with the raw JSON value; `404 Not Found` when the conversation **or** the key is absent. |
+| POST | `/api/conversations/{conversationId}/canvas-state/{key}` | Body is the raw JSON value. `200 OK`, or `404 Not Found`. |
+| DELETE | `/api/conversations/{conversationId}/canvas-state/{key}` | Idempotent — `204 No Content` even when the key did not exist; `404 Not Found` only when the conversation does not exist. |
+
+Note the asymmetry on the key routes: `GET` treats a missing key as `404`, while `DELETE`
+treats it as success. A successful `POST` or `DELETE` also broadcasts the change to
+connected clients through the registered canvas notifiers, which is what drives the
+`CanvasStateChanged` hub event.
+
+See [Canvas](../features/canvas.md) for the agent-side tool surface and the
+`window.canvasState` bridge these routes back.
 
 ### Portal hydration endpoints
 

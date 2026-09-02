@@ -108,6 +108,7 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `listenUrl` | string | `http://localhost:5005` | HTTP listen URL for REST API and WebUI. Loopback by default (#2798) — see [Remote and mesh access](#remote-and-mesh-access) before widening it. |
 | `defaultAgentId` | string | `null` | Agent to route to when none specified |
 | `agentsDirectory` | string | `~/.botnexus/agents` | Directory containing agent descriptor JSON files |
+| `defaultTimezone` | string | `null` | Server-wide default IANA timezone ID (e.g. `America/Los_Angeles`) used when an agent has no `soul.timezone` of its own. Blank or invalid falls back to UTC |
 | `sessionStore.type` | string | _(inferred)_ | Session store backend: `InMemory`, `File`, or `Sqlite`. When unset it resolves to `File` if `sessionsDirectory` is set, otherwise `Sqlite`. `InMemory` loses all data on restart. |
 | `sessionStore.filePath` | string | `null` | Directory for the `File` store. Required when `type` is `File`; a relative path resolves against the writable data directory. |
 | `sessionStore.connectionString` | string | `null` | SQLite connection string (when type=Sqlite). Defaults to `sessions.sqlite` in the writable data directory. |
