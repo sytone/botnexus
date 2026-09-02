@@ -27,6 +27,15 @@
        branch does not exist at all (its PR merged and the branch was deleted).
        That is a distinct condition from a genuine lease violation and must be
        reported as such rather than surfacing an opaque push error.
+    3. Issue #3782: a remote may carry BOTH `remote.<name>.url` and
+       `remote.<name>.pushurl`, and git resolves a push against `pushurl`
+       whenever one is set — `url` is never consulted for that operation. A
+       plain `git remote set-url` writes `url` only, so on such a remote the
+       credential-free `pushurl` shadowed the authenticated `url` and every
+       push died with `fatal: unable to get password from user`. Both keys must
+       therefore be authenticated, and both restored in the `finally`.
+       `git push --dry-run` SUCCEEDS in that broken configuration, so it is
+       worthless as a preflight for this class of failure.
 
     Secrecy rules enforced here:
     - the authenticated URL is only ever live for the duration of the callback;
@@ -134,6 +143,47 @@ function Test-RemoteBranchExists {
 
 <#
 .SYNOPSIS
+    Annotates a failed push message when a configured pushurl is the likely cause.
+.DESCRIPTION
+    Issue #3782: when a push dies on credential resolution the raw git output is
+    `fatal: unable to get password from user`, which reads as a token-acquisition
+    failure. If the remote also carries a `pushurl`, the far more likely cause is
+    that the credential-free `pushurl` shadowed the authenticated `url`. Name the
+    shadowing key explicitly so the next occurrence is diagnosable from the log
+    line alone instead of costing another diagnostic cycle.
+
+    Returns $PushOutput unchanged when either condition is absent, so this never
+    speculates: a credential failure on a remote with no pushurl is a genuine
+    token problem and must not be misattributed.
+.OUTPUTS
+    The push output, optionally suffixed with the diagnostic.
+#>
+function Add-PushUrlShadowDiagnostic {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$PushOutput,
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter()][string]$Remote = 'origin'
+    )
+
+    if ($PushOutput -notmatch 'unable to get password|could not read Username|could not read Password|Authentication failed') {
+        return $PushOutput
+    }
+
+    $pushUrl = (git -C $RepoRoot config --get "remote.$Remote.pushurl" 2>$null | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($pushUrl)) { return $PushOutput }
+
+    $safe = ConvertTo-SanitizedRemoteUrl -Url $pushUrl
+    return $PushOutput + [Environment]::NewLine +
+        "Diagnostic (#3782): remote '$Remote' has a configured remote.$Remote.pushurl ($safe), " +
+        "which shadows remote.$Remote.url for every push. If that pushurl carries no credential the " +
+        "push cannot authenticate regardless of the token. Note that 'git push --dry-run' succeeds in this " +
+        'state and is not a valid preflight.'
+}
+
+<#
+.SYNOPSIS
     Runs a scriptblock with an authenticated origin URL, then scrubs it.
 .DESCRIPTION
     Sets the remote URL on $RepoRoot (worktrees inherit it), invokes $Body, and
@@ -155,10 +205,19 @@ function Invoke-WithAuthenticatedRemote {
     )
 
     $originalUrl = (git -C $RepoRoot remote get-url $Remote 2>$null | Out-String).Trim()
+    # `git config --get` (not `remote get-url --push`) is the only way to tell a
+    # remote that has NO pushurl from one whose pushurl merely equals its url:
+    # `get-url --push` falls back to `url` and would make us synthesize a
+    # pushurl key on a remote that never had one (#3782 AC2).
+    $originalPushUrl = (git -C $RepoRoot config --get "remote.$Remote.pushurl" 2>$null | Out-String).Trim()
+    $hasPushUrl = -not [string]::IsNullOrWhiteSpace($originalPushUrl)
+
     # Never restore a URL that itself carries a credential: if a previous run
     # died before its own scrub, this is where the leak gets cleaned up.
     $safeUrl = ConvertTo-SanitizedRemoteUrl -Url $originalUrl
+    $safePushUrl = ConvertTo-SanitizedRemoteUrl -Url $originalPushUrl
     $applied = $false
+    $appliedPush = $false
 
     try {
         if (-not [string]::IsNullOrWhiteSpace($Token) -and -not [string]::IsNullOrWhiteSpace($safeUrl)) {
@@ -169,11 +228,26 @@ function Invoke-WithAuthenticatedRemote {
             }
         }
 
+        # A configured pushurl shadows url for every push, so authenticating url
+        # alone leaves the operation this helper exists to enable unauthenticated.
+        if ($hasPushUrl -and -not [string]::IsNullOrWhiteSpace($Token)) {
+            $authPushUrl = ConvertTo-AuthenticatedRemoteUrl -Url $safePushUrl -Token $Token
+            if ($authPushUrl -ne $safePushUrl) {
+                git -C $RepoRoot remote set-url --push $Remote $authPushUrl 2>&1 | Out-Null
+                $appliedPush = $true
+            }
+        }
+
         & $Body
     }
     finally {
         if ($applied) {
             git -C $RepoRoot remote set-url $Remote $safeUrl 2>&1 | Out-Null
         }
+        if ($appliedPush) {
+            git -C $RepoRoot remote set-url --push $Remote $safePushUrl 2>&1 | Out-Null
+        }
     }
 }
+
+

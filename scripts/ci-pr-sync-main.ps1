@@ -98,7 +98,12 @@ function Invoke-LeasedPush {
         }
     }
 
-    return [pscustomobject]@{ Ok = $false; Message = "Push failed: $text" }
+    return [pscustomobject]@{
+        Ok      = $false
+        # Issue #3782: name the shadowing pushurl when the failure is a credential
+        # one, so "unable to get password" is not read as a token problem again.
+        Message = "Push failed: " + (Add-PushUrlShadowDiagnostic -PushOutput $text -RepoRoot $repoRoot)
+    }
 }
 
 # Fetch latest from remote
