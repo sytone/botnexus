@@ -224,7 +224,14 @@ try {
     # `full` run finished inside its budget with timeout=null, so the #3305 attribution never
     # fired and nothing on disk said where the time went. Surfacing the top costs here means
     # the answer is in the operator's console rather than in a parser they have to write.
-    $projectCosts = if ($result -and $result.PSObject.Properties['projectCosts']) { @($result.projectCosts) } else { @() }
+    #
+    # #3788: the OUTER @(...) is load-bearing. An `if` used as an expression yields its branch's
+    # pipeline output, and both `@()` and `@(<empty array>)` are an EMPTY pipeline - which assigns
+    # $null, discarding the inner array subexpression. A build-failed run emits
+    # `"projectCosts": []`, so without this wrapper $projectCosts was $null and the .Count below
+    # threw "The property 'Count' cannot be found on this object" under Set-StrictMode, replacing
+    # the verdict this script exists to report with what looked like a tooling breakage.
+    $projectCosts = @(if ($result -and $result.PSObject.Properties['projectCosts']) { @($result.projectCosts) } else { @() })
     if ($projectCosts.Count -gt 0) {
         $topCosts = ($projectCosts | Select-Object -First 3 | ForEach-Object { "{0} {1:N1}s" -f $_.project, $_.seconds }) -join '; '
         Write-Host "Most expensive projects: $topCosts (full table: runner-cost.log)." -ForegroundColor DarkGray
