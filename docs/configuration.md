@@ -279,6 +279,41 @@ concurrently.
 
 ---
 
+### Cron: webhook blocked hosts
+
+A cron job's `webhookUrl` is a gateway egress target, so it is validated against the shared SSRF
+policy before the job is stored. That policy blocks *address classes* structurally - loopback,
+RFC-1918, link-local/IMDS and cloud metadata - but it cannot classify an internal service that sits
+on a **publicly-resolving hostname**. `webhookBlockedHosts` is how an operator blocks those by name.
+
+```json
+{
+  "cron": {
+    "webhookBlockedHosts": [
+      "internal-api.example.com",
+      "admin.example.com"
+    ]
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `cron.webhookBlockedHosts` | string[] | `[]` | Hostnames refused as cron webhook targets, in addition to the always-blocked address ranges. Matched **exactly and case-insensitively** against the URL host; no wildcards, no suffix matching. |
+
+- **Enforced at authoring time, on both surfaces.** A blocked host is rejected when a job is created
+  or updated through the API (HTTP 400), and a config-declared job naming one is skipped with a
+  warning rather than materialised. It is not a delivery-time check - the job never reaches the store.
+- **Empty means unchanged.** With no list configured the behaviour is byte-for-byte what it was
+  before: address-class rejection still fires, and a valid URL still round-trips unreshaped.
+- **Exact match only.** `internal-api.example.com` does not block `sub.internal-api.example.com`.
+  List each host you mean to block.
+
+> Before #3779 this list existed for `web_fetch` and the browser tools but was silently dropped on
+> the cron webhook path, so a configured block was accepted and never enforced there.
+
+---
+
 ### Feature flags (`FeatureManagement`)
 
 Feature flags live in the `FeatureManagement` section of `config.json` and bind through

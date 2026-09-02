@@ -39,6 +39,14 @@ public sealed class CronController(
     /// </summary>
     private const string ForbiddenMessage = "You can only manage cron jobs created by or targeting an agent you are authorized for.";
 
+    /// <summary>
+    /// #3779: the operator-configured webhook blocked-host list, read live from
+    /// <see cref="CronOptions"/> so a config reload takes effect without a restart, and read from
+    /// the SAME options instance the scheduler uses so the imperative and declarative seams cannot
+    /// enforce different policies.
+    /// </summary>
+    private IReadOnlyList<string>? ConfiguredWebhookBlockedHosts => cronOptions.CurrentValue?.WebhookBlockedHosts;
+
     /// <summary>Lists cron jobs.</summary>
     /// <summary>
     /// Executes list.
@@ -131,7 +139,9 @@ public sealed class CronController(
         // webhook target leaves no row behind.
         // #2745: return the rule-specific reason so the caller can tell a blocked address class
         // apart from a scheme/credentials rejection.
-        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl, out var webhookRejectionReason))
+        // #3779: pass the operator-configured blocked-host list. Omitting it left every configured
+        // hostname block inert on this seam while web_fetch and BrowserTools enforced theirs.
+        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, ConfiguredWebhookBlockedHosts, out var normalizedWebhookUrl, out var webhookRejectionReason))
             return BadRequest(webhookRejectionReason);
 
         // #2671: validate the failure-alert target at the authoring seam, through the SAME shared
@@ -177,7 +187,9 @@ public sealed class CronController(
         // #2552: same shared boundary on the update path.
         // #2745: return the rule-specific reason so the caller can tell a blocked address class
         // apart from a scheme/credentials rejection.
-        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, out var normalizedWebhookUrl, out var webhookRejectionReason))
+        // #3779: same configured blocked-host list as the create seam - AC3 requires refusal at
+        // update as well, or a job could be created clean and then repointed at a blocked host.
+        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, ConfiguredWebhookBlockedHosts, out var normalizedWebhookUrl, out var webhookRejectionReason))
             return BadRequest(webhookRejectionReason);
 
         // #2671: same shared validator on the update seam (clause 2).

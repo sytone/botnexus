@@ -1419,6 +1419,23 @@ public sealed class CronConfig
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "cron", Order = 1)]
     public int TickIntervalSeconds { get; set; } = 60;
 
+    /// <summary>
+    /// #3779: hostnames refused as cron webhook targets, on top of the address classes the shared
+    /// SSRF policy blocks structurally (loopback, RFC-1918, link-local, cloud metadata).
+    /// </summary>
+    /// <remarks>
+    /// Exists for the case the address table structurally cannot catch: an internal service on a
+    /// publicly-resolving hostname. Matched exactly and case-insensitively against the URL host.
+    /// Empty means no configured blocks, which is the pre-#3779 behaviour exactly.
+    /// </remarks>
+    [Display(
+        Name = "Webhook blocked hosts",
+        Description = "Hostnames refused as cron webhook targets, in addition to the always-blocked loopback, private, link-local and cloud-metadata address ranges. Use for internal services on publicly-resolving names. Exact, case-insensitive host match.",
+        GroupName = "Cron",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron", Order = 3)]
+    public List<string>? WebhookBlockedHosts { get; set; }
+
     /// <summary>Optional job definitions keyed by stable job ID.</summary>
     [Display(
         Name = "Jobs",

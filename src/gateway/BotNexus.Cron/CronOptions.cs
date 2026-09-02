@@ -57,6 +57,26 @@ public sealed class CronOptions
     /// </summary>
     public int SelfPacingCeilingSeconds { get; set; } = 3600;
 
+    /// <summary>
+    /// #3779: operator-configured hostnames refused as cron webhook targets, in addition to the
+    /// address classes <c>SsrfValidator</c> classifies structurally.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The built-in address table cannot catch an internal service on a publicly-resolving name -
+    /// that is precisely what this list is for, and it is why <c>web_fetch</c> and BrowserTools
+    /// already carry an equivalent one. It lives on <see cref="CronOptions"/> rather than on each
+    /// call site because <c>CronController</c> (create/update) and <c>CronScheduler</c> (config
+    /// reconciliation) must enforce the SAME list; a per-caller copy is exactly the drift
+    /// <c>CronWebhookUrl</c> exists to prevent.
+    /// </para>
+    /// <para>
+    /// Empty by default, and an empty list makes the check a no-op - an unconfigured deployment
+    /// behaves byte-for-byte as it did before #3779.
+    /// </para>
+    /// </remarks>
+    public List<string> WebhookBlockedHosts { get; set; } = [];
+
     public Dictionary<string, ConfiguredCronJob>? Jobs { get; set; }
     public Dictionary<string, ConfiguredPromptTemplate>? PromptTemplates { get; set; }
 }

@@ -2053,7 +2053,10 @@ public sealed class CronScheduler(
             // #2552: the declarative surface goes through the same shared boundary as the API so
             // the two cannot drift. A config-declared job with a credential-bearing or non-http(s)
             // webhook URL is skipped loudly rather than materialised into the store.
-            if (!CronWebhookUrl.TryNormalize(configuredJob.WebhookUrl, out var normalizedWebhookUrl, out var webhookRejectionReason))
+            // #3779: and with the same operator-configured blocked-host list, read off the very
+            // options instance being reconciled - so a host the operator blocked cannot enter the
+            // store through the declarative door after being refused at the API one.
+            if (!CronWebhookUrl.TryNormalize(configuredJob.WebhookUrl, options.WebhookBlockedHosts, out var normalizedWebhookUrl, out var webhookRejectionReason))
             {
                 // #2745: log the rule-specific reason so an operator can tell a blocked address
                 // class apart from a scheme/credentials rejection without reading the source.

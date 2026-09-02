@@ -232,6 +232,12 @@ builder.Services.Configure<CronOptions>(options =>
 
     options.Enabled = cron.Enabled;
     options.TickIntervalSeconds = cron.TickIntervalSeconds;
+    // #3779: the operator-configured webhook blocked-host list must reach BOTH the API create/update
+    // seam and the scheduler's config reconciliation. Binding it here - onto the single CronOptions
+    // both already read - is what stops either seam constructing its own copy of the policy.
+    options.WebhookBlockedHosts = cron.WebhookBlockedHosts is null
+        ? []
+        : [.. cron.WebhookBlockedHosts.Where(host => !string.IsNullOrWhiteSpace(host)).Select(host => host.Trim())];
     options.Jobs = cron.Jobs?
         .ToDictionary(
             pair => pair.Key,

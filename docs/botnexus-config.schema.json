@@ -2197,6 +2197,17 @@
           "maximum": 2147483647.0,
           "minimum": 1.0
         },
+        "webhookBlockedHosts": {
+          "title": "Webhook blocked hosts",
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "Hostnames refused as cron webhook targets, in addition to the always-blocked loopback, private, link-local and cloud-metadata address ranges. Use for internal services on publicly-resolving names. Exact, case-insensitive host match.",
+          "items": {
+            "type": "string"
+          }
+        },
         "jobs": {
           "type": [
             "null",
