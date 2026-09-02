@@ -15,10 +15,12 @@ namespace BotNexus.Gateway.Configuration;
 /// <remarks>
 /// <para><b>Explicit-null semantics (#2705).</b> config.json has THREE distinct states per key:
 /// key absent, key present with value <c>null</c>, and key present with a value.
-/// <see cref="AgentConfigMerger" /> depends on that distinction in six places
-/// (<c>memory</c>, <c>search</c>, <c>temporalDecay</c>, <c>heartbeat</c>, <c>quietHours</c>,
-/// <c>fileAccess</c>): an explicit null means <em>suppress the inherited world default</em>,
-/// whereas absence means <em>inherit it</em>.</para>
+/// <see cref="BotNexus.Gateway.Configuration.Store.ConfigValueState" /> is the canonical model of
+/// that distinction today: the agent-level merger that originally consumed it was removed with the
+/// configuration reset (#3515), but the states did not go with it - an explicit null still means
+/// <em>suppress the inherited value</em>, whereas absence still means <em>inherit it</em>, and the
+/// store layer (<see cref="BotNexus.Gateway.Configuration.Store.ConfigDocumentFlattener" /> reading,
+/// <see cref="BotNexus.Gateway.Configuration.Store.ConfigDocumentPatcher" /> writing) preserves it.</para>
 /// <para>The writer therefore guarantees that <b>an explicit null present in the document on disk
 /// survives a whole-document write</b>. This is a deliberate contract, not an implementation
 /// accident: the typed <see cref="PlatformConfig" /> graph cannot represent "present and null"
@@ -281,19 +283,21 @@ public sealed class PlatformConfigWriter
             // and an absent property are the same CLR state. So a whole-document write through
             // the typed model erases every explicit null in config.json.
             //
-            // That is not cosmetic. AgentConfigMerger treats absent / explicit-null / value as
-            // THREE distinct states in six places (memory, search, temporalDecay, heartbeat,
-            // quietHours, fileAccess): explicit null means "suppress the inherited default",
-            // absence means "inherit it". Erasing the null therefore flips the setting to the
-            // opposite of what the operator wrote, silently, on a write they did not initiate.
+            // That is not cosmetic. ConfigValueState models absent / explicit-null / value as
+            // THREE distinct states, and the store layer preserves them end to end
+            // (ConfigDocumentFlattener reading, ConfigDocumentPatcher writing): explicit null means
+            // "suppress the inherited value", absence means "inherit it". Erasing the null therefore
+            // flips the setting to the opposite of what the operator wrote, silently, on a write they
+            // did not initiate. The agent-level merger that first depended on this was removed with
+            // the configuration reset (#3515); the tri-state itself was not.
             //
             // Two rejected alternatives, recorded so they are not "simplified" back in:
             //  - Dropping WhenWritingNull globally would spray nulls for every unset optional
             //    property across the whole document - a far larger behaviour change than the
-            //    defect warrants, and it would not help the keys the merger reads anyway,
-            //    because the typed model cannot tell "operator wrote null" from "never set".
-            //  - Changing the merger's meaning of null is wrong: the merger is correct and six
-            //    call sites depend on it.
+            //    defect warrants, and it would not help the tri-state keys anyway, because the
+            //    typed model cannot tell "operator wrote null" from "never set".
+            //  - Redefining what a JSON null means in config.json is wrong: the reader and the
+            //    store both treat it as an explicit suppression, and both are correct.
             // Instead the preservation is scoped precisely to keys that were explicitly null in
             // the SOURCE document, and only where the regenerated document left them absent - a
             // real value in the new document always wins.

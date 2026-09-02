@@ -8,7 +8,8 @@ namespace BotNexus.Gateway.Configuration.Store;
 /// configuration inheritance depends on: <c>NULL</c> means both "unset, inherit from the layer above"
 /// and "explicitly nulled, do not inherit". Storing one row per (layer, key) makes <em>presence</em>
 /// the carrier of that distinction - exactly as the JSON document does, where
-/// <see cref="AgentConfigMerger"/> detects it via <c>TryGetProperty</c> before inspecting the value.
+/// <see cref="ConfigDocumentFlattener"/> detects it by walking the raw node graph before inspecting
+/// the value.
 /// </para>
 ///
 /// <para>

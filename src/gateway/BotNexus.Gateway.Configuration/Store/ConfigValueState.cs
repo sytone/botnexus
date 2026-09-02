@@ -9,9 +9,11 @@ namespace BotNexus.Gateway.Configuration.Store;
 /// <para>
 /// <b>Why four and not two.</b> Configuration inheritance is three-valued: a key <em>absent</em> from a
 /// document means "inherit from the layer above", a key present with a <c>null</c> value means
-/// "suppress the inherited value", and a key with a value means "override". <see cref="AgentConfigMerger"/>
-/// detects this today via the raw <see cref="JsonElement"/>, because the distinction exists only in the
-/// document - a bound POCO has already collapsed absent and null into the same <c>null</c> field.
+/// "suppress the inherited value", and a key with a value means "override". <see cref="ConfigDocumentFlattener"/>
+/// detects this today by walking the raw <see cref="JsonNode"/> document, because the distinction exists
+/// only in the document - a bound POCO has already collapsed absent and null into the same <c>null</c>
+/// field. <see cref="ConfigDocumentPatcher"/> is the write-side counterpart: it materialises
+/// <see cref="ExplicitNull"/> as a JSON null rather than as a missing key.
 /// </para>
 ///
 /// <para>
