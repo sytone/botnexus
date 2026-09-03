@@ -26,6 +26,10 @@ public interface ISatelliteRegistry
     /// <summary>Records a heartbeat from the satellite, updating LastSeen.</summary>
     void RecordHeartbeat(string satelliteId);
 
-    /// <summary>Gets all satellites that have not sent a heartbeat within their stale timeout.</summary>
-    IReadOnlyList<SatelliteConnectionInfo> GetStaleSatellites(DateTimeOffset now);
+    /// <summary>
+    /// Gets all online satellites whose last heartbeat is older than their stale timeout, measured on
+    /// the registry's own monotonic clock. The caller does not supply an instant: a wall-clock "now"
+    /// from a second clock is exactly the mixed-source comparison that #3780 removed.
+    /// </summary>
+    IReadOnlyList<SatelliteConnectionInfo> GetStaleSatellites();
 }

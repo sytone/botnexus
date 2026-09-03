@@ -14,6 +14,11 @@ public sealed class SatelliteStaleDetectionService : BackgroundService
     private readonly ISatelliteRegistry _registry;
     private readonly ILogger<SatelliteStaleDetectionService> _logger;
     private readonly TimeSpan _checkInterval;
+
+    /// <summary>
+    /// Drives the sweep cadence. Freshness itself is decided inside the registry against a single
+    /// monotonic clock (#3780); this service no longer supplies a "now" to compare against.
+    /// </summary>
     private readonly TimeProvider _timeProvider;
 
     /// <summary>
@@ -41,7 +46,7 @@ public sealed class SatelliteStaleDetectionService : BackgroundService
         {
             try
             {
-                await Task.Delay(_checkInterval, stoppingToken);
+                await Task.Delay(_checkInterval, _timeProvider, stoppingToken);
                 DetectAndMarkStale();
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -57,8 +62,7 @@ public sealed class SatelliteStaleDetectionService : BackgroundService
 
     internal void DetectAndMarkStale()
     {
-        var now = _timeProvider.GetUtcNow();
-        var stale = _registry.GetStaleSatellites(now);
+        var stale = _registry.GetStaleSatellites();
 
         foreach (var satellite in stale)
         {

@@ -26,7 +26,7 @@ public sealed class SatelliteStaleDetectionServiceTests
             }
         };
 
-        var registry = new InMemorySatelliteRegistry(entries, NullLogger<InMemorySatelliteRegistry>.Instance);
+        var registry = new InMemorySatelliteRegistry(entries, NullLogger<InMemorySatelliteRegistry>.Instance, new ManualTimeProvider(now));
 
         var service = new SatelliteStaleDetectionService(
             registry,
@@ -58,7 +58,7 @@ public sealed class SatelliteStaleDetectionServiceTests
             }
         };
 
-        var registry = new InMemorySatelliteRegistry(entries, NullLogger<InMemorySatelliteRegistry>.Instance);
+        var registry = new InMemorySatelliteRegistry(entries, NullLogger<InMemorySatelliteRegistry>.Instance, new ManualTimeProvider(now));
 
         var service = new SatelliteStaleDetectionService(
             registry,

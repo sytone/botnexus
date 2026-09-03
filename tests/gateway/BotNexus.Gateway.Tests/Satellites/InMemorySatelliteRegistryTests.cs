@@ -186,7 +186,7 @@ public sealed class InMemorySatelliteRegistryTests
         };
 
         var registry = new InMemorySatelliteRegistry(entries, NullLogger<InMemorySatelliteRegistry>.Instance);
-        var stale = registry.GetStaleSatellites(DateTimeOffset.UtcNow);
+        var stale = registry.GetStaleSatellites();
 
         Assert.Single(stale);
         Assert.Equal("stale-sat", stale[0].Id);
@@ -210,7 +210,7 @@ public sealed class InMemorySatelliteRegistryTests
         };
 
         var registry = new InMemorySatelliteRegistry(entries, NullLogger<InMemorySatelliteRegistry>.Instance);
-        var stale = registry.GetStaleSatellites(DateTimeOffset.UtcNow);
+        var stale = registry.GetStaleSatellites();
         Assert.Empty(stale);
     }
 
