@@ -1006,6 +1006,11 @@ Gateway HTTP server settings.
 | `SignalR.StreamBufferCapacity` | int | 10 | Maximum items buffered for client upload streams before processing blocks. Non-positive values fall back to the default. |
 | `SecretRedaction.Patterns` | string[] | _(none)_ | Additional operator-supplied .NET regular expressions whose matches are replaced with `[REDACTED]`. Applied **in addition to** the built-in credential patterns — never instead of them. Validated at startup (issue #2727). |
 | `SecretRedaction.MatchTimeoutMilliseconds` | int | 100 | Per-pattern match timeout for operator patterns, so a catastrophic-backtracking expression cannot hang the logging path. Must be greater than zero. |
+| `MaxCallChainDepth` | int | 10 | Maximum allowed depth for cross-agent and sub-agent call chains. A chain that would exceed this depth is refused rather than extended, so a delegation cycle cannot recurse without bound. |
+| `CrossAgentTimeoutSeconds` | int | 120 | Maximum duration, in seconds, for a cross-agent prompt call before it times out. |
+| `AgentConversationMaxDepth` | int | 3 | Maximum depth for `agent_converse` call chains. A value of zero or less falls back to the built-in default rather than disabling the guard. |
+| `AutoReplayInterruptedTurns` | bool | false | When true, the gateway automatically re-dispatches the last user message from interactive sessions interrupted by an unclean restart. Off by default until the replay path is confirmed stable; when off, the interrupted session gets a notification instead of a replay. |
+| `MaxAutoReplayAttempts` | int | 2 | Maximum automatic replay attempts for a single interrupted session before falling back to the notification-only path. The counter lives in session metadata, so a message that always crashes the agent cannot produce an infinite replay loop. |
 | `EnableProviderRequestLogging` | bool | false | When true, every provider HTTP request and response is logged at **Debug** level for observability (issue #453). Auth headers (`x-api-key`, `Authorization`, `Proxy-Authorization`) are always redacted by name, and request/response bodies are additionally passed through the shared `SecretRedactor` so leaked keys/tokens are scrubbed. Non-streamed responses also log a best-effort token `usage` summary and elapsed ms. Streaming (`text/event-stream`) responses log status + headers + duration only — the body is never buffered, so streaming is never broken. Off by default; enable only for debugging unexpected provider responses (never at Info in production). |
 
 
@@ -1076,6 +1081,99 @@ or `parent-override`) so operators can audit which authorization tier applied.
 | `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
 | `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
+
+#### Session warmup (`sessionWarmup`)
+
+`gateway.sessionWarmup` controls session pre-warming and multi-session subscription. Warming a
+recently-active session ahead of the next inbound message removes the first-turn latency of
+rehydrating its transcript, at the cost of holding those sessions resident.
+
+```json
+{
+  "gateway": {
+    "sessionWarmup": {
+      "enabled": true,
+      "maxSessionsPerAgent": 10,
+      "retentionWindowHours": 24,
+      "collapseChannelContinuations": true
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `enabled` | bool | `true` | Whether session pre-warming and multi-session subscription is enabled. |
+| `maxSessionsPerAgent` | int | 10 | Maximum number of sessions pre-warmed per agent. This is the bound on resident sessions, so it is the knob to lower on a memory-constrained host. |
+| `retentionWindowHours` | int | 24 | Retention window, in hours, within which a recently-active session is eligible for pre-warming. A session last touched outside this window is not warmed. |
+| `collapseChannelContinuations` | bool | `true` | Whether continuation sessions from the same channel are collapsed into one during pre-warming, so a long-running channel conversation does not consume several of the per-agent slots. |
+
+#### Delay tool (`delayTool`)
+
+`gateway.delayTool` bounds the built-in `delay` tool. The ceiling is a clamp, not a rejection - a
+longer request is served at the ceiling rather than failing the turn.
+
+```json
+{
+  "gateway": {
+    "delayTool": {
+      "maxDelaySeconds": 1800,
+      "defaultDelaySeconds": 60
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `maxDelaySeconds` | int | 1800 (30 min) | Maximum delay, in seconds, an agent may request. Longer requests are clamped to this ceiling. |
+| `defaultDelaySeconds` | int | 60 | Delay applied when a request omits a duration. |
+
+#### File watcher tool (`fileWatcherTool`)
+
+`gateway.fileWatcherTool` bounds the built-in `watch_file` tool.
+
+```json
+{
+  "gateway": {
+    "fileWatcherTool": {
+      "maxTimeoutSeconds": 1800,
+      "defaultTimeoutSeconds": 300,
+      "debounceMilliseconds": 500
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `maxTimeoutSeconds` | int | 1800 (30 min) | Maximum time, in seconds, an agent may wait on a file-watch request. Longer requests are clamped to this ceiling. |
+| `defaultTimeoutSeconds` | int | 300 (5 min) | Timeout applied when a request omits one. |
+| `debounceMilliseconds` | int | 500 | Debounce interval, in milliseconds, coalescing rapid filesystem events into a single wake. Some editors fire several events per save, so without a debounce one save wakes the agent repeatedly. |
+
+#### Conversation auto-archive (`conversations`)
+
+`gateway.conversations` is the **world-level** conversation retention policy, bound from
+`gateway:conversations` and applied by a background service. Per-agent overrides live on the agent's
+own `conversationRetention` block; this is the default those overrides inherit.
+
+```json
+{
+  "gateway": {
+    "conversations": {
+      "autoArchiveEnabled": false,
+      "autoArchiveAfterDays": 30,
+      "checkInterval": "01:00:00"
+    }
+  }
+}
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `autoArchiveEnabled` | bool | `false` | Whether auto-archive runs at the world level. Opt-in: archiving a conversation is a visible change to a user's history, so it is never turned on implicitly. |
+| `autoArchiveAfterDays` | int | 30 | Days of inactivity after which a conversation is auto-archived. Zero or negative is treated as disabled, so the interval alone cannot cause archiving. |
+| `checkInterval` | TimeSpan | `01:00:00` | How often the retention service scans for conversations to archive. |
 
 #### Agent Exchange (`agentExchange`)
 

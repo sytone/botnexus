@@ -122,6 +122,23 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `rateLimit.windowSeconds` | int | `60` | Rate limit window size in seconds |
 | `rateLimit.maxEntries` | int | `10000` | Max distinct client windows tracked in memory; bounds the per-client dictionary so a flood of distinct clients cannot exhaust gateway memory. Actively rate-limited windows are never evicted. Non-positive disables the cap. |
 | `logLevel` | string | `Information` | Logging level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical` |
+| `maxCallChainDepth` | int | `10` | Max depth for cross-agent and sub-agent call chains; a deeper chain is refused, not extended |
+| `crossAgentTimeoutSeconds` | int | `120` | Timeout for a cross-agent prompt call |
+| `agentConversationMaxDepth` | int | `3` | Max depth for `agent_converse` call chains; zero or less falls back to the default rather than disabling the guard |
+| `autoReplayInterruptedTurns` | bool | `false` | Re-dispatch the last user message from interactive sessions interrupted by an unclean restart. Off by default; when off the session is notified instead |
+| `maxAutoReplayAttempts` | int | `2` | Replay attempts per interrupted session before falling back to notification-only. Counted in session metadata so a crashing message cannot loop |
+| `sessionWarmup.enabled` | bool | `true` | Enable session pre-warming and multi-session subscription |
+| `sessionWarmup.maxSessionsPerAgent` | int | `10` | Max sessions pre-warmed per agent; the bound on resident sessions |
+| `sessionWarmup.retentionWindowHours` | int | `24` | Window within which a recently-active session is eligible for pre-warming |
+| `sessionWarmup.collapseChannelContinuations` | bool | `true` | Collapse continuation sessions from the same channel into one during warmup |
+| `delayTool.maxDelaySeconds` | int | `1800` | Max delay an agent may request; longer requests are clamped, not rejected |
+| `delayTool.defaultDelaySeconds` | int | `60` | Delay used when a request omits a duration |
+| `fileWatcherTool.maxTimeoutSeconds` | int | `1800` | Max file-watch wait; longer requests are clamped |
+| `fileWatcherTool.defaultTimeoutSeconds` | int | `300` | File-watch timeout used when a request omits one |
+| `fileWatcherTool.debounceMilliseconds` | int | `500` | Debounce coalescing rapid filesystem events into a single wake |
+| `conversations.autoArchiveEnabled` | bool | `false` | World-level conversation auto-archive. Opt-in; per-agent `conversationRetention` inherits this default |
+| `conversations.autoArchiveAfterDays` | int | `30` | Days of inactivity before auto-archive. Zero or negative disables archiving |
+| `conversations.checkInterval` | TimeSpan | `01:00:00` | How often the retention service scans for conversations to archive |
 | `extensions.path` | string | `~/.botnexus/extensions` | Root directory for extension assemblies |
 | `extensions.enabled` | bool | `true` | Enable/disable dynamic extension loading |
 | `world.id` | string | `local-gateway` | Unique identifier for this Gateway instance |

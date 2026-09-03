@@ -21,7 +21,7 @@ There was no in-app recovery. The only remedy was clearing site data, which is n
 ## The caching contract
 
 The published service worker (`wwwroot/service-worker.published.js`, one near-identical copy per
-portal) splits every request into exactly two classes:
+portal) splits every request into four classes:
 
 | Class | Strategy | Rationale |
 |---|---|---|
