@@ -50,6 +50,11 @@ public static class WebhookServiceCollectionExtensions
                 fileSystem ?? sp.GetService<IFileSystem>(),
                 sp.GetService<ILogger<SqliteWebhookRunStore>>()));
 
+        // #3807: the inbound route is anonymous and must read the body before it can verify the
+        // HMAC, so the pre-auth read needs its own byte ceiling and in-flight cap. Singleton
+        // because the concurrency cap is only meaningful when every request shares one semaphore.
+        services.TryAddSingleton(_ => new WebhookInboundBodyGuard());
+
         services.AddHostedService<WebhookRunRetentionHostedService>();
 
         services.AddOptions<WebhookConversationRetentionOptions>();

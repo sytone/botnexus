@@ -26,10 +26,19 @@ public sealed class WebhookInboundController(
     IConversationStore conversationStore,
     ISessionStore sessionStore,
     IHttpClientFactory httpClientFactory,
-    ILogger<WebhookInboundController> logger) : ControllerBase
+    ILogger<WebhookInboundController> logger,
+    WebhookInboundBodyGuard? bodyGuard = null) : ControllerBase
 {
     private const string SignatureHeader = "X-BotNexus-Signature-256";
     private const int SyncTimeoutSeconds = 120;
+
+    /// <summary>
+    /// Fallback guard for callers that construct the controller without DI. The bounds are a
+    /// security floor, not a tuning knob, so an unwired controller must still be bounded (#3807).
+    /// </summary>
+    private static readonly WebhookInboundBodyGuard DefaultBodyGuard = new();
+
+    private WebhookInboundBodyGuard BodyGuard => bodyGuard ?? DefaultBodyGuard;
 
     /// <summary>
     /// Accepts an inbound message from an external system, verifies the HMAC-SHA256
@@ -51,6 +60,8 @@ public sealed class WebhookInboundController(
     [ProducesResponseType(typeof(WebhookSyncResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status413PayloadTooLarge)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Receive(
         string agentId,
@@ -58,11 +69,58 @@ public sealed class WebhookInboundController(
         CancellationToken cancellationToken)
     {
         // ── 1. Read raw body for HMAC verification ───────────────────────────
-        Request.EnableBuffering();
-        using var ms = new MemoryStream();
-        await Request.Body.CopyToAsync(ms, cancellationToken);
-        var rawBody = ms.ToArray();
-        Request.Body.Position = 0;
+        // This route is anonymous, and the signature is computed over these exact bytes, so the
+        // read necessarily precedes authentication. That makes it an unauthenticated allocation
+        // primitive unless it is bounded here (#3807): a declared-length check first (a truthful
+        // oversized request then costs nothing), then an in-flight slot, then a length-capped copy.
+        var guard = BodyGuard;
+
+        if (guard.ExceedsDeclaredLength(Request.ContentLength))
+        {
+            logger.LogWarning(
+                "Webhook '{WebhookId}' rejected — declared body length {Declared} exceeds the {Limit} byte ceiling, from {RemoteIp}.",
+                webhookId, Request.ContentLength, guard.MaxBodyBytes, HttpContext.Connection.RemoteIpAddress);
+            return StatusCode(
+                StatusCodes.Status413PayloadTooLarge,
+                new { error = $"Request body exceeds the {guard.MaxBodyBytes} byte limit." });
+        }
+
+        if (!guard.TryAcquireReadSlot())
+        {
+            logger.LogWarning(
+                "Webhook '{WebhookId}' rejected — {Limit} concurrent pre-authentication body reads already in flight, from {RemoteIp}.",
+                webhookId, guard.MaxInFlightReads, HttpContext.Connection.RemoteIpAddress);
+            return StatusCode(
+                StatusCodes.Status429TooManyRequests,
+                new { error = "Too many concurrent webhook requests." });
+        }
+
+        byte[] rawBody;
+        try
+        {
+            Request.EnableBuffering();
+            var read = await guard.ReadBoundedAsync(Request.Body, cancellationToken);
+            if (read.IsTooLarge)
+            {
+                logger.LogWarning(
+                    "Webhook '{WebhookId}' rejected — body exceeds the {Limit} byte ceiling, from {RemoteIp}.",
+                    webhookId, read.Limit, HttpContext.Connection.RemoteIpAddress);
+                return StatusCode(
+                    StatusCodes.Status413PayloadTooLarge,
+                    new { error = $"Request body exceeds the {read.Limit} byte limit." });
+            }
+
+            rawBody = read.Body;
+        }
+        finally
+        {
+            // Released as soon as the pre-signature region ends. The cap bounds unauthenticated
+            // reads, not the authenticated work that follows.
+            guard.ReleaseReadSlot();
+        }
+
+        if (Request.Body.CanSeek)
+            Request.Body.Position = 0;
 
         // ── 2. Parse request body ────────────────────────────────────────────
         WebhookInboundRequest? body;
