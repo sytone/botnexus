@@ -68,11 +68,53 @@ Updates an existing job from the request body. The route `jobId` wins over any `
 in the body, and the original `createdAt` is preserved. `nextRunAt`, when present, is
 range-validated as on create.
 
+#### Omitted fields are preserved (#3808)
+
+**A field absent from the request body leaves the stored value unchanged.** Only a field the
+caller actually sends is written, so editing a job's schedule cannot silently clear policy the
+request never mentioned. This is the same omitted-field rule the `cron` agent tool has applied
+since #2634, and the two seams are asserted to agree.
+
+This matters most for the six policy columns, because their CLR defaults are indistinguishable
+from a deliberate "turn it off":
+
+| Field | Omitted | Explicit value |
+|-------|---------|----------------|
+| `failureAlertsEnabled` | keeps stored value | `true`/`false` applied |
+| `failureAlertConversationId` | keeps stored value | applied; `null` or `""` **clears** the target |
+| `deleteJobAfterRun` | keeps stored value | `true`/`false` applied |
+| `deleteAfterRun` | keeps stored value | `true`/`false` applied |
+| `expiresAt` | keeps stored value | applied; `null` or `""` **clears** the expiry |
+| `executionClass` | keeps stored value | `true`/`false` applied |
+
+The same rule applies to the ordinary definition fields (`name`, `schedule`, `actionType`,
+`message`, `templateName`, `templateParameters`, `model`, `webhookUrl`, `shellCommand`,
+`enabled`, `system`, `timeZone`, `metadata`, `nextRunAt`).
+
+A partial edit is therefore the recommended shape - send only what changes:
+
+```http
+PUT /api/cron/daily-briefing
+Content-Type: application/json
+X-Api-Key: <key>
+
+{ "schedule": "0 9 * * *" }
+```
+
+The job's alert routing, one-shot disposition, expiry and execution class all survive that request.
+Round-tripping the full record returned by `GET /api/cron/{jobId}` also remains correct, since
+nothing is omitted.
+
+Only a **supplied** `failureAlertConversationId` is validated against the conversation store. A
+retained one is not re-checked, so a job whose alert conversation was later deleted stays editable
+rather than becoming permanently un-saveable because of a field the caller never touched.
+
 `agentId` and `createdBy` are **not** caller-authored on this route (#3575). `createdBy` is
 server-stamped provenance and is always taken from the stored row; `agentId` moves only to an
 agent the authenticated caller is itself scoped to, and otherwise keeps its stored value. This
-mirrors the existing `scheduleActivatedAt` stripping (#2554) - the request binds the domain
-record directly, so any column the store writes must be governed explicitly here.
+mirrors the existing `scheduleActivatedAt` stripping (#2554) - any column the store writes must be
+governed explicitly here. The scheduler-owned runtime bookkeeping (`lastRunAt`, `lastRunStatus`,
+`lastRunError`, `backoffUntil`, `conversationId`) is likewise not accepted from this route (#2133).
 
 Returns `200 OK` with the updated job, `404 Not Found` when the job does not exist,
 `403 Forbidden` when the job exists but is not manageable by the caller, or `409 Conflict` when

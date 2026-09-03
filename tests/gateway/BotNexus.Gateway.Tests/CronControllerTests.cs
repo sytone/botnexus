@@ -178,7 +178,7 @@ public sealed partial class CronControllerTests
             NextRunAt = new DateTimeOffset(9001, 6, 15, 0, 0, 0, TimeSpan.Zero)
         };
 
-        var result = await controller.Update("job-upd", request, CancellationToken.None);
+        var result = await controller.Update("job-upd", CronJobUpdateRequest.FromCronJob(request), CancellationToken.None);
 
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
     }
@@ -242,7 +242,7 @@ public sealed partial class CronControllerTests
             var nextRun = runAt.AddMinutes(5);
 
             var controllerUpdate = Task.Run(async () =>
-                await controller.Update("job-1", CreateJob("job-1") with { Schedule = "*/5 * * * *", Name = "Edited", Enabled = false }, CancellationToken.None));
+                await controller.Update("job-1", CronJobUpdateRequest.FromCronJob(CreateJob("job-1") with { Schedule = "*/5 * * * *", Name = "Edited", Enabled = false }), CancellationToken.None));
 
             var runtimeWrites = Task.Run(async () =>
             {
@@ -405,7 +405,7 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "job-1",
-            CreateJob("job-1", actionType: "webhook") with { WebhookUrl = "https://u:p@example.com/hook" },
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-1", actionType: "webhook") with { WebhookUrl = "https://u:p@example.com/hook" }),
             CancellationToken.None);
 
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
@@ -440,7 +440,7 @@ public sealed partial class CronControllerTests
             .Single(j => j.Id.Value == "job-1");
         listed.WebhookUrl.ShouldBe(Url);
 
-        var updateResult = await controller.Update("job-1", listed with { Name = "Renamed" }, CancellationToken.None);
+        var updateResult = await controller.Update("job-1", CronJobUpdateRequest.FromCronJob(listed with { Name = "Renamed" }), CancellationToken.None);
         var updated = (updateResult.Result as OkObjectResult)?.Value as CronJob;
         updated.ShouldNotBeNull();
         updated!.WebhookUrl.ShouldBe(Url);
