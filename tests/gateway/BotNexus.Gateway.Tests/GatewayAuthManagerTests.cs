@@ -309,6 +309,111 @@ public sealed class GatewayAuthManagerTests : IDisposable
             .ShouldBe("https://api.githubcopilot.com/mcp");
     }
 
+    // ---- #3673: out-of-process credential rotation must be observed without a restart ----
+
+    private const string RotationTemplate = """
+                                            {
+                                              "openai": {
+                                                "type": "token",
+                                                "refresh": "unused",
+                                                "access": "TOKENVALUE",
+                                                "expires": 4102444800000,
+                                                "endpoint": "https://api.openai.test"
+                                              }
+                                            }
+                                            """;
+
+    private static string AuthJsonWithToken(string token) => RotationTemplate.Replace("TOKENVALUE", token);
+
+    [Fact]
+    public async Task GetApiKeyAsync_WhenAuthFileRewrittenOutOfProcess_ReturnsRotatedToken()
+    {
+        // The rotation case from #3673: `botnexus provider login` rewrites auth.json while the
+        // gateway is running. The cache used to latch on the first load, so the revoked token was
+        // served until a restart. Same manager instance throughout - no restart is simulated.
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("stale-token-aaa"));
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, new DateTime(2026, 8, 29, 15, 40, 0, DateTimeKind.Utc));
+
+        var manager = CreateManager(new PlatformConfig());
+        (await manager.GetApiKeyAsync("openai")).ShouldBe("stale-token-aaa");
+
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("rotated-token-bbb"));
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, new DateTime(2026, 8, 29, 15, 47, 28, DateTimeKind.Utc));
+
+        (await manager.GetApiKeyAsync("openai")).ShouldBe("rotated-token-bbb");
+    }
+
+    [Fact]
+    public void GetApiEndpoint_WhenAuthFileRewrittenOutOfProcess_ReturnsRotatedEndpoint()
+    {
+        // The endpoint override rides the same cache, so it must rotate too.
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("stale-token-aaa"));
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, new DateTime(2026, 8, 29, 15, 40, 0, DateTimeKind.Utc));
+
+        var manager = CreateManager(new PlatformConfig());
+        manager.GetApiEndpoint("openai").ShouldBe("https://api.openai.test");
+
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("stale-token-aaa").Replace("https://api.openai.test", "https://rotated.openai.test"));
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, new DateTime(2026, 8, 29, 15, 47, 28, DateTimeKind.Utc));
+
+        manager.GetApiEndpoint("openai").ShouldBe("https://rotated.openai.test");
+    }
+
+    [Fact]
+    public async Task GetApiKeyAsync_WhenAuthFileUnchanged_DoesNotRereadFromDisk()
+    {
+        // Acceptance criterion 2: no per-call disk read in the steady state. Proven by mutating the
+        // file's CONTENT while holding its observable stat (last-write time and length) fixed - a
+        // manager that re-read on every call would return the new bytes. Both tokens are the same
+        // length so the length component of the signature cannot be what carries the test.
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("first-token-aaaa"));
+        var frozenStamp = new DateTime(2026, 8, 29, 15, 40, 0, DateTimeKind.Utc);
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, frozenStamp);
+
+        var manager = CreateManager(new PlatformConfig());
+        (await manager.GetApiKeyAsync("openai")).ShouldBe("first-token-aaaa");
+
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("second-token-bbb"));
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, frozenStamp);
+
+        (await manager.GetApiKeyAsync("openai")).ShouldBe("first-token-aaaa");
+        (await manager.GetApiKeyAsync("openai")).ShouldBe("first-token-aaaa");
+    }
+
+    [Fact]
+    public async Task InvalidateCache_WhenStatIsUnchanged_ForcesReread()
+    {
+        // The explicit seam a 401/403 handler uses: it must override the stat-based shortcut, so the
+        // stamp is deliberately held fixed here to prove invalidation - not mtime - did the work.
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("first-token-aaaa"));
+        var frozenStamp = new DateTime(2026, 8, 29, 15, 40, 0, DateTimeKind.Utc);
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, frozenStamp);
+
+        var manager = CreateManager(new PlatformConfig());
+        (await manager.GetApiKeyAsync("openai")).ShouldBe("first-token-aaaa");
+
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("second-token-bbb"));
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, frozenStamp);
+
+        manager.InvalidateCache();
+
+        (await manager.GetApiKeyAsync("openai")).ShouldBe("second-token-bbb");
+    }
+
+    [Fact]
+    public async Task GetApiKeyAsync_WhenAuthFileAppearsAfterFirstResolution_PicksItUp()
+    {
+        // A first-login-after-start rotation: the absent->present transition is a signature change
+        // too, so the freshly written credential must be visible without a restart.
+        SetEnvironmentVariable("OPENAI_API_KEY", null);
+        var manager = CreateManager(new PlatformConfig());
+        (await manager.GetApiKeyAsync("openai")).ShouldBeNull();
+
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("post-login-token"));
+
+        (await manager.GetApiKeyAsync("openai")).ShouldBe("post-login-token");
+    }
+
     public void Dispose()
     {
         foreach (var (name, value) in _originalEnvironmentVariables)

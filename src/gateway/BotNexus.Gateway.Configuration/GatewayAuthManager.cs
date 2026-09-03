@@ -38,6 +38,24 @@ public sealed class GatewayAuthManager
     private Dictionary<string, AuthEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
 
+    /// <summary>
+    /// #3673: the observed on-disk state of the auth files at the moment the cache was populated.
+    ///
+    /// <para>
+    /// The cache used to be a one-shot latch (<see cref="_loaded"/> set once, never reset), so a
+    /// credential written <b>out of process</b> - which is exactly what <c>botnexus provider login</c>
+    /// does - was invisible to a running gateway. It kept serving the revoked token and every call
+    /// failed <c>HTTP 403</c> until someone restarted the daemon. Recording the files' last-write
+    /// stamp and size lets the next resolution notice the rewrite and re-read.
+    /// </para>
+    /// <para>
+    /// A stat is deliberately used rather than a read: the steady state must not perform disk I/O on
+    /// every credential resolution, and an unchanged stamp is sufficient evidence that the cached
+    /// entries still match the file.
+    /// </para>
+    /// </summary>
+    private string? _loadedSignature;
+
     public GatewayAuthManager(IOptionsMonitor<PlatformConfig> platformConfig, ILogger<GatewayAuthManager> logger, IFileSystem fileSystem)
         : this(platformConfig, logger, fileSystem, NullProviderHealthObserver.Instance)
     {
@@ -497,11 +515,31 @@ public sealed class GatewayAuthManager
         }
     }
 
+    /// <summary>
+    /// Drops the cached <c>auth.json</c> entries so the next resolution re-reads from disk (#3673).
+    ///
+    /// <para>
+    /// The mtime check below already covers the ordinary rotation case. This is the explicit escape
+    /// hatch for a caller that has independent evidence the cache is wrong - most usefully a provider
+    /// that just answered 401/403 - and does not want to depend on filesystem timestamp granularity
+    /// to find out.
+    /// </para>
+    /// </summary>
+    public void InvalidateCache()
+    {
+        lock (_sync)
+        {
+            _loaded = false;
+            _loadedSignature = null;
+        }
+    }
+
     private void LoadAuthEntries()
     {
         lock (_sync)
         {
-            if (_loaded)
+            var signature = ComputeAuthFileSignature();
+            if (_loaded && string.Equals(_loadedSignature, signature, StringComparison.Ordinal))
             {
                 return;
             }
@@ -530,7 +568,46 @@ public sealed class GatewayAuthManager
             }
 
             _loaded = true;
+            _loadedSignature = signature;
         }
+    }
+
+    /// <summary>
+    /// Stats the candidate auth files and renders their observable state as a comparison token (#3673).
+    /// Last-write time alone is not enough on filesystems with coarse timestamp granularity, so the
+    /// length participates too - two rewrites within the same tick that changed the token almost
+    /// always differ in length, and the explicit <see cref="InvalidateCache"/> seam covers the rest.
+    /// A stat failure renders as a stable marker rather than a changing one: a transient error must
+    /// not be able to turn every subsequent resolution into a disk read.
+    /// </summary>
+    private string ComputeAuthFileSignature()
+    {
+        var builder = new System.Text.StringBuilder();
+        foreach (var candidatePath in new[] { _legacyAuthFilePath, _authFilePath })
+        {
+            builder.Append(candidatePath).Append('|');
+            try
+            {
+                var info = _fileSystem.FileInfo.New(candidatePath);
+                if (info.Exists)
+                {
+                    builder.Append(info.LastWriteTimeUtc.Ticks).Append(':').Append(info.Length);
+                }
+                else
+                {
+                    builder.Append("absent");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to stat auth file '{AuthPath}' for staleness detection.", candidatePath);
+                builder.Append("unknown");
+            }
+
+            builder.Append(';');
+        }
+
+        return builder.ToString();
     }
 
     private void SaveAuthEntries()
@@ -546,6 +623,11 @@ public sealed class GatewayAuthManager
         // #2392: auth.json holds OAuth refresh/access tokens. Narrow it to the owner on every
         // save, not just first create - a token refresh rewrites this file routinely.
         SecureFilePermissions.RestrictToOwner(_fileSystem, _authFilePath);
+
+        // #3673: this process just rewrote the file, so the cache already matches what is on disk.
+        // Re-baselining the signature keeps an in-process refresh from being mistaken for a foreign
+        // rotation and forcing a pointless re-read of our own write.
+        _loadedSignature = ComputeAuthFileSignature();
     }
 
     private static bool TryGetProviderConfig(
