@@ -3,6 +3,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Gateway.Tools;
@@ -85,7 +86,17 @@ public sealed class SubAgentManageTool(
             info.Status,
             info.ResultSummary,
             info.StartedAt,
-            info.CompletedAt
+            info.CompletedAt,
+            // #3703: without these a delivery-failed record is reported as a clean completion and
+            // the caller goes on waiting for an announcement that was already dropped.
+            // Emitted as text, not the raw enum: JsonOptions has no enum converter, so an
+            // unprojected enum would reach the calling model as a bare integer.
+            CompletionDelivery = info.CompletionDelivery.ToString(),
+            info.CompletionDeliveryError,
+            DeliveryWarning = info.CompletionDelivery == SubAgentCompletionDelivery.Failed
+                ? "This sub-agent finished but its completion announcement never reached this session. "
+                  + "Treat the resultSummary here as the only copy of its result; no wake-up is coming."
+                : null
         }, JsonOptions);
 
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, result)]);

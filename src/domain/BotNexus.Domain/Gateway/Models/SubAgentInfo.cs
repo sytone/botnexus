@@ -93,6 +93,51 @@ public sealed record SubAgentInfo
     /// must mean "your requested budget was reduced and you should re-scope the task".
     /// </summary>
     public SubAgentBudgetClamp? BudgetClamp { get; init; }
+
+    /// <summary>
+    /// Gets whether the completion follow-up actually reached the parent session (#3703).
+    /// <para>
+    /// <b>Why this is separate from <see cref="Status"/>.</b> A run can finish its work perfectly
+    /// and still strand its supervisor: the terminal status describes what the CHILD did, while
+    /// this describes whether the parent was ever told. Before this field existed a dispatch that
+    /// threw was caught, counted and logged, and the record still read <c>Completed</c> - the
+    /// parent waited forever for a push-based announcement that had already been dropped, and no
+    /// operator could tell the two apart without reading gateway logs. Modelled on the hardened
+    /// cron sibling, <c>CronRunStatus.DeliveryFailed</c>.
+    /// </para>
+    /// </summary>
+    public SubAgentCompletionDelivery CompletionDelivery { get; init; } = SubAgentCompletionDelivery.Pending;
+
+    /// <summary>
+    /// Gets the failure detail when <see cref="CompletionDelivery"/> is
+    /// <see cref="SubAgentCompletionDelivery.Failed"/>; otherwise <c>null</c>. Carries the
+    /// dispatch exception's message so the surfaced state answers "why did it not arrive?"
+    /// rather than only "it did not arrive".
+    /// </summary>
+    public string? CompletionDeliveryError { get; init; }
+}
+
+/// <summary>
+/// Reports whether a terminal sub-agent run's completion follow-up reached the parent session
+/// (#3703). Orthogonal to <see cref="SubAgentStatus"/>: the status is about the child's work, this
+/// is about whether the announcement was delivered.
+/// </summary>
+public enum SubAgentCompletionDelivery
+{
+    /// <summary>
+    /// No delivery has been attempted (or concluded) yet. The state of every still-running record,
+    /// and of a terminal record whose parent agent id was empty so no wake was ever owed.
+    /// </summary>
+    Pending,
+
+    /// <summary>The completion follow-up was dispatched to the parent session without error.</summary>
+    Delivered,
+
+    /// <summary>
+    /// The completion follow-up dispatch threw. The run finished, the child was torn down, and the
+    /// parent was never woken - the result summary on this record is all that survives.
+    /// </summary>
+    Failed
 }
 
 /// <summary>
