@@ -101,6 +101,20 @@ public sealed class AgentExchangeTurnEngine
         Action<GatewaySession> onSealSuccess,
         CancellationToken cancellationToken)
     {
+        // #3515: the engine arms its OWN deadline source, deliberately NOT linked from the caller's
+        // token. That asymmetry is the entire point - a source the caller cannot cancel is the only
+        // evidence available at the catch arms below that distinguishes "the budget expired" from
+        // "a human pressed stop". Every pre-existing deadline on this path was a linked DESCENDANT of
+        // the caller's token, so both causes set the same bit and the seal decision had nothing to
+        // discriminate with. Null Deadline keeps the pre-#3515 shape exactly.
+        using var deadlineCts = CreateDeadlineSource(request.Deadline);
+
+        // The work below observes caller-cancel OR deadline; the two catch arms then attribute it.
+        using var effectiveCts = deadlineCts is null
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadlineCts.Token);
+        var effectiveToken = effectiveCts?.Token ?? cancellationToken;
+
         var transcript = new List<AgentExchangeTranscriptEntry>();
         var message = request.Message;
         var finalResponse = string.Empty;
@@ -114,7 +128,7 @@ public sealed class AgentExchangeTurnEngine
             {
                 AddTurn(MessageRole.User, message, transcript, session);
 
-                var outcome = await sendTurnAsync(turn, message, cancellationToken).ConfigureAwait(false);
+                var outcome = await sendTurnAsync(turn, message, effectiveToken).ConfigureAwait(false);
                 finalResponse = outcome.Response;
                 // #2614 AC4: tool rows land between the user turn and the assistant turn. They are
                 // session-history only - the returned transcript stays a pure user/assistant
@@ -150,7 +164,12 @@ public sealed class AgentExchangeTurnEngine
             beforeSeal(session);
             session.Status = GatewaySessionStatus.Sealed;
             onSealSuccess(session);
-            await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+            // #3515: CancellationToken.None, matching the archive call below and both writes in the
+            // error arm. onSealSuccess has ALREADY announced the seal on the line above, so a
+            // cancellation landing here would otherwise abort the persist and leave observers told
+            // the exchange sealed while the stored row still reads Active. A terminal write that has
+            // been announced must be durable; it is bounded work, not something worth abandoning.
+            await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
             await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -158,6 +177,12 @@ public sealed class AgentExchangeTurnEngine
             // #553: caller-initiated cancellation must NOT seal the session. See the matching
             // comment in CrossWorldFederationController.ExecuteRelayAsync for full rationale —
             // sealing here would poison the session for any caller retry.
+            throw;
+        }
+        catch (OperationCanceledException) when (deadlineCts is { IsCancellationRequested: true })
+        {
+            // #3515: engine deadline expired, caller did not cancel. See SealOnDeadlineAsync.
+            await SealOnDeadlineAsync(conversation, sessionId, session, beforeSeal).ConfigureAwait(false);
             throw;
         }
         catch (Exception ex)
@@ -185,6 +210,63 @@ public sealed class AgentExchangeTurnEngine
             FinishReason = exchangeFinished ? finishReason : null,
             FinishSummary = exchangeFinished ? finishSummary : null
         };
+    }
+
+    /// <summary>
+    /// Seals and archives an exchange whose engine-owned deadline expired (#3515).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A timed-out exchange is over and nobody is waiting to retry it, so it is sealed exactly like
+    /// any other failure. Both writes use <see cref="CancellationToken.None"/> because the token that
+    /// brought us here is, by construction, already cancelled.
+    /// </para>
+    /// <para>
+    /// <strong>Arm order is the safety property.</strong> The caller-cancellation arm is declared
+    /// FIRST, so genuine ambiguity (caller token and deadline both cancelled) resolves to "caller",
+    /// never "timeout". Cancelling a session that had timed out anyway costs nothing; sealing a
+    /// session its user is still holding is unrecoverable, because the sealed-session 409 guard then
+    /// rejects every retry.
+    /// </para>
+    /// <para>
+    /// Extracted from the catch body deliberately: <c>CancelNoSealArchitectureTests</c> fences the
+    /// seal-on-error catch-all by looking back a bounded window for the caller-cancellation rethrow
+    /// clause, and an inline body here would push that clause out of range.
+    /// </para>
+    /// </remarks>
+    private async Task SealOnDeadlineAsync(
+        Conversation conversation,
+        SessionId sessionId,
+        GatewaySession session,
+        Action<GatewaySession> beforeSeal)
+    {
+        _logger.LogWarning(
+            "Agent exchange for session '{SessionId}' exceeded its deadline; sealing.", sessionId);
+        beforeSeal(session);
+        session.Status = GatewaySessionStatus.Sealed;
+        session.Metadata["error"] = "Agent exchange exceeded its deadline.";
+        await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+        await ArchiveOnExchangeEndAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Builds the engine-owned deadline source for <paramref name="deadline"/>, or null when the
+    /// caller imposed none (#3515).
+    /// </summary>
+    /// <remarks>
+    /// An already-elapsed deadline arms immediately (<c>TimeSpan.Zero</c>) rather than being treated
+    /// as "no deadline": a caller that hands over a past instant has already spent its budget, and
+    /// silently granting it a fresh unbounded one would be the opposite of what it asked for.
+    /// </remarks>
+    private static CancellationTokenSource? CreateDeadlineSource(DateTimeOffset? deadline)
+    {
+        if (deadline is not { } instant)
+            return null;
+
+        var remaining = instant - DateTimeOffset.UtcNow;
+        var cts = new CancellationTokenSource();
+        cts.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+        return cts;
     }
 
     /// <summary>

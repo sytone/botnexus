@@ -28,6 +28,18 @@ public sealed class AgentConverseTool(
     private const int DefaultTimeoutSeconds = 600;
     private const int MaxTimeoutSeconds = 1800;
 
+    /// <summary>
+    /// Grace period added to this tool's own linked backstop timer so the turn engine's
+    /// engine-owned deadline expires first (#3515).
+    /// </summary>
+    /// <remarks>
+    /// The backstop is linked from the caller's token, so if it wins the race the resulting
+    /// cancellation is indistinguishable from caller cancellation and the exchange session is left
+    /// unsealed - the defect #3515 fixes. Five seconds is generous relative to the scheduling jitter
+    /// between two timers and negligible relative to the 600s default budget.
+    /// </remarks>
+    private static readonly TimeSpan DeadlineBackstopBuffer = TimeSpan.FromSeconds(5);
+
     private readonly AgentExchangeOptions _exchangeOptions = exchangeOptions ?? new AgentExchangeOptions();
     private readonly ILogger _logger = logger ?? NullLogger.Instance;
 
@@ -105,8 +117,19 @@ public sealed class AgentConverseTool(
             ?? throw new ArgumentException("Missing required argument: message.");
 
         var timeoutSeconds = ReadTimeoutSeconds(arguments);
+        // #3515: the exchange budget is now expressed TWICE, deliberately, and the order matters.
+        //   1. `Deadline` below is data. The turn engine arms its own source from it - one the caller
+        //      cannot cancel - which is what lets it tell "budget expired" apart from "caller pressed
+        //      stop" and seal the session on the former.
+        //   2. `timeoutCts` stays, demoted to a backstop for the frames the engine does not own
+        //      (argument prep below, and anything that escapes the loop).
+        // The backstop is armed with a buffer so the engine's deadline reliably fires FIRST. Without
+        // it the two timers race, the linked token wins often enough to matter, and the exchange then
+        // looks like caller cancellation - the exact ambiguity #3515 exists to remove. Same idiom, and
+        // the same reason, as the +10s safety-cap buffer in ToolExecutor.ResolveEffectiveTimeout.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds) + DeadlineBackstopBuffer);
         var startedAt = Stopwatch.GetTimestamp();
 
         try
@@ -119,6 +142,7 @@ public sealed class AgentConverseTool(
                     Message = message,
                     Objective = ReadString(arguments, "objective"),
                     MaxTurns = Math.Clamp(ReadInt(arguments, "maxTurns", 1), 1, _exchangeOptions.EffectiveMaxTurnsCeiling),
+                    Deadline = deadline,
                     CallChain = await ResolveCallChainAsync(timeoutCts.Token).ConfigureAwait(false),
                     // #3176: hand the exchange the delegating thread's address so handoff milestones
                     // can be reported back into it. Resolution failures are non-fatal - progress is

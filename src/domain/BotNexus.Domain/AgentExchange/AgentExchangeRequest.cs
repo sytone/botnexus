@@ -33,6 +33,29 @@ public sealed record AgentExchangeRequest
     public int MaxTurns { get; init; } = 1;
 
     /// <summary>
+    /// Absolute instant at which this exchange must stop, when the caller imposes a deadline (#3515).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Absolute, not a <see cref="TimeSpan"/>.</strong> The value is passed across several
+    /// frames before the turn engine arms it; a relative budget would silently re-base at each hop
+    /// and grant more time than the caller allowed. An instant cannot drift.
+    /// </para>
+    /// <para>
+    /// <strong>Why it exists at all.</strong> The turn engine decides whether a failed exchange is
+    /// sealed by asking whether the CALLER cancelled. Before #3515 every deadline on this path was
+    /// armed on a token linked <em>from</em> the caller's token, so a timer expiring was
+    /// indistinguishable from a human pressing stop and the seal was skipped either way. Handing the
+    /// engine the deadline as data lets it arm its OWN source, which the caller cannot cancel, so the
+    /// two causes become separable evidence rather than one shared bit.
+    /// </para>
+    /// <para>
+    /// Null (every pre-#3515 caller) means no engine-owned deadline: behaviour is exactly as before.
+    /// </para>
+    /// </remarks>
+    public DateTimeOffset? Deadline { get; init; }
+
+    /// <summary>
     /// Current call chain used for depth and cycle detection.
     /// </summary>
     public IReadOnlyList<AgentId> CallChain { get; init; } = [];
