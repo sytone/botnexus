@@ -92,11 +92,12 @@ internal sealed class SubAgentWorkspaceCheck : IDoctorCheck
         try
         {
             var configPath = _fileSystem.Path.Combine(homePath, "config.json");
-            if (!_fileSystem.File.Exists(configPath))
-                return null;
 
-            // Injected IFileSystem: see SubAgentCommand for why this cannot use the provider pipeline (#3504).
-            var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
+            // Resolved through IPlatformConfigAccessor (#3824). A doctor check that reports on
+            // configuration the gateway is not using is worse than an absent one, and the previous
+            // PlatformConfigLoader read was store-blind - and returned all-defaults when config.json
+            // was absent, which under #3823 is the normal case.
+            var config = PlatformConfigAccessor.Shared.Get(configPath, _fileSystem);
             return config.Gateway?.SubAgents?.WorkspaceRoot;
         }
         catch
