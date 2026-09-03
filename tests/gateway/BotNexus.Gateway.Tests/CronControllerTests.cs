@@ -662,7 +662,7 @@ public sealed partial class CronControllerTests
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyList<CronJobCostRollup>> GetJobCostRollupsAsync(
+        public virtual Task<IReadOnlyList<CronJobCostRollup>> GetJobCostRollupsAsync(
             IReadOnlyCollection<JobId> jobIds,
             int windowDays,
             CancellationToken ct = default)
