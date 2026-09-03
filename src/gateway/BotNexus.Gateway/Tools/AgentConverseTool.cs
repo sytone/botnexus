@@ -133,18 +133,32 @@ public sealed class AgentConverseTool(
                     new AgentToolContent(AgentToolContentType.Text, JsonSerializer.Serialize(result, JsonOptions))
                 ]);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            // #3577: a cancellation that the CALLER's ambient token did not cause must never reach
-            // ToolExecutor's generic `catch (Exception ex) => ex.Message` handler, because the .NET
-            // default text there is the bare "A task was canceled." - the exact opaque result this
-            // issue was filed for. Everything the caller needs to choose between retrying, waiting
-            // and giving up is knowable here and nowhere further up the stack: the budget, the
-            // elapsed time against it, and which token actually fired.
+            // #3577: a cancellation must never reach ToolExecutor's generic
+            // `catch (Exception ex) => ex.Message` handler, because the .NET default text there is
+            // the bare "A task was canceled." - the exact opaque result that issue was filed for.
+            // Everything the caller needs to choose between retrying, waiting and giving up is
+            // knowable here and nowhere further up the stack: the budget, the elapsed time against
+            // it, and which token actually fired.
+            //
+            // #3698: this catch was previously guarded by `when (!cancellationToken.IsCancellation
+            // Requested)`, which excluded the caller's own ambient turn token by construction and so
+            // let the majority class of real cancellations (56% of the measured corpus - parallel
+            // fan-outs abandoned when their turn ended) fall through to that generic handler. The
+            // guard's intent was right - an abandoned turn is not a peer failure and must not be
+            // reported as one - but "not a peer failure" was implemented as "no report at all".
+            // A third cause now covers it, so no cancellation path is unlabelled.
+            //
+            // The ambient token is tested FIRST because timeoutCts is linked to it: once the caller
+            // aborts, the linked source also reports cancellation, and testing it first would
+            // misattribute an abandoned turn as an exhausted budget.
             var elapsed = Stopwatch.GetElapsedTime(startedAt);
-            var report = timeoutCts.IsCancellationRequested
-                ? BuildTimeoutReport(targetAgentId, timeoutSeconds, elapsed)
-                : BuildTargetUnavailableReport(targetAgentId, timeoutSeconds, elapsed);
+            var report = cancellationToken.IsCancellationRequested
+                ? BuildCallerAbortedReport(targetAgentId, timeoutSeconds, elapsed)
+                : timeoutCts.IsCancellationRequested
+                    ? BuildTimeoutReport(targetAgentId, timeoutSeconds, elapsed)
+                    : BuildTargetUnavailableReport(targetAgentId, timeoutSeconds, elapsed);
 
             LogCancellation(toolCallId, targetAgentId, report);
             return new AgentToolResult(
@@ -177,6 +191,37 @@ public sealed class AgentConverseTool(
                 $"timeoutSeconds budget was exhausted after {elapsed.TotalSeconds:0.###}s and this side " +
                 "cancelled the call. The target may still be working. Retry with a larger timeoutSeconds " +
                 "if the work genuinely needs longer."
+        };
+
+    /// <summary>
+    /// Builds the #3698 report for the caller's own ambient turn token firing - a turn abort, a
+    /// session seal, or a cron run hitting its wall-clock limit while this exchange was in flight.
+    /// </summary>
+    /// <remarks>
+    /// <c>retryAdvised</c> is <c>false</c> and is not a judgement about the target: the calling turn
+    /// no longer exists, so there is nothing left to retry into. The target's state is deliberately
+    /// NOT probed here - the peer was never established to be at fault, and reporting a state for it
+    /// would invite exactly the caller/peer confusion this cause exists to remove.
+    /// </remarks>
+    private static AgentConverseCancellationReport BuildCallerAbortedReport(
+        string targetAgentId,
+        int timeoutSeconds,
+        TimeSpan elapsed)
+        => new()
+        {
+            CancellationCause = "callerAborted",
+            CancelledBy = "caller",
+            TargetAgentId = targetAgentId,
+            TargetState = "unknown",
+            TimeoutSeconds = timeoutSeconds,
+            ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 3),
+            RetryAdvised = false,
+            Message =
+                $"The exchange with agent '{targetAgentId}' was abandoned after " +
+                $"{elapsed.TotalSeconds:0.###}s of its {timeoutSeconds}s budget because the calling " +
+                "turn itself was cancelled - a turn abort, session seal or cron wall-clock limit - " +
+                "not because the target failed or the budget ran out. The target may still be " +
+                "working. An immediate retry will not help: the turn that issued this call is gone."
         };
 
     /// <summary>
@@ -452,7 +497,10 @@ public sealed record AgentConverseCancellationReport
     /// <summary>Always <c>true</c>; the discriminator against a successful exchange result.</summary>
     public bool Cancelled { get; init; } = true;
 
-    /// <summary><c>timeout</c> when the caller's budget was exhausted; otherwise <c>targetUnavailable</c>.</summary>
+    /// <summary>
+    /// <c>timeout</c> when the caller's budget was exhausted, <c>callerAborted</c> when the caller's
+    /// ambient turn token fired (#3698), otherwise <c>targetUnavailable</c>.
+    /// </summary>
     public required string CancellationCause { get; init; }
 
     /// <summary>Which side cancelled: <c>caller</c> or <c>target</c>.</summary>

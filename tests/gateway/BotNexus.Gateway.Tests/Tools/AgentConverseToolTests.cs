@@ -220,8 +220,22 @@ public sealed class AgentConverseToolTests
         entry.ShouldContain("call-42");
     }
 
+    /// <summary>
+    /// #3698 AC1/AC2/AC3/AC4: when the caller's own ambient turn token fires, the call must still
+    /// report a structured cause rather than escaping to <c>ToolExecutor</c>'s generic
+    /// <c>catch (Exception ex) => ex.Message</c> handler, whose text for a cancelled task is the bare
+    /// .NET default <c>A task was canceled.</c>
+    /// </summary>
+    /// <remarks>
+    /// This test previously asserted that the ambient cancellation propagated (
+    /// <c>ExecuteAsync_WhenCallerCancels_PropagatesCallerCancellation</c>). That propagation IS the
+    /// #3698 defect: 56% of the 91 historical bare cancellations arrived on exactly this path. The
+    /// assertion is not relaxed - it is inverted to the contract the issue establishes, and the
+    /// caller's token is still asserted to have fired so the scenario cannot silently degrade into
+    /// the timeout or targetUnavailable case.
+    /// </remarks>
     [Fact]
-    public async Task ExecuteAsync_WhenCallerCancels_PropagatesCallerCancellation()
+    public async Task ExecuteAsync_WhenCallerAborts_ReturnsCallerAbortedReportInsteadOfBareCancellation()
     {
         using var callerCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
         var service = new Mock<IAgentExchangeService>();
@@ -229,15 +243,55 @@ public sealed class AgentConverseToolTests
             .Returns<AgentExchangeRequest, CancellationToken>((_, token) => WaitForCancellationAsync(token));
         var tool = new AgentConverseTool(service.Object, new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"));
 
-        Func<Task> action = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
             ["agentId"] = "agent-c",
             ["message"] = "Take your time",
             ["timeoutSeconds"] = 1800
         }, callerCancellation.Token);
 
-        await action.ShouldThrowAsync<OperationCanceledException>();
         callerCancellation.IsCancellationRequested.ShouldBeTrue();
+
+        var text = ReadText(result);
+        text.ShouldNotContain("A task was canceled");
+        using var payload = JsonDocument.Parse(text);
+        var root = payload.RootElement;
+        root.GetProperty("cancelled").GetBoolean().ShouldBeTrue();
+        root.GetProperty("cancellationCause").GetString().ShouldBe("callerAborted");
+        root.GetProperty("cancelledBy").GetString().ShouldBe("caller");
+        root.GetProperty("retryAdvised").GetBoolean().ShouldBeFalse();
+        root.GetProperty("targetAgentId").GetString().ShouldBe("agent-c");
+        root.GetProperty("timeoutSeconds").GetInt32().ShouldBe(1800);
+        root.GetProperty("elapsedSeconds").GetDouble().ShouldBeGreaterThan(0d);
+        root.GetProperty("message").GetString().ShouldNotBeNull()
+            .ShouldContain("abandoned");
+    }
+
+    /// <summary>
+    /// #3698 AC2: the ambient-abort cause must be distinguishable from the two #3586 causes, so a
+    /// later corpus partition can separate an abandoned turn from a peer failure without re-deriving
+    /// the batch heuristic the issue used.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenCallerAborts_UsesCauseDistinctFromTimeoutAndTargetUnavailable()
+    {
+        using var callerCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        var service = new Mock<IAgentExchangeService>();
+        service.Setup(s => s.ConverseAsync(It.IsAny<AgentExchangeRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<AgentExchangeRequest, CancellationToken>((_, token) => WaitForCancellationAsync(token));
+        var tool = new AgentConverseTool(service.Object, new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"));
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["agentId"] = "agent-c",
+            ["message"] = "Take your time",
+            ["timeoutSeconds"] = 1800
+        }, callerCancellation.Token);
+
+        using var payload = JsonDocument.Parse(ReadText(result));
+        var cause = payload.RootElement.GetProperty("cancellationCause").GetString();
+        cause.ShouldNotBe("timeout");
+        cause.ShouldNotBe("targetUnavailable");
     }
 
     [Fact]
