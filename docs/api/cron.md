@@ -28,7 +28,8 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/CronController.cs`.
 
 Lists all cron jobs. The response merges jobs persisted in the cron store with jobs
 declared in configuration (`cron.jobs`) that are not already persisted. Results are
-ordered by `createdAt` descending.
+ordered by `createdAt` descending, and **filtered to the jobs the caller may manage**
+(see [Ownership](#ownership)).
 
 Returns `200 OK` with a JSON array of `CronJob` objects.
 
@@ -38,7 +39,8 @@ Returns `200 OK` with a JSON array of `CronJob` objects.
 |-----------|----|------|-------|
 | `jobId` | path | string | The job identifier. |
 
-Returns `200 OK` with the `CronJob`, or `404 Not Found` when it does not exist.
+Returns `200 OK` with the `CronJob`, `404 Not Found` when it does not exist, or
+`403 Forbidden` when it exists but is not manageable by the caller (see [Ownership](#ownership)).
 
 ### `POST /api/cron`
 
@@ -89,13 +91,19 @@ Deletes a cron job through the scheduler, which also archives the job's pinned
 conversation. Returns `204 No Content`, or `403 Forbidden` when the job exists but is not
 manageable by the caller.
 
-### Ownership on the mutating routes
+### Ownership
 
-`PUT` and `DELETE` apply the same ownership rule as the `cron` agent tool, through the shared
-`CronJobOwnership` predicate: a job is manageable when the caller is scoped to the agent that
+`GET`, `PUT` and `DELETE` all apply the same ownership rule as the `cron` agent tool, through the
+shared `CronJobOwnership` predicate: a job is manageable when the caller is scoped to the agent that
 created it or to the agent it targets. A caller whose API key carries no `allowedAgents` scope,
 or which is marked `isAdmin`, is already trusted platform-wide by the gateway auth middleware and
 is not further restricted here.
+
+The read routes were unscoped until #3778: a caller limited to one agent could enumerate every job
+definition on the platform (including `shellCommand` and `webhookUrl`), every run's `sessionId`, and
+platform-wide cost rollups. The single-job routes now answer `403`; the collection routes (`GET
+/api/cron` and `GET /api/cron/costs`) filter their result set instead, since there is no single
+subject to refuse.
 
 An unauthorized target answers `403 Forbidden`, not `404` - the caller has already learned the
 job exists from the route's own `404` contract, so collapsing the two would trade a truthful
@@ -113,8 +121,10 @@ describing the started run, or `404 Not Found` when the job does not exist.
 | `jobId` | path | string | The job identifier. |
 | `limit` | query | int | Maximum runs to return. Defaults to `20`. |
 
-Returns `200 OK` with a JSON array of `CronRun` objects (most recent first), or
-`404 Not Found` when the job does not exist.
+Returns `200 OK` with a JSON array of `CronRun` objects (most recent first),
+`404 Not Found` when the job does not exist, or `403 Forbidden` when it exists but is not
+manageable by the caller (see [Ownership](#ownership)). Run records carry the `sessionId` that
+keys into the owning agent's transcript, so the check runs before the history is read.
 
 Each `CronRun` carries a `cost` object with the per-run measurements recorded at run
 finalization (#2641):
@@ -137,7 +147,9 @@ a free one and invert the cost ranking.
 
 ### `GET /api/cron/costs`
 
-Per-job cost rollup derived from run history, ordered by **total** spend descending.
+Per-job cost rollup derived from run history, ordered by **total** spend descending. The rollup is
+built from the jobs the caller may manage (see [Ownership](#ownership)); a scoped caller that owns
+no jobs receives an empty array rather than an unscoped query.
 
 | Parameter | In | Type | Notes |
 |-----------|----|------|-------|
