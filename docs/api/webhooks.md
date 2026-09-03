@@ -199,7 +199,29 @@ poll URL; the run status becomes `Timeout`.
 | `400 Bad Request` | `{ "error": "Invalid JSON body." }` or `{ "error": "message is required." }` |
 | `401 Unauthorized` | `{ "error": "Invalid signature." }` |
 | `404 Not Found` | `{ "error": "Webhook '{webhookId}' not found or disabled." }` |
+| `413 Payload Too Large` | `{ "error": "Request body exceeds the {limit} byte limit." }` |
+| `429 Too Many Requests` | `{ "error": "Too many concurrent webhook requests." }` |
 | `503 Service Unavailable` | `{ "error": "Agent run did not complete." }` (sync mode) |
+
+### Pre-authentication body limits
+
+This route is anonymous — the signature is computed over the raw bytes, so the
+body must be read before the caller can be authenticated. To stop that read from
+becoming an unauthenticated allocation primitive, two bounds apply *before*
+signature verification:
+
+| Bound | Default | Exceeded → |
+|-------|---------|-----------|
+| Body size ceiling | 1 MiB | `413 Payload Too Large` |
+| Concurrent pre-signature reads | 64 | `429 Too Many Requests` |
+
+A request whose `Content-Length` header already declares more than the ceiling is
+rejected before any body read at all, so a truthful oversized request costs
+nothing. A body that under-declares its length is abandoned as soon as the
+ceiling is passed and is never fully materialised.
+
+Both bounds are scoped to this endpoint only — authenticated API routes are
+unaffected.
 
 ### Signature computation
 

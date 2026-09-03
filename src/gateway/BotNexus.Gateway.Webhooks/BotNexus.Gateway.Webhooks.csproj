@@ -16,6 +16,7 @@
     <Compile Include="SqliteWebhookRunStore.cs" />
     <Compile Include="WebhookServiceCollectionExtensions.cs" />
     <Compile Include="WebhookCallbackValidator.cs" />
+    <Compile Include="WebhookInboundBodyGuard.cs" />
     <Compile Include="WebhookRunRetentionHostedService.cs" />
     <Compile Include="WebhookRunRetentionOptions.cs" />
     <Compile Include="WebhookConversationProvenance.cs" />
