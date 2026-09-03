@@ -189,29 +189,32 @@ public sealed class CronController(
     /// <summary>
     /// Executes update.
     /// </summary>
+    /// <remarks>
+    /// #3808: the body binds <see cref="CronJobUpdateRequest"/>, not the domain record. Binding
+    /// <see cref="CronJob"/> directly made absence indistinguishable from a default, so a caller
+    /// editing one field silently cleared the five other columns it never mentioned - failure
+    /// alerting, both delete dispositions, expiry and execution class. The DTO makes "unmentioned"
+    /// representable, and the default for an unmentioned field is now "preserve", which is the rule
+    /// the tool seam has applied since #2634. That direction matters: the previous shape's default
+    /// was to overwrite, so every column added to <see cref="CronJob"/> was silently clearable until
+    /// someone remembered to name it here - which is exactly how #2554 and #3575 each came to patch
+    /// this one expression.
+    /// </remarks>
     /// <param name="jobId">The job id.</param>
     /// <param name="request">The request.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The update result.</returns>
     [HttpPut("{jobId}")]
-    public async Task<ActionResult<CronJob>> Update(string jobId, [FromBody] CronJob request, CancellationToken cancellationToken)
+    public async Task<ActionResult<CronJob>> Update(string jobId, [FromBody] CronJobUpdateRequest request, CancellationToken cancellationToken)
     {
-        if (request.NextRunAt.HasValue && !IsTimestampInRange(request.NextRunAt.Value))
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (request.NextRunAt.IsSet
+            && request.NextRunAt.Value.HasValue
+            && !IsTimestampInRange(request.NextRunAt.Value.Value))
+        {
             return BadRequest("NextRunAt timestamp is out of the valid range (1970-01-01 to 9000-01-01).");
-
-        // #2552: same shared boundary on the update path.
-        // #2745: return the rule-specific reason so the caller can tell a blocked address class
-        // apart from a scheme/credentials rejection.
-        // #3779: same configured blocked-host list as the create seam - AC3 requires refusal at
-        // update as well, or a job could be created clean and then repointed at a blocked host.
-        if (!CronWebhookUrl.TryNormalize(request.WebhookUrl, ConfiguredWebhookBlockedHosts, out var normalizedWebhookUrl, out var webhookRejectionReason))
-            return BadRequest(webhookRejectionReason);
-
-        // #2671: same shared validator on the update seam (clause 2).
-        var updateAlertTarget = await CronAlertTarget.ValidateAsync(
-            alertTargetResolver, request.FailureAlertConversationId, cancellationToken);
-        if (!updateAlertTarget.IsValid)
-            return BadRequest(updateAlertTarget.Error);
+        }
 
         var typedJobId = JobId.From(jobId);
         var existing = await store.GetAsync(typedJobId, cancellationToken);
@@ -225,22 +228,48 @@ public sealed class CronController(
         if (!IsCallerAuthorizedFor(existing))
             return StatusCode(StatusCodes.Status403Forbidden, new { error = ForbiddenMessage });
 
-        var updated = request with
+        // #2552: same shared boundary on the update path.
+        // #2745: return the rule-specific reason so the caller can tell a blocked address class
+        // apart from a scheme/credentials rejection.
+        // #3779: same configured blocked-host list as the create seam - AC3 requires refusal at
+        // update as well, or a job could be created clean and then repointed at a blocked host.
+        // #3808: the URL validated is the EFFECTIVE one - the supplied value, or the stored value
+        // when the caller omitted the field - so an unrelated edit is neither rejected by nor able
+        // to erase a webhook target it never mentioned.
+        var effectiveWebhookUrl = request.WebhookUrl.Or(existing.WebhookUrl);
+        if (!CronWebhookUrl.TryNormalize(effectiveWebhookUrl, ConfiguredWebhookBlockedHosts, out var normalizedWebhookUrl, out var webhookRejectionReason))
+            return BadRequest(webhookRejectionReason);
+
+        // #2671: same shared validator on the update seam (clause 2).
+        // #3808: only a caller-SUPPLIED target is preflighted, matching CronTool. Re-validating a
+        // retained one would make a job whose alert conversation was later deleted permanently
+        // uneditable - the caller would be blocked by a field they did not touch.
+        if (request.FailureAlertConversationId.IsSet)
+        {
+            var updateAlertTarget = await CronAlertTarget.ValidateAsync(
+                alertTargetResolver, request.ResolveAlertConversationId(existing), cancellationToken);
+            if (!updateAlertTarget.IsValid)
+                return BadRequest(updateAlertTarget.Error);
+        }
+
+        var updated = request.ApplyTo(existing) with
         {
             Id = typedJobId,
-            ActionType = NormalizeActionType(request.ActionType),
+            ActionType = NormalizeActionType(request.ActionType.Or(existing.ActionType)),
             WebhookUrl = normalizedWebhookUrl,
             CreatedAt = existing.CreatedAt,
 
-            // #3575, mirroring the #2554 shape below: PUT binds the domain record directly, so
-            // AgentId and CreatedBy arrive from the request body and SqliteCronStore writes both
-            // under WHERE id = $id. CreatedBy is provenance the server stamps at creation and no
-            // REST caller authors it, so it is always taken from the stored row. AgentId may only
-            // move to an agent the authenticated caller is itself scoped to - otherwise a single
-            // body field would let an owner hand their job to an agent they cannot act as, which is
-            // the ownership-capture half of this issue.
+            // #3575, mirroring the #2554 shape below: AgentId and CreatedBy would otherwise arrive
+            // from the request body and SqliteCronStore writes both under WHERE id = $id.
+            // CreatedBy is provenance the server stamps at creation and no REST caller authors it,
+            // so it is always taken from the stored row. AgentId may only move to an agent the
+            // authenticated caller is itself scoped to - otherwise a single body field would let an
+            // owner hand their job to an agent they cannot act as, which is the ownership-capture
+            // half of that issue.
             CreatedBy = existing.CreatedBy,
-            AgentId = ResolveUpdatedAgentId(request.AgentId, existing.AgentId),
+            AgentId = ResolveUpdatedAgentId(
+                request.AgentId.IsSet ? ParseOptionalAgentId(request.AgentId.Value) : existing.AgentId,
+                existing.AgentId),
 
             // #2554: PUT binds the domain record directly, so a caller can put a
             // ScheduleActivatedAt in the body. Strip it explicitly here (the store also refuses
@@ -451,6 +480,14 @@ public sealed class CronController(
 
         return Ok(await store.GetJobCostRollupsAsync(jobIds, windowDays, cancellationToken));
     }
+
+    /// <summary>
+    /// Parses an optional caller-supplied agent id, treating blank as "no agent" (#3808).
+    /// </summary>
+    /// <param name="agentId">The raw value from the request body.</param>
+    /// <returns>The typed agent id, or <c>null</c> when blank.</returns>
+    private static AgentId? ParseOptionalAgentId(string? agentId)
+        => string.IsNullOrWhiteSpace(agentId) ? null : AgentId.From(agentId);
 
     private static string NormalizeActionType(string? actionType)
     {
