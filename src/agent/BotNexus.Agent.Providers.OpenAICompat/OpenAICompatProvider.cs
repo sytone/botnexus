@@ -186,7 +186,9 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
             {
                 errorBody = $"<error body exceeded {ErrorBodyLimitBytes} bytes and was discarded>";
             }
-            var errorMessage = CreateErrorMessage(model, $"HTTP {(int)response.StatusCode}: {errorBody}");
+            var errorMessage = CreateErrorMessage(
+                model,
+                OpenAICompatErrorText.DescribeHttpFailure((int)response.StatusCode, errorBody));
             stream.Push(new ErrorEvent(StopReason.Error, errorMessage));
             stream.End(errorMessage);
             return;
@@ -554,16 +556,25 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         );
     }
 
+    /// <summary>
+    /// Builds the failure message for a turn, naming the provider and the transmitted model id.
+    /// </summary>
+    /// <remarks>
+    /// #3758: the augmentation lives here, not at the call sites, so BOTH the exception path and the
+    /// non-success HTTP path are covered and neither can regress independently. The structured
+    /// <c>Provider</c>/<c>ModelId</c> fields are untouched - this adds to the rendered text only.
+    /// </remarks>
     private static AssistantMessage CreateErrorMessage(LlmModel model, string error)
     {
+        var described = OpenAICompatErrorText.Describe(model, error);
         return new AssistantMessage(
-            Content: [new TextContent(error)],
+            Content: [new TextContent(described)],
             Api: "openai-compat",
             Provider: model.Provider,
             ModelId: model.Id,
             Usage: Usage.Empty(),
             StopReason: StopReason.Error,
-            ErrorMessage: error,
+            ErrorMessage: described,
             ResponseId: null,
             Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         );
