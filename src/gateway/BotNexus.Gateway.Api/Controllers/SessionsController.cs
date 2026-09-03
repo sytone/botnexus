@@ -875,9 +875,14 @@ public sealed class SessionsController : ControllerBase
         /// </summary>
         /// <param name="subAgentId">The sub agent id.</param>
         /// <param name="resultSummary">The result summary.</param>
+        /// <param name="outcome">The measured tool/provider outcome of the run (#3565).</param>
         /// <param name="ct">The ct.</param>
         /// <returns>The on completed async result.</returns>
-        public Task OnCompletedAsync(string subAgentId, string resultSummary, CancellationToken ct = default)
+        public Task OnCompletedAsync(
+            string subAgentId,
+            string resultSummary,
+            SubAgentRunOutcome? outcome = null,
+            CancellationToken ct = default)
             => Task.CompletedTask;
     }
 }

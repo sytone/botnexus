@@ -57,7 +57,19 @@ public interface ISubAgentManager
     /// </summary>
     /// <param name="subAgentId">The completed sub-agent identifier.</param>
     /// <param name="resultSummary">A short summary of the sub-agent result.</param>
+    /// <param name="outcome">
+    /// #3565: the tool-level and provider-level outcome of the child run. The completion contract
+    /// used to be text-only, so a run whose tools all failed but which narrated a confident summary
+    /// was recorded <c>Completed</c> and handed to the parent as an unqualified success. Optional
+    /// because a caller that genuinely cannot observe the run's tool timeline (an out-of-band
+    /// completion, a test double) must still be able to complete a sub-agent; <c>null</c> means
+    /// "not measured" and preserves the historical text-only behaviour exactly.
+    /// </param>
     /// <param name="ct">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    Task OnCompletedAsync(string subAgentId, string resultSummary, CancellationToken ct = default);
+    Task OnCompletedAsync(
+        string subAgentId,
+        string resultSummary,
+        SubAgentRunOutcome? outcome = null,
+        CancellationToken ct = default);
 }

@@ -49,6 +49,19 @@ public sealed record AgentResponse
     public bool RequiresFollowUp { get; init; }
     /// <summary>Any tool calls the agent made during processing.</summary>
     public IReadOnlyList<AgentToolCallInfo> ToolCalls { get; init; } = [];
+
+    /// <summary>
+    /// #3565: the provider error carried by the run's TERMINAL assistant message, or <c>null</c>
+    /// when the run's last message ended normally.
+    /// </summary>
+    /// <remarks>
+    /// A blocking caller previously saw only <see cref="Content"/>, so a run whose final turn was
+    /// rejected by the provider was indistinguishable from one that simply said little. <c>null</c>
+    /// means "the terminal message reported no error", never "not measured" - a strategy that
+    /// cannot observe the finish reason leaves it null and the consumer's clean-run behaviour is
+    /// unchanged.
+    /// </remarks>
+    public string? TerminalError { get; init; }
 }
 /// <summary>
 /// Token usage information for an agent response.

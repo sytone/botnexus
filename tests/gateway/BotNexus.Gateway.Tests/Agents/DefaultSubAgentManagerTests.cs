@@ -359,7 +359,11 @@ public sealed class DefaultSubAgentManagerTests
             return true;
         }
 
-        public async Task OnCompletedAsync(string subAgentId, string resultSummary, CancellationToken ct = default)
+        public async Task OnCompletedAsync(
+            string subAgentId,
+            string resultSummary,
+            SubAgentRunOutcome? outcome = null,
+            CancellationToken ct = default)
         {
             if (!entries.TryGetValue(subAgentId, out var runtime))
             {

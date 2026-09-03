@@ -176,7 +176,11 @@ public sealed class StatsControllerTests
         public Task<bool> KillAsync(string subAgentId, SessionId requestingSessionId, CancellationToken ct = default)
             => throw new NotSupportedException();
 
-        public Task OnCompletedAsync(string subAgentId, string resultSummary, CancellationToken ct = default)
+        public Task OnCompletedAsync(
+            string subAgentId,
+            string resultSummary,
+            SubAgentRunOutcome? outcome = null,
+            CancellationToken ct = default)
             => throw new NotSupportedException();
     }
 }

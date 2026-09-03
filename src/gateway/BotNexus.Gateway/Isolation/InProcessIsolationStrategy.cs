@@ -1240,8 +1240,33 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
             RunUsage = AggregateRunUsage(messages),
             TurnCount = messages.OfType<AssistantAgentMessage>().Count(),
-            ToolCalls = BuildToolCalls(messages, pendingToolCallIds: null)
+            ToolCalls = BuildToolCalls(messages, pendingToolCallIds: null),
+            // #3565: the blocking boundary now carries the terminal message's provider error, so a
+            // sub-agent run that ended on a rejected turn is distinguishable from one that merely
+            // said little. Gated strictly on StopReason.Error for the same reason MapTurnError is:
+            // an aborted turn also carries an ErrorMessage, and keying on a non-empty message alone
+            // would promote every ordinary cancellation into a fault.
+            TerminalError = DescribeTerminalError(lastAssistant)
         };
+    }
+
+    /// <summary>
+    /// Returns the provider error to report for a run's terminal assistant message, or
+    /// <see langword="null"/> when the message did not end in a provider error (#3565).
+    /// </summary>
+    /// <remarks>
+    /// A provider that errors without detail still yields a non-null string: the presence of the
+    /// error is the load-bearing signal, and collapsing a detail-free failure to <c>null</c> would
+    /// make it indistinguishable from a clean run - the exact conflation #3565 exists to remove.
+    /// </remarks>
+    internal static string? DescribeTerminalError(AssistantAgentMessage? lastAssistant)
+    {
+        if (lastAssistant is not { FinishReason: StopReason.Error })
+            return null;
+
+        return string.IsNullOrWhiteSpace(lastAssistant.ErrorMessage)
+            ? "The provider ended the turn with an error but supplied no detail."
+            : lastAssistant.ErrorMessage;
     }
 
     /// <summary>
@@ -1309,7 +1334,8 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             // instead of leaving the most expensive runs on the platform unmeasured.
             RunUsage = AggregateRunUsage(snapshot),
             TurnCount = snapshot.OfType<AssistantAgentMessage>().Count(),
-            ToolCalls = BuildToolCalls(snapshot, _agent.State.PendingToolCalls)
+            ToolCalls = BuildToolCalls(snapshot, _agent.State.PendingToolCalls),
+            TerminalError = DescribeTerminalError(lastAssistant)
         };
         return new AgentPromptInterruptedException(partial, oce.CancellationToken);
     }

@@ -1034,7 +1034,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     /// <inheritdoc />
-    public async Task OnCompletedAsync(string subAgentId, string resultSummary, CancellationToken ct = default)
+    public async Task OnCompletedAsync(
+        string subAgentId,
+        string resultSummary,
+        SubAgentRunOutcome? outcome = null,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(subAgentId);
 
@@ -1050,20 +1054,39 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         const string emptyResponseDiagnostic = "Sub-agent failed because it returned an empty final response.";
         var hasFinalResponse = !string.IsNullOrWhiteSpace(resultSummary);
 
+        // #3565: text alone no longer decides success. A run that produced prose while every tool
+        // it invoked errored - or whose terminal assistant message carried a provider error - is a
+        // FAILURE, and must present as one to the parent. `outcome` is null only when the caller
+        // could not observe the run's timeline at all, in which case the historical text-only
+        // behaviour is preserved exactly.
+        var runFailed = outcome?.HasFailure == true;
+
         // Normalize pathological token-per-line whitespace at the earliest point so
         // the record, session persistence, LLM parent context, and every channel all
         // observe the same clean content (#2150). Done before the record is updated
         // rather than only at dispatch time to avoid a divergent persisted summary.
         var normalizedResultSummary = SubAgentSummaryNormalizer.Normalize(resultSummary);
 
+        // AC3: the text delivered to the parent names the sub-agent and the underlying tool error,
+        // so the parent can act without opening the child transcript. The run's own words are kept
+        // BELOW the diagnostic rather than discarded - they are often the only description of what
+        // was attempted - but they can no longer stand alone as an unqualified success.
+        var terminalSummary = runFailed
+            ? DescribeFailedRun(subAgentId, outcome!, hasFinalResponse ? normalizedResultSummary : null)
+            : hasFinalResponse ? normalizedResultSummary : emptyResponseDiagnostic;
+
+        var terminalStatus = hasFinalResponse && !runFailed
+            ? SubAgentStatus.Completed
+            : SubAgentStatus.Failed;
+
         if (!TryUpdateSubAgent(
                 subAgentId,
                 current => current.Status == SubAgentStatus.Running
                     ? current with
                     {
-                        Status = hasFinalResponse ? SubAgentStatus.Completed : SubAgentStatus.Failed,
+                        Status = terminalStatus,
                         CompletedAt = DateTimeOffset.UtcNow,
-                        ResultSummary = hasFinalResponse ? normalizedResultSummary : emptyResponseDiagnostic
+                        ResultSummary = terminalSummary
                     }
                     : current,
                 out var updated) || updated.Status == SubAgentStatus.Killed)
@@ -1282,7 +1305,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             }
             else
             {
-                await OnCompletedAsync(subAgentId, response.Content);
+                await OnCompletedAsync(subAgentId, response.Content, SubAgentRunOutcome.From(response));
             }
         }
         catch (Exception) when (record.BudgetExhausted)
@@ -1468,6 +1491,54 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         {
             await OnCompletedAsync(subAgentId, diagnostic);
         }
+    }
+
+    /// <summary>
+    /// Builds the failure text a parent receives when a sub-agent run narrated an answer but its
+    /// tools failed, or its terminal assistant message carried a provider error (#3565, AC3).
+    /// </summary>
+    /// <remarks>
+    /// The sub-agent id and the underlying error are both named so the parent can act without
+    /// opening the child transcript. The run's own words are appended rather than dropped: they are
+    /// frequently the only record of what was attempted, and discarding them would trade one
+    /// information loss for another. Vocabulary deliberately mirrors the existing
+    /// <c>emptyResponseDiagnostic</c> shape ("Sub-agent failed because ...") so the diagnostics on
+    /// this path stay recognisable as one family.
+    /// </remarks>
+    /// <param name="subAgentId">The run whose failure is being described.</param>
+    /// <param name="outcome">The measured tool/provider outcome of the run.</param>
+    /// <param name="narratedSummary">The run's own final text, or null when it produced none.</param>
+    internal static string DescribeFailedRun(
+        string subAgentId,
+        SubAgentRunOutcome outcome,
+        string? narratedSummary)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        var reason = outcome.FailedToolCount > 0
+            ? $"{outcome.FailedToolCount} tool invocation{(outcome.FailedToolCount == 1 ? string.Empty : "s")} failed"
+            : "the provider ended its final turn with an error";
+
+        var detail = outcome.FailedToolCount > 0
+            ? outcome.LastToolError
+            : outcome.TerminalError;
+
+        var text = $"Sub-agent '{subAgentId}' failed because {reason}.";
+
+        if (!string.IsNullOrWhiteSpace(detail))
+            text += $" Last error: {detail}";
+
+        if (!string.IsNullOrWhiteSpace(narratedSummary))
+        {
+            text += Environment.NewLine
+                + Environment.NewLine
+                + "The sub-agent nevertheless reported the following, which must NOT be treated as a "
+                + "confirmed result:"
+                + Environment.NewLine
+                + narratedSummary;
+        }
+
+        return text;
     }
 
     private static string DescribeStatus(SubAgentStatus status)
