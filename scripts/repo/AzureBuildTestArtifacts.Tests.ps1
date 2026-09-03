@@ -114,3 +114,173 @@ Describe 'Invoke-AzureBuildTest.ps1 artifact wiring' {
         $source | Should -Not -Match 'Filter result\.json -Recurse'
     }
 }
+
+# ---------------------------------------------------------------------------------------------
+# Issue #3805: a gate run whose BUILD phase fails destroyed its own diagnosis.
+#
+# Two independent defects, both only reachable on the failure path:
+#
+#   1. `$x = if ($c) { @($result.projectCosts) } else { @() }` UNROLLS to a bare $null when the
+#      JSON property is null, and `.Count` on $null throws under `Set-StrictMode -Version Latest`.
+#      A build failure skips the test phase, so `result.json` carries `"tests": null` and
+#      `"projectCosts": null` - i.e. the null shape is the NORMAL shape of a build failure, which
+#      is why the secondary PowerShell error always masked the real cause.
+#   2. The `finally` removed $tempRoot unconditionally, and the downloaded artifacts were still
+#      inside it, so the throw deleted the only local copy of result.json and build.log while the
+#      remote blobs had already been deleted (no -KeepRemoteArtifacts).
+#
+# These tests exercise the real helpers and the real filesystem. The null-collection case is
+# asserted directly, per AC3, so it cannot regress silently.
+# ---------------------------------------------------------------------------------------------
+
+Describe 'ConvertTo-CountableArray (#3805 AC1, AC3)' {
+    It 'returns a countable empty array for a JSON null property - the skipped-test-phase shape' {
+        # This is the exact expression that threw in production, with the exact input.
+        $result = '{"exitCode":1,"tests":null,"projectCosts":null}' | ConvertFrom-Json
+        $costs = ConvertTo-CountableArray $result.projectCosts
+
+        # An empty array IS "empty" - the assertion that matters is that it is not $NULL and that
+        # .Count is reachable, which is the exact pair the production line needed and did not get.
+        $null -ne $costs | Should -BeTrue -Because 'a null-collapsing result is what threw'
+        $costs -is [array] | Should -BeTrue
+        { $costs.Count } | Should -Not -Throw
+        $costs.Count | Should -Be 0
+    }
+
+    It 'proves the original idiom really does collapse to $null, so this test is not vacuous' {
+        # Non-vacuity: without this, the fix above could be trivially satisfied by any value.
+        $result = '{"projectCosts":null}' | ConvertFrom-Json
+        $collapsed = if ($result.PSObject.Properties['projectCosts']) { @($result.projectCosts) } else { @() }
+
+        $null -eq $collapsed | Should -BeTrue -Because 'the if-statement pipeline unrolls @($null)'
+        { Set-StrictMode -Version Latest; $collapsed.Count } | Should -Throw -ExpectedMessage "*'Count'*"
+    }
+
+    It 'returns a countable empty array when the property is absent entirely' {
+        $result = '{"exitCode":1}' | ConvertFrom-Json
+        $value = if ($result.PSObject.Properties['projectCosts']) { $result.projectCosts } else { $null }
+        (ConvertTo-CountableArray $value).Count | Should -Be 0
+    }
+
+    It 'returns a countable empty array for an EMPTY JSON array - the shape observed on the live gate' {
+        # Measured, not assumed: run 20260903153054-5b81c25c (-Mode core, build failed on an
+        # inherited CS0535) produced `"projectCosts": []` and `"tests": null`, and reproduced the
+        # #3805 'Count' throw. An EMPTY array unrolls to $null on assignment exactly as @($null)
+        # does, so the null-property case alone would not have covered the observed failure.
+        $result = '{"exitCode":1,"projectCosts":[],"tests":null,"timeout":null}' | ConvertFrom-Json
+        $costs = ConvertTo-CountableArray $result.projectCosts
+
+        $null -ne $costs | Should -BeTrue -Because 'this is the exact shape the live gate emitted'
+        { $costs.Count } | Should -Not -Throw
+        $costs.Count | Should -Be 0
+    }
+
+    It 'proves the empty-array shape also collapses under the original idiom (non-vacuity)' {
+        $result = '{"projectCosts":[]}' | ConvertFrom-Json
+        $collapsed = if ($result.PSObject.Properties['projectCosts']) { @($result.projectCosts) } else { @() }
+
+        $null -eq $collapsed | Should -BeTrue
+        { Set-StrictMode -Version Latest; $collapsed.Count } | Should -Throw -ExpectedMessage "*'Count'*"
+    }
+
+    It 'preserves a populated collection unchanged (AC4 - success path is not altered)' {
+        $result = '{"projectCosts":[{"project":"A","seconds":9.5},{"project":"B","seconds":2}]}' | ConvertFrom-Json
+        $costs = ConvertTo-CountableArray $result.projectCosts
+
+        $costs.Count | Should -Be 2
+        $costs[0].project | Should -Be 'A'
+        $costs[1].seconds | Should -Be 2
+    }
+
+    It 'wraps a bare scalar into a one-element array' {
+        (ConvertTo-CountableArray 'solo').Count | Should -Be 1
+    }
+
+    It 'drops null elements rather than counting an absent datum' {
+        (ConvertTo-CountableArray @('a', $null, 'b')).Count | Should -Be 2
+    }
+}
+
+Describe 'Save-AzureBuildTestFailureArtifacts (#3805 AC2)' {
+    It 'lands result.json and build.log on disk when the run failed and -OutputPath was not supplied' {
+        # -OutputPath unsupplied means $OutputPath defaulted to artifacts/azure-buildtest/<runId>;
+        # AC2 requires the files to be THERE, not in the temp staging root that gets deleted.
+        $case = New-Case
+        $retained = Save-AzureBuildTestFailureArtifacts -StagingRoot $case.Staging -RunId $case.RunId -Destination $case.Destination
+
+        $retained | Should -Be $case.Destination
+        Test-Path -LiteralPath (Join-Path $retained 'result.json') -PathType Leaf | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $retained 'build.log') -PathType Leaf | Should -BeTrue
+    }
+
+    It 'survives the temp staging root being deleted afterwards, as the finally block does' {
+        $case = New-Case
+        $retained = Save-AzureBuildTestFailureArtifacts -StagingRoot $case.Staging -RunId $case.RunId -Destination $case.Destination
+        # Delete ONLY the staging root - that is what the script's finally removes. The destination
+        # is deliberately outside it, which is the whole point of retaining before cleanup.
+        Remove-Item -LiteralPath $case.Staging -Recurse -Force -ErrorAction SilentlyContinue
+
+        Test-Path -LiteralPath $case.Staging | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $retained 'result.json') -PathType Leaf | Should -BeTrue
+    }
+
+    It 'returns $null when nothing was downloaded, so the caller cannot print an empty path' {
+        $empty = Join-Path $script:Scratch ("empty-" + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $empty -Force | Out-Null
+        $dest = Join-Path $script:Scratch ("dest-" + [Guid]::NewGuid().ToString('N'))
+
+        Save-AzureBuildTestFailureArtifacts -StagingRoot $empty -RunId 'r1' -Destination $dest | Should -BeNullOrEmpty
+    }
+
+    It 'returns $null when the staging root never existed (download failed before writing)' {
+        $missing = Join-Path $script:Scratch ("never-" + [Guid]::NewGuid().ToString('N'))
+        $dest = Join-Path $script:Scratch ("dest2-" + [Guid]::NewGuid().ToString('N'))
+
+        Save-AzureBuildTestFailureArtifacts -StagingRoot $missing -RunId 'r1' -Destination $dest | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Invoke-AzureBuildTest.ps1 failure-path wiring (#3805)' {
+    BeforeAll { $script:Source = Get-Content -LiteralPath $script:ScriptPath -Raw }
+
+    It 'no longer counts a possibly-null JSON collection directly (AC1)' {
+        # The literal defect. If this idiom returns, the failure path throws on .Count again.
+        $script:Source | Should -Not -Match '\$projectCosts = if \('
+        $script:Source | Should -Match 'ConvertTo-CountableArray'
+    }
+
+    It 'retains downloaded artifacts in the finally block before deleting the temp root (AC2)' {
+        $script:Source | Should -Match 'Save-AzureBuildTestFailureArtifacts'
+
+        $retainAt = $script:Source.IndexOf('Save-AzureBuildTestFailureArtifacts -StagingRoot')
+        $deleteAt = $script:Source.IndexOf('if (Test-Path $tempRoot) { Remove-Item $tempRoot')
+        $retainAt | Should -BeGreaterThan 0
+        $deleteAt | Should -BeGreaterThan 0
+        $retainAt | Should -BeLessThan $deleteAt -Because 'retention after deletion retains nothing'
+    }
+
+    It 'declares the staging path and the placement flag outside the try, so finally can see them (AC2)' {
+        $script:Source | Should -Match '(?m)^\$downloadStaging = Join-Path \$tempRoot'
+        $script:Source | Should -Match '(?m)^\$artifactsPlaced = \$false'
+        $script:Source | Should -Match '\$artifactsPlaced = \$true'
+    }
+
+    It 'names the execution status and the artifact path in the thrown failure message (AC1)' {
+        $script:Source | Should -Match 'throw "Azure validation failed\. Execution status:'
+        $script:Source | Should -Match 'Artifacts: \$OutputPath"'
+    }
+
+    It 'distinguishes a non-reporting test phase from a test failure in the thrown message (AC1)' {
+        $script:Source | Should -Match 'tests: null'
+    }
+
+    It 'retains only when the normal placement did not happen, so a green run is unchanged (AC4)' {
+        $script:Source | Should -Match 'if \(-not \$artifactsPlaced\)'
+    }
+
+    It 'never lets the retention diagnostic replace the original failure (AC1)' {
+        # A throw from the finally block would substitute itself for the real error - the exact
+        # class of bug this issue is about, reintroduced one layer out.
+        $script:Source | Should -Match 'Could not retain downloaded artifacts'
+    }
+}
