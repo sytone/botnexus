@@ -56,10 +56,19 @@ public static class ConfigWriterFactory
         };
 
         var storePath = fileSystem.Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
+        IConfigStore? store = null;
         if (fileSystem.File.Exists(storePath))
-            writers.Add(new SqliteConfigurationWriter(new SqliteConfigStore($"Data Source={storePath}")));
+        {
+            store = new SqliteConfigStore($"Data Source={storePath}");
+            writers.Add(new SqliteConfigurationWriter(store));
+        }
 
         var writer = writers.Count == 1 ? writers[0] : new FanOutConfigurationWriter(writers);
-        return new PlatformConfigWriter(configPath, fileSystem, backup, writer);
+
+        // The store is handed to the writer twice, for two different jobs: as a write backend above,
+        // and here as the pristine-document source. Without the second, a write on an installation
+        // whose config.json is absent would diff against an empty document and produce a change set
+        // spanning every stored key (#3823).
+        return new PlatformConfigWriter(configPath, fileSystem, backup, writer, store);
     }
 }

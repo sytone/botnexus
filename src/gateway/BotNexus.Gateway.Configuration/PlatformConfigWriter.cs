@@ -82,6 +82,12 @@ public sealed class PlatformConfigWriter
     /// </remarks>
     private readonly Writers.IConfigurationWriter _writer;
 
+    /// <summary>
+    /// Store consulted for the pristine document when no config file exists. Null for file-only
+    /// installations, which is every caller that has not been given a store.
+    /// </summary>
+    private readonly IConfigStore? _pristineStore;
+
     public PlatformConfigWriter(string configPath, IFileSystem fileSystem, ConfigBackupService? backup = null)
         : this(configPath, fileSystem, backup, writer: null)
     {
@@ -99,10 +105,31 @@ public sealed class PlatformConfigWriter
         IFileSystem fileSystem,
         ConfigBackupService? backup,
         Writers.IConfigurationWriter? writer)
+        : this(configPath, fileSystem, backup, writer, pristineStore: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a writer that can recover its pristine document from <paramref name="pristineStore"/>
+    /// when no config file exists.
+    /// </summary>
+    /// <param name="pristineStore">
+    /// Store consulted for the before-document when the config file is absent. <see langword="null"/>
+    /// keeps the file-only behaviour. Supplying it is what makes a store-only installation safe; see
+    /// <see cref="ReadRootAsync"/> for why an empty fallback is actively dangerous rather than merely
+    /// incomplete.
+    /// </param>
+    public PlatformConfigWriter(
+        string configPath,
+        IFileSystem fileSystem,
+        ConfigBackupService? backup,
+        Writers.IConfigurationWriter? writer,
+        IConfigStore? pristineStore)
     {
         _configPath = configPath;
         _fileSystem = fileSystem;
         _backup = backup;
+        _pristineStore = pristineStore;
         _writer = writer ?? new Writers.JsonConfigurationWriter(configPath, fileSystem, backup);
     }
 
@@ -774,13 +801,41 @@ public sealed class PlatformConfigWriter
                 section.Remove(key);
         }, $"before-{sectionName}-remove", ct, namedSections: [sectionName]);
 
+    /// <summary>
+    /// Reads the pristine document every mutation diffs against.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The file is the source when it exists. When it does not, an authoritative store is consulted
+    /// before falling back to an empty document, because "no file" and "no configuration" are not
+    /// the same statement once <c>config.db</c> holds the configuration.
+    /// </para>
+    /// <para>
+    /// <b>Why this is not merely a tidy-up.</b> This document is the <em>before</em> side of
+    /// <see cref="ConfigDocumentDiffer"/>. Returning an empty object when a populated store exists
+    /// does not fail - it makes the differ compute every stored key as an addition and no key as a
+    /// removal, so a one-field edit produces a change set spanning the entire configuration. That is
+    /// silently wrong output from a successful-looking write, the same detection story as #3547: a
+    /// 200, no error-shaped log line, and a wrong result. Sourcing the pristine document from the
+    /// store is what makes a store-only installation safe (#3823).
+    /// </para>
+    /// </remarks>
     private async Task<JsonObject> ReadRootAsync(CancellationToken ct)
     {
-        if (!_fileSystem.File.Exists(_configPath))
-            return new JsonObject();
+        if (_fileSystem.File.Exists(_configPath))
+        {
+            var json = await _fileSystem.File.ReadAllTextAsync(_configPath, ct);
+            return JsonNode.Parse(json)?.AsObject() ?? new JsonObject();
+        }
 
-        var json = await _fileSystem.File.ReadAllTextAsync(_configPath, ct);
-        return JsonNode.Parse(json)?.AsObject() ?? new JsonObject();
+        if (_pristineStore is not null)
+        {
+            var entries = await _pristineStore.ReadEntriesAsync(ct);
+            if (entries.Count > 0)
+                return ConfigDocumentRehydrator.Rehydrate(entries);
+        }
+
+        return new JsonObject();
     }
 
     /// <summary>
