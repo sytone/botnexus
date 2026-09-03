@@ -41,7 +41,6 @@ tests/gateway/BotNexus.Gateway.Conversations.Tests/Conversations/MultiChannelFan
 tests/gateway/BotNexus.Gateway.Conversations.Tests/ConversationStoreContractTests.cs|1
 tests/gateway/BotNexus.Gateway.Conversations.Tests/SqliteConversationStoreTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/Agents/DefaultSubAgentManagerActivityTests.cs|1
-tests/gateway/BotNexus.Gateway.Tests/Agents/DefaultSubAgentManagerTimeoutTests.cs|2
 tests/gateway/BotNexus.Gateway.Tests/Agents/SubAgentAssistantHistoryTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/Agents/SubAgentEagerConversationPinTests.cs|2
 tests/gateway/BotNexus.Gateway.Tests/Agents/SubAgentSpawnClampDisclosureTests.cs|1
