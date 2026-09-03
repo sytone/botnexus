@@ -16,8 +16,24 @@ name: "CI: Base Freshness & Main Health"
 #   * base-freshness  -- re-evaluates the tree-wide rules against HEAD merged with the
 #                        CURRENT tip of main, not the PR's recorded base. A stale-base
 #                        PR that would land a tree-wide violation fails here.
-#   * main-health     -- polls the latest main run so a red main is surfaced within one
-#                        gate cycle instead of via an unrelated PR (AC3).
+#   * main-health     -- reports the latest main run's conclusion so a red main is surfaced
+#                        promptly instead of via an unrelated PR (AC3).
+#
+# Detection latency for main-health (measured, issue #3715)
+# ---------------------------------------------------------
+# The primary trigger is `workflow_run` on `CI: Build & Test` completing, so the probe
+# fires at the moment main's verdict exists rather than waiting for a cron tick. Over the
+# last 60 push-triggered runs on main, `CI: Build & Test` took a median of 13.1 min and a
+# maximum of 15.4 min, so the WORST-CASE detection latency is that build duration plus the
+# probe's own ~1 min: about 17 minutes from the breaking merge.
+#
+# The cron below is a BACKSTOP only, and it is deliberately hourly rather than */15.
+# Measured over 213 h of run history, the previous `*/15` schedule delivered 68 runs
+# against an expected 853 -- 8% of its declared rate, with a median gap of 149 min and a
+# worst gap of 11.4 h. GitHub queues `schedule` events on a best-effort basis and drops
+# them under load, and high-frequency crons on busy repositories are hit hardest. A `*/15`
+# expression therefore advertised a 15-minute guarantee the platform never delivered.
+# Hourly is honest about what cron can supply; the real guarantee comes from `workflow_run`.
 #
 # Both jobs write a GitHub step summary that states, in words, whether a failure was
 # INHERITED from a red main or INTRODUCED by the PR (AC4).
@@ -25,10 +41,17 @@ name: "CI: Base Freshness & Main Health"
 on:
   pull_request:
     branches: [ main ]
+  # Primary main-health trigger: probe as soon as main's own build verdict exists.
+  # This does not depend on cron delivery at all.
+  workflow_run:
+    workflows: ["CI: Build & Test"]
+    branches: [ main ]
+    types: [ completed ]
   schedule:
-    # Every 15 minutes: a red main is detected within one gate cycle rather than
-    # being discovered hours later by whoever opens the next unrelated PR.
-    - cron: '*/15 * * * *'
+    # Backstop only -- catches a main left red by a run that never reported (cancelled
+    # workflow, skipped push, platform incident). Not the primary detector; see the
+    # detection-latency note in the header for why this is hourly and not '*/15'.
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -159,7 +182,8 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # AC3: a red main announces itself on a fixed cadence.
+  # AC3: a red main announces itself promptly. Driven by `workflow_run` on main's
+  # own build completing (~17 min worst case), with an hourly cron as backstop.
   # ---------------------------------------------------------------------------
   main-health:
     name: main health probe
@@ -173,8 +197,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
+          # --status completed is required: without it the newest row can be an
+          # in-progress run whose `conclusion` is null, which would report a red main
+          # as unknown-and-therefore-fine. We want the latest CONCLUDED verdict.
           RUN_JSON="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow 'CI: Build & Test' \
-            --branch main --limit 1 --json conclusion,databaseId,headSha,url \
+            --branch main --status completed --limit 1 --json conclusion,databaseId,headSha,url \
             --jq '.[0] // empty')"
           if [ -z "$RUN_JSON" ]; then
             echo "No completed run found for main; nothing to report." >> "$GITHUB_STEP_SUMMARY"

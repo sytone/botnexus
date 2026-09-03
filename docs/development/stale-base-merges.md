@@ -49,24 +49,32 @@ second — which is the outcome the acceptance criterion asks for.
 Only the architecture project runs, so the job costs a fraction of a full suite while covering
 every rule class that a stale base can defeat.
 
-### `main-health` (schedule / manual)
+### `main-health` (workflow_run / hourly backstop / manual)
 
-Scheduled at `*/15 * * * *`. It reads the latest `CI: Build & Test` conclusion for `main` and,
-if it is `failure`, emits a workflow `::error::` annotation naming the red commit and run ID,
-and fails. A red `main` therefore announces itself on its own, instead of waiting to be
-discovered by whoever happens to open the next unrelated PR.
+Runs when `CI: Build & Test` completes on `main`, hourly as a backstop, and on demand. It reads
+the latest **completed** `CI: Build & Test` conclusion for `main` and, if it is `failure`, emits
+a workflow `::error::` annotation naming the red commit and run ID, and fails.
 
-**The cadence is best-effort, and in practice it is far below the declared one.** GitHub queues
-`schedule` events on a best-effort basis and drops them under load. Measured over a 147-hour
-window this workflow fired **46** scheduled runs against the ~588 implied by `*/15` — about 8%
-of its nominal rate — with observed gaps between consecutive runs ranging from **2.2 to 11.4
-hours**. In the 2026-08-30 incident the break landed at 20:59Z and the first failing probe ran
-at 22:46Z, 1 h 47 m later.
+**Measured detection latency (issue #3715): worst case ~17 minutes from the breaking merge.**
+That is the `CI: Build & Test` duration on `main` (median 13.1 min, max 15.4 min over the last
+60 push-triggered runs) plus the probe's own runtime. The probe is driven by `workflow_run`, so
+it fires as soon as main's verdict exists and does not depend on cron delivery.
 
-So treat this job as a **multi-hour backstop, not a 15-minute alarm**. In particular, the
-absence of a recent failing run is not evidence that `main` is green — it is at least as likely
-that the probe has not run. Check the newest `CI: Build & Test` conclusion for `main` directly
-when freshness matters. See #3715 for the measurement and the proposed fix.
+The hourly `schedule` is a **backstop**, not the primary detector — it catches a `main` left red
+by a run that never reported at all (cancelled workflow, platform incident). It is deliberately
+not `*/15`. The workflow originally declared `*/15` and, measured over 213 h of run history,
+GitHub delivered 68 scheduled runs against an expected 853 — **8% of the declared rate**, with a
+median gap of 149 minutes and a worst gap of 11.4 hours. `schedule` events are queued
+best-effort and dropped under load, and high-frequency crons on busy repositories suffer most,
+so a `*/15` expression advertised a guarantee the platform never honoured. During the
+2026-08-30 red-main incident the first failing probe landed 1 h 47 m after the break and
+subsequent detections were 2.5–8 h apart — which is why `main` sat red for ~90 hours. Hourly
+states what cron can actually supply; the real guarantee comes from `workflow_run`.
+
+The corollary still holds for the **cron** leg specifically: absence of a recent *scheduled* run
+is not evidence that `main` is green, only that cron did not fire. The `workflow_run` leg is what
+you should rely on, and when freshness genuinely matters, read the newest `CI: Build & Test`
+conclusion for `main` directly.
 
 ### Inherited vs introduced
 
