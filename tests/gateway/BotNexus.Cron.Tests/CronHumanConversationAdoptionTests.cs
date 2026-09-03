@@ -425,6 +425,12 @@ public sealed class CronHumanConversationAdoptionTests
         // #3689 added this double; the two PRs merged independently and neither build saw the other,
         // so BotNexus.Cron.Tests was left with CS0535 on main. Delegating to the empty double keeps
         // the delete-path assertions untouched.
+        //
+        // #3814: this member was then declared TWICE, for the same reason one level up. #3697 added
+        // it here to fix CS0535, and #3693 -- branched before that landed -- added it again further
+        // down the class to fix the same CS0535. Both were green against their own bases; the first
+        // tree containing both declarations was main, which failed with CS0111. This is the single
+        // canonical declaration; do not re-add another when satisfying IConversationStore.
         public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
             => _unused.GetPendingAskUserCheckpointsAsync(ct);
         public Task<IReadOnlyList<Conversation>> ListAsync(AgentId? agentId = null, CancellationToken ct = default)
@@ -455,8 +461,6 @@ public sealed class CronHumanConversationAdoptionTests
             => _unused.PatchOverrideAsync(conversationId, patch, ct);
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => _unused.GetSummariesAsync(ct);
-        public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
-            => _unused.GetPendingAskUserCheckpointsAsync(ct);
         public Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
             => _unused.GetCanvasStateAsync(conversationId, ct);
         public Task<bool> SetCanvasStateKeyAsync(ConversationId conversationId, string key, JsonElement value, CancellationToken ct = default)
