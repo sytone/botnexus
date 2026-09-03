@@ -19,11 +19,30 @@ namespace BotNexus.Agent.Core.Tools;
 /// <param name="FileName">Executable to launch; never quoted (UseShellExecute=false).</param>
 /// <param name="Args">Structured arguments; empty when <paramref name="RawArgumentLine"/> is set.</param>
 /// <param name="RawArgumentLine">Verbatim command line, or null to use <paramref name="Args"/>.</param>
+/// <param name="ResolvedTarget">
+/// The path the PATH/PATHEXT probe actually selected, or null when nothing matched. Carried so a
+/// launch failure can name what was attempted instead of surfacing the bare OS string
+/// <c>The system cannot find the path specified.</c>, which named neither the command nor a path
+/// and left the agent unable to tell the tool, the working directory and an argument apart (#3710).
+/// </param>
 public sealed record ProcessLaunch(
     string FileName,
     IReadOnlyList<string> Args,
-    string? RawArgumentLine = null)
+    string? RawArgumentLine = null,
+    string? ResolvedTarget = null)
 {
+    /// <summary>
+    /// Describes what this descriptor tried to launch, for use in a start-failure message.
+    /// </summary>
+    /// <param name="requestedCommand">The command name as the caller configured it.</param>
+    public string FormatLaunchFailureDetail(string requestedCommand)
+        => ResolvedTarget is { } target && !string.Equals(target, requestedCommand, StringComparison.Ordinal)
+            ? $"'{requestedCommand}' resolved to '{target}' and was launched via '{FileName}'"
+            : $"'{requestedCommand}' was not resolved to any file on PATH (probed extensions: {string.Join(", ", ProbeExtensionNames)})";
+
+    /// <summary>Extensions the PATH probe considers, in order; surfaced for diagnostics.</summary>
+    internal static IReadOnlyList<string> ProbeExtensionNames => WindowsShimLaunch.ProbeExtensions;
+
     /// <summary>Two-value deconstruction for callers that do not care about the raw line.</summary>
     public void Deconstruct(out string fileName, out IReadOnlyList<string> args)
     {
@@ -73,7 +92,7 @@ public sealed record ProcessLaunch(
 /// </remarks>
 public static class WindowsShimLaunch
 {
-    private static readonly string[] ProbeExtensions = [".exe", ".cmd", ".bat"];
+    internal static readonly string[] ProbeExtensions = [".exe", ".cmd", ".bat", ".ps1"];
 
     /// <summary>
     /// Resolves <paramref name="command"/> plus <paramref name="args"/> into a launch descriptor,
@@ -99,7 +118,8 @@ public static class WindowsShimLaunch
             return new ProcessLaunch(command, args);
         }
 
-        var resolved = ResolveWindowsExecutable(command, fileExists ?? File.Exists);
+        var probe = fileExists ?? File.Exists;
+        var resolved = ResolveWindowsExecutable(command, probe);
         if (resolved is not null && IsWindowsBatchFile(resolved))
         {
             // Route through cmd.exe /d /s /c. The payload MUST be a raw line with a literal outer
@@ -108,10 +128,48 @@ public static class WindowsShimLaunch
             return new ProcessLaunch(
                 Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
                 [],
-                resolved.BuildCmdRawArgumentLine(args));
+                resolved.BuildCmdRawArgumentLine(args),
+                resolved);
         }
 
-        return new ProcessLaunch(resolved ?? command, args);
+        if (resolved is not null && IsWindowsPowerShellScript(resolved))
+        {
+            // A .ps1 is not an executable image, so CreateProcess cannot start it at all - that is
+            // the #3710 defect. It needs a PowerShell host, and deliberately NOT the cmd.exe raw-line
+            // treatment: -File hands the remaining tokens to the script as literal arguments, so a
+            // structured ArgumentList passes an argument containing a space or a '$' through
+            // unmodified. Routing it through cmd.exe would re-parse those under cmd's rules.
+            var hostArgs = new List<string>(args.Count + 3) { "-NoProfile", "-File", resolved };
+            hostArgs.AddRange(args);
+            return new ProcessLaunch(ResolvePowerShellHost(probe), hostArgs, null, resolved);
+        }
+
+        return new ProcessLaunch(resolved ?? command, args, null, resolved);
+    }
+
+    /// <summary>True when <paramref name="path"/> names a PowerShell script that needs a host (#3710).</summary>
+    public static bool IsWindowsPowerShellScript(string path)
+        => string.Equals(Path.GetExtension(path), ".ps1", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Picks the PowerShell host for a <c>.ps1</c> shim: <c>pwsh</c> when it is on PATH, otherwise
+    /// the Windows-inbox <c>powershell.exe</c>, which is always present on a Windows host.
+    /// </summary>
+    private static string ResolvePowerShellHost(Func<string, bool> fileExists)
+    {
+        var pathDirs = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var dir in pathDirs)
+        {
+            var candidate = Path.Combine(dir, "pwsh.exe");
+            if (fileExists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return "powershell.exe";
     }
 
     /// <summary>

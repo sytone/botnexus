@@ -277,19 +277,10 @@ public sealed class ExecTool : IAgentTool
             WorkingDirectory = workingDir ?? _workingDirectory ?? string.Empty,
         };
 
-        if (launch.RawArgumentLine is { } rawArgumentLine)
-        {
-            // Windows .cmd/.bat shims only (#3568): hand cmd.exe the line verbatim. Going through
-            // ArgumentList here would re-escape the quotes and break the launch.
-            startInfo.Arguments = rawArgumentLine;
-        }
-        else
-        {
-            foreach (var arg in processArgs)
-            {
-                startInfo.ArgumentList.Add(arg);
-            }
-        }
+        // Windows .cmd/.bat shims (#3568) need the line handed to cmd.exe verbatim; everything else,
+        // including the .ps1 host invocation (#3710), goes through ArgumentList. The seam decides -
+        // looping over Args by hand here is precisely how a raw cmd payload gets re-escaped.
+        launch.ApplyArgumentsTo(startInfo);
 
 
         if (env is not null)
@@ -313,12 +304,18 @@ public sealed class ExecTool : IAgentTool
         {
             if (!process.Start())
             {
-                return NotDispatchedResult($"Failed to start process '{fileName}'.");
+                return NotDispatchedResult(
+                    $"Failed to start process '{fileName}'. {launch.FormatLaunchFailureDetail(command[0])}.");
             }
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or PlatformNotSupportedException)
         {
-            return NotDispatchedResult($"Failed to start process '{fileName}': {ex.Message}");
+            // #3710: the raw OS text ("The system cannot find the path specified.") named neither the
+            // command nor a path, so the agent could not tell the tool, the workingDir and an argument
+            // apart. Name what was actually resolved and attempted.
+            return NotDispatchedResult(
+                $"Failed to start process '{fileName}': {ex.Message} " +
+                $"({launch.FormatLaunchFailureDetail(command[0])}).");
         }
 
         StartedTestHook?.Invoke(process);
@@ -619,134 +616,35 @@ public sealed class ExecTool : IAgentTool
     }
 
     /// <summary>
-    /// A resolved launch descriptor: the executable to start plus EITHER a structured argument
-    /// list (the normal case) OR a raw command line that must be passed to the child verbatim.
+    /// Resolves the command array into a launch descriptor via the shared Windows shim seam.
     /// </summary>
     /// <remarks>
-    /// The raw form exists solely for the Windows <c>.cmd</c>/<c>.bat</c> shim path (issue #3568).
-    /// <c>cmd.exe /d /s /c</c> requires its payload wrapped in a literal outer quote pair, and
-    /// <see cref="ProcessStartInfo.ArgumentList"/> cannot express that: .NET applies CRT quoting to
-    /// every entry, so a payload containing quotes comes out escaped as <c>\"</c>. cmd.exe does not
-    /// recognise backslash-escaped quotes, so it treated the escaped quotes as part of the program
-    /// name and reported <c>'"C:\Program Files\nodejs\npm.cmd"' is not recognized</c> - a correct
-    /// path that could never launch. Setting <see cref="ProcessStartInfo.Arguments"/> directly is
-    /// the only way to hand cmd.exe the byte sequence it actually parses.
+    /// This used to be a second, independent copy of the PATH probe plus the cmd.exe quoting rules,
+    /// which is exactly the duplication #3642 consolidated into <see cref="WindowsShimLaunch"/> for
+    /// the MCP stdio transport. The copy still here was why #3568's <c>.cmd</c> fix did not extend to
+    /// <c>.ps1</c>: the seam and the copy could disagree. There is now one implementation (#3710).
     /// </remarks>
-    /// <param name="FileName">Executable to launch; never quoted (UseShellExecute=false).</param>
-    /// <param name="Args">Structured arguments; empty when <paramref name="RawArgumentLine"/> is set.</param>
-    /// <param name="RawArgumentLine">Verbatim command line, or null to use <paramref name="Args"/>.</param>
-    internal sealed record ExecLaunch(
-        string FileName,
-        IReadOnlyList<string> Args,
-        string? RawArgumentLine = null)
-    {
-        /// <summary>Two-value deconstruction for callers that do not care about the raw line.</summary>
-        public void Deconstruct(out string fileName, out IReadOnlyList<string> args)
-        {
-            fileName = FileName;
-            args = Args;
-        }
-    }
-
-    /// <summary>
-    /// Resolves command array into fileName and arguments, handling Windows .cmd/.bat shims.
-    /// </summary>
-    internal static ExecLaunch ResolveCommand(IReadOnlyList<string> command)
+    internal static ProcessLaunch ResolveCommand(IReadOnlyList<string> command)
         => ResolveCommand(command, new FileSystem());
 
-    internal static ExecLaunch ResolveCommand(
+    internal static ProcessLaunch ResolveCommand(
         IReadOnlyList<string> command,
         IFileSystem fileSystem)
     {
+        ArgumentNullException.ThrowIfNull(fileSystem);
+
         var exe = command[0];
-        var args = command.Count > 1 ? command.Skip(1).ToList() : new List<string>();
+        var args = command.Count > 1 ? command.Skip(1).ToList() : [];
 
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            return new ExecLaunch(exe, args);
-        }
-
-        // On Windows, resolve .cmd/.bat files through cmd.exe
-        var resolved = ResolveWindowsExecutable(exe, fileSystem);
-        if (resolved is not null && IsWindowsBatchFile(resolved))
-        {
-            // Route through cmd.exe /d /s /c. The payload MUST be a raw line with a literal outer
-            // quote pair (#3568) - /s tells cmd.exe to strip exactly that outer pair and run the
-            // remainder verbatim, which is what makes an inner quoted path with spaces survive.
-            return new ExecLaunch(
-                Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
-                [],
-                BuildCmdRawArgumentLine(resolved, args));
-        }
-
-        return new ExecLaunch(resolved ?? exe, args);
+        return WindowsShimLaunch.Resolve(exe, args, fileSystem.File.Exists);
     }
 
     /// <summary>
     /// Builds the verbatim <c>cmd.exe</c> argument line for a resolved .cmd/.bat shim.
     /// </summary>
+    /// <remarks>Forwards to the shared seam; retained as the name existing callers and tests use.</remarks>
     internal static string BuildCmdRawArgumentLine(string resolved, IReadOnlyList<string> args)
-        => $"/d /s /c \"{BuildCmdCommandLine(resolved, args)}\"";
-
-    private static string? ResolveWindowsExecutable(string command, IFileSystem fileSystem)
-    {
-        if (Path.HasExtension(command))
-        {
-            return command;
-        }
-
-        // Look for common Windows script extensions
-        string[] extensions = [".exe", ".cmd", ".bat"];
-        var pathDirs = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-
-        // Check current name first (might be in PATH as-is)
-        foreach (var ext in extensions)
-        {
-            var candidate = command + ext;
-
-            // Check in PATH directories
-            foreach (var dir in pathDirs)
-            {
-                var fullPath = Path.Combine(dir, candidate);
-                if (fileSystem.File.Exists(fullPath))
-                {
-                    return fullPath;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private static bool IsWindowsBatchFile(string path)
-    {
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        return ext is ".cmd" or ".bat";
-    }
-
-    private static string BuildCmdCommandLine(string command, IReadOnlyList<string> args)
-    {
-        var sb = new StringBuilder();
-        sb.Append(QuoteForCmd(command));
-        foreach (var arg in args)
-        {
-            sb.Append(' ');
-            sb.Append(QuoteForCmd(arg));
-        }
-
-        return sb.ToString();
-    }
-
-    private static string QuoteForCmd(string arg)
-    {
-        if (!arg.Contains(' ') && !arg.Contains('"'))
-        {
-            return arg;
-        }
-
-        return $"\"{arg.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
-    }
+        => resolved.BuildCmdRawArgumentLine(args);
 
     private static void TryKill(Process process)
     {

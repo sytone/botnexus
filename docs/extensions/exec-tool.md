@@ -18,7 +18,7 @@ The Exec Tool provides agents with advanced shell command execution including ti
 - Set additional environment variables per invocation
 - Override working directory
 - Kill processes on inactivity (no-output timeout)
-- Windows `.cmd`/`.bat` resolution
+- Windows `.cmd`/`.bat`/`.ps1` shim resolution
 
 ## Tool Parameters
 
@@ -85,7 +85,13 @@ The tool respects the agent's workspace directory as the default working directo
   discarded figure to decide whether to re-run with a narrower command or redirect output to a file.
   Output below the cap is returned verbatim with no banner.
 - Background processes persist across tool calls within the same session and can be managed with the [Process Tool](./process-tool.md).
-- On Windows, the tool resolves `.cmd` and `.bat` files automatically when the command is not a full path.
+- On Windows, the tool resolves `.exe`, `.cmd`, `.bat` and `.ps1` files from `PATH` automatically when the
+  command is not a full path. A `.cmd`/`.bat` shim is launched through `cmd.exe /d /s /c`; a `.ps1` shim is
+  launched through `pwsh -NoProfile -File` (falling back to `powershell.exe` when `pwsh` is not on `PATH`),
+  with the remaining arguments passed through unmodified. This is why `exec ["qmd", "--version"]` works even
+  though `qmd` is an npm-installed PowerShell script rather than an executable.
+- If a resolved command still cannot be started, the failure names the resolved path that was attempted and the
+  host it was launched through, rather than the bare OS text `The system cannot find the path specified.`
 - The default timeout of 2 minutes applies unless overridden. Background processes have a separate 10-minute default.
 - When `noOutputTimeoutMs` is set, the process is killed if it produces no stdout/stderr within that window.
 
