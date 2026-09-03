@@ -117,6 +117,11 @@ public static class ProcessRunner
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
+        // A background child outlives DisposeAsync when the test host is stopped rather than
+        // finishing - Ctrl-C, a CI timeout, a pkill. Registering it here means those cases kill
+        // the child too, instead of leaving a gateway running for hours.
+        BotNexus.Integration.Testing.SandboxProcessGuard.KillOnExit(process);
+
         return new BackgroundProcess(process, stdOut, stdErr);
     }
 

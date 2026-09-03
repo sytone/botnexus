@@ -50,8 +50,14 @@ public sealed class ExtensionBootFixture : IAsyncLifetime
             RepoRoot = RepoLocator.FindRepoRoot();
 
             var runId = Guid.NewGuid().ToString("N");
-            SandboxRoot = Path.Combine(Path.GetTempPath(), "botnexus-extboot", runId);
+            var sandboxFamilyRoot = Path.Combine(Path.GetTempPath(), "botnexus-extboot");
+
+            // See NewUserExperienceFixture: reclaim sandboxes left by a run that was killed.
+            BotNexus.Integration.Testing.SandboxProcessGuard.ReapStaleSandboxes(sandboxFamilyRoot);
+
+            SandboxRoot = Path.Combine(sandboxFamilyRoot, runId);
             Home = Path.Combine(SandboxRoot, "home");
+            BotNexus.Integration.Testing.SandboxProcessGuard.MarkSandboxOwner(SandboxRoot);
             Directory.CreateDirectory(Home);
 
             // 1 - build the DEPLOYMENT CLOSURE in Release. This produces both the gateway dll
@@ -114,6 +120,8 @@ public sealed class ExtensionBootFixture : IAsyncLifetime
                 "dotnet",
                 $"\"{cliDll}\" gateway start --attached --skip-build --source \"{RepoRoot}\" --target \"{Home}\" --port {GatewayPort}",
                 environment: env);
+
+            BotNexus.Integration.Testing.SandboxProcessGuard.RecordSandboxGateway(SandboxRoot, _gateway.ProcessId);
 
             // 4 - wait for /health.
             var ready = await WaitForGatewayReadyAsync(GatewayBaseUrl, GatewayReadyTimeout, _gateway);

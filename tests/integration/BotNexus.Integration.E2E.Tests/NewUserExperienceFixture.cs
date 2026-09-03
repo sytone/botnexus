@@ -92,11 +92,20 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
         {
             var runId = Guid.NewGuid().ToString("N");
             PackVersion = E2ECliPack.BuildPackageVersion(runId);
-            SandboxRoot = Path.Combine(Path.GetTempPath(), "botnexus-e2e", runId);
+            var sandboxFamilyRoot = Path.Combine(Path.GetTempPath(), "botnexus-e2e");
+
+            // Reclaim sandboxes abandoned by a run that was killed rather than finished. Nothing
+            // else reaps them: a gigabyte of these had accumulated before this was added.
+            BotNexus.Integration.Testing.SandboxProcessGuard.ReapStaleSandboxes(sandboxFamilyRoot);
+
+            SandboxRoot = Path.Combine(sandboxFamilyRoot, runId);
             Home = Path.Combine(SandboxRoot, "home");
             var packDir = Path.Combine(SandboxRoot, "pack");
             var packArtifactsDir = Path.Combine(SandboxRoot, "build");
             var toolDir = Path.Combine(SandboxRoot, "tool");
+            // Marked before anything expensive goes in, so an interrupted run still leaves a
+            // sandbox the next one can recognise as abandoned.
+            BotNexus.Integration.Testing.SandboxProcessGuard.MarkSandboxOwner(SandboxRoot);
             Directory.CreateDirectory(Home);
             Directory.CreateDirectory(packDir);
             Directory.CreateDirectory(packArtifactsDir);
@@ -258,6 +267,9 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
                 CliExecutablePath,
                 $"gateway start --attached --skip-build --source \"{repoRoot}\" --target \"{Home}\" --port {GatewayPort}",
                 environment: env);
+
+            // Recorded so a later run can kill this gateway if this one is stopped before disposing.
+            BotNexus.Integration.Testing.SandboxProcessGuard.RecordSandboxGateway(SandboxRoot, _gateway.ProcessId);
 
             var ready = await WaitForGatewayReadyAsync(GatewayBaseUrl, GatewayReadyTimeout, _gateway);
             if (!ready)
