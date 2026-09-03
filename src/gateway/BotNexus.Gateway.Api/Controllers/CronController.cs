@@ -96,7 +96,10 @@ public sealed class CronController(
             }
         }
 
-        return Ok(merged.Values.OrderByDescending(job => job.CreatedAt).ToList());
+        return Ok(merged.Values
+            .Where(IsCallerAuthorizedFor)
+            .OrderByDescending(job => job.CreatedAt)
+            .ToList());
     }
 
     /// <summary>Gets a cron job by identifier.</summary>
@@ -110,7 +113,19 @@ public sealed class CronController(
     public async Task<ActionResult<CronJob>> Get(string jobId, CancellationToken cancellationToken)
     {
         var job = await store.GetAsync(JobId.From(jobId), cancellationToken);
-        return job is null ? NotFound() : Ok(job);
+        if (job is null)
+            return NotFound();
+
+        // #3778: the read seams apply the SAME ownership rule as update (:199) and delete, through
+        // the same helper - a scoped caller could otherwise read every job definition on the
+        // platform, including ShellCommand and WebhookUrl. 403 and not 404 for the reason the
+        // update path states: the caller has already been told 404 only when the job truly does
+        // not exist, so collapsing the two would trade a truthful authorization answer for an
+        // existence-oracle defence this endpoint does not need.
+        if (!IsCallerAuthorizedFor(job))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ForbiddenMessage });
+
+        return Ok(job);
     }
 
     /// <summary>Creates a cron job.</summary>
@@ -392,6 +407,12 @@ public sealed class CronController(
         if (existing is null)
             return NotFound();
 
+        // #3778: ownership is checked BEFORE the history read, not after. Every run carries the
+        // SessionId that is the key into the owning agent's transcript, so an unscoped read here
+        // discloses more than the job definition does.
+        if (!IsCallerAuthorizedFor(existing))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ForbiddenMessage });
+
         return Ok(await store.GetRunHistoryAsync(typedJobId, limit, cancellationToken));
     }
 
@@ -415,10 +436,16 @@ public sealed class CronController(
         CancellationToken cancellationToken = default)
     {
         var jobs = await store.ListAsync(ct: cancellationToken);
-        var jobIds = jobs.Select(job => job.Id).ToArray();
+
+        // #3778: the rollup scope is the OWNERSHIP-FILTERED job set, not every job in the store.
+        // Costs are per-job spend for jobs the caller may manage; an unfiltered set handed a scoped
+        // caller a platform-wide spend report.
+        var jobIds = jobs.Where(IsCallerAuthorizedFor).Select(job => job.Id).ToArray();
 
         // An empty job set short-circuits to an empty result rather than an unscoped query - the
-        // #2838 rule, restated here because this controller builds the scope itself.
+        // #2838 rule, restated here because this controller builds the scope itself. #3778: this
+        // now also covers a scoped caller who owns nothing, which is exactly the case where a
+        // fall-through would query the store with no scope at all.
         if (jobIds.Length == 0)
             return Ok(Array.Empty<CronJobCostRollup>());
 
