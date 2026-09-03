@@ -19,7 +19,10 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 13. [Session Management](#session-management)
 14. [System & Status](#system--status)
 15. [Error Handling](#error-handling)
-16. [Webhooks](#webhooks)
+16. [Secrets](#secrets)
+17. [Webhooks](#webhooks)
+18. [Plugins](#plugins)
+19. [Telemetry](#telemetry)
 
 ---
 
