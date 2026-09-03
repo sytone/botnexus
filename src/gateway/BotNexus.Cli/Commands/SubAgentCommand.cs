@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Configuration.Store;
 using Microsoft.Data.Sqlite;
 using Spectre.Console;
 using BotNexus.Cli.Services;
@@ -106,6 +107,13 @@ internal sealed class SubAgentCommand
         try
         {
             var configPath = _fileSystem.Path.Combine(CliPaths.ResolveTarget(target), "config.json");
+
+            // #3823: prefer the store when it exists, since it wins on read for the gateway; the
+            // file read below stays as the fallback so an injected IFileSystem still drives tests.
+            var fromStore = TryReadWorkspaceRootFromStore(configPath);
+            if (fromStore is not null)
+                return fromStore;
+
             if (!_fileSystem.File.Exists(configPath))
                 return null;
 
@@ -115,6 +123,35 @@ internal sealed class SubAgentCommand
         // caller supplied a mock. Exempted in ConfigurationReadPathFenceTests with this reason.
         var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
             return config.Gateway?.SubAgents?.WorkspaceRoot;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads <c>gateway.subAgents.workspaceRoot</c> from the SQLite config store when one exists.
+    /// Best-effort: any failure returns null and the caller falls back to the file.
+    /// </summary>
+    private string? TryReadWorkspaceRootFromStore(string configPath)
+    {
+        try
+        {
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, _fileSystem);
+            if (!_fileSystem.File.Exists(storePath))
+                return null;
+
+            var store = new SqliteConfigStore($"Data Source={storePath}");
+            var entries = store.ReadEntriesAsync().GetAwaiter().GetResult();
+
+            if (!entries.TryGetValue("gateway.subAgents.workspaceRoot", out var entry))
+                return null;
+            if (entry.State != ConfigValueState.Value || entry.Value is null)
+                return null;
+
+            var text = entry.Value.Trim('"');
+            return string.IsNullOrWhiteSpace(text) ? null : text;
         }
         catch
         {

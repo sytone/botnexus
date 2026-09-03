@@ -361,9 +361,9 @@ internal sealed class DoctorCommand
 
     private static async Task<PlatformConfig?> LoadConfigRequiredAsync(string configPath, CancellationToken cancellationToken)
     {
-        if (!File.Exists(configPath))
+        if (!ConfigPresence.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/]. Run [green]botnexus init[/] first.");
+            AnsiConsole.MarkupLine(configPath.NotFoundMessage());
             return null;
         }
 
