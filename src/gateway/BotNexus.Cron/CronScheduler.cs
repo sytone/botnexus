@@ -965,13 +965,16 @@ public sealed class CronScheduler(
     /// Whether <paramref name="job"/> is past its <see cref="CronJob.ExpiresAt"/> instant (#2634).
     /// </summary>
     /// <remarks>
-    /// A <c>null</c> expiry is <b>never</b> expired: NULL means "no expiry", so a job that does not
-    /// carry the field behaves exactly as it does today (AC4). The comparison is inclusive
-    /// (<c>&gt;=</c>) so the expiry instant itself is already past -- "stops executing after that
-    /// instant" must not leave a one-tick window where a fire still lands.
+    /// A thin adapter that binds the scheduler's <see cref="TimeProvider"/> to the one shared
+    /// predicate in <see cref="CronJobExpiry"/>. The comparison itself was extracted there by #3546
+    /// so <see cref="MissedRunDetectionService"/> could reach it: the scanner previously ignored
+    /// expiry entirely because this method was private, and a second inline <c>ExpiresAt</c>
+    /// comparison would only have re-created the divergence. Both scheduler call sites - the
+    /// due-scan early-out and the fire-time gate - still call this method, so there is exactly one
+    /// comparison in the assembly.
     /// </remarks>
     private bool IsExpired(CronJob job)
-        => job.ExpiresAt is { } expiresAt && _timeProvider.GetUtcNow() >= expiresAt;
+        => CronJobExpiry.IsExpired(job, _timeProvider.GetUtcNow());
 
     /// <summary>
     /// Opt-in scheduler-driven one-shot removal (#2634): deletes the <b>job</b> after its first
