@@ -139,7 +139,7 @@ internal sealed class DoctorCommand
         {
             var state = entry.IsOrphaned
                 ? (entry.IsUnsafeLink ? "[red]unsafe orphan[/]" : "[yellow]orphaned[/]")
-                : "[green]registered[/]";
+                : "[green]declared[/]";
             AnsiConsole.MarkupLine($"  {state}  {CliText.SafeDisplay(entry.DirectoryName)}");
         }
 
@@ -160,7 +160,7 @@ internal sealed class DoctorCommand
         if (!approved && interactive)
         {
             approved = (confirm ?? (message => AnsiConsole.Confirm(message, defaultValue: false)))(
-                $"Delete the {orphans.Length} enumerated orphaned workspace(s)?");
+                $"Delete the {orphans.Length} enumerated orphaned workspace(s)? No config.json entry declares them.");
         }
 
         if (!approved)

@@ -5,8 +5,9 @@ namespace BotNexus.Cli.Commands;
 
 /// <summary>
 /// A single physical directory found directly under the configured agents root, classified against
-/// the set of registered agents. <paramref name="IsOrphaned"/> is true when no enabled config agent
-/// claims the directory name; <paramref name="IsUnsafeLink"/> is true when the directory is a
+/// the set of declared agents. <paramref name="IsOrphaned"/> is true when no agent declared in
+/// config.json claims the directory name - a *disabled* agent is still declared and is never
+/// orphaned (issue #3700); <paramref name="IsUnsafeLink"/> is true when the directory is a
 /// symlink/reparse point and must never be followed for deletion.
 /// </summary>
 internal sealed record PersistentAgentWorkspaceEntry(
@@ -16,7 +17,7 @@ internal sealed record PersistentAgentWorkspaceEntry(
     bool IsUnsafeLink);
 
 /// <summary>
-/// Reconciles persistent top-level agent workspaces with enabled config-defined agents while
+/// Reconciles persistent top-level agent workspaces with the agents declared in config while
 /// keeping every deletion constrained to the configured agents root. This is the destructive
 /// counterpart to the read-only <c>PersistentAgentFolderCheck</c>: it produces a reviewable plan and
 /// deletes only orphaned directories that pass strict containment and reparse-point safety checks.
@@ -42,10 +43,10 @@ internal sealed class PersistentAgentWorkspaceReconciler
 
     /// <summary>
     /// Enumerates the immediate directories under <paramref name="agentsRoot"/> and classifies each
-    /// as registered or orphaned. Registration is derived the same way the gateway interprets config:
-    /// the <c>defaults</c> reserved key and disabled agents are ignored, and remaining keys are
-    /// canonicalized through <see cref="AgentId"/> rather than a doctor-specific interpretation.
-    /// Returns an empty list when the root does not exist.
+    /// as declared or orphaned. Only the reserved <c>defaults</c> key is ignored: a disabled agent is
+    /// a declared agent whose workspace must survive cleanup, because disabling is a reversible opt-out
+    /// that preserves state (issue #3700). Keys are canonicalized through <see cref="AgentId"/> rather
+    /// than a doctor-specific interpretation. Returns an empty list when the root does not exist.
     /// </summary>
     public IReadOnlyList<PersistentAgentWorkspaceEntry> BuildPlan(string agentsRoot, PlatformConfig config)
     {
@@ -55,17 +56,20 @@ internal sealed class PersistentAgentWorkspaceReconciler
         if (!Directory.Exists(root))
             return [];
 
-        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var declared = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var pair in config.Agents ?? [])
         {
-            if (pair.Key.Equals("defaults", StringComparison.OrdinalIgnoreCase) || !pair.Value.Enabled)
+            // Only the reserved `defaults` key is not an agent. Enablement is deliberately NOT
+            // consulted: a disabled agent is declared, and deleting its workspace would destroy
+            // user-authored memory and notes that re-enabling is supposed to restore (issue #3700).
+            if (pair.Key.Equals("defaults", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             // Canonicalize through AgentId so the doctor uses the gateway's own ID rules; skip any key
-            // AgentId rejects rather than inventing a second, laxer interpretation of registration.
+            // AgentId rejects rather than inventing a second, laxer interpretation of declaration.
             var maybeId = AgentId.TryFrom(pair.Key, out var id) ? id.Value : null;
             if (maybeId is not null)
-                registered.Add(maybeId);
+                declared.Add(maybeId);
         }
 
         return Directory.EnumerateDirectories(root)
@@ -75,7 +79,7 @@ internal sealed class PersistentAgentWorkspaceReconciler
                 return new PersistentAgentWorkspaceEntry(
                     info.Name,
                     info.FullName,
-                    !registered.Contains(info.Name.Trim()),
+                    !declared.Contains(info.Name.Trim()),
                     (info.Attributes & FileAttributes.ReparsePoint) != 0);
             })
             .OrderBy(entry => entry.DirectoryName, StringComparer.OrdinalIgnoreCase)
