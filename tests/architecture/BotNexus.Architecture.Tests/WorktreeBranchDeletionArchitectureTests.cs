@@ -68,6 +68,22 @@ public sealed class WorktreeBranchDeletionArchitectureTests : ArchitectureTest
     // How many following lines count as "adjacent" inside a fenced block.
     private const int AdjacencyWindow = 3;
 
+    // Extensions whose comment syntax is '#' to end of line (shell/PowerShell/YAML).
+    private static readonly HashSet<string> HashCommentExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".ps1", ".psm1", ".psd1", ".sh", ".bash", ".zsh", ".yml", ".yaml", ".toml",
+    };
+
+    // Extensions whose comment syntax is C-style ('//' and '/* */').
+    private static readonly HashSet<string> SlashCommentExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".cs", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".razor", ".css", ".scss", ".jsonc",
+    };
+
+    // '//' that starts a comment - not the '//' of a scheme like 'https://'.
+    private static readonly Regex LineCommentSlash = new(
+        @"(?<!:)//", RegexOptions.Compiled);
+
     [Fact]
     public void NoTrackedFile_ChainsBranchDeletionAfterWorktreeRemoval()
     {
@@ -75,7 +91,7 @@ public sealed class WorktreeBranchDeletionArchitectureTests : ArchitectureTest
         var offenders = ScanTrackedFiles(
             (path, content) =>
             {
-                var hits = FindOffendingLines(content);
+                var hits = FindOffendingLines(content, path);
                 return hits.Count == 0
                     ? null
                     : $"{path}: {string.Join("; ", hits)}";
@@ -141,14 +157,57 @@ public sealed class WorktreeBranchDeletionArchitectureTests : ArchitectureTest
             "which would make the fence unusable. Sample:\n" + sample);
     }
 
+    // ---------------------------------------------------------------------
+    // Issue #3817: a file may DESCRIBE the anti-pattern in a comment without
+    // EXECUTING it. Both directions are pinned so the fix cannot gut the fence.
+    // ---------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("scripts/Remove-DevWorktree.ps1", "# `git worktree remove ...` ; `git branch -D ...`, because the chained form runs the")]
+    [InlineData("scripts/cleanup.sh", "# git worktree remove ../wt-1 ; git branch -D fix/1-slug")]
+    [InlineData("src/Foo.cs", "// git worktree remove ../wt-1 ; git branch -D fix/1-slug")]
+    [InlineData("src/Foo.cs", "/* git worktree remove ../wt-1\n   git branch -D fix/1-slug */")]
+    [InlineData("scripts/Doc.ps1", "<#\ngit worktree remove ../wt-1\ngit branch -D fix/1-slug\n#>")]
+    [InlineData("scripts/Trailing.ps1", "Write-Host 'x'  # git worktree remove ../wt-1 ; git branch -D fix/1")]
+    public void Detector_IgnoresCommentedExample(string path, string sample)
+    {
+        FindOffendingLines(sample, path).ShouldBeEmpty(
+            "Issue #3817: a comment that merely describes the chained form is not an " +
+            "offence - only executable statements are. Sample:\n" + sample);
+    }
+
+    [Theory]
+    // executable chain in the same file types whose comments are now stripped
+    [InlineData("scripts/Remove-DevWorktree.ps1", "git worktree remove ../wt-1 ; git branch -D fix/1-slug")]
+    [InlineData("scripts/cleanup.sh", "git worktree remove ../wt-1 && git branch -d fix/1-slug")]
+    // code before the comment on the same line is still scanned
+    [InlineData("scripts/Mixed.ps1", "git worktree remove ../wt-1 ; git branch -D fix/1  # cleanup")]
+    // code after a closed block comment is still scanned
+    [InlineData("scripts/Block.ps1", "<# doc #> git worktree remove ../wt-1 ; git branch -D fix/1")]
+    // markdown prose is NOT stripped - teaching the chained form is the #2104 vector
+    [InlineData("docs/guide.md", "Run `git worktree remove ../wt-1` then `git branch -d fix/1-slug`")]
+    public void Detector_StillFlagsExecutableChain_WhenCommentsAreStripped(string path, string sample)
+    {
+        FindOffendingLines(sample, path).ShouldNotBeEmpty(
+            "Issue #3817 regression guard: comment stripping must not blind the fence " +
+            "to a real #2104 chained statement. Sample:\n" + sample);
+    }
+
     /// <summary>
     /// Returns human-readable descriptions of every unconditionally chained
     /// "remove worktree then delete branch" occurrence in <paramref name="content"/>.
     /// </summary>
-    internal static List<string> FindOffendingLines(string content)
+    /// <remarks>
+    /// <paramref name="relativePath"/> selects the comment syntax to blank before
+    /// matching (issue #3817): a file may <i>describe</i> the anti-pattern in a
+    /// comment without <i>executing</i> it. Markdown is deliberately NOT stripped -
+    /// prose that teaches the chained form is the original #2104 regression vector.
+    /// Passing <c>null</c> disables stripping and matches raw text.
+    /// </remarks>
+    internal static List<string> FindOffendingLines(string content, string? relativePath = null)
     {
         var hits = new List<string>();
-        var lines = content.Replace("\r\n", "\n").Split('\n');
+        var lines = StripComments(content.Replace("\r\n", "\n").Split('\n'), relativePath);
 
         for (var i = 0; i < lines.Length; i++)
         {
@@ -193,6 +252,111 @@ public sealed class WorktreeBranchDeletionArchitectureTests : ArchitectureTest
         }
 
         return hits;
+    }
+
+    /// <summary>
+    /// Blanks comment text (preserving line count and numbering) according to the
+    /// file's language, so a documented example of the anti-pattern is not an offence.
+    /// </summary>
+    internal static string[] StripComments(string[] lines, string? relativePath)
+    {
+        if (relativePath is null)
+        {
+            return lines;
+        }
+
+        var extension = Path.GetExtension(relativePath);
+        var hash = HashCommentExtensions.Contains(extension);
+        var slash = SlashCommentExtensions.Contains(extension);
+        if (!hash && !slash)
+        {
+            return lines;
+        }
+
+        var result = new string[lines.Length];
+        var inBlockComment = false;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+
+            if (slash)
+            {
+                if (inBlockComment)
+                {
+                    var end = line.IndexOf("*/", StringComparison.Ordinal);
+                    if (end < 0)
+                    {
+                        result[i] = string.Empty;
+                        continue;
+                    }
+                    line = new string(' ', end + 2) + line[(end + 2)..];
+                    inBlockComment = false;
+                }
+
+                var start = line.IndexOf("/*", StringComparison.Ordinal);
+                if (start >= 0)
+                {
+                    var end = line.IndexOf("*/", start + 2, StringComparison.Ordinal);
+                    if (end < 0)
+                    {
+                        inBlockComment = true;
+                        line = line[..start];
+                    }
+                    else
+                    {
+                        line = line[..start] + line[(end + 2)..];
+                    }
+                }
+
+                var slashMatch = LineCommentSlash.Match(line);
+                if (slashMatch.Success)
+                {
+                    line = line[..slashMatch.Index];
+                }
+            }
+
+            if (hash)
+            {
+                // PowerShell block comments <# ... #>.
+                if (inBlockComment)
+                {
+                    var end = line.IndexOf("#>", StringComparison.Ordinal);
+                    if (end < 0)
+                    {
+                        result[i] = string.Empty;
+                        continue;
+                    }
+                    line = line[(end + 2)..];
+                    inBlockComment = false;
+                }
+
+                var start = line.IndexOf("<#", StringComparison.Ordinal);
+                if (start >= 0)
+                {
+                    var end = line.IndexOf("#>", start + 2, StringComparison.Ordinal);
+                    if (end < 0)
+                    {
+                        inBlockComment = true;
+                        line = line[..start];
+                    }
+                    else
+                    {
+                        line = line[..start] + line[(end + 2)..];
+                    }
+                }
+
+                var hashIndex = line.IndexOf('#');
+                if (hashIndex >= 0)
+                {
+                    line = line[..hashIndex];
+                }
+            }
+
+            result[i] = line;
+        }
+
+        return result;
     }
 
     private List<string> ScanTrackedFiles(Func<string, string, string?> inspect, ref int scanned)
