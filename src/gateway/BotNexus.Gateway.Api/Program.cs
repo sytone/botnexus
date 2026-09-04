@@ -476,28 +476,30 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
             if (!providerConfig.Enabled)
                 continue;
 
-            var apiName = string.IsNullOrWhiteSpace(providerConfig.Api)
+            var apiName = string.IsNullOrWhiteSpace(providerConfig.ResolveChatApi())
                 ? "openai-completions"
-                : providerConfig.Api!;
+                : providerConfig.ResolveChatApi()!;
             // For openai-completions a BaseUrl is required (the HTTP endpoint). For other
             // apis (e.g. integration-mock) BaseUrl is provider-specific (catalog file path,
             // possibly empty) — skip the BaseUrl gate.
             if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
                 continue;
 
-            if (providerConfig.Models is { Count: > 0 })
+            if (providerConfig.ResolveChatModels() is { Count: > 0 } chatModels)
             {
-                foreach (var modelId in providerConfig.Models)
+                foreach (var modelId in chatModels)
                 {
                     // PBI6 (#1707): a dynamic (config-declared) model carries a valid capability set
                     // so the agent + conversation pickers offer only valid thinking/context choices.
                     // Explicit declarations win; anything omitted is inferred from the model family.
+                    // #2854: read through the resolvers so a nested `chat` object wins over the
+                    // deprecated flat twin, per field.
                     var caps = DynamicModelCapabilities.Infer(
                         modelId,
-                        declaredReasoning: providerConfig.Reasoning,
-                        declaredExtraHighThinking: providerConfig.SupportsExtraHighThinking,
-                        declaredExtendedContext: providerConfig.SupportsExtendedContextWindow,
-                        declaredInput: providerConfig.Input);
+                        declaredReasoning: providerConfig.ResolveChatReasoning(),
+                        declaredExtraHighThinking: providerConfig.ResolveChatSupportsExtraHighThinking(),
+                        declaredExtendedContext: providerConfig.ResolveChatSupportsExtendedContextWindow(),
+                        declaredInput: providerConfig.ResolveChatInput());
                     models.Register(providerName, new LlmModel(
                         Id: modelId,
                         Name: modelId,
@@ -507,7 +509,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                         Reasoning: caps.Reasoning,
                         Input: caps.Input,
                         Cost: new ModelCost(0, 0, 0, 0),
-                        ContextWindow: providerConfig.ContextWindow ?? 128000,
+                        ContextWindow: providerConfig.ResolveChatContextWindow() ?? 128000,
                         MaxTokens: 32000,
                         SupportsExtraHighThinking: caps.SupportsExtraHighThinking,
                         SupportsExtendedContextWindow: caps.SupportsExtendedContextWindow));
