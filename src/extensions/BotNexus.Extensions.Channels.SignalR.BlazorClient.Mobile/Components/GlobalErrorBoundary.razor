@@ -12,12 +12,12 @@ else
 {
     <div class="global-error-boundary" data-testid="error-boundary">
         <div class="error-boundary-banner">
-            <span class="error-boundary-icon" aria-hidden="true">&#x26A0;&#xFE0F;</span>
+            <span class="error-boundary-icon" aria-hidden="true"><Icon Name="warning" Size="15" /></span>
             <span class="error-boundary-message">Something went wrong.</span>
             <button class="error-boundary-toggle" @onclick="ToggleDetail" aria-expanded="@_showDetail">
                 @(_showDetail ? "Hide" : "Details")
             </button>
-            <button class="error-boundary-dismiss" @onclick="RecoverFromError" title="Dismiss">&#x2715;</button>
+            <button class="error-boundary-dismiss" @onclick="RecoverFromError" title="Dismiss"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
         </div>
 
         @if (_showDetail)

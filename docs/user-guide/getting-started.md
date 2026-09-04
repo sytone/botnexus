@@ -99,6 +99,28 @@ Once the Gateway is running:
    - Real-time activity stream
    - Command palette (type `/help` for commands)
 
+### Finding your way around
+
+The left sidebar is the portal's whole navigation. Collapse it with the button in the
+top-left, or drag its right edge to resize it.
+
+| Item | What it is |
+|---|---|
+| **Home** | Pick an agent and a model and start talking |
+| **Activity** | Everything happening across the platform - Overview, Cost and Cron views |
+| **Tools** | External websites pinned into the portal. **Not** an agent's tools |
+| **Chat** | The working surface: Conversation, Workspace, Reports, Canvas and Todo tabs |
+| **Configuration** | Edit `config.json` from the browser |
+| **Skills** | Browse and edit the markdown skills agents can load |
+| **Agents** | Define and inspect agents |
+| **Cron Jobs** | Scheduled runs |
+| **Plugins** | Installed extension packages |
+| **Guide** | This documentation, rendered in the portal |
+
+The **Tools** entry is the one that catches people out: it manages links to external
+sites, and has nothing to do with the tools an agent can call. Those are configured
+per agent through `toolIds` - see [Agents](agents.md).
+
 ## Verify Installation
 
 ### Health Check Endpoint
@@ -179,7 +201,7 @@ Edit `~/.botnexus/config.json` to add a provider:
     "anthropic": {
       "apiKey": "sk-ant-...",
       "baseUrl": "https://api.anthropic.com",
-      "defaultModel": "claude-sonnet-4-20250514",
+      "defaultModel": "claude-sonnet-5",
       "enabled": true
     }
   }

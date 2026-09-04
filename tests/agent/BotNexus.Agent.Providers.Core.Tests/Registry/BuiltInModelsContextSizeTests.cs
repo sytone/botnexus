@@ -78,11 +78,13 @@ public sealed class BuiltInModelsContextSizeTests
     {
         var registry = BuildRegistry();
 
-        var sonnet4 = registry.GetModel("anthropic", "claude-sonnet-4-20250514");
+        // claude-sonnet-4-20250514 was retired; Sonnet 4.5 is the current dated Sonnet that
+        // advertises the 1M window, so it is what exercises the extended-context branch now.
+        var sonnet = registry.GetModel("anthropic", "claude-sonnet-4-5-20250929");
 
-        sonnet4.ShouldNotBeNull();
-        sonnet4!.SupportsExtendedContextWindow.ShouldBeTrue();
-        var sizes = ModelRegistry.GetSupportedContextSizes(sonnet4);
+        sonnet.ShouldNotBeNull();
+        sonnet!.SupportsExtendedContextWindow.ShouldBeTrue();
+        var sizes = ModelRegistry.GetSupportedContextSizes(sonnet);
         sizes.ShouldContain(200000);
         sizes.ShouldContain(1000000);
     }
@@ -92,7 +94,9 @@ public sealed class BuiltInModelsContextSizeTests
     {
         var registry = BuildRegistry();
 
-        var haiku = registry.GetModel("anthropic", "claude-3-5-haiku-20241022");
+        // claude-3-5-haiku-20241022 was retired; Haiku 4.5 is the current Haiku, and like its
+        // predecessor it offers the standard window only.
+        var haiku = registry.GetModel("anthropic", "claude-haiku-4-5-20251001");
 
         haiku.ShouldNotBeNull();
         haiku!.SupportsExtendedContextWindow.ShouldBeFalse();

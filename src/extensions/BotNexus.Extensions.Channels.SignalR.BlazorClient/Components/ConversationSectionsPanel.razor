@@ -54,10 +54,10 @@
                                 disabled="@(index == SectionsState.Sections.Count - 1)"
                                 title="Move down" @onclick="() => MoveAsync(index, index + 1)">&#x25BC;</button>
                         <button class="section-rename-btn" data-testid="section-rename-btn"
-                                title="Rename" @onclick="() => StartRename(section)">&#x270E;</button>
+                                title="Rename" @onclick="() => StartRename(section)"><Icon Name="edit" Size="14" Class="bn-icon-inherit" /></button>
                         <button class="section-delete-btn" data-testid="section-delete-btn"
                                 title="Delete section (conversations return to their default section)"
-                                @onclick="() => DeleteAsync(section)">&#x1F5D1;</button>
+                                @onclick="() => DeleteAsync(section)"><Icon Name="delete" Size="13" Class="bn-icon-inherit" /></button>
                     </div>
                 }
             </div>
@@ -222,7 +222,7 @@
                 @ItemActions(conversationId)
             }
             <button class="section-remove-conversation-btn" data-testid="section-remove-conversation"
-                    title="Remove from section" @onclick="() => RemoveConversationAsync(conversationId)">&#x2715;</button>
+                    title="Remove from section" @onclick="() => RemoveConversationAsync(conversationId)"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
         </div>
     };
 }

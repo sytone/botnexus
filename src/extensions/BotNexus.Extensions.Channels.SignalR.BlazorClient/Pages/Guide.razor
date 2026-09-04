@@ -1,0 +1,244 @@
+@page "/guide"
+@page "/guide/{SectionId}"
+@using System.Net.Http.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>BotNexus &mdash; Guide</PageTitle>
+
+<div class="platform-config-page">
+    <header class="platform-config-toolbar">
+        <h2 class="page-heading"><Icon Name="guide" Size="24" /><span>Guide</span></h2>
+        <input class="guide-search t-body"
+               type="search"
+               placeholder="Search the guide…"
+               aria-label="Search the guide"
+               data-testid="guide-search"
+               value="@_query"
+               @oninput="OnSearchInput" />
+    </header>
+
+    <div class="config-page">
+        <div class="guide-layout">
+            <nav class="guide-nav" aria-label="Guide contents">
+                @if (_index is null)
+                {
+                    <div class="workspace-state t-caption">Loading contents…</div>
+                }
+                else if (Matches.Count == 0)
+                {
+                    <div class="workspace-state t-caption">
+                        Nothing matches “@_query”.
+                        @if (!_fullTextLoaded)
+                        {
+                            <span> Still indexing page contents…</span>
+                        }
+                    </div>
+                }
+                else
+                {
+                    @foreach (var s in Matches)
+                    {
+                        <button class="guide-nav-item @(s.Id == _currentId ? "active" : "")"
+                                data-testid="guide-nav-@s.Id"
+                                title="@s.Blurb"
+                                @onclick="() => SelectAsync(s.Id)">
+                            <span class="guide-nav-title t-label">@s.Title</span>
+                            @if (!string.IsNullOrWhiteSpace(s.Blurb))
+                            {
+                                <span class="guide-nav-blurb t-caption">@s.Blurb</span>
+                            }
+                        </button>
+
+                        @if (s.Children is { Count: > 0 } && s.Id == _currentTopId)
+                        {
+                            @foreach (var c in s.Children)
+                            {
+                                <button class="guide-nav-item is-child @(c.Id == _currentId ? "active" : "")"
+                                        @onclick="() => SelectAsync(c.Id)">
+                                    <span class="guide-nav-title t-caption">@c.Title</span>
+                                </button>
+                            }
+                        }
+                    }
+                }
+            </nav>
+
+            <article class="guide-content" data-testid="guide-content">
+                @if (_error is not null)
+                {
+                    <p class="workspace-state t-body">@_error</p>
+                }
+                else if (_isLoading)
+                {
+                    <p class="workspace-state t-body">Loading…</p>
+                }
+                else if (_html is not null)
+                {
+                    <div class="msg-content guide-body">@((MarkupString)_html)</div>
+                }
+            </article>
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>Section to open, from the route. Enables deep links from contextual help buttons.</summary>
+    [Parameter]
+    public string? SectionId { get; set; }
+
+    private GuideIndex? _index;
+    private string? _currentId;
+    private string? _currentTopId;
+    private string? _html;
+    private string? _error;
+    private bool _isLoading;
+    private string _query = string.Empty;
+
+    // Page bodies, fetched once so search can look inside them. Titles alone are a poor index:
+    // the answer to "why is my agent 404ing" is in a page called "Troubleshooting", which the
+    // word "404" would never match.
+    private readonly Dictionary<string, string> _bodies = new(StringComparer.OrdinalIgnoreCase);
+    private bool _fullTextLoaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _index = await Http.GetFromJsonAsync<GuideIndex>("guide/guide-index.json");
+        }
+        catch (Exception ex)
+        {
+            _error = $"Could not load the guide contents: {ex.Message}";
+            return;
+        }
+
+        await SelectAsync(SectionId ?? _index?.Sections.FirstOrDefault()?.Id);
+    }
+
+    // A deep link arriving while the page is already open changes the parameter, not the component.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_index is not null && SectionId is { Length: > 0 } && SectionId != _currentId)
+            await SelectAsync(SectionId);
+    }
+
+    private IReadOnlyList<GuideSection> Matches
+    {
+        get
+        {
+            var all = _index?.Sections ?? [];
+            if (string.IsNullOrWhiteSpace(_query))
+                return all;
+
+            var q = _query.Trim();
+            return [.. all.Where(s =>
+                Contains(s.Title, q)
+                || Contains(s.Blurb, q)
+                || (_bodies.TryGetValue(s.Id, out var body) && Contains(body, q))
+                || (s.Children?.Any(c => Contains(c.Title, q)
+                        || (_bodies.TryGetValue(c.Id, out var cb) && Contains(cb, q))) ?? false))];
+        }
+    }
+
+    private static bool Contains(string? haystack, string needle) =>
+        haystack is not null && haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        _query = e.Value?.ToString() ?? string.Empty;
+
+        // Fetched on first keystroke rather than at page load: most visits read a page and never
+        // search, and the whole guide is ~150 KB that those visits should not pay for.
+        if (!_fullTextLoaded && !string.IsNullOrWhiteSpace(_query))
+            await LoadAllBodiesAsync();
+    }
+
+    private async Task LoadAllBodiesAsync()
+    {
+        _fullTextLoaded = true;
+        foreach (var (id, file) in AllPages())
+        {
+            if (_bodies.ContainsKey(id))
+                continue;
+            try
+            {
+                _bodies[id] = await Http.GetStringAsync($"guide/{file}");
+            }
+            catch
+            {
+                // A page that will not load is simply not searchable. The nav still lists it, and
+                // selecting it surfaces the real error.
+            }
+        }
+        StateHasChanged();
+    }
+
+    private IEnumerable<(string Id, string File)> AllPages()
+    {
+        foreach (var s in _index?.Sections ?? [])
+        {
+            yield return (s.Id, s.File);
+            foreach (var c in s.Children ?? [])
+                yield return (c.Id, c.File);
+        }
+    }
+
+    private async Task SelectAsync(string? id)
+    {
+        if (_index is null || string.IsNullOrWhiteSpace(id))
+            return;
+
+        var page = AllPages().FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (page.File is null)
+            return;
+
+        _currentId = page.Id;
+        _currentTopId = _index.Sections
+            .FirstOrDefault(s => s.Id == page.Id || (s.Children?.Any(c => c.Id == page.Id) ?? false))?.Id;
+
+        _isLoading = true;
+        _error = null;
+        _html = null;
+        StateHasChanged();
+
+        try
+        {
+            var markdown = _bodies.TryGetValue(page.Id, out var cached)
+                ? cached
+                : await Http.GetStringAsync($"guide/{page.File}");
+            _bodies[page.Id] = markdown;
+
+            // Same sanitising renderer the chat transcript uses. It fails closed: with marked or
+            // DOMPurify missing it returns escaped text rather than raw HTML.
+            _html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", markdown);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Could not load this page: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+
+        StateHasChanged();
+    }
+
+    private sealed class GuideIndex
+    {
+        [JsonPropertyName("sections")]
+        public List<GuideSection> Sections { get; set; } = [];
+    }
+
+    private sealed class GuideSection
+    {
+        [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
+        [JsonPropertyName("file")] public string File { get; set; } = string.Empty;
+        [JsonPropertyName("title")] public string Title { get; set; } = string.Empty;
+        [JsonPropertyName("blurb")] public string? Blurb { get; set; }
+        [JsonPropertyName("children")] public List<GuideSection>? Children { get; set; }
+    }
+}

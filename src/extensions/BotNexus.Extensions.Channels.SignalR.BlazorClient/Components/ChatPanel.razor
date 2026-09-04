@@ -55,11 +55,11 @@
         <div class="chat-header-actions">
             <button class="toggle-btn @(!ShowThinking ? "toggled-off" : "")" data-testid="chat-thinking-toggle"
                     @onclick="ToggleThinking" title="Toggle thinking visibility">
-                💭
+                <Icon Name="thinking" Size="16" />
             </button>
             <button class="toggle-btn @(!ShowTools ? "toggled-off" : "")" data-testid="chat-tools-toggle"
                     @onclick="ToggleTools" title="Toggle tool visibility">
-                🔧
+                <Icon Name="tools" Size="16" />
             </button>
             @if (CanManageActiveConversation)
             {
@@ -69,24 +69,24 @@
                         aria-label="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
                         aria-pressed="@(ActiveConversation?.IsPinned == true ? "true" : "false")"
                         @onclick="ToggleActiveConversationPinAsync">
-                    &#x1F4CC;
+                    <Icon Name="pin" Size="16" />
                 </button>
                 <button class="conversation-header-action archive"
                         data-testid="chat-archive-conversation-btn"
                         title="Archive conversation"
                         aria-label="Archive conversation"
                         @onclick="ArchiveActiveConversationAsync">
-                    &#x1F5D1;&#xFE0F;
+                    <Icon Name="delete" Size="16" Class="bn-icon-inherit" />
                 </button>
             }
             <button class="config-btn" data-testid="chat-config-btn" @onclick="OpenConfig" title="Agent configuration">
-                ⚙
+                <Icon Name="configuration" Size="16" Class="bn-icon-inherit" />
             </button>
             @if (!IsReadOnly)
             {
                 <button class="new-chat-btn" data-testid="chat-new-session-btn" @onclick="ConfirmNewSession" title="Start a new session in this conversation"
                         disabled="@IsStreaming">
-                    ↺ New session
+                    <Icon Name="refresh" Size="14" Class="bn-icon-inherit" /> New session
                 </button>
             }
         </div>
@@ -104,12 +104,12 @@
                     <button class="toggle-btn @(!ShowThinking ? "toggled-off" : "")"
                             @onclick="ToggleThinkingFromMenu"
                             title="Toggle thinking visibility">
-                        💭
+                        <Icon Name="thinking" Size="16" />
                     </button>
                     <button class="toggle-btn @(!ShowTools ? "toggled-off" : "")"
                             @onclick="ToggleToolsFromMenu"
                             title="Toggle tool visibility">
-                        🔧
+                        <Icon Name="tools" Size="16" />
                     </button>
                     @if (CanManageActiveConversation)
                     {
@@ -118,17 +118,17 @@
                                 aria-label="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
                                 aria-pressed="@(ActiveConversation?.IsPinned == true ? "true" : "false")"
                                 @onclick="ToggleActiveConversationPinFromMenuAsync">
-                            &#x1F4CC;
+                            <Icon Name="pin" Size="16" />
                         </button>
                         <button class="conversation-header-action archive"
                                 title="Archive conversation"
                                 aria-label="Archive conversation"
                                 @onclick="ArchiveActiveConversationFromMenuAsync">
-                            &#x1F5D1;&#xFE0F;
+                            <Icon Name="delete" Size="16" Class="bn-icon-inherit" />
                         </button>
                     }
                     <button class="config-btn" @onclick="OpenConfigFromMenu" title="Agent configuration">
-                        ⚙
+                        <Icon Name="configuration" Size="16" Class="bn-icon-inherit" />
                     </button>
                     @if (!IsReadOnly)
                     {
@@ -136,7 +136,7 @@
                                 @onclick="ConfirmNewSessionFromMenu"
                                 title="Start a new session in this conversation"
                                 disabled="@IsStreaming">
-                            ↺ New session
+                            <Icon Name="refresh" Size="14" Class="bn-icon-inherit" /> New session
                         </button>
                     }
                 </div>
@@ -178,7 +178,7 @@
                     <button class="tool-modal-close" type="button"
                             data-testid="tool-modal-close"
                             title="Close" aria-label="Close"
-                            @onclick="CloseToolModal">&#x2715;</button>
+                            @onclick="CloseToolModal"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
                 </div>
                 <pre class="tool-modal-content" data-testid="tool-modal-content">@_toolModalDecoded</pre>
             </div>
@@ -188,8 +188,17 @@
     @if (IsReadOnly)
     {
         <div class="read-only-banner" role="status" aria-label="Read-only sub-agent session view">
-            <span class="read-only-badge">🔍 Sub-agent session</span>
-            <span class="read-only-status @(IsStreaming ? "" : "completed")">@GetSubAgentStatus()</span>
+            <span class="read-only-badge"><Icon Name="visibility" Size="14" Class="bn-icon-inherit" /> Sub-agent session</span>
+            <span class="read-only-status @(IsStreaming ? "" : "completed")">
+                @if (IsStreaming)
+                {
+                    <Icon Name="running" Size="13" Class="bn-icon-inherit bn-icon-spin" /><text> Running</text>
+                }
+                else
+                {
+                    <Icon Name="check" Size="13" /><text> Completed</text>
+                }
+            </span>
             <span class="read-only-label">Read-only — you can observe but not interact</span>
         </div>
     }
@@ -293,7 +302,20 @@
                 <div class="message tool @(msg.ToolIsError == true ? "tool-error" : "") @(_expandedTools.Contains(msg.Id) ? "expanded" : "") @(!ShowTools ? "visibility-hidden" : "")"
                      style="@(!ShowTools ? "display:none" : "")">
                     <div class="tool-header" @onclick="() => ToggleToolDetails(msg.Id)">
-                        <span class="tool-icon">@(msg.ToolResult is null ? "⏳" : (msg.ToolIsError == true ? "❌" : "✅"))</span>
+                        <span class="tool-icon">
+                            @if (msg.ToolResult is null)
+                            {
+                                <Icon Name="running" Size="14" Class="bn-icon-inherit bn-icon-spin" />
+                            }
+                            else if (msg.ToolIsError == true)
+                            {
+                                <Icon Name="error" Size="14" />
+                            }
+                            else
+                            {
+                                <Icon Name="check" Size="14" />
+                            }
+                        </span>
                         <span class="tool-name">@ToolDescriptionFormatter.FormatDescription(msg.ToolName ?? "tool", msg.ToolArgs)</span>
                         @if (msg.ToolDuration is not null)
                         {
@@ -322,7 +344,14 @@
                                                 title="@(_copiedSectionId == $"{msg.Id}-args" ? "Copied!" : "Copy arguments")"
                                                 aria-label="@(_copiedSectionId == $"{msg.Id}-args" ? "Copied!" : "Copy arguments")"
                                                 @onclick="() => CopyToolSection(msg.Id, CopySectionArgs, msg.ToolArgs)">
-                                            @(_copiedSectionId == $"{msg.Id}-args" ? "✓" : "📋")
+                                            @if (_copiedSectionId == $"{msg.Id}-args")
+                                            {
+                                                <Icon Name="check" Size="13" />
+                                            }
+                                            else
+                                            {
+                                                <Icon Name="copy" Size="13" Class="bn-icon-inherit" />
+                                            }
                                         </button>
                                     </div>
                                     <pre class="tool-content">@msg.ToolArgs</pre>
@@ -346,7 +375,14 @@
                                                 title="@(_copiedSectionId == $"{msg.Id}-result" ? "Copied!" : "Copy result")"
                                                 aria-label="@(_copiedSectionId == $"{msg.Id}-result" ? "Copied!" : "Copy result")"
                                                 @onclick="() => CopyToolSection(msg.Id, CopySectionResult, msg.ToolResult)">
-                                            @(_copiedSectionId == $"{msg.Id}-result" ? "✓" : "📋")
+                                            @if (_copiedSectionId == $"{msg.Id}-result")
+                                            {
+                                                <Icon Name="check" Size="13" />
+                                            }
+                                            else
+                                            {
+                                                <Icon Name="copy" Size="13" Class="bn-icon-inherit" />
+                                            }
                                         </button>
                                     </div>
                                     <pre class="tool-content">@msg.ToolResult</pre>
@@ -363,7 +399,7 @@
                     <div class="thinking-block @(!ShowThinking ? "visibility-hidden" : "")"
                          style="@(!ShowThinking ? "display:none" : "")">
                         <details open>
-                            <summary class="thinking-summary">💭 Thinking…</summary>
+                            <summary class="thinking-summary"><Icon Name="thinking" Size="14" /> Thinking…</summary>
                             <div class="thinking-content">@msg.ThinkingContent</div>
                         </details>
                     </div>
@@ -386,7 +422,14 @@
                                         title="@(_copiedMessageId == msg.Id ? "Copied!" : "Copy message")"
                                         aria-label="@(_copiedMessageId == msg.Id ? "Copied!" : "Copy message")"
                                         @onclick="() => CopyMessage(msg.Id, msg.Content)">
-                                    @(_copiedMessageId == msg.Id ? "✓" : "📋")
+                                    @if (_copiedMessageId == msg.Id)
+                                    {
+                                        <Icon Name="check" Size="13" />
+                                    }
+                                    else
+                                    {
+                                        <Icon Name="copy" Size="13" Class="bn-icon-inherit" />
+                                    }
                                 </button>
                             }
                         </div>
@@ -430,7 +473,7 @@
             <div class="thinking-block live @(!ShowThinking ? "visibility-hidden" : "")"
                  style="@(!ShowThinking ? "display:none" : "")">
                 <details open>
-                    <summary class="thinking-summary">💭 Thinking… <span class="streaming-indicator">●</span></summary>
+                    <summary class="thinking-summary"><Icon Name="thinking" Size="14" /> Thinking… <span class="streaming-indicator">●</span></summary>
                     <div class="thinking-content">@ThinkingBuffer</div>
                 </details>
             </div>
@@ -497,7 +540,7 @@
                     <label class="attach-btn" data-testid="chat-attach" title="Attach files" aria-label="Attach files">&#x1F4CE;<InputFile class="attachment-input" OnChange="HandleFilesSelected" multiple /></label>
                     @foreach (var attachment in _attachments)
                     {
-                        <span class="attachment-chip" data-testid="attachment-chip"><span class="attachment-name">@attachment.FileName</span><span class="attachment-size">@FormatBytes(attachment.Size)</span><button type="button" data-testid="attachment-remove" aria-label="@($"Remove {attachment.FileName}")" @onclick="() => RemoveAttachment(attachment)">&#x2715;</button></span>
+                        <span class="attachment-chip" data-testid="attachment-chip"><span class="attachment-name">@attachment.FileName</span><span class="attachment-size">@FormatBytes(attachment.Size)</span><button type="button" data-testid="attachment-remove" aria-label="@($"Remove {attachment.FileName}")" @onclick="() => RemoveAttachment(attachment)"><Icon Name="close" Size="12" Class="bn-icon-inherit" /></button></span>
                     }
                     @if (_attachmentError is not null) { <div class="attachment-error" role="alert">@_attachmentError</div> }
                 </div>
@@ -520,7 +563,7 @@
                             @onclick="FollowUpAgent"
                             disabled="@(string.IsNullOrWhiteSpace(_inputText))"
                             title="Follow Up: queue this message to run after the agent finishes the whole loop">
-                        ➕ Follow Up
+                        <Icon Name="add" Size="14" /> Follow Up
                     </button>
                     <button class="abort-btn" data-testid="chat-abort-btn"
                             @onclick="AbortAgent"

@@ -234,7 +234,7 @@ world-level values that are merged into every agent, so it is not itself an agen
       "description": "General-purpose AI assistant",
       "provider": "copilot",
       "model": "gpt-4.1",
-      "allowedModels": ["gpt-4.1", "gpt-4o", "claude-sonnet-4-20250514"],
+      "allowedModels": ["gpt-4.1", "gpt-4o", "claude-sonnet-5"],
       "systemPromptFiles": ["SOUL.md", "IDENTITY.md", "TOOLS.md"],
       "toolIds": ["read_file", "write_file", "web_search"],
       "subAgents": ["specialist", "reviewer"],
@@ -478,15 +478,15 @@ Providers connect BotNexus to LLM APIs. Each provider has its own configuration 
       "defaultModel": "gpt-4.1",
       "models": [
         "gpt-4.1", "gpt-4o", "gpt-5.4", 
-        "claude-sonnet-4-20250514", "claude-opus-4.6"
+        "claude-sonnet-5", "claude-opus-4-6"
       ]
     },
     "anthropic": {
       "enabled": true,
       "apiKey": "${ANTHROPIC_API_KEY}",
       "baseUrl": "https://api.anthropic.com",
-      "defaultModel": "claude-sonnet-4-20250514",
-      "models": ["claude-sonnet-4-20250514", "claude-opus-4.6"]
+      "defaultModel": "claude-sonnet-5",
+      "models": ["claude-sonnet-5", "claude-opus-4-6"]
     },
     "openai": {
       "enabled": true,
@@ -536,7 +536,7 @@ sizes to offer, each dynamic model carries a capability set:
   single window; an extended-context model additionally exposes the 1M tier.
 
 When you omit the capability fields, BotNexus **infers sensible defaults from the model
-family** (for example `claude-opus-4.6` and `gpt-5.2` are recognised as reasoning models with
+family** (for example `claude-opus-4-6` and `gpt-5.2` are recognised as reasoning models with
 the extra-high tiers; `claude-sonnet-4*` carries the extended context window). Declare the
 fields explicitly when the family heuristic does not recognise your model id - for example a
 local Ollama or LM Studio build:
@@ -576,7 +576,7 @@ declared `reasoning: false` is ignored (a non-reasoning model has no thinking ti
 The Copilot provider supports **26 models** across multiple families:
 
 **Claude (via Copilot):**
-- `claude-sonnet-4-20250514`, `claude-opus-4.6`, `claude-haiku-4.5`
+- `claude-sonnet-5`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`
 
 **GPT-4 & GPT-4o:**
 - `gpt-4.1`, `gpt-4o`, `gpt-4-turbo`
@@ -1199,8 +1199,8 @@ A production-ready configuration with multiple agents, providers, and extensions
       "displayName": "Coding Agent",
       "description": "Code generation and review",
       "provider": "copilot",
-      "model": "claude-opus-4.6",
-      "allowedModels": ["claude-opus-4.6", "gpt-5.4"],
+      "model": "claude-opus-4-6",
+      "allowedModels": ["claude-opus-4-6", "gpt-5.4"],
       "systemPromptFiles": ["SOUL.md", "IDENTITY.md", "TOOLS.md"],
       "toolIds": ["read_file", "write_file", "grep", "glob"],
       "subAgents": ["reviewer"],
@@ -1222,7 +1222,7 @@ A production-ready configuration with multiple agents, providers, and extensions
       "displayName": "Code Reviewer",
       "description": "Code review specialist",
       "provider": "anthropic",
-      "model": "claude-sonnet-4-20250514",
+      "model": "claude-sonnet-5",
       "systemPromptFiles": ["SOUL.md", "reviewer-guidelines.md"],
       "enabled": true
     }
@@ -1238,7 +1238,7 @@ A production-ready configuration with multiple agents, providers, and extensions
       "enabled": true,
       "apiKey": "${ANTHROPIC_API_KEY}",
       "baseUrl": "https://api.anthropic.com",
-      "defaultModel": "claude-sonnet-4-20250514"
+      "defaultModel": "claude-sonnet-5"
     }
   },
   "channels": {

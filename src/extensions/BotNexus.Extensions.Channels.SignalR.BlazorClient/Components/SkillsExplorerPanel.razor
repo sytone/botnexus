@@ -1,4 +1,5 @@
 @inject IGatewayRestClient GatewayRestClient
+@inject IPortalLoadService PortalLoad
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -15,6 +16,7 @@
         else
         {
             <WorkspaceFileTree Entries="@GetDirectoryEntries(string.Empty)"
+                               EmptyMessage="No skills yet. Add a folder with a SKILL.md to get started."
                                ExpandedPaths="_expandedDirectories"
                                SelectedFilePath="_selectedFilePath"
                                OnDirectoryToggled="ToggleDirectoryAsync"
@@ -49,7 +51,7 @@
                 @if (_deleteIsNonEmptyDir)
                 {
                     <p class="workspace-delete-warning">
-                        ⚠️ <strong>@_deleteConfirmPath</strong> is a non-empty directory. All contents will be permanently deleted.
+                        <Icon Name="warning" Size="15" /> <strong>@_deleteConfirmPath</strong> is a non-empty directory. All contents will be permanently deleted.
                     </p>
                 }
                 else
@@ -96,7 +98,32 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadRootAsync();
+        // The REST client only learns its base URL when PortalLoadService runs Configure(), so a
+        // load fired before the portal is ready throws from EnsureConfigured and is swallowed by
+        // the catch below as "Unable to load skills directory" - a message that blames the skills
+        // folder for a startup race. /skills is a top-level route, so it is reachable by direct
+        // navigation or refresh, which is exactly when that race is lost. It was also one-shot:
+        // nothing retried once the portal did come up, so the error stayed on screen for good.
+        if (PortalLoad.IsReady)
+        {
+            await LoadRootAsync();
+            return;
+        }
+
+        PortalLoad.OnReadyChanged += HandlePortalReady;
+    }
+
+    private void HandlePortalReady()
+    {
+        if (!PortalLoad.IsReady)
+            return;
+
+        PortalLoad.OnReadyChanged -= HandlePortalReady;
+        _ = InvokeAsync(async () =>
+        {
+            await LoadRootAsync();
+            StateHasChanged();
+        });
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -109,6 +136,7 @@
 
     public void Dispose()
     {
+        PortalLoad.OnReadyChanged -= HandlePortalReady;
         _cts.Cancel();
         _cts.Dispose();
     }
@@ -206,6 +234,8 @@
 
     private void SetDirectoryError(string path, bool isRoot)
     {
+        // Reached only on a genuine failure now: a null response, a non-directory payload, or a
+        // thrown call. An empty-but-valid directory renders the empty state instead.
         const string msg = "Unable to load skills directory.";
         if (isRoot) _rootError = msg;
         else _directoryErrors[path] = msg;

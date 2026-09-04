@@ -23,8 +23,12 @@ public sealed class BuiltInModelsTests
         new BuiltInModels().RegisterAll(registry);
         var models = registry.GetModels("anthropic");
 
-        models.ShouldContain(model => model.Id == "claude-sonnet-4-20250514");
-        models.ShouldContain(model => model.Id == "claude-opus-4-5-20250929");
+        // Ids are exact and dated, and a retired one fails with a 404 at send time rather than
+        // at save time. These were replaced when the registry dropped ids the Anthropic API no
+        // longer serves: claude-sonnet-4-20250514 was retired outright, and the opus 4.5 entry
+        // carried the wrong release date (-20250929 for a -20251101 release).
+        models.ShouldContain(model => model.Id == "claude-sonnet-5");
+        models.ShouldContain(model => model.Id == "claude-opus-4-5-20251101");
         models.ShouldContain(model => model.Id.StartsWith("claude-sonnet-4", StringComparison.Ordinal));
     }
 
