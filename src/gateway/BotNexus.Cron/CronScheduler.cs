@@ -536,12 +536,71 @@ public sealed class CronScheduler(
             {
                 var (job, expression) = entry;
                 var tz = CronTimeZoneResolver.Resolve(job.TimeZone, _logger, job.Id);
-                await RunActionAsync(job, CronTriggerType.Scheduled, now, ct).ConfigureAwait(false);
+
+                // #3659: per-entry isolation. Parallel.ForEachAsync propagates the FIRST unhandled
+                // body exception and cancels the remaining partitions, so before this guard a single
+                // SQLITE_BUSY escaping RecordRunStartAsync silently dropped every other due job in
+                // the tick - and the drop was invisible, because the only signal was one anonymous
+                // "Cron scheduler tick failed." line naming no job. This is the same policy #2410
+                // already gave the reaper: a failure here must never abort the tick.
+                try
+                {
+                    await RunActionAsync(job, CronTriggerType.Scheduled, now, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    // Attributed to the job it belongs to (AC2), so the lost work is identifiable
+                    // from the log line alone.
+                    _logger.LogError(
+                        ex,
+                        "Cron job '{JobId}' ('{JobName}') failed during the tick fan-out. Other due jobs in this tick are unaffected.",
+                        job.Id,
+                        job.Name);
+
+                    // Best-effort attribution in run history too. RunActionAsync records its own
+                    // terminal bookkeeping for anything that fails INSIDE the run; a throw from the
+                    // run-start write happens before any run row exists, so without this the failure
+                    // would appear in history as if the job had never been due.
+                    try
+                    {
+                        await _cronStore.RecordRunFinalizationAsync(
+                            job.Id,
+                            now,
+                            CronRunStatus.Error,
+                            ex.Message,
+                            ct).ConfigureAwait(false);
+                    }
+                    catch (Exception recordEx) when (!ct.IsCancellationRequested)
+                    {
+                        _logger.LogWarning(
+                            recordEx,
+                            "Failed to record the tick-fan-out failure of cron job '{JobId}' in run history.",
+                            job.Id);
+                    }
+                }
 
                 // #2133: reschedule via the narrow next_run_at write. RunActionAsync already
                 // persisted the run's terminal LastRun* bookkeeping and any conversation pin
                 // through their own narrow writes, so no whole-record round-trip is needed here.
-                await _cronStore.SetNextRunAtAsync(job.Id, expression.NextRun(now, tz), ct).ConfigureAwait(false);
+                //
+                // #3659 (AC3): this runs on the failure path too. Skipping it would leave the job's
+                // NextRunAt in the past, so it would re-fire on the very next tick and keep failing
+                // against the same contention - while the guard above is what stops the failure
+                // being fatal to the tick, this is what stops it becoming a hot loop. Guarded in
+                // turn, because the reschedule write can contend for exactly the same reason the
+                // run-start write did.
+                try
+                {
+                    await _cronStore.SetNextRunAtAsync(job.Id, expression.NextRun(now, tz), ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Failed to reschedule cron job '{JobId}' ('{JobName}') after its tick fan-out entry. It keeps its previous NextRunAt and will be retried on a subsequent tick.",
+                        job.Id,
+                        job.Name);
+                }
             }).ConfigureAwait(false);
     }
 
