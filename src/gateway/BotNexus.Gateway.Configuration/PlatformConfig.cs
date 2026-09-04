@@ -328,6 +328,164 @@ public sealed class ProviderConfig
         Order = 10)]
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "provider", Order = 10)]
     public int? ContextWindow { get; set; }
+
+    /// <summary>
+    /// Chat-capability settings for this provider (#2854). Presence of this object is the
+    /// config-side declaration that the provider serves chat.
+    /// </summary>
+    /// <remarks>
+    /// Every field here has a deprecated flat twin above. The flat fields are retained for one
+    /// release so an existing <c>config.json</c> keeps working unchanged (AC2); the validator emits
+    /// a deprecation warning naming the nested replacement path (AC3). Resolution is per FIELD, not
+    /// per object -- see <see cref="ProviderConfigCapabilityExtensions"/> -- so a half-migrated
+    /// document that moved <c>defaultModel</c> but not <c>api</c> still resolves both.
+    /// </remarks>
+    [Display(
+        Name = "Chat",
+        Description = "Chat-capability settings for this provider (model, allowlist, API and reasoning declarations). Presence of this object declares the provider serves chat.",
+        GroupName = "Provider",
+        Order = 11)]
+    [ConfigField(Group = "provider-chat", Order = 11)]
+    public ProviderChatConfig? Chat { get; set; }
+
+    /// <summary>
+    /// Embeddings-capability settings for this provider (#2854). Presence of this object is the
+    /// config-side declaration that the provider serves embeddings, even when nothing in the code
+    /// declares that capability for it.
+    /// </summary>
+    /// <remarks>
+    /// This has no flat twin: before #2854 an embedding model was unrepresentable, because the one
+    /// <see cref="DefaultModel"/> slot already meant "chat". That unrepresentability is the reason
+    /// the issue exists.
+    /// </remarks>
+    [Display(
+        Name = "Embeddings",
+        Description = "Embeddings-capability settings for this provider (embedding model, API and vector dimensions). Presence of this object declares the provider serves embeddings.",
+        GroupName = "Provider",
+        Order = 12)]
+    [ConfigField(Group = "provider-embeddings", Order = 12)]
+    public ProviderEmbeddingsConfig? Embeddings { get; set; }
+}
+
+/// <summary>
+/// Chat-capability settings nested under a provider (#2854).
+/// </summary>
+/// <remarks>
+/// These are the fields that were always chat semantics wearing provider-level clothing. Splitting
+/// them out is what makes a second capability representable at all: a provider serving chat AND
+/// embeddings previously had exactly one <c>defaultModel</c> slot for two unrelated model ids.
+/// </remarks>
+public sealed class ProviderChatConfig
+{
+    /// <summary>API identifier used when registering this provider's chat models.</summary>
+    [Display(
+        Name = "API",
+        Description = "API identifier used when registering this provider's chat models (for example 'openai-completions'). Defaults to 'openai-completions' when omitted.",
+        GroupName = "Provider chat",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider-chat", Order = 0)]
+    public string? Api { get; set; }
+
+    /// <summary>Default chat model identifier for this provider.</summary>
+    [Display(
+        Name = "Default model",
+        Description = "Default chat model identifier used for this provider when an agent does not specify one.",
+        GroupName = "Provider chat",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "provider-chat", Order = 1, OptionsSource = "models")]
+    public string? DefaultModel { get; set; }
+
+    /// <summary>Allowed chat model IDs. Null means all models, empty means none.</summary>
+    [Display(
+        Name = "Models",
+        Description = "Allowed chat model IDs for this provider. Null means all models, empty means none.",
+        GroupName = "Provider chat",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider-chat", Order = 2)]
+    public List<string>? Models { get; set; }
+
+    /// <summary>Explicit input modalities for this provider's chat models.</summary>
+    [Display(
+        Name = "Input",
+        Description = "Explicit input modalities (for example [\"text\",\"image\"]) for this provider's chat models. When null or empty the modalities are inferred from each model's family.",
+        GroupName = "Provider chat",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider-chat", Order = 3)]
+    public List<string>? Input { get; set; }
+
+    /// <summary>Explicit reasoning/thinking capability for this provider's chat models.</summary>
+    [Display(
+        Name = "Reasoning",
+        Description = "Explicit reasoning/thinking capability for this provider's chat models. When null the capability is inferred from each model's family.",
+        GroupName = "Provider chat",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "provider-chat", Order = 4)]
+    public bool? Reasoning { get; set; }
+
+    /// <summary>Explicit extra-high (ExtraHigh / Max) thinking-tier capability.</summary>
+    [Display(
+        Name = "Supports extra high thinking",
+        Description = "Explicit extra-high (ExtraHigh / Max) thinking-tier capability for this provider's chat models. When null the value is inferred from the model family.",
+        GroupName = "Provider chat",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "provider-chat", Order = 5)]
+    public bool? SupportsExtraHighThinking { get; set; }
+
+    /// <summary>Explicit extended (1M) context-window capability.</summary>
+    [Display(
+        Name = "Supports extended context window",
+        Description = "Explicit extended (1M) context-window capability for this provider's chat models. When null the value is inferred from the model family.",
+        GroupName = "Provider chat",
+        Order = 6)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "provider-chat", Order = 6)]
+    public bool? SupportsExtendedContextWindow { get; set; }
+
+    /// <summary>Default context-window size (in tokens) for this provider's chat models.</summary>
+    [Display(
+        Name = "Context window",
+        Description = "Default context-window size (in tokens) for this provider's chat models. When null a conservative 128000-token default is used.",
+        GroupName = "Provider chat",
+        Order = 7)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "provider-chat", Order = 7)]
+    public int? ContextWindow { get; set; }
+}
+
+/// <summary>
+/// Embeddings-capability settings nested under a provider (#2854).
+/// </summary>
+/// <remarks>
+/// Config shape and capability declaration only. #2854 is explicitly scoped to make an embeddings
+/// endpoint REPRESENTABLE and DISCOVERABLE; executing an embedding request against it is separate
+/// work in the #2500 epic, so nothing here is dispatched on yet.
+/// </remarks>
+public sealed class ProviderEmbeddingsConfig
+{
+    /// <summary>API identifier serving this provider's embeddings endpoint.</summary>
+    [Display(
+        Name = "API",
+        Description = "API identifier used for this provider's embeddings endpoint (for example 'openai-embeddings').",
+        GroupName = "Provider embeddings",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider-embeddings", Order = 0)]
+    public string? Api { get; set; }
+
+    /// <summary>The embedding model identifier. Required when an embeddings object is present.</summary>
+    [Display(
+        Name = "Model",
+        Description = "Embedding model identifier served by this provider (for example 'nomic-embed-text'). Required when an embeddings capability is configured.",
+        GroupName = "Provider embeddings",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider-embeddings", Order = 1)]
+    public string? Model { get; set; }
+
+    /// <summary>Vector dimensionality produced by the embedding model.</summary>
+    [Display(
+        Name = "Dimensions",
+        Description = "Vector dimensionality produced by the embedding model (for example 768). Must be greater than zero when specified.",
+        GroupName = "Provider embeddings",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "provider-embeddings", Order = 2)]
+    public int? Dimensions { get; set; }
 }
 
 /// <summary>Gateway runtime configuration.</summary>

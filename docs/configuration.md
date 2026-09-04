@@ -144,6 +144,88 @@ An example of the canonical shape:
 | `models` | `string[]?` | Allowed model ids. `null` means all registered models; `[]` means none. |
 | `input` | `string[]?` | Explicit input modalities (e.g. `["text","image"]`) for models registered from `models`. `null`/`[]` infers modalities from the model family; an explicit declaration always wins. Previously these models were hardcoded text-only, so a vision-capable local model silently discarded every image (#2485). |
 | `api` | `string?` | Wire-contract identifier. One of `openai-completions` (default), `openai-responses`, `anthropic-messages`, `integration-mock`. Required when the provider speaks a non-OpenAI-completions contract. |
+| `chat` | `object?` | Chat-capability settings (#2854). See [Per-capability provider configuration](#per-capability-provider-configuration). |
+| `embeddings` | `object?` | Embeddings-capability settings (#2854). See [Per-capability provider configuration](#per-capability-provider-configuration). |
+
+### Per-capability provider configuration
+
+**Added in #2854** (part of the providers epic #2500).
+
+Everything model-shaped on `ProviderConfig` used to mean *chat*: `defaultModel`, `models`, `api`,
+`input`, `reasoning`, `contextWindow`. That left a provider serving both chat and embeddings with
+exactly one `defaultModel` slot for two unrelated model ids — an embedding model was not merely
+awkward to express, it was **unrepresentable**.
+
+Capability settings now live in nested objects. Provider-level fields (`enabled`, `apiKey`,
+`baseUrl`) stay where they are:
+
+```json
+{
+  "providers": {
+    "my-ollama": {
+      "enabled": true,
+      "baseUrl": "http://localhost:11434",
+      "chat":       { "api": "openai-completions", "defaultModel": "llama3.1", "models": ["llama3.1"] },
+      "embeddings": { "api": "openai-embeddings",  "model": "nomic-embed-text", "dimensions": 768 }
+    },
+    "github-copilot": { "enabled": true }
+  }
+}
+```
+
+**`chat` fields** — each is the nested replacement for the flat field of the same name:
+`api`, `defaultModel`, `models`, `input`, `reasoning`, `supportsExtraHighThinking`,
+`supportsExtendedContextWindow`, `contextWindow`.
+
+**`embeddings` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `api` | `string?` | API identifier serving the embeddings endpoint (for example `openai-embeddings`). |
+| `model` | `string` | Embedding model identifier. **Required** when an `embeddings` object is present. |
+| `dimensions` | `int?` | Vector dimensionality. Must be greater than zero when specified. |
+
+#### Capability resolution
+
+The **presence of a capability object is the config-side declaration** — there is no separate
+`capabilities` array. A provider's effective capability set is:
+
+```text
+effective = code-declared  ∪  config-declared      (then narrowed by `enabled`)
+```
+
+- A provider whose code declares embeddings keeps that declaration with no config at all.
+- A provider with **no** code-side embeddings declaration but a configured `embeddings` object
+  resolves as embeddings-capable. This is what makes a local Ollama-style endpoint declarable
+  without a code change.
+- `enabled: false` removes **every** capability the provider declares, from either side. A disabled
+  provider is not partially available.
+
+Narrowing runs after the union, never inside it — the same precedent `ConfigModelFilter` sets, where
+the model allowlist narrows a registry result rather than constructing one.
+
+> A config-side `capabilities` key that *restricts* a provider is deliberately **not** part of this.
+> Adding a capability and removing one are different semantics; conflating them into one key is how
+> a declaration quietly becomes a permission check.
+
+#### Compatibility and deprecation
+
+The flat chat fields are **retained and still work**. An existing `config.json` binds and resolves
+the same chat model it always did, with no edit required.
+
+Resolution is **per field**, not per object: if you move `defaultModel` into `chat` but leave `api`
+flat, both still resolve. A half-migrated document is a working document.
+
+Each flat chat field still in use emits a startup **warning** (not an error) naming its nested
+replacement path:
+
+```text
+providers.my-ollama.defaultModel is deprecated (#2854); move it to
+providers.my-ollama.chat.defaultModel. The flat field still applies until it is removed in a
+later release.
+```
+
+When the nested value is present it wins over the flat twin.
 
 ---
 
