@@ -120,7 +120,9 @@ public static class PlatformConfigurationSources
         services.AddSingleton<IConfiguration>(configuration);
         services.Configure<PlatformConfig>(configuration);
         services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(
-            new PlatformConfigPostConfigure(configuration, configPath));
+            // #3842: same store fallback the gateway registers, so a CLI invocation against a
+            // store-only home binds the identical PlatformConfig the gateway does.
+            PlatformConfigPostConfigure.ForConfigPath(configuration, configPath));
 
         return services.BuildServiceProvider().GetRequiredService<IOptionsMonitor<PlatformConfig>>();
     }

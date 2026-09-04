@@ -483,7 +483,10 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<PlatformConfig>().Bind(configuration);
         services.TryAddSingleton(configuration);
         services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
-            new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
+            // #3842: ForConfigPath attaches the SQLite store as the raw-JSON fallback, so a home whose
+            // configuration lives only in config.db is normalised instead of having agents.defaults
+            // deleted.
+            PlatformConfigPostConfigure.ForConfigPath(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath, fileSystem));
         // Explicit factory: the validator has a second, internal constructor used only by
         // tests, so resolve the logger deliberately rather than relying on constructor
         // selection. Without the logger the #3037 unknown-property warning would be silent.
