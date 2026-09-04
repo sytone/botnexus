@@ -138,6 +138,32 @@ function Invoke-GhCapture {
     }
 }
 
+# The comment body is multi-line by construction (marker, markdown table, action
+# bullets, history block). Passing it as an inline `--body <value>` argument does
+# not survive the native gh.exe boundary on Windows: the value stops being a
+# single argument and gh parses one of its lines as a positional, producing the
+# misleading `GraphQL: Could not resolve to a Repository with the name '<a body
+# line>'` (issue #3850). `--body-file` avoids the boundary entirely and is the
+# form gh documents for long bodies. The file is removed in a `finally` on both
+# the success and the failure path.
+function Invoke-GhWithBodyFile {
+    param(
+        [Parameter(Mandatory)][string]$Body,
+        [Parameter(Mandatory)][scriptblock]$BuildArgs,   # [string]$path -> string[]
+        [ref]$Stderr
+    )
+    $bodyPath = [IO.Path]::Combine(
+        [IO.Path]::GetTempPath(),
+        "ci-pr-comment-$PR-$([Guid]::NewGuid().ToString('N')).md")
+    try {
+        # -NoNewline keeps the written bytes byte-identical to the rendered body.
+        Set-Content -LiteralPath $bodyPath -Value $Body -Encoding UTF8 -NoNewline
+        Invoke-GhCapture -GhArgs (& $BuildArgs $bodyPath) -Stderr $Stderr
+    } finally {
+        Remove-Item -LiteralPath $bodyPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $ghErr = $null
 if ($existingId) {
     Invoke-GhCapture -GhArgs @('api', "repos/$Repo/issues/comments/$existingId", '-X', 'PATCH', '-f', "body=$newBody") -Stderr ([ref]$ghErr)
@@ -146,7 +172,10 @@ if ($existingId) {
     }
     @{ action = 'updated'; commentId = $existingId; pr = $PR } | ConvertTo-Json -Compress
 } else {
-    Invoke-GhCapture -GhArgs @('pr', 'comment', "$PR", '--repo', $Repo, '--body', $newBody) -Stderr ([ref]$ghErr)
+    Invoke-GhWithBodyFile -Body $newBody -Stderr ([ref]$ghErr) -BuildArgs {
+        param([string]$path)
+        @('pr', 'comment', "$PR", '--repo', $Repo, '--body-file', $path)
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-CiCommentFailure -Reason 'create-failed' -Detail $ghErr
     }
