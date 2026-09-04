@@ -1119,6 +1119,8 @@ or `parent-override`) so operators can audit which authorization tier applied.
 | `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
 | `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
+| `subAgents.completedRecordRetentionMinutes` | int | 15 | How long a finished (completed/failed/killed/timed-out) sub-agent record is kept in memory so `list_subagents` and status queries can still surface a recently-finished run. After the window the record is swept and its timeout source disposed, bounding the manager's registry on a long-lived gateway. `0` or less disables **time-based** eviction; the count cap below still applies. Running records are never evicted. |
+| `subAgents.maxRetainedCompletedRecords` | int | 200 | Maximum number of **completed** records retained regardless of age - a burst-spawn backstop so the registry stays bounded even inside the retention window. When exceeded, the oldest completed records are evicted first. `0` or less disables the cap. Running records do not count toward it. |
 
 #### Session warmup (`sessionWarmup`)
 
@@ -1223,7 +1225,11 @@ Governs agent-to-agent conversations started with the `agent_converse` tool. Bou
     "agentExchange": {
       "accessPolicy": "open",
       "maxTurnsCeiling": 30,
-      "maxInboundQueueDepth": 8
+      "maxInboundQueueDepth": 8,
+      "dailyTurnCap": 200,
+      "loopDetectionWindowSeconds": 60,
+      "loopThreshold": 3,
+      "cooldownOnLoopDetectSeconds": 300
     }
   }
 }
@@ -1234,6 +1240,10 @@ Governs agent-to-agent conversations started with the `agent_converse` tool. Bou
 | `AgentExchange.AccessPolicy` | string | `open` | Which agents may initiate conversations with others. `open` lets any registered agent converse with any other; `whitelist` requires the initiator to have the target in its `SubAgentIds` list or a matching `SubAgentRoles` grant. Compared case-insensitively. |
 | `AgentExchange.MaxTurnsCeiling` | int | 30 | Upper bound applied to the `maxTurns` argument of a single `agent_converse` call, regardless of the value the agent requests. This is what stops one tool call from driving an unbounded number of provider round-trips — the conversation budget tracker caps exchanges per agent pair, not turns within an exchange. Values below 1 are treated as 1, so a misconfiguration can never disable exchanges entirely. |
 | `AgentExchange.MaxInboundQueueDepth` | int | 8 | How many inbound exchanges may **wait** for one agent's single execution slot before further callers are refused with explicit backpressure. An in-process agent runs one turn at a time; without a bound, a busy agent accumulates waiters until each expires on its own caller-side deadline, which is precisely the silent message loss this setting makes visible. The in-flight exchange itself does not count toward the bound — only genuinely blocked callers do. Values below 1 are treated as 1. |
+| `AgentExchange.DailyTurnCap` | int | 200 | Maximum total turns per agent pair per calendar day (UTC). Counts **turns**, not exchanges, so one long conversation consumes the same budget as several short ones. Surfaced per pair as `dailyTurnCap` by [`GET /api/exchanges/budget`](api/exchanges.md). |
+| `AgentExchange.LoopDetectionWindowSeconds` | int | 60 | Window in seconds within which the same pair re-engaging increments its loop counter. |
+| `AgentExchange.LoopThreshold` | int | 3 | Number of rapid re-engagements inside the detection window before a cooldown is triggered. |
+| `AgentExchange.CooldownOnLoopDetectSeconds` | int | 300 | Cooldown duration in seconds once a loop is detected. Further exchanges between that pair are refused until it expires. |
 
 See [Agent Exchange](features/agent-exchange.md) for the tool surface and the budget system.
 

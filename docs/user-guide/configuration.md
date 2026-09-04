@@ -926,6 +926,7 @@ Schedule recurring tasks like heartbeats, reports, or maintenance jobs.
 **Cron Settings:**
 - `enabled` (bool): Enable/disable scheduler
 - `tickIntervalSeconds` (int): Scheduler polling interval
+- `webhookBlockedHosts` (string[]): Hostnames refused as cron webhook targets, in addition to the always-blocked address ranges. Matched exactly and case-insensitively against the URL host - no wildcards or suffix matching. Defaults to `[]`
 - `jobs` (object): Job definitions keyed by job ID
 
 **Cron Job Settings:**
