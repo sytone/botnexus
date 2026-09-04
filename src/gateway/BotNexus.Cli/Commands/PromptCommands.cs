@@ -178,9 +178,9 @@ internal sealed class PromptCommands
         _ = verbose;
         _ = runMode;
 
-        if (!File.Exists(configPath))
+        if (!ConfigPresence.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/].");
+            AnsiConsole.MarkupLine(configPath.NotFoundMessage());
             return 1;
         }
 
@@ -231,9 +231,9 @@ internal sealed class PromptCommands
     {
         _ = verbose;
         _ = cancellationToken;
-        if (!File.Exists(configPath))
+        if (!ConfigPresence.Exists(configPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{CliText.SafeDisplay(configPath)}[/].");
+            AnsiConsole.MarkupLine(configPath.NotFoundMessage());
             return 1;
         }
 
