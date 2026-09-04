@@ -292,7 +292,6 @@ public class WarningEventContractTests
             emitError: (_, _, _, _) => { },
             onParsedEvent: null,
             resolveConfiguredServiceTier: null,
-            normalizeTextDelta: null,
             ct: CancellationToken.None);
 
         await drain.WaitAsync(TimeSpan.FromSeconds(30));
