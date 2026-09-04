@@ -20,7 +20,7 @@ public sealed class FollowUpChipLifecycleTests
     public FollowUpChipLifecycleTests()
     {
         _handler = new GatewayEventHandler(_store, new GatewayHubConnection(),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance, _store);
 
         _store.UpsertAgent(new AgentState
         {
@@ -45,6 +45,9 @@ public sealed class FollowUpChipLifecycleTests
             ActiveSessionId = "sess-2"
         };
         _store.RegisterSession("agent-1", "sess-1");
+        // #3212: visibility is route-derived, so the fixture must state which pane is DISPLAYED.
+        // This replaces the ambient AgentState.ActiveConversationId the handler used to read.
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
     }
 
     private void QueueFollowUp(string conversationId = "conv-1", string id = "f1", string text = "pending follow-up") =>
