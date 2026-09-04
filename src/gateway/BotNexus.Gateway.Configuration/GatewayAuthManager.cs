@@ -516,6 +516,70 @@ public sealed class GatewayAuthManager
     }
 
     /// <summary>
+    /// Runs a provider call with a single, bounded invalidate-and-retry on an authentication
+    /// failure (#3833).
+    ///
+    /// <para>
+    /// #3673 shortened the stale-credential window from "until a gateway restart" to "until the next
+    /// resolution", but it could not remove the call that <i>discovers</i> the staleness: a turn
+    /// already in flight when the credential rotates still spends a real provider round trip and
+    /// surfaces an opaque 403 that advises rotating a key which has already been rotated. This is
+    /// the seam that closes that gap - it hands the resolved credential to the operation, and on a
+    /// 401/403 drops the cache via <see cref="InvalidateCache"/>, re-resolves from disk and runs the
+    /// operation exactly once more.
+    /// </para>
+    ///
+    /// <para>
+    /// The bound is <b>structural, not configured</b>. There is no loop and no retry count: the
+    /// second attempt is a straight-line second call, so "at most one forced reload per failed call"
+    /// is a property of the shape of this method rather than of a policy object someone could later
+    /// widen. A second failure propagates unmodified, so the caller sees the provider's own message
+    /// and not a wrapper.
+    /// </para>
+    ///
+    /// <para>
+    /// Only <see cref="ProviderAuthenticationException"/> triggers the retry. A 500 or a timeout is
+    /// not evidence that the cached credential is wrong, and spending an invalidation on one would
+    /// turn every upstream outage into a disk re-read storm across every in-flight turn.
+    /// </para>
+    /// </summary>
+    /// <typeparam name="TResult">The provider call's result type.</typeparam>
+    /// <param name="provider">The provider whose credential backs the call.</param>
+    /// <param name="operation">
+    /// The provider call, receiving the freshly resolved API key (null when none is configured, so
+    /// the provider's own environment fallback still applies) and the cancellation token.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<TResult> InvokeWithAuthRetryAsync<TResult>(
+        string provider,
+        Func<string?, CancellationToken, Task<TResult>> operation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        var apiKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await operation(apiKey, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ProviderAuthenticationException ex)
+        {
+            _logger.LogWarning(
+                "Provider '{Provider}' rejected the cached credential (HTTP {StatusCode}); invalidating " +
+                "the auth cache and retrying once (#3833).",
+                provider,
+                ex.StatusCode is { } status ? (int)status : 0);
+
+            InvalidateCache();
+        }
+
+        // Outside the catch deliberately: the retry's own failure must reach the caller as itself,
+        // not as an exception thrown while handling another one.
+        var refreshedKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        return await operation(refreshedKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Drops the cached <c>auth.json</c> entries so the next resolution re-reads from disk (#3673).
     ///
     /// <para>
