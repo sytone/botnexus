@@ -6,14 +6,19 @@ namespace BotNexus.Extensions.Skills.Tests;
 
 public sealed class SkillToolTests
 {
-    private static SkillDefinition MakeSkill(string name, string? description = null, string? content = null)
+    private static SkillDefinition MakeSkill(
+        string name,
+        string? description = null,
+        string? content = null,
+        SkillSource source = SkillSource.Global,
+        string? sourcePath = null)
         => new()
         {
             Name = name,
             Description = description ?? $"{name} skill description",
             Content = content ?? $"Content for {name}",
-            Source = SkillSource.Global,
-            SourcePath = $"/skills/{name}"
+            Source = source,
+            SourcePath = sourcePath ?? $"/skills/{name}"
         };
 
     private static IReadOnlyDictionary<string, object?> Args(string action, string? skillName = null)
@@ -279,6 +284,51 @@ public sealed class SkillToolTests
 
         text.ShouldContain("**Path:**");
         text.ShouldContain("/skills/git-workflow");
+    }
+
+    // #3712: there is more than one skill root, so the resolved root must be named at point of
+    // use. An agent that only sees a bare path has no way to know which of the four tiers it
+    // came from, and hard-codes the shared root for an agent-local skill.
+    [Fact]
+    public async Task Load_NamesResolvedRootTier()
+    {
+        var skill = MakeSkill(
+            "botnexus-maintenance",
+            source: SkillSource.Workspace,
+            sourcePath: "/agents/farnsworth/workspace/skills/botnexus-maintenance");
+        var tool = new SkillTool([skill], config: null);
+
+        var result = await tool.ExecuteAsync("call-1", Args("load", "botnexus-maintenance"));
+        var text = ResultText(result);
+
+        text.ShouldContain("**Resolved from:** Workspace skill root");
+        text.ShouldContain("/agents/farnsworth/workspace/skills/botnexus-maintenance");
+    }
+
+    [Theory]
+    [InlineData(SkillSource.Plugin, "Plugin")]
+    [InlineData(SkillSource.Global, "Global")]
+    [InlineData(SkillSource.Agent, "Agent")]
+    [InlineData(SkillSource.Workspace, "Workspace")]
+    public async Task Load_NamesEveryRootTier(SkillSource source, string expectedTier)
+    {
+        var tool = new SkillTool([MakeSkill("tiered", source: source)], config: null);
+
+        var result = await tool.ExecuteAsync("call-1", Args("load", "tiered"));
+
+        ResultText(result).ShouldContain($"**Resolved from:** {expectedTier} skill root");
+    }
+
+    // The whole point of #3712: the load output must steer the agent to build support-file
+    // paths from the resolved directory instead of a hard-coded absolute root.
+    [Fact]
+    public async Task Load_TellsAgentToBuildPathsFromResolvedDirectory()
+    {
+        var tool = new SkillTool([MakeSkill("git-workflow")], config: null);
+
+        var result = await tool.ExecuteAsync("call-1", Args("load", "git-workflow"));
+
+        ResultText(result).ShouldContain("Resolve scripts and support files against this directory");
     }
 
     [Fact]
