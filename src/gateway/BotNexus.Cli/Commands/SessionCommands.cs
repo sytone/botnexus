@@ -244,11 +244,9 @@ internal sealed class SessionCommands
     {
         var home = CliPaths.ResolveTarget(target);
         var configPath = Path.Combine(home, "config.json");
-        if (!File.Exists(configPath))
+        if (!ConfigPresence.Exists(configPath))
         {
-            AnsiConsole.MarkupLine(
-                "[red]Error:[/] Config file not found at [dim]{0}[/]. Run [green]botnexus init[/] first.",
-                CliText.SafeDisplay(configPath));
+            AnsiConsole.MarkupLine(configPath.NotFoundMessage());
             return 1;
         }
 

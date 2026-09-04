@@ -52,6 +52,6 @@ public sealed class ValidateCommandTests
         var result = await fixture.RunCliAsync("validate");
 
         result.ExitCode.ShouldBe(1);
-        result.CombinedOutput.ShouldContain("Config file not found");
+        result.CombinedOutput.ShouldContain("No configuration found");
     }
 }
