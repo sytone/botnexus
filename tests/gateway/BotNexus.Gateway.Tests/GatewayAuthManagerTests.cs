@@ -1,4 +1,5 @@
 using System.Reflection;
+using BotNexus.Agent.Providers.Core;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -412,6 +413,92 @@ public sealed class GatewayAuthManagerTests : IDisposable
         _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("post-login-token"));
 
         (await manager.GetApiKeyAsync("openai")).ShouldBe("post-login-token");
+    }
+
+    [Fact]
+    public async Task InvokeWithAuthRetryAsync_WhenProviderReturns403_InvalidatesOnceAndRetriesOnce()
+    {
+        // Acceptance criterion 1 and 3. The stat is held FIXED across the rotation so that only an
+        // explicit invalidation can make the second attempt see the new credential - if the retry
+        // were relying on mtime granularity this test would hand it the stale token and fail.
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("stale-token-aaaa"));
+        var frozenStamp = new DateTime(2026, 8, 29, 15, 40, 0, DateTimeKind.Utc);
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, frozenStamp);
+        var manager = CreateManager(new PlatformConfig());
+
+        var keysSeen = new List<string?>();
+        var result = await manager.InvokeWithAuthRetryAsync(
+            "openai",
+            (apiKey, _) =>
+            {
+                keysSeen.Add(apiKey);
+                if (keysSeen.Count == 1)
+                {
+                    // The out-of-process rotation lands between the two attempts, with the file's
+                    // observable stat deliberately unchanged.
+                    _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("fresh-token-bbbb"));
+                    _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, frozenStamp);
+                    throw new ProviderAuthenticationException("forbidden", 403, "openai");
+                }
+
+                return Task.FromResult("ok");
+            });
+
+        result.ShouldBe("ok");
+        keysSeen.Count.ShouldBe(2);
+        keysSeen[0].ShouldBe("stale-token-aaaa");
+        keysSeen[1].ShouldBe("fresh-token-bbbb");
+    }
+
+    [Fact]
+    public async Task InvokeWithAuthRetryAsync_WhenProviderIsPersistently403_DoesNotLoop()
+    {
+        // Acceptance criteria 2 and 4: the retry is structural, not a policy, so a provider that
+        // never recovers is called exactly twice and the second failure surfaces unmodified.
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("stale-token-aaaa"));
+        var manager = CreateManager(new PlatformConfig());
+
+        var attempts = 0;
+        var failure = await Should.ThrowAsync<ProviderAuthenticationException>(async () =>
+            await manager.InvokeWithAuthRetryAsync<string>(
+                "openai",
+                (_, _) =>
+                {
+                    attempts++;
+                    throw new ProviderAuthenticationException($"forbidden #{attempts}", 403, "openai");
+                }));
+
+        attempts.ShouldBe(2);
+        // The SECOND failure is what reaches the caller - not a rethrow of the first, and not a
+        // wrapper that would hide the provider's own message.
+        failure.Message.ShouldBe("forbidden #2");
+    }
+
+    [Fact]
+    public async Task InvokeWithAuthRetryAsync_WhenProviderReturns500_DoesNotInvalidateOrRetry()
+    {
+        // Acceptance criterion 5. A non-auth fault must not spend an invalidation: proven by
+        // rotating the file behind a frozen stat and showing a later resolution still sees the
+        // stale value, which is only true if no invalidation happened.
+        _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("stale-token-aaaa"));
+        var frozenStamp = new DateTime(2026, 8, 29, 15, 40, 0, DateTimeKind.Utc);
+        _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, frozenStamp);
+        var manager = CreateManager(new PlatformConfig());
+
+        var attempts = 0;
+        await Should.ThrowAsync<HttpRequestException>(async () =>
+            await manager.InvokeWithAuthRetryAsync<string>(
+                "openai",
+                (_, _) =>
+                {
+                    attempts++;
+                    _fileSystem.File.WriteAllText(_authFilePath, AuthJsonWithToken("fresh-token-bbbb"));
+                    _fileSystem.File.SetLastWriteTimeUtc(_authFilePath, frozenStamp);
+                    throw new HttpRequestException("HTTP 500: upstream exploded");
+                }));
+
+        attempts.ShouldBe(1);
+        (await manager.GetApiKeyAsync("openai")).ShouldBe("stale-token-aaaa");
     }
 
     public void Dispose()
