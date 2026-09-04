@@ -110,6 +110,17 @@ public sealed class OpenAIStreamProcessor
             catch (JsonException)
             {
                 onMalformedChunk?.Invoke();
+                // A skipped frame means the turn may have silently lost content. The debug-log
+                // callback above cannot be reacted to, asserted on without a log sink, or recorded
+                // in a transcript, so the same finding is also reported on the contract as a
+                // non-terminal warning (#3291). No chunk bytes are included - the payload is the
+                // untrusted, possibly content-bearing thing that was skipped.
+                stream.Push(new WarningEvent(
+                    WarningCodes.MalformedChunkSkipped,
+                    "Skipping malformed SSE chunk: the frame could not be parsed as JSON and was " +
+                    $"discarded. api={api} model={model.Id} provider={model.Provider}. " +
+                    "Content for this frame is lost; the turn continues.",
+                    BuildPartial()));
                 continue;
             }
 
