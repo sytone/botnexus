@@ -48,11 +48,6 @@ public static class ResponsesStreamParser
     /// provider supplies the cast to its own options type). Used to price usage on completion when
     /// the response body omits <c>service_tier</c>. May be null.
     /// </param>
-    /// <param name="normalizeTextDelta">
-    /// Optional transport-compatibility hook applied only to text/refusal delta payloads before
-    /// they are accumulated or emitted. Providers should leave this null unless their upstream
-    /// transport has a confirmed wire-level quirk; tool arguments and reasoning are never changed.
-    /// </param>
     /// <param name="ct">Cancellation token.</param>
     public static Task ParseAsync(
         LlmStream stream,
@@ -64,7 +59,6 @@ public static class ResponsesStreamParser
         Action<LlmStream, LlmModel, string, IReadOnlyList<ContentBlock>?> emitError,
         Action<JsonElement>? onParsedEvent,
         Func<StreamOptions?, string?>? resolveConfiguredServiceTier,
-        Func<LlmModel, string, string>? normalizeTextDelta,
         CancellationToken ct)
         => ParseEventsAsync(
             stream,
@@ -80,7 +74,6 @@ public static class ResponsesStreamParser
             emitError,
             onParsedEvent,
             resolveConfiguredServiceTier,
-            normalizeTextDelta,
             ct);
 
     /// <summary>
@@ -98,7 +91,6 @@ public static class ResponsesStreamParser
         Action<LlmStream, LlmModel, string, IReadOnlyList<ContentBlock>?> emitError,
         Action<JsonElement>? onParsedEvent,
         Func<StreamOptions?, string?>? resolveConfiguredServiceTier,
-        Func<LlmModel, string, string>? normalizeTextDelta,
         CancellationToken ct)
     {
         var contentBlocks = new List<ContentBlock>();
@@ -269,8 +261,8 @@ public static class ResponsesStreamParser
                     }
                     var itemId = GetString(root, "item_id");
                     var delta = GetString(root, "delta") ?? "";
-                    if (normalizeTextDelta is not null)
-                        delta = normalizeTextDelta(model, delta);
+                    // Byte-identical accumulation (#3442): no transport normalization hook. The
+                    // CRLF blamed on the Copilot wire was our own separator injection (#3425/#3428).
                     if (delta.Length == 0) continue;
 
                     var stateKeyForRefusal = itemId ?? Guid.NewGuid().ToString("N");

@@ -301,9 +301,10 @@ internal static class CopilotMessagesStreamParser
         switch (deltaType)
         {
             case "text_delta":
-                var text = CopilotTextDeltaNormalizer.Normalize(
-                    CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf,
-                    delta.GetProperty("text").GetString() ?? "");
+                // Byte-identical accumulation (#3442). The CRLF strip that used to run here was
+                // removed once mitm captures showed Copilot sends no CR on the wire; the artifact
+                // came from our own separator injection (#3425/#3428).
+                var text = delta.GetProperty("text").GetString() ?? "";
                 if (text.Length == 0)
                     break;
                 textAccumulators[index].Append(text);

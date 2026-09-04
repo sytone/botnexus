@@ -1,33 +1,28 @@
 using System.Reflection;
 using BotNexus.Agent.Providers.Copilot.Completions;
-using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
 
 namespace BotNexus.Agent.Providers.Copilot.Tests;
 
 /// <summary>
-/// Fence proving all three Copilot transports apply the SAME text-delta normalization (#2443).
+/// Inverted fence (#3442): NO Copilot transport mutates streamed text deltas.
 /// </summary>
 /// <remarks>
-/// This is deliberately a wiring test, not a behaviour test. Behaviour tests on each transport can
-/// all stay green while a fourth transport is added with no normalization at all - which is exactly
-/// how #2170 happened after #2049. The property that must hold is "every Copilot transport routes
-/// through <see cref="CopilotTextDeltaNormalizer"/>", and only inspecting the wiring can check it.
+/// This file previously proved the opposite property - that all three transports routed through
+/// <c>CopilotTextDeltaNormalizer</c> (#2443). That normalizer existed to strip a per-delta CRLF
+/// transport prefix, and mitm captures of the identical endpoints contain 0 raw CR bytes across
+/// 3,025 provider deltas. The corruption it was built for was injected by our own
+/// <c>string.Join(Environment.NewLine, ...)</c> in <c>MessageConverter.ToAgentMessage</c> (#3425,
+/// fixed in #3428), which is why five transport-side fixes (#2049, #2119, #2170, #2443, #3336)
+/// each appeared to work and each recurred.
+/// <para>
+/// The fence is retained rather than deleted, with its assertion inverted rather than weakened: the
+/// property worth pinning is now "no Copilot transport reintroduces a lossy delta transform on a
+/// falsified premise". A future author re-adding one must delete this fence deliberately.
+/// </para>
 /// </remarks>
 public class CopilotTransportNormalizationSeamTests
 {
-    private static LlmModel Model(string id) => new(
-        Id: id,
-        Name: id,
-        Api: "github-copilot-completions",
-        Provider: "github-copilot",
-        BaseUrl: "https://api.enterprise.githubcopilot.com",
-        Reasoning: false,
-        Input: ["text"],
-        Cost: new ModelCost(0, 0, 0, 0),
-        ContextWindow: 128000,
-        MaxTokens: 16384);
-
     private static CompletionsTransportProfile BuildCompletionsProfile()
     {
         var method = typeof(CopilotCompletionsProvider).GetMethod(
@@ -37,54 +32,35 @@ public class CopilotTransportNormalizationSeamTests
         return (CompletionsTransportProfile)method!.Invoke(null, [null])!;
     }
 
-    // The Completions transport was the unnormalized one. If this hook is ever dropped, the third
-    // recurrence of the CRLF family is one model-discovery decision away.
+    // The transport profile must carry no delta-mutation hook at all: the record member is gone,
+    // so this asserts the shape of the profile the provider actually builds.
     [Fact]
-    public void CompletionsProfile_DeclaresTheTextDeltaNormalizer()
+    public void CompletionsTransportProfile_HasNoTextDeltaMutationHook()
     {
-        var profile = BuildCompletionsProfile();
+        BuildCompletionsProfile();
 
-        profile.NormalizeTextDelta.ShouldNotBeNull(
-            "The Copilot Completions transport must apply the same text-delta normalization as " +
-            "Responses and Messages (#2443).");
+        typeof(CompletionsTransportProfile)
+            .GetProperties()
+            .Select(p => p.Name)
+            .ShouldNotContain(
+                "NormalizeTextDelta",
+                "The CRLF that this hook stripped is not on the wire (#3442). Copilot text deltas " +
+                "accumulate byte-identically, as on every non-Copilot transport.");
     }
 
-    // Prove the hook is the shared normalizer, not a hand-rolled copy with drifting semantics:
-    // it must reproduce the normalizer's behaviour on both a fire and a no-fire case.
+    // The Copilot provider assembly must contain NO text-delta normalizer type. A re-added one
+    // would be a sixth fix built on a premise the captures falsified.
     [Fact]
-    public void CompletionsProfileHook_BehavesIdenticallyToTheSharedNormalizer()
+    public void CopilotAssembly_HasNoTextDeltaNormalizer()
     {
-        var hook = BuildCompletionsProfile().NormalizeTextDelta!;
-
-        hook(Model("gpt-5.6"), "\r\n\r\nHello")
-            .ShouldBe(CopilotTextDeltaNormalizer.Normalize(
-                CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf, "\r\n\r\nHello"));
-
-        // #3336: the discriminator is the transport, not the model id, so a claude-shaped model on
-        // this Copilot transport must get the SAME treatment - which is what the old model-id gate
-        // got wrong.
-        hook(Model("claude-opus-5"), "\r\nframed")
-            .ShouldBe(CopilotTextDeltaNormalizer.Normalize(
-                CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf, "\r\nframed"));
-    }
-
-    // Non-vacuity: the seam must actually transform something on the fire case, otherwise the
-    // equality assertion above would hold trivially for a no-op hook.
-    [Fact]
-    public void CompletionsProfileHook_ActuallyStripsOnTheFireCase()
-        => BuildCompletionsProfile().NormalizeTextDelta!(Model("gpt-5.6"), "\r\nHello")
-            .ShouldBe("Hello");
-
-    // The Copilot provider assembly must contain exactly one type performing this normalization.
-    [Fact]
-    public void CopilotAssembly_HasExactlyOneTextDeltaNormalizer()
-    {
-        var normalizers = typeof(CopilotTextDeltaNormalizer).Assembly
+        var normalizers = typeof(CopilotCompletionsProvider).Assembly
             .GetTypes()
             .Where(t => t.Name.Contains("TextDeltaNormalizer", StringComparison.Ordinal))
             .Select(t => t.FullName)
             .ToList();
 
-        normalizers.ShouldBe([typeof(CopilotTextDeltaNormalizer).FullName!]);
+        normalizers.ShouldBeEmpty(
+            "CopilotTextDeltaNormalizer was deleted by #3442 because Copilot sends no CR on the " +
+            "wire. If a newline defect recurs, the root cause is assembly (#3425), not framing.");
     }
 }
