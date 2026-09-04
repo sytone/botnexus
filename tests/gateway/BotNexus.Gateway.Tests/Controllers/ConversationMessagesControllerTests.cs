@@ -31,6 +31,13 @@ public sealed class ConversationMessagesControllerTests
 {
     private const string AgentSlug = "pr-doctor";
 
+    /// <summary>
+    /// Deadlock backstop for the one genuinely detached hand-off in this fixture (#3816). Deliberately
+    /// generous: it must never be reachable by mere CI scheduling pressure, only by a wake path that is
+    /// actually broken. Same idiom as <c>AgentExchangeInboundQueueTests.Generous</c>.
+    /// </summary>
+    private static readonly TimeSpan HandOffLiveness = TimeSpan.FromSeconds(30);
+
     private readonly InMemoryConversationStore _conversations = new();
     private readonly InMemorySessionStore _sessions = new();
     private readonly IConversationDispatcher _dispatcher;
@@ -44,11 +51,19 @@ public sealed class ConversationMessagesControllerTests
     private readonly TaskCompletionSource<InboundMessage> _accepted =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>
+    /// Records every message that reaches the dispatch seam. #3816: the controller <em>awaits</em>
+    /// <see cref="IConversationDispatcher.DispatchAsync"/> before it returns its 202, so anything this
+    /// records is observable the instant <c>PostMessage</c> returns - with no wait of any kind.
+    /// </summary>
+    private readonly RecordingDispatcher _dispatched;
+
     public ConversationMessagesControllerTests()
     {
         var router = new DefaultConversationRouter(
             _conversations, _sessions, NullLogger<DefaultConversationRouter>.Instance);
-        _dispatcher = new DefaultConversationDispatcher(router, _conversations);
+        _dispatched = new RecordingDispatcher(new DefaultConversationDispatcher(router, _conversations));
+        _dispatcher = _dispatched;
 
         // A hand-written stub rather than a substitute: IAgentRegistry.Contains takes a Vogen value
         // object, and an Arg.Any<AgentId>() spec against it is left unbound (NSubstitute reports
@@ -350,9 +365,36 @@ public sealed class ConversationMessagesControllerTests
 
     // ── helpers ────────────────────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Awaits the orchestrator hand-off signal.
+    /// </summary>
+    /// <remarks>
+    /// #3816: the controller detaches the <see cref="IInboundMessageOrchestrator.AcceptAsync"/> call onto
+    /// <c>Task.Run</c> so the 202 does not wait for the turn, so this hand-off is genuinely asynchronous
+    /// and a signal is the only correct way to observe it. What changed is the <em>role</em> of the
+    /// timeout: at 5 s it was a scheduling budget the test could lose under a saturated CI runner - the
+    /// failure mode reported in #3816, where the test died at exactly <c>[5 s]</c> on diffs that cannot
+    /// reach this code. <see cref="HandOffLiveness"/> is a deadlock backstop rather than a budget, sized
+    /// so that only a genuine "the orchestrator was never called" regression can reach it, and it reports
+    /// that regression by name instead of as a bare <see cref="TimeoutException"/>. This matches the
+    /// generous-liveness idiom already used by <c>AgentExchangeInboundQueueTests</c> and the #3186
+    /// conversion. Assertions that can be made without waiting at all are made against
+    /// <see cref="RecordingDispatcher"/> instead - see
+    /// <see cref="Post_WithoutDeliveryMode_RequestsAutoWhichAlwaysQueues"/>.
+    /// </remarks>
     private async Task<InboundMessage> AwaitAcceptedAsync()
     {
-        return await _accepted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            return await _accepted.Task.WaitAsync(HandOffLiveness);
+        }
+        catch (TimeoutException)
+        {
+            throw new InvalidOperationException(
+                $"The controller never handed a message to IInboundMessageOrchestrator.AcceptAsync within " +
+                $"{HandOffLiveness.TotalSeconds:0}s. The dispatch seam saw " +
+                $"{_dispatched.Messages.Count} message(s), so this is a broken wake path, not a slow one.");
+        }
     }
 
     private async Task<PostConversationMessageResponse> PostAcceptedAsync(
@@ -390,6 +432,14 @@ public sealed class ConversationMessagesControllerTests
     /// caller who says nothing never interrupts a running turn - the exact guarantee the #2998
     /// endpoint previously had by accident rather than by statement.
     /// </summary>
+    /// <remarks>
+    /// #3816: this assertion is made against the message captured at the dispatch seam, which the
+    /// controller awaits <em>before</em> returning its 202. The ordering is therefore guaranteed by
+    /// construction - once <c>PostMessage</c> has returned, the message has already been recorded - so
+    /// there is no wait, no timer and no wall-clock quantity left for a loaded CI runner to lose.
+    /// The previous shape raced a 5 s budget against the detached orchestrator hand-off, which is what
+    /// produced the <c>[5 s]</c> failures on unrelated diffs.
+    /// </remarks>
     [Fact]
     public async Task Post_WithoutDeliveryMode_RequestsAutoWhichAlwaysQueues()
     {
@@ -402,8 +452,17 @@ public sealed class ConversationMessagesControllerTests
             CancellationToken.None);
 
         result.ShouldBeOfType<AcceptedResult>();
-        var inbound = await AwaitAcceptedAsync();
-        inbound.RoutingHints!.DeliveryMode.ShouldBe(InboundDeliveryMode.Auto);
+
+        // Synchronously observable: the controller cannot have returned without completing dispatch.
+        var dispatched = _dispatched.Messages.ShouldHaveSingleItem();
+        dispatched.RoutingHints!.DeliveryMode.ShouldBe(InboundDeliveryMode.Auto);
+
+        // ...and "always queues" means it went down the queue-into-the-conversation's-session path,
+        // not a steer or interrupt into a running turn. Asserting the negative too is what stops a
+        // future default of Steer or Interrupt from satisfying this test.
+        dispatched.RoutingHints.DeliveryMode.ShouldNotBe(InboundDeliveryMode.Steer);
+        dispatched.RoutingHints.DeliveryMode.ShouldNotBe(InboundDeliveryMode.Interrupt);
+        dispatched.RoutingHints.RequestedConversationId.ShouldBe(conversation.ConversationId);
     }
 
     /// <summary>
@@ -456,6 +515,33 @@ public sealed class ConversationMessagesControllerTests
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
+
+    /// <summary>
+    /// Pass-through <see cref="IConversationDispatcher"/> that records each message it dispatches (#3816).
+    /// </summary>
+    /// <remarks>
+    /// A decorator over the REAL dispatcher rather than a substitute for it: the conversation-to-session
+    /// binding must still be exercised end to end (see the class remarks), so this only observes, it never
+    /// replaces behaviour. Recording here rather than at the orchestrator is the whole point - dispatch is
+    /// on the awaited request path, so the observation needs no synchronisation with the caller.
+    /// </remarks>
+    private sealed class RecordingDispatcher(IConversationDispatcher inner) : IConversationDispatcher
+    {
+        private readonly List<InboundMessage> _messages = [];
+
+        /// <summary>Messages seen at the dispatch seam, in arrival order.</summary>
+        public IReadOnlyList<InboundMessage> Messages
+        {
+            get { lock (_messages) { return [.. _messages]; } }
+        }
+
+        public async Task<DispatchResult> DispatchAsync(
+            InboundMessageContext context, CancellationToken cancellationToken = default)
+        {
+            lock (_messages) { _messages.Add(context.Message); }
+            return await inner.DispatchAsync(context, cancellationToken);
+        }
+    }
 
     /// <summary>
     /// Minimal <see cref="IAgentRegistry"/> whose only meaningful member is <c>Contains</c> - the one
