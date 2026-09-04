@@ -2333,6 +2333,11 @@ botnexus doctor agents [OPTIONS]
 
 > Without `--cleanup-orphans`, the command reports the plan and exits without deleting anything.
 
+Each directory is listed with its total size on disk and the date of its newest file, so an orphan
+can be judged before it is deleted, and the orphan lines are followed by a total. Deletion always
+re-derives registration from `config.json` at deletion time and refuses any directory whose id is
+registered, so a stale or hand-built plan can never remove a live agent's workspace or memory store.
+
 ### Examples
 
 ```powershell
