@@ -693,6 +693,11 @@ private bool IsStreaming =>
     // heuristic that leaked one conversation's prompts into another.
     private readonly Dictionary<string, List<string>> _historyByConversation = new(StringComparer.Ordinal);
     private const int MaxHistoryEntries = 50;
+    // #3451: what the seed last consumed for a conversation - the transcript length it saw, and the
+    // message that was then at the FRONT of it. Together these let a later seed tell a load-more
+    // PREPEND (older page inserted ahead of the remembered head) apart from an ordinary append,
+    // without re-deriving - and thereby clobbering - history the citizen is already walking.
+    private readonly Dictionary<string, (int Count, ChatMessage? Head)> _historySeedMark = new(StringComparer.Ordinal);
     // -1 means "not currently navigating history"; otherwise an index into the current list.
     private int _historyIndex = -1;
     // The draft stashed when history navigation began, restored on Esc or Down-past-newest.
@@ -1359,15 +1364,23 @@ private bool IsStreaming =>
     /// rendered from, so an entry still cannot cross conversations.
     ///
     /// Seeding is skipped once a bucket exists, so a live send is never overwritten and the
-    /// transcript cannot re-add a prompt the citizen has already navigated past.
+    /// transcript cannot re-add a prompt the citizen has already navigated past. The ONE exception
+    /// (#3451) is a load-more prepend: <c>Messages</c> is the PAGINATED transcript, so latching per
+    /// conversation made recall permanently blind to older prompts revealed later by
+    /// <c>LoadMoreHistory</c>. That case is handled by <see cref="ReseedPrependedPrefix"/>, which
+    /// only ever adds entries AHEAD of the existing list and never rewrites its tail.
     /// </summary>
     private void SeedHistoryFromTranscript(string convId)
     {
         if (_historyByConversation.ContainsKey(convId))
+        {
+            ReseedPrependedPrefix(convId);
             return;
+        }
 
+        var messages = Messages;
         var seeded = new List<string>();
-        foreach (var msg in Messages)
+        foreach (var msg in messages)
         {
             // Folded (pre-compaction) messages are deliberately included: they are real prompts the
             // citizen sent, and excluding them would reintroduce an unreachable-oldest-entry gap.
@@ -1385,6 +1398,78 @@ private bool IsStreaming =>
             seeded.RemoveRange(0, seeded.Count - MaxHistoryEntries);
 
         _historyByConversation[convId] = seeded;
+        _historySeedMark[convId] = (messages.Count, messages.Count > 0 ? messages[0] : null);
+    }
+
+    /// <summary>
+    /// #3451: absorbs user prompts revealed by a transcript load-more into an ALREADY-seeded
+    /// conversation, oldest first, ahead of everything recall already knows.
+    ///
+    /// A prepend is identified structurally, not guessed: the transcript grew by <c>delta</c> and
+    /// the message now at index <c>delta</c> is REFERENCE-identical to the one that was at the
+    /// front when the seed last ran. An ordinary append (a live send, a server echo) grows the same
+    /// count but leaves the head where it was, so it fails that test and is ignored - which is what
+    /// keeps the #2919 guarantee intact that the transcript can never re-add a prompt the citizen
+    /// has navigated past, nor clobber a live send.
+    ///
+    /// Only the newly-visible prefix is examined; the existing list is spliced on unchanged, so
+    /// live-recorded entries are neither reordered nor duplicated. The same consecutive-duplicate
+    /// rule and <see cref="MaxHistoryEntries"/> bound as the initial seed are re-applied at the
+    /// join, so the two paths cannot disagree.
+    /// </summary>
+    private void ReseedPrependedPrefix(string convId)
+    {
+        if (!_historySeedMark.TryGetValue(convId, out var mark) || mark.Head is null)
+            return;
+        if (!_historyByConversation.TryGetValue(convId, out var list))
+            return;
+
+        var messages = Messages;
+        var delta = messages.Count - mark.Count;
+        if (delta <= 0)
+            return;
+        // Not a prepend unless the remembered head is still exactly delta positions further along.
+        if (delta >= messages.Count || !ReferenceEquals(messages[delta], mark.Head))
+            return;
+
+        var prefix = new List<string>();
+        for (var i = 0; i < delta; i++)
+        {
+            var msg = messages[i];
+            if (!string.Equals(msg.Role, "User", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var text = msg.Content?.Trim();
+            if (string.IsNullOrWhiteSpace(text))
+                continue;
+            if (prefix.Count > 0 && string.Equals(prefix[^1], text, StringComparison.Ordinal))
+                continue;
+            prefix.Add(text);
+        }
+
+        // The seam between the prepended prefix and the existing list is a consecutive pair too.
+        if (prefix.Count > 0 && list.Count > 0 && string.Equals(prefix[^1], list[0], StringComparison.Ordinal))
+            prefix.RemoveAt(prefix.Count - 1);
+
+        // The mark advances even when the prefix contributed nothing (an older page of pure
+        // assistant turns), so the next load-more is measured from the transcript we just consumed.
+        _historySeedMark[convId] = (messages.Count, messages[0]);
+
+        if (prefix.Count == 0)
+            return;
+
+        list.InsertRange(0, prefix);
+        var trimmed = 0;
+        if (list.Count > MaxHistoryEntries)
+        {
+            trimmed = list.Count - MaxHistoryEntries;
+            list.RemoveRange(0, trimmed);
+        }
+
+        // The navigation pointer is an INDEX, so inserting ahead of it would silently re-point it at
+        // a different prompt mid-walk - the citizen presses Up once and jumps several entries. Shift
+        // it by the net insertion so it keeps addressing the entry it was already on.
+        if (_historyIndex >= 0 && string.Equals(_historyConversationId, convId, StringComparison.Ordinal))
+            _historyIndex = Math.Clamp(_historyIndex + prefix.Count - trimmed, 0, list.Count - 1);
     }
 
     /// <summary>

@@ -144,6 +144,88 @@ An example of the canonical shape:
 | `models` | `string[]?` | Allowed model ids. `null` means all registered models; `[]` means none. |
 | `input` | `string[]?` | Explicit input modalities (e.g. `["text","image"]`) for models registered from `models`. `null`/`[]` infers modalities from the model family; an explicit declaration always wins. Previously these models were hardcoded text-only, so a vision-capable local model silently discarded every image (#2485). |
 | `api` | `string?` | Wire-contract identifier. One of `openai-completions` (default), `openai-responses`, `anthropic-messages`, `integration-mock`. Required when the provider speaks a non-OpenAI-completions contract. |
+| `chat` | `object?` | Chat-capability settings (#2854). See [Per-capability provider configuration](#per-capability-provider-configuration). |
+| `embeddings` | `object?` | Embeddings-capability settings (#2854). See [Per-capability provider configuration](#per-capability-provider-configuration). |
+
+### Per-capability provider configuration
+
+**Added in #2854** (part of the providers epic #2500).
+
+Everything model-shaped on `ProviderConfig` used to mean *chat*: `defaultModel`, `models`, `api`,
+`input`, `reasoning`, `contextWindow`. That left a provider serving both chat and embeddings with
+exactly one `defaultModel` slot for two unrelated model ids — an embedding model was not merely
+awkward to express, it was **unrepresentable**.
+
+Capability settings now live in nested objects. Provider-level fields (`enabled`, `apiKey`,
+`baseUrl`) stay where they are:
+
+```json
+{
+  "providers": {
+    "my-ollama": {
+      "enabled": true,
+      "baseUrl": "http://localhost:11434",
+      "chat":       { "api": "openai-completions", "defaultModel": "llama3.1", "models": ["llama3.1"] },
+      "embeddings": { "api": "openai-embeddings",  "model": "nomic-embed-text", "dimensions": 768 }
+    },
+    "github-copilot": { "enabled": true }
+  }
+}
+```
+
+**`chat` fields** — each is the nested replacement for the flat field of the same name:
+`api`, `defaultModel`, `models`, `input`, `reasoning`, `supportsExtraHighThinking`,
+`supportsExtendedContextWindow`, `contextWindow`.
+
+**`embeddings` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `api` | `string?` | API identifier serving the embeddings endpoint (for example `openai-embeddings`). |
+| `model` | `string` | Embedding model identifier. **Required** when an `embeddings` object is present. |
+| `dimensions` | `int?` | Vector dimensionality. Must be greater than zero when specified. |
+
+#### Capability resolution
+
+The **presence of a capability object is the config-side declaration** — there is no separate
+`capabilities` array. A provider's effective capability set is:
+
+```text
+effective = code-declared  ∪  config-declared      (then narrowed by `enabled`)
+```
+
+- A provider whose code declares embeddings keeps that declaration with no config at all.
+- A provider with **no** code-side embeddings declaration but a configured `embeddings` object
+  resolves as embeddings-capable. This is what makes a local Ollama-style endpoint declarable
+  without a code change.
+- `enabled: false` removes **every** capability the provider declares, from either side. A disabled
+  provider is not partially available.
+
+Narrowing runs after the union, never inside it — the same precedent `ConfigModelFilter` sets, where
+the model allowlist narrows a registry result rather than constructing one.
+
+> A config-side `capabilities` key that *restricts* a provider is deliberately **not** part of this.
+> Adding a capability and removing one are different semantics; conflating them into one key is how
+> a declaration quietly becomes a permission check.
+
+#### Compatibility and deprecation
+
+The flat chat fields are **retained and still work**. An existing `config.json` binds and resolves
+the same chat model it always did, with no edit required.
+
+Resolution is **per field**, not per object: if you move `defaultModel` into `chat` but leave `api`
+flat, both still resolve. A half-migrated document is a working document.
+
+Each flat chat field still in use emits a startup **warning** (not an error) naming its nested
+replacement path:
+
+```text
+providers.my-ollama.defaultModel is deprecated (#2854); move it to
+providers.my-ollama.chat.defaultModel. The flat field still applies until it is removed in a
+later release.
+```
+
+When the nested value is present it wins over the flat twin.
 
 ---
 
@@ -1119,6 +1201,8 @@ or `parent-override`) so operators can audit which authorization tier applied.
 | `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
 | `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
+| `subAgents.completedRecordRetentionMinutes` | int | 15 | How long a finished (completed/failed/killed/timed-out) sub-agent record is kept in memory so `list_subagents` and status queries can still surface a recently-finished run. After the window the record is swept and its timeout source disposed, bounding the manager's registry on a long-lived gateway. `0` or less disables **time-based** eviction; the count cap below still applies. Running records are never evicted. |
+| `subAgents.maxRetainedCompletedRecords` | int | 200 | Maximum number of **completed** records retained regardless of age - a burst-spawn backstop so the registry stays bounded even inside the retention window. When exceeded, the oldest completed records are evicted first. `0` or less disables the cap. Running records do not count toward it. |
 
 #### Session warmup (`sessionWarmup`)
 
@@ -1223,7 +1307,11 @@ Governs agent-to-agent conversations started with the `agent_converse` tool. Bou
     "agentExchange": {
       "accessPolicy": "open",
       "maxTurnsCeiling": 30,
-      "maxInboundQueueDepth": 8
+      "maxInboundQueueDepth": 8,
+      "dailyTurnCap": 200,
+      "loopDetectionWindowSeconds": 60,
+      "loopThreshold": 3,
+      "cooldownOnLoopDetectSeconds": 300
     }
   }
 }
@@ -1234,6 +1322,10 @@ Governs agent-to-agent conversations started with the `agent_converse` tool. Bou
 | `AgentExchange.AccessPolicy` | string | `open` | Which agents may initiate conversations with others. `open` lets any registered agent converse with any other; `whitelist` requires the initiator to have the target in its `SubAgentIds` list or a matching `SubAgentRoles` grant. Compared case-insensitively. |
 | `AgentExchange.MaxTurnsCeiling` | int | 30 | Upper bound applied to the `maxTurns` argument of a single `agent_converse` call, regardless of the value the agent requests. This is what stops one tool call from driving an unbounded number of provider round-trips — the conversation budget tracker caps exchanges per agent pair, not turns within an exchange. Values below 1 are treated as 1, so a misconfiguration can never disable exchanges entirely. |
 | `AgentExchange.MaxInboundQueueDepth` | int | 8 | How many inbound exchanges may **wait** for one agent's single execution slot before further callers are refused with explicit backpressure. An in-process agent runs one turn at a time; without a bound, a busy agent accumulates waiters until each expires on its own caller-side deadline, which is precisely the silent message loss this setting makes visible. The in-flight exchange itself does not count toward the bound — only genuinely blocked callers do. Values below 1 are treated as 1. |
+| `AgentExchange.DailyTurnCap` | int | 200 | Maximum total turns per agent pair per calendar day (UTC). Counts **turns**, not exchanges, so one long conversation consumes the same budget as several short ones. Surfaced per pair as `dailyTurnCap` by [`GET /api/exchanges/budget`](api/exchanges.md). |
+| `AgentExchange.LoopDetectionWindowSeconds` | int | 60 | Window in seconds within which the same pair re-engaging increments its loop counter. |
+| `AgentExchange.LoopThreshold` | int | 3 | Number of rapid re-engagements inside the detection window before a cooldown is triggered. |
+| `AgentExchange.CooldownOnLoopDetectSeconds` | int | 300 | Cooldown duration in seconds once a loop is detected. Further exchanges between that pair are refused until it expires. |
 
 See [Agent Exchange](features/agent-exchange.md) for the tool surface and the budget system.
 

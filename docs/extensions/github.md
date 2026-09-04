@@ -227,16 +227,65 @@ Set under the agent's `extensionConfig` as `botnexus-github`:
 | `defaultPageSize` | `30` | Page size when a list call does not specify one. |
 | `maxPageSize` | `100` | Upper bound on a page; a larger request is clamped and the clamp reported. |
 
+### Enabling it: a worked `config.json` fragment
+
+The tools are contributed **only** when this key exists, so an agent with no entry gets no GitHub
+tools at all. That is deliberate, but it also means the extension delivers nothing until an operator
+adds the key - which is exactly how a merged, tested and deployed tool surface recorded zero calls
+for two weeks (#3750) while agents kept shelling out to `gh`.
+
+The key lives on the **agent**, in `~/.botnexus/config.json`, alongside the other `extensions`
+entries. Note the outer property is `extensions` in the file; it surfaces on the agent descriptor as
+`extensionConfig`.
+
 ```json
 {
-  "extensionConfig": {
-    "botnexus-github": {
-      "defaultRepository": "owner/repo",
-      "identity": "my-agent[bot]"
+  "agents": {
+    "farnsworth": {
+      "provider": "github-copilot",
+      "model": "claude-opus-5",
+      "extensions": {
+        "botnexus-github": {
+          "defaultRepository": "Sytone/botnexus",
+          "identity": "agent-farnsworth[bot]",
+          "defaultPageSize": 30,
+          "maxPageSize": 100
+        }
+      }
     }
   }
 }
 ```
+
+`defaultRepository` and `identity` are both optional, so the minimum viable entry that switches the
+tools on is an empty object:
+
+```json
+{ "extensions": { "botnexus-github": {} } }
+```
+
+With no `defaultRepository`, every tool call must name `repository` explicitly.
+
+The agent-level entry only turns on the **tool surface**. Minting the credential still needs the
+platform-level `GitHub` section documented under [Configuration](#configuration) above - `appId`,
+`installationId` and `privateKeyPath`. Without it the tools appear and fail at first call with a
+`GitHubCredentialException` naming the missing key.
+
+### Diagnosing "I configured it and there are still no tools"
+
+Both failure paths contribute zero tools, and they are told apart by their log line (#3750 AC4):
+
+| Condition | Level | Line |
+| --- | --- | --- |
+| No `botnexus-github` key on the agent | `Debug` | `GitHub tools not contributed for agent '<id>': no 'botnexus-github' entry in extensionConfig.` |
+| Key present but not a JSON object | `Warning` | `GitHub tools not contributed for agent '<id>': the 'botnexus-github' extensionConfig entry is present but could not be bound (found JSON <kind>; a JSON object is required).` |
+
+The unconfigured case is `Debug` because it is the normal state of most agents; a malformed entry is
+`Warning` because somebody intended it to work. Neither line echoes the configured value - extension
+config bags hold API keys for other extensions, and a diagnostic must not become a leak.
+
+Out-of-range page bounds are **not** in that table: a `defaultPageSize` or `maxPageSize` of `0` or
+less is normalised back to the defaults rather than rejected, so the tools still load.
 
 ## What stays in the shell
 

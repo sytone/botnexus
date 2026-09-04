@@ -126,6 +126,58 @@ public sealed record DoneEvent(
 ) : AssistantMessageEvent("done");
 
 /// <summary>
+/// Represents a non-terminal warning: an abnormal but survivable condition observed by a producer,
+/// reported to the consumer without ending the turn or the stream (#3291).
+/// </summary>
+/// <param name="Code">
+/// Stable machine-readable discriminator (e.g. <c>stream_assembly_mismatch</c>,
+/// <c>malformed_chunk_skipped</c>). A consumer branches on this rather than substring-matching
+/// <paramref name="Message"/>, so improving the prose cannot silently break a consumer or a test.
+/// </param>
+/// <param name="Message">
+/// Human-readable detail. It must carry <b>no model or user content</b> - only lengths, indices and
+/// identifiers - matching the discipline already enforced in <see cref="StreamAssemblyConformance"/>,
+/// because this string flows to consumers and into persisted transcripts.
+/// </param>
+/// <param name="Partial">The message as assembled so far, unchanged by the warning.</param>
+/// <remarks>
+/// <para>
+/// This is the contract's only abnormal-condition event that does not complete the stream. Before it
+/// existed a producer that observed something wrong but recoverable had exactly two options: stay
+/// silent, or escalate to a terminal <see cref="ErrorEvent"/> and kill the turn. Both known sites
+/// chose silence, so a degraded turn was indistinguishable from a clean one to every consumer.
+/// </para>
+/// <para>
+/// <see cref="LlmStream.Push"/> deliberately does not treat this case as terminal. A warning that
+/// ends the stream is an error with a friendlier name, which would defeat the entire purpose.
+/// </para>
+/// </remarks>
+public sealed record WarningEvent(
+    string Code,
+    string Message,
+    AssistantMessage Partial
+) : AssistantMessageEvent("warning");
+
+/// <summary>
+/// Well-known <see cref="WarningEvent.Code"/> values. Constants rather than literals so a producer
+/// and the consumer asserting on it cannot drift apart by a typo.
+/// </summary>
+public static class WarningCodes
+{
+    /// <summary>
+    /// Text assembled from streamed deltas disagreed with the provider's own authoritative final
+    /// text for the block; the provider's text was preferred as canonical.
+    /// </summary>
+    public const string StreamAssemblyMismatch = "stream_assembly_mismatch";
+
+    /// <summary>
+    /// An SSE chunk could not be parsed and was skipped. The turn continues, but content may have
+    /// been lost.
+    /// </summary>
+    public const string MalformedChunkSkipped = "malformed_chunk_skipped";
+}
+
+/// <summary>
 /// Represents error event.
 /// </summary>
 public sealed record ErrorEvent(

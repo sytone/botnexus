@@ -169,6 +169,41 @@ public sealed class PersistentAgentWorkspaceReconcilerTests : IDisposable
     }
 
     [Fact]
+    public void BuildPlan_ReportsSizeAndNewestContentTimestampForEachDirectory()
+    {
+        var agents = Path.Combine(_root, "agents");
+        var orphan = Directory.CreateDirectory(Path.Combine(agents, "orphan", "data")).FullName;
+        File.WriteAllText(Path.Combine(orphan, "memory.sqlite"), new string('x', 2048));
+        var newest = new DateTime(2026, 7, 5, 12, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(Path.Combine(orphan, "memory.sqlite"), newest);
+
+        var entry = new PersistentAgentWorkspaceReconciler().BuildPlan(agents, new PlatformConfig()).Single();
+
+        entry.SizeBytes.ShouldBe(2048);
+        entry.NewestContentUtc.ShouldBe(newest);
+    }
+
+    [Fact]
+    public void DeleteOrphans_RefusesDirectoryWhoseIdIsRegisteredEvenIfMarkedOrphaned()
+    {
+        var agents = Directory.CreateDirectory(Path.Combine(_root, "agents")).FullName;
+        var registered = Directory.CreateDirectory(Path.Combine(agents, "keeper")).FullName;
+        var config = new PlatformConfig
+        {
+            Agents = new(StringComparer.OrdinalIgnoreCase) { ["keeper"] = new() }
+        };
+
+        // The caller has mis-classified a REGISTERED agent as an orphan. Deletion is irreversible,
+        // so the reconciler must re-derive registration itself rather than trust the flag.
+        var plan = new[] { new PersistentAgentWorkspaceEntry("keeper", registered, true, false, 0, null) };
+
+        Should.Throw<InvalidOperationException>(
+            () => new PersistentAgentWorkspaceReconciler().DeleteOrphans(agents, plan, config));
+
+        Directory.Exists(registered).ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task ExecuteAgentsAsync_NonInteractiveDoesNotDeleteWithoutOptIn()
     {
         var agents = Path.Combine(_root, "agents");
@@ -256,7 +291,7 @@ public sealed class PersistentAgentWorkspaceReconcilerTests : IDisposable
     /// not "not currently enabled".
     /// </summary>
     [Fact]
-    public void BuildPlan_TreatsDisabledAgentAsRegisteredAndAbsentAgentAsOrphaned()
+    public void BuildPlan_TreatsDisabledAgentAsDeclaredAndAbsentAgentAsOrphaned()
     {
         var agents = Path.Combine(_root, "agents");
         Directory.CreateDirectory(Path.Combine(agents, "dormant"));
