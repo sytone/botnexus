@@ -5,10 +5,9 @@ and MCP server definitions - so they can be distributed and installed as one uni
 being copied file by file.
 
 This document describes the **on-disk contract**, the **install / update / remove
-lifecycle**, how a plugin's skills join skill discovery, how plugin MCP servers register, and
-how plugin-shipped agents reach the agent registry behind a privilege fence.
-Plugin-granularity trust catalogs (#2682) are deliberately out of scope here and are covered by
-a later slice of the plugin epic (#2623).
+lifecycle**, **plugin-granularity trust catalogs**, how a plugin's skills join skill discovery,
+how plugin MCP servers register, and how plugin-shipped agents reach the agent registry behind a
+privilege fence.
 
 ## Directory layout
 
@@ -285,9 +284,8 @@ a skill whose `trust.json` catalog does not match its content is skipped and the
 logged; under `Warn` it is loaded and the violation logged.
 
 Note that this is trust at **skill** granularity, applied to skills that happen to come from a
-plugin. A catalog generated over the whole plugin at install time - so that a plugin shipping
-no `trust.json` is itself covered - is sibling issue #2682 and is not yet implemented.
-
+plugin. Trust at **plugin** granularity - a catalog generated over the whole plugin at install
+time - is described in [Plugin trust catalogs](#plugin-trust-catalogs) below.
 
 ## Plugin-shipped agents
 
@@ -368,3 +366,74 @@ and the structural fence is what stops it drifting.
 
 Runtime sandboxing of the resulting agent is out of scope: the fence governs what the descriptor
 may **declare**.
+
+## Plugin trust catalogs
+
+A plugin ships executable content, so it is a supply-chain surface. Install therefore records a
+SHA-256 **trust catalog** at `<plugin>/trust.json`, generated over the content install actually
+materialised (#2682).
+
+```json
+{
+  "version": 1,
+  "generatedAt": "2026-09-04T12:00:00+00:00",
+  "entries": [
+    { "path": ".botnexus-plugin/plugin.json", "sha256": "…", "updatedAt": "…" },
+    { "path": "skills/demo/scripts/run.ps1", "sha256": "…", "updatedAt": "…" }
+  ]
+}
+```
+
+This is the **same catalog format and the same hasher** the skills trust model uses. There is one
+implementation in the platform, `ContentTrustCatalog`; `SkillTrustVerifier` is a documented
+forwarding shim over it. A second hashing mechanism is how the enforced set and the reported set
+drift apart, which is the defect #2682 exists to prevent.
+
+### Modes
+
+`PluginTrustGate` applies one of three postures, matching `SkillTrustMode` member for member:
+
+| Mode | Verifies | Modified content |
+|---|---|---|
+| `Disabled` | no | permitted, not logged |
+| `Warn` | yes | **permitted**, logged as a warning |
+| `Enforce` | yes | **refused**, logged as an error |
+
+`Warn` deliberately still logs. A Warn that permitted silently would be indistinguishable from
+`Disabled`, and the whole point of the mode is to make a tamper visible on a fleet that cannot yet
+afford to fail closed.
+
+### What the catalog covers
+
+Every file install materialised - including the plugin's own `.botnexus-plugin/plugin.json`. The
+manifest is the most security-relevant file in the tree, so skipping dot-directories (as the skills
+policy does, since a skill's dot-directories are editor metadata) would leave a plugin's declared
+identity freely editable after install.
+
+Because the catalog is exhaustive, plugin verification also reports **unlisted** files: content
+present on disk and absent from the catalog is a violation, not something to ignore. A file dropped
+into an installed plugin was not installed by the platform, and calling such a plugin trusted would
+make the catalog a claim about an unnamed subset.
+
+The two postures differ deliberately:
+
+| | Skills | Plugins |
+|---|---|---|
+| Files catalogued | scannable script files only | every materialised file |
+| Dot-directories | skipped | walked |
+| Unlisted file on disk | tolerated | violation |
+
+A skill legitimately sits beside documentation and assets that were never script content, so
+hashing them would turn a README edit into a trust violation. A plugin's content set is defined by
+what install wrote, so it has no such ambiguity.
+
+### Update regenerates the catalog
+
+Update replaces content, so it rewrites `trust.json` for the new content. A stale catalog would
+describe files that no longer exist and would make every successfully updated plugin fail
+verification - an availability bug wearing a security hat.
+
+If the catalog cannot be written, the install does **not** fail: the content is already on disk, and
+reporting a failed install the caller could act on destructively is worse than an unverifiable
+plugin. Failing open here hands out no trust, because a missing catalog is itself a refusal under
+`Enforce`.
