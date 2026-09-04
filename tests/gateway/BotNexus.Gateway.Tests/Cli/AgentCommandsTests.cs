@@ -109,6 +109,6 @@ public sealed class AgentCommandsTests
         var result = await fixture.RunCliAsync("agent", "remove", "assistant");
 
         result.ExitCode.ShouldBe(1);
-        result.CombinedOutput.ShouldContain("config file not found");
+        result.CombinedOutput.ShouldContain("No configuration found");
     }
 }

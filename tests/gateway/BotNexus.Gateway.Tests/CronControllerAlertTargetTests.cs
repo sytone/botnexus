@@ -100,11 +100,11 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "job-1",
-            CreateJob("job-1") with
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-1") with
             {
                 FailureAlertsEnabled = true,
                 FailureAlertConversationId = ConversationId.From("conv-gone")
-            },
+            }),
             CancellationToken.None);
 
         var bad = result.Result.ShouldBeOfType<BadRequestObjectResult>();
@@ -125,7 +125,7 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "job-1",
-            CreateJob("job-1") with { FailureAlertConversationId = null },
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-1") with { FailureAlertConversationId = null }),
             CancellationToken.None);
 
         result.Result.ShouldBeOfType<OkObjectResult>();
@@ -156,7 +156,7 @@ public sealed partial class CronControllerTests
 
         var updateResult = await controller.Update(
             "job-1",
-            CreateJob("job-1") with { FailureAlertConversationId = ConversationId.From("conv-shared") },
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-1") with { FailureAlertConversationId = ConversationId.From("conv-shared") }),
             CancellationToken.None);
 
         var createMessage = createResult.Result.ShouldBeOfType<BadRequestObjectResult>().Value!.ToString();
