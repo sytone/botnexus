@@ -153,7 +153,6 @@ public sealed class ModelProfileTool : IAgentTool
         sb.AppendLine("These are DECLARED by the provider, not probed. A capability that is false means the platform applies no workaround for it.");
         sb.AppendLine($"- recoversLeakedToolCallMarkup: `{_capabilities.RecoversLeakedToolCallMarkup}`");
         sb.AppendLine($"- systemPromptPlacement: `{_capabilities.SystemPromptPlacement}`");
-        sb.AppendLine($"- framesStreamedTextDeltasWithCrlf: `{_capabilities.FramesStreamedTextDeltasWithCrlf}`");
 
         AppendResolvedRungs(sb, family, version);
         AppendVariantFiles(sb, requestedBaseFile);
