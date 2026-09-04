@@ -246,8 +246,10 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             ActiveSessionId = "sess-1"
         };
         store.RegisterSession("agent-1", "sess-1");
+        // #3212: visibility is route-derived; state the displayed pane explicitly.
+        store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
-        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance, store);
 
         handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -289,8 +291,10 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             ActiveSessionId = "sess-1"
         };
         store.RegisterSession("agent-1", "sess-1");
+        // #3212: visibility is route-derived; state the displayed pane explicitly.
+        store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
-        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance, store);
 
         // Spawn first
         handler.HandleSubAgentSpawned(new SubAgentEventPayload(
