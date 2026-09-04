@@ -192,7 +192,7 @@ public sealed class SqliteWebhookRunStore(
                 DELETE FROM webhook_runs
                 WHERE completed_at IS NOT NULL
                   AND completed_at < $cutoff
-                  AND status IN ('Completed', 'Failed', 'Timeout')
+                  AND status IN ('Completed', 'Failed', 'Timeout', 'Rejected')
                 """;
             cmd.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
             var deleted = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
