@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using BotNexus.Agent.Providers.Core.Models;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Providers.Core.Streaming;
@@ -56,6 +57,17 @@ public static class StreamAssemblyConformance
     /// <param name="transport">Transport identifier (e.g. <c>sse</c>), for the diagnostic.</param>
     /// <param name="deltaCount">Number of deltas that contributed to <paramref name="assembled"/>.</param>
     /// <param name="logger">Optional logger; a null logger suppresses the diagnostic only, not the reconciliation.</param>
+    /// <param name="stream">
+    /// Optional stream to report the mismatch on as a non-terminal <see cref="WarningEvent"/> (#3291).
+    /// A log line is not a contract: until this existed, the one detector built for the CRLF
+    /// corruption family could not get its finding out of the provider layer, so the consumer that
+    /// had just rendered the wrong deltas to a user was never told. Optional so existing callers and
+    /// unit tests that only want the reconciliation are unaffected.
+    /// </param>
+    /// <param name="buildPartial">
+    /// Optional factory for the partial message carried on the warning. Only invoked on the mismatch
+    /// path, so a caller pays nothing for a clean block. Ignored when <paramref name="stream"/> is null.
+    /// </param>
     /// <returns>
     /// <paramref name="finalText"/> when it is present and differs from <paramref name="assembled"/>;
     /// otherwise <paramref name="assembled"/>.
@@ -68,7 +80,9 @@ public static class StreamAssemblyConformance
         string api,
         string transport,
         int deltaCount,
-        ILogger? logger)
+        ILogger? logger,
+        LlmStream? stream = null,
+        Func<AssistantMessage>? buildPartial = null)
     {
         ArgumentNullException.ThrowIfNull(assembled);
 
@@ -98,6 +112,23 @@ public static class StreamAssemblyConformance
             firstMismatchIndex,
             Context(assembled, firstMismatchIndex),
             Context(finalText, firstMismatchIndex));
+
+        if (stream is not null && buildPartial is not null)
+        {
+            // Deliberately narrower than the log line: the escaped context windows above are the one
+            // place content-derived characters appear, and this string leaves the provider layer for
+            // consumers and persisted transcripts. Lengths, indices and identifiers only (#3291).
+            stream.Push(new WarningEvent(
+                WarningCodes.StreamAssemblyMismatch,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Stream assembly mismatch at provider seam: provider={provider} model={modelId} " +
+                    $"api={api} transport={transport} deltaCount={deltaCount} " +
+                    $"assembledLength={assembled.Length} finalLength={finalText.Length} " +
+                    $"firstMismatchIndex={firstMismatchIndex}. " +
+                    $"Preferring the provider's final text as canonical."),
+                buildPartial()));
+        }
 
         return finalText;
     }

@@ -149,6 +149,15 @@ public static class ResponsesStreamParser
             catch (JsonException)
             {
                 logger.LogDebug("Skipping malformed responses SSE event {Event}", evt.Event);
+                // Same non-terminal report as the completions path (#3291): a skipped frame is a
+                // silent content loss that only debug logging witnessed. The event name is a
+                // protocol discriminator, not content, so it is safe to include.
+                stream.Push(new WarningEvent(
+                    WarningCodes.MalformedChunkSkipped,
+                    $"Skipping malformed responses SSE event '{evt.Event}': the frame could not be " +
+                    $"parsed as JSON and was discarded. api={api} model={model.Id} " +
+                    $"provider={model.Provider}. Content for this frame is lost; the turn continues.",
+                    BuildPartial()));
                 continue;
             }
 
@@ -352,7 +361,9 @@ public static class ResponsesStreamParser
                         api,
                         "responses",
                         textDeltaCounts.GetValueOrDefault(itemId),
-                        logger);
+                        logger,
+                        stream,
+                        BuildPartial);
 
                     if (!ReferenceEquals(canonical, assembled))
                     {
