@@ -37,6 +37,13 @@
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Conversations\BotNexus.Gateway.Conversations.csproj" />
+    <!--
+      #2685: the plugin agent privilege fence is a structural property of
+      PluginAgentDescriptorFence's classification of AgentDescriptor's member set, so the fence
+      test must read that classification off the real type. Reflecting it out of a loose DLL in
+      the output directory would go vacuously green the day the file moved.
+    -->
+    <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Plugins\BotNexus.Extensions.Plugins.csproj" />
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Harness\BotNexus.Scenarios.Harness.csproj" />
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Tests\BotNexus.Scenarios.Tests.csproj" />
   </ItemGroup>
