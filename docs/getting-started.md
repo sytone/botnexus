@@ -49,7 +49,7 @@ This guide covers everything: clone, build, run, configure, dev workflow, testin
 BotNexus is a platform for building and running AI agents. It provides:
 
 - **A multi-agent framework** — Run multiple independent agents with different personalities and skills
-- **Multiple channels** — Connect your agents to Telegram, Discord, Slack, or your own custom interfaces
+- **Multiple channels** — Connect agents through Telegram, Azure Service Bus, Agent 365, Matrix, SignalR, or custom interfaces
 - **Pluggable providers** — Use Copilot, OpenAI, or other LLM backends
 - **A web interface** — Chat with your agents from your browser
 - **Persistent memory** — Agents remember conversations and learn from long-term interactions
