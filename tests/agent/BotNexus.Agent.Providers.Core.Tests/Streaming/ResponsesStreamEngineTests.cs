@@ -90,7 +90,6 @@ public class ResponsesStreamEngineTests
             emitError: (_, _, _, _) => { },
             onParsedEvent: null,
             resolveConfiguredServiceTier: null,
-            normalizeTextDelta: null,
             ct: CancellationToken.None);
 
         return await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));

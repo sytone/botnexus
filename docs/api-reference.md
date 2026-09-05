@@ -21,8 +21,7 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 15. [Error Handling](#error-handling)
 16. [Secrets](#secrets)
 17. [Webhooks](#webhooks)
-18. [Plugins](#plugins)
-19. [Telemetry](#telemetry)
+18. [Real-Time Streaming (SignalR Hub)](#real-time-streaming-signalr-hub)
 
 ---
 
@@ -557,49 +556,174 @@ X-Api-Key: your-api-key
 
 Skills are modular knowledge packages that enhance agent reasoning. Learn more in the [Skills Guide](./skills.md).
 
-> **Note:** Skills endpoints are provided by the main BotNexus application host, not the Gateway API project. They are included here for completeness.
+The `/api/skills` routes are registered by `SkillsEndpointContributor` through the
+`IEndpointContributor` seam rather than as a gateway controller, because a gateway project may not
+reference an extension project. They are ordinary authenticated `/api/*` routes and obey the same
+API-key rules as every controller route.
 
-### List Global Skills
+This surface is a **file browser over the skills directory**, not a skill-metadata catalogue: it
+returns directory trees and file contents rooted at `~/.botnexus/skills/`, so the shape is the same
+whether a path names a skill's `SKILL.md`, a `references/` document, or an ordinary folder.
+
+Every path is resolved against the skills root and then containment-checked. A path that escapes the
+root, is absolute, or fails skill-path validation returns `403 Forbidden` rather than `404` - a `404`
+would confirm whether the out-of-root target exists, which is exactly what a traversal attempt is
+probing for.
+
+### Browse the Skills Root
 
 **Endpoint:** `GET /api/skills`
 
-**Description:** Retrieve all global skills available to all agents.
+**Description:** Return the skills directory tree from the root.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `depth` | int | `2` | Traversal depth. Must be between `0` and `5`; anything outside that range is a `400`. |
 
 **Request:**
 ```http
-GET /api/skills
+GET /api/skills?depth=2
 X-Api-Key: your-api-key
 ```
 
 **Response:** 200 OK
 ```json
-[
-  {
-    "name": "git-workflow",
-    "description": "Git workflow and commit conventions for BotNexus",
-    "version": "1.0.0",
-    "scope": "Global",
-    "alwaysLoad": false,
-    "sourcePath": "/home/user/.botnexus/skills/git-workflow/SKILL.md"
-  },
-  {
-    "name": "testing-standards",
-    "description": "Testing patterns and best practices",
-    "version": "1.0.0",
-    "scope": "Global",
-    "alwaysLoad": false,
-    "sourcePath": "/home/user/.botnexus/skills/testing-standards/SKILL.md"
-  }
-]
+{
+  "type": "directory",
+  "path": "",
+  "depthLimit": 2,
+  "entries": [
+    {
+      "name": "git-workflow",
+      "path": "git-workflow",
+      "type": "directory",
+      "children": [
+        { "name": "SKILL.md", "path": "git-workflow/SKILL.md", "type": "file", "size": 4213 }
+      ]
+    }
+  ]
+}
+```
+
+Directories are ordered before files, then by name case-insensitively, so the rendered tree order is
+stable across reloads. `size` and `children` are omitted rather than sent as `null`.
+
+**Response:** 400 Bad Request - `depth` is outside `0..5`.
+
+A missing skills directory is **not** an error: the endpoint returns `200` with an empty `entries`
+array, so a first-run install renders the browser instead of an error state.
+
+### Read a Skills Path
+
+**Endpoint:** `GET /api/skills/{**path}`
+
+**Description:** Return one entry by skills-relative path. A directory yields a single-level listing
+(`depthLimit` `0`); a file yields its content.
+
+**Request:**
+```http
+GET /api/skills/git-workflow/SKILL.md
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK - text file
+```json
+{
+  "path": "git-workflow/SKILL.md",
+  "type": "text",
+  "size": 4213,
+  "encoding": "utf-8",
+  "content": "# Git Workflow\n...",
+  "isTruncated": false
+}
 ```
 
 **Response Fields:**
-- `name` (string) — Skill identifier (folder name)
-- `description` (string) — Human-readable skill description
-- `version` (string) — Semantic version of the skill
-- `scope` (string) — Scope: `"Global"` or `"Agent"`
-- `alwaysLoad` (boolean) — Reserved for future use (always false currently)
-- `sourcePath` (string) — File path for debugging
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | string | Skills-relative path, always with `/` separators |
+| `type` | string | `text`, `binary`, or `directory` |
+| `size` | int | Full file size in bytes - the size **on disk**, not the number of bytes returned |
+| `encoding` | string \| null | `utf-8` for text; omitted for binary |
+| `content` | string \| null | Decoded text; omitted for binary |
+| `isTruncated` | boolean | Whether the content was cut at the read cap |
+
+**Binary content is described, never returned.** A file detected as binary comes back with `type`
+`binary` and no `content`, so a browser client cannot accidentally render bytes as text.
+
+**Reads are capped at 512 KB.** A larger file returns the first 512 KB with `isTruncated` `true`
+while `size` still reports the true length - so a client can tell a truncated read from a complete
+one, which comparing the returned length against a cap could not.
+
+| Status | Condition |
+|--------|-----------|
+| `400 Bad Request` | The path is empty, absolute, or contains invalid characters |
+| `403 Forbidden` | The path escapes the skills root or fails skill-path validation |
+| `404 Not Found` | No file or directory exists at that path |
+
+### Write a Skills File
+
+**Endpoint:** `PUT /api/skills/{**path}`
+
+**Description:** Write UTF-8 text content to a file under the skills root.
+
+**Request:**
+```http
+PUT /api/skills/git-workflow/SKILL.md
+X-Api-Key: your-api-key
+Content-Type: application/json
+
+{
+  "content": "# Git Workflow\n..."
+}
+```
+
+**Response:** 204 No Content
+
+| Status | Condition |
+|--------|-----------|
+| `400 Bad Request` | Empty/absolute/invalid path, a missing body, the path names a **directory**, or the **parent directory does not exist** |
+| `403 Forbidden` | The path escapes the skills root or fails skill-path validation |
+
+**The write never creates intermediate directories.** A path whose parent is absent is a `400`
+rather than a silent `mkdir -p`, because a typo in a path segment would otherwise materialise a new
+skill folder that nothing knows about.
+
+### Delete a Skills Path
+
+**Endpoint:** `DELETE /api/skills/{**path}`
+
+**Description:** Delete a file, or a directory under the skills root.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `force` | boolean | `false` | Permit recursive deletion of a non-empty directory. |
+
+**Response:** 204 No Content
+
+| Status | Condition |
+|--------|-----------|
+| `400 Bad Request` | The path is empty, absolute, or contains invalid characters |
+| `403 Forbidden` | The path escapes the skills root or fails skill-path validation |
+| `404 Not Found` | No file or directory exists at that path |
+| `409 Conflict` | The path names a **non-empty directory** and `force` was not set |
+
+**A non-empty directory is a `409`, not a silent recursive delete.** Deleting a skill folder removes
+every reference and script inside it, so the conflict makes the caller state that intent explicitly
+via `force=true`; an empty directory needs no such confirmation because there is nothing to lose.
+
+### Skill Usage Telemetry
+
+`GET /api/skills/telemetry` and `GET /api/skills/telemetry/{skillName}` return recorded skill usage.
+Both are registered **before** the `{**path}` catch-all so `telemetry` binds as a literal segment
+rather than as a skills-relative file path - which also means a real directory named `telemetry`
+under the skills root is unreachable through this API. See
+[Skills: Usage Telemetry](extensions/skills.md) for the record shape.
 
 ---
 
@@ -3308,11 +3432,11 @@ If `maxTokens` or `temperature` are not specified (null), the provider uses its 
 
 ---
 
-## Configuration Files & Backups
+## Configuration & Backups
 
-### Config Structure
+### Configuration shape
 
-Configuration is stored in `~/.botnexus/config.json`:
+Use `botnexus config get`, `botnexus config set`, and the purpose-built provider and agent commands to manage platform settings. These commands work with both JSON-backed and SQLite-backed homes. The following JSON documents the configuration shape used by the API and by legacy JSON-backed installations:
 
 ```json
 {
@@ -3548,114 +3672,6 @@ invalid or missing signature returns 401 { "error": "Invalid signature." }.
 
 ---
 
-## Plugins
-
-A read and preference-toggle surface over installed plugins, backing the
-[portal plugins page](./features/portal-plugins-page). Installing a plugin remains a CLI
-operation, so there is deliberately **no `POST`** here.
-
-These routes are registered by `PluginsEndpointContributor` in the
-`BotNexus.Extensions.Plugins.Api` extension rather than by a gateway controller, because a
-gateway project may not reference an extension project. They are therefore absent from the
-controller-derived listing in the [REST API reference](api/README.md).
-
-### GET /api/plugins
-
-**Description:** Lists every installed plugin, ordered by name.
-
-**Response:** `200 OK` with an array of plugin rows.
-
-Each row carries the installed record projected together with the two derived states an operator
-needs - whether the plugin is current, and whether its content is intact:
-
-| Field | Meaning |
-|-------|---------|
-| `name` | Plugin identifier, and the route parameter that addresses it. |
-| `source` | Marketplace source the content was fetched from. |
-| `reference` | Branch or tag requested at install time, or `null` for the source's default branch. |
-| `resolvedVersion` | Exact revision currently on disk - a commit SHA for a git source. |
-| `manifestVersion` | Version the plugin's own manifest advertises, or `null` when unversioned. |
-| `updatesEnabled` | Whether a scheduled update may replace this plugin's content. |
-| `installedAtUtc` | When the content currently on disk was materialised. |
-| `fileCount` | Number of files the install recorded, so a modified count is interpretable. |
-| `trustState` | `Unverified`, `Verified`, or `Modified` - see below. |
-| `trustDetail` | Why the trust state is what it is, or `null` when there is nothing to explain. |
-| `updateState` | `Unknown`, `Current`, `UpdateAvailable`, `Pinned`, or `ProbeFailed`. |
-| `availableVersion` | Revision the source resolves to, when it was probed. |
-| `updateProbeError` | Why the update probe failed, when `updateState` is `ProbeFailed`. |
-
-**`trustState` is three states rather than a boolean** because "we did not look" and "we looked
-and it is fine" are different answers; collapsing them would present an unverifiable plugin as a
-trusted one. `Unverified` means no content hash catalog exists, `Verified` means every recorded
-file is present and matches its catalog entry, and `Modified` means content diverges from the
-installed record. A `Modified` plugin is **reported rather than repaired** - silently
-re-materialising content would destroy the evidence an operator needs.
-
-**`updateState` defaults to `Unknown` and is deliberately not collapsed into `Current`.** Answering
-the update question costs a network round trip against the source, so the list does not pay it
-unless asked; reporting "current" without having looked would be a claim rather than a finding. A
-`Pinned` plugin is not probed at all, because it would not be replaced by whatever the probe found.
-
-### GET /api/plugins/{name}
-
-**Description:** Returns one installed plugin by name.
-
-**Response:** `200 OK` with a single plugin row.
-
-| Status | Condition |
-|--------|-----------|
-| `400 Bad Request` | No plugin name was supplied. |
-| `404 Not Found` | No plugin with that name is installed. |
-
-An unknown name is a `404` rather than an empty `200`: the portal distinguishes "not installed"
-from "installed with nothing to show", and collapsing the two would make a typo indistinguishable
-from an empty plugin.
-
-### PUT /api/plugins/{name}/update-preference
-
-**Description:** Sets whether scheduled updates may replace this plugin's content.
-
-**Request body:** `{ "updatesEnabled": true|false }`
-
-**Response:** `200 OK` with the updated plugin row.
-
-| Status | Condition |
-|--------|-----------|
-| `400 Bad Request` | No plugin name, or no request body, was supplied. |
-| `404 Not Found` | No plugin with that name is installed. |
-
-The change is written back to the installed record rather than held in memory, so it survives a
-restart - a preference that did not persist would leave the portal's toggle asserting something the
-gateway never stored. The write preserves the recorded file set and every other field, because that
-file list is the only description of what the plugin owns.
-
----
-
-## Telemetry
-
-### GET /api/telemetry/metrics
-
-**Description:** Returns a JSON snapshot of the current values of every instrument on the canonical
-`"BotNexus"` meter scope. This lets operators and the portal read metrics locally **without**
-standing up an external OpenTelemetry collector.
-
-**Response:** `200 OK` with `generatedAt`, `scope`, and an `instruments` array.
-
-When telemetry is disabled and no collector is registered, the endpoint returns an **empty,
-well-formed snapshot** rather than an error, so a UI consumer never has to special-case the
-disabled state.
-
-The instruments covered are the hot-path metrics - `botnexus.turns.total`,
-`botnexus.turn.duration`, `botnexus.tool.calls`, `botnexus.provider.requests`,
-`botnexus.provider.tokens`, `botnexus.cron.runs`, `botnexus.channel.messages`,
-`botnexus.sessions.active`, and `botnexus.host.starts` among them. Extension instruments emitted
-under `botnexus.ext.<id>.*` land on the same scope and appear here too; see
-[Extension Telemetry](extensions/telemetry.md).
-
-Like the plugins routes above, this endpoint is registered through the endpoint-contributor seam
-rather than as a gateway controller.
-
----
 ## Real-Time Streaming (SignalR Hub)
 
 Real-time agent interaction uses the SignalR hub at `/hub/gateway`. There is no raw WebSocket endpoint -- all streaming goes through ASP.NET Core SignalR.

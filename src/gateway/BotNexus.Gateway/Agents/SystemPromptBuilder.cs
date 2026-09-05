@@ -70,6 +70,20 @@ public sealed record SystemPromptParams
     /// </summary>
     public ConversationScope Scope { get; init; } = ConversationScope.Private;
     public ConversationContext? ConversationContext { get; init; }
+
+    /// <summary>
+    /// Prompt contributors resolved from the host container (#3667). Empty for every caller that
+    /// does not supply them, which renders an identical prompt to the pre-#3667 behaviour.
+    /// </summary>
+    /// <remarks>
+    /// This is the seam that makes <see cref="IPromptContributor"/> reachable from production at
+    /// all. Before #3667 the builder composed its pipeline exclusively from
+    /// <c>Add(IPromptSection)</c>, so a contributor registered in DI was constructed and silently
+    /// ignored. Threading them as a parameter rather than resolving DI inside the builder keeps
+    /// <c>SystemPromptBuilder</c> a static pure function of its inputs, which is what its ~40
+    /// snapshot tests depend on.
+    /// </remarks>
+    public IReadOnlyList<IPromptContributor>? PromptContributors { get; init; }
 }
 
 public static class SystemPromptBuilder
@@ -207,6 +221,12 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(PromptOrder.ExtraSystemPrompt, BuildExtraSystemPromptSection))
             .Add(new LambdaPromptSection(PromptOrder.Heartbeat, BuildHeartbeatSection, static context => !GetGatewayData(context).IsMinimal))
             .Add(new LambdaPromptSection(PromptOrder.Runtime, BuildRuntimeSection, xmlTag: "runtime"));
+
+        // #3667: the one call that makes IPromptContributor a real extension point. Contributors
+        // are ordered against the PromptOrder keys above by their Priority (or the contribution's
+        // own Order), so an extension can place its block between built-in sections. Passing an
+        // empty collection is a no-op, which is why every existing caller renders unchanged.
+        pipeline.AddContributors(@params.PromptContributors ?? []);
 
         var lines = pipeline.BuildLines(promptContext);
         return string.Join("\n", lines.Where(static line => !string.IsNullOrEmpty(line)));

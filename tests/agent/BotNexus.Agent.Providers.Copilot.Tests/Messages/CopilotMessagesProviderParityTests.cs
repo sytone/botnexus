@@ -95,7 +95,7 @@ public class CopilotMessagesProviderParityTests
     }
 
     [Fact]
-    public async Task Stream_Gpt56_RemovesCopilotChunkCrLf_WhilePreservingFormattingPayload()
+    public async Task Stream_Gpt56_AssemblesFormattingPayloadByteIdentically()
     {
         const string expected = """
             ## Formatting Test
@@ -118,7 +118,12 @@ public class CopilotMessagesProviderParityTests
             "BotNexus](https://github.com/Sytone/botnexus)\n\n```powershell\nbotnexus gateway status\n```\n\n",
             "| Component | Status |\n|---|---|\n| Gateway | Running |"
         };
-        var sse = BuildTextSse(fragments.Select(fragment => "\r\n" + fragment));
+        // #3442: the deltas carry NO CRLF prefix, because mitm captures of these exact endpoints
+        // contain 0 raw CR bytes across 3,025 provider deltas. This test used to synthesise a
+        // "\r\n" + fragment wire that Copilot never sends, and assert our normalizer removed it -
+        // proving only that a transform undid a fixture. What is worth pinning is that a
+        // realistically-chunked markdown payload reassembles byte-identically.
+        var sse = BuildTextSse(fragments);
         var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
         var model = BuildModel() with { Id = "gpt-5.6-sol", Name = "gpt-5.6-sol" };
 
@@ -132,16 +137,17 @@ public class CopilotMessagesProviderParityTests
         result.Content.OfType<TextContent>().Single().Text.ShouldBe(expected);
     }
 
-    // #3336 CONTRACT CHANGE, deliberately re-pinned rather than deleted.
-    // This test previously asserted that a NON-gpt-5.6 model preserved a leading CRLF verbatim,
-    // encoding the 2026-07 hypothesis that the framing artifact belonged to one model family. The
-    // claude-opus-5 corruption evidence in #3336 falsifies that: the artifact is a property of the
-    // Copilot TRANSPORT, so every model on this transport is now normalized. The assertion is not
-    // weakened - the inverted case (a leading CRLF is stripped) is asserted just as strictly, and
-    // the genuinely load-bearing invariant (an INTERIOR CRLF is content and survives) is added,
-    // because that is the property whose loss would actually delete model output.
+    // #3442 CONTRACT CHANGE, deliberately re-pinned rather than deleted.
+    // This test has now been inverted twice, and the history is the point. It first asserted a
+    // non-gpt-5.6 model PRESERVED a leading CRLF; #3336 inverted it to assert the CRLF was
+    // STRIPPED, on the theory that the framing was a transport artifact rather than a model-family
+    // one. Both versions were built on a premise that mitm captures have now falsified: Copilot
+    // sends no CR on the wire at all. The corruption came from our own
+    // string.Join(Environment.NewLine, ...) in MessageConverter.ToAgentMessage (#3425, #3428).
+    // So the assertion returns to preservation - not as a reversion, but because a leading CRLF a
+    // model genuinely emits is content, and silently deleting it was a real data-loss path.
     [Fact]
-    public async Task Stream_NonGpt56Model_StillNormalizesLeadingCrLf_BecauseTheQuirkIsTransportDeclared()
+    public async Task Stream_LeadingCrLf_IsPreservedAsContent_BecauseItIsNotTransportFraming()
     {
         var sse = BuildTextSse(["\r\nintentional"]);
         var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
@@ -153,14 +159,14 @@ public class CopilotMessagesProviderParityTests
             .GetResultAsync()
             .WaitAsync(TimeSpan.FromSeconds(10));
 
-        result.Content.OfType<TextContent>().Single().Text.ShouldBe("intentional");
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("\r\nintentional");
     }
 
     [Fact]
     public async Task Stream_NonGpt56Model_InteriorCrLf_SurvivesAsContent()
     {
-        // The strip is leading-only. A CRLF inside a delta is model content and must never be
-        // touched - this is the assertion that keeps the widened normalization honest.
+        // Unchanged by #3442 and still load-bearing: an interior CRLF was never touched even when
+        // the leading strip existed, so this is the invariant that spans both contracts.
         var sse = BuildTextSse(["before\r\nafter"]);
         var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
 

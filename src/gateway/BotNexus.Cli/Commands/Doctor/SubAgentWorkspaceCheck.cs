@@ -1,6 +1,5 @@
 using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
-using BotNexus.Gateway.Configuration.Store;
 using BotNexus.Cli.Commands.Doctor.Generated;
 using BotNexus.Cli.Services;
 
@@ -94,18 +93,11 @@ internal sealed class SubAgentWorkspaceCheck : IDoctorCheck
         {
             var configPath = _fileSystem.Path.Combine(homePath, "config.json");
 
-            // #3823: the store is authoritative once it exists, so a file-only read reports the
-            // JSON copy - or nothing at all on a store-only home. Prefer the store, and keep the
-            // file read as the fallback so the injected IFileSystem still drives the mocked case.
-            var fromStore = TryReadWorkspaceRootFromStore(configPath);
-            if (fromStore is not null)
-                return fromStore;
-
-            if (!_fileSystem.File.Exists(configPath))
-                return null;
-
-            // Injected IFileSystem: see SubAgentCommand for why this cannot use the provider pipeline (#3504).
-            var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
+            // Resolved through IPlatformConfigAccessor (#3824). A doctor check that reports on
+            // configuration the gateway is not using is worse than an absent one, and the previous
+            // PlatformConfigLoader read was store-blind - and returned all-defaults when config.json
+            // was absent, which under #3823 is the normal case.
+            var config = PlatformConfigAccessor.Shared.Get(configPath, _fileSystem);
             return config.Gateway?.SubAgents?.WorkspaceRoot;
         }
         catch
@@ -114,37 +106,6 @@ internal sealed class SubAgentWorkspaceCheck : IDoctorCheck
         }
     }
 
-    /// <summary>
-    /// Reads <c>gateway.subAgents.workspaceRoot</c> from the SQLite config store when one exists.
-    /// </summary>
-    /// <remarks>
-    /// Best-effort by design: any failure returns null and the caller falls back to the file, so a
-    /// missing or locked store cannot turn a working doctor check into a failing one.
-    /// </remarks>
-    private string? TryReadWorkspaceRootFromStore(string configPath)
-    {
-        try
-        {
-            var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, _fileSystem);
-            if (!_fileSystem.File.Exists(storePath))
-                return null;
-
-            var store = new SqliteConfigStore($"Data Source={storePath}");
-            var entries = store.ReadEntriesAsync().GetAwaiter().GetResult();
-
-            if (!entries.TryGetValue("gateway.subAgents.workspaceRoot", out var entry))
-                return null;
-            if (entry.State != ConfigValueState.Value || entry.Value is null)
-                return null;
-
-            var text = entry.Value.Trim('"');
-            return string.IsNullOrWhiteSpace(text) ? null : text;
-        }
-        catch
-        {
-            return null;
-        }
-    }
 }
 
 
