@@ -6,6 +6,12 @@ using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
+using DiagnosticActivity = System.Diagnostics.Activity;
+using ActivityCreationOptions = System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext>;
+using ActivityContext = System.Diagnostics.ActivityContext;
+using ActivityListener = System.Diagnostics.ActivityListener;
+using ActivitySamplingResult = System.Diagnostics.ActivitySamplingResult;
+using ActivitySource = System.Diagnostics.ActivitySource;
 
 namespace BotNexus.Gateway.Tests.Sessions;
 
@@ -72,6 +78,54 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
         store.LastHistoryRowsMutated.ShouldBe(1, "work must be proportional to the delta, not total history");
         store.LastHistoryWriteReconciled.ShouldBeFalse();
         (await ReadHistoryRowsAsync(session.SessionId)).Count.ShouldBe(2_001);
+    }
+
+    [Fact]
+    public void CaptureHistoryForPersistence_OneAppendToTwentyThousandRows_HasFixedAllocationBudget()
+    {
+        // Warm the method/JIT outside the measured region, then compare a small and production-scale
+        // persisted history. The capture must allocate for the one-row delta, not for the prefix.
+        _ = MeasureCaptureAllocation(10);
+        var small = MeasureCaptureAllocation(10);
+        var large = MeasureCaptureAllocation(20_000);
+
+        large.ShouldBeLessThan(64 * 1024L, "one-row capture must stay within a fixed 64 KiB budget");
+        large.ShouldBeLessThanOrEqualTo(small + 16 * 1024L,
+            "growing persisted history from 10 to 20,000 rows must not add prefix-proportional allocation");
+    }
+
+    [Fact]
+    public async Task SaveAsync_RecordsBoundedHistoryMutationTagsOnExistingActivity()
+    {
+        DiagnosticActivity? stopped = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "BotNexus.Gateway",
+            Sample = (ref ActivityCreationOptions _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "session.save")
+                    stopped = activity;
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var store = CreateStore();
+        var session = await CreateSavedSessionAsync(store, "telemetry");
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "delta" });
+        await store.SaveAsync(session);
+
+        stopped.ShouldNotBeNull();
+        stopped.GetTagItem("botnexus.session.history.mode").ShouldBe("append");
+        stopped.GetTagItem("botnexus.session.history.rows.inserted").ShouldBe(1);
+        stopped.GetTagItem("botnexus.session.history.rows.updated").ShouldBe(0);
+        stopped.GetTagItem("botnexus.session.history.rows.deleted").ShouldBe(0);
+        stopped.Tags.Where(tag => tag.Key.StartsWith("botnexus.session.history.", StringComparison.Ordinal))
+            .Select(tag => tag.Key)
+            .ShouldBe([
+                "botnexus.session.history.mode"
+            ], ignoreOrder: true,
+            customMessage: "the only string mutation tag is a bounded mode; row counts are numeric tags");
     }
 
     [Fact]
@@ -247,6 +301,31 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
         var contents = (await ReadHistoryRowsAsync(session.SessionId)).Select(row => row.Content).ToList();
         contents.ShouldBe(["entry-0", "captured", "raced"]);
         contents.Count(content => content == "raced").ShouldBe(1);
+    }
+
+    private static long MeasureCaptureAllocation(int persistedEntryCount)
+    {
+        var session = new GatewaySession
+        {
+            SessionId = SessionId.From($"allocation-{persistedEntryCount}"),
+            AgentId = AgentId.From("agent-a")
+        };
+        session.AddEntries(Enumerable.Range(1, persistedEntryCount)
+            .Select(i => new SessionEntry
+            {
+                PersistenceId = i,
+                Role = MessageRole.User,
+                Content = "persisted"
+            }));
+        session.MarkCurrentHistoryPersisted();
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "delta" });
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var snapshot = session.CaptureHistoryForPersistence();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        snapshot.Entries.ShouldHaveSingleItem();
+        snapshot.RequiresReplacement.ShouldBeFalse();
+        return allocated;
     }
 
     private async Task InsertExternalHistoryRowAsync(SessionId sessionId, string content)

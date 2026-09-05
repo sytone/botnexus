@@ -276,22 +276,26 @@ public sealed class GatewaySessionRuntime
             var requiresReplacement = _destructiveVersion != _persistedDestructiveVersion
                 || _persistedHistoryCount > Session.History.Count;
             var startIndex = requiresReplacement ? 0 : _persistedHistoryCount;
-            foreach (var entry in Session.History)
+            var entries = Session.History.GetRange(startIndex, Session.History.Count - startIndex).ToArray();
+            foreach (var entry in entries)
             {
                 entry.PersistenceId ??= _nextTransientPersistenceId--;
                 if (entry.PersistenceId < 0)
                     entry.PersistenceKey ??= Guid.NewGuid().ToString("N");
             }
 
-            var entries = Session.History.GetRange(startIndex, Session.History.Count - startIndex).ToArray();
-            var retainedPersistedIds = Session.History
-                .Select(static entry => entry.PersistenceId)
-                .OfType<long>()
-                .Where(static id => id > 0)
-                .ToHashSet();
-            var removedPersistedIds = requiresReplacement
-                ? _observedPersistedHistoryIds.Where(id => !retainedPersistedIds.Contains(id)).ToArray()
-                : [];
+            IReadOnlyList<long> removedPersistedIds = [];
+            if (requiresReplacement)
+            {
+                var retainedPersistedIds = Session.History
+                    .Select(static entry => entry.PersistenceId)
+                    .OfType<long>()
+                    .Where(static id => id > 0)
+                    .ToHashSet();
+                removedPersistedIds = _observedPersistedHistoryIds
+                    .Where(id => !retainedPersistedIds.Contains(id))
+                    .ToArray();
+            }
             return new SessionHistoryPersistenceSnapshot(
                 entries,
                 removedPersistedIds,
@@ -315,15 +319,28 @@ public sealed class GatewaySessionRuntime
         ArgumentNullException.ThrowIfNull(insertedRowIds);
         lock (_lock)
         {
-            // Apply insert identities even when a concurrent destructive mutation invalidated the
-            // cursor acknowledgement. Record `with` clones retain the transient negative id, so
-            // this also transfers the durable identity to replacement entries derived in flight.
-            foreach (var entry in Session.History)
+            // The captured entries are the live objects on the ordinary append path, so applying
+            // returned row ids costs O(delta). Only a destructive mutation racing the write can
+            // replace them with `with` clones; that exceptional path scans the current history to
+            // transfer the durable ids before leaving reconciliation pending.
+            foreach (var entry in snapshot.Entries)
             {
                 if (entry.PersistenceId is { } transientId
                     && insertedRowIds.TryGetValue(transientId, out var durableId))
                 {
                     entry.PersistenceId = durableId;
+                }
+            }
+
+            if (_destructiveVersion != snapshot.DestructiveVersion)
+            {
+                foreach (var entry in Session.History)
+                {
+                    if (entry.PersistenceId is { } transientId
+                        && insertedRowIds.TryGetValue(transientId, out var durableId))
+                    {
+                        entry.PersistenceId = durableId;
+                    }
                 }
             }
 

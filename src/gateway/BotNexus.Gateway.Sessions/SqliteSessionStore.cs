@@ -232,8 +232,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 return await PersistHistoryAsync(connection, session.SessionId, history, cancellationToken).ConfigureAwait(false);
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
             session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
-            LastHistoryRowsMutated = persistence.MutatedRowCount;
-            LastHistoryWriteReconciled = history.RequiresReplacement;
+            RecordHistoryMutation(activity, history, persistence);
         }
         finally { sessionLock.Dispose(); }
     }
@@ -292,8 +291,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
                 var persistence = await PersistHistoryAsync(connection, session.SessionId, history, cancellationToken).ConfigureAwait(false);
                 session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
-                LastHistoryRowsMutated = persistence.MutatedRowCount;
-                LastHistoryWriteReconciled = history.RequiresReplacement;
+                RecordHistoryMutation(activity, history, persistence);
                 return true;
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -1904,7 +1902,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             cancellationToken).ConfigureAwait(false);
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new HistoryPersistenceResult(insertedRowIds, deletedCount + updatedCount + insertedRowIds.Count);
+        return new HistoryPersistenceResult(insertedRowIds, updatedCount, deletedCount);
     }
 
     private static async Task<int> UpdateHistoryRowAsync(
@@ -1994,12 +1992,28 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         var insertedRowIds = await WriteHistoryRowsAsync(connection, transaction, sessionId, entries, cancellationToken).ConfigureAwait(false);
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new HistoryPersistenceResult(insertedRowIds, insertedRowIds.Count);
+        return new HistoryPersistenceResult(insertedRowIds, UpdatedRowCount: 0, DeletedRowCount: 0);
+    }
+
+    private void RecordHistoryMutation(
+        Activity? activity,
+        SessionHistoryPersistenceSnapshot snapshot,
+        HistoryPersistenceResult result)
+    {
+        // Bounded-cardinality observability until #3662 adds the canonical in-process store
+        // histogram. Counts are numeric activity tags; neither session nor row identity is tagged.
+        activity?.SetTag("botnexus.session.history.mode", snapshot.RequiresReplacement ? "reconcile" : "append");
+        activity?.SetTag("botnexus.session.history.rows.inserted", result.InsertedRowIds.Count);
+        activity?.SetTag("botnexus.session.history.rows.updated", result.UpdatedRowCount);
+        activity?.SetTag("botnexus.session.history.rows.deleted", result.DeletedRowCount);
+        LastHistoryRowsMutated = result.InsertedRowIds.Count + result.UpdatedRowCount + result.DeletedRowCount;
+        LastHistoryWriteReconciled = snapshot.RequiresReplacement;
     }
 
     private sealed record HistoryPersistenceResult(
         IReadOnlyDictionary<long, long> InsertedRowIds,
-        int MutatedRowCount);
+        int UpdatedRowCount,
+        int DeletedRowCount);
 
     private static async Task<IReadOnlyDictionary<long, long>> WriteHistoryRowsAsync(
         SqliteConnection connection,
