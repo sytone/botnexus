@@ -10,8 +10,8 @@ namespace BotNexus.Scenarios.Tests.Journeys;
 /// <remarks>
 /// <para>
 /// Everything that existed before this journey stopped at the JSON.
-/// <c>PlatformAgentReconciliationServiceTests</c> proves the entry is inserted into
-/// <c>config.json</c> and <c>InitCommandTests</c> proves <c>init</c> emits a field-identical one —
+/// <c>PlatformAgentReconciliationServiceTests</c> proves the entry is persisted and
+/// <c>InitCommandTests</c> proves <c>init</c> emits a field-identical one —
 /// but an entry is not an agent. Between the two lies <c>PlatformConfigAgentSource</c>,
 /// <c>AgentDescriptorValidator</c> and <c>AgentConfigurationHostedService</c>, and a template that
 /// is syntactically perfect but semantically unregistrable (a provider name nothing resolves, a key
@@ -43,7 +43,7 @@ public sealed class BundledTrailguideBringUpJourney
     [Fact]
     public async Task FreshInstall_RegistersTheBundledTrailguide_InTheSameStartupThatInsertsIt()
     {
-        // Given a fresh BotNexus home whose config.json has never heard of the Trailguide, and a
+        // Given a fresh SQLite-enabled BotNexus home whose config store has never heard of the Trailguide, and a
         // gateway that boots over it exactly once.
         await using var world = await VirtualWorld.StartAsync(FreshInstall());
 

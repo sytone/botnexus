@@ -153,7 +153,10 @@ public sealed class VirtualWorld : IAsyncDisposable
 
         if (options.ReconcileBundledAgents)
         {
-            var configPath = SeedConfigJson(tempHomePath, options.SeedConfigAgentId);
+            var configPath = await SeedConfigStoreAsync(
+                tempHomePath,
+                options.SeedConfigAgentId,
+                cancellationToken);
             services.AddPlatformConfiguration(configPath);
         }
 
@@ -478,6 +481,15 @@ public sealed class VirtualWorld : IAsyncDisposable
         _host.Dispose();
         try
         {
+            ConfigStoreBootstrap.ReleaseConnections(
+                Path.Combine(_tempHomePath, ConfigStoreBootstrap.StoreFileName));
+        }
+        catch
+        {
+            // Best-effort release; a world without the config store has no pooled connection.
+        }
+        try
+        {
             if (Directory.Exists(_tempHomePath))
                 Directory.Delete(_tempHomePath, recursive: true);
         }
@@ -488,18 +500,31 @@ public sealed class VirtualWorld : IAsyncDisposable
     }
 
     /// <summary>
-    /// Writes the <c>config.json</c> a config-plane world boots from (#3699): one enabled agent
-    /// pointed at the scenario fake provider, and nothing else.
+    /// Creates the authoritative SQLite configuration store a config-plane world boots from
+    /// (#3699): one enabled agent pointed at the scenario fake provider, and nothing else.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The JSON path is still supplied to the production composition root because <c>config.db</c>
+    /// is discovered beside it, but no JSON seed is written. The store file existing is the
+    /// production opt-in, and <see cref="ConfigStoreBootstrap.PopulateAsync"/> is the supported
+    /// bootstrap seam. This makes the journey fail if startup silently falls back to file-only
+    /// configuration.
+    /// </para>
+    /// <para>
     /// The seed agent is not decoration. <c>PlatformAgentReconciliationService</c> copies its
     /// provider/model onto the bundled entry it inserts; with an empty config the reconciler would
     /// resolve nothing and insert the bundled agent DISABLED, so the scenario would be asserting
     /// against the fallback path rather than the one a real install with a working agent takes.
+    /// </para>
     /// </remarks>
-    private static string SeedConfigJson(string homePath, string seedAgentId)
+    private static async Task<string> SeedConfigStoreAsync(
+        string homePath,
+        string seedAgentId,
+        CancellationToken cancellationToken)
     {
         var configPath = Path.Combine(homePath, "config.json");
+        var storePath = Path.Combine(homePath, ConfigStoreBootstrap.StoreFileName);
         var document = new System.Text.Json.Nodes.JsonObject
         {
             ["agents"] = new System.Text.Json.Nodes.JsonObject
@@ -514,7 +539,8 @@ public sealed class VirtualWorld : IAsyncDisposable
                 }
             }
         };
-        File.WriteAllText(configPath, document.ToJsonString());
+
+        await ConfigStoreBootstrap.PopulateAsync(storePath, document, cancellationToken);
         return configPath;
     }
 
