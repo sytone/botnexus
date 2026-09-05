@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Globalization;
 using BotNexus.Cli.Commands.Doctor;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Configuration;
@@ -140,7 +141,13 @@ internal sealed class DoctorCommand
             var state = entry.IsOrphaned
                 ? (entry.IsUnsafeLink ? "[red]unsafe orphan[/]" : "[yellow]orphaned[/]")
                 : "[green]registered[/]";
-            AnsiConsole.MarkupLine($"  {state}  {CliText.SafeDisplay(entry.DirectoryName)}");
+            // #3845: size and newest-content age are what an operator needs to judge an orphan -
+            // a name alone gives them nothing to decide with.
+            var newest = entry.NewestContentUtc is { } stamp
+                ? stamp.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                : "empty";
+            AnsiConsole.MarkupLine(
+                $"  {state}  {CliText.SafeDisplay(entry.DirectoryName)}  [dim]{DebugDbCommand.FormatSize(entry.SizeBytes)}, newest {newest}[/]");
         }
 
         var orphans = plan.Where(entry => entry.IsOrphaned).ToArray();
@@ -149,6 +156,9 @@ internal sealed class DoctorCommand
             AnsiConsole.MarkupLine("[green]No orphaned persistent agent workspaces found.[/]");
             return 0;
         }
+
+        AnsiConsole.MarkupLine(
+            $"[yellow]{orphans.Length} orphaned workspace(s) holding {DebugDbCommand.FormatSize(orphans.Sum(entry => entry.SizeBytes))}.[/]");
 
         if (orphans.Any(entry => entry.IsUnsafeLink))
         {
@@ -173,7 +183,9 @@ internal sealed class DoctorCommand
 
         try
         {
-            var deleted = reconciler.DeleteOrphans(agentsRoot, orphans);
+            // Pass config so the reconciler re-derives registration immediately before deleting,
+            // rather than trusting flags computed before the print/prompt round trip (#3845).
+            var deleted = reconciler.DeleteOrphans(agentsRoot, orphans, config);
             AnsiConsole.MarkupLine($"[green]Deleted {deleted} orphaned persistent agent workspace(s).[/]");
             return 0;
         }

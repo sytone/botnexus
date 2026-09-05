@@ -56,18 +56,18 @@ When `open` is set, the `ListAgents` tool shows `canConverse: true` for all agen
 
 ## Budget System
 
-The budget system prevents runaway agent loops and excessive resource consumption:
+The budget system prevents runaway agent loops and excessive resource consumption. The settings are
+bound from `gateway:agentExchange` and sit **directly** on that section - there is no nested
+`budget` object:
 
 ```json
 {
   "gateway": {
     "agentExchange": {
-      "budget": {
-        "dailyCap": 200,
-        "loopWindowSeconds": 60,
-        "loopThreshold": 3,
-        "cooldownSeconds": 300
-      }
+      "dailyTurnCap": 200,
+      "loopDetectionWindowSeconds": 60,
+      "loopThreshold": 3,
+      "cooldownOnLoopDetectSeconds": 300
     }
   }
 }
@@ -75,17 +75,21 @@ The budget system prevents runaway agent loops and excessive resource consumptio
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `dailyCap` | integer | 200 | Maximum exchanges per agent pair per day. |
-| `loopWindowSeconds` | integer | 60 | Time window for loop detection. |
-| `loopThreshold` | integer | 3 | Exchanges within the window that trigger cooldown. |
-| `cooldownSeconds` | integer | 300 | Seconds a pair must wait after loop detection. |
+| `dailyTurnCap` | integer | 200 | Maximum total **turns** per agent pair per calendar day (UTC). |
+| `loopDetectionWindowSeconds` | integer | 60 | Window within which a pair re-engaging increments the loop counter. |
+| `loopThreshold` | integer | 3 | Rapid re-engagements within the window that trigger cooldown. |
+| `cooldownOnLoopDetectSeconds` | integer | 300 | Cooldown duration in seconds once a loop is detected. |
+
+These four sit alongside the access and backpressure settings on the same section - `accessPolicy`,
+`maxTurnsCeiling` and `maxInboundQueueDepth`, documented in
+[Configuration](/configuration#agent-exchange-agentexchange).
 
 ### How It Works
 
 - Each agent pair (A→B) has an independent budget tracker
-- When a pair exceeds `loopThreshold` exchanges within `loopWindowSeconds`, a cooldown is applied
+- When a pair exceeds `loopThreshold` re-engagements within `loopDetectionWindowSeconds`, a cooldown is applied
 - During cooldown, further exchanges between that pair are rejected
-- The daily cap resets at UTC midnight
+- The daily cap counts turns, not exchanges, and resets at UTC midnight
 
 ## Scheduled Agent Conversations
 

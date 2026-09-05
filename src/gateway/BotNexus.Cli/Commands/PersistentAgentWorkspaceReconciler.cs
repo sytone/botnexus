@@ -8,12 +8,22 @@ namespace BotNexus.Cli.Commands;
 /// the set of registered agents. <paramref name="IsOrphaned"/> is true when no enabled config agent
 /// claims the directory name; <paramref name="IsUnsafeLink"/> is true when the directory is a
 /// symlink/reparse point and must never be followed for deletion.
+/// <para>
+/// #3845: <paramref name="SizeBytes"/> and <paramref name="NewestContentUtc"/> exist so the report
+/// answers the only two questions an operator actually has before approving an irreversible delete -
+/// how much disk this is holding, and how recently anything wrote to it. A bare list of names forces
+/// them to shell out and measure by hand, which is how 42 orphans accumulated unexamined.
+/// </para>
 /// </summary>
+/// <param name="SizeBytes">Total bytes of files in the tree, best-effort; 0 when unreadable.</param>
+/// <param name="NewestContentUtc">Newest file last-write time in the tree, or null when empty/unreadable.</param>
 internal sealed record PersistentAgentWorkspaceEntry(
     string DirectoryName,
     string FullPath,
     bool IsOrphaned,
-    bool IsUnsafeLink);
+    bool IsUnsafeLink,
+    long SizeBytes = 0,
+    DateTime? NewestContentUtc = null);
 
 /// <summary>
 /// Reconciles persistent top-level agent workspaces with enabled config-defined agents while
@@ -55,28 +65,24 @@ internal sealed class PersistentAgentWorkspaceReconciler
         if (!Directory.Exists(root))
             return [];
 
-        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var pair in config.Agents ?? [])
-        {
-            if (pair.Key.Equals("defaults", StringComparison.OrdinalIgnoreCase) || !pair.Value.Enabled)
-                continue;
-
-            // Canonicalize through AgentId so the doctor uses the gateway's own ID rules; skip any key
-            // AgentId rejects rather than inventing a second, laxer interpretation of registration.
-            var maybeId = AgentId.TryFrom(pair.Key, out var id) ? id.Value : null;
-            if (maybeId is not null)
-                registered.Add(maybeId);
-        }
+        var registered = RegisteredIds(config);
 
         return Directory.EnumerateDirectories(root)
             .Select(path =>
             {
                 var info = new DirectoryInfo(path);
+                var isLink = (info.Attributes & FileAttributes.ReparsePoint) != 0;
+                // Never walk through a reparse point to measure it: the tree on the other side is
+                // not this directory's disk usage, and following it is exactly the escape the
+                // deletion guards refuse.
+                var (size, newest) = isLink ? (0L, (DateTime?)null) : Measure(info);
                 return new PersistentAgentWorkspaceEntry(
                     info.Name,
                     info.FullName,
                     !registered.Contains(info.Name.Trim()),
-                    (info.Attributes & FileAttributes.ReparsePoint) != 0);
+                    isLink,
+                    size,
+                    newest);
             })
             .OrderBy(entry => entry.DirectoryName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -89,13 +95,30 @@ internal sealed class PersistentAgentWorkspaceReconciler
     /// <see cref="InvalidOperationException"/> if any candidate escapes the root or contains a reparse
     /// point. Returns the number of directories deleted.
     /// </summary>
-    public int DeleteOrphans(string agentsRoot, IReadOnlyList<PersistentAgentWorkspaceEntry> plan)
+    /// <param name="agentsRoot">The resolved agents root every candidate must be a direct child of.</param>
+    /// <param name="plan">The classified plan produced by <see cref="BuildPlan"/>.</param>
+    /// <param name="config">
+    /// #3845: when supplied, registration is re-derived from config here rather than trusting the
+    /// caller-supplied <see cref="PersistentAgentWorkspaceEntry.IsOrphaned"/> flag. The flag travels
+    /// through a print/prompt/approve round trip during which config can be edited, and a plan can be
+    /// hand-built by a caller that classified it differently. Deleting a live agent's memory store is
+    /// irreversible, so the last word before deletion belongs to the registry, not to a stale bool.
+    /// </param>
+    public int DeleteOrphans(
+        string agentsRoot,
+        IReadOnlyList<PersistentAgentWorkspaceEntry> plan,
+        PlatformConfig? config = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentsRoot);
         ArgumentNullException.ThrowIfNull(plan);
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(agentsRoot));
+        var registered = config is null ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : RegisteredIds(config);
         var candidates = plan
             .Where(item => item.IsOrphaned)
+            .Select(entry => registered.Contains(entry.DirectoryName.Trim())
+                ? throw new InvalidOperationException(
+                    $"Refusing to delete '{entry.DirectoryName}': it is a registered agent, not an orphan.")
+                : entry)
             .Select(entry => ValidateDeletionCandidate(root, entry))
             .Where(Directory.Exists)
             .ToArray();
@@ -109,6 +132,64 @@ internal sealed class PersistentAgentWorkspaceReconciler
             Directory.Delete(candidate, recursive: true);
 
         return candidates.Length;
+    }
+
+    /// <summary>
+    /// The canonical set of registered agent ids for <paramref name="config"/>. The <c>defaults</c>
+    /// reserved key and disabled agents are ignored, and remaining keys are canonicalized through
+    /// <see cref="AgentId"/> rather than a doctor-specific interpretation. Shared by classification
+    /// and by the pre-deletion refusal so the two can never disagree about what "registered" means.
+    /// </summary>
+    private static HashSet<string> RegisteredIds(PlatformConfig config)
+    {
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in config.Agents ?? [])
+        {
+            if (pair.Key.Equals("defaults", StringComparison.OrdinalIgnoreCase) || !pair.Value.Enabled)
+                continue;
+
+            var maybeId = AgentId.TryFrom(pair.Key, out var id) ? id.Value : null;
+            if (maybeId is not null)
+                registered.Add(maybeId);
+        }
+
+        return registered;
+    }
+
+    /// <summary>
+    /// Best-effort total byte count and newest last-write time across the tree. Failures are absorbed
+    /// because this feeds a report: an unreadable subtree must degrade the numbers, never abort the
+    /// enumeration an operator is relying on to see the orphans at all.
+    /// </summary>
+    private static (long SizeBytes, DateTime? NewestContentUtc) Measure(DirectoryInfo directory)
+    {
+        long size = 0;
+        DateTime? newest = null;
+        try
+        {
+            foreach (var file in directory.EnumerateFiles("*", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    if ((file.Attributes & FileAttributes.ReparsePoint) != 0)
+                        continue;
+                    size += file.Length;
+                    var written = file.LastWriteTimeUtc;
+                    if (newest is null || written > newest)
+                        newest = written;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Individual file vanished or is locked; keep measuring the rest.
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable subtree: report what was counted so far.
+        }
+
+        return (size, newest);
     }
 
     private static string ValidateDeletionCandidate(string root, PersistentAgentWorkspaceEntry entry)

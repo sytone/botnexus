@@ -158,6 +158,46 @@ public sealed class SubAgentWorkspaceSweeperLivenessTests
     }
 
     /// <summary>
+    /// #3670 AC4: the backstop line must carry the SAME audit prefix the lifecycle route emits, so
+    /// an operator investigating a vanished workspace finds both reclamation routes with one query
+    /// rather than needing to know two separately-worded messages exist.
+    /// </summary>
+    [Fact]
+    public void Sweep_RemovalAudit_UsesTheSharedReclamationPrefix()
+    {
+        AddExpiredSubAgentDir("aurum--subagent--reviewer--shared1");
+        var logger = new CapturingLogger();
+        var sweeper = new SubAgentWorkspaceSweeper(_fileSystem, logger, new StubProbe(_ => false));
+
+        sweeper.Sweep(_agentsRoot, Retention, Grace, NowUtc);
+
+        logger.Entries.ShouldContain(entry =>
+            entry.Level == LogLevel.Information
+            && entry.Message.StartsWith(
+                SubAgentWorkspaceReclamationAudit.MessagePrefix,
+                StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The two routes must remain distinguishable within that shared prefix. A single query finds
+    /// both, but the operator still has to know WHICH mechanism removed the workspace: a backstop
+    /// removal means the lifecycle path failed to fire, which is itself the signal worth acting on.
+    /// </summary>
+    [Fact]
+    public void Sweep_RemovalAudit_NamesTheBackstopRoute()
+    {
+        AddExpiredSubAgentDir("aurum--subagent--reviewer--route01");
+        var logger = new CapturingLogger();
+        var sweeper = new SubAgentWorkspaceSweeper(_fileSystem, logger, new StubProbe(_ => false));
+
+        sweeper.Sweep(_agentsRoot, Retention, Grace, NowUtc);
+
+        logger.Entries.ShouldContain(entry =>
+            entry.Level == LogLevel.Information
+            && entry.Message.Contains("route: backstop-sweep", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// The probe is a required collaborator. Construction must fail loudly rather than allow a
     /// probe-less sweeper to exist at all: an optional probe would let a misconfigured DI graph
     /// silently revert to the time-only deletion that caused #3569, undetected until it destroyed
