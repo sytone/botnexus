@@ -20,6 +20,9 @@
 10. [REST API Endpoints](#rest-api-endpoints)
 11. [Migration from HeartbeatService](#migration-from-heartbeatservice)
 11a. [Failure Alerts](#11a-failure-alerts-2557)
+11b. [Zero-Tool-Call Runs](#11b-zero-tool-call-runs-2985)
+11c. [Delivery Failure](#11c-delivery-failure-delivery_failed)
+11d. [Operator Abort](#11d-operator-abort-aborted)
 12. [Observability](#observability)
 13. [Examples](#examples)
 
@@ -1254,7 +1257,7 @@ Two conditions must both hold, and each guards a distinct way of getting this wr
 
 A run that invokes one or more tools continues to record `ok` exactly as before.
 
-## 11b. Delivery failure (`delivery_failed`)
+## 11c. Delivery failure (`delivery_failed`)
 
 A cron run has two halves: the action does the work, and that work is **delivered** to the job's
 destination conversation. Before #3161 only the first half decided the run status, so a run whose
@@ -1311,7 +1314,7 @@ The run's *status* is left exactly as it was decided. Only the error text grows.
 double failure -- the run failed **and** nobody could be told -- discoverable from run history
 instead of existing only as one log line that nothing queries and no operator reads.
 
-## 11c. Operator abort (`aborted`)
+## 11d. Operator abort (`aborted`)
 
 Deleting or disabling a cron job used to do nothing at all to a run that was **already executing**
 (#3160). `DeleteJobAsync` removed the row and returned; the in-flight action kept burning a model

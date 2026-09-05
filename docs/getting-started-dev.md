@@ -108,13 +108,10 @@ Use `dev-loop.ps1` for the edit → build → test → run cycle:
 ### Running tests
 
 ```powershell
-# Full test suite (required before committing)
+# Authoritative remote validation (required for code changes)
 scripts/repo/Validate-PreCommit.ps1
 
-# Specific test project
-dotnet test tests\gateway\BotNexus.Gateway.Tests
-
-# Specific test by name
+# Direct remote runner for a named worktree
 scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>
 ```
 

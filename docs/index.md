@@ -4,7 +4,7 @@ layout: home
 hero:
   name: BotNexus
   text: Run AI agents at scale.
-  tagline: A modular, extensible platform for multi-agent AI orchestration built in C#/.NET. Deploy agents across Discord, Slack, REST APIs, and more — powered by Copilot, OpenAI, Anthropic, or any LLM provider.
+  tagline: A modular, extensible platform for multi-agent AI orchestration built in C#/.NET. Deploy agents across Telegram, Azure Service Bus, SignalR, REST APIs, and more — powered by Copilot, OpenAI, Anthropic, or compatible LLM endpoints.
   actions:
     - theme: brand
       text: Get Started
@@ -19,13 +19,13 @@ features:
     details: Run multiple independent agents with separate configs and personalities.
   - icon: 🔌
     title: Multi-Provider LLM Support
-    details: Copilot (26 models), OpenAI, Anthropic, Azure OpenAI, and custom endpoints.
+    details: GitHub Copilot, GitHub Models, OpenAI, Anthropic, Ollama, and OpenAI-compatible endpoints.
   - icon: 🗺️
     title: Model-Aware Routing
     details: Automatic API format detection and request routing per model.
   - icon: 📡
     title: Multi-Channel Integration
-    details: Discord, Slack, Telegram, REST API, and SignalR streaming.
+    details: Telegram, Azure Service Bus, Agent 365, Matrix, REST API, and SignalR streaming.
   - icon: 🧩
     title: Extensible Architecture
     details: Dynamic assembly loading with folder-based plugin system.
