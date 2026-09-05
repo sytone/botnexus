@@ -24,6 +24,23 @@ Skills are discovered from, in increasing order of precedence:
 
 When the same skill name appears at more than one level, the higher-numbered one wins.
 
+### Knowing which root a skill came from
+
+Because there is more than one root, a skill directory cannot be guessed from the skill name.
+The `skills` tool `load` output therefore states both the resolved directory and the tier it
+came from:
+
+```
+## Skill: botnexus-maintenance
+**Path:** ~/.botnexus/agents/farnsworth/workspace/skills/botnexus-maintenance
+**Resolved from:** Workspace skill root
+```
+
+Always build script and support-file paths from that reported directory. Hard-coding the shared
+`~/.botnexus/skills/<skill-name>/` root works only for skills that happen to live there, and
+fails for an agent-local skill with a "not recognized as the name of a script file" error that
+names the wrong problem.
+
 ### Plugin skills
 
 A plugin bundles skills alongside its other components and ships them as one unit. Its skills

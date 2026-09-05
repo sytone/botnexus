@@ -28,12 +28,19 @@ public sealed class ConfigurationReadPathFenceTests : ArchitectureTest
     /// provider implementations that make up the pipeline.
     /// </summary>
     /// <remarks>
-    /// The last two entries are genuine exemptions rather than pipeline components, and the reason
-    /// is worth stating because it bounds how far this refactor can go. Both take an injected
-    /// <c>IFileSystem</c>, and the framework's file configuration provider is backed by a PHYSICAL
-    /// file provider - it cannot read an injected abstraction. Routing them through the pipeline
-    /// would silently read the real disk while the caller supplied a mock, producing configuration
-    /// that matches neither. A hand-load through the injected filesystem is the honest option.
+    /// <para>
+    /// The list once carried two further entries - <c>SubAgentCommand.cs</c> and
+    /// <c>SubAgentWorkspaceCheck.cs</c> - on the grounds that an injected <c>IFileSystem</c> cannot
+    /// be served by the framework's PHYSICAL file provider. That reasoning was sound about the file
+    /// provider and wrong about the conclusion: the framework also accepts a STREAM
+    /// (<c>AddJsonStream</c>), which an injected filesystem can supply. #3824 removed both
+    /// exemptions and routed them through <c>IPlatformConfigAccessor</c>, which is why nothing
+    /// outside the pipeline appears here any more.
+    /// </para>
+    /// <para>
+    /// Adding an entry back is therefore a deliberate act, not a convenience: an exempted file is a
+    /// file that cannot see the SQLite config store.
+    /// </para>
     /// </remarks>
     private static readonly string[] AllowedFiles =
     [
@@ -43,10 +50,6 @@ public sealed class ConfigurationReadPathFenceTests : ArchitectureTest
         "SqliteConfigurationProvider.cs",
         "SqliteConfigurationSource.cs",
         "PlatformConfigAccessor.cs",
-
-        // Injected-IFileSystem exemptions - see the remarks above.
-        "SubAgentCommand.cs",
-        "SubAgentWorkspaceCheck.cs",
     ];
 
     private static readonly Regex DirectLoad =
@@ -84,8 +87,39 @@ public sealed class ConfigurationReadPathFenceTests : ArchitectureTest
             "and SQLite configuration providers - not by loading and binding the file directly.\n" +
             "A direct load cannot see the SQLite store, gets no hot reload, and skips the " +
             "last-known-good protection in ResilientJsonConfigurationSource (#2358).\n" +
-            "Use IOptionsMonitor<PlatformConfig> (gateway) or IPlatformConfigAccessor (CLI).\n" +
+            "Use IOptionsMonitor<PlatformConfig> (gateway) or IPlatformConfigAccessor (CLI) - " +
+            "PlatformConfigAccessor.Shared.Get(configPath) resolves it, and the " +
+            "Get(configPath, IFileSystem) overload covers a call site with an injected filesystem " +
+            "(#3824).\n" +
             "Offending files:\n  " + string.Join("\n  ", offenders));
+    }
+
+    /// <summary>
+    /// The two call sites #3824 migrated must stay migrated. The generic fence above would catch a
+    /// literal reintroduction of <c>PlatformConfigLoader.Load</c>, but this names them and the
+    /// accessor, so the mutation in acceptance criterion 5 fails a test whose message says what to
+    /// do rather than one that merely lists a path.
+    /// </summary>
+    [Theory]
+    [InlineData("SubAgentCommand.cs")]
+    [InlineData("SubAgentWorkspaceCheck.cs")]
+    public void SubAgentConfigReads_GoThroughTheAccessor(string fileName)
+    {
+        var file = ProductionSourceFiles()
+            .SingleOrDefault(f => Path.GetFileName(f).Equals(fileName, StringComparison.OrdinalIgnoreCase));
+
+        file.ShouldNotBeNull($"{fileName} must exist for this fence to mean anything");
+
+        var text = File.ReadAllText(file);
+
+        DirectLoad.IsMatch(text).ShouldBeFalse(
+            $"{fileName} must not call PlatformConfigLoader.Load/LoadAsync: that read cannot see the " +
+            "SQLite config store and yields an all-defaults PlatformConfig when config.json is " +
+            "absent (#3824). Use PlatformConfigAccessor.Shared.Get(configPath, _fileSystem).");
+
+        text.ShouldContain(
+            "PlatformConfigAccessor",
+            customMessage: $"{fileName} must resolve configuration through IPlatformConfigAccessor (#3824).");
     }
 
     /// <summary>

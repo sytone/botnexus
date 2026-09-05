@@ -12,6 +12,10 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<GatewayHubConnection>();
 builder.Services.AddScoped<IClientStateStore, ClientStateStore>();
+// #3212: the route-derived "is this conversation displayed" predicate. ClientStateStore owns it
+// because it owns the single ViewSelection the route writes; resolve the SAME instance rather than
+// constructing a second store, or the predicate would answer from an empty selection.
+builder.Services.AddScoped<IDisplayedConversation>(sp => (ClientStateStore)sp.GetRequiredService<IClientStateStore>());
 builder.Services.AddScoped<IGatewayRestClient, GatewayRestClient>();
 builder.Services.AddScoped<IChannelErrorReporter>(sp => (GatewayRestClient)sp.GetRequiredService<IGatewayRestClient>());
 builder.Services.AddScoped<IGatewayEventHandler, GatewayEventHandler>();

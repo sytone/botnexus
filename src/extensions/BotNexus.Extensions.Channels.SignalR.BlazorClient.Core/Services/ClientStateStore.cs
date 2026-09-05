@@ -4,7 +4,7 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// Scoped in-memory state store for the portal. Single source of truth for all agent,
 /// conversation, and message state. UI components subscribe to <see cref="OnChanged"/> to re-render.
 /// </summary>
-public sealed class ClientStateStore : IClientStateStore
+public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
 {
     private readonly Dictionary<string, AgentState> _agents = new();
     private readonly Dictionary<string, string> _sessionToAgent = new(); // sessionId → agentId
@@ -112,7 +112,13 @@ public sealed class ClientStateStore : IClientStateStore
             agent.ActiveConversationId = conversationId;
             if (agent.Conversations.TryGetValue(conversationId, out var conv))
             {
-                conv.UnreadCount = 0;
+                // #3212: unread clears precisely when the conversation BECOMES DISPLAYED, which is
+                // now true by construction -- _selection was just set to (agentId, conversationId)
+                // above, so the route-derived predicate answers true here. Asserting it through the
+                // predicate rather than by position keeps the store's unread logic and
+                // GatewayEventHandler's unread logic on the one visibility source (AC3).
+                if (IsConversationDisplayed(agentId, conversationId))
+                    conv.UnreadCount = 0;
                 agent.SessionId = conv.ActiveSessionId;
             }
         }
@@ -302,16 +308,23 @@ public sealed class ClientStateStore : IClientStateStore
             ClearSteeringQueue(leaving);
         }
 
-        if (agent.Conversations.TryGetValue(conversationId, out var conv))
-        {
-            conv.UnreadCount = 0;
-            agent.SessionId = conv.ActiveSessionId;
-        }
-
         // Keep the single view-selection value's conversation projection in step when this is the
         // active agent, so ActiveConversationId (derived) and the stored selection never disagree.
+        // #3212: this MUST happen before the unread clear below, because the unread clear now asks
+        // the route-derived predicate whether the conversation is displayed, and the predicate reads
+        // _selection.
         if (string.Equals(_selection.AgentId, agentId, StringComparison.Ordinal))
             _selection = _selection with { ConversationId = conversationId };
+
+        if (agent.Conversations.TryGetValue(conversationId, out var conv))
+        {
+            // #3212: single visibility source. Selecting a conversation on an agent whose pane is
+            // NOT the displayed one no longer silently zeroes its unread badge -- the user has not
+            // seen those messages, so the badge survives until the conversation is actually shown.
+            if (IsConversationDisplayed(agentId, conversationId))
+                conv.UnreadCount = 0;
+            agent.SessionId = conv.ActiveSessionId;
+        }
 
         NotifyChanged();
     }
@@ -320,6 +333,38 @@ public sealed class ClientStateStore : IClientStateStore
     public string? ActiveConversationId =>
         ActiveAgentId is not null && _agents.TryGetValue(ActiveAgentId, out var a)
             ? a.ActiveConversationId
+            : null;
+
+    // ── #3212: route-derived visibility (IDisplayedConversation) ─────────────
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Answered from the single <see cref="ViewSelection"/> this store holds, which is exactly the
+    /// value the route application path writes through <see cref="SelectView"/> with
+    /// <see cref="SelectionSource.RouteNavigation"/>. It deliberately does NOT consult
+    /// <see cref="AgentState.ActiveConversationId"/>: that is a per-agent last-selected marker, so
+    /// every agent has one simultaneously while the browser renders exactly one pane. Requiring the
+    /// AGENT to match as well as the conversation is what makes this a real visibility answer rather
+    /// than a "was this ever selected" answer.
+    /// </remarks>
+    public bool IsConversationDisplayed(string? agentId, string? conversationId)
+    {
+        if (string.IsNullOrWhiteSpace(agentId) || string.IsNullOrWhiteSpace(conversationId))
+            return false;
+
+        return string.Equals(_selection.AgentId, agentId, StringComparison.Ordinal)
+            && string.Equals(_selection.ConversationId, conversationId, StringComparison.Ordinal);
+    }
+
+    /// <inheritdoc />
+    public bool IsAgentDisplayed(string? agentId) =>
+        !string.IsNullOrWhiteSpace(agentId)
+        && string.Equals(_selection.AgentId, agentId, StringComparison.Ordinal);
+
+    /// <inheritdoc />
+    public string? DisplayedConversationIdFor(string? agentId) =>
+        IsAgentDisplayed(agentId) && _selection.ConversationId is { Length: > 0 } conversationId
+            ? conversationId
             : null;
 
     // ── Message operations ───────────────────────────────────────────────────

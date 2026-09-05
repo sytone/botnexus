@@ -1,7 +1,6 @@
 using System.CommandLine;
 using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
-using BotNexus.Gateway.Configuration.Store;
 using Microsoft.Data.Sqlite;
 using Spectre.Console;
 using BotNexus.Cli.Services;
@@ -108,50 +107,14 @@ internal sealed class SubAgentCommand
         {
             var configPath = _fileSystem.Path.Combine(CliPaths.ResolveTarget(target), "config.json");
 
-            // #3823: prefer the store when it exists, since it wins on read for the gateway; the
-            // file read below stays as the fallback so an injected IFileSystem still drives tests.
-            var fromStore = TryReadWorkspaceRootFromStore(configPath);
-            if (fromStore is not null)
-                return fromStore;
-
-            if (!_fileSystem.File.Exists(configPath))
-                return null;
-
-            // Reads through the injected IFileSystem, NOT the provider pipeline (#3504). The framework's
-        // file provider is backed by the physical filesystem and cannot serve an injected
-        // abstraction, so routing this through IOptions would silently read the real disk while the
-        // caller supplied a mock. Exempted in ConfigurationReadPathFenceTests with this reason.
-        var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
+            // Resolved through IPlatformConfigAccessor (#3824), so this sees the same effective
+            // configuration as the gateway - JSON plus the SQLite store, store winning. It used to
+            // call PlatformConfigLoader.Load, which could not see the store and returned an
+            // all-defaults PlatformConfig when config.json was absent. The absence check is gone
+            // deliberately: under #3823 a missing file is the normal case and the store is the only
+            // source, so returning early on it is exactly the bug.
+            var config = PlatformConfigAccessor.Shared.Get(configPath, _fileSystem);
             return config.Gateway?.SubAgents?.WorkspaceRoot;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Reads <c>gateway.subAgents.workspaceRoot</c> from the SQLite config store when one exists.
-    /// Best-effort: any failure returns null and the caller falls back to the file.
-    /// </summary>
-    private string? TryReadWorkspaceRootFromStore(string configPath)
-    {
-        try
-        {
-            var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, _fileSystem);
-            if (!_fileSystem.File.Exists(storePath))
-                return null;
-
-            var store = new SqliteConfigStore($"Data Source={storePath}");
-            var entries = store.ReadEntriesAsync().GetAwaiter().GetResult();
-
-            if (!entries.TryGetValue("gateway.subAgents.workspaceRoot", out var entry))
-                return null;
-            if (entry.State != ConfigValueState.Value || entry.Value is null)
-                return null;
-
-            var text = entry.Value.Trim('"');
-            return string.IsNullOrWhiteSpace(text) ? null : text;
         }
         catch
         {
