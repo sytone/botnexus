@@ -141,6 +141,12 @@ Uses `ConcurrentDictionary<string, GatewaySession>` for O(1) lookups. Non-durabl
 
 See [InMemorySessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/InMemorySessionStore.cs)
 
+## FileSessionStore
+
+The file-backed implementation stores history as JSONL plus a small metadata sidecar. Ordinary saves append only the unpersisted history tail to the JSONL file, so adding one turn does not serialize and recreate the existing transcript. Explicit destructive history mutations, such as compaction projection or sentinel removal, rewrite the JSONL file from the reconciled in-memory history because a line-oriented file has no stable row-update primitive. Whole-session deletion and archival remain explicit lifecycle operations.
+
+See [FileSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/FileSessionStore.cs)
+
 ## SqliteSessionStore
 
 **Characteristics:**
@@ -187,7 +193,7 @@ CREATE INDEX idx_sessions_session_type ON sessions(session_type);
 CREATE INDEX idx_sessions_created_at ON sessions(created_at);
 ```
 
-**Key behaviors:** Parameterized queries throughout, `INSERT OR REPLACE` for upserts, JSON serialization for complex fields (`participants_json`, `metadata`). Session history stored in the separate `session_history` table. Lazy schema initialization via `EnsureCreatedAsync`, and ISO 8601 date formatting.
+**Key behaviors:** Parameterized queries throughout, conflict-targeted upserts for the session row, JSON serialization for complex fields (`participants_json`, `metadata`), lazy schema initialization via `EnsureCreatedAsync`, and ISO 8601 date formatting. Session history lives in the separate `session_history` table and is append-oriented: an ordinary aggregate save inserts only the unpersisted tail. Explicit destructive mutations such as compaction projection or crash-sentinel cleanup reconcile rows by their durable `session_history.id`, preserving unchanged row identities and deleting only rows that were explicitly removed. Whole-session history deletion is reserved for deleting the session itself or repairing a dangling session whose owning conversation no longer exists.
 
 ### History entry flags
 

@@ -30,6 +30,26 @@ public static class SessionJsonl
         }
     }
 
+    public static async Task AppendAsync<TEntry>(
+        IFileSystem fileSystem,
+        string path,
+        IEnumerable<TEntry> entries,
+        JsonSerializerOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+            fileSystem.Directory.CreateDirectory(directory);
+
+        await using var stream = fileSystem.FileStream.New(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+        foreach (var entry in entries)
+        {
+            var json = JsonSerializer.Serialize(entry, options);
+            await writer.WriteLineAsync(json).ConfigureAwait(false);
+        }
+    }
+
     public static async Task<IReadOnlyList<TEntry>> ReadAllAsync<TEntry>(
         IFileSystem fileSystem,
         string path,

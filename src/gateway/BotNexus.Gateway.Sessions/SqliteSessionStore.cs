@@ -117,6 +117,12 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     private readonly ILogger<SqliteSessionStore> _logger;
     private readonly ISecretRedactor? _redactor;
 
+    // Deterministic test seam for #3907. It observes the immutable work item after capture and
+    // may gate the write to force a concurrent mutation; production leaves it null.
+    internal Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? BeforeHistoryWriteAsync { get; set; }
+    internal int LastHistoryRowsMutated { get; private set; }
+    internal bool LastHistoryWriteReconciled { get; private set; }
+
     /// <summary>
     /// Initialises a new <see cref="SqliteSessionStore"/>.
     /// </summary>
@@ -214,13 +220,20 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         try
         {
             _cache.Set(session.SessionId, session);
-            await RetryOnTransientAsync(async () =>
+            var history = session.CaptureHistoryForPersistence();
+            if (BeforeHistoryWriteAsync is { } beforeHistoryWrite)
+                await beforeHistoryWrite(history, cancellationToken).ConfigureAwait(false);
+
+            var persistence = await RetryOnTransientAsync(async () =>
             {
                 await using var connection = CreateConnection();
                 await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
                 await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
-                await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
+                return await PersistHistoryAsync(connection, session.SessionId, history, cancellationToken).ConfigureAwait(false);
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
+            session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
+            LastHistoryRowsMutated = persistence.MutatedRowCount;
+            LastHistoryWriteReconciled = history.RequiresReplacement;
         }
         finally { sessionLock.Dispose(); }
     }
@@ -272,8 +285,15 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                     return false;
                 }
 
+                var history = session.CaptureHistoryForPersistence();
+                if (BeforeHistoryWriteAsync is { } beforeHistoryWrite)
+                    await beforeHistoryWrite(history, cancellationToken).ConfigureAwait(false);
+
                 await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
-                await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
+                var persistence = await PersistHistoryAsync(connection, session.SessionId, history, cancellationToken).ConfigureAwait(false);
+                session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
+                LastHistoryRowsMutated = persistence.MutatedRowCount;
+                LastHistoryWriteReconciled = history.RequiresReplacement;
                 return true;
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -341,8 +361,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     /// <remarks>
     /// Issue #2132. Inserts <b>only</b> the new history rows: the existing <c>session_history</c>
     /// rows and the <c>metadata</c>/<c>status</c> columns of the <c>sessions</c> row are left exactly
-    /// as they stand, so this can never replace the complete history from a stale snapshot the way
-    /// <see cref="SaveAsync(GatewaySession, CancellationToken)"/> does. The status probe and the
+    /// as they stand. Unlike aggregate save, this operation also cannot update lifecycle fields or
+    /// reconcile an explicit destructive history mutation. The status probe and the
     /// inserts run under a single striped session lock, so a competing seal cannot slip between the
     /// conflict check and the write.
     /// </remarks>
@@ -579,11 +599,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
 
         // #2903: fence the run BEFORE the per-session lock. The lock only serialises store writes;
-        // it does nothing to stop an agent turn that is still appending to this session, and the
-        // ReplaceHistoryAsync below is a destructive full-history rewrite from the snapshot loaded
-        // here - so a turn that lands after the load is silently erased. Draining outside the lock
-        // is deliberate: the run being drained needs the lock to persist its final turn, so
-        // waiting while holding it would deadlock the drain against its own subject.
+        // it does nothing to stop an agent turn that is still appending to this session. Draining
+        // outside the lock is required so the final turn reaches durable storage before sealing;
+        // waiting while holding the lock would deadlock the drain against its own subject.
         // A drain that times out throws and nothing is written at all.
         await DrainActiveRunForArchiveAsync(sessionId, cancellationToken).ConfigureAwait(false);
 
@@ -601,7 +619,6 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 await using var connection = CreateConnection();
                 await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
                 await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
-                await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
@@ -1063,7 +1080,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                     is_crash_sentinel INTEGER NOT NULL DEFAULT 0,
                     is_history INTEGER NOT NULL DEFAULT 0,
                     trigger_type TEXT,
-                    message_kind TEXT
+                    message_kind TEXT,
+                    persistence_key TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS sub_agent_sessions (
@@ -1307,7 +1325,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                      // #2840: optional origin attribution for an entry ("api:cron:pr-doctor"), so a
                      // message posted by a script is distinguishable from a human turn in history.
                      // Idempotent ALTER; a missing/NULL value reads back as null (no attribution).
-                     ("sender_id", "TEXT")
+                     ("sender_id", "TEXT"),
+                     // #3907: makes append retries idempotent even when a prior commit succeeded but
+                     // the caller observed a transient I/O error before receiving RETURNING id.
+                     ("persistence_key", "TEXT")
                  })
         {
             try
@@ -1317,6 +1338,12 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (SqliteException) { /* column already exists */ }
+        }
+
+        await using (var persistenceKeyIndex = connection.CreateCommand())
+        {
+            persistenceKeyIndex.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS idx_session_history_persistence_key ON session_history(session_id, persistence_key) WHERE persistence_key IS NOT NULL";
+            await persistenceKeyIndex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
         foreach (var migration in new[]
@@ -1726,7 +1753,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner
+            SELECT id, persistence_key, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -1747,10 +1774,18 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         // pre-Phase-3a databases may contain multiple IsCompactionSummary rows all with
         // IsHistory=false because the old code applied a load-time slice to hide them;
         // collapse those forward so only the latest summary is LLM-visible after migration.
+        var persistedEntries = entries;
         entries = SessionCompaction.ApplyLegacyHistoryProjection(entries);
 
-        if (entries.Count > 0)
-            session.AddEntries(entries);
+        if (persistedEntries.Count > 0)
+            session.AddEntries(persistedEntries);
+        session.MarkCurrentHistoryPersisted();
+
+        // The legacy projection changes persisted flags. Model that migration as an explicit
+        // destructive replacement so the next aggregate save reconciles it rather than appending
+        // a duplicate full transcript.
+        if (!persistedEntries.SequenceEqual(entries))
+            session.ReplaceHistory(entries);
 
         // #1627: re-stamp the persisted UpdatedAt after AddEntries so adding history rows
         // does not bump it past the value loaded from the sessions row. SessionRow surfaces the
@@ -1813,29 +1848,141 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task ReplaceHistoryAsync(SqliteConnection connection, GatewaySession session, CancellationToken cancellationToken)
+    private static Task<HistoryPersistenceResult> PersistHistoryAsync(
+        SqliteConnection connection,
+        SessionId sessionId,
+        SessionHistoryPersistenceSnapshot snapshot,
+        CancellationToken cancellationToken)
+        => snapshot.RequiresReplacement
+            ? ReconcileHistoryAsync(connection, sessionId, snapshot, cancellationToken)
+            : InsertHistoryAsync(connection, sessionId, snapshot.Entries, cancellationToken);
+
+    private static async Task<HistoryPersistenceResult> ReconcileHistoryAsync(
+        SqliteConnection connection,
+        SessionId sessionId,
+        SessionHistoryPersistenceSnapshot snapshot,
+        CancellationToken cancellationToken)
     {
         await using var dbTransaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var transaction = (SqliteTransaction)dbTransaction;
 
-        await using var deleteCommand = connection.CreateCommand();
-        deleteCommand.Transaction = transaction;
-        deleteCommand.CommandText = "DELETE FROM session_history WHERE session_id = $sessionId";
-        deleteCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
-        await deleteCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        var entries = snapshot.Entries;
+        var currentPersistedIds = new HashSet<long>();
+        await using (var selectCommand = connection.CreateCommand())
+        {
+            selectCommand.Transaction = transaction;
+            selectCommand.CommandText = "SELECT id FROM session_history WHERE session_id = $sessionId";
+            selectCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
+            await using var reader = await selectCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                currentPersistedIds.Add(reader.GetInt64(0));
+        }
 
-        await WriteHistoryRowsAsync(connection, transaction, session.SessionId, session.GetHistorySnapshot(), cancellationToken)
-            .ConfigureAwait(false);
+        var deletedCount = 0;
+        foreach (var removedId in snapshot.RemovedPersistedIds.Where(currentPersistedIds.Contains))
+        {
+            await using var deleteCommand = connection.CreateCommand();
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM session_history WHERE id = $id AND session_id = $sessionId";
+            deleteCommand.Parameters.AddWithValue("$id", removedId);
+            deleteCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
+            deletedCount += await deleteCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var updatedCount = 0;
+        foreach (var entry in entries.Where(entry => entry.PersistenceId is { } id && currentPersistedIds.Contains(id)))
+            updatedCount += await UpdateHistoryRowAsync(connection, transaction, sessionId, entry, cancellationToken).ConfigureAwait(false);
+
+        // A positive id may have been deleted by an earlier destructive snapshot whose
+        // acknowledgement lost a race. Treat such a stale identity as a new row and return an
+        // old->new mapping; this makes a following reconciliation converge instead of losing it.
+        var insertedRowIds = await WriteHistoryRowsAsync(
+            connection,
+            transaction,
+            sessionId,
+            entries.Where(entry => entry.PersistenceId is { } id && !currentPersistedIds.Contains(id)).ToArray(),
+            cancellationToken).ConfigureAwait(false);
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new HistoryPersistenceResult(insertedRowIds, deletedCount + updatedCount + insertedRowIds.Count);
+    }
+
+    private static async Task<int> UpdateHistoryRowAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        SessionId sessionId,
+        SessionEntry entry,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE session_history SET
+                role = $role,
+                content = $content,
+                timestamp = $timestamp,
+                tool_name = $toolName,
+                tool_call_id = $toolCallId,
+                is_compaction_summary = $isCompactionSummary,
+                tool_args = $toolArgs,
+                tool_is_error = $toolIsError,
+                is_crash_sentinel = $isCrashSentinel,
+                is_history = $isHistory,
+                trigger_type = $triggerType,
+                thinking_content = $thinkingContent,
+                message_kind = $messageKind,
+                sender_id = $senderId,
+                is_replay_banner = $isReplayBanner,
+                persistence_key = $persistenceKey
+            WHERE id = $id AND session_id = $sessionId
+              AND (
+                  role IS NOT $role OR
+                  content IS NOT $content OR
+                  timestamp IS NOT $timestamp OR
+                  tool_name IS NOT $toolName OR
+                  tool_call_id IS NOT $toolCallId OR
+                  is_compaction_summary IS NOT $isCompactionSummary OR
+                  tool_args IS NOT $toolArgs OR
+                  tool_is_error IS NOT $toolIsError OR
+                  is_crash_sentinel IS NOT $isCrashSentinel OR
+                  is_history IS NOT $isHistory OR
+                  trigger_type IS NOT $triggerType OR
+                  thinking_content IS NOT $thinkingContent OR
+                  message_kind IS NOT $messageKind OR
+                  sender_id IS NOT $senderId OR
+                  is_replay_banner IS NOT $isReplayBanner OR
+                  persistence_key IS NOT $persistenceKey
+              )
+            """;
+        command.Parameters.AddWithValue("$id", entry.PersistenceId!.Value);
+        command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        command.Parameters.AddWithValue("$role", entry.Role.Value);
+        command.Parameters.AddWithValue("$content", entry.Content);
+        command.Parameters.AddWithValue("$timestamp", entry.Timestamp.ToString("O"));
+        command.Parameters.AddWithValue("$toolName", (object?)entry.ToolName ?? DBNull.Value);
+        command.Parameters.AddWithValue("$toolCallId", (object?)entry.ToolCallId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$isCompactionSummary", entry.IsCompactionSummary ? 1 : 0);
+        command.Parameters.AddWithValue("$toolArgs", (object?)entry.ToolArgs ?? DBNull.Value);
+        command.Parameters.AddWithValue("$toolIsError", entry.ToolIsError ? 1 : 0);
+        command.Parameters.AddWithValue("$isCrashSentinel", entry.IsCrashSentinel ? 1 : 0);
+        command.Parameters.AddWithValue("$isHistory", entry.IsHistory ? 1 : 0);
+        command.Parameters.AddWithValue("$triggerType", (object?)entry.Trigger?.Value ?? DBNull.Value);
+        command.Parameters.AddWithValue("$thinkingContent", (object?)entry.ThinkingContent ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "$messageKind",
+            entry.Kind is { } kind && !kind.Equals(MessageKind.Message) ? kind.Value : (object)DBNull.Value);
+        command.Parameters.AddWithValue("$senderId", (object?)entry.SenderId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$isReplayBanner", entry.IsReplayBanner ? 1 : 0);
+        command.Parameters.AddWithValue("$persistenceKey", (object?)entry.PersistenceKey ?? DBNull.Value);
+        return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Appends history rows for a session <b>without</b> deleting the existing ones (issue #2132).
-    /// This is the additive counterpart to <see cref="ReplaceHistoryAsync"/>; both share
-    /// <see cref="WriteHistoryRowsAsync"/> so the 14-column INSERT shape has exactly one definition.
+    /// Aggregate append and targeted reconciliation share <see cref="WriteHistoryRowsAsync"/> so
+    /// the 16-column INSERT shape has exactly one definition.
     /// </summary>
-    private static async Task InsertHistoryAsync(
+    private static async Task<HistoryPersistenceResult> InsertHistoryAsync(
         SqliteConnection connection,
         SessionId sessionId,
         IReadOnlyList<SessionEntry> entries,
@@ -1844,12 +1991,17 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         await using var dbTransaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var transaction = (SqliteTransaction)dbTransaction;
 
-        await WriteHistoryRowsAsync(connection, transaction, sessionId, entries, cancellationToken).ConfigureAwait(false);
+        var insertedRowIds = await WriteHistoryRowsAsync(connection, transaction, sessionId, entries, cancellationToken).ConfigureAwait(false);
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new HistoryPersistenceResult(insertedRowIds, insertedRowIds.Count);
     }
 
-    private static async Task WriteHistoryRowsAsync(
+    private sealed record HistoryPersistenceResult(
+        IReadOnlyDictionary<long, long> InsertedRowIds,
+        int MutatedRowCount);
+
+    private static async Task<IReadOnlyDictionary<long, long>> WriteHistoryRowsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         SessionId sessionId,
@@ -1857,15 +2009,17 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         CancellationToken cancellationToken)
     {
         // #1628: prepare the INSERT command + its parameters ONCE instead of recreating a
-        // fresh SqliteCommand and re-adding all 13 parameters per row. Behaviour is identical
+        // fresh SqliteCommand and re-adding every parameter per row. Behaviour is identical
         // (same SQL, same parameter values, same order, same transaction + commit); only the
         // per-row .Value is reset inside the loop. $sessionId is constant for the whole call,
         // so it is bound once before the loop.
         await using var insertCommand = connection.CreateCommand();
         insertCommand.Transaction = transaction;
         insertCommand.CommandText = """
-            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner)
-            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind, $senderId, $isReplayBanner)
+            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner, persistence_key)
+            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind, $senderId, $isReplayBanner, $persistenceKey)
+            ON CONFLICT(session_id, persistence_key) WHERE persistence_key IS NOT NULL DO UPDATE SET persistence_key = excluded.persistence_key
+            RETURNING id
             """;
         insertCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
         var pRole = insertCommand.Parameters.AddWithValue("$role", string.Empty);
@@ -1888,9 +2042,12 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         var pSenderId = insertCommand.Parameters.AddWithValue("$senderId", DBNull.Value);
         // #3046: gateway-authored restart-replay banner marker; 0 for every ordinary entry.
         var pIsReplayBanner = insertCommand.Parameters.AddWithValue("$isReplayBanner", 0);
+        var pPersistenceKey = insertCommand.Parameters.AddWithValue("$persistenceKey", DBNull.Value);
 
+        var insertedRowIds = new Dictionary<long, long>();
         foreach (var entry in entries)
         {
+            entry.PersistenceKey ??= Guid.NewGuid().ToString("N");
             pRole.Value = entry.Role.Value;
             pContent.Value = entry.Content;
             pTimestamp.Value = entry.Timestamp.ToString("O");
@@ -1909,8 +2066,14 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 : (object)DBNull.Value;
             pSenderId.Value = (object?)entry.SenderId ?? DBNull.Value;
             pIsReplayBanner.Value = entry.IsReplayBanner ? 1 : 0;
-            await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            pPersistenceKey.Value = (object?)entry.PersistenceKey ?? DBNull.Value;
+            var insertedId = (long)(await insertCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("SQLite did not return an id for the inserted session history row."));
+            if (entry.PersistenceId is { } priorId)
+                insertedRowIds.Add(priorId, insertedId);
         }
+
+        return insertedRowIds;
     }
 
     private SqliteConnection CreateConnection()
