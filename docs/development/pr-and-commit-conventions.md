@@ -116,6 +116,54 @@ Rules that matter more than the headings:
    fresh `origin/main` rather than pushing.
 5. **Edit agent output before requesting review.** Agents are verbose. Cut anything the diff says better.
 
+## Stacked pull requests
+
+Use an ordinary `main`-based PR by default. A native GitHub stack is appropriate only when a plan
+contains at least two changes that are both:
+
+1. **dependent** — the upper change cannot be implemented or validated sensibly without the lower one; and
+2. **independently reviewable** — each layer has one coherent purpose, its own acceptance evidence, and can
+   merge without requiring the upper layers.
+
+Do not stack unrelated fixes, parallel alternatives, or changes that merely happen to share a delivery
+window. They remain independent worktrees and `main`-based PRs.
+
+### Client preflight
+
+GitHub stacked PRs require GitHub CLI 2.90.0 or later and the official extension:
+
+```powershell
+gh --version
+gh extension install github/gh-stack   # once
+gh stack --version
+```
+
+If either requirement is absent, stop with an actionable prerequisite error. Do not emulate cascading
+rebases and PR retargeting with ad-hoc scripts.
+
+### Layer contract
+
+- Design the stack bottom-up: foundational contracts first, then their consumers.
+- The bottom PR targets `main`; every upper PR targets the branch immediately below it.
+- Every layer has its own issue, or uses the sanctioned partial-work form so no umbrella issue closes early.
+- Run the normal compile, remote-validation, PR-title/body, issue-link, UI-evidence, and scope gates for
+  **each layer**. Layer scope is the diff against its immediate parent; whole-stack safety is still checked
+  against `origin/main`.
+- Prepare and validate each layer with the sanctioned PR helper before linking/submitting the stack. The
+  stack client manages topology; it does not replace BotNexus policy checks.
+- Use `gh stack init` / `add` to establish topology, `gh stack rebase` for cascading rebases, and
+  `gh stack push` or `submit` only after every affected layer has current validation evidence.
+- Merge bottom-up. If a lower layer changes, rebase and revalidate every affected upper layer; prior review
+  and validation evidence may no longer describe the displayed diff.
+- A whole-stack merge carries the same authorization requirement as merging its individual PRs. Do not use
+  `gh stack merge` to bypass a human merge gate.
+- Keep worktrees and branches until GitHub confirms every included PR merged or the stack was deliberately
+  dissolved. Clean them through the hardened worktree-removal helper.
+
+GitHub's stack map, branch-protection propagation, CI coverage, and automatic retargeting remove manual
+branch choreography. They do not make a dependent layer independent, nor do they turn one issue into
+several honestly closable units by themselves.
+
 ## Closing an issue: the clause-by-clause rule
 
 `Closes #N` is a claim that **every** clause of issue N is satisfied. It is not a claim that a PR

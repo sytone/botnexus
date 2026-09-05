@@ -167,7 +167,10 @@ Before every `git push` on a PR branch:
 
 - `../botnexus-wt-N` — dedicated worktree per issue/PR (N = GitHub issue number)
 - Branch naming: `<type>/<issue-number>-<short-slug>` (e.g. `fix/64-history-first-load`, `feat/128-gateway-plugins`)
-- PRs always target `main`; never branch off a feature branch
+- Ordinary PRs target `main` and never branch from another feature branch.
+- **Stacked PR exception:** use GitHub native stacked PRs only when a plan has at least two dependent, independently reviewable layers. The bottom layer targets `main`; each upper layer targets the branch immediately below it. Unrelated or independently mergeable issues remain separate `main`-based PRs.
+- Every stack layer keeps its own issue or explicit partial-work reason, worktree, validation evidence, title/body checks, and merge authorization. Merge bottom-up. A lower-layer change requires affected upper layers to be rebased and revalidated.
+- Use GitHub CLI 2.90.0+ with the official `github/gh-stack` extension for stack topology and cascading rebases. Do not hand-maintain PR bases when `gh stack` can do so.
 - `~/projects/botnexus` — always on `main`, clean and synced to `origin/main`
 
 ### PR Titles
