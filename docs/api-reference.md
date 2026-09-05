@@ -3432,11 +3432,11 @@ If `maxTokens` or `temperature` are not specified (null), the provider uses its 
 
 ---
 
-## Configuration Files & Backups
+## Configuration & Backups
 
-### Config Structure
+### Configuration shape
 
-Configuration is stored in `~/.botnexus/config.json`:
+Use `botnexus config get`, `botnexus config set`, and the purpose-built provider and agent commands to manage platform settings. These commands work with both JSON-backed and SQLite-backed homes. The following JSON documents the configuration shape used by the API and by legacy JSON-backed installations:
 
 ```json
 {

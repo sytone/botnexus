@@ -746,20 +746,27 @@ void InstallCrashObservability(WebApplication application)
             new System.IO.Abstractions.FileSystem(),
             dataDirectory);
         var previousRun = marker.DetectPreviousRun();
-        if (!previousRun.WasClean)
+        // Clause 3 of #3680: with no stamp of any kind there is nothing useful to say about when
+        // the gateway was last alive, so the builder omits the timestamp clause entirely rather
+        // than printing a placeholder that reads like a transient lookup failure.
+        var uncleanWarning = BotNexus.Gateway.Diagnostics.CleanShutdownMarker.BuildUncleanWarning(previousRun);
+        if (uncleanWarning is not null)
         {
-            var lastKnown = previousRun.LastKnownUtc?.ToString("o") ?? "unknown";
-            application.Logger.LogWarning(
-                "previous gateway run terminated uncleanly (last-known clean-shutdown timestamp: {LastKnownTimestamp})",
-                lastKnown);
+            application.Logger.LogWarning("{UncleanTerminationWarning}", uncleanWarning);
         }
+
+        // MarkRunning clears the shutdown marker AND seeds the liveness stamp for this run; the
+        // timer then refreshes it so a hard kill leaves a recent last-alive instant behind.
         marker.MarkRunning();
+        var livenessRefresh = marker.StartLivenessRefresh();
 
         // 3. On graceful shutdown, write the clean-shutdown marker so the next boot knows this run
         //    ended cleanly and does NOT emit the unclean-termination warning.
         var lifetime = application.Services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>();
         lifetime?.ApplicationStopped.Register(() =>
         {
+            try { livenessRefresh.Dispose(); }
+            catch { /* best effort - stopping the refresh timer must never block shutdown */ }
             try { marker.MarkCleanShutdown(); }
             catch { /* best effort - a missed marker only risks a false unclean warning */ }
         });
