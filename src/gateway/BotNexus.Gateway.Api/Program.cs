@@ -476,28 +476,30 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
             if (!providerConfig.Enabled)
                 continue;
 
-            var apiName = string.IsNullOrWhiteSpace(providerConfig.Api)
+            var apiName = string.IsNullOrWhiteSpace(providerConfig.ResolveChatApi())
                 ? "openai-completions"
-                : providerConfig.Api!;
+                : providerConfig.ResolveChatApi()!;
             // For openai-completions a BaseUrl is required (the HTTP endpoint). For other
             // apis (e.g. integration-mock) BaseUrl is provider-specific (catalog file path,
             // possibly empty) — skip the BaseUrl gate.
             if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
                 continue;
 
-            if (providerConfig.Models is { Count: > 0 })
+            if (providerConfig.ResolveChatModels() is { Count: > 0 } chatModels)
             {
-                foreach (var modelId in providerConfig.Models)
+                foreach (var modelId in chatModels)
                 {
                     // PBI6 (#1707): a dynamic (config-declared) model carries a valid capability set
                     // so the agent + conversation pickers offer only valid thinking/context choices.
                     // Explicit declarations win; anything omitted is inferred from the model family.
+                    // #2854: read through the resolvers so a nested `chat` object wins over the
+                    // deprecated flat twin, per field.
                     var caps = DynamicModelCapabilities.Infer(
                         modelId,
-                        declaredReasoning: providerConfig.Reasoning,
-                        declaredExtraHighThinking: providerConfig.SupportsExtraHighThinking,
-                        declaredExtendedContext: providerConfig.SupportsExtendedContextWindow,
-                        declaredInput: providerConfig.Input);
+                        declaredReasoning: providerConfig.ResolveChatReasoning(),
+                        declaredExtraHighThinking: providerConfig.ResolveChatSupportsExtraHighThinking(),
+                        declaredExtendedContext: providerConfig.ResolveChatSupportsExtendedContextWindow(),
+                        declaredInput: providerConfig.ResolveChatInput());
                     models.Register(providerName, new LlmModel(
                         Id: modelId,
                         Name: modelId,
@@ -507,7 +509,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
                         Reasoning: caps.Reasoning,
                         Input: caps.Input,
                         Cost: new ModelCost(0, 0, 0, 0),
-                        ContextWindow: providerConfig.ContextWindow ?? 128000,
+                        ContextWindow: providerConfig.ResolveChatContextWindow() ?? 128000,
                         MaxTokens: 32000,
                         SupportsExtraHighThinking: caps.SupportsExtraHighThinking,
                         SupportsExtendedContextWindow: caps.SupportsExtendedContextWindow));
@@ -744,20 +746,27 @@ void InstallCrashObservability(WebApplication application)
             new System.IO.Abstractions.FileSystem(),
             dataDirectory);
         var previousRun = marker.DetectPreviousRun();
-        if (!previousRun.WasClean)
+        // Clause 3 of #3680: with no stamp of any kind there is nothing useful to say about when
+        // the gateway was last alive, so the builder omits the timestamp clause entirely rather
+        // than printing a placeholder that reads like a transient lookup failure.
+        var uncleanWarning = BotNexus.Gateway.Diagnostics.CleanShutdownMarker.BuildUncleanWarning(previousRun);
+        if (uncleanWarning is not null)
         {
-            var lastKnown = previousRun.LastKnownUtc?.ToString("o") ?? "unknown";
-            application.Logger.LogWarning(
-                "previous gateway run terminated uncleanly (last-known clean-shutdown timestamp: {LastKnownTimestamp})",
-                lastKnown);
+            application.Logger.LogWarning("{UncleanTerminationWarning}", uncleanWarning);
         }
+
+        // MarkRunning clears the shutdown marker AND seeds the liveness stamp for this run; the
+        // timer then refreshes it so a hard kill leaves a recent last-alive instant behind.
         marker.MarkRunning();
+        var livenessRefresh = marker.StartLivenessRefresh();
 
         // 3. On graceful shutdown, write the clean-shutdown marker so the next boot knows this run
         //    ended cleanly and does NOT emit the unclean-termination warning.
         var lifetime = application.Services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>();
         lifetime?.ApplicationStopped.Register(() =>
         {
+            try { livenessRefresh.Dispose(); }
+            catch { /* best effort - stopping the refresh timer must never block shutdown */ }
             try { marker.MarkCleanShutdown(); }
             catch { /* best effort - a missed marker only risks a false unclean warning */ }
         });

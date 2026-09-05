@@ -1,6 +1,6 @@
 # BotNexus Configuration Guide
 
-BotNexus uses a hierarchical, dictionary-based configuration model with a unified home directory at `~/.botnexus/` (or `BOTNEXUS_HOME`).
+BotNexus uses a hierarchical, dictionary-based configuration model with a unified home directory at `~/.botnexus/` (or `BOTNEXUS_HOME`). Use the `botnexus` CLI to read and change configuration; it applies the same commands whether the active backend is the existing JSON file or the SQLite configuration store.
 
 ## Table of Contents
 
@@ -24,33 +24,41 @@ BotNexus uses a hierarchical, dictionary-based configuration model with a unifie
 
 ### Using the CLI (Recommended)
 
-Instead of editing JSON manually, use the `botnexus` CLI to manage configuration:
+Use the CLI as the stable configuration interface. It reads and writes the active backend, so these commands work for existing JSON-backed homes and SQLite-backed homes without changing the workflow:
 
 ```powershell
-# Initialize home directory
+# Initialize the BotNexus home
 botnexus init
 
 # Set up a provider (interactive wizard)
 botnexus provider setup
 
-# List agents
+# Read and update individual settings by dotted path
+botnexus config get gateway.listenUrl
+botnexus config set gateway.listenUrl http://localhost:8080
+botnexus config set agents.defaults.memory.enabled true
+
+# Create and inspect agents through their purpose-built commands
+botnexus agent add myagent --provider copilot --model gpt-4.1
 botnexus agent list
 
-# Add an agent
-botnexus agent add myagent --provider copilot --model gpt-4.1
-
-# Update a setting
-botnexus config set gateway.listenUrl http://localhost:8080
-
-# Validate
+# Check the selected configuration backend and validate the result
+botnexus config store status
 botnexus validate
 ```
 
-The `botnexus provider setup` wizard walks you through provider selection, authentication (OAuth for Copilot, API key for OpenAI/Anthropic), and default model selection.
+Values are type-checked against the platform configuration model before they are written. Use `true` or `false` for Boolean values and dotted paths such as `agents.myagent.model` for nested settings. Commands which manage a complete resource, such as `provider setup` and `agent add`, should be preferred over assembling that resource property by property.
 
-See [CLI Reference](cli-reference.md) for all available commands.
+The `botnexus provider setup` wizard walks you through provider selection, authentication (OAuth for Copilot, API key for OpenAI/Anthropic), and default model selection. See [CLI Reference](cli-reference.md) for all available commands.
 
-### Manual Configuration (`~/.botnexus/config.json`)
+
+::: warning CLI coverage during JSON retirement
+`botnexus config set` can currently mutate paths represented by the typed platform model. Some extension-owned or legacy raw subtrees documented on this page are not discoverable through that model and therefore cannot yet be authored with `config set`; the CLI refuses those paths rather than writing inert configuration. Those gaps must be closed before the JSON backend is retired. Where a translated command list omits a field shown in the surrounding reference table, use the extension's purpose-built command if one exists; otherwise that field is part of the remaining CLI-surface work, not an invitation to keep editing JSON indefinitely.
+:::
+
+### Legacy manual configuration (`~/.botnexus/config.json`)
+
+Direct JSON editing remains supported during the storage transition, but it is no longer the recommended operator interface. The CLI commands above work with both JSON and SQLite today, avoiding a second migration in scripts and runbooks when JSON-backed configuration is retired.
 
 On first run, BotNexus creates a minimal default config:
 
@@ -115,22 +123,14 @@ from the config root, which is what makes a read-only config mount workable in c
 
 An example of the canonical shape:
 
-```json
-{
-  "version": 1,
-  "providers": {
-    "github-copilot": {
-      "enabled": true,
-      "apiKey": "auth:github-copilot",
-      "defaultModel": "gpt-4o"
-    },
-    "openai": {
-      "enabled": true,
-      "apiKey": "sk-...",
-      "defaultModel": "gpt-4o-mini"
-    }
-  }
-}
+```bash
+botnexus config set version 1
+botnexus config set providers.github-copilot.enabled true
+botnexus config set providers.github-copilot.apiKey auth:github-copilot
+botnexus config set providers.github-copilot.defaultModel gpt-4o
+botnexus config set providers.openai.enabled true
+botnexus config set providers.openai.apiKey sk-...
+botnexus config set providers.openai.defaultModel gpt-4o-mini
 ```
 
 **`ProviderConfig` fields:**
@@ -144,17 +144,97 @@ An example of the canonical shape:
 | `models` | `string[]?` | Allowed model ids. `null` means all registered models; `[]` means none. |
 | `input` | `string[]?` | Explicit input modalities (e.g. `["text","image"]`) for models registered from `models`. `null`/`[]` infers modalities from the model family; an explicit declaration always wins. Previously these models were hardcoded text-only, so a vision-capable local model silently discarded every image (#2485). |
 | `api` | `string?` | Wire-contract identifier. One of `openai-completions` (default), `openai-responses`, `anthropic-messages`, `integration-mock`. Required when the provider speaks a non-OpenAI-completions contract. |
+| `chat` | `object?` | Chat-capability settings (#2854). See [Per-capability provider configuration](#per-capability-provider-configuration). |
+| `embeddings` | `object?` | Embeddings-capability settings (#2854). See [Per-capability provider configuration](#per-capability-provider-configuration). |
+
+### Per-capability provider configuration
+
+**Added in #2854** (part of the providers epic #2500).
+
+Everything model-shaped on `ProviderConfig` used to mean *chat*: `defaultModel`, `models`, `api`,
+`input`, `reasoning`, `contextWindow`. That left a provider serving both chat and embeddings with
+exactly one `defaultModel` slot for two unrelated model ids — an embedding model was not merely
+awkward to express, it was **unrepresentable**.
+
+Capability settings now live in nested objects. Provider-level fields (`enabled`, `apiKey`,
+`baseUrl`) stay where they are:
+
+```bash
+botnexus config set providers.my-ollama.enabled true
+botnexus config set providers.my-ollama.baseUrl http://localhost:11434
+botnexus config set providers.my-ollama.chat.api openai-completions
+botnexus config set providers.my-ollama.chat.defaultModel llama3.1
+botnexus config set providers.my-ollama.chat.models '["llama3.1"]'
+botnexus config set providers.my-ollama.embeddings.api openai-embeddings
+botnexus config set providers.my-ollama.embeddings.model nomic-embed-text
+botnexus config set providers.my-ollama.embeddings.dimensions 768
+botnexus config set providers.github-copilot.enabled true
+```
+
+**`chat` fields** — each is the nested replacement for the flat field of the same name:
+`api`, `defaultModel`, `models`, `input`, `reasoning`, `supportsExtraHighThinking`,
+`supportsExtendedContextWindow`, `contextWindow`.
+
+**`embeddings` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `api` | `string?` | API identifier serving the embeddings endpoint (for example `openai-embeddings`). |
+| `model` | `string` | Embedding model identifier. **Required** when an `embeddings` object is present. |
+| `dimensions` | `int?` | Vector dimensionality. Must be greater than zero when specified. |
+
+#### Capability resolution
+
+The **presence of a capability object is the config-side declaration** — there is no separate
+`capabilities` array. A provider's effective capability set is:
+
+```text
+effective = code-declared  ∪  config-declared      (then narrowed by `enabled`)
+```
+
+- A provider whose code declares embeddings keeps that declaration with no config at all.
+- A provider with **no** code-side embeddings declaration but a configured `embeddings` object
+  resolves as embeddings-capable. This is what makes a local Ollama-style endpoint declarable
+  without a code change.
+- `enabled: false` removes **every** capability the provider declares, from either side. A disabled
+  provider is not partially available.
+
+Narrowing runs after the union, never inside it — the same precedent `ConfigModelFilter` sets, where
+the model allowlist narrows a registry result rather than constructing one.
+
+> A config-side `capabilities` key that *restricts* a provider is deliberately **not** part of this.
+> Adding a capability and removing one are different semantics; conflating them into one key is how
+> a declaration quietly becomes a permission check.
+
+#### Compatibility and deprecation
+
+The flat chat fields are **retained and still work**. An existing `config.json` binds and resolves
+the same chat model it always did, with no edit required.
+
+Resolution is **per field**, not per object: if you move `defaultModel` into `chat` but leave `api`
+flat, both still resolve. A half-migrated document is a working document.
+
+Each flat chat field still in use emits a startup **warning** (not an error) naming its nested
+replacement path:
+
+```text
+providers.my-ollama.defaultModel is deprecated (#2854); move it to
+providers.my-ollama.chat.defaultModel. The flat field still applies until it is removed in a
+later release.
+```
+
+When the nested value is present it wins over the flat twin.
 
 ---
 
 ## Configuration Hierarchy
 
-BotNexus follows a **defaults → overrides** pattern:
+BotNexus follows a **defaults → overrides** pattern. The CLI is the management interface; JSON and SQLite are storage backends beneath it:
 
 1. **Defaults** — Built-in constants in code (e.g., `Model = "gpt-4o"`)
-2. **Configuration file** — `~/.botnexus/config.json` (or `${BOTNEXUS_HOME}/config.json` when set)
-3. **Environment variables** — Supply a setting whose key is absent from `config.json` (see [Environment Variable Overrides](#environment-variable-overrides))
-4. **Named agent overrides** — Per-agent customization in `Agents.Named` dict
+2. **Environment variables** — Supply settings not present in the persistent platform configuration (see [Environment Variable Overrides](#environment-variable-overrides))
+3. **Persistent platform configuration** — `config.json`, `config.db`, or both during migration; when both contain a key, the SQLite value wins
+4. **Named agent overrides** — Per-agent customization in the `agents` dictionary
 
 **Example:**
 ```text
@@ -172,16 +252,14 @@ Agent "planner" override (Agents.Named.planner.Model) = "gpt-4-turbo"
 
 ## Primary Deployment: ~/.botnexus/
 
-BotNexus loads user configuration from:
+BotNexus resolves its home from `~/.botnexus/` or `BOTNEXUS_HOME`. Manage the configuration in that home through the CLI; the active persistent backend may be `config.json`, `config.db`, or both while an installation is migrating.
 
-- `~/.botnexus/config.json`
-- or `${BOTNEXUS_HOME}/config.json` when `BOTNEXUS_HOME` is set.
-
-On startup, BotNexus creates this structure if it does not already exist:
+On startup, BotNexus creates the required home structure. During the transition it can contain:
 
 ```text
 ~/.botnexus/
-├── config.json
+├── config.json        # legacy JSON backend; optional for a store-backed home
+├── config.db          # SQLite configuration backend, when enabled
 ├── extensions/
 │   ├── providers/
 │   ├── channels/
@@ -287,15 +365,8 @@ policy before the job is stored. That policy blocks *address classes* structural
 RFC-1918, link-local/IMDS and cloud metadata - but it cannot classify an internal service that sits
 on a **publicly-resolving hostname**. `webhookBlockedHosts` is how an operator blocks those by name.
 
-```json
-{
-  "cron": {
-    "webhookBlockedHosts": [
-      "internal-api.example.com",
-      "admin.example.com"
-    ]
-  }
-}
+```bash
+botnexus config set cron.webhookBlockedHosts '["internal-api.example.com","admin.example.com"]'
 ```
 
 | Key | Type | Default | Description |
@@ -401,7 +472,8 @@ source.
 ### Configuration store (SQLite)
 
 A SQLite-backed configuration store can sit alongside `config.json` at `config.db` in the same
-directory.
+directory. `botnexus config get`, `botnexus config set`, and the purpose-built provider and agent
+commands remain the operator interface in either state; callers do not select a backend per command.
 
 **It is an ordinary .NET configuration provider.** There is no feature flag, no migration service,
 and no verification harness. The store is registered after the JSON file, so any key it holds wins;
@@ -456,23 +528,15 @@ is how the portal could display one value while the gateway ran another.
 The `agents` section is a dictionary keyed by **agent id**. One reserved key, `defaults`, holds the
 world-level defaults that are field-merged into every agent; every other key defines a named agent.
 
-```json
-{
-  "agents": {
-    "defaults": {
-      "toolIds": ["read", "write", "shell"],
-      "toolTimeoutSeconds": 300
-    },
-    "assistant": {
-      "displayName": "Assistant",
-      "provider": "copilot",
-      "model": "gpt-4.1",
-      "systemPromptFiles": ["SOUL.md", "IDENTITY.md"],
-      "toolIds": ["read", "write", "web_search"],
-      "enabled": true
-    }
-  }
-}
+```bash
+botnexus config set agents.defaults.toolIds '["read","write","shell"]'
+botnexus config set agents.defaults.toolTimeoutSeconds 300
+botnexus config set agents.assistant.displayName Assistant
+botnexus config set agents.assistant.provider copilot
+botnexus config set agents.assistant.model gpt-4.1
+botnexus config set agents.assistant.systemPromptFiles '["SOUL.md","IDENTITY.md"]'
+botnexus config set agents.assistant.toolIds '["read","write","web_search"]'
+botnexus config set agents.assistant.enabled true
 ```
 
 #### `agents.defaults` properties
@@ -724,31 +788,14 @@ disagree. **Extra-high** marks a model that accepts the `xhigh` thinking level.
 
 **Configuration Example:**
 
-```json
-{
-  "providers": {
-    "copilot": {
-      "auth": "oauth",
-      "defaultModel": "claude-opus-4.6",
-      "timeoutSeconds": 120,
-      "maxRetries": 3
-    }
-  },
-  "agents": {
-    "analyst": {
-      "model": "gpt-4o",
-      "provider": "copilot"
-    },
-    "researcher": {
-      "model": "gpt-5.4",
-      "provider": "copilot"
-    },
-    "coder": {
-      "model": "claude-opus-4.6",
-      "provider": "copilot"
-    }
-  }
-}
+```bash
+botnexus config set providers.copilot.defaultModel claude-opus-4.6
+botnexus config set agents.analyst.model gpt-4o
+botnexus config set agents.analyst.provider copilot
+botnexus config set agents.researcher.model gpt-5.4
+botnexus config set agents.researcher.provider copilot
+botnexus config set agents.coder.model claude-opus-4.6
+botnexus config set agents.coder.provider copilot
 ```
 
 **Key Points:**
@@ -765,19 +812,8 @@ disagree. **Extra-high** marks a model that accepts the `xhigh` thinking level.
 **Folder:** `extensions/providers/copilot/`  
 **Auth:** OAuth (no API key required)
 
-```json
-{
-  "providers": {
-    "copilot": {
-      "auth": "oauth",
-      "defaultModel": "gpt-4o",
-      "apiBase": "https://api.individual.githubcopilot.com",
-      "oAuthClientId": "Iv1.b507a08c87ecfe98",
-      "timeoutSeconds": 120,
-      "maxRetries": 3
-    }
-  }
-}
+```bash
+botnexus config set providers.copilot.defaultModel gpt-4o
 ```
 
 **How it works:**
@@ -812,19 +848,9 @@ These headers identify the client to the Copilot API and enable proper rate limi
 **Folder:** `extensions/providers/openai/`  
 **Auth:** API Key
 
-```json
-{
-  "providers": {
-    "openai": {
-      "auth": "apikey",
-      "apiKey": "sk-...",
-      "defaultModel": "gpt-4-turbo",
-      "apiBase": "https://api.openai.com/v1",
-      "timeoutSeconds": 120,
-      "maxRetries": 3
-    }
-  }
-}
+```bash
+botnexus config set providers.openai.apiKey sk-...
+botnexus config set providers.openai.defaultModel gpt-4-turbo
 ```
 
 #### Anthropic Provider
@@ -832,19 +858,9 @@ These headers identify the client to the Copilot API and enable proper rate limi
 **Folder:** `extensions/providers/anthropic/`  
 **Auth:** API Key
 
-```json
-{
-  "providers": {
-    "anthropic": {
-      "auth": "apikey",
-      "apiKey": "sk-ant-...",
-      "defaultModel": "claude-3-5-sonnet-20241022",
-      "apiBase": "https://api.anthropic.com",
-      "timeoutSeconds": 120,
-      "maxRetries": 3
-    }
-  }
-}
+```bash
+botnexus config set providers.anthropic.apiKey sk-ant-...
+botnexus config set providers.anthropic.defaultModel claude-3-5-sonnet-20241022
 ```
 
 #### Azure OpenAI Provider
@@ -852,19 +868,9 @@ These headers identify the client to the Copilot API and enable proper rate limi
 **Folder:** `extensions/providers/azure-openai/`  
 **Auth:** API Key
 
-```json
-{
-  "providers": {
-    "azure-openai": {
-      "auth": "apikey",
-      "apiKey": "your-azure-key",
-      "defaultModel": "deployment-name",
-      "apiBase": "https://your-resource.openai.azure.com/openai/deployments/deployment-name",
-      "timeoutSeconds": 120,
-      "maxRetries": 3
-    }
-  }
-}
+```bash
+botnexus config set providers.azure-openai.apiKey your-azure-key
+botnexus config set providers.azure-openai.defaultModel deployment-name
 ```
 
 ---
@@ -912,17 +918,11 @@ Social channel integrations. Keys in `Instances` dict are case-insensitive and m
 
 The Telegram adapter binds directly from the `channels:telegram` section (it does **not** use the generic `Channels.Instances` shape above). The real option names come from `TelegramGatewayOptions`:
 
-```json
-{
-  "channels": {
-    "telegram": {
-      "botToken": "123456789:ABCdefGHijKlmnoPQRstuvWXYZ",
-      "agentId": "my-agent",
-      "allowedUserIds": [12345, 67890],
-      "allowedChatIds": []
-    }
-  }
-}
+```bash
+botnexus config set channels.telegram.botToken 123456789:ABCdefGHijKlmnoPQRstuvWXYZ
+botnexus config set channels.telegram.agentId my-agent
+botnexus config set channels.telegram.allowedUserIds '[12345,67890]'
+botnexus config set channels.telegram.allowedChatIds '[]'
 ```
 
 #### Agent 365 Channel
@@ -937,19 +937,13 @@ package / Microsoft.Extensions.* pin design note, and
 [docs/features/agent365-onboarding.md](features/agent365-onboarding.md) for tenant prerequisites,
 licensing, and blueprint provisioning.
 
-```json
-{
-  "channels": {
-    "agent365": {
-      "clientId": "${AGENT365_CLIENT_ID}",
-      "clientSecret": "${AGENT365_CLIENT_SECRET}",
-      "tenantId": "${AGENT365_TENANT_ID}",
-      "channelServiceEndpoint": "https://smba.trafficmanager.net/amer/",
-      "agentId": "my-agent",
-      "inboundRoute": "/agent365/messages"
-    }
-  }
-}
+```bash
+botnexus config set channels.agent365.clientId '${AGENT365_CLIENT_ID}'
+botnexus config set channels.agent365.clientSecret '${AGENT365_CLIENT_SECRET}'
+botnexus config set channels.agent365.tenantId '${AGENT365_TENANT_ID}'
+botnexus config set channels.agent365.channelServiceEndpoint https://smba.trafficmanager.net/amer/
+botnexus config set channels.agent365.agentId my-agent
+botnexus config set channels.agent365.inboundRoute /agent365/messages
 ```
 
 | Key | Required | Description |
@@ -965,38 +959,11 @@ licensing, and blueprint provisioning.
 
 **Folder:** `extensions/channels/discord/`
 
-```json
-{
-  "channels": {
-    "instances": {
-      "discord": {
-        "enabled": true,
-        "botToken": "MzA5NTkyMzAzMTgyNzIzODQw.C_DUbA.Tz3u1NBoI7K-xypwWD",
-        "allowFrom": []
-      }
-    }
-  }
-}
-```
 
 #### Slack Channel
 
 **Folder:** `extensions/channels/slack/`
 
-```json
-{
-  "channels": {
-    "instances": {
-      "slack": {
-        "enabled": true,
-        "botToken": "xoxb-1234567890-1234567890-xxxxxxxxxxxxx",
-        "signingSecret": "8f742231b91ee1522d552420d224e9aa",
-        "allowFrom": []
-      }
-    }
-  }
-}
-```
 
 ---
 
@@ -1004,21 +971,6 @@ licensing, and blueprint provisioning.
 
 Gateway HTTP server settings.
 
-```json
-{
-  "gateway": {
-    "host": "0.0.0.0",
-    "port": 5005,
-    "apiKey": "secret-gateway-key",
-    "defaultAgent": "default",
-    "broadcastWhenAgentUnspecified": false,
-    "heartbeat": {
-      "enabled": true,
-      "intervalSeconds": 1800
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1059,15 +1011,6 @@ Gateway HTTP server settings.
 before delegating, so an unbounded self-written summary would inflate every other agent's system
 prompt. The bound therefore lives on the write seam - one place - rather than at each projection.
 
-```json
-{
-  "gateway": {
-    "agentSummary": {
-      "maxLength": 500
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1082,27 +1025,17 @@ Keys are agent IDs and are matched case-insensitively. Policy selection uses the
 `ParentAgentId` carried by the spawn request; a task, display name, archetype, or mirrored target
 cannot select another parent's policy.
 
-```json
-{
-  "gateway": {
-    "subAgents": {
-      "defaultTimeoutSeconds": 1800,
-      "maxTimeoutSeconds": 1800,
-      "defaultMaxTurns": 30,
-      "maxTurnsCeiling": 30,
-      "maxConcurrentPerSession": 5,
-      "parentOverrides": {
-        "farnsworth": {
-          "defaultTimeoutSeconds": 3600,
-          "maxTimeoutSeconds": 3600,
-          "defaultMaxTurns": 60,
-          "maxTurnsCeiling": 90,
-          "maxConcurrentPerSession": 8
-        }
-      }
-    }
-  }
-}
+```bash
+botnexus config set gateway.subAgents.defaultTimeoutSeconds 1800
+botnexus config set gateway.subAgents.maxTimeoutSeconds 1800
+botnexus config set gateway.subAgents.defaultMaxTurns 30
+botnexus config set gateway.subAgents.maxTurnsCeiling 30
+botnexus config set gateway.subAgents.maxConcurrentPerSession 5
+botnexus config set gateway.subAgents.parentOverrides.farnsworth.defaultTimeoutSeconds 3600
+botnexus config set gateway.subAgents.parentOverrides.farnsworth.maxTimeoutSeconds 3600
+botnexus config set gateway.subAgents.parentOverrides.farnsworth.defaultMaxTurns 60
+botnexus config set gateway.subAgents.parentOverrides.farnsworth.maxTurnsCeiling 90
+botnexus config set gateway.subAgents.parentOverrides.farnsworth.maxConcurrentPerSession 8
 ```
 
 Omitted override fields inherit the global value. Unknown parents use the complete global policy.
@@ -1119,6 +1052,8 @@ or `parent-override`) so operators can audit which authorization tier applied.
 | `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
 | `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
+| `subAgents.completedRecordRetentionMinutes` | int | 15 | How long a finished (completed/failed/killed/timed-out) sub-agent record is kept in memory so `list_subagents` and status queries can still surface a recently-finished run. After the window the record is swept and its timeout source disposed, bounding the manager's registry on a long-lived gateway. `0` or less disables **time-based** eviction; the count cap below still applies. Running records are never evicted. |
+| `subAgents.maxRetainedCompletedRecords` | int | 200 | Maximum number of **completed** records retained regardless of age - a burst-spawn backstop so the registry stays bounded even inside the retention window. When exceeded, the oldest completed records are evicted first. `0` or less disables the cap. Running records do not count toward it. |
 
 #### Session warmup (`sessionWarmup`)
 
@@ -1126,18 +1061,6 @@ or `parent-override`) so operators can audit which authorization tier applied.
 recently-active session ahead of the next inbound message removes the first-turn latency of
 rehydrating its transcript, at the cost of holding those sessions resident.
 
-```json
-{
-  "gateway": {
-    "sessionWarmup": {
-      "enabled": true,
-      "maxSessionsPerAgent": 10,
-      "retentionWindowHours": 24,
-      "collapseChannelContinuations": true
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1151,16 +1074,6 @@ rehydrating its transcript, at the cost of holding those sessions resident.
 `gateway.delayTool` bounds the built-in `delay` tool. The ceiling is a clamp, not a rejection - a
 longer request is served at the ceiling rather than failing the turn.
 
-```json
-{
-  "gateway": {
-    "delayTool": {
-      "maxDelaySeconds": 1800,
-      "defaultDelaySeconds": 60
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1171,17 +1084,6 @@ longer request is served at the ceiling rather than failing the turn.
 
 `gateway.fileWatcherTool` bounds the built-in `watch_file` tool.
 
-```json
-{
-  "gateway": {
-    "fileWatcherTool": {
-      "maxTimeoutSeconds": 1800,
-      "defaultTimeoutSeconds": 300,
-      "debounceMilliseconds": 500
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1195,17 +1097,6 @@ longer request is served at the ceiling rather than failing the turn.
 `gateway:conversations` and applied by a background service. Per-agent overrides live on the agent's
 own `conversationRetention` block; this is the default those overrides inherit.
 
-```json
-{
-  "gateway": {
-    "conversations": {
-      "autoArchiveEnabled": false,
-      "autoArchiveAfterDays": 30,
-      "checkInterval": "01:00:00"
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1217,23 +1108,16 @@ own `conversationRetention` block; this is the default those overrides inherit.
 
 Governs agent-to-agent conversations started with the `agent_converse` tool. Bound from `gateway:agentExchange`.
 
-```json
-{
-  "gateway": {
-    "agentExchange": {
-      "accessPolicy": "open",
-      "maxTurnsCeiling": 30,
-      "maxInboundQueueDepth": 8
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `AgentExchange.AccessPolicy` | string | `open` | Which agents may initiate conversations with others. `open` lets any registered agent converse with any other; `whitelist` requires the initiator to have the target in its `SubAgentIds` list or a matching `SubAgentRoles` grant. Compared case-insensitively. |
 | `AgentExchange.MaxTurnsCeiling` | int | 30 | Upper bound applied to the `maxTurns` argument of a single `agent_converse` call, regardless of the value the agent requests. This is what stops one tool call from driving an unbounded number of provider round-trips — the conversation budget tracker caps exchanges per agent pair, not turns within an exchange. Values below 1 are treated as 1, so a misconfiguration can never disable exchanges entirely. |
 | `AgentExchange.MaxInboundQueueDepth` | int | 8 | How many inbound exchanges may **wait** for one agent's single execution slot before further callers are refused with explicit backpressure. An in-process agent runs one turn at a time; without a bound, a busy agent accumulates waiters until each expires on its own caller-side deadline, which is precisely the silent message loss this setting makes visible. The in-flight exchange itself does not count toward the bound — only genuinely blocked callers do. Values below 1 are treated as 1. |
+| `AgentExchange.DailyTurnCap` | int | 200 | Maximum total turns per agent pair per calendar day (UTC). Counts **turns**, not exchanges, so one long conversation consumes the same budget as several short ones. Surfaced per pair as `dailyTurnCap` by [`GET /api/exchanges/budget`](api/exchanges.md). |
+| `AgentExchange.LoopDetectionWindowSeconds` | int | 60 | Window in seconds within which the same pair re-engaging increments its loop counter. |
+| `AgentExchange.LoopThreshold` | int | 3 | Number of rapid re-engagements inside the detection window before a cooldown is triggered. |
+| `AgentExchange.CooldownOnLoopDetectSeconds` | int | 300 | Cooldown duration in seconds once a loop is detected. Further exchanges between that pair are refused until it expires. |
 
 See [Agent Exchange](features/agent-exchange.md) for the tool surface and the budget system.
 
@@ -1241,16 +1125,10 @@ See [Agent Exchange](features/agent-exchange.md) for the tool surface and the bu
 
 The gateway registers its SignalR hub with **explicit** transport limits rather than relying on the framework's implicit defaults (32 KB frame size, 1 parallel invocation, 10 stream-buffer items). The defaults below are intentionally bounded: the inbound frame cap is generous enough to carry base64-encoded inline media via `SendMessageWithMedia` (base64 inflates payloads by ~33%) while still preventing a single frame from exhausting server memory, and the parallel-invocation bound limits how much concurrent work one connection can force on the server.
 
-```json
-{
-  "gateway": {
-    "signalR": {
-      "maximumReceiveMessageSizeBytes": 10485760,
-      "maximumParallelInvocationsPerClient": 10,
-      "streamBufferCapacity": 10
-    }
-  }
-}
+```bash
+botnexus config set gateway.signalR.maximumReceiveMessageSizeBytes 10485760
+botnexus config set gateway.signalR.maximumParallelInvocationsPerClient 10
+botnexus config set gateway.signalR.streamBufferCapacity 10
 ```
 
 The `signalR` section is optional — when absent, the secure defaults are applied automatically. Any non-positive override is ignored in favour of the default so a misconfiguration can never disable the bound.
@@ -1260,20 +1138,6 @@ The `signalR` section is optional — when absent, the secure defaults are appli
 
 The gateway runs a periodic `SessionCleanupService` that prunes stale sessions. Beyond the base TTL and closed-session retention, it prunes **near-empty cron "noop wake" sessions**: scheduled cron wakes frequently produce a session with only a wake message (and an optional `NO_REPLY`), which accumulate rapidly and bloat `sessions.db` with rows that are never read again. A cron session is treated as a noop when its id is in the `cron:` namespace and it has at most two persisted messages; such sessions are persisted-then-pruned once their `UpdatedAt` is older than `cronNoopRetention`. This never changes wake or persist behaviour — it only deletes stale near-empty cron sessions after the fact.
 
-```json
-{
-  "gateway": {
-    "sessionCleanup": {
-      "sessionTtl": "1.00:00:00",
-      "closedSessionRetention": null,
-      "cronNoopRetention": "7.00:00:00",
-      "maxDiskBytes": null,
-      "highWaterBytes": null,
-      "diskBudgetMode": "Warn"
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1319,20 +1183,6 @@ Detected invariants:
 
 Each pass is idempotent and bounded; running it repeatedly on an already-consistent world detects nothing and mutates nothing. Every discrepancy is emitted as a structured log line (invariant name, entity ids, previous state, chosen disposition) so operators can inspect detected and repaired discrepancies without querying SQLite directly.
 
-```json
-{
-  "gateway": {
-    "sessionConsistency": {
-      "enabled": true,
-      "dryRun": false,
-      "checkInterval": "00:30:00",
-      "startupDelay": "00:01:00",
-      "staleActiveCronThreshold": "06:00:00",
-      "maxConversationsPerRun": 5000
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1351,18 +1201,6 @@ Ephemeral sub-agent workers occasionally leave workspace husks under the **persi
 
 The sweep only ever considers directories whose name contains the `--subagent--` marker, so **top-level registered agent workspaces are never touched**. Directories modified within the grace window are always skipped so a live / in-flight worker is never yanked, deletion is confined to the resolved agents root, and reparse points (symlinks / junctions) are never followed or deleted through.
 
-```json
-{
-  "gateway": {
-    "subAgentWorkspace": {
-      "enabled": true,
-      "retentionHours": 24,
-      "graceMinutes": 60,
-      "checkInterval": "01:00:00"
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1378,20 +1216,6 @@ Each sweep pass emits a single log line with the number of directories removed, 
 
 Conversations created by webhook-triggered automation are provenance-tagged and age out on a faster, dedicated schedule than ordinary human conversations. This policy is **independent** of both the world-level conversation auto-archive gate and webhook *run* retention — the three settings govern different data with their own thresholds. It is opt-in: with `enabled` left `false`, existing deployments see no behaviour change until the policy is explicitly turned on. A periodic sweep archives eligible webhook conversations using two rules: the canonical conversation of a deleted or disabled registration ages out after `disabledRegistrationInactivityDays`, while an orphan conversation (whose registration no longer exists and which is not the registration's pinned conversation) ages out faster after `orphanInactivityDays`.
 
-```json
-{
-  "gateway": {
-    "webhooks": {
-      "conversationRetention": {
-        "enabled": false,
-        "disabledRegistrationInactivityDays": 7,
-        "orphanInactivityDays": 1,
-        "checkInterval": "01:00:00"
-      }
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -1407,15 +1231,9 @@ Configurable via `gateway:webhooks:conversationRetention:*`.
 
 Large tool results (for example a recursive directory listing or a session-history dump) are otherwise written into `session_history` at full size and re-sent to the model on every subsequent turn — consuming context budget with no ongoing value. The `toolResultPersistence` section caps the size of an individual tool result **at write time**: a result whose UTF-8 byte size exceeds `maxBytes` is truncated on a rune boundary (never splitting a surrogate pair or a multi-byte UTF-8 sequence) and an explicit `[truncated N bytes]` marker is appended before the entry is persisted, so the oversized blob never lands in history nor reaches the next turn's context window.
 
-```json
-{
-  "gateway": {
-    "toolResultPersistence": {
-      "enabled": true,
-      "maxBytes": 16384
-    }
-  }
-}
+```bash
+botnexus config set gateway.toolResultPersistence.enabled true
+botnexus config set gateway.toolResultPersistence.maxBytes 16384
 ```
 
 | Property | Type | Default | Description |
@@ -1473,15 +1291,9 @@ large enough to be truncated.
 
 Image content blocks are passed through untouched - an encoded image cannot be truncated into a smaller valid image, only into a broken one.
 
-```json
-{
-  "gateway": {
-    "toolOutputBudget": {
-      "enabled": true,
-      "maxBytes": 262144
-    }
-  }
-}
+```bash
+botnexus config set gateway.toolOutputBudget.enabled true
+botnexus config set gateway.toolOutputBudget.maxBytes 262144
 ```
 
 | Property | Type | Default | Description |
@@ -1511,15 +1323,9 @@ arguments, no path or permission changes.
    one session and the file is byte-for-byte identical, a short "unchanged" marker is returned
    instead of repeating the body.
 
-```json
-{
-  "gateway": {
-    "readTool": {
-      "largeReadThresholdBytes": 20480,
-      "elideUnchangedRereads": true
-    }
-  }
-}
+```bash
+botnexus config set gateway.readTool.largeReadThresholdBytes 20480
+botnexus config set gateway.readTool.elideUnchangedRereads true
 ```
 
 | Property | Type | Default | Description |
@@ -1557,17 +1363,11 @@ The `compaction` section tunes when and how a session's history is summarised to
 - **Token-count threshold** — the estimated LLM-visible token total exceeds `contextWindowTokens × tokenThresholdRatio`.
 - **Bloat-aware (largest-entry) threshold** — a *single* visible history entry is at or above `largestEntryBytesThreshold` UTF-8 bytes. A session can accumulate a small number of enormous low-value entries (for example a raw transcript dump or a directory listing) whose total still sits under the token threshold while the visible tail is dominated by dead weight; this signal makes such a session eligible for compaction so the oversized entry gets summarised away instead of being re-sent on every turn.
 
-```json
-{
-  "gateway": {
-    "compaction": {
-      "preservedTurns": 3,
-      "tokenThresholdRatio": 0.6,
-      "contextWindowTokens": 128000,
-      "largestEntryBytesThreshold": 65536
-    }
-  }
-}
+```bash
+botnexus config set gateway.compaction.preservedTurns 3
+botnexus config set gateway.compaction.tokenThresholdRatio 0.6
+botnexus config set gateway.compaction.contextWindowTokens 128000
+botnexus config set gateway.compaction.largestEntryBytesThreshold 65536
 ```
 
 | Property | Type | Default | Description |
@@ -1609,18 +1409,10 @@ A value of 0 or less at any layer is treated as unset and falls through to the n
 
 The gateway can auto-generate a short title for a conversation after its first user+assistant exchange, replacing the default `New conversation` label. Titling uses a cheap/fast auxiliary model and is best-effort: failures never affect the turn, and a conversation a user or agent has already titled is never overwritten.
 
-```json
-{
-  "gateway": {
-    "auxiliary": {
-      "titling": {
-        "enabled": true,
-        "model": "gpt-5.6-luna",
-        "timeoutSeconds": 30
-      }
-    }
-  }
-}
+```bash
+botnexus config set gateway.auxiliary.titling.enabled true
+botnexus config set gateway.auxiliary.titling.model gpt-5.6-luna
+botnexus config set gateway.auxiliary.titling.timeoutSeconds 30
 ```
 
 | Property | Type | Default | Description |
@@ -1640,15 +1432,9 @@ This exists because every other anti-fabrication guardrail lives in the system p
 
 When an unbacked claim is detected, the auditor emits a structured `claimAudit` stream event (observable to clients and logs, not just a prose log line). In `warn` mode the turn is unaffected; in `block` mode the event additionally marks the turn as one that should be blocked.
 
-```json
-{
-  "gateway": {
-    "claimAudit": {
-      "enabled": true,
-      "mode": "warn"
-    }
-  }
-}
+```bash
+botnexus config set gateway.claimAudit.enabled true
+botnexus config set gateway.claimAudit.mode warn
 ```
 
 | Property | Type | Default | Description |
@@ -1665,19 +1451,13 @@ Selects the embedding backend that supplies vectors for hybrid memory retrieval 
 backend is an **explicit operator choice**; `none` is the default, so no vectors are produced and no
 memory content leaves the machine until you say otherwise.
 
-```json
-{
-  "gateway": {
-    "memoryEmbeddings": {
-      "backend": "provider",
-      "provider": "ollama",
-      "model": "nomic-embed-text",
-      "dimensions": 768,
-      "baseUrl": "http://localhost:11434/v1",
-      "apiKey": null
-    }
-  }
-}
+```bash
+botnexus config set gateway.memoryEmbeddings.backend provider
+botnexus config set gateway.memoryEmbeddings.provider ollama
+botnexus config set gateway.memoryEmbeddings.model nomic-embed-text
+botnexus config set gateway.memoryEmbeddings.dimensions 768
+botnexus config set gateway.memoryEmbeddings.baseUrl http://localhost:11434/v1
+botnexus config set gateway.memoryEmbeddings.apiKey null
 ```
 
 | Property | Type | Default | Description |
@@ -1727,15 +1507,6 @@ Controls how much of a report file the gateway will read when serving it to the 
 |----------|------|---------|-------------|
 | `Workspace.MaxReportFileSizeBytes` | int | `524288` (512 KB) | Maximum number of bytes read from a report file for portal preview. Larger files are truncated server-side and flagged with `isTruncated` in the response. Set to `0` for no server-side limit. |
 
-```json
-{
-  "gateway": {
-    "workspace": {
-      "maxReportFileSizeBytes": 1048576
-    }
-  }
-}
-```
 
 This limit applies to the reports API only. The workspace file API
 ([`GET /api/agents/{agentId}/workspace/{path}`](./api-reference.md#agent-workspace-files)) uses a
@@ -1764,18 +1535,12 @@ never runs and `POST /api/gateway/update/start` refuses the request.
 `POST /api/gateway/update/start` returns `412 Precondition Failed` rather than starting a process it
 cannot complete.
 
-```json
-{
-  "gateway": {
-    "autoUpdate": {
-      "enabled": true,
-      "checkIntervalMinutes": 60,
-      "branch": "main",
-      "cliPath": "/opt/botnexus/BotNexus.Cli.dll",
-      "sourcePath": "/opt/botnexus/src"
-    }
-  }
-}
+```bash
+botnexus config set gateway.autoUpdate.enabled true
+botnexus config set gateway.autoUpdate.checkIntervalMinutes 60
+botnexus config set gateway.autoUpdate.branch main
+botnexus config set gateway.autoUpdate.cliPath /opt/botnexus/BotNexus.Cli.dll
+botnexus config set gateway.autoUpdate.sourcePath /opt/botnexus/src
 ```
 
 #### Cross-World Federation (`crossWorld`)
@@ -1802,24 +1567,12 @@ a `targetWorldId` plus optional `allowedAgents` and `allowInbound`/`allowOutboun
 `true` by default), and grants communication with that world. `crossWorld` supplies the transport
 and credentials; `crossWorldPermissions` decides who may use it.
 
-```json
-{
-  "gateway": {
-    "crossWorld": {
-      "peers": {
-        "research-world": {
-          "endpoint": "https://research.example.com",
-          "apiKey": "peer-shared-key"
-        }
-      },
-      "inbound": {
-        "enabled": true,
-        "allowedWorlds": ["research-world"],
-        "apiKeys": { "research-world": "peer-shared-key" }
-      }
-    }
-  }
-}
+```bash
+botnexus config set gateway.crossWorld.peers.research-world.endpoint https://research.example.com
+botnexus config set gateway.crossWorld.peers.research-world.apiKey peer-shared-key
+botnexus config set gateway.crossWorld.inbound.enabled true
+botnexus config set gateway.crossWorld.inbound.allowedWorlds '["research-world"]'
+botnexus config set gateway.crossWorld.inbound.apiKeys.research-world peer-shared-key
 ```
 
 #### Shell Execution Settings
@@ -1833,15 +1586,9 @@ Gateway-level shell settings control the default shell behavior for all agents. 
 
 **Configuration example:**
 
-```json
-{
-  "gateway": {
-    "host": "0.0.0.0",
-    "port": 5005,
-    "shellPreference": "pwsh",
-    "shellCommand": ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]
-  }
-}
+```bash
+botnexus config set gateway.shellPreference pwsh
+botnexus config set gateway.shellCommand '["pwsh","-NoLogo","-NoProfile","-NonInteractive","-Command"]'
 ```
 
 **Resolution order:** Per-agent `shellCommand` > Gateway `ShellCommand` > Gateway `ShellPreference` > Auto detection.
@@ -1913,17 +1660,9 @@ There is no `disallowedTools` key. A tool is withheld either by omitting it from
 `toolIds` grant, or - when it must be blocked outright regardless of what grants it - by listing it in
 `toolPolicy.denied`:
 
-```json
-{
-  "agents": {
-    "secure-agent": {
-      "toolIds": ["read", "web_search"],
-      "toolPolicy": {
-        "denied": ["shell", "exec"]
-      }
-    }
-  }
-}
+```bash
+botnexus config set agents.secure-agent.toolIds '["read","web_search"]'
+botnexus config set agents.secure-agent.toolPolicy.denied '["shell","exec"]'
 ```
 
 **Tool Logging and Visibility:**
@@ -1951,41 +1690,6 @@ There is no `disallowedTools` key. A tool is withheld either by omitting it from
 
 MCP (Model Context Protocol) servers provide tools to agents. Supports local processes (stdio) and remote HTTP endpoints.
 
-```json
-{
-  "tools": {
-    "mcpServers": {
-      "filesystem": {
-        "type": "Stdio",
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-        "toolTimeout": 30,
-        "enabledTools": ["*"]
-      },
-      "github-mcp": {
-        "type": "Sse",
-        "url": "http://localhost:3001/sse",
-        "headers": {
-          "Authorization": "Bearer YOUR_TOKEN"
-        },
-        "toolTimeout": 30,
-        "enabledTools": ["*"]
-      },
-      "trello": {
-        "type": "Stdio",
-        "command": "node",
-        "args": ["./mcp-servers/trello-server.js"],
-        "env": {
-          "TRELLO_API_KEY": "xxx",
-          "TRELLO_API_TOKEN": "yyy"
-        },
-        "toolTimeout": 30,
-        "enabledTools": ["*"]
-      }
-    }
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -2010,16 +1714,6 @@ MCP (Model Context Protocol) servers provide tools to agents. Supports local pro
 
 Optional OpenAI-compatible REST API (for external clients).
 
-```json
-{
-  "api": {
-    "host": "127.0.0.1",
-    "port": 8900,
-    "timeout": 120.0,
-    "enabled": false
-  }
-}
-```
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -2060,13 +1754,6 @@ It has no counterpart on the gateway. The gateway's built-in `exec` tool takes *
 
 The optional `telemetry` section controls the in-process OpenTelemetry metrics/tracing plane.
 
-```json
-{
-  "telemetry": {
-    "enabled": true
-  }
-}
-```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -2110,26 +1797,6 @@ When `telemetry.enabled` is `false` the endpoint still resolves and returns a we
 
 The optional `telemetry.exporter` section ships metrics/traces to an external OpenTelemetry collector. It is **off by default** - a fresh install produces **zero network egress** and no OTLP connection is ever attempted until an operator explicitly sets `type` to `otlp` and provides an `endpoint`. No default endpoint is shipped.
 
-```json
-{
-  "telemetry": {
-    "enabled": true,
-    "exporter": {
-      "type": "otlp",
-      "endpoint": "http://collector.internal:4317",
-      "protocol": "grpc",
-      "headers": {
-        "Authorization": "Bearer <collector-token>"
-      },
-      "resource": {
-        "serviceName": "botnexus",
-        "serviceInstanceId": "host-a-1",
-        "deploymentEnvironment": "production"
-      }
-    }
-  }
-}
-```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -2176,17 +1843,7 @@ Point BotNexus at any OTLP-compatible collector (OpenTelemetry Collector, Grafan
 
 2. Configure BotNexus to export to it (in `~/.botnexus/config.json`):
 
-   ```json
-   {
-     "telemetry": {
-       "exporter": {
-         "type": "otlp",
-         "endpoint": "http://localhost:4317",
-         "protocol": "grpc",
-         "resource": { "deploymentEnvironment": "dev" }
-       }
-     }
-   }
+      ```bash
    ```
 
 3. Restart the gateway. The canonical `botnexus.*` instruments now flow to the collector, tagged with the `service.name`/`service.instance.id`/`deployment.environment` resource attributes so a downstream aggregator can attribute data per instance.
@@ -2199,25 +1856,6 @@ The optional `telemetry.agent365` section routes BotNexus OpenTelemetry **spans*
 
 This is a **direct OTLP** integration: BotNexus takes **no dependency** on any `Microsoft.Agents.A365.Observability` SDK. The exporter is attached as an **additional** target alongside (not instead of) the generic `exporter` above, so you can fan telemetry out to both a private collector and Agent 365 at once. The A365 exporter is always sent over `http/protobuf` because the Agent 365 traces route is HTTP-only.
 
-```json
-{
-  "telemetry": {
-    "enabled": true,
-    "agent365": {
-      "enabled": true,
-      "endpoint": "https://agent365.svc.cloud.microsoft/observabilityService/tenants/<tenantId>/otlp/agents/<agentId>/traces?api-version=1",
-      "authHeaderValue": "Bearer <access-token>",
-      "headers": {
-        "x-custom-header": "value"
-      },
-      "resource": {
-        "serviceName": "my-agent",
-        "deploymentEnvironment": "production"
-      }
-    }
-  }
-}
-```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -2410,15 +2048,21 @@ When `MaxTokens` or `Temperature` are not specified (null), providers use their 
 
 On reload, the Gateway publishes a `gateway.config.reloaded` activity event listing which subsystems were updated. Portal and SignalR clients receive this event in real time.
 
-### CLI Config Commands
+### CLI configuration commands
 
-The CLI tool provides commands for managing configuration:
+Use the CLI for configuration management regardless of the active storage backend:
 
 ```bash
-botnexus config validate   # Validate config.json syntax and binding
-botnexus config show       # Show resolved config (defaults merged with overrides)
-botnexus config init       # Create default config.json interactively
+botnexus init                                      # Initialize a BotNexus home
+botnexus config get gateway.listenUrl             # Read a value by dotted path
+botnexus config set gateway.listenUrl http://localhost:8080
+botnexus provider setup                           # Configure and authenticate a provider
+botnexus agent add assistant --provider github-copilot --model gpt-4.1
+botnexus config store status                      # Inspect the selected backend
+botnexus validate                                 # Validate the platform configuration
 ```
+
+See the [CLI Reference](cli-reference.md#config-get) for arguments and additional resource-specific commands.
 
 ---
 
@@ -2479,19 +2123,6 @@ Keys are **case-insensitive** for matching but should use kebab-case by conventi
 
 Extension-specific config is placed in `Tools.Extensions`:
 
-```json
-{
-  "tools": {
-    "extensions": {
-      "github": {
-        "token": "ghp_...",
-        "defaultOwner": "microsoft",
-        "apiBase": "https://api.github.com"
-      }
-    }
-  }
-}
-```
 
 Extensions access their config from the DI container or from the main `BotNexusConfig`.
 
@@ -2571,18 +2202,9 @@ Telegram, `Authorization` headers, generic `api_key=`). Every deployment also ha
 platform cannot know about — internal service tokens, deployment identifiers, bespoke API key
 formats. Declare those in `~/.botnexus/config.json`:
 
-```json
-{
-  "gateway": {
-    "secretRedaction": {
-      "patterns": [
-        "deployment-secret-[a-z-]+",
-        "cust-[0-9]{6}"
-      ],
-      "matchTimeoutMilliseconds": 100
-    }
-  }
-}
+```bash
+botnexus config set gateway.secretRedaction.patterns '["deployment-secret-[a-z-]+","cust-[0-9]{6}"]'
+botnexus config set gateway.secretRedaction.matchTimeoutMilliseconds 100
 ```
 
 Behaviour and guarantees:
@@ -2607,13 +2229,6 @@ Write patterns that require at least one character and anchor where you can. Pre
 
 For production Gateway deployments, always set `Gateway.ApiKey`:
 
-```json
-{
-  "gateway": {
-    "apiKey": "random-secret-key"
-  }
-}
-```
 
 Clients must provide this key:
 ```text
@@ -2636,31 +2251,11 @@ chmod 700 ~/.botnexus
 
 Enable workspace restriction to limit file access:
 
-```json
-{
-  "tools": {
-    "restrictToWorkspace": true
-  }
-}
-```
 
 ### 5. Channel Allow Lists
 
 Use `AllowFrom` to whitelist specific users/chats:
 
-```json
-{
-  "channels": {
-    "instances": {
-      "telegram": {
-        "enabled": true,
-        "botToken": "...",
-        "allowFrom": ["12345", "67890"]
-      }
-    }
-  }
-}
-```
 
 ### 6. Sensitive Config in Development
 
@@ -2668,14 +2263,8 @@ Keep local dev secrets out of source control. Prefer the default `~/.botnexus/co
 never committed), or supply them via environment variables — see
 [Environment Variable Overrides](#environment-variable-overrides):
 
-```json
-{
-  "providers": {
-    "openai": {
-      "apiKey": "sk-local-dev-key-here"
-    }
-  }
-}
+```bash
+botnexus config set providers.openai.apiKey sk-local-dev-key-here
 ```
 
 ### 7. Streaming Tool-Argument Byte Budget
@@ -2726,25 +2315,13 @@ The CLI merges all sources when listing or rendering templates. When both `foo.p
 
 ### Configuration Structure
 
-```json
-{
-  "promptTemplates": {
-    "template-name": {
-      "prompt": "Template body with {{parameter}} placeholders",
-      "description": "Optional human-friendly description",
-      "defaults": {
-        "parameter": "default value"
-      },
-      "parameters": {
-        "parameter": {
-          "description": "Optional parameter description",
-          "default": "default value",
-          "required": false
-        }
-      }
-    }
-  }
-}
+```bash
+botnexus config set promptTemplates.template-name.prompt 'Template body with {{parameter}} placeholders'
+botnexus config set promptTemplates.template-name.description 'Optional human-friendly description'
+botnexus config set promptTemplates.template-name.defaults.parameter 'default value'
+botnexus config set promptTemplates.template-name.parameters.parameter.description 'Optional parameter description'
+botnexus config set promptTemplates.template-name.parameters.parameter.default 'default value'
+botnexus config set promptTemplates.template-name.parameters.parameter.required false
 ```
 
 ### Properties
@@ -2865,20 +2442,12 @@ Parameters are declared using `{{name}}` placeholders in the template body. The 
 
 #### Example 1: Simple Configuration Template
 
-```json
-{
-  "promptTemplates": {
-    "daily-standup": {
-      "prompt": "Provide a brief status update for {{project}}. Owner: {{owner}}. Focus areas: {{focus}}",
-      "description": "Daily team status template",
-      "defaults": {
-        "project": "BotNexus",
-        "owner": "Development Team",
-        "focus": "Feature delivery and quality"
-      }
-    }
-  }
-}
+```bash
+botnexus config set promptTemplates.daily-standup.prompt 'Provide a brief status update for {{project}}. Owner: {{owner}}. Focus areas: {{focus}}'
+botnexus config set promptTemplates.daily-standup.description 'Daily team status template'
+botnexus config set promptTemplates.daily-standup.defaults.project BotNexus
+botnexus config set promptTemplates.daily-standup.defaults.owner 'Development Team'
+botnexus config set promptTemplates.daily-standup.defaults.focus 'Feature delivery and quality'
 ```
 
 **CLI usage:**
@@ -2896,35 +2465,19 @@ botnexus prompt render daily-standup --param owner="Leela" --param focus="Bug fi
 
 #### Example 2: Template with Required Parameters
 
-```json
-{
-  "promptTemplates": {
-    "code-review-summary": {
-      "prompt": "Summarize the code review for PR #{{prNumber}} in {{repo}}. Reviewer: {{reviewer}}. Focus on: {{focusArea}}",
-      "description": "Code review summary for pull requests",
-      "parameters": {
-        "prNumber": {
-          "description": "Pull request number",
-          "required": true
-        },
-        "repo": {
-          "description": "Repository name",
-          "default": "botnexus",
-          "required": false
-        },
-        "reviewer": {
-          "description": "Code reviewer name",
-          "required": true
-        },
-        "focusArea": {
-          "description": "Aspect to focus on (architecture, performance, tests, etc.)",
-          "default": "architecture and testability",
-          "required": false
-        }
-      }
-    }
-  }
-}
+```bash
+botnexus config set promptTemplates.code-review-summary.prompt 'Summarize the code review for PR #{{prNumber}} in {{repo}}. Reviewer: {{reviewer}}. Focus on: {{focusArea}}'
+botnexus config set promptTemplates.code-review-summary.description 'Code review summary for pull requests'
+botnexus config set promptTemplates.code-review-summary.parameters.prNumber.description 'Pull request number'
+botnexus config set promptTemplates.code-review-summary.parameters.prNumber.required true
+botnexus config set promptTemplates.code-review-summary.parameters.repo.description 'Repository name'
+botnexus config set promptTemplates.code-review-summary.parameters.repo.default botnexus
+botnexus config set promptTemplates.code-review-summary.parameters.repo.required false
+botnexus config set promptTemplates.code-review-summary.parameters.reviewer.description 'Code reviewer name'
+botnexus config set promptTemplates.code-review-summary.parameters.reviewer.required true
+botnexus config set promptTemplates.code-review-summary.parameters.focusArea.description 'Aspect to focus on (architecture, performance, tests, etc.)'
+botnexus config set promptTemplates.code-review-summary.parameters.focusArea.default 'architecture and testability'
+botnexus config set promptTemplates.code-review-summary.parameters.focusArea.required false
 ```
 
 **CLI usage:**
@@ -3042,30 +2595,16 @@ botnexus prompt run sprint-retrospective `
 
 Schedule a template-based agent prompt:
 
-```json
-{
-  "cron": {
-    "enabled": true,
-    "jobs": {
-      "morning-briefing": {
-        "enabled": true,
-        "schedule": "0 9 * * MON-FRI",
-        "actionType": "agent-prompt",
-        "agentId": "analyst",
-        "templateName": "daily-standup",
-        "templateParameters": {
-          "project": "Infrastructure",
-          "owner": "Platform Team"
-        }
-      }
-    }
-  },
-  "promptTemplates": {
-    "daily-standup": {
-      "prompt": "Daily standup for {{project}} ({{owner}}). What are the top 3 items?"
-    }
-  }
-}
+```bash
+botnexus config set cron.enabled true
+botnexus config set cron.jobs.morning-briefing.enabled true
+botnexus config set cron.jobs.morning-briefing.schedule '0 9 * * MON-FRI'
+botnexus config set cron.jobs.morning-briefing.actionType agent-prompt
+botnexus config set cron.jobs.morning-briefing.agentId analyst
+botnexus config set cron.jobs.morning-briefing.templateName daily-standup
+botnexus config set cron.jobs.morning-briefing.templateParameters.project Infrastructure
+botnexus config set cron.jobs.morning-briefing.templateParameters.owner 'Platform Team'
+botnexus config set promptTemplates.daily-standup.prompt 'Daily standup for {{project}} ({{owner}}). What are the top 3 items?'
 ```
 
 When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and sends the expanded prompt to the agent.
@@ -3075,7 +2614,7 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
 - Template names are case-insensitive when stored but matched case-sensitively in CLI commands
 - Placeholder syntax `{{name}}` is rigid — no nested placeholders, filters, or conditions
 - Maximum template size is limited by JSON parser and agent context window
-- File-based templates (`.prompt.json`) are read-only — edit directly in `config.json` for primary control
+- File-based templates (`.prompt.json`) are read-only — manage configuration-backed templates through the platform configuration interface
 
 ---
 
@@ -3083,113 +2622,49 @@ When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and
 
 ### Example 1: Basic Setup with Copilot
 
-```json
-{
-  "version": 1,
-  "agents": {
-    "assistant": {
-      "provider": "copilot",
-      "model": "gpt-4o"
-    }
-  },
-  "providers": {
-    "copilot": {
-      "auth": "oauth",
-      "defaultModel": "gpt-4o",
-      "apiBase": "https://api.githubcopilot.com"
-    }
-  },
-  "channels": {
-    "telegram": {
-      "enabled": false
-    }
-  },
-  "gateway": {
-    "listenUrl": "http://127.0.0.1:5005",
-    "defaultAgentId": "assistant"
-  }
-}
+```bash
+botnexus config set version 1
+botnexus config set agents.assistant.provider copilot
+botnexus config set agents.assistant.model gpt-4o
+botnexus config set providers.copilot.defaultModel gpt-4o
+botnexus config set channels.telegram.enabled false
+botnexus config set gateway.listenUrl http://127.0.0.1:5005
+botnexus config set gateway.defaultAgentId assistant
 ```
 
 ### Example 2: Multi-Agent Team with OpenAI Fallback
 
-```json
-{
-  "version": 1,
-  "agents": {
-    "planner": {
-      "provider": "openai",
-      "model": "gpt-4-turbo",
-      "systemPromptFiles": ["planner-soul.md"]
-    },
-    "writer": {
-      "provider": "openai",
-      "model": "gpt-4o",
-      "systemPromptFiles": ["writer-soul.md"]
-    }
-  },
-  "providers": {
-    "openai": {
-      "auth": "apikey",
-      "apiKey": "sk-...",
-      "defaultModel": "gpt-4-turbo"
-    }
-  },
-  "gateway": {
-    "defaultAgentId": "planner"
-  }
-}
+```bash
+botnexus config set version 1
+botnexus config set agents.planner.provider openai
+botnexus config set agents.planner.model gpt-4-turbo
+botnexus config set agents.planner.systemPromptFiles '["planner-soul.md"]'
+botnexus config set agents.writer.provider openai
+botnexus config set agents.writer.model gpt-4o
+botnexus config set agents.writer.systemPromptFiles '["writer-soul.md"]'
+botnexus config set providers.openai.apiKey sk-...
+botnexus config set providers.openai.defaultModel gpt-4-turbo
+botnexus config set gateway.defaultAgentId planner
 ```
 
 ### Example 3: Full Stack with Multiple Channels and MCP Servers
 
-```json
-{
-  "version": 1,
-  "agents": {
-    "researcher": {
-      "provider": "copilot",
-      "model": "gpt-4o",
-      "extensions": {
-        "botnexus-mcp": {
-          "servers": { "filesystem": { "command": "npx" } }
-        }
-      }
-    }
-  },
-  "providers": {
-    "copilot": {
-      "auth": "oauth",
-      "defaultModel": "gpt-4o",
-      "apiBase": "https://api.githubcopilot.com"
-    }
-  },
-  "channels": {
-    "telegram": {
-      "botToken": "123456789:ABCdef...",
-      "agentId": "researcher",
-      "allowedUserIds": [12345]
-    },
-    "discord": {
-      "enabled": true,
-      "settings": {
-        "botToken": "xoxp-..."
-      }
-    },
-    "slack": {
-      "enabled": true,
-      "settings": {
-        "botToken": "xoxb-...",
-        "signingSecret": "8f742231b91ee1522d..."
-      }
-    }
-  },
-  "gateway": {
-    "listenUrl": "http://0.0.0.0:5005",
-    "defaultAgentId": "researcher"
-  },
-  "apiKey": "gateway-secret-key"
-}
+```bash
+botnexus config set version 1
+botnexus config set agents.researcher.provider copilot
+botnexus config set agents.researcher.model gpt-4o
+botnexus config set providers.copilot.defaultModel gpt-4o
+botnexus config set channels.telegram.botToken 123456789:ABCdef...
+botnexus config set channels.telegram.agentId researcher
+botnexus config set channels.telegram.allowedUserIds '[12345]'
+botnexus config set channels.discord.enabled true
+botnexus config set channels.discord.settings.botToken xoxp-...
+botnexus config set channels.slack.enabled true
+botnexus config set channels.slack.settings.botToken xoxb-...
+botnexus config set channels.slack.settings.signingSecret 8f742231b91ee1522d...
+botnexus config set gateway.listenUrl http://0.0.0.0:5005
+botnexus config set gateway.defaultAgentId researcher
+botnexus config set apiKey gateway-secret-key
 ```
 
 ### Example 4: Using Environment Variables for Secrets
