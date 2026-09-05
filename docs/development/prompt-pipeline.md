@@ -81,11 +81,11 @@ public class IdentitySection : IPromptSection
 ```csharp
 public interface IPromptContributor
 {
+    PromptSection? Target { get; }  // null = standalone block
     int Priority { get; }
-    string? Target { get; }  // null = top-level, or target section name
-    
+
     bool ShouldInclude(PromptContext context);
-    
+
     PromptContribution GetContribution(PromptContext context);
 }
 
@@ -110,7 +110,7 @@ public record PromptContribution
 public class SkillPromptContributor : IPromptContributor
 {
     public int Priority => 500;
-    public string? Target => null;  // Top-level
+    public PromptSection? Target => null;  // Standalone block
     
     public bool ShouldInclude(PromptContext context)
         => context.Extensions.ContainsKey("skills");
@@ -185,7 +185,7 @@ See [PromptPipeline.cs](../../src/gateway/BotNexus.Gateway.Prompts/PromptPipelin
 
 ## SystemPromptBuilder (Gateway)
 
-Gateway-specific prompt builder. In `None` mode returns a minimal identity string. Otherwise, creates a `PromptPipeline` with standard sections (Identity, Workspace, Tools, ContextFiles, Guidelines, Examples), builds a `PromptContext` from `SystemPromptParams`, and returns the assembled prompt.
+Gateway-specific prompt builder. In `None` mode it returns a minimal identity string. Otherwise it creates a `PromptPipeline` from the named `PromptOrder` sections in source, appends DI-resolved contributors, builds a `PromptContext` from `SystemPromptParams`, and returns the assembled prompt. The source order is authoritative; this guide does not restate the full list because new runtime and safety sections are added frequently.
 
 See [SystemPromptBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/SystemPromptBuilder.cs)
 
@@ -199,7 +199,7 @@ public record SystemPromptParams
     public IReadOnlyList<string>? ToolNames { get; init; }
     public string? UserTimezone { get; init; }
     public IReadOnlyList<ContextFile>? ContextFiles { get; init; }
-    public string? SkillsPrompt { get; init; }
+    public IReadOnlyList<IPromptContributor>? PromptContributors { get; init; }
     public string? HeartbeatPrompt { get; init; }
     public string? DocsPath { get; init; }
     public IReadOnlyList<string>? WorkspaceNotes { get; init; }
@@ -301,7 +301,7 @@ Injects project-specific documentation:
 
 **Context File Discovery:**
 
-Discovers context files from two sources: (1) `.botnexus/context/*.md` directory in workspace, and (2) common root docs (README.md, ARCHITECTURE.md, CONTRIBUTING.md).
+Loads the agent workspace prompt files in the canonical order: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`. An agent-specific `systemPromptFile` replaces that default list. Owner-private files (`USER.md`, `MEMORY.md`, and daily memory notes) are withheld from shared conversations.
 
 See [WorkspaceContextBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/WorkspaceContextBuilder.cs)
 
@@ -598,65 +598,32 @@ Detection is case-insensitive and matches on common prefixes and substrings. The
 
 ## Extension Prompt Contributions
 
-Extensions can contribute to prompts via `IPromptContributor`:
+An extension can register an `IPromptContributor` in the host DI container. `WorkspaceContextBuilder`
+receives the complete `IEnumerable<IPromptContributor>`, passes it through
+`SystemPromptParams.PromptContributors`, and `SystemPromptBuilder` calls
+`PromptPipeline.AddContributors`. This production collection path was added in #3667; before it,
+registered contributors were constructed but silently ignored.
 
-**Skills Extension:**
-
-```csharp
-public class SkillsExtension : IExtension, IPromptContributor
-{
-    public int Priority => 500;
-    public string? Target => null;
-    
-    public PromptContribution GetContribution(PromptContext context)
-    {
-        var skillsPrompt = LoadSkills();
-        
-        return new PromptContribution
-        {
-            SectionHeading = "Available Skills",
-            Lines = [skillsPrompt],
-            Order = 350  // After tools, before context files
-        };
-    }
-}
-```
-
-**Memory Extension:**
+Only standalone contributors (`Target == null`) render today. The pipeline calls `ShouldInclude`, obtains
+the `PromptContribution`, and orders the block by `PromptContribution.Order` when supplied or by the
+contributor's `Priority` otherwise. A non-null `Target` is reserved for attaching to a named
+`PromptSection`, but targeted rendering is not implemented yet.
 
 ```csharp
-public class MemoryExtension : IExtension, IPromptContributor
+public sealed class ExtensionPromptContributor : IPromptContributor
 {
-    public PromptContribution GetContribution(PromptContext context)
-    {
-        var memories = FetchRecentMemories(context);
-        
-        return new PromptContribution
-        {
-            SectionHeading = "Recent Memories",
-            Lines = memories.Select(m => $"- {m.Timestamp}: {m.Content}").ToList(),
-            Order = 450  // After skills, before context files
-        };
-    }
-}
-```
+    public PromptSection? Target => null;
+    public int Priority => 350;
 
-**MCP Extension:**
+    public bool ShouldInclude(PromptContext context)
+        => context.AvailableTools.Contains("extension_tool");
 
-```csharp
-public class McpExtension : IExtension, IPromptContributor
-{
     public PromptContribution GetContribution(PromptContext context)
-    {
-        var servers = GetConnectedServers();
-        
-        return new PromptContribution
+        => new()
         {
-            SectionHeading = "MCP Servers",
-            Lines = servers.Select(s => $"- **{s.Name}**: {s.Description} ({s.ToolCount} tools)").ToList(),
-            Order = 310  // Right after tools section
+            SectionHeading = "Extension guidance",
+            Lines = ["Use `extension_tool` for extension-owned operations."]
         };
-    }
 }
 ```
 
@@ -668,27 +635,12 @@ Discovers context files from workspace, builds `SystemPromptParams` with runtime
 
 See [WorkspaceContextBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/WorkspaceContextBuilder.cs)
 
-## Coding Agent vs. Gateway Agent Prompts
+## Gateway prompt composition
 
-**Coding Agent (BotNexus.CodingAgent):**
-
-- Rich coding-focused prompt
-- Extensive tool documentation
-- Code examples and patterns
-- File operation guidelines
-- Session management instructions
-
-**Gateway Agent (BotNexus.Gateway):**
-
-- More generic prompt structure
-- Extensible via `IPromptContributor`
-- Support for multiple agent archetypes
-- Dynamic context injection
-- Tool registry-based tool docs
-
-**Shared Foundation:**
-
-Both use `BotNexus.Prompts.PromptPipeline` but with different section implementations.
+`WorkspaceContextBuilder` is the production entry point. It discovers workspace context, applies the
+owner-private conversation-scope boundary, resolves DI-registered contributors, and delegates the final
+assembly to `SystemPromptBuilder`. The builder uses `BotNexus.Gateway.Prompts.PromptPipeline`; the retired
+`BotNexus.CodingAgent` project is not a second active prompt implementation.
 
 ## Summary
 
@@ -702,18 +654,15 @@ Both use `BotNexus.Prompts.PromptPipeline` but with different section implementa
 6. **Cache boundaries**: Support for provider-level prompt caching
 7. **Runtime parameterization**: Dynamic values (workspace, tools, timezone) injected at build time
 
-**Performance Characteristics:**
-
-- Prompt build time: <5ms (typical)
-- Context file discovery: <50ms (depends on file count)
-- Cache hit rate: 70-90% (with stable sections)
-- Token reduction: 30-50% (via caching)
+**Performance characteristics:** Prompt construction and context discovery are not assigned fixed latency,
+cache-hit, or token-reduction guarantees. Measure them in the target deployment rather than treating local
+observations as capacity commitments.
 
 **Best Practices:**
 
 1. Use low `Order` values for stable content (cache-friendly)
 2. Use high `Order` values for dynamic content (session-specific)
 3. Keep sections focused and single-purpose
-4. Use `PromptContributor` for extension-based additions
+4. Use `IPromptContributor` for extension-based additions
 5. Leverage `IsMinimal` to reduce token usage for sub-agents
 6. Place cache boundary between stable and dynamic content

@@ -238,15 +238,16 @@ BotNexus follows a **defaults → overrides** pattern. The CLI is the management
 
 **Example:**
 ```text
-Global Model (config.json) = "gpt-4o"
+Provider default (providers.copilot.chat.defaultModel) = "gpt-4o"
   ↓
-Environment variable (agents__named__planner__model) = "claude-3-5-sonnet"
-  — ignored, because the key is also set in config.json
-  ↓
-Agent "planner" override (Agents.Named.planner.Model) = "gpt-4-turbo"
+Named agent override (agents.planner.model) = "gpt-4-turbo"
   ↓
 **Final result:** GPT-4 Turbo for the "planner" agent
 ```
+
+Named agents are keyed directly under `agents`; there is no `agents.named` wrapper. The reserved
+`agents.defaults` entry supplies world-level defaults for the fields it declares, while a named
+agent's own values override those defaults.
 
 ---
 
@@ -296,7 +297,7 @@ services.AddSingleton(botNexusConfig);
 | `Extensions` | ExtensionLoadingConfig | — | Extension loader behavior (signing, max assemblies) |
 | `Agents` | AgentDefaults | — | Agent defaults and named agent configurations |
 | `Providers` | ProvidersConfig | — | LLM provider registry (Copilot, OpenAI, Anthropic, Azure) |
-| `Channels` | ChannelsConfig | — | Social channel integrations (Telegram, Discord, Slack) |
+| `Channels` | ChannelsConfig | — | Channel integrations such as Telegram, Service Bus, SignalR, Agent 365, Matrix, TUI, and test |
 | `Gateway` | GatewayConfig | — | Gateway HTTP server settings |
 | `Tools` | ToolsConfig | — | Tool/extension tool settings (exec, web search, MCP) |
 | `Api` | ApiConfig | — | OpenAI-compatible REST API (optional) |
@@ -702,10 +703,10 @@ Dictionary mapping provider names to provider configurations. Keys are case-inse
 ```json
 {
   "providers": {
-    "copilot": { ... },
+    "github-copilot": { ... },
     "openai": { ... },
     "anthropic": { ... },
-    "azure-openai": { ... }
+    "my-compatible-endpoint": { ... }
   }
 }
 ```
@@ -863,60 +864,38 @@ botnexus config set providers.anthropic.apiKey sk-ant-...
 botnexus config set providers.anthropic.defaultModel claude-3-5-sonnet-20241022
 ```
 
-#### Azure OpenAI Provider
-
-**Folder:** `extensions/providers/azure-openai/`  
-**Auth:** API Key
-
-```bash
-botnexus config set providers.azure-openai.apiKey your-azure-key
-botnexus config set providers.azure-openai.defaultModel deployment-name
-```
 
 ---
 
-### Channels: ChannelsConfig
+### Channels
 
-Social channel integrations. Keys in `Instances` dict are case-insensitive and match extension folder names.
+The top-level `channels` object is a dictionary keyed directly by channel id; there is no
+`channels.instances` wrapper. `ChannelConfig` centrally models only `type`, `enabled`, and an optional
+`settings` dictionary. Adapter-specific objects, arrays, numbers, booleans, credentials, and routing fields
+are preserved verbatim through `AdditionalSettings` so an unrelated typed write cannot erase them.
 
 ```json
 {
   "channels": {
-    "sendProgress": true,
-    "sendToolHints": false,
-    "sendMaxRetries": 3,
-    "instances": {
-      "telegram": { ... },
-      "discord": { ... },
-      "slack": { ... }
-    }
+    "telegram": { ... },
+    "serviceBus": { ... },
+    "signalr": { ... }
   }
 }
 ```
 
-#### ChannelsConfig Properties
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `SendProgress` | bool | true | Include intermediate agent steps in messages |
-| `SendToolHints` | bool | false | Include tool usage hints in responses |
-| `SendMaxRetries` | int | 3 | Retry failed message sends up to N times |
-| `Instances` | dict | — | Per-channel configuration (Telegram, Discord, Slack, etc.) |
-
-#### ChannelConfig: Individual Channel Settings
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Enabled` | bool | false | Enable this channel (if false, not loaded by dynamic loader) |
-| `BotToken` | string | `""` | Bot token/API key for the channel |
-| `SigningSecret` | string | `""` | Signing secret (Slack only, for webhook validation) |
-| `AllowFrom` | list | `[]` | Whitelist of user/chat IDs allowed to use this channel (empty=all) |
+| Common field | Type | Default | Description |
+|---|---|---|---|
+| `type` | string? | channel key | Optional adapter type override. |
+| `enabled` | bool | `true` | Whether the channel entry is enabled. Individual adapters may define a different enablement contract; follow the channel page. |
+| `settings` | object? | `null` | Optional adapter-specific settings dictionary. Most shipped adapters bind their fields directly from the channel object instead. |
+| Additional fields | any JSON shape | — | Adapter-owned fields preserved verbatim by the platform configuration model. |
 
 #### Telegram Channel
 
 **Folder:** `extensions/channels/telegram/`
 
-The Telegram adapter binds directly from the `channels:telegram` section (it does **not** use the generic `Channels.Instances` shape above). The real option names come from `TelegramGatewayOptions`:
+The Telegram adapter binds directly from the `channels:telegram` section. The real option names come from `TelegramGatewayOptions`:
 
 ```bash
 botnexus config set channels.telegram.botToken 123456789:ABCdefGHijKlmnoPQRstuvWXYZ
@@ -930,8 +909,8 @@ botnexus config set channels.telegram.allowedChatIds '[]'
 **Folder:** `extensions/channels/agent365/`
 
 The Agent 365 adapter bridges the Microsoft 365 Agents SDK `Activity` protocol to BotNexus (Register
-tier). It binds directly from the `channels:agent365` section (it does **not** use the generic
-`Channels.Instances` shape). The real option names come from `Agent365GatewayOptions`. See
+tier). It binds directly from the `channels:agent365` section. The real option names come from
+`Agent365GatewayOptions`. See
 [docs/extensions/agent365.md](extensions/agent365.md) for the full surface and the Microsoft.Agents.*
 package / Microsoft.Extensions.* pin design note, and
 [docs/features/agent365-onboarding.md](features/agent365-onboarding.md) for tenant prerequisites,
@@ -954,15 +933,6 @@ botnexus config set channels.agent365.inboundRoute /agent365/messages
 | `channelServiceEndpoint` | no | Base URL outbound activities post to. Defaults to the inbound activity's `serviceUrl`. |
 | `agentId` | yes | BotNexus agent ID inbound messages route to. |
 | `inboundRoute` | no | HTTP route the message endpoint is hosted on. Defaults to `/agent365/messages`. |
-
-#### Discord Channel
-
-**Folder:** `extensions/channels/discord/`
-
-
-#### Slack Channel
-
-**Folder:** `extensions/channels/slack/`
 
 
 ---
@@ -1980,20 +1950,17 @@ BotNexus monitors `~/.botnexus/config.json` for changes and applies most configu
 
 | Setting | Effect |
 |---------|--------|
-| `Agents.Named.*` | Agent runners are rebuilt with new model, temperature, prompt, etc. |
-| `Agents` defaults (Model, MaxTokens, Temperature, etc.) | All agents inherit updated defaults |
-| `Providers.*` | Provider registry is refreshed; new/changed provider configs take effect |
-| `Cron.*` | Cron jobs are reloaded (schedules, new jobs, removed jobs) |
-| `Gateway.ApiKey` | API key middleware uses the new key immediately |
-| `Agents.Named.*.fileAccess` | The agent is re-registered and its path validator is rebuilt from the new allow/deny lists |
+| `agents.<id>.*` | The named agent is re-registered from its new effective descriptor. |
+| `agents.defaults.*` | Named agents inheriting the changed default are re-registered. |
+| `providers.*` | Provider filtering and capability resolution read the rebound configuration. |
+| `cron.*` | Seeded job definitions are reloaded. |
+| `gateway.apiKey` / `gateway.apiKeys.*` | Authentication reads the rebound gateway configuration. |
+| `agents.<id>.fileAccess` | The agent is re-registered and its path validator is rebuilt from the new allow/deny lists. |
 
-Agent re-registration compares the whole effective descriptor - identity, model, prompts, tools, metadata, isolation options, extension config, memory, soul, heartbeat, datetime injection, conversation retention and `fileAccess` - via a single stable fingerprint, so any per-agent field you edit takes effect on the next reload.
-| `Agents.Named.*.fileAccess` | The agent is re-registered and its path validator is rebuilt from the new allow/deny lists |
-
-Agent re-registration compares the whole effective descriptor - identity, model, prompts, tools,
+Agent re-registration compares the whole effective descriptor — identity, model, prompts, tools,
 metadata, isolation options, extension config, memory, soul, heartbeat, datetime injection,
-conversation retention and `fileAccess` - via a single stable fingerprint, so any per-agent field
-you edit takes effect on the next reload.
+conversation retention and `fileAccess` — via a single stable fingerprint, so any effective per-agent
+change takes effect on the next reload.
 
 ### Nullable Parameters (Provider Defaults)
 
@@ -2074,18 +2041,9 @@ Extensions are dynamically loaded from the `extensions/` directory. Each extensi
 
 ```text
 extensions/
-├── providers/
-│   ├── copilot/              # BotNexus.Agent.Providers.Copilot.dll
-│   ├── openai/               # BotNexus.Agent.Providers.OpenAI.dll
-│   ├── anthropic/            # BotNexus.Agent.Providers.Anthropic.dll
-│   └── azure-openai/         # Custom provider
-├── channels/
-│   ├── telegram/             # BotNexus.Extensions.Channels.Telegram.dll
-│   ├── discord/              # BotNexus.Extensions.Channels.Discord.dll
-│   └── slack/                # BotNexus.Extensions.Channels.Slack.dll
-└── tools/
-    ├── github/               # BotNexus.Tools.GitHub.dll
-    └── custom-tool/          # Custom tool extension
+├── providers/                # Provider assemblies packaged by a deployment
+├── channels/                 # Telegram, Service Bus, SignalR, Agent 365, Matrix, TUI, or test channel assemblies
+└── tools/                    # Tool and integration extension assemblies
 ```
 
 ### Extension Registration
@@ -2700,7 +2658,7 @@ export BOTNEXUS_API_KEY="$(openssl rand -hex 32)"
 
 1. Check `DefaultAgent` is set and matches a named agent (if using named agents)
 2. Verify provider config: `Auth`, `ApiKey` (for apikey auth), or OAuth token (for oauth)
-3. Check the channel is configured under the right section (Telegram binds `channels:telegram` with a valid `botToken` and `agentId` - it has no `Enabled` flag; Discord/Slack use the `Channels.Instances` shape)
+3. Check the channel is configured under the section documented by its channel page (for example, Telegram binds `channels:telegram` with a valid `botToken` and `agentId` and has no `enabled` flag)
 4. View logs for provider initialization errors
 
 ### Token Expiration Errors

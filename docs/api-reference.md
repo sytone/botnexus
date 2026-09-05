@@ -31,7 +31,7 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 
 All endpoints follow REST conventions and return JSON responses. The default port is **5005** (configurable via `config.json`).
 
-**Authentication:** All endpoints require API key authentication (see [Authentication](#authentication) below).
+**Authentication:** `/api/*` endpoints require API-key authentication when keys are configured, except for the explicit bypass routes listed in [Authentication](#authentication). `GET /health` is outside `/api` and unauthenticated. With no configured key, the gateway runs in development mode and grants callers an admin identity.
 
 ---
 

@@ -96,7 +96,7 @@ This command:
 ├── config.json              # Your configuration
 ├── extensions/
 │   ├── providers/           # LLM provider assemblies
-│   ├── channels/            # Channel assemblies (Telegram, Discord, Slack, etc.)
+│   ├── channels/            # Channel assemblies (Telegram, Service Bus, SignalR, etc.)
 │   └── tools/               # Tool extension assemblies
 ├── agents/                  # Agent workspace directories
 ├── tokens/                  # OAuth tokens (encrypted)
@@ -301,15 +301,9 @@ Click any session in the sidebar to reload it and continue.
 
 ### Viewing Extensions
 
-The **Extensions** panel shows all loaded components:
-
-```text
-✅ 4 loaded
-❌ 0 failed
-📡 1 channel
-🧠 1 provider
-🔧 15 tools
-```
+The **Extensions** panel shows the components loaded by this installation, grouped by type and health.
+Counts vary with the installed extension set and enabled providers, so use the panel's live totals rather
+than expecting a fixed number of channels, providers, or tools.
 
 Expand **Providers** and **Tools** to see what's available.
 
@@ -442,7 +436,7 @@ filesystem backup of `~/.botnexus/`:
 
 ## 10. Next Steps
 
-- **[Using Channels](user-guide/extensions.md)** — Connect your agents to Telegram, Discord, Slack, or your own interfaces
+- **[Using Channels](user-guide/extensions.md)** — Connect agents through the shipped channels or your own interfaces
 - **[Configuring Cron Jobs](cron-and-scheduling.md)** — Automate recurring tasks
 - **[Workspace & Memory](development/workspace-and-memory.md)** — Deep dive into agent personality files
 - **[Configuration Guide](configuration.md)** — Full reference for every config option
