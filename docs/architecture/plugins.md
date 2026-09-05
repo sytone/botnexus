@@ -5,9 +5,9 @@ and MCP server definitions - so they can be distributed and installed as one uni
 being copied file by file.
 
 This document describes the **on-disk contract**, the **install / update / remove
-lifecycle**, **plugin-granularity trust catalogs**, and how a plugin's skills join skill
-discovery. Cron-triggered updates and wiring into agent config sources or MCP are
-deliberately out of scope here and are covered by later slices of the plugin epic (#2623).
+lifecycle**, **plugin-granularity trust catalogs**, how a plugin's skills join skill discovery,
+how plugin MCP servers register, and how plugin-shipped agents reach the agent registry behind a
+privilege fence.
 
 ## Directory layout
 
@@ -286,6 +286,86 @@ logged; under `Warn` it is loaded and the violation logged.
 Note that this is trust at **skill** granularity, applied to skills that happen to come from a
 plugin. Trust at **plugin** granularity - a catalog generated over the whole plugin at install
 time - is described in [Plugin trust catalogs](#plugin-trust-catalogs) below.
+
+## Plugin-shipped agents
+
+A plugin may ship agent descriptors under its own `agents/` directory, one JSON document per
+agent. `PluginAgentConfigurationSource` surfaces them as a **second
+`IAgentConfigurationSource`**, which `AgentConfigurationHostedService` already knows how to
+reconcile - it loads every registered source at startup and merges the results. Plugin agents
+therefore need no reconciliation logic of their own, and none was added: a second reconciliation
+path is how two sets of agents drift into disagreeing about which descriptor won.
+
+As with skills, **the installed record is the authority**. Descriptors are read only from
+plugins recorded in `installed-plugins.json`; a directory dropped next to real plugins has no
+provenance and contributes nothing.
+
+The source does not watch. `Watch` returns `null`, which the hosted service already treats as
+"this source does not notify". Plugin content changes only through install, update or remove -
+all explicit operations - so a filesystem watcher would be a second, racier notification path
+for events the lifecycle manager already knows about.
+
+### What a plugin agent may declare
+
+A plugin arrives from a marketplace, so its agent descriptor is untrusted input. BotNexus adopts
+the Claude Code constraint directly: **a plugin-shipped agent may not declare hooks, MCP servers,
+isolation escalation, or file access beyond the installing user's own ceiling.**
+
+| Category | Members | Outcome |
+|---|---|---|
+| Identity and presentation | `displayName`, `emoji`, `description`, `order` | Declarable |
+| Model selection | `model`, `provider`, `allowedModels`, `thinking`, `contextWindow`, `cacheRetention` | Declarable |
+| Prompt content | `systemPrompt`, `systemPromptFiles` | Declarable |
+| Tool ids | `toolIds` | Declarable |
+| Behavioural config | `memory`, `soul`, `heartbeat`, `dateTimeInjection`, `conversationRetention`, `maxConcurrentSessions`, `metadata` | Declarable |
+| File access | `fileAccess` | **Narrowed** to the installing user's ceiling |
+| Everything else | `isolationStrategy`, `isolationOptions`, `kind`, `shellCommand`, `extensionConfig` (hooks, MCP servers), `subAgents`, `subAgentRoles`, session and conversation access | **Rejected at load** |
+
+`toolIds` is declarable because a tool id names a tool the *host* has registered; an id the host
+does not know resolves to nothing. Declaring one cannot conjure a capability the user has not
+already installed.
+
+A rejected descriptor is **skipped entirely**, with an error naming the offending field, and the
+agent does not load. It is never loaded at reduced privilege: "load it anyway but ignore the
+dangerous bit" is indistinguishable at the call site from "the author's intent was honoured".
+
+### File access is narrowed, not refused
+
+`fileAccess` is the one member with a coherent reduced form, so it is clamped rather than
+rejected. Grants are intersected **by containment** - a declared path survives when it is at or
+beneath a path the ceiling already allows, so a plugin may legitimately ask for a subdirectory of
+a granted tree. Denials go the other way and are **unioned**: the ceiling's denied paths always
+apply, because a plugin must not be able to un-deny a path by omitting it. Narrowing is logged,
+so an author whose declaration did not fully take effect can find out.
+
+A plugin that declares no `fileAccess` is **not** handed the ceiling as a grant; it keeps the
+host's default, workspace-only behaviour. And when the installing user has no path grants of
+their own, a plugin-declared policy narrows to nothing - a plugin can never be granted more than
+the user who installed it.
+
+### The fence is structural, not a list of forbidden names
+
+The obvious implementation is a deny-list of dangerous member names. That list is correct only on
+the day it is written: the next property added to `AgentDescriptor` is not on it, so it becomes
+plugin-declarable the instant it exists - silently, with no error and no log.
+
+So `PluginAgentDescriptorFence` inverts the default. It reflects over the descriptor's settable
+members and classifies them as *declarable* or *narrowed*; the **fenced set is the computed
+complement**, never a literal list. A member added tomorrow is fenced tomorrow, and the failure
+mode of forgetting is "the new member is rejected", not "the new member is granted".
+
+`PluginAgentPrivilegeFenceArchitectureTests` pins that structure, in the shape of the #2588
+fingerprint fence: widening the declarable set fails the architecture test until the same
+decision is mirrored in it. Growing the plugin privilege surface therefore cannot happen as a
+quiet one-line edit - it requires editing a test whose whole purpose is to be read.
+
+The on-disk `PluginAgentDefinition` shape is a second, cheaper layer: it declares only the
+permitted fields, so an `isolationStrategy` in a plugin's JSON has nowhere to bind and is
+discarded at parse time. That is a convenience, not the authority - it is a hand-maintained list,
+and the structural fence is what stops it drifting.
+
+Runtime sandboxing of the resulting agent is out of scope: the fence governs what the descriptor
+may **declare**.
 
 ## Plugin trust catalogs
 
