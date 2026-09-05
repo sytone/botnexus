@@ -70,26 +70,27 @@ Here's what happens when you start BotNexus:
 4. **Chat** — Open the WebUI and start chatting with your agent
 5. **Extend** — Add channels, tools, cron jobs, or custom providers as needed
 
-The whole system is driven by a single `config.json` file and workspace Markdown files for each agent.
+Platform settings are managed through the `botnexus` CLI and agent behaviour through workspace Markdown files. Existing JSON-backed homes and SQLite-backed homes use the same CLI commands.
 
 ### Using the CLI
 
-You can manage configuration from the command line without editing JSON:
+Use the command line rather than editing the storage representation directly. The same commands work whether the home currently stores configuration in JSON or SQLite:
 
 ```powershell
-# Initialize home directory
+# Initialize the home and configure a provider
 botnexus init
+botnexus provider setup
 
-# List agents
+# Read and update settings
+botnexus config get gateway.listenUrl
+botnexus config set gateway.listenUrl http://localhost:8080
+
+# Create and inspect agents
+botnexus agent add coder --provider copilot --model gpt-5.6-sol
 botnexus agent list
 
-# Add an agent
-botnexus agent add coder --provider copilot --model gpt-5.6-sol
-
-# View a config value
-botnexus config get gateway.listenUrl
-
-# Validate configuration
+# Inspect the backend and validate configuration
+botnexus config store status
 botnexus validate
 ```
 

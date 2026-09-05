@@ -43,6 +43,11 @@ public sealed record EventOrderingViolation(string Rule, int EventIndex, string 
 /// <item><description>Nothing is emitted after the terminal event.</description></item>
 /// </list>
 /// <para>
+/// <see cref="WarningEvent"/> is deliberately outside this grammar (#3291): it is non-terminal,
+/// opens and closes no block, and may appear at any position - including before the
+/// <see cref="StartEvent"/>, when the first frame a producer sees is the malformed one.
+/// </para>
+/// <para>
 /// The "nothing after the terminal event" rule matters more than it looks:
 /// <see cref="LlmStream.Push"/> drops post-terminal pushes silently, so a producer that violates it
 /// is invisible at runtime as well as in tests. Validating the captured list rather than the stream
@@ -98,6 +103,13 @@ public static class AssistantMessageEventOrdering
         var violations = new List<EventOrderingViolation>();
         var openBlocks = new Dictionary<int, string>();
         var startSeen = false;
+        // Whether any event other than a non-terminal WarningEvent has been observed. The start rule
+        // is "nothing of substance precedes StartEvent", not "StartEvent is literally at index 0":
+        // a producer can observe a malformed first frame and legitimately report it (#3291) before
+        // it has parsed enough to open the message. Keying off this flag rather than the raw index
+        // does not weaken the rule - a block event before StartEvent is still caught, by the
+        // !startSeen check further down, which warnings never reach.
+        var nonWarningSeen = false;
         var terminalIndex = -1;
         var terminalIsError = false;
 
@@ -124,23 +136,34 @@ public static class AssistantMessageEventOrdering
                         violations.Add(new EventOrderingViolation(
                             RuleSingleStart, i, "a second StartEvent was emitted; exactly one is permitted."));
                     }
-                    else if (i != 0)
+                    else if (nonWarningSeen)
                     {
                         violations.Add(new EventOrderingViolation(
                             RuleStartPrecedesBlocks,
                             i,
-                            $"StartEvent appeared at position {i}; it must precede every other event."));
+                            $"StartEvent appeared at position {i}, after a non-warning event; it must " +
+                            "precede every other event except a non-terminal warning."));
                     }
 
                     startSeen = true;
+                    nonWarningSeen = true;
                     continue;
 
                 case DoneEvent:
                 case ErrorEvent:
                     terminalIndex = i;
                     terminalIsError = evt is ErrorEvent;
+                    nonWarningSeen = true;
+                    continue;
+
+                case WarningEvent:
+                    // Non-terminal and position-neutral (#3291). It opens and closes no block, so it
+                    // has no place in the block grammar, and it may legitimately appear before the
+                    // StartEvent when the very first frame is the abnormal one.
                     continue;
             }
+
+            nonWarningSeen = true;
 
             var (kind, phase, contentIndex) = Classify(evt);
             if (kind is null)

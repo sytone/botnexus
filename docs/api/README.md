@@ -128,18 +128,6 @@ A machine-readable OpenAPI 3.0 description of the full surface is also available
 > The gateway hosts additional controllers (channels, models, providers, memory,
 > stats, and more) that are not yet documented as hand-written pages; they do
 > appear in `openapi.json`.
-### Routes registered outside the controller set
-
-Some routes are registered through the `IEndpointContributor` seam by an extension rather than as
-a controller in `BotNexus.Gateway.Api`, because a gateway project may not reference an extension
-project. They are real, authenticated `/api/*` routes, but they will never appear in a listing
-derived from `Controllers/`:
-
-| Base route | Registered by | Reference |
-|------------|---------------|-----------|
-| `api/plugins` | `PluginsEndpointContributor` | [Plugins](../api-reference.md#plugins) |
-| `api/skills` | `SkillsEndpointContributor` | [Skills Management](../api-reference.md#skills-management) |
-| `api/telemetry` | `TelemetryEndpointContributor` | [Telemetry](../api-reference.md#telemetry) |
 
 ---
 

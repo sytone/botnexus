@@ -31,6 +31,22 @@ Per test-run sandbox under `Path.GetTempPath()/botnexus-e2e/<runId>/`:
    The pack now also runs under the same machine-wide mutex as the solution prebuild, and
    the install layout is verified by name before any CLI verb runs, so a bind fault fails at
    the step that produced it rather than as an opaque `exited 1` later.
+
+   **The same defect existed independently in `BotNexus.Integration.Cli.Tests` and was fixed by
+   #3237.** That project's `LocalCliInstallFixture` packs through `CliPackIsolation`, which was
+   still stamping the synthetic value as *both* `Version` and `PackageVersion` after #3388 fixed
+   the E2E copy. It produced the same intermittent
+   `Could not load file or assembly 'BotNexus.Agent.Providers.Core, Version=99.99.99.0'` during
+   `init`, reddening unrelated PRs. Two properties are involved and they are not interchangeable:
+
+   | Property | Correct value | Effect if stamped synthetically |
+   |---|---|---|
+   | `PackageVersion` | `99.99.99-<kind>-<hash>` | none — this is what gives `dotnet tool install --version` a per-run identity |
+   | `Version` | the repo assembly version (`Directory.Build.props`) | flows into every `ProjectReference`, recompiles the whole closure at a version nothing else on the machine carries, and the CLI then binds a dependency version the packaged copy may not have |
+
+   **If you add another pack-and-install fixture, stamp `PackageVersion` only.** The install-layout
+   guard must also expect the *repo* version rather than the pack stamp — expecting the synthetic
+   value is what left the #3243 guard silent on a genuinely broken layout.
 2. `botnexus init --target <home>` — fresh `BOTNEXUS_HOME`.
 3. `botnexus provider add --name integration-mock --api integration-mock
    --default-model integration-mock-echo --base-url <e2e-catalog.json>`.

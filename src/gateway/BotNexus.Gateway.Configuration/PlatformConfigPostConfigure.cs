@@ -1,5 +1,7 @@
+using BotNexus.Gateway.Configuration.Store;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
+using System.IO.Abstractions;
 using System.Text.Json;
 
 namespace BotNexus.Gateway.Configuration;
@@ -18,7 +20,7 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
     {
         var rawJson = configFilePath is not null && File.Exists(configFilePath)
             ? TryReadFile(configFilePath)
-            : ReadRawJson(configuration);
+            : ReadRawJson(configuration) ?? ReadRawJsonFromStore(configFilePath);
 
         if (!string.IsNullOrWhiteSpace(rawJson))
         {
@@ -165,6 +167,58 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
     {
         try { return File.ReadAllText(path); }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Rebuilds the raw configuration document from the SQLite config store when no
+    /// <c>config.json</c> exists on disk.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this fallback is load-bearing.</b> Every normalisation step above operates on the raw
+    /// JSON document rather than on the bound config, because each handles something IConfiguration
+    /// binding cannot express: <c>agents.defaults</c> extraction, <c>version</c> (bound under a
+    /// remapped key to avoid colliding with the <c>DOTNET_VERSION</c> environment variable), legacy
+    /// root-level gateway field migration, and <c>JsonElement</c> fields. With no raw document, none
+    /// of them run.
+    /// </para>
+    /// <para>
+    /// On a store-only home that was silent data loss rather than a skipped step: the fallback branch
+    /// does not merely decline to extract <c>agents.defaults</c>, it removes the key from the bound
+    /// config. Measured against a real 690-entry store, <c>version</c>,
+    /// <c>agents.defaults.memory.enabled</c> and <c>agents.defaults.memory.indexing</c> existed only
+    /// in the store and were dropped with no error and no warning (#3842).
+    /// </para>
+    /// <para>
+    /// This mirrors the pristine-document seam the writer uses (#3826) and the identity seam
+    /// <c>WorldIdResolver</c> uses at DI registration (#3824), so the store is authoritative
+    /// consistently rather than only on whichever paths happened to be fixed. Deliberately
+    /// best-effort: a missing, locked or malformed store yields null and the caller behaves exactly
+    /// as it did before.
+    /// </para>
+    /// </remarks>
+    private static string? ReadRawJsonFromStore(string? configFilePath)
+    {
+        if (string.IsNullOrWhiteSpace(configFilePath))
+            return null;
+
+        try
+        {
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(configFilePath, new FileSystem());
+            if (!File.Exists(storePath))
+                return null;
+
+            var store = new SqliteConfigStore($"Data Source={storePath}");
+            var entries = store.ReadEntriesAsync().GetAwaiter().GetResult();
+            if (entries.Count == 0)
+                return null;
+
+            return ConfigDocumentRehydrator.Rehydrate(entries).ToJsonString();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or JsonException)
+        {
+            return null;
+        }
     }
 
     private static string? ReadRawJson(IConfiguration configuration)

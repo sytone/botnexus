@@ -75,38 +75,29 @@ public sealed class CopilotProviderCapabilitiesTests
     }
 
     /// <summary>
-    /// #3336: all three Copilot transports declare the CRLF delta-framing quirk. The strip used to
-    /// be gated on a <c>gpt-5.6</c> model-id prefix, which the <c>claude-opus-5</c> corruption
-    /// evidence falsified - a transport artifact is a property of the wire, not of the model.
+    /// #3442: no Copilot transport declares a CRLF delta-framing quirk any more. Mitm captures of
+    /// the identical endpoints contain 0 raw CR bytes across 3,025 provider deltas, so the flag
+    /// (and the lossy strip it gated) was removed entirely. This asserts the property that
+    /// replaced it: every Copilot transport accumulates text deltas byte-identically, exactly as
+    /// every non-Copilot provider already did.
     /// </summary>
     [Fact]
-    public void EveryCopilotTransport_DeclaresCrlfTextDeltaFraming()
+    public void NoCopilotTransport_DeclaresATextDeltaMutationCapability()
     {
-        CreateMessages().Capabilities.FramesStreamedTextDeltasWithCrlf.ShouldBeTrue();
-        CreateCompletions().Capabilities.FramesStreamedTextDeltasWithCrlf.ShouldBeTrue();
-        CreateResponses().Capabilities.FramesStreamedTextDeltasWithCrlf.ShouldBeTrue();
-    }
+        var capabilityNames = typeof(ProviderCapabilities)
+            .GetProperties()
+            .Select(p => p.Name)
+            .ToList();
 
-    /// <summary>
-    /// The complement, and the assertion that makes the flag mean something: a provider that has
-    /// not declared the quirk does NOT get the lossy strip. Defaulting the workaround OFF is the
-    /// #2432 contract - one provider's defect must not be paid for by every provider.
-    /// </summary>
-    [Fact]
-    public void UndeclaredProvider_DoesNotGetTheCrlfStrip()
-    {
-        ProviderCapabilities.Default.FramesStreamedTextDeltasWithCrlf.ShouldBeFalse();
-    }
+        capabilityNames.ShouldNotContain(
+            "FramesStreamedTextDeltasWithCrlf",
+            "The CRLF this flag gated is not on the wire (#3442). The real defect was our own " +
+            "separator injection in MessageConverter.ToAgentMessage (#3425, fixed by #3428).");
 
-    /// <summary>
-    /// Every real provider outside the Copilot tree still declares the quirk OFF, so the migration
-    /// from the model-id gate did not silently widen a lossy transform across the platform.
-    /// </summary>
-    [Fact]
-    public void NonCopilotProviders_DoNotDeclareCrlfTextDeltaFraming()
-    {
-        new OpenAIResponsesProvider(new HttpClient(), NullLogger<OpenAIResponsesProvider>.Instance)
-            .Capabilities.FramesStreamedTextDeltasWithCrlf.ShouldBeFalse();
+        // Non-vacuity: the record must still carry its OTHER declared capabilities, otherwise this
+        // assertion would pass against an empty or renamed type.
+        capabilityNames.ShouldContain("RecoversLeakedToolCallMarkup");
+        capabilityNames.ShouldContain("SystemPromptPlacement");
     }
 
     /// <summary>
