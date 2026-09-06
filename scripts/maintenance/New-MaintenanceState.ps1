@@ -155,8 +155,10 @@ function Test-MaintenanceCandidate {
             if (-not $prop) {
                 $problems += ($label + ": missing '" + $flag.Key + "' (the planner defaults it false -> " + $flag.Reason + ")")
             }
-            elseif (-not [bool]$prop.Value) {
-                $problems += ($label + ": '" + $flag.Key + "' is false -> the planner will answer " + $flag.Reason)
+            elseif ($prop.Value -isnot [bool] -or -not $prop.Value) {
+                # Nonempty strings and arrays are truthy in PowerShell, but are not
+                # JSON Boolean evidence. Preserve type until this admission check.
+                $problems += ($label + ": '" + $flag.Key + "' must be Boolean true -> the planner will answer " + $flag.Reason)
             }
         }
 

@@ -387,5 +387,48 @@ try {
 finally { Remove-Item -Recurse -Force $tmp2 -ErrorAction SilentlyContinue }
 
 Write-Host ''
+# #3960: pass deserialized JSON candidates to the actual producer process.
+$flagCases = @(
+    @{ Name = 'string-false'; Json = '"false"' }, @{ Name = 'string-true'; Json = '"true"' },
+    @{ Name = 'empty-string'; Json = '""' }, @{ Name = 'zero'; Json = '0' },
+    @{ Name = 'one'; Json = '1' }, @{ Name = 'empty-array'; Json = '[]' },
+    @{ Name = 'true-array'; Json = '[true]' }, @{ Name = 'false-array'; Json = '[false]' },
+    @{ Name = 'mixed-array'; Json = '[false,true]' }, @{ Name = 'object'; Json = '{}' },
+    @{ Name = 'null'; Json = 'null' }, @{ Name = 'omitted'; Json = 'null' },
+    @{ Name = 'boolean-false'; Json = 'false' }, @{ Name = 'boolean-true'; Json = 'true' }
+)
+$flagTemp = Join-Path ([IO.Path]::GetTempPath()) ('boolean-producer-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $flagTemp | Out-Null
+try {
+    foreach ($flag in 'trusted', 'decisionFree') {
+        foreach ($case in $flagCases) {
+            $candidate = @{ id = 'boolean-contract'; lane = 'repair'; trusted = $true; decisionFree = $true; files = @('src/boolean.cs') }
+            $typed = ConvertFrom-Json -InputObject ('{"value":' + $case.Json + '}')
+            if ($case.Name -eq 'omitted') { $candidate.Remove($flag) }
+            else { $candidate[$flag] = $typed.value }
+            $inputPath = Join-Path $flagTemp 'candidate.json'
+            $outPath = Join-Path $flagTemp "$flag-$($case.Name).json"
+            $candidate | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $inputPath -Encoding utf8
+            $escapedScript = $scriptPath.Replace("'", "''")
+            $escapedInput = $inputPath.Replace("'", "''")
+            $escapedOut = $outPath.Replace("'", "''")
+            $command = "`$c = Get-Content -LiteralPath '$escapedInput' -Raw | ConvertFrom-Json; & '$escapedScript' -OpenPrCount 1 -OpenPrSoftCap 5 -Candidates @(`$c) -OutPath '$escapedOut'; exit `$LASTEXITCODE"
+            $diagnostic = @(& pwsh -NoProfile -Command $command 2>&1) -join ' '
+            $exitCode = $LASTEXITCODE
+            $accept = $case.Name -eq 'boolean-true'
+            Assert-Eq "Boolean $flag $($case.Name): producer exit" $(if ($accept) { 0 } else { 2 }) $exitCode
+            Assert-True "Boolean $flag $($case.Name): file exists only for actual true" ((Test-Path -LiteralPath $outPath) -eq $accept)
+            if (-not $accept) {
+                Assert-True "Boolean $flag $($case.Name): diagnostic names candidate and flag" ($diagnostic.Contains('boolean-contract') -and $diagnostic.Contains($flag))
+            }
+            else {
+                $roundTrip = Get-Content -LiteralPath $outPath -Raw | ConvertFrom-Json
+                Assert-True "Boolean $flag actual true retains Boolean type" ($roundTrip.candidates[0].$flag -is [bool] -and $roundTrip.candidates[0].$flag)
+            }
+        }
+    }
+}
+finally { Remove-Item -LiteralPath $flagTemp -Recurse -Force }
+
 Write-Host "PASS: $script:pass  FAIL: $script:fail" -ForegroundColor $(if ($script:fail) { 'Red' } else { 'Green' })
 exit $(if ($script:fail) { 1 } else { 0 })

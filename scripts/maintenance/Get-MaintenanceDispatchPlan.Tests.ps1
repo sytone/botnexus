@@ -178,6 +178,33 @@ Assert-Equal 'open-pr-soft-cap' (($plan.blockers | ForEach-Object reason) -join 
 Assert-Equal 0 $plan.dispatch.Count 'Complete 31/30 state must not dispatch.'
 Assert-Equal 0 $plan.telemetry.implementationStarts 'Complete 31/30 state must preserve zero implementation starts.'
 
+# #3960: exercise JSON types through the real file entry point, not a bool cast.
+$flagCases = @(
+    @{ Name = 'string-false'; Json = '"false"' }, @{ Name = 'string-true'; Json = '"true"' },
+    @{ Name = 'empty-string'; Json = '""' }, @{ Name = 'zero'; Json = '0' },
+    @{ Name = 'one'; Json = '1' }, @{ Name = 'empty-array'; Json = '[]' },
+    @{ Name = 'true-array'; Json = '[true]' }, @{ Name = 'false-array'; Json = '[false]' },
+    @{ Name = 'mixed-array'; Json = '[false,true]' }, @{ Name = 'object'; Json = '{}' },
+    @{ Name = 'null'; Json = 'null' }, @{ Name = 'omitted'; Json = 'null' },
+    @{ Name = 'boolean-false'; Json = 'false' }, @{ Name = 'boolean-true'; Json = 'true' }
+)
+foreach ($flag in 'trusted', 'decisionFree') {
+    foreach ($case in $flagCases) {
+        $state = New-State
+        $candidate = @{ id = 'boolean-contract'; lane = 'repair'; trusted = $true; decisionFree = $true; files = @('src/boolean.cs') }
+        $typed = ConvertFrom-Json -InputObject ('{"value":' + $case.Json + '}')
+        if ($case.Name -eq 'omitted') { $candidate.Remove($flag) }
+        else { $candidate[$flag] = $typed.value }
+        $state.candidates = @($candidate)
+        $plan = Invoke-Plan $state
+        $accept = $case.Name -eq 'boolean-true'
+        $expectedReason = if ($flag -eq 'trusted') { 'trust-gate' } else { 'decision-gate' }
+        Assert-Equal ([int]$accept) $plan.dispatch.Count "Boolean $flag $($case.Name): dispatch only actual true."
+        $reasons = (@($plan.blockers) | ForEach-Object reason) -join ','
+        Assert-Equal $(if ($accept) { '' } else { $expectedReason }) $reasons "Boolean $flag $($case.Name): precise gate reason."
+    }
+}
+
 Write-Host "PASS: $script:pass  FAIL: $($failures.Count)"
 if ($failures.Count -gt 0) { $failures | ForEach-Object { Write-Host "  FAIL $_" -ForegroundColor Red }; exit 1 }
 Write-Host 'Maintenance dispatch tests passed.' -ForegroundColor Green

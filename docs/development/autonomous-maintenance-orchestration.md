@@ -80,6 +80,13 @@ keys so input from other producers cannot bypass that check.
 
 Candidate order is priority order. The runtime owns issue/PR discovery and must populate `trusted`, `decisionFree`, and the complete intended file set from authoritative evidence. Put every path changed by an open PR in `reservedFiles`; active workers contribute their file sets automatically. Missing evidence fails closed, and an issue already assigned to an active worker is rejected as `already-active`.
 
+Candidate `trusted` and `decisionFree` must each be actual JSON Boolean `true`.
+The planner reports `trust-gate` or `decision-gate` for Boolean false, strings
+(including `"true"` and `"false"`), numbers, arrays (including `[true]`), objects,
+null, or omitted flags. The repository producer rejects these values with a
+candidate-and-flag diagnostic and writes no state file. Neither boundary coerces
+truthy values into trust or decision evidence.
+
 Set `validationMode` to `local` or `remote`. For compatibility, the planner itself defaults omitted values to `local`; this is distinct from the producer and repository validation gate, which default to `remote`. On the workstation hosting the live gateway, always pass `remote` explicitly; the compatibility default is not permission to run local gateway tests. Workers still run `scripts/repo/Validate-PreCommit.ps1`; the planner records the selected plane but does not replace strict validation. In remote mode, `validationRequired` reserves capacity and `remoteValidation.maxConcurrent`/`maxCost` remain hard ceilings. Local mode is an explicit opt-in that reserves no remote capacity and lets `Invoke-LocalValidation.ps1` globally serialize host work; it must not be selected on a host running a live gateway, because local test hosts outlive their parent and claim the live gateway's scheduled jobs.
 
 ## Preserved gates
@@ -117,7 +124,7 @@ pwsh -NoProfile -File scripts/maintenance/Get-MaintenanceDispatchPlan.Tests.ps1
 pwsh -NoProfile -File scripts/maintenance/New-MaintenanceState.Tests.ps1
 ```
 
-The tests cover independent lanes, push-based refill, every preserved gate, validation ceilings, existing-worktree recovery, and telemetry accumulation. They also cover each missing/null budget key, explicit zero budgets, the complete-input PR-cap verdict, producer schema/source agreement, and producer entry-point rejection. The planner suite reports numeric PASS/FAIL tallies for mutation verification.
+The tests cover independent lanes, push-based refill, every preserved gate, validation ceilings, existing-worktree recovery, and telemetry accumulation. They also cover each missing/null budget key, explicit zero budgets, the complete-input PR-cap verdict, producer schema/source agreement, and producer entry-point rejection. Both suites parameterize real entry-point Boolean flag cases across JSON types. Removing the strict type checks re-admits string-false candidates and fails the named regressions. Both suites report numeric PASS/FAIL tallies for mutation verification.
 
 
 ## Throughput proof and production soak
