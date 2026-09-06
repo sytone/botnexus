@@ -1,459 +1,463 @@
 # Message Routing and Session Flow
 
-This document describes how messages flow through BotNexus from client to agent and back, including session lifecycle management.
+This guide follows an inbound message from the client to an agent and back. The
+transport is channel-based, but a **conversation** is the durable routing identity;
+a **session** is an execution/history segment within that conversation. Compaction
+can replace the active session without changing the conversation's subscription.
+
+For the complete wire surface and authorization rules, see the
+[SignalR API reference](../api/signalr.md) and
+[hub protocol contract](../signalr-hub-contract.md). The source links below identify
+the implementations behind this walkthrough, rather than proposed behavior.
 
 ## Overview
 
-BotNexus uses a **channel-based routing architecture** where messages flow through:
+```text
+SignalR client -> GatewayHub -> GatewayHubApplicationService
+    -> conversation/session resolution and conversation-group subscription
+    -> IInboundMessageOrchestrator.AcceptAsync
+    -> GatewayHost.ProcessAsync -> IMessageRouter -> conversation/session resolution
+    -> IAgentSupervisor -> IAgentHandle -> agent loop
+    -> GatewayHost stream callback -> SignalRChannelAdapter -> conversation group
 
-1. **Channel Adapters** (SignalR, Telegram, TUI, etc.) → 
-2. **Channel Dispatcher** (IChannelDispatcher) → 
-3. **Message Router** (IMessageRouter) → 
-4. **Agent Supervisor** (IAgentSupervisor) → 
-5. **Agent Handle** (IAgentHandle) → 
-6. **Agent Response** → 
-7. **Channel Adapter** (broadcast to session group)
+Other channel adapters -> IChannelDispatcher.DispatchAsync
+    -> shared inbound orchestrator -> GatewayHost.ProcessAsync -> same execution path
+```
+
+The hub resolves identifiers before dispatch so it can subscribe the caller before
+streaming starts. That is distinct from processing the message or completing an
+agent turn. The shared orchestrator owns inbound queuing and delivery decisions;
+the hub is not a second agent executor.
+
+Sources: [GatewayHubApplicationService.cs](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHubApplicationService.cs),
+[DefaultInboundMessageOrchestrator.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Dispatching/DefaultInboundMessageOrchestrator.cs),
+[GatewayHost.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/GatewayHost.cs).
 
 ## Message Routing Flow
 
 ### 1. Client Connection (WebUI Example)
 
-```text
-User → SignalR Client → GatewayHub.SubscribeAll()
-```
+1. Connect to the SignalR hub at **`/hub/gateway`**, mapped by
+   `SignalREndpointContributor.MapEndpoints`.
+2. Call `SubscribeAll()`. It obtains the available session summaries through the
+   hub application service and returns `SubscribeAllResult` with a `sessions` list.
+3. For each returned session, the hub joins the connection to the real
+   `conversation:{conversationId}` group when its conversation ID is present,
+   **and** to the compatibility alias `conversation:{sessionId}`. Duplicate group
+   keys are joined once.
+4. For conversation-list lifecycle notifications, separately call
+   `SubscribeAgents(IReadOnlyList<string> agentIds)`. This joins `agent:{agentId}`
+   groups for `ConversationChanged`, including creation of conversations that did
+   not exist when `SubscribeAll()` ran.
 
-**WebUI Connection Sequence:**
+`SubscribeAll()` is a snapshot subscription, not a promise that every stored
+session or every future conversation is subscribed. Its summaries are selected by
+`SessionWarmupService`; see [visibility and filtering](#session-visibility-and-filtering).
+A new session **within an already subscribed conversation** continues to use the
+same conversation group.
 
-1. Client connects to SignalR hub at `/gateway`
-2. Calls `SubscribeAll()` to receive all session metadata
-3. Hub joins client to all non-Sealed session groups: `session:{sessionId}`
-4. Client receives list of available sessions with metadata
-
-**Key Code:**
-- `GatewayHub.SubscribeAll()`: Returns all sessions visible to the connection
-- `SignalRChannelAdapter`: Implements `IChannelAdapter` for SignalR broadcasting
-- Session groups pattern: `session:{sessionId}` for targeted message delivery
+Sources: [SignalREndpointContributor.cs](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Channels.SignalR/SignalREndpointContributor.cs),
+[GatewayHub.cs](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs)
+(`SubscribeAll`, `SubscribeAgents`).
 
 ### 2. Sending a Message
 
-```text
-Client → SendMessage(agentId, channelType, content) → Auto-Session → Dispatch
-```
-
-**SendMessage Flow (Current Model — #721):**
-
-1. Client calls `SendMessage(agentId, channelType, content, conversationId?)`
-2. Hub calls `ResolveOrCreateSessionAsync(agentId, channelType, conversationId?)`
-   - Delegates to `IConversationDispatcher.DispatchAsync(context)` which runs the
-     conversation router → routes via explicit `conversationId`, channel-binding
-     reuse, or initiator-pin to produce `(sessionId, conversationId)`.
-   - Side-effect: the router internally calls `SessionStore.GetOrCreate + SaveAsync`
-     as it materialises bindings, so the session row exists by the time RoCSA returns.
-   - **Hub no longer mutates session state** (Status, ChannelType, SessionType,
-     Participants). Those are owned by `GatewayHost.ProcessAsync` downstream in the
-     orchestrator's per-session worker.
-3. Hub subscribes caller to **conversation** group (not session) so streams reach the
-   caller even if the active session id later changes via compaction. See #682.
-4. Hub fires-and-forgets the inbound message via `IInboundMessageOrchestrator.AcceptAsync`.
-
-**Session Mutation (owned by GatewayHost):**
+The current server signature is:
 
 ```csharp
-// GatewayHost.ProcessAsync (orchestrator worker):
-var session = await _sessions.GetOrCreateAsync(sessionId, agentId, ct);
-session.ChannelType ??= channelType;
-session.SessionType = ResolveSessionType(inbound, conversation);
-if (session.Status == SessionStatus.Expired) session.Status = SessionStatus.Active;
-await _sessions.SaveAsync(session, ct);
-await EnsureCallerParticipantAsync(conversation, inbound, ct);
+public Task<SendMessageResult> SendMessage(
+    AgentId agentId,
+    ChannelKey channelType,
+    string content,
+    string? conversationId = null)
 ```
 
-**Eventual-consistency note:** because session mutation moved to the worker, a reused
-Expired session is reactivated *eventually* after `SendMessage` returns rather than
-synchronously. The window is small (worker wake) and SignalR streaming is unaffected
-because the agent only emits after reactivation; polling REST callers that fire within
-the wake window may briefly observe the pre-reactivation row.
+The last parameter is **optional** in the server contract. Omitting it is not, by
+itself, evidence of a runtime failure. An explicit conversation ID selects the
+intended conversation; `null` requests binding-based resolution. The example below
+passes all four arguments so that choice is visible. `AgentId` and `ChannelKey`
+are typed server values serialized as strings on the wire.
 
-### 3. Message Dispatch
+```javascript
+// Assumes the SignalR JavaScript client is loaded and content is nonblank.
+const connection = new signalR.HubConnectionBuilder()
+  .withUrl('/hub/gateway') // Supply authentication as required by the host.
+  .withAutomaticReconnect()
+  .build();
 
-```text
-IChannelDispatcher.DispatchAsync(InboundMessage)
-```
-
-**Dispatcher Role:**
-- Entry point for all inbound messages from any channel
-- Creates `InboundMessage` with metadata (channel type, sender ID, session ID)
-- Routes to `IMessageRouter` for agent resolution
-
-**InboundMessage Structure:**
-```csharp
-{
-    ChannelType: "signalr",
-    SenderId: connectionId,                           // wire-level audit/allow-list token
-    Sender: CitizenId.Of(UserId.From(connectionId)),  // typed domain identity (species + id)
-    ChannelAddress: sessionId,
-    SessionId: sessionId,
-    TargetAgentId: agentId,  // Optional explicit target
-    Content: "user message",
-    Metadata: { messageType: "message" }
+async function subscribe() {
+  await connection.invoke('SubscribeAll');
+  await connection.invoke('SubscribeAgents', ['my-agent']);
 }
+connection.onreconnected(subscribe);
+await connection.start();
+await subscribe();
+
+// Use an existing conversation ID to target it, or null for binding resolution.
+const conversationId = null;
+const result = await connection.invoke(
+  'SendMessage', 'my-agent', 'signalr', content, conversationId);
+// result contains sessionId, agentId and channelType; it is not the final reply.
 ```
 
-**Two-field invariant (`SenderId` vs `Sender`):** Every channel adapter MUST populate both.
-`SenderId` is the channel-native wire token used for audit, allow-list filtering, and
-fan-out exclusion. `Sender` is the typed `CitizenId` carrying the species (User / Agent)
-and identity used by downstream participant tracking and conversation ownership. They
-may differ in shape — for example the sub-agent wake-up uses `SenderId = "subagent:<id>"`
-for audit while `Sender` carries the typed child agent id (`CitizenId.Of(agentId)`).
-Downstream code must NEVER re-parse `SenderId` to infer species; use `Sender.Kind`.
+**Current send path:**
 
-**Sender → Initiator (Phase 2b, #529):** when the router creates a **new** Conversation,
-`inbound.Sender` is stamped onto `Conversation.Initiator` as the write-once provenance of
-who first caused the conversation to exist. `Initiator` is **never** overwritten — archived-
-reopen and explicit-ConversationId branches preserve the original value even when the
-inbound `Sender` differs. Agent-initiated conversations (`ConversationTool.NewAsync`,
-`HeartbeatTrigger`, `CronTrigger`) set `Initiator = CitizenId.Of(agentId)` directly;
-`ConversationsController.Create` leaves it `null` pending SignalR claims-based auth (#527).
-`IConversationStore.ListForCitizenAsync(citizen)` returns the union of conversations the
-citizen initiated and (for agents only) those they currently own.
+1. `SendMessage` checks control scope, normalizes the agent/channel values, and
+   rejects blank content. Blank conversation IDs are normalized to `null`.
+2. `ResolveOrCreateSessionAsync` delegates through
+   `IGatewayHubApplicationService.ResolveSessionAsync` to
+   `IConversationDispatcher.DispatchAsync` to obtain the session/conversation pair.
+   The hub's binding identity is always **`signalr` plus the agent ID as channel
+   address**. The caller's `channelType` is a preference, not permission to create
+   a binding for a different transport.
+3. `SubscribeConversationInternalAsync` joins the caller to
+   `conversation:{conversationId}` before dispatch.
+4. `SafeDispatchAsync` starts the application's `AcceptAsync` path without awaiting
+   turn completion. Dispatch exceptions are logged and reported through a
+   best-effort activity error. The synchronous result identifies the session,
+   agent and channel; it does not certify a completed agent response.
 
-### 4. Agent Resolution
+The conversation router can materialize and save a session while resolving a
+binding. Session status/channel/type stamping and caller-participant registration
+belong to `GatewayHost.ProcessAsync`, not the hub. A reused expired session can
+therefore remain expired until the worker processes it. Do not infer completed
+state mutation from the hub return alone.
 
-```text
-IMessageRouter.ResolveAsync(InboundMessage) → AgentId[]
+Sources: `GatewayHub.SendMessageCore`, `ResolveOrCreateSessionAsync`,
+`BuildInboundMessage`, `SafeDispatchAsync`, and
+[HubContracts.cs](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Channels.SignalR/HubContracts.cs).
+
+### 3. Message Dispatch and Identity
+
+Channel adapters construct `InboundMessage` and submit it through
+`IChannelDispatcher`; the SignalR hub uses the application service's orchestrator
+entry point. The current hub envelope uses typed routing hints, not the retired
+`TargetAgentId` and `SessionId` top-level example fields.
+
+```csharp
+// Relevant fields from the hub path; local variables represent resolved values.
+var inbound = new InboundMessage
+{
+    ChannelType = ChannelKey.From("signalr"),
+    SenderId = connectionId,
+    Sender = CitizenId.Of(UserId.From(authenticatedUserId)),
+    ChannelAddress = ChannelAddress.From(agentId.Value),
+    RoutingHints = new InboundMessageRoutingHints(
+        RequestedAgentId: agentId,
+        RequestedSessionId: sessionId,
+        RequestedConversationId: conversationId), // ConversationId? here
+    Content = content,
+    Metadata = new Dictionary<string, object?>
+    {
+        ["messageType"] = "message",
+        ["clientKind"] = clientKind
+    }
+};
 ```
 
-**Resolution Priority:**
+**`SenderId` versus `Sender`:** the first is the channel-native audit/allow-list
+and fan-out token; the second is the typed `CitizenId` used for domain identity.
+For SignalR, `SenderId` is the connection ID, while `GetAuthenticatedUserId()` uses
+`Context.UserIdentifier` and falls back to the connection ID when absent. They
+need not have the same value. Agent-originated deliveries use an agent citizen;
+downstream code should inspect `Sender.Kind`, not re-parse an audit string.
 
-1. **Explicit Target**: If `message.TargetAgentId` is set → use that agent
-2. **Session Binding**: If `message.SessionId` exists → use session's bound agent
-3. **Default Agent**: Use `GatewayOptions.DefaultAgentId`
-4. **None**: Return empty list (no route)
+Conversation creation records initiator provenance separately from current
+participants. Reusing a conversation does not mean replacing its original
+initiator. The conversation router's creation path uses `ConversationFactory`.
 
-**Key Code:**
-- `DefaultMessageRouter`: Implements priority-based resolution
-- Session binding is persisted in `GatewaySession.AgentId`
-- Default agent is configured in `appsettings.json`
+The orchestrator uses `InboundIsolationKey`: requested conversation first,
+requested session second, otherwise channel type/address. Queued messages sharing
+one key are FIFO-serialized; different keys may run concurrently. Configured
+running-turn delivery can steer instead of enqueueing. These queue keys are not
+SignalR subscription groups, even when they share a prefix.
+
+Sources: `GatewayHub.BuildInboundMessage`,
+[InboundIsolationKey.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Dispatching/InboundIsolationKey.cs),
+[DefaultConversationRouter.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Conversations/DefaultConversationRouter.cs).
+
+### 4. Agent and Conversation Resolution
+
+`GatewayHost.ProcessAsync` asks `IMessageRouter.ResolveAsync` for target agents.
+`DefaultMessageRouter` applies this priority:
+
+1. `RoutingHints.RequestedAgentId`: use the registered agent, or return no route
+   if the explicit target is unknown (do not silently fall back).
+2. `RoutingHints.RequestedSessionId`: use the session's agent if registered.
+3. `GatewayOptions.DefaultAgentId`: use it if configured and registered.
+4. Otherwise return an empty target list.
+
+The host then resolves the conversation/session for each target. In
+`DefaultConversationRouter.ResolveInboundAsync`, an existing explicit conversation
+bypasses binding lookup; a missing explicit ID falls through to binding lookup.
+The binding path reuses an existing conversation, can reopen an archived one, or
+creates one. An archived conversation is reopened with its active-session pointer
+cleared. Session selection reuses a non-sealed active segment unless there is a
+cross-channel conflict; otherwise it creates a replacement segment.
+
+Conversation ownership is durable on `Conversation.AgentId`;
+`GatewaySession.AgentId` is hydrated from it. Do not treat the latter as a mutable,
+independent owner binding.
+
+Sources: [DefaultMessageRouter.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Routing/DefaultMessageRouter.cs),
+`GatewayHost.ResolveConversationSessionAsync`,
+`DefaultConversationRouter.ResolveOrCreateSessionAsync`.
 
 ### 5. Agent Execution
 
-```text
-IAgentSupervisor.GetOrCreateAsync(agentId, sessionId) → IAgentHandle
-```
+`IAgentSupervisor.GetOrCreateAsync(agentId, sessionId)` obtains an execution handle
+for the resolved pair. The supervisor owns instance lifecycle and delegates
+creation to the selected isolation strategy. Reuse, configured concurrency, and
+shutdown belong at this layer, rather than in the SignalR hub.
 
-**Supervisor Responsibilities:**
+The in-process strategy builds context and the workspace/tool environment, creates
+an agent, and wraps it in a handle. It runs inside the gateway process, not across
+a security boundary. Isolation is pluggable, but the earlier descriptions of
+[container](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Isolation/ContainerIsolationStrategy.cs),
+[remote](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Isolation/RemoteIsolationStrategy.cs),
+and [sandbox](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Isolation/SandboxIsolationStrategy.cs)
+execution describe planned backends: those strategies' `CreateAsync` methods
+currently throw `NotSupportedException`.
 
-- Manages agent instance lifecycle per (agentId, sessionId) pair
-- Uses `IIsolationStrategy` to create agent instances
-- Enforces concurrency limits (`MaxConcurrentSessions`)
-- Caches running instances (Idle/Running status)
-- Coordinates graceful shutdown
-
-**Instance Creation Flow:**
-
-1. Check if instance exists for (agentId, sessionId)
-2. If exists and healthy → return existing handle
-3. If not exists → delegate to isolation strategy
-4. Cache instance and return handle
-
-**Isolation Strategies:**
-- **InProcess** (default): Wraps `BotNexus.Agent.Core.Agent` directly
-- **Container**: Spawns agent in isolated container
-- **Remote**: Connects to remote agent endpoint
-- **Sandbox**: Runs agent in sandboxed process
+Sources: [DefaultAgentSupervisor.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Agents/DefaultAgentSupervisor.cs),
+[InProcessIsolationStrategy.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Isolation/InProcessIsolationStrategy.cs)
+(including its in-process handle).
 
 ### 6. Agent Prompt and Tool Execution
 
-```text
-IAgentHandle.PromptAsync(message) → AgentLoopRunner → Tool Execution → Response
-```
+The in-process handle's `PromptAsync` returns an `AgentResponse`; its `StreamAsync`
+path yields `AgentStreamEvent` values. Both use the underlying agent timeline and
+loop. The loop calls the configured model, processes tool requests and their
+results, and can continue across multiple model turns. A provider's literal stop
+reason is not the portable gateway completion contract.
 
-**InProcess Isolation Flow:**
+Tool invocation uses before/after hooks and configured tool execution behavior.
+The gateway policy contract is **`IToolPolicyProvider`**, declared in
+[ToolPolicy.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Contracts/Security/ToolPolicy.cs).
+It supplies risk classification, approval requirements/fallback, HTTP exclusions,
+and tool availability. It is not a generic path-validation interface named
+`IToolPolicy`.
 
-1. `InProcessIsolationStrategy.CreateAsync()`:
-   - Builds system prompt via `IContextBuilder`
-   - Creates workspace path via `IAgentWorkspaceManager`
-   - Instantiates tools via `IAgentToolFactory`
-   - Creates `BotNexus.Agent.Core.Agent` instance
-   - Wraps in `InProcessAgentHandle`
-
-2. `IAgentHandle.PromptAsync(message)`:
-   - Appends user message to agent timeline
-   - Calls `AgentLoopRunner` (from AgentCore)
-   - Streams response events via callback
-
-3. `AgentLoopRunner` execution:
-   - Converts messages to LLM context
-   - Calls `LlmClient.StreamAsync()`
-   - Accumulates streaming response
-   - Executes tool calls if requested
-   - Repeats until LLM returns `stop_reason: end_turn`
-
-**Tool Execution:**
-- `ToolExecutor` runs tools sequentially or parallel (configurable)
-- Before/after hooks via `IHookDispatcher`
-- Tool policies via `IToolPolicy` (path validation, security checks)
-- Results appended as `ToolResultMessage` to timeline
+[ToolPolicyHookHandler.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Hooks/ToolPolicyHookHandler.cs)
+uses the production `DefaultToolPolicyProvider` before execution to deny blocked
+tools and apply the configured approval fallback. Do not assume that an
+approval-required policy automatically opens an interactive approval prompt at
+this hook seam.
 
 ### 7. Response Streaming
 
 ```text
-AgentLoopRunner → AgentEvent → IChannelAdapter.SendStreamEventAsync()
+Agent handle/loop -> AgentStreamEvent -> GatewayHost stream callback
+    -> IStreamEventChannelAdapter.SendStreamEventAsync(target, streamEvent, ct)
+    -> SignalR conversation group -> subscribed clients
 ```
 
-**Event Flow:**
+The host stamps agent, session and conversation IDs on events and constructs a
+`ChannelStreamTarget` carrying the conversation, session, channel address and
+binding/request identifiers. SignalR's current streaming methods take that typed
+target, **not a bare conversation ID string**:
 
-1. `AgentLoopRunner` emits `AgentEvent`s:
-   - `MessageStart`: Agent begins response
-   - `ThinkingDelta`: Model reasoning (if enabled)
-   - `ContentDelta`: Incremental text output
-   - `ToolStart`: Tool execution begins
-   - `ToolEnd`: Tool execution complete
-   - `MessageEnd`: Response complete
+```csharp
+Task SendStreamDeltaAsync(
+    ChannelStreamTarget target, string delta,
+    CancellationToken cancellationToken = default);
 
-2. `InProcessAgentHandle` wraps events as `AgentStreamEvent`
-
-3. `SignalRChannelAdapter.SendStreamEventAsync(conversationId, event)`:
-   - Maps event type to SignalR method name
-   - Broadcasts to session group: `Clients.Group("session:{sessionId}")`
-   - All subscribed clients receive event in real-time
-
-**SignalR Methods:**
-- `MessageStart`: Signals response begin
-- `ThinkingDelta`: Streams model thinking text
-- `ContentDelta`: Streams response content
-- `ToolStart`: Tool execution metadata
-- `ToolEnd`: Tool result summary
-- `MessageEnd`: Signals response complete
-- `Error`: Error details
-
-### 8. Session Group Broadcast
-
-```text
-SignalR Group: session:{sessionId} → All Subscribed Clients
+Task SendStreamEventAsync(
+    ChannelStreamTarget target, AgentStreamEvent streamEvent,
+    CancellationToken cancellationToken = default);
 ```
 
-**Group Management:**
-- Each session has a SignalR group: `session:{sessionId}`
-- Clients join groups via `SubscribeAll()` or `SendMessage()`
-- All streaming events broadcast to group
-- Supports multi-client collaboration (future)
+`SignalRChannelAdapter.SendStreamDeltaAsync` addresses
+`conversation:{target.ConversationId}`. Structured events prefer the IDs stamped
+on the event over the target's IDs, so observer delivery retains the originating
+conversation/session. An uninitialized conversation ID is logged and the event is
+not emitted.
 
-**WebUI Rendering:**
-- Client listens to SignalR events
-- Accumulates deltas in session-specific store
-- Renders to DOM via `marked.js` (Markdown)
-- Sanitizes via `DOMPurify`
+| Client event | Meaning in the stream |
+|---|---|
+| `RunStarted`, `RunEnded` | Bracket the whole run; `RunEnded` is the authoritative idle signal. |
+| `MessageStart`, `MessageEnd` | Begin/end an assistant message, not necessarily the whole run. |
+| `ThinkingDelta`, `ContentDelta` | Incremental reasoning/content. |
+| `ToolStart`, `ToolEnd` | Tool invocation and completion metadata. |
+| `UserInputRequired` | A user-input checkpoint; the host has dedicated prompt handling. |
+| `TurnInterrupted`, `TurnEnd` | Interruption and turn completion, including tool-only turns. |
+| `Error` | Stream error information. |
+
+`SendAsync(OutboundMessage)` is the non-streaming adapter path. It emits
+`ContentDelta`, preferring `OutboundMessage.ConversationId`; legacy callers fall
+back to **`conversation:{sessionId}`**, not a session-prefixed group. It also
+suppresses the exact trimmed `NO_REPLY` sentinel.
+
+Sources: `GatewayHost`'s `OnEventAsync` callback,
+[SignalRChannelAdapter.cs](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Channels.SignalR/SignalRChannelAdapter.cs),
+[IChannelAdapter.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Contracts/Channels/IChannelAdapter.cs)
+(including `IStreamEventChannelAdapter`).
+
+### 8. Conversation Group Broadcast
+
+| Group key | Current use |
+|---|---|
+| `conversation:{conversationId}` | Production conversation stream; stable across session compaction. |
+| `conversation:{sessionId}` | Compatibility alias joined by `SubscribeAll`, used by session-only outbound callers. |
+| `agent:{agentId}` | Separate agent-scoped conversation lifecycle notifications via `SubscribeAgents`. |
+
+`GetSessionGroup` still exists in the adapter as a legacy helper returning
+`session:{sessionId}`. Its presence is **not** evidence that current subscription
+or stream delivery uses it: the paths above call `GetConversationGroup`.
+
+Clients route payloads using the emitted conversation/session IDs and render their
+selected view. A group subscription is delivery fan-out, not a concurrency lock
+or proof of participant authorization. Keep rendering and reconnect behavior
+aligned with the [hub protocol contract](../signalr-hub-contract.md).
 
 ## Session Lifecycle
 
 ### Session States
 
-```text
-Active → Suspended → Sealed
-```
+The [SessionStatus enum](https://github.com/Sytone/botnexus/blob/main/src/domain/BotNexus.Domain/Gateway/Models/SessionStatus.cs)
+contains `Active`, `Suspended`, `Expired`, and `Sealed`. These are not a single
+mandatory `Active -> Suspended -> Sealed` sequence.
 
-**Status Definitions:**
+- **Active:** available for message processing.
+- **Suspended:** paused; `GatewayHost.ProcessAsync` rejects non-active states other
+  than its explicit reactivation cases.
+- **Expired:** may be reused by conversation resolution and reactivated by the worker.
+- **Sealed:** normally replaced during conversation-router session selection.
+  However, `GatewayHost.ProcessAsync` also has a reactivation branch for a sealed
+  session reaching it; describing sealing as universally terminal/read-only would
+  overstate the implementation.
 
-- **Active**: Currently accepting new messages
-- **Suspended**: Paused, can be resumed
-- **Sealed**: Completed, read-only — terminal state (e.g., old soul sessions, completed cron sessions)
-
-**Visibility Rule:** Any non-Sealed session is visible to clients. `IsInteractive` on the session determines whether the user can send messages.
+The worker clears `ExpiresAt` when reactivating expired or sealed sessions. The
+session's computed `IsInteractive` marker and the warmup selection rules are
+separate from its lifecycle status.
 
 ### Session Types
 
-Sessions are discriminated by `SessionType`:
+The canonical [SessionType values](https://github.com/Sytone/botnexus/blob/main/src/domain/BotNexus.Domain/Primitives/SessionType.cs)
+are `UserAgent`, `AgentSelf`, `AgentSubAgent`, and `AgentAgent`. Legacy persisted
+`soul` and `heartbeat` values map to `AgentSelf`; `cron` maps to `UserAgent`.
+Trigger provenance lives on `SessionEntry.Trigger`, not in separate canonical
+`Soul`/`Cron` session types. A cron-channel session can therefore be `UserAgent`
+while remaining excluded from the warmup roster.
 
-- **UserAgent**: User ↔ Agent conversation (most common)
-- **AgentSelf**: Agent internal reflection
-- **AgentSubAgent**: Parent agent ↔ sub-agent
-- **AgentAgent**: Peer agent-to-agent via `agent_converse`
-- **Soul**: Daily soul session (persistent agent memory)
-- **Cron**: Scheduled trigger execution
+### Session Creation and Participants
 
-### Session Creation
+Sending a message can resolve or create a conversation and its active session;
+it is not simply a lookup of the first active agent/channel session. Conversations
+can also exist before their first message. Compaction and reset can move the
+conversation to another session while retaining its conversation identity.
 
-**Auto-Creation (SendMessage):**
-
-Finds an existing active UserAgent session for the agent+channel pair, or creates a new one with auto-generated SessionId. Sets session type, channel, and adds the caller as a User participant.
-
-See [GatewayHub.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs)
-
-### Session Participants
-
-Sessions track participants via `SessionParticipant`:
+Participants now live on the **conversation**, not on `GatewaySession`.
+`GatewayHost.EnsureCallerParticipantAsync` calls
+`IConversationStore.AddParticipantsAsync` with the inbound typed citizen after
+session persistence. The current participant shape is:
 
 ```csharp
-public record SessionParticipant
+public sealed record SessionParticipant
 {
-    public ParticipantType Type { get; set; }  // User, Agent, System
-    public string Id { get; set; }             // connectionId or agentId
-    public string? Role { get; set; }          // "initiator", "target", etc.
+    public required CitizenId CitizenId { get; init; }
+    public string? Role { get; init; }
 }
 ```
 
-**Examples:**
+For example, a human participant uses `CitizenId.Of(UserId.From(userId))`; a peer
+agent uses `CitizenId.Of(AgentId.From(agentId))`. The old `Type`/`Id` participant
+shape survives in serialization compatibility handling, not as the current
+record's writable properties.
 
-- UserAgent session: `[{ Type: User, Id: connectionId }]`
-- AgentAgent session: `[{ Type: Agent, Id: initiatorId, Role: "initiator" }, { Type: Agent, Id: targetId, Role: "target" }]`
+Sources: [SessionParticipant.cs](https://github.com/Sytone/botnexus/blob/main/src/domain/BotNexus.Domain/Primitives/SessionParticipant.cs),
+[GatewaySession.cs](https://github.com/Sytone/botnexus/blob/main/src/domain/BotNexus.Domain/Gateway/Models/GatewaySession.cs),
+`GatewayHost.EnsureCallerParticipantAsync`.
 
 ### Session Persistence
 
-Sessions are persisted via `ISessionStore`:
-
-- **InMemorySessionStore**: Dev/testing (not durable)
-- **SqliteSessionStore**: SQLite database (production default)
-
-**Session Structure:**
-
-```csharp
-public class GatewaySession
-{
-    public SessionId SessionId { get; set; }
-    public AgentId AgentId { get; set; }
-    public SessionType SessionType { get; set; }
-    public SessionStatus Status { get; set; }
-    public ChannelKey? ChannelType { get; set; }
-    public string? CallerId { get; set; }
-    public List<SessionParticipant> Participants { get; set; }
-    public List<SessionEntry> History { get; set; }
-    public Dictionary<string, object?> Metadata { get; set; }
-    public DateTimeOffset CreatedAt { get; set; }
-    public DateTimeOffset UpdatedAt { get; set; }
-    public DateTimeOffset? ExpiresAt { get; set; }
-}
-```
+`ISessionStore` persists session segments and provides history and summary query
+operations. `GatewaySession` exposes typed `SessionId`/`ConversationId`, hydrated
+`AgentId`, status/type/channel, timestamps, history and metadata; runtime state is
+kept separately from the persisted domain session. Its former `Participants`
+facade is removed. Use the linked source for the complete model instead of copying
+a reduced class definition as if it were the persistence contract.
 
 ### Session Visibility and Filtering
 
-**Existence Queries:**
+`SubscribeAll()` delegates to `SessionWarmupService.GetAvailableSessionsAsync`.
+The current implementation:
 
-`ISessionStore` supports filtered queries via `ExistenceQuery`:
+- Returns no sessions when warmup is disabled.
+- Queries transcript-free summaries inside the configured retention window for
+  registered agents.
+- Selects `UserAgent` summaries, excluding the `cron` channel; it does not include
+  `Soul` or every non-sealed session by default.
+- When continuation collapsing is enabled, groups channel-bearing summaries by
+  channel and prefers the most recently updated active/suspended summary, falling
+  back to the most recent sealed summary. Channel-less candidates are retained.
+  Disabling collapse retains the type/channel-filtered candidates without that
+  status preference.
+- Orders results by update time and applies `MaxSessionsPerAgent` per agent.
 
-```csharp
-// Get all active UserAgent sessions for an agent
-var sessions = await _sessions.ListAsync(agentId, ct);
-var userSessions = sessions.Where(s =>
-    s.SessionType == SessionType.UserAgent &&
-    s.Status == SessionStatus.Active);
-```
+This is a roster selection policy, not a universal authorization rule or a
+non-expired-only predicate.
 
-**SubscribeAll Filtering:**
-
-`ISessionWarmupService.GetAvailableSessionsAsync()` returns sessions visible to client:
-- Active or Suspended status
-- UserAgent or Soul type (default)
-- Not expired
-- Configurable filter via `SessionWarmupOptions`
+Sources: [SessionWarmupService.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Sessions/SessionWarmupService.cs),
+[SessionWarmupOptions.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/SessionWarmupOptions.cs).
 
 ## Channel Adapters
 
-Channel adapters implement `IChannelAdapter` to integrate external communication systems.
+Adapters implement `IChannelAdapter` for lifecycle, inbound dispatch and outbound
+delivery. The contract exposes streaming, steering, follow-up, thinking/tool
+display, inbound-image and interactive-prompt capabilities. Structured stream
+events use the optional `IStreamEventChannelAdapter` contract. Capabilities must
+be read from each implementation; they are not implied by being an adapter.
 
-### Adapter Interface
-
-```csharp
-public interface IChannelAdapter
-{
-    ChannelKey ChannelType { get; }
-    string DisplayName { get; }
-    
-    // Capabilities
-    bool SupportsStreaming { get; }
-    bool SupportsSteering { get; }
-    bool SupportsFollowUp { get; }
-    bool SupportsThinkingDisplay { get; }
-    bool SupportsToolDisplay { get; }
-    
-    // Lifecycle
-    Task StartAsync(IChannelDispatcher dispatcher, CancellationToken ct);
-    Task StopAsync(CancellationToken ct);
-    
-    // Outbound
-    Task SendAsync(OutboundMessage message, CancellationToken ct);
-    Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken ct);
-}
-```
-
-### Built-In Adapters
-
-**SignalRChannelAdapter:**
-- Bidirectional real-time communication
-- Supports all capabilities (streaming, steering, thinking, tools)
-- Uses SignalR groups for session-based broadcast
-- Primary adapter for WebUI
-
-**CronChannelAdapter:**
-- Used by `CronTrigger` for scheduled execution
-- No streaming (batch execution only)
-- Creates `SessionType.Cron` sessions
-- Results logged to session history
-
-**CrossWorldChannelAdapter:**
-- Federation between BotNexus instances
-- HTTP-based relay protocol
-- No streaming (synchronous exchange)
-- Used for agent-to-agent cross-world conversations
-
-### Custom Channel Adapters
-
-External adapters can be implemented for:
-- Telegram Bot API
-- Discord Bot API
-- Slack API
-- Terminal UI (TUI)
-- SMS/WhatsApp
-- Voice interfaces
-
-Adapters are registered in DI and started by `GatewayHost`.
+SignalR combines the inbound hub with `SignalRChannelAdapter` for outbound
+conversation-group delivery. Other transports retain their own addressing and
+streaming semantics. Custom adapters should construct typed inbound identity and
+routing hints, dispatch through the shared entry point, and consume the fields of
+`ChannelStreamTarget` appropriate to their transport. See
+[IChannelAdapter.cs](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Contracts/Channels/IChannelAdapter.cs)
+for the full current interface rather than a stale partial copy.
 
 ## Deprecated: Direct Session Join
 
-**Legacy Pattern (Deprecated):**
+### Historical Pattern (Removed, Not Callable)
 
-```csharp
-// OLD: JoinSession(agentId, sessionId)
-await hub.Invoke("JoinSession", "my-agent", null);  // Creates session
-await hub.Invoke("Prompt", content);                // Sends message
-```
+Earlier versions used `JoinSession(agentId, sessionId)` followed by `Prompt(content)`
+and described session-keyed group delivery. That explains older examples and why
+conversation-keyed delivery replaced session-keyed subscriptions: compaction can
+change the active session while the user is still viewing the same conversation
+(#682).
 
-**New Pattern (Current):**
+**Current `GatewayHub` exposes neither `JoinSession` nor `Prompt`.** These are
+historical names, not deprecated-but-working compatibility APIs. Migrate clients
+to the complete `SendMessage(AgentId agentId, ChannelKey channelType, string content,
+string? conversationId = null)` contract and the current subscription sequence
+shown [above](#_2-sending-a-message). Pass the intended conversation ID, or explicitly
+use `null` for binding-based routing. The surviving group alias does not restore
+the removed hub methods.
 
-```csharp
-// NEW: SubscribeAll + SendMessage
-await hub.Invoke("SubscribeAll");                          // Subscribe to all
-await hub.Invoke("SendMessage", "my-agent", "signalr", content);  // Auto-session
-```
+Session mutation moved out of the hub into worker processing (#721); retain that
+ownership distinction when comparing older hub code or diagnosing the short
+resolution-versus-processing consistency window.
 
-**Rationale:**
-- SubscribeAll enables multi-session UI without manual join/leave
-- SendMessage auto-creates sessions on demand (simpler client code)
-- Channel-centric model supports multi-channel agents
-- Backwards compatible (JoinSession still works but deprecated)
+## Summary and Measurement Guidance
 
-## Summary
+- Route by conversation identity; retain session identity for the execution/history
+  segment and event payloads.
+- Subscribe before dispatch, and distinguish stream groups from agent lifecycle
+  groups and inbound isolation keys.
+- Treat hub return, message end, turn end and run end as different milestones.
+- Keep participant identity on conversations and consult actual policy contracts.
 
-**Key Architectural Decisions:**
+This guide makes **no fixed startup-latency or connections-per-hub promise**. The
+previous startup/capacity estimates had no reproducible measurements attached.
+Likewise, auto-session routing is not guaranteed to be a single database lookup:
+resolution can read/write conversations, bindings and sessions.
 
-1. **Channel-based routing**: Messages are channel-scoped, not session-scoped initially
-2. **Auto-session on send**: Sessions created on first message, not explicit creation
-3. **Session group broadcast**: SignalR groups enable multi-client collaboration
-4. **Subscribe-all model**: Clients subscribe to all sessions upfront, switch views client-side
-5. **Isolation strategies**: Pluggable agent execution (in-process, container, remote)
-6. **Session type discrimination**: Different flows for UserAgent, AgentAgent, Soul, Cron
-7. **Participant tracking**: Sessions record all participants for visibility and access control
-
-**Performance Characteristics:**
-
-- In-process isolation: <10ms agent startup
-- Session lookup: O(1) via dictionary (in-memory) or indexed query (SQLite)
-- SignalR broadcast: O(N) where N = clients in session group
-- Auto-session overhead: Single DB lookup + potential creation (amortized across messages)
-
-**Scalability Considerations:**
-
-- Session store must support high read volume (every message routes via session)
-- SignalR groups scale to ~10K connections per hub (horizontal scaling via backplane)
-- Agent instance cache prevents redundant initialization
-- Concurrency limits prevent resource exhaustion
+For a performance claim, record the tested commit, host/runtime, configured
+persistence and isolation strategy, cold versus reused handles, transcript size,
+concurrent conversations/subscribers, transport, model/provider, and workload.
+Measure startup separately from queue wait and first-token latency; report latency
+distributions, throughput, failures/backpressure and resource use. Verify delivery
+across reconnect and compaction under that workload. Report the observed operating
+range, not an inferred universal limit from a cache, group helper or configuration
+value. No load-test result is asserted by this documentation reconciliation.
