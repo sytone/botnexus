@@ -58,11 +58,12 @@ Both identifiers are included so a delayed deletion for an old binding cannot er
 
 - Non-success responses and network failures are logged as warnings and dropped.
 - The extension has no retry queue or outbox.
-- Startup reconciliation re-sends the current bindings and is the recovery mechanism after a transient TaskNexus outage.
+- Startup reconciliation re-sends bindings for agents currently in the registry. It can repair a missed creation or refresh for an agent that is still registered; it does not replay removals for absent agents.
+- Removal deletes the local webhook registration before notifying TaskNexus. If that outbound `DELETE` fails, there is no retained deletion record for the next startup to replay. A stale TaskNexus binding can require manual or external cleanup using the removed agent id and webhook id; do not delete a recreated agent's newer binding.
 - A missing `baseUrl` is a supported disabled state, not an error.
 
 ## Known limitations
 
 - TaskNexus configuration is not yet writable through the typed `botnexus config set` surface.
-- Delivery is best-effort between startup reconciliation passes.
+- Delivery is best-effort. Restart reconciliation covers current bindings only, not guaranteed recovery of every missed lifecycle notification.
 - The extension synchronizes webhook bindings only; it does not expose an agent-callable tool.

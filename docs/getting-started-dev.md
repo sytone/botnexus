@@ -346,10 +346,10 @@ All scripts live in `scripts/`.
 |---|---|
 | `dotnet: command not found` | Install .NET 10+ SDK from https://dotnet.microsoft.com/download |
 | Build fails | `dotnet clean dirs.proj; dotnet build dirs.proj` |
-| Port 5005 already in use | `.\scripts\dev-loop.ps1 -Port 8080` |
+| Port 5005 already in use | On a dedicated development host only: `.\scripts\dev-loop.ps1 -Port 8080 -SkipTests`. A different port does not isolate shared runtime state. |
 | Config file not found | Run the Gateway once — it auto-creates `~/.botnexus/` |
 | OAuth code expired | Send another message to trigger a fresh device code |
-| WebUI shows "Disconnected" | Restart: `.\scripts\dev-loop.ps1` |
+| WebUI shows "Disconnected" | Check the gateway first. On a dedicated development host, stop the previous development instance before running `.\scripts\dev-loop.ps1 -SkipTests`; do not start a second instance against a live home. |
 | Config changes ignored | Most settings hot-reload. `listenUrl` changes require restart. |
 | Tests fail | `dotnet clean dirs.proj; dotnet build dirs.proj --nologo --tl:off; scripts/repo/Validate-PreCommit.ps1` |
 
