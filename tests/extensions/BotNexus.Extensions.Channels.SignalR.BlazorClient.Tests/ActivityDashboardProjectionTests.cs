@@ -1853,4 +1853,294 @@ public sealed class ActivityDashboardProjectionTests
 
         Assert.Equal(without, with);
     }
+
+    // ── #3713: Live badge corroborated against the session roster ──────────
+
+    private static SessionSummary Session(string id, string? status, string agentId = "alpha") =>
+        new(SessionId: id, AgentId: agentId, ChannelType: null, SessionType: null,
+            Status: status, MessageCount: 0);
+
+    /// <summary>
+    /// AC1: the joined session status reaches the row, sourced from the existing
+    /// <c>GET /api/sessions</c> roster shape. No new endpoint exists for it - the map is built from
+    /// the same <see cref="SessionSummary"/> records <c>SessionRosterLoader</c> already returns.
+    /// </summary>
+    [Fact]
+    public void Project_carries_the_joined_session_liveness_for_the_active_pointer()
+    {
+        var map = ActivityDashboardProjection.SessionStatusById(
+            [Session("s-active", "Active"), Session("s-sealed", "Sealed")]);
+
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-active"), Conv("c2", activeSessionId: "s-sealed")],
+            new ActivityDashboardFilter(),
+            Now,
+            sessionStatus: map);
+
+        Assert.Equal(
+            ActivitySessionLiveness.Running,
+            rows.Single(r => r.ConversationId == "c1").SessionLiveness);
+        Assert.Equal(
+            ActivitySessionLiveness.NotRunning,
+            rows.Single(r => r.ConversationId == "c2").SessionLiveness);
+    }
+
+    /// <summary>
+    /// AC2: with the map omitted the projection is byte-identical to the pre-#3713 output, so a
+    /// failed <c>GET /api/sessions</c> degrades to the old rendering instead of blanking every
+    /// badge on the page. Compared with the same reference-equality workaround
+    /// <c>A_failed_cron_fetch_leaves_every_row_unchanged</c> uses: <c>InvolvedAgents</c> is a
+    /// <c>List</c> and compares by reference.
+    /// </summary>
+    [Fact]
+    public void An_omitted_or_empty_session_map_leaves_every_row_unchanged()
+    {
+        var conv = Conv("c1", activeSessionId: "s-1");
+        var filter = new ActivityDashboardFilter();
+
+        var baseline = ActivityDashboardProjection.Project([conv], filter, Now).Single();
+        var omitted = ActivityDashboardProjection.Project(
+            [conv], filter, Now, null, null).Single();
+        var emptyMap = ActivityDashboardProjection.Project(
+            [conv], filter, Now, null, ActivityDashboardProjection.SessionStatusById(null)).Single();
+
+        Assert.Equal(ActivitySessionLiveness.Unverifiable, baseline.SessionLiveness);
+        Assert.True(baseline.IsLive);
+
+        Assert.Equal(baseline with { InvolvedAgents = [] }, omitted with { InvolvedAgents = [] });
+        Assert.Equal(baseline with { InvolvedAgents = [] }, emptyMap with { InvolvedAgents = [] });
+    }
+
+    /// <summary>
+    /// AC3: a pointer at a <c>Sealed</c> session renders no Live badge and does not count. This is
+    /// the exact production case <c>CronSessionStartupReconciler</c> mints on every gateway start.
+    /// </summary>
+    [Fact]
+    public void A_sealed_session_is_not_live_and_does_not_count()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-sealed")],
+            new ActivityDashboardFilter(),
+            Now,
+            sessionStatus: ActivityDashboardProjection.SessionStatusById([Session("s-sealed", "Sealed")]));
+
+        var row = Assert.Single(rows);
+        Assert.False(row.IsLive);
+        Assert.Equal(0, ActivityDashboardProjection.Summarize(rows).LiveCount);
+    }
+
+    /// <summary>AC4: the same holds for a TTL-expired session (<c>SessionCleanupService</c>).</summary>
+    [Fact]
+    public void An_expired_session_is_not_live_and_does_not_count()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-exp")],
+            new ActivityDashboardFilter(),
+            Now,
+            sessionStatus: ActivityDashboardProjection.SessionStatusById([Session("s-exp", "Expired")]));
+
+        var row = Assert.Single(rows);
+        Assert.False(row.IsLive);
+        Assert.Equal(0, ActivityDashboardProjection.Summarize(rows).LiveCount);
+    }
+
+    /// <summary>
+    /// AC5: a pointer at a session ABSENT from a supplied roster is not live, and that is a
+    /// different state from the null-pointer case. Unverifiable evidence must not be promoted to a
+    /// present-tense claim (#3421 fail-direction lesson), but the two must stay distinguishable so
+    /// a later surface can explain <em>why</em> a row is idle.
+    /// </summary>
+    [Fact]
+    public void A_session_absent_from_the_roster_is_not_live_and_is_distinct_from_no_pointer()
+    {
+        var map = ActivityDashboardProjection.SessionStatusById([Session("s-other", "Active")]);
+
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-missing"), Conv("c2")],
+            new ActivityDashboardFilter(),
+            Now,
+            sessionStatus: map);
+
+        var absent = rows.Single(r => r.ConversationId == "c1");
+        var noPointer = rows.Single(r => r.ConversationId == "c2");
+
+        Assert.False(absent.IsLive);
+        Assert.False(noPointer.IsLive);
+
+        // The distinguishing assertion: both are idle, for different reasons.
+        Assert.Equal(ActivitySessionLiveness.Absent, absent.SessionLiveness);
+        Assert.Equal(ActivitySessionLiveness.Unverifiable, noPointer.SessionLiveness);
+        Assert.Equal("s-missing", absent.ActiveSessionId);
+        Assert.Null(noPointer.ActiveSessionId);
+
+        Assert.Equal(0, ActivityDashboardProjection.Summarize(rows).LiveCount);
+    }
+
+    /// <summary>
+    /// AC6: an <c>Active</c> session is unchanged - it still badges and still counts. The fix must
+    /// only subtract false positives, never the true ones.
+    /// </summary>
+    [Fact]
+    public void An_active_session_still_renders_live_and_still_counts()
+    {
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-1")],
+            new ActivityDashboardFilter(),
+            Now,
+            sessionStatus: ActivityDashboardProjection.SessionStatusById([Session("s-1", "Active")]));
+
+        var row = Assert.Single(rows);
+        Assert.True(row.IsLive);
+        Assert.Equal(ActivitySessionLiveness.Running, row.SessionLiveness);
+        Assert.Equal(1, ActivityDashboardProjection.Summarize(rows).LiveCount);
+    }
+
+    /// <summary>
+    /// AC7: the <c>Live</c> facet selects on the CORRECTED predicate. Before the fix the sealed row
+    /// was selected here, so this test fails against the old filter.
+    /// </summary>
+    [Fact]
+    public void Live_filter_selects_on_the_corroborated_predicate()
+    {
+        var map = ActivityDashboardProjection.SessionStatusById(
+            [Session("s-live", "Active"), Session("s-dead", "Sealed")]);
+
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-live"), Conv("c2", activeSessionId: "s-dead")],
+            new ActivityDashboardFilter(Live: ActivityLiveFilter.Live),
+            Now,
+            sessionStatus: map);
+
+        Assert.Equal(["c1"], rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>
+    /// AC7: and the <c>Idle</c> complement claims the sealed row, so the two facets still partition
+    /// the set and a row cannot fall out of both.
+    /// </summary>
+    [Fact]
+    public void Idle_filter_selects_on_the_corroborated_predicate()
+    {
+        var map = ActivityDashboardProjection.SessionStatusById(
+            [Session("s-live", "Active"), Session("s-dead", "Sealed")]);
+
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-live"), Conv("c2", activeSessionId: "s-dead")],
+            new ActivityDashboardFilter(Live: ActivityLiveFilter.Idle),
+            Now,
+            sessionStatus: map);
+
+        Assert.Equal(["c2"], rows.Select(r => r.ConversationId));
+    }
+
+    /// <summary>
+    /// A status string this client does not recognise resolves to NOT running. Presenting an
+    /// unclassifiable status as a present-tense claim is the failure mode the slice exists to
+    /// prevent, so the allow-list fails CLOSED - the opposite direction from display helpers like
+    /// <c>RoleLabel</c>, which fail open because losing a stamped word is worse than showing it.
+    /// </summary>
+    [Theory]
+    [InlineData("Suspended")]
+    [InlineData("Quiesced")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void An_unrecognised_or_blank_session_status_is_not_running(string status)
+    {
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-1")],
+            new ActivityDashboardFilter(),
+            Now,
+            sessionStatus: ActivityDashboardProjection.SessionStatusById([Session("s-1", status)]));
+
+        var row = Assert.Single(rows);
+        Assert.False(row.IsLive);
+        Assert.Equal(ActivitySessionLiveness.NotRunning, row.SessionLiveness);
+    }
+
+    /// <summary>Status matching is case-insensitive: the wire casing is the server's business.</summary>
+    [Theory]
+    [InlineData("active")]
+    [InlineData("ACTIVE")]
+    [InlineData(" Active ")]
+    public void Session_status_matching_is_case_and_whitespace_tolerant(string status)
+    {
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-1")],
+            new ActivityDashboardFilter(),
+            Now,
+            sessionStatus: ActivityDashboardProjection.SessionStatusById([Session("s-1", status)]));
+
+        Assert.True(Assert.Single(rows).IsLive);
+    }
+
+    /// <summary>
+    /// <c>SessionStatusById</c> degrades rather than throws, and is first-wins on a duplicated id -
+    /// the same de-duplication rule <c>CronHealthById</c> and <c>InvolvedAgents</c> apply, so a
+    /// roster paged twice resolves deterministically instead of to whichever page arrived last.
+    /// </summary>
+    [Fact]
+    public void SessionStatusById_degrades_on_null_and_is_first_wins_on_duplicates()
+    {
+        Assert.Empty(ActivityDashboardProjection.SessionStatusById(null));
+        Assert.Empty(ActivityDashboardProjection.SessionStatusById([]));
+
+        var map = ActivityDashboardProjection.SessionStatusById(
+            [Session("s-1", "Active"), Session("s-1", "Sealed"), Session("  ", "Active")]);
+
+        Assert.Equal("Active", Assert.Single(map).Value);
+    }
+
+    /// <summary>
+    /// <c>ResolveSessionLiveness</c> is the single classification the row flag and the facet share,
+    /// so it is asserted directly across all four outcomes rather than only through the projection.
+    /// </summary>
+    [Fact]
+    public void ResolveSessionLiveness_covers_every_outcome()
+    {
+        var map = ActivityDashboardProjection.SessionStatusById(
+            [Session("s-1", "Active"), Session("s-2", "Sealed")]);
+
+        Assert.Equal(
+            ActivitySessionLiveness.Running,
+            ActivityDashboardProjection.ResolveSessionLiveness("s-1", map));
+        Assert.Equal(
+            ActivitySessionLiveness.NotRunning,
+            ActivityDashboardProjection.ResolveSessionLiveness("s-2", map));
+        Assert.Equal(
+            ActivitySessionLiveness.Absent,
+            ActivityDashboardProjection.ResolveSessionLiveness("s-3", map));
+        Assert.Equal(
+            ActivitySessionLiveness.Unverifiable,
+            ActivityDashboardProjection.ResolveSessionLiveness("s-1", null));
+        Assert.Equal(
+            ActivitySessionLiveness.Unverifiable,
+            ActivityDashboardProjection.ResolveSessionLiveness(null, map));
+    }
+
+    /// <summary>
+    /// The regression the issue describes end to end: a sealed cron session left behind by a
+    /// gateway restart no longer inflates <c>live now</c>, while a genuinely running peer still does.
+    /// </summary>
+    [Fact]
+    public void A_sealed_cron_pointer_no_longer_inflates_the_live_count()
+    {
+        var conversations = new[]
+        {
+            Conv("cron1", activeSessionId: "s-sealed", source: "Cron"),
+            Conv("c2", activeSessionId: "s-live")
+        };
+        var filter = new ActivityDashboardFilter(IncludeCron: true);
+
+        var before = ActivityDashboardProjection.Summarize(
+            ActivityDashboardProjection.Project(conversations, filter, Now));
+        var after = ActivityDashboardProjection.Summarize(
+            ActivityDashboardProjection.Project(
+                conversations, filter, Now,
+                sessionStatus: ActivityDashboardProjection.SessionStatusById(
+                    [Session("s-sealed", "Sealed"), Session("s-live", "Active")])));
+
+        Assert.Equal(2, before.LiveCount);
+        Assert.Equal(1, after.LiveCount);
+        Assert.Equal(before.ConversationCount, after.ConversationCount);
+    }
 }
