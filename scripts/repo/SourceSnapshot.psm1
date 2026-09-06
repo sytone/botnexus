@@ -70,11 +70,12 @@ function Get-SourceSnapshotManifest {
     $portable = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $files = @(foreach ($name in $set) {
         Assert-SourceSnapshotPath $name
-        if (-not $portable.Add($name)) { throw "Unsafe case-colliding source path: $name" }
         Assert-SnapshotNoLinks $RepoRoot $name
         $path = Join-Path $RepoRoot $name
-        if (-not (Test-Path -LiteralPath $path)) { continue } # staged/unstaged deletion
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Unsupported source directory: $name" }
+        # An indexed file replaced by a directory is deleted; enumerated descendants are
+        # separate candidate files. Only surviving regular files reserve portable names.
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        if (-not $portable.Add($name)) { throw "Unsafe case-colliding source path: $name" }
         $bytes = [IO.File]::ReadAllBytes($path)
         if ($CaptureRoot) {
             $destination = Join-Path $CaptureRoot $name
