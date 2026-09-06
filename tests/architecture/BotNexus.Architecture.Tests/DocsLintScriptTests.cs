@@ -350,6 +350,7 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
             args.Append(" -AsJson");
         }
 
+        using var startupState = new PowerShellStartupState();
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo(PwshExecutable(), args.ToString())
@@ -362,20 +363,54 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
             },
         };
 
+        startupState.Configure(process.StartInfo);
         process.Start();
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();
 
-        return new LintRun(process.ExitCode, stdout, stderr);
+        return new LintRun(process.ExitCode, stdout, stderr,
+            $"Executable: {process.StartInfo.FileName}; arguments: {process.StartInfo.Arguments}; "
+            + $"owned cache root: {startupState.Root}; exit: {process.ExitCode}");
+    }
+
+    // Test-local seam: ownership lasts until the launched child has exited.
+    internal sealed class PowerShellStartupState : IDisposable
+    {
+        internal string Root { get; } = Directory.CreateTempSubdirectory("docs-lint-pwsh-").FullName;
+
+        internal void Configure(ProcessStartInfo start)
+        {
+            var overrides = new Dictionary<string, string>
+            {
+                ["PSModuleAnalysisCachePath"] = Path.Combine(Root, "ModuleAnalysisCache"),
+            };
+            // Unix PowerShell selects its ProfileOptimization root before running any script.
+            // Windows uses a known folder instead; XDG_CACHE_HOME does not isolate it there.
+            if (!OperatingSystem.IsWindows())
+            {
+                overrides["XDG_CACHE_HOME"] = Root;
+            }
+
+            BotNexus.Agent.Core.Tools.ProcessEnvironment.Merge(start.Environment, overrides);
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Root))
+            {
+                Directory.Delete(Root, recursive: true);
+            }
+        }
     }
 
     private static string PwshExecutable()
         => OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
 
 
-    private sealed record LintRun(int ExitCode, string StdOut, string StdErr)
+    private sealed record LintRun(int ExitCode, string StdOut, string StdErr, string StartupDiagnostics)
     {
-        public string Output => StdOut + StdErr;
+        // Keep stdout pure for the JSON assertion; attach launch context only to diagnostics.
+        public string Output => StartupDiagnostics + Environment.NewLine + StdOut + StdErr;
     }
 }
