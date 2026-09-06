@@ -1117,10 +1117,32 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         AssistantMessage completion;
         try
         {
-            completion = await _llmClient
-                .CompleteSimpleAsync(model, context, streamOptions)
-                .WaitAsync(timeoutCts.Token)
-                .ConfigureAwait(false);
+            // #3833: a credential that rotates mid-flight would otherwise fail this call with an
+            // opaque 403 that the fallback ladder cannot distinguish from a genuinely bad key.
+            // Routing through the auth manager's bounded retry means the rotation costs one wasted
+            // round trip instead of a failed compaction. The retry is structural (exactly one), so
+            // the per-attempt timeout below still bounds the total wait at two attempts.
+            completion = _authManager is not null
+                ? await _authManager
+                    .InvokeWithAuthRetryAsync(
+                        model.Provider,
+                        async (apiKey, _) =>
+                        {
+                            var attemptOptions = string.IsNullOrWhiteSpace(apiKey)
+                                ? streamOptions
+                                : streamOptions with { ApiKey = apiKey };
+
+                            return await _llmClient
+                                .CompleteSimpleAsync(model, context, attemptOptions)
+                                .WaitAsync(timeoutCts.Token)
+                                .ConfigureAwait(false);
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false)
+                : await _llmClient
+                    .CompleteSimpleAsync(model, context, streamOptions)
+                    .WaitAsync(timeoutCts.Token)
+                    .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
