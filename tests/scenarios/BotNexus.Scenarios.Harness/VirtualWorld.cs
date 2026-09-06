@@ -52,6 +52,7 @@ public sealed class VirtualWorld : IAsyncDisposable
     private readonly VirtualChannelAdapter _adapter;
     private readonly ScenarioFakeApiProvider _provider;
     private readonly string _tempHomePath;
+    private readonly IOptionsMonitor<PlatformConfig> _platformConfig;
     private readonly IAgentRegistry _agentRegistry;
     private readonly IConversationStore _conversationStore;
     private readonly ISessionStore _sessionStore;
@@ -63,6 +64,7 @@ public sealed class VirtualWorld : IAsyncDisposable
         VirtualChannelAdapter adapter,
         ScenarioFakeApiProvider provider,
         string tempHomePath,
+        IOptionsMonitor<PlatformConfig> platformConfig,
         IAgentRegistry agentRegistry,
         IConversationStore conversationStore,
         ISessionStore sessionStore,
@@ -73,6 +75,7 @@ public sealed class VirtualWorld : IAsyncDisposable
         _adapter = adapter;
         _provider = provider;
         _tempHomePath = tempHomePath;
+        _platformConfig = platformConfig;
         _agentRegistry = agentRegistry;
         _conversationStore = conversationStore;
         _sessionStore = sessionStore;
@@ -201,6 +204,7 @@ public sealed class VirtualWorld : IAsyncDisposable
             adapter,
             provider,
             tempHomePath,
+            host.Services.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),
             host.Services.GetRequiredService<IAgentRegistry>(),
             host.Services.GetRequiredService<IConversationStore>(),
             host.Services.GetRequiredService<ISessionStore>(),
@@ -407,12 +411,18 @@ public sealed class VirtualWorld : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
-        await TestAwait.EventuallyAsync(
-            () => _agentRegistry.Contains(AgentId.From(agentId)),
-            $"agent '{agentId}' to be registered; registered set is " +
-            $"[{string.Join(", ", _agentRegistry.GetAll().Select(d => d.AgentId.Value))}]",
-            timeout ?? RegistrationHangGuard,
-            cancellationToken: cancellationToken);
+        try
+        {
+            await TestAwait.EventuallyAsync(
+                () => _agentRegistry.Contains(AgentId.From(agentId)),
+                $"agent '{agentId}' to be registered",
+                timeout ?? RegistrationHangGuard,
+                cancellationToken: cancellationToken);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new TimeoutException(BuildRegistrationDiagnostic(agentId), ex);
+        }
 
         var descriptor = _agentRegistry.Get(AgentId.From(agentId))
             ?? throw new InvalidOperationException(
@@ -542,6 +552,20 @@ public sealed class VirtualWorld : IAsyncDisposable
 
         await ConfigStoreBootstrap.PopulateAsync(storePath, document, cancellationToken);
         return configPath;
+    }
+
+    private string BuildRegistrationDiagnostic(string agentId)
+    {
+        var registered = string.Join(", ", _agentRegistry.GetAll().Select(d => d.AgentId.Value));
+        var configured = string.Join(", ", _platformConfig.CurrentValue.Agents?.Keys ?? Enumerable.Empty<string>());
+        var storePath = Path.Combine(_tempHomePath, ConfigStoreBootstrap.StoreFileName);
+        var store = new BotNexus.Gateway.Configuration.Store.SqliteConfigStore($"Data Source={storePath}");
+        var persisted = store.ReadEntriesAsync().GetAwaiter().GetResult().Keys
+            .Where(key => key.StartsWith("agents.", StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.OrdinalIgnoreCase);
+
+        return $"Agent '{agentId}' was not registered. Registered=[{registered}]; "
+            + $"boundConfigAgents=[{configured}]; persistedAgentKeys=[{string.Join(", ", persisted)}].";
     }
 
     private static async Task WaitForAdapterStartAsync(VirtualChannelAdapter adapter, TimeSpan timeout, CancellationToken cancellationToken)
