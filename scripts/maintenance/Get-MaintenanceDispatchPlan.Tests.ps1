@@ -7,9 +7,16 @@ $ErrorActionPreference = 'Stop'
 $scriptPath = Join-Path $PSScriptRoot 'Get-MaintenanceDispatchPlan.ps1'
 $azureScriptPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'repo/Invoke-AzureBuildTest.ps1'
 $failures = [Collections.Generic.List[string]]::new()
+$script:pass = 0
 
-function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { $failures.Add($Message) } }
-function Assert-Equal([object]$Expected, [object]$Actual, [string]$Message) { if ($Expected -ne $Actual) { $failures.Add("$Message Expected '$Expected', got '$Actual'.") } }
+function Assert-True([bool]$Condition, [string]$Message) {
+    if (-not $Condition) { $failures.Add($Message) }
+    else { $script:pass++ }
+}
+function Assert-Equal([object]$Expected, [object]$Actual, [string]$Message) {
+    if ($Expected -ne $Actual) { $failures.Add("$Message Expected '$Expected', got '$Actual'.") }
+    else { $script:pass++ }
+}
 function Invoke-Plan([hashtable]$State) {
     $path = Join-Path ([IO.Path]::GetTempPath()) "maintenance-state-$([Guid]::NewGuid().ToString('N')).json"
     try {
@@ -85,7 +92,8 @@ Assert-True (@($plan.blockers | Where-Object reason -eq 'file-overlap').Count -e
 Assert-True (@($plan.blockers | Where-Object reason -eq 'already-active').Count -eq 1) 'Duplicate active issue assignment should be reported.'
 
 # Local validation is the maintenance default and does not reserve the remote plane.
-$state = New-State; $state.remoteValidation.active = 2; $state.remoteValidation.committedCost = 10
+# The throughput proof omits validationMode; keep that optional-field contract.
+$state = New-State; $state.Remove('validationMode'); $state.remoteValidation.active = 2; $state.remoteValidation.committedCost = 10
 $state.candidates = @(
     @{ id = 'local-a'; lane = 'implementation'; trusted = $true; decisionFree = $true; files = @('src/local-a.cs'); validationRequired = $true; estimatedValidationCost = 2 },
     @{ id = 'local-b'; lane = 'implementation'; trusted = $true; decisionFree = $true; files = @('src/local-b.cs'); validationRequired = $true; estimatedValidationCost = 2 }
@@ -114,5 +122,89 @@ $plan = Invoke-Plan $state
 Assert-Equal 2 $plan.dispatch.Count 'Recovery should not consume new implementation capacity.'
 Assert-Equal '../botnexus-wt-30' ($plan.dispatch | Where-Object id -eq 'recover-30').worktree 'Recovery should preserve the existing worktree.'
 
-if ($failures.Count -gt 0) { $failures | ForEach-Object { Write-Error $_ -ErrorAction Continue }; exit 1 }
+# #3874: incomplete budgets are an authoring error, never a board verdict.
+# Each path is independently absent/null, with and without a candidate, so validation
+# must happen before any dispatch decisions (including an otherwise idle cycle).
+# The six other producer gating paths remain optional here. Their missing/null and
+# numeric-zero assertions live in New-MaintenanceState.Tests.ps1 at that stricter boundary.
+$gatingPaths = @(
+    'budgets.implementation', 'budgets.repair', 'budgets.recovery',
+    'budgets.maxImplementationStartsPerCycle', 'budgets.openPrSoftCap'
+)
+foreach ($path in $gatingPaths) {
+    foreach ($kind in 'missing', 'null') {
+        foreach ($withCandidate in $false, $true) {
+            $state = New-State
+            if ($withCandidate) {
+                $state.candidates = @(@{ id = 'schema-check'; lane = 'implementation'; trusted = $true; decisionFree = $true; files = @('src/schema.cs') })
+            }
+            $segments = $path.Split('.')
+            $container = $state
+            if ($segments.Count -gt 1) { $container = $state[$segments[0]] }
+            if ($kind -eq 'missing') { $container.Remove($segments[-1]) }
+            else { $container[$segments[-1]] = $null }
+            $diagnostic = ''
+            $output = @()
+            try { $output = @(Invoke-Plan $state) }
+            catch { $diagnostic = $_.Exception.Message }
+            Assert-True ($diagnostic.Contains($path) -and $output.Count -eq 0) "Schema $kind $path (candidate=$withCandidate) must throw naming the path, not return a verdict."
+        }
+    }
+}
+
+# Explicit zero is not an omission. Test every required budget independently.
+foreach ($path in $gatingPaths) {
+    $state = New-State
+    $segments = $path.Split('.')
+    $container = $state
+    if ($segments.Count -gt 1) { $container = $state[$segments[0]] }
+    $container[$segments[-1]] = 0
+    $accepted = $false
+    try { $zeroPlan = Invoke-Plan $state; $accepted = $null -ne $zeroPlan }
+    catch { $accepted = $false }
+    Assert-True $accepted "Schema explicit zero $path must remain valid."
+}
+
+# Complete cycle-92 input must expose the real board constraint, not a fabricated wave limit.
+$state = New-State
+$state.cycleId = 'cycle-92'
+$state.openPrCount = 31
+$state.budgets.openPrSoftCap = 30
+$state.budgets.maxImplementationStartsPerCycle = 2
+$state.telemetry = @{ implementationStarts = 0 }
+$state.candidates = @(@{ id = 'soft-cap'; lane = 'implementation'; trusted = $true; decisionFree = $true; files = @('src/soft-cap.cs') })
+$plan = Invoke-Plan $state
+Assert-Equal 'open-pr-soft-cap' (($plan.blockers | ForEach-Object reason) -join ',') 'Complete 31/30 state must return exactly open-pr-soft-cap.'
+Assert-Equal 0 $plan.dispatch.Count 'Complete 31/30 state must not dispatch.'
+Assert-Equal 0 $plan.telemetry.implementationStarts 'Complete 31/30 state must preserve zero implementation starts.'
+
+# #3960: exercise JSON types through the real file entry point, not a bool cast.
+$flagCases = @(
+    @{ Name = 'string-false'; Json = '"false"' }, @{ Name = 'string-true'; Json = '"true"' },
+    @{ Name = 'empty-string'; Json = '""' }, @{ Name = 'zero'; Json = '0' },
+    @{ Name = 'one'; Json = '1' }, @{ Name = 'empty-array'; Json = '[]' },
+    @{ Name = 'true-array'; Json = '[true]' }, @{ Name = 'false-array'; Json = '[false]' },
+    @{ Name = 'mixed-array'; Json = '[false,true]' }, @{ Name = 'object'; Json = '{}' },
+    @{ Name = 'null'; Json = 'null' }, @{ Name = 'omitted'; Json = 'null' },
+    @{ Name = 'boolean-false'; Json = 'false' }, @{ Name = 'boolean-true'; Json = 'true' }
+)
+foreach ($flag in 'trusted', 'decisionFree') {
+    foreach ($case in $flagCases) {
+        $state = New-State
+        $candidate = @{ id = 'boolean-contract'; lane = 'repair'; trusted = $true; decisionFree = $true; files = @('src/boolean.cs') }
+        $typed = ConvertFrom-Json -InputObject ('{"value":' + $case.Json + '}')
+        if ($case.Name -eq 'omitted') { $candidate.Remove($flag) }
+        else { $candidate[$flag] = $typed.value }
+        $state.candidates = @($candidate)
+        $plan = Invoke-Plan $state
+        $accept = $case.Name -eq 'boolean-true'
+        $expectedReason = if ($flag -eq 'trusted') { 'trust-gate' } else { 'decision-gate' }
+        Assert-Equal ([int]$accept) $plan.dispatch.Count "Boolean $flag $($case.Name): dispatch only actual true."
+        $reasons = (@($plan.blockers) | ForEach-Object reason) -join ','
+        Assert-Equal $(if ($accept) { '' } else { $expectedReason }) $reasons "Boolean $flag $($case.Name): precise gate reason."
+    }
+}
+
+Write-Host "PASS: $script:pass  FAIL: $($failures.Count)"
+if ($failures.Count -gt 0) { $failures | ForEach-Object { Write-Host "  FAIL $_" -ForegroundColor Red }; exit 1 }
 Write-Host 'Maintenance dispatch tests passed.' -ForegroundColor Green
