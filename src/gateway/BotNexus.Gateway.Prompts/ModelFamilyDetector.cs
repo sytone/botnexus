@@ -1,3 +1,5 @@
+using BotNexus.Agent.Providers.Core.Registry;
+
 namespace BotNexus.Gateway.Prompts;
 
 /// <summary>
@@ -75,7 +77,12 @@ public static class ModelFamilyDetector
         if (id.Contains("claude", StringComparison.OrdinalIgnoreCase))
             return Claude;
 
+        // Slash-qualified IDs identify the model after the broker (e.g. copilot/gpt-6).
+        // Keep legacy composite names such as github-copilot-gpt-4 classified as before.
+        var qualifiedModel = modelId[(modelId.LastIndexOf('/') + 1)..];
         if (id.StartsWith("gpt", StringComparison.OrdinalIgnoreCase) ||
+            (qualifiedModel.StartsWith("gpt", StringComparison.OrdinalIgnoreCase) &&
+             ModelFamilyVersion.ContainsFamilyToken(qualifiedModel, Gpt)) ||
             id.Contains("o1", StringComparison.OrdinalIgnoreCase) ||
             id.Contains("o3", StringComparison.OrdinalIgnoreCase) ||
             id.Contains("o4", StringComparison.OrdinalIgnoreCase))

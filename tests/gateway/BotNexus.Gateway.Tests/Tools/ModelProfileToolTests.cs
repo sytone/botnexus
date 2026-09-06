@@ -144,6 +144,55 @@ public class ModelProfileToolTests
         Assert.Contains("no workspace directory is bound", report, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("gpt-6-astra", "gpt@6.0")]
+    [InlineData("gpt-6.1-astra", "gpt@6.1")]
+    public void ReportsMajorThenExactInRegistryResolutionOrder(string modelId, string exact)
+    {
+        var registry = PromptVariantRegistry.FreezeTypes([typeof(MajorExactProbe)]);
+        var tool = new ModelProfileTool(modelId, "openai", registry: registry);
+        var rungs = registry.ResolveDeclarations("profile-probe", "gpt", modelId);
+
+        rungs.Select(d => d.Site.Split('.').Last()).ShouldBe(["Default", "Family", "Major", exact == "gpt@6.0" ? "Zero" : "One"]);
+        registry.Resolve("profile-probe", "gpt", modelId).ShouldBe(["default", "family", "major", exact]);
+        tool.BuildReport(null).ShouldContain($"`profile-probe`: default -> gpt -> gpt@6.* -> {exact}");
+    }
+
+    [Fact]
+    public void ReportsOnlyDefaultWhenVersionRungsHaveNoFamilyPrerequisite()
+    {
+        var registry = PromptVariantRegistry.FreezeTypes([typeof(NoFamilyProbe)]);
+        registry.ResolveDeclarations("no-family-probe", "gpt", "gpt-6.1").ShouldHaveSingleItem().IsDefault.ShouldBeTrue();
+        var report = new ModelProfileTool("gpt-6.1", "openai", registry: registry).BuildReport(null);
+        report.ShouldContain("`no-family-probe`: default");
+        report.ShouldNotContain("gpt@6");
+    }
+
+    internal static class MajorExactProbe
+    {
+        // Intentionally most-specific first to catch accidental discovery-order diagnostics.
+        [PromptVariant("profile-probe", Family = "gpt", Version = "6-1")]
+        internal static IReadOnlyList<PromptRule> One() => [new("exact", "gpt@6.1")];
+        [PromptVariant("profile-probe", Family = "gpt", Version = "6")]
+        internal static IReadOnlyList<PromptRule> Zero() => [new("exact", "gpt@6.0")];
+        [PromptVariant("profile-probe", Family = "gpt", Version = "6", MatchMajorVersion = true)]
+        internal static IReadOnlyList<PromptRule> Major() => [new("major", "major")];
+        [PromptVariant("profile-probe", Family = "gpt")]
+        internal static IReadOnlyList<PromptRule> Family() => [new("family", "family")];
+        [PromptVariant("profile-probe")]
+        internal static IReadOnlyList<PromptRule> Default() => [new("default", "default")];
+    }
+
+    internal static class NoFamilyProbe
+    {
+        [PromptVariant("no-family-probe")]
+        internal static IReadOnlyList<PromptRule> Default() => [new("default", "default")];
+        [PromptVariant("no-family-probe", Family = "gpt", Version = "6", MatchMajorVersion = true)]
+        internal static IReadOnlyList<PromptRule> Major() => [new("major", "major")];
+        [PromptVariant("no-family-probe", Family = "gpt", Version = "6-1")]
+        internal static IReadOnlyList<PromptRule> Exact() => [new("exact", "exact")];
+    }
+
     [Fact]
     public async Task ExecuteReturnsTheReportAsTextContent()
     {

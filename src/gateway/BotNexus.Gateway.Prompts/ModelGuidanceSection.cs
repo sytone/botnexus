@@ -89,6 +89,24 @@ public static class ModelGuidanceSection
 
         /// <summary>Checkpoint narration on an observable count, not a subjective judgement (#3375).</summary>
         public const string NarrationThreshold = "narration-threshold";
+
+        /// <summary>Infer the intended task and complete the authorized scope.</summary>
+        public const string CompleteAuthorizedTask = "complete-authorized-task";
+
+        /// <summary>Make safe progress before asking about a material blocker.</summary>
+        public const string ClarifyMaterialBlockers = "clarify-material-blockers";
+
+        /// <summary>Explain a blocking skill rule without weakening the instruction hierarchy.</summary>
+        public const string ExplainSkillConstraints = "explain-skill-constraints";
+
+        /// <summary>Use the persona and lead with the useful result.</summary>
+        public const string ResultFirstCommunication = "result-first-communication";
+
+        /// <summary>Delegate independent bounded work using available tools.</summary>
+        public const string BoundedDelegation = "bounded-delegation";
+
+        /// <summary>Complete required verification without redundant broadening.</summary>
+        public const string ProportionateVerification = "proportionate-verification";
     }
 
     /// <summary>
@@ -146,6 +164,28 @@ public static class ModelGuidanceSection
         new(Rules.ToolSchemaFidelity, "Build every tool call using only the properties declared in that tool's own schema — never carry a parameter across from a similar tool, and never invent one. If the argument you want does not exist on the tool you selected, the tool selection is wrong, not the schema."),
         new(Rules.RetryCircuitBreaker, "After two failed attempts at the same operation on the same target, stop and change approach — a different match count, different whitespace, or a different anchor is the SAME strategy retried, not a new one. Re-read the current state of the target before attempting again."),
         new(Rules.NarrationThreshold, "Post a short progress message to the user at least once every ten tool calls, and at every phase boundary (investigation done, implementation done, validation done). Individually routine calls still accumulate into a long silent run — the trigger is the count, not your judgement of whether any single call was interesting.")
+    ];
+
+    /// <summary>
+    /// GPT-6 overlays the inherited default and GPT rules with task-completion, clarification,
+    /// communication, delegation, and verification guidance (#3917). This is a major-version
+    /// opt-in, so minor releases inherit it without changing exact-version declaration semantics.
+    /// </summary>
+    /// <remarks>
+    /// Adapted from OpenAI's prompting guide (Astra notes), pinned at:
+    /// https://github.com/openai/codex/blob/008bbd5884122dc95aaece19ecfe0fc6a59dcf36/codex-rs/skills/src/assets/samples/openai-docs/references/prompting-guide.md
+    /// These rules tune behavior, not provider capabilities, tool availability, or reasoning settings.
+    /// </remarks>
+    /// <returns>The additive GPT-6 overlay rules.</returns>
+    [PromptVariant(Id, Family = ModelFamilyDetector.Gpt, Version = "6", MatchMajorVersion = true)]
+    internal static IReadOnlyList<PromptRule> Gpt6() =>
+    [
+        new(Rules.CompleteAuthorizedTask, "Infer the intended outcome from the actual user request and context, and complete the whole authorized task — not just a capability acknowledgement or a plan."),
+        new(Rules.ClarifyMaterialBlockers, "Do safe, authorized preparatory work before asking a question; ask when missing information materially blocks correct completion. Preserve explicit approval gates and never infer missing authority."),
+        new(Rules.ExplainSkillConstraints, "When a skill blocks the task, report the exact relevant instruction and distinguish the rule from your interpretation. Follow the instruction hierarchy; a user request does not override system or developer instructions."),
+        new(Rules.ResultFirstCommunication, "Follow the agent persona, lead with the useful result or evidence, and use plain language. Avoid canned phrases, unnecessary formatting, and verbosity that does not help the user."),
+        new(Rules.BoundedDelegation, "Use available delegation tools for independent, bounded work when useful. Honor workspace isolation and concurrency constraints, and verify delegated results before relying on them; do not assume unavailable tools or capabilities."),
+        new(Rules.ProportionateVerification, "Complete all required checks. Broaden or repeat verification only for new changes, failures, or unresolved concerns; never weaken required checks to save effort. Reuse already-read evidence only while it remains current and relevant, and report only what the evidence supports.")
     ];
 
     /// <summary>

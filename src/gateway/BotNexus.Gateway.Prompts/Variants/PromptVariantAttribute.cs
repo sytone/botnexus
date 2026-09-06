@@ -50,9 +50,17 @@ public sealed class PromptVariantAttribute : Attribute
     /// token grammar as the family (<c>5</c>, <c>4-6</c>). Parsed by
     /// <c>ModelFamilyVersion</c> -- there is deliberately no second version parser in the tree
     /// (#2374). Setting a version without a family is rejected at freeze time: a version means
-    /// nothing without the family it versions.
+    /// nothing without the family it versions. Matching is exact unless
+    /// <see cref="MatchMajorVersion"/> is explicitly enabled: <c>5</c> means <c>5.0</c>, not <c>5.*</c>.
     /// </summary>
     public string? Version { get; set; }
+
+    /// <summary>
+    /// Opts this rung into matching every minor version of the declared major. Requires a
+    /// <see cref="Family"/> and a major-only <see cref="Version"/> (e.g. <c>6</c>, not <c>6-0</c>).
+    /// Applied after the family rung and before any exact-version rung; the two can coexist.
+    /// </summary>
+    public bool MatchMajorVersion { get; set; }
 
     /// <summary>
     /// When <see langword="true"/>, this variant REPLACES the default rung outright instead of
