@@ -84,7 +84,23 @@ The tool respects the agent's workspace directory as the default working directo
   The **head** of the stream is what survives; everything after the cap is dropped. Use the
   discarded figure to decide whether to re-run with a narrower command or redirect output to a file.
   Output below the cap is returned verbatim with no banner.
-- Background processes persist across tool calls within the same session and can be managed with the [Process Tool](./process-tool.md).
+- Background processes persist across tool calls for the launching agent within the gateway process.
+  The shared Core registry owns the child handle, stdin, and stdout/stderr drains after `exec` returns.
+  The [Process Tool](./process-tool.md) can manage only that agent's registered children; another agent
+  cannot access them even when it shares the same workspace. A `workingDir` override never changes ownership.
+- Background output retains the **tail**, bounded to 100 KB, and discloses discarded head bytes.
+  Both streams are drained in bounded chunks, including long lines with no newline. Foreground output
+  retains the **head** as described above. `process status` with `timeoutMs` waits for exit and final
+  output drain, not just the first output byte; cancelling that wait does not kill the child.
+- Without `input`, background stdin stays open for `process input`. With `input`, the supplied text
+  is written while output drains and stdin is closed to signal EOF.
+- There is no automatic completion wake in this implementation. Use `process status`/`output` to inspect
+  work and `process kill` for explicit cleanup. Kill requests target the tree before the root disappears;
+  unconfirmed kills remain tracked and re-killable. OS root exit does not prove every descendant exited.
+  Completed entries are retained up to a shared cap of 100, oldest first; live and unconfirmed-kill entries
+  are never evicted. Registrations are in-memory and are not reattached after a gateway restart.
+- `No tracked process` means absent or not owned by this agent, not proof that a command never ran or
+  that its OS process has died. Never launch a duplicate side effect based only on that message.
 - On Windows, the tool resolves `.exe`, `.cmd`, `.bat` and `.ps1` files from `PATH` automatically when the
   command is not a full path. A `.cmd`/`.bat` shim is launched through `cmd.exe /d /s /c`; a `.ps1` shim is
   launched through `pwsh -NoProfile -File` (falling back to `powershell.exe` when `pwsh` is not on `PATH`),
@@ -92,8 +108,11 @@ The tool respects the agent's workspace directory as the default working directo
   though `qmd` is an npm-installed PowerShell script rather than an executable.
 - If a resolved command still cannot be started, the failure names the resolved path that was attempted and the
   host it was launched through, rather than the bare OS text `The system cannot find the path specified.`
-- The default timeout of 2 minutes applies unless overridden. Background processes have a separate 10-minute default.
-- When `noOutputTimeoutMs` is set, the process is killed if it produces no stdout/stderr within that window.
+- Foreground execution uses `timeoutMs` (default 2 minutes) and optional `noOutputTimeoutMs`.
+  These execution timers do **not** apply to background children. The tool's 10-minute executor timeout
+  bounds the launching call, not the background child's lifetime. Startup cancellation kills the started
+  child before returning; after successful ownership transfer, cancellation of the launching call does
+  not terminate the child. Use a child-native timeout or `process kill` to bound background work.
 
 ## Failure Dispositions - Is It Safe To Retry?
 

@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.ExecTool\BotNexus.Extensions.ExecTool.csproj" />
+    <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.ProcessTool\BotNexus.Extensions.ProcessTool.csproj" />
+    <Compile Include="..\..\..\src\gateway\BotNexus.Gateway\Extensions\ExtensionAssemblyLoadContext.cs" Link="Composition/ExtensionAssemblyLoadContext.cs" />
     <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
   </ItemGroup>
 
