@@ -5,8 +5,10 @@ The GitHub Copilot provider connects BotNexus to models available through the Gi
 ## Prerequisites
 
 - An active GitHub Copilot subscription (Individual, Business, or Enterprise)
-- GitHub CLI (`gh`) authenticated with a Copilot-enabled account
-- BotNexus running on a machine where `gh auth status` shows an active session
+- BotNexus CLI for the device-code login and provider diagnostics
+- Network access for authorization, token exchange and model requests
+
+GitHub CLI (`gh`) is not required. Its authenticated state is not a BotNexus credential source.
 
 ## Configuration
 
@@ -27,21 +29,25 @@ Set the provider on your agent in `config.json`:
 
 ### Authentication
 
-BotNexus automatically discovers Copilot credentials via:
+The gateway's `GatewayAuthManager.GetApiKeyAsync` resolves credentials in this order:
 
-1. `COPILOT_GITHUB_TOKEN` environment variable
-2. `GH_TOKEN` environment variable
-3. `GITHUB_TOKEN` environment variable
-4. GitHub CLI auth state (automatic OAuth refresh)
+1. The BotNexus `auth.json` entry for `github-copilot`.
+2. A declared `providers.github-copilot.apiKey`, including an `auth:<entry>` reference. A declared blank value does not fall through to ambient credentials.
+3. Ambient credentials, only when no provider credential is declared: the first nonblank value of `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`.
 
-No API key configuration is needed when `gh` is authenticated.
+For stored OAuth credentials, BotNexus refreshes the Copilot session token by re-exchanging the retained GitHub credential directly over HTTP through `CopilotOAuth.RefreshAsync`. It does not invoke `gh` or read GitHub CLI auth state.
+
+The CLI diagnostics have a different entry point: `CopilotAuthLoader` loads the `github-copilot` entry from BotNexus `auth.json` in the selected target directory. It does not fall back to gateway provider configuration, environment variables or GitHub CLI auth state. When necessary it refreshes the session token over HTTP and attempts to persist the refreshed credentials. An ambient variable that works for the gateway therefore does not by itself configure these diagnostics.
 
 ### CLI Setup
 
-Use the BotNexus CLI to verify and configure Copilot access:
+Use BotNexus's device-code login to create the `github-copilot` entry in its `auth.json` store (normally under the BotNexus home directory). `botnexus provider copilot login` is an alias for `botnexus provider setup --provider github-copilot`; follow the displayed authorization URL and code. Treat the auth file as a secret and do not commit it.
 
 ```bash
-# Check Copilot authentication, plan, and endpoint
+# Authorize BotNexus and save its OAuth credentials
+botnexus provider copilot login
+
+# Check the stored Copilot authentication, plan, and endpoint
 botnexus provider copilot whoami
 
 # List the models your account is entitled to
@@ -102,4 +108,5 @@ Copilot supports prompt caching for compatible models. The `<!-- BOTNEXUS_CACHE_
 - Rate limits are managed by GitHub — not configurable per-user
 - Some models may not support all features (e.g., extended thinking availability depends on the model)
 - Built-in limits are fallback metadata; inspect the effective registration after discovery rather than assuming every Claude model has the same context window
-- OAuth token refresh requires `gh` CLI to be installed and authenticated
+- OAuth refresh requires a retained GitHub credential and access to the HTTP token-exchange endpoint, not an installed/authenticated `gh` CLI
+- Copilot CLI diagnostics require the BotNexus `auth.json` entry; gateway ambient fallback is not a diagnostic login substitute
