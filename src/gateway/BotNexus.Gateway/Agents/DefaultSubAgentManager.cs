@@ -405,6 +405,23 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             });
         }
 
+        // Register first: the existing registry liveness probe must own the directory as soon as
+        // it exists. Provision once here, before any handle/tool exposure; path resolution and
+        // tool retries must never resurrect a terminal workspace. Custom workspace managers keep
+        // their existing lifecycle; this is the file-backed production manager's admission seam.
+        if (_workspaceManager is FileAgentWorkspaceManager fileWorkspaces)
+        {
+            try
+            {
+                fileWorkspaces.ProvisionSubAgentWorkspace(childAgentId.Value);
+            }
+            catch
+            {
+                _registry.Unregister(childAgentId);
+                throw;
+            }
+        }
+
         // Materialize and persist the child conversation + session before handle creation. Handle
         // creation can reach the model immediately, so this is the last safe point to guarantee that
         // every later tool write-ahead has a durable parent row (#2113). Since #2338 the child owns
@@ -977,28 +994,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (info.ParentSessionId != requestingSessionId)
             return false;
 
-        if (SubAgentStatusPolicy.IsTerminal(info.Status))
+        // Publish the winning terminal disposition before cancellation can run callbacks or wake
+        // the timeout-completion path. A stale read followed by an unconditional update lets kill
+        // overwrite a completed run, or lets cancellation audit a timeout for a successful kill.
+        if (!record.TryMarkKilled(out var updatedInfo))
             return false;
 
         record.CancelTimeout();
-
-        // The kill is the terminal disposition, but the record's status does not flip to Killed
-        // until after this teardown returns. Pass the disposition explicitly so the reclamation
-        // audit names Killed rather than the stale Running it would otherwise read (#3670).
         await CleanupChildAgentAsync(subAgentId, info.ChildSessionId, SubAgentStatus.Killed, ct);
-
-        if (!TryUpdateSubAgent(
-            subAgentId,
-            current => current with
-            {
-                Status = SubAgentStatus.Killed,
-                CompletedAt = DateTimeOffset.UtcNow,
-                ResultSummary = "Sub-agent was killed by parent session."
-            },
-            out var updatedInfo))
-        {
-            return false;
-        }
 
         _logger.LogInformation(
             "Killed sub-agent '{SubAgentId}' for parent session '{ParentSessionId}'.",
@@ -1721,9 +1724,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 // invisible in production and unjoinable with the sweeper's trail.
                 //
                 // It is emitted only when TryCleanupWorkspace actually removed something. A line
-                // logged unconditionally would report phantom reclamations - for a shared-workspace
-                // child there is no isolated directory to reclaim and nothing is deleted - and an
-                // audit trail that overstates what happened is worse than none.
+                // logged unconditionally would report phantom reclamations for an already-absent
+                // directory. Sharing adds access to the parent; the child still owns an isolated
+                // cwd, and cleanup must never remove the parent's workspace.
                 _logger.LogInformation(
                     SubAgentWorkspaceReclamationAudit.LifecycleTemplate,
                     childAgentId.Value,
@@ -1922,6 +1925,35 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 if (ReferenceEquals(Interlocked.CompareExchange(ref _info, updated, current), current))
                 {
                     updatedInfo = updated;
+                    return true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Claims a still-live run for kill before its cancellation callbacks can claim completion.
+        /// Competing terminal transitions and duplicate kills cannot overwrite the winning state.
+        /// </summary>
+        public bool TryMarkKilled(out SubAgentInfo updatedInfo)
+        {
+            while (true)
+            {
+                var current = Info;
+                if (SubAgentStatusPolicy.IsTerminal(current.Status))
+                {
+                    updatedInfo = current;
+                    return false;
+                }
+
+                var killed = current with
+                {
+                    Status = SubAgentStatus.Killed,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    ResultSummary = "Sub-agent was killed by parent session."
+                };
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _info, killed, current), current))
+                {
+                    updatedInfo = killed;
                     return true;
                 }
             }

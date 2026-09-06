@@ -92,6 +92,23 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
         return Path.Combine(_botNexusHome.GetAgentDirectory(normalizedAgentName), "workspace");
     }
 
+    /// <summary>
+    /// Provisions an empty isolated workspace at admission, not during path lookup or tool use.
+    /// The spawn owner must register the child first so liveness probes protect the directory.
+    /// </summary>
+    internal void ProvisionSubAgentWorkspace(string agentName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
+        if (!IsSubAgentAgentName(agentName.Trim()))
+            throw new ArgumentException("Only isolated child workspaces can be provisioned here.", nameof(agentName));
+
+        _fileSystem.Directory.CreateDirectory(GetWorkspacePath(agentName));
+    }
+
+    /// <summary>
+    /// Reports an actual isolated-directory removal, not success inferred from an absent path.
+    /// Path resolution remains side-effect free so cleanup cannot recreate a retired workspace.
+    /// </summary>
     public bool TryCleanupWorkspace(string agentName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
@@ -110,10 +127,19 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
         if (!IsWithinRoot(tempRoot, workspaceRootFullPath))
             return false;
 
-        if (_fileSystem.Directory.Exists(workspaceRootFullPath))
-            _fileSystem.Directory.Delete(workspaceRootFullPath, recursive: true);
+        if (!_fileSystem.Directory.Exists(workspaceRootFullPath))
+            return false;
 
-        return true;
+        try
+        {
+            _fileSystem.Directory.Delete(workspaceRootFullPath, recursive: true);
+            return true;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // Another cleanup won the race; this caller removed nothing and must not audit it.
+            return false;
+        }
     }
 
     private async Task<string> ReadFileOrEmptyAsync(string path, CancellationToken cancellationToken)

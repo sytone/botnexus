@@ -128,6 +128,36 @@ public sealed class ReclaimedWorkspacePreflightTests
         exception.Message.ShouldContain("reclaimed");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Describe_AbsenceDoesNotProveHistory(bool previouslyCreatedAndDeleted)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "bnx-diagnostic--subagent--" + Guid.NewGuid().ToString("N"), "workspace");
+        var root = Path.GetDirectoryName(path).ShouldNotBeNull();
+        try
+        {
+            if (previouslyCreatedAndDeleted)
+            {
+                Directory.CreateDirectory(path);
+                Directory.Delete(root, recursive: true);
+            }
+            var message = ReclaimedWorkspacePreflight.Describe(path, Directory.Exists).ShouldNotBeNull();
+            message.ShouldContain(path);
+            message.ShouldContain("does not exist");
+            message.ShouldContain("cannot determine");
+            message.ShouldNotContain("was reclaimed while");
+            message.ShouldNotContain("created and used successfully");
+            message.ShouldNotContain("No path you supply can succeed");
+            message.ShouldNotContain("any other file operation will fail");
+            Directory.Exists(path).ShouldBeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     /// <summary>The enforcement seam is silent whenever the workspace is present.</summary>
     [Fact]
     public void ThrowIfReclaimed_DoesNotThrow_WhenWorkspaceExists()
