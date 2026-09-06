@@ -218,32 +218,8 @@ public sealed class PortalLoadService : IPortalLoadService
             conversation.HasMoreHistory = false;
             if (history?.Entries is { Count: > 0 } historyEntries)
             {
-                foreach (var entry in historyEntries)
-                {
-                    if (entry.Kind == "boundary")
-                    {
-                        conversation.AppendMessage(new ChatMessage("System", string.Empty, entry.Timestamp)
-                        {
-                            Kind = "boundary",
-                            BoundaryLabel = $"Session · {entry.Timestamp.ToLocalTime():MMM d HH:mm} · {entry.SessionId}",
-                            BoundarySessionId = entry.SessionId
-                        });
-                    }
-                    else
-                    {
-                        var isTool = entry.ToolName is not null;
-                        conversation.AppendMessage(new ChatMessage(MapRole(entry.Role ?? "system"), entry.Content ?? string.Empty, entry.Timestamp)
-                        {
-                            ToolName = entry.ToolName,
-                            ToolCallId = entry.ToolCallId,
-                            ToolArgs = entry.ToolArgs,
-                            ToolIsError = entry.ToolIsError,
-                            ToolResult = isTool ? AnsiStripper.Strip(entry.Content) : null,
-                            IsToolCall = isTool,
-                            IsFolded = entry.IsFolded
-                        });
-                    }
-                }
+                foreach (var message in ToChatMessages(historyEntries))
+                    conversation.AppendMessage(message);
 
                 // Open on the most-recent page and allow scroll-up paging while the server total
                 // says older rows remain. A short-page test alone is unsound since #2936 lets the
@@ -269,6 +245,97 @@ public sealed class PortalLoadService : IPortalLoadService
 
     // #3456: role normalisation is owned by MessageRole. Do not reintroduce a local switch here.
     private static string MapRole(string role) => MessageRole.Normalize(role);
+
+    /// <summary>
+    /// Projects a conversation-history REST page onto the client timeline model. Extracted so the
+    /// initial load and the refresh re-fetch (#3846) share ONE mapping - a second copy would let the
+    /// two paths drift and would break the identity the reconciler keys on.
+    /// </summary>
+    private static List<ChatMessage> ToChatMessages(IReadOnlyList<ConversationHistoryEntryDto> entries)
+    {
+        var messages = new List<ChatMessage>(entries.Count);
+        foreach (var entry in entries)
+        {
+            if (entry.Kind == "boundary")
+            {
+                messages.Add(new ChatMessage("System", string.Empty, entry.Timestamp)
+                {
+                    Kind = "boundary",
+                    BoundaryLabel = $"Session · {entry.Timestamp.ToLocalTime():MMM d HH:mm} · {entry.SessionId}",
+                    BoundarySessionId = entry.SessionId
+                });
+            }
+            else
+            {
+                var isTool = entry.ToolName is not null;
+                messages.Add(new ChatMessage(MapRole(entry.Role ?? "system"), entry.Content ?? string.Empty, entry.Timestamp)
+                {
+                    ToolName = entry.ToolName,
+                    ToolCallId = entry.ToolCallId,
+                    ToolArgs = entry.ToolArgs,
+                    ToolIsError = entry.ToolIsError,
+                    ToolResult = isTool ? AnsiStripper.Strip(entry.Content) : null,
+                    IsToolCall = isTool,
+                    IsFolded = entry.IsFolded
+                });
+            }
+        }
+
+        return messages;
+    }
+
+    /// <summary>
+    /// Re-fetches the ACTIVE conversation's transcript over REST and reconciles it into the
+    /// displayed timeline, so a message SignalR dropped mid-conversation reappears on refresh
+    /// (#3846). Insert-only and idempotent - see <see cref="TranscriptReconciler"/>.
+    /// </summary>
+    /// <remarks>
+    /// Independently guarded and never throws to its caller: clause 5 of #3846 extends the #2541
+    /// rule (a failed hub re-dial must not cost the user the REST refresh they asked for) to this
+    /// half, in both directions - a failed transcript fetch must not abort the roster refresh
+    /// either. A no-op when nothing is active, when the row is a locally synthesised sub-agent
+    /// observer transcript (no server conversation behind it), or when history was never loaded.
+    /// </remarks>
+    private async Task RefreshActiveTranscriptAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (_store.ActiveConversationId is not { Length: > 0 } conversationId)
+                return;
+
+            var conversation = _store.GetConversation(conversationId);
+            if (conversation is null || conversation.IsLocallySynthesised || !conversation.HistoryLoaded)
+                return;
+
+            var history = await _restClient.GetHistoryAsync(
+                conversationId,
+                AgentInteractionService.DefaultHistoryPageSize,
+                0,
+                cancellationToken);
+
+            if (history?.Entries is not { Count: > 0 } entries)
+                return;
+
+            var serverPage = ToChatMessages(entries);
+            var local = conversation.Messages;
+            var inserted = TranscriptReconciler.CountMissing(local, serverPage);
+            if (inserted == 0)
+                return;
+
+            var reconciled = TranscriptReconciler.Reconcile(local, serverPage);
+            conversation.ClearMessages();
+            foreach (var message in reconciled)
+                conversation.AppendMessage(message);
+
+            // Repaired rows are real history rows, so the backwards-paging offset must advance by
+            // exactly the number inserted or the next scroll-up would re-fetch a page it already has.
+            conversation.LoadedHistoryRows += inserted;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[PortalLoadService] Transcript refresh failed: {ex.Message}");
+        }
+    }
 
     /// <inheritdoc />
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
@@ -305,6 +372,14 @@ public sealed class PortalLoadService : IPortalLoadService
             // data refresh they asked for. Ordering this after the reconnect made a hub failure
             // silently skip the whole session reload (#2541).
             await ReloadSessionRosterAsync(cancellationToken);
+
+            // #3846: re-fetch and reconcile the ACTIVE conversation's transcript. Before this, the
+            // refresh button reloaded the rosters but never the transcript, so the one thing a user
+            // reaches for refresh to repair - a conversation missing messages dropped by SignalR -
+            // was the one thing it could not fix. Placed here, before the optional re-dial, for the
+            // same #2541 reason the roster load is: a failed re-dial must not cost the user the REST
+            // refresh they asked for. The call is independently guarded and never throws.
+            await RefreshActiveTranscriptAsync(cancellationToken);
 
             // Reconnect SignalR if needed
             if (!_hub.IsConnected)

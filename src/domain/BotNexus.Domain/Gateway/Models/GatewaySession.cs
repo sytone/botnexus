@@ -1,6 +1,8 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Security;
 
+using System.Text.Json.Serialization;
+
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
@@ -260,6 +262,18 @@ public sealed class GatewaySession
     /// <summary>Returns a snapshot of the history (safe to iterate).</summary>
     public IReadOnlyList<SessionEntry> GetHistorySnapshot() => Runtime.GetHistorySnapshot();
 
+    /// <summary>Captures append-only or replacement history work for a persistence attempt.</summary>
+    public SessionHistoryPersistenceSnapshot CaptureHistoryForPersistence() => Runtime.CaptureHistoryForPersistence();
+
+    /// <summary>Acknowledges the exact history prefix written by a persistence attempt.</summary>
+    public void AcknowledgeHistoryPersistence(
+        SessionHistoryPersistenceSnapshot snapshot,
+        IReadOnlyDictionary<long, long> insertedRowIds)
+        => Runtime.AcknowledgeHistoryPersistence(snapshot, insertedRowIds);
+
+    /// <summary>Marks history materialized from durable storage as already persisted.</summary>
+    public void MarkCurrentHistoryPersisted() => Runtime.MarkCurrentHistoryPersisted();
+
     /// <summary>
     /// Returns a paginated snapshot of the history (safe to iterate).
     /// </summary>
@@ -295,6 +309,22 @@ public sealed class GatewaySession
 /// </summary>
 public sealed record SessionEntry
 {
+    /// <summary>
+    /// SQLite row identity used only by aggregate persistence reconciliation. It is deliberately
+    /// excluded from every wire/JSON representation; negative values are transient identities
+    /// assigned while an insert is in flight and are replaced with the durable row id on acknowledgement.
+    /// </summary>
+    [JsonIgnore]
+    public long? PersistenceId { get; set; }
+
+    /// <summary>
+    /// Stable idempotency key for inserting this row. Unlike <see cref="PersistenceId"/>, this is
+    /// assigned before I/O and survives a retry whose first commit had an ambiguous outcome.
+    /// It is persistence-only and never appears in transcript JSON or wire payloads.
+    /// </summary>
+    [JsonIgnore]
+    public string? PersistenceKey { get; set; }
+
     /// <summary>Message role.</summary>
     public required MessageRole Role { get; init; }
 

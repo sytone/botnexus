@@ -116,14 +116,40 @@ Invoke-TimedPhase -Phase 'source-download' -Body {
     if ($LASTEXITCODE -ne 0) { throw "Source download failed with exit code $LASTEXITCODE." }
 }
 
+$sourceSnapshot = $null
 Invoke-TimedPhase -Phase 'payload-extract' -Body {
-    tar -xzf $payloadArchive -C $payloadRoot
-    if ($LASTEXITCODE -ne 0) { throw "Payload extraction failed with exit code $LASTEXITCODE." }
-
-    git clone (Join-Path $payloadRoot 'repository.bundle') $sourceRoot
-    if ($LASTEXITCODE -ne 0) { throw "Repository bundle clone failed with exit code $LASTEXITCODE." }
-    tar -xzf (Join-Path $payloadRoot 'workspace.tar.gz') -C $sourceRoot
-    if ($LASTEXITCODE -ne 0) { throw "Workspace overlay failed with exit code $LASTEXITCODE." }
+    # BEGIN EXACT SOURCE RESTORE
+    # The outer transport has exactly four regular files. Validate without extracting first;
+    # the verifier module is a trusted sender artifact, not a bootstrap for an old image.
+    $stream = [IO.File]::OpenRead($payloadArchive)
+    $gzip = [IO.Compression.GZipStream]::new($stream, [IO.Compression.CompressionMode]::Decompress)
+    $tar = [System.Formats.Tar.TarReader]::new($gzip)
+    try {
+        $allowed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($name in @('repository.bundle','workspace.zip','source-manifest.json','SourceSnapshot.psm1')) { [void]$allowed.Add($name) }
+        while ($null -ne ($entry = $tar.GetNextEntry())) {
+            if (-not $allowed.Remove($entry.Name) -or $entry.EntryType -notin @([System.Formats.Tar.TarEntryType]::RegularFile, [System.Formats.Tar.TarEntryType]::V7RegularFile)) { throw 'Unsafe source payload entry.' }
+            $destination = [IO.File]::Create((Join-Path $payloadRoot $entry.Name))
+            try { $entry.DataStream.CopyTo($destination) } finally { $destination.Dispose() }
+        }
+        if ($allowed.Count -ne 0) { throw 'Incomplete source payload; operator must deploy compatible sender and runner.' }
+    }
+    finally { $tar.Dispose(); $gzip.Dispose(); $stream.Dispose() }
+    Import-Module (Join-Path $payloadRoot 'SourceSnapshot.psm1') -Force
+    $manifest = Get-Content -LiteralPath (Join-Path $payloadRoot 'source-manifest.json') -Raw | ConvertFrom-Json
+    # Do not checkout bundled HEAD: its files may be deleted or replaced in the candidate.
+    # Clear inherited index selection for clone only; it belongs to the sender's repository.
+    $hadIndex = Test-Path Env:GIT_INDEX_FILE; $savedIndex = $env:GIT_INDEX_FILE
+    try {
+        Remove-Item Env:GIT_INDEX_FILE -ErrorAction SilentlyContinue
+        git clone --no-checkout (Join-Path $payloadRoot 'repository.bundle') $sourceRoot | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw 'Repository bundle clone failed.' }
+    }
+    finally {
+        if ($hadIndex) { $env:GIT_INDEX_FILE = $savedIndex } else { Remove-Item Env:GIT_INDEX_FILE -ErrorAction SilentlyContinue }
+    }
+    $script:sourceSnapshot = Restore-SourceSnapshot -Root $sourceRoot -Archive (Join-Path $payloadRoot 'workspace.zip') -Manifest $manifest -RunId $runId
+    # END EXACT SOURCE RESTORE
 
     # The packed payload is no longer needed after the repository is materialized.
     # Reclaim it before restore/build so test fixtures get the maximum ephemeral space.
@@ -134,10 +160,10 @@ Push-Location $sourceRoot
 $exitCode = 0
 $testResult = $null
 try {
-    git config user.name 'BotNexus Azure Build Runner'
-    git config user.email 'build-runner@botnexus.invalid'
-    git add --all
-    git commit --allow-empty -m 'build runner snapshot' | Out-Host
+    # Source proof was established before any restore/build command; do not manufacture a
+    # pre-validation commit. Keep HEAD as history and populate the clone index for diff tools.
+    git read-tree HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize runner index.' }
 
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
     $env:DOTNET_NOLOGO = '1'
@@ -274,8 +300,6 @@ try {
         Write-PhaseTiming -Phase 'build-release' -Status 'skipped'
     }
 
-    $strictResults = $mode -in @('full', 'core', 'strict', 'playwright')
-
     # Timed inline rather than through Invoke-TimedPhase: every branch below assigns $exitCode,
     # and an assignment inside a scriptblock invoked with & would land in a child scope and be
     # silently discarded -- the run would then report success regardless of the test outcome.
@@ -353,24 +377,23 @@ try {
         throw "Test phase exceeded the runner deadline of $testBudgetSeconds s. $($timeoutRecord.attribution)"
     }
 
-    if ($strictResults) {
-        . $runnerResultScript
-        $trxPaths = @(Get-ChildItem -Path $resultsRoot -Filter '*.trx' -Recurse -File | Select-Object -ExpandProperty FullName)
+    # Every mode must produce a verifiable test contract before the sender can certify it.
+    . $runnerResultScript
+    $trxPaths = @(Get-ChildItem -Path $resultsRoot -Filter '*.trx' -Recurse -File | Select-Object -ExpandProperty FullName)
 
-        # A collapsed run is invisible to a pass/fail check: one passing test satisfies
-        # "zero failed" exactly as well as 12,765 do, so a filter typo or a project that
-        # silently stopped being discovered would certify green. The floors are set well
-        # below the observed counts (core measured 12,802 on 2026-08-06) so ordinary suite
-        # growth and churn never trip them, but a collapse cannot hide.
-        $minimumTotals = @{ full = 12000; core = 12000; strict = 0; playwright = 0 }
-        $minimumTotal = if ($minimumTotals.ContainsKey($mode)) { $minimumTotals[$mode] } else { 0 }
+    # A collapsed run is invisible to a pass/fail check: one passing test satisfies
+    # "zero failed" exactly as well as 12,765 do, so a filter typo or a project that
+    # silently stopped being discovered would certify green. The floors are set well
+    # below the observed counts (core measured 12,802 on 2026-08-06) so ordinary suite
+    # growth and churn never trip them, but a collapse cannot hide.
+    $minimumTotals = @{ full = 12000; core = 12000; strict = 0; playwright = 0 }
+    $minimumTotal = if ($minimumTotals.ContainsKey($mode)) { $minimumTotals[$mode] } else { 0 }
 
-        $testResult = Get-RunnerTestResult -TrxPaths $trxPaths -RequireZeroSkipped -MinimumTotal $minimumTotal
-        $testResult | ConvertTo-Json | Set-Content -Path (Join-Path $artifactsRoot 'test-result.json')
-        if (-not $testResult.isComplete) {
-            $exitCode = 1
-            throw "Strict $mode validation rejected the test result: $($testResult.failureReason) (total=$($testResult.total), passed=$($testResult.passed), failed=$($testResult.failed), skipped=$($testResult.skipped), fixtureFailures=$($testResult.fixtureFailures), minimumTotal=$minimumTotal)."
-        }
+    $testResult = Get-RunnerTestResult -TrxPaths $trxPaths -RequireZeroSkipped -MinimumTotal $minimumTotal
+    $testResult | ConvertTo-Json | Set-Content -Path (Join-Path $artifactsRoot 'test-result.json')
+    if (-not $testResult.isComplete) {
+        $exitCode = 1
+        throw "Strict $mode validation rejected the test result: $($testResult.failureReason) (total=$($testResult.total), passed=$($testResult.passed), failed=$($testResult.failed), skipped=$($testResult.skipped), fixtureFailures=$($testResult.fixtureFailures), minimumTotal=$minimumTotal)."
     }
 }
 catch {
@@ -421,6 +444,7 @@ finally {
         exitCode = $exitCode
         completedUtc = [DateTime]::UtcNow.ToString('o')
         tests = $testResult
+        sourceSnapshot = $sourceSnapshot
         timings = $phaseTimings
         # #3314: per-project cost travels IN the contract as well as in runner-cost.log, so a
         # caller can attribute the run without re-parsing TRX. Always present, never inferred.

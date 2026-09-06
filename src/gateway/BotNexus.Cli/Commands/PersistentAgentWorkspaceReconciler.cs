@@ -5,8 +5,9 @@ namespace BotNexus.Cli.Commands;
 
 /// <summary>
 /// A single physical directory found directly under the configured agents root, classified against
-/// the set of registered agents. <paramref name="IsOrphaned"/> is true when no enabled config agent
-/// claims the directory name; <paramref name="IsUnsafeLink"/> is true when the directory is a
+/// the set of declared agents. <paramref name="IsOrphaned"/> is true when no agent declared in
+/// config.json claims the directory name - a *disabled* agent is still declared and is never
+/// orphaned (issue #3700); <paramref name="IsUnsafeLink"/> is true when the directory is a
 /// symlink/reparse point and must never be followed for deletion.
 /// <para>
 /// #3845: <paramref name="SizeBytes"/> and <paramref name="NewestContentUtc"/> exist so the report
@@ -26,7 +27,7 @@ internal sealed record PersistentAgentWorkspaceEntry(
     DateTime? NewestContentUtc = null);
 
 /// <summary>
-/// Reconciles persistent top-level agent workspaces with enabled config-defined agents while
+/// Reconciles persistent top-level agent workspaces with the agents declared in config while
 /// keeping every deletion constrained to the configured agents root. This is the destructive
 /// counterpart to the read-only <c>PersistentAgentFolderCheck</c>: it produces a reviewable plan and
 /// deletes only orphaned directories that pass strict containment and reparse-point safety checks.
@@ -52,10 +53,10 @@ internal sealed class PersistentAgentWorkspaceReconciler
 
     /// <summary>
     /// Enumerates the immediate directories under <paramref name="agentsRoot"/> and classifies each
-    /// as registered or orphaned. Registration is derived the same way the gateway interprets config:
-    /// the <c>defaults</c> reserved key and disabled agents are ignored, and remaining keys are
-    /// canonicalized through <see cref="AgentId"/> rather than a doctor-specific interpretation.
-    /// Returns an empty list when the root does not exist.
+    /// as declared or orphaned. Only the reserved <c>defaults</c> key is ignored: a disabled agent is
+    /// a declared agent whose workspace must survive cleanup, because disabling is a reversible opt-out
+    /// that preserves state (issue #3700). Keys are canonicalized through <see cref="AgentId"/> rather
+    /// than a doctor-specific interpretation. Returns an empty list when the root does not exist.
     /// </summary>
     public IReadOnlyList<PersistentAgentWorkspaceEntry> BuildPlan(string agentsRoot, PlatformConfig config)
     {
@@ -65,7 +66,7 @@ internal sealed class PersistentAgentWorkspaceReconciler
         if (!Directory.Exists(root))
             return [];
 
-        var registered = RegisteredIds(config);
+        var declared = DeclaredIds(config);
 
         return Directory.EnumerateDirectories(root)
             .Select(path =>
@@ -79,7 +80,7 @@ internal sealed class PersistentAgentWorkspaceReconciler
                 return new PersistentAgentWorkspaceEntry(
                     info.Name,
                     info.FullName,
-                    !registered.Contains(info.Name.Trim()),
+                    !declared.Contains(info.Name.Trim()),
                     isLink,
                     size,
                     newest);
@@ -112,12 +113,12 @@ internal sealed class PersistentAgentWorkspaceReconciler
         ArgumentException.ThrowIfNullOrWhiteSpace(agentsRoot);
         ArgumentNullException.ThrowIfNull(plan);
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(agentsRoot));
-        var registered = config is null ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : RegisteredIds(config);
+        var declared = config is null ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : DeclaredIds(config);
         var candidates = plan
             .Where(item => item.IsOrphaned)
-            .Select(entry => registered.Contains(entry.DirectoryName.Trim())
+            .Select(entry => declared.Contains(entry.DirectoryName.Trim())
                 ? throw new InvalidOperationException(
-                    $"Refusing to delete '{entry.DirectoryName}': it is a registered agent, not an orphan.")
+                    $"Refusing to delete '{entry.DirectoryName}': it is a declared agent, not an orphan.")
                 : entry)
             .Select(entry => ValidateDeletionCandidate(root, entry))
             .Where(Directory.Exists)
@@ -135,25 +136,27 @@ internal sealed class PersistentAgentWorkspaceReconciler
     }
 
     /// <summary>
-    /// The canonical set of registered agent ids for <paramref name="config"/>. The <c>defaults</c>
-    /// reserved key and disabled agents are ignored, and remaining keys are canonicalized through
-    /// <see cref="AgentId"/> rather than a doctor-specific interpretation. Shared by classification
-    /// and by the pre-deletion refusal so the two can never disagree about what "registered" means.
+    /// The canonical set of declared agent ids for <paramref name="config"/>. Only the
+    /// <c>defaults</c> reserved key is ignored; disabled agents remain declared because disabling is
+    /// reversible and must not authorize deletion of their persistent state (issue #3700). Remaining
+    /// keys are canonicalized through <see cref="AgentId"/> rather than a doctor-specific
+    /// interpretation. Shared by classification and by the pre-deletion refusal so the two can never
+    /// disagree about what "declared" means.
     /// </summary>
-    private static HashSet<string> RegisteredIds(PlatformConfig config)
+    private static HashSet<string> DeclaredIds(PlatformConfig config)
     {
-        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var declared = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var pair in config.Agents ?? [])
         {
-            if (pair.Key.Equals("defaults", StringComparison.OrdinalIgnoreCase) || !pair.Value.Enabled)
+            if (pair.Key.Equals("defaults", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var maybeId = AgentId.TryFrom(pair.Key, out var id) ? id.Value : null;
             if (maybeId is not null)
-                registered.Add(maybeId);
+                declared.Add(maybeId);
         }
 
-        return registered;
+        return declared;
     }
 
     /// <summary>

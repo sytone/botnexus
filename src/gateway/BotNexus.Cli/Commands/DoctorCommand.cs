@@ -95,8 +95,8 @@ internal sealed class DoctorCommand
     }
 
     /// <summary>
-    /// Reconciles the persistent agent workspaces under the resolved agents root against the enabled
-    /// agents declared in <c>config.json</c>, prints the plan, and (only when approved) deletes
+    /// Reconciles the persistent agent workspaces under the resolved agents root against all agents
+    /// declared in <c>config.json</c>, prints the plan, and (only when approved) deletes
     /// orphaned directories. Approval comes either from <paramref name="cleanupOrphans"/> (the explicit
     /// opt-in flag) or, in an interactive terminal, from the <paramref name="confirm"/> prompt. In a
     /// non-interactive terminal without the flag the method is strictly non-destructive. Returns 0 when
@@ -140,7 +140,7 @@ internal sealed class DoctorCommand
         {
             var state = entry.IsOrphaned
                 ? (entry.IsUnsafeLink ? "[red]unsafe orphan[/]" : "[yellow]orphaned[/]")
-                : "[green]registered[/]";
+                : "[green]declared[/]";
             // #3845: size and newest-content age are what an operator needs to judge an orphan -
             // a name alone gives them nothing to decide with.
             var newest = entry.NewestContentUtc is { } stamp
@@ -170,7 +170,7 @@ internal sealed class DoctorCommand
         if (!approved && interactive)
         {
             approved = (confirm ?? (message => AnsiConsole.Confirm(message, defaultValue: false)))(
-                $"Delete the {orphans.Length} enumerated orphaned workspace(s)?");
+                $"Delete the {orphans.Length} enumerated orphaned workspace(s)? No config.json entry declares them.");
         }
 
         if (!approved)
