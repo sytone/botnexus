@@ -8,6 +8,97 @@ namespace BotNexus.Architecture.Tests;
 public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     [Fact]
+    public async Task RunLintAt_StderrBeyondPipeCapacity_RetainsBothOutputs()
+    {
+        await ExerciseLintBoundaryAsync(
+            "[Console]::Error.Write(('E' * 2097152)); [Console]::Out.Write('stdout-complete'); exit 0",
+            cancelAfterStart: false);
+    }
+
+    [Fact]
+    public async Task RunLintAt_NeverExitingChild_CancellationTerminatesOwnedProcess()
+    {
+        await ExerciseLintBoundaryAsync(
+            "[Console]::Out.Write('ready-never-exit'); [Threading.Tasks.Task]::Delay(-1).GetAwaiter().GetResult()",
+            cancelAfterStart: true);
+    }
+
+    private static async Task ExerciseLintBoundaryAsync(string body, bool cancelAfterStart)
+    {
+        var fixture = Directory.CreateTempSubdirectory("lint-boundary-").FullName;
+        using var unrelated = new DocsLintScriptTests.PowerShellStartupState();
+        var sentinel = Path.Combine(unrelated.Root, "untouched");
+        File.WriteAllText(sentinel, "preserve");
+        var script = Path.Combine(fixture, "child.ps1");
+        File.WriteAllText(script, "param($RepoRoot, $Rule)\n" + body);
+        using var cancellation = new CancellationTokenSource();
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Process? observed = null;
+        string? cache = null;
+        Task<DocsLintScriptTests.LintRun>? run = null;
+        try
+        {
+            run = DocsLintScriptTests.RunLintAtAsync(fixture, script, "literal-drift", false,
+                cancellation.Token, (child, root) =>
+                {
+                    observed = Process.GetProcessById(child.Id);
+                    cache = root;
+                    Directory.Exists(root).ShouldBeTrue("cache must remain owned while the child is live");
+                }, timeout: TimeSpan.FromSeconds(10));
+            if (cancelAfterStart)
+            {
+                var failure = await Should.ThrowAsync<TimeoutException>(async () =>
+                    await run.WaitAsync(guard.Token));
+                failure.Message.ShouldContain("ready-never-exit");
+                failure.Message.ShouldContain("cache");
+                // The outer guard is only emergency containment of the RED mutation.
+                guard.IsCancellationRequested.ShouldBeFalse("the actual helper must enforce its deadline");
+            }
+            else
+            {
+                DocsLintScriptTests.LintRun? result = null;
+                var failure = await Record.ExceptionAsync(async () => result = await run.WaitAsync(guard.Token));
+                failure.ShouldBeNull("concurrent drains must complete the stderr flood without the emergency guard");
+                result.ShouldNotBeNull();
+                result.ExitCode.ShouldBe(0, result.StartupDiagnostics);
+                result.StdOut.ShouldBe("stdout-complete");
+                result.StdErr.ShouldBe(new string('E', 2097152));
+            }
+
+            observed.ShouldNotBeNull();
+            observed.HasExited.ShouldBeTrue("helper completion must prove owned termination");
+            cache.ShouldNotBeNull();
+            Directory.Exists(cache).ShouldBeFalse();
+            File.ReadAllText(sentinel).ShouldBe("preserve");
+        }
+        finally
+        {
+            // This independent guard safely kills a deliberately broken launcher in RED.
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            if (observed is not null)
+            {
+                if (!observed.HasExited)
+                {
+                    observed.Kill(entireProcessTree: true);
+                }
+                await observed.WaitForExitAsync(cleanup.Token);
+                observed.HasExited.ShouldBeTrue();
+                observed.Dispose();
+            }
+            if (run is not null)
+            {
+                try { await run.WaitAsync(cleanup.Token); }
+                catch (OperationCanceledException) when (!cleanup.IsCancellationRequested) { }
+                catch (TimeoutException) when (cancelAfterStart && !cleanup.IsCancellationRequested)
+                {
+                    // The main assertion already checks this expected helper failure and diagnostics.
+                }
+            }
+            Directory.Delete(fixture, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Configure_ReplacesInheritedCacheInputsWithoutChangingParent()
     {
         var parentCache = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");

@@ -335,6 +335,12 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
         => RunLintAt(repo, Path.Combine(repo, "scripts", "repo", "docs-lint.ps1"), rules, asJson);
 
     private static LintRun RunLintAt(string repoRoot, string scriptPath, string rules, bool asJson)
+        => RunLintAtAsync(repoRoot, scriptPath, rules, asJson).GetAwaiter().GetResult();
+
+    internal static async Task<LintRun> RunLintAtAsync(
+        string repoRoot, string scriptPath, string rules, bool asJson,
+        CancellationToken cancellationToken = default,
+        Action<Process, string>? onStarted = null, TimeSpan? timeout = null)
     {
         var args = new StringBuilder();
         args.Append("-NoProfile -NonInteractive -File \"").Append(scriptPath).Append('"');
@@ -350,7 +356,7 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
             args.Append(" -AsJson");
         }
 
-        using var startupState = new PowerShellStartupState();
+        var startupState = new PowerShellStartupState();
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo(PwshExecutable(), args.ToString())
@@ -363,15 +369,93 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
             },
         };
 
-        startupState.Configure(process.StartInfo);
-        process.Start();
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var diagnostics = $"Executable: {process.StartInfo.FileName}; arguments: {process.StartInfo.Arguments}; "
+            + $"owned cache root: {startupState.Root}";
+        var budget = timeout ?? TimeSpan.FromSeconds(60);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(budget);
+        using var drainCancellation = new CancellationTokenSource();
+        var started = false;
+        var cleanupAttempted = false;
+        var cleanupSucceeded = false;
+        Task<string>? stdout = null;
+        Task<string>? stderr = null;
+        try
+        {
+            startupState.Configure(process.StartInfo);
+            started = process.Start();
+            if (!started)
+            {
+                throw new InvalidOperationException("PowerShell did not start. " + diagnostics);
+            }
+            // Start both drains before waiting for either pipe or for process termination.
+            stdout = process.StandardOutput.ReadToEndAsync(drainCancellation.Token);
+            stderr = process.StandardError.ReadToEndAsync(drainCancellation.Token);
+            onStarted?.Invoke(process, startupState.Root);
+            try
+            {
+                await Task.WhenAll(stdout, stderr, process.WaitForExitAsync(deadline.Token))
+                    .WaitAsync(deadline.Token);
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            {
+                await TerminateAndDrainAsync();
+                var captured = $"{diagnostics}; stdout: {Bounded(await stdout)}; stderr: {Bounded(await stderr)}";
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    throw new OperationCanceledException(captured, cancellationToken);
+                }
+                throw new TimeoutException($"PowerShell exceeded its {budget} safety deadline. {captured}");
+            }
 
-        return new LintRun(process.ExitCode, stdout, stderr,
-            $"Executable: {process.StartInfo.FileName}; arguments: {process.StartInfo.Arguments}; "
-            + $"owned cache root: {startupState.Root}; exit: {process.ExitCode}");
+            return new LintRun(process.ExitCode, await stdout, await stderr,
+                diagnostics + $"; exit: {process.ExitCode}");
+        }
+        finally
+        {
+            try
+            {
+                if (started && !cleanupAttempted)
+                {
+                    await TerminateAndDrainAsync();
+                }
+                // No deletion on failed termination: retain owned state for diagnosis.
+                if (!started || cleanupSucceeded)
+                {
+                    startupState.Dispose();
+                }
+            }
+            finally
+            {
+                drainCancellation.Cancel();
+            }
+        }
+
+        async Task TerminateAndDrainAsync()
+        {
+            cleanupAttempted = true;
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                await process.WaitForExitAsync(cleanup.Token).WaitAsync(cleanup.Token);
+                if (stdout is not null && stderr is not null)
+                {
+                    await Task.WhenAll(stdout, stderr).WaitAsync(cleanup.Token);
+                }
+                cleanupSucceeded = true;
+            }
+            catch (Exception error)
+            {
+                throw new InvalidOperationException(
+                    "PowerShell cleanup failed; cache retained. " + diagnostics, error);
+            }
+        }
+
+        static string Bounded(string text) => text[..Math.Min(text.Length, 4096)];
     }
 
     // Test-local seam: ownership lasts until the launched child has exited.
@@ -408,7 +492,7 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
         => OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
 
 
-    private sealed record LintRun(int ExitCode, string StdOut, string StdErr, string StartupDiagnostics)
+    internal sealed record LintRun(int ExitCode, string StdOut, string StdErr, string StartupDiagnostics)
     {
         // Keep stdout pure for the JSON assertion; attach launch context only to diagnostics.
         public string Output => StartupDiagnostics + Environment.NewLine + StdOut + StdErr;

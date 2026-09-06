@@ -66,3 +66,31 @@ Read `result.json` test counters and named TRX results, not merely the wrapper e
 code. Keep issue #3968 open for a captured failing startup with full identity and
 cache evidence, and for separately scoped Windows startup-profile investigation.
 No runner deployment or live gateway rebuild is part of this test-only change.
+
+## Actual lint-launch pipe and deadline safety (#3982)
+
+The fifteen lint regressions use `RunLintAtAsync` through the existing synchronous
+adapter. The helper starts asynchronous stdout and stderr drains together, then
+awaits both drains and process exit under a linked 60-second safety deadline.
+Tests may supply a shorter deadline to exercise failure; elapsed time is not a
+success oracle. Caller cancellation remains cancellation; the helper's deadline
+produces an explicit `TimeoutException`, never a lint exit code.
+
+On cancellation or failure, the helper attempts owned process-tree termination
+once, then confirms process exit and pipe completion under a separate 10-second
+cleanup deadline. Cache deletion happens only after that confirmation. A cleanup
+failure reports the executable, arguments and retained cache path; it does not
+silently delete state belonging to a possibly live child. Timeout diagnostics
+include up to 4096 characters from each drained stream. Ordinary results retain
+complete, separate stdout and stderr, including pure JSON stdout.
+
+Two regressions invoke this actual helper with an isolated script: one writes
+2 MiB to stderr before closing stdout, and one emits a readiness marker then waits
+indefinitely. The latter must fail explicitly, prove owned termination and cache
+cleanup, and preserve an unrelated cache sentinel. An independent outer guard
+contains the broken sequential/no-deadline mutation and confirms termination even
+when the helper under test is deliberately defective. The mutation must fail both
+named assertions without requiring the remote replica to be killed.
+
+This addresses a reproducible test-helper pipe/wait defect, not the historical
+exit-134 assembly-load cause. No assertion or exit-code contract is weakened.
