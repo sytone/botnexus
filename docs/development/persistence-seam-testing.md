@@ -66,39 +66,60 @@ Two guarantees of different strength appear here, and the distinction matters:
 
 ### Sessions aggregate (worked example)
 
-Sessions are the instructive counter-shape: the broad write is **deliberately unguarded**.
-`SaveAsync` is the unconditional `INSERT … ON CONFLICT DO UPDATE` that the pre-run write-ahead
-saves (the user message, the crash sentinel) rely on to create the row, and it also deletes and
-re-inserts the *entire* `session_history` table from the caller's snapshot. There is no revision
-column to compare against.
+Sessions separate the **deliberately unguarded session-row upsert** from history persistence.
+`SaveAsync` still uses unconditional `INSERT … ON CONFLICT DO UPDATE` for the caller-owned
+session columns: pre-run write-ahead saves (the user message, the crash sentinel) rely on it to
+create the row. There is no revision column to compare against, so post-run finalizers still
+need the fenced overload to protect lifecycle fields.
+
+History no longer undergoes a whole-transcript delete/reinsert on each save (#3907). Ordinary
+saves append only the captured unpersisted delta. Explicit destructive history mutations use
+identity-based reconciliation: they update known rows and may delete only previously observed
+row IDs recorded as removed, leaving a concurrent append outside that deletion authority. See
+[`SqliteSessionStore.SaveAsync` and `PersistHistoryAsync`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs)
+and the executable
+[`SessionWriteInventoryTests`](https://github.com/Sytone/botnexus/blob/main/tests/persistence/BotNexus.Persistence.Seam.Tests/Sessions/SessionWriteInventoryTests.cs).
 
 | Entry point | Class | Owns |
 | --- | --- | --- |
 | `GetOrCreateAsync` | Create | constructs only; nothing reaches SQLite until a save |
-| `SaveAsync(session)` | FullReplace | every caller-owned column **and the whole transcript** — unguarded by contract |
-| `SaveAsync(session, fence)` | Fenced | same columns, gated on `SessionFenceEvaluator.Passes` over a lock-scoped re-read |
+| `SaveAsync(session)` | FullReplace | caller-owned **session-row columns** remain unguarded; history uses append/targeted reconciliation, not whole-transcript replacement |
+| `SaveAsync(session, fence)` | Fenced | same session columns and history delta, gated on `SessionFenceEvaluator.Passes` over a lock-scoped re-read |
 | `AppendEntriesAsync` | NarrowPatch | new `session_history` rows + `updated_at`; refused against a terminal row |
-| `PatchMetadataAsync` | Merge | the `metadata` column only, read-merge-written under one lock |
-| `TransitionStatusAsync` | CompareAndSwap | `status` only, via `UPDATE … WHERE status = $expected` |
+| `PatchMetadataAsync` | Merge | `metadata` + `updated_at`, read-merge-written under one lock |
+| `TransitionStatusAsync` | CompareAndSwap | `status` + `updated_at`, via `UPDATE … WHERE status = $expected` |
 | `DeleteAsync` | NarrowPatch | removes the row and its history |
-| `ArchiveAsync` | FullReplace | seals + rewrites history, but from a re-load taken **inside** the lock after draining the run (#2903) |
-| `Save`/`UpdateSubAgentSessionAsync` | Create / NarrowPatch | `sub_agent_sessions` side table |
+| `ArchiveAsync` | NarrowPatch (logical mutation) | seals status + advances `updated_at` via an authoritative row upsert after draining the run and re-loading **inside** the lock (#2903); history is untouched |
+| `SaveSubAgentSessionAsync`/`UpdateSubAgentSessionAsync` | Create / NarrowPatch | `sub_agent_sessions` side table |
 
-So the protection is not a CAS but two different mechanisms, and both are exercised:
+`ArchiveAsync` is classified as `NarrowPatch` for its logical mutation, **not** because it issues
+a status-only SQL `UPDATE`. It drains the active run before taking the lock, then reloads the
+session under that lock, changes status and `updated_at`, and calls `UpsertSessionAsync` without
+persisting history. A drain timeout throws before any archive write.
 
-- **Narrowing** (#2132) — appends, metadata patches and status transitions own disjoint columns,
-  so they compose instead of clobbering. This is what callers should reach for when they only add
-  turns or only edit metadata.
+The protections have distinct scopes:
+
+- **Narrowing** (#2132) — append, metadata-patch and status-transition paths target their own
+  state (plus `updated_at`), so they compose instead of clobbering. This is what callers should
+  reach for when they only add turns or only edit metadata.
+- **History delta/reconciliation** (#3907) — an accepted stale unfenced save preserves a
+  concurrently appended history row. This does not guard the broad session-row upsert or make
+  stale lifecycle writes safe.
 - **Fencing** (#1518) — the post-run finalizer overload re-reads `(status, conversation_id)`
   straight from SQLite under the *same* striped lock it then writes under, and returns `Rebound`
   when the row was deleted, sealed by a competing reset, or rebound to another conversation while
   the run was in flight.
 
-`SessionLostUpdateSeamTests` therefore pins the hazard as well as the guards: a
-**characterisation** test asserts that a stale unfenced `SaveAsync` *does* erase a concurrently
-appended turn. That is not an aspiration — it is the documented contract, and pinning it means
-that if the unfenced save ever gains a guard the test fails and the guidance above gets revisited
-instead of quietly going stale.
+[`SessionLostUpdateSeamTests.StaleUnfencedSave_PreservesAConcurrentAppend`](https://github.com/Sytone/botnexus/blob/main/tests/persistence/BotNexus.Persistence.Seam.Tests/Sessions/SessionLostUpdateSeamTests.cs)
+now asserts both that the stale unfenced save is **accepted** and that the concurrent turn
+**survives**, verified through a fresh store. It supersedes the original characterisation of
+transcript erasure; it does not assert that the session-row upsert has gained a guard.
+
+The original sessions seam coverage shipped in
+[PR #3452](https://github.com/Sytone/botnexus/pull/3452), including recorded proven-red evidence
+for removing the fence-token check. That historical fence-mutation evidence is distinct from
+the current append-preservation assertion; updating this guide does not constitute a new test
+or mutation run.
 
 ## The harness
 
