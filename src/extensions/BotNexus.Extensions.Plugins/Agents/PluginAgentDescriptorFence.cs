@@ -153,19 +153,16 @@ public static class PluginAgentDescriptorFence
         // A denial cannot be narrowed by dropping it: that would widen access. Without an
         // explicit owner workspace, a relative directory denial cannot be transferred safely.
         // Globs are the exception: DefaultPathValidator matches them without workspace anchoring.
-        if (candidate.FileAccess is { } declaredAccess)
+        foreach (var denied in (candidate.FileAccess?.DeniedPaths ?? []).Concat(ceiling?.DeniedPaths ?? []))
         {
-            foreach (var denied in declaredAccess.DeniedPaths.Concat(ceiling?.DeniedPaths ?? []))
+            if (!string.IsNullOrWhiteSpace(denied)
+                && !denied.Contains('*') && !denied.Contains('?')
+                && !Path.IsPathFullyQualified(denied.Trim()))
             {
-                if (!string.IsNullOrWhiteSpace(denied)
-                    && !denied.Contains('*') && !denied.Contains('?')
-                    && !Path.IsPathFullyQualified(denied.Trim()))
-                {
-                    rejections.Add(
-                        $"{nameof(AgentDescriptor.FileAccess)}.{nameof(FileAccessPolicy.DeniedPaths)}: "
-                        + "non-glob denials must be fully qualified absolute paths; a relative "
-                        + "denial has no unambiguous owner workspace and cannot be transplanted.");
-                }
+                rejections.Add(
+                    $"{nameof(AgentDescriptor.FileAccess)}.{nameof(FileAccessPolicy.DeniedPaths)}: "
+                    + "non-glob denials must be fully qualified absolute paths; a relative "
+                    + "denial has no unambiguous owner workspace and cannot be transplanted.");
             }
         }
 
@@ -198,23 +195,23 @@ public static class PluginAgentDescriptorFence
         FileAccessPolicy? declared,
         FileAccessPolicy? ceiling)
     {
-        // A plugin that declares no policy is not handed the ceiling as a grant; it simply keeps
-        // the host's default, workspace-only behaviour.
-        if (declared is null)
-            return (null, false);
+        // Omission grants no extra paths, but must not erase ceiling restrictions inside the
+        // workspace. Carry denials even when there is no plugin policy to intersect.
+        var reads = ClampPaths(declared?.AllowedReadPaths ?? [], ceiling?.AllowedReadPaths);
+        var writes = ClampPaths(declared?.AllowedWritePaths ?? [], ceiling?.AllowedWritePaths);
 
-        var reads = ClampPaths(declared.AllowedReadPaths, ceiling?.AllowedReadPaths);
-        var writes = ClampPaths(declared.AllowedWritePaths, ceiling?.AllowedWritePaths);
-
-        var denies = declared.DeniedPaths
+        var denies = (declared?.DeniedPaths ?? [])
             .Concat(ceiling?.DeniedPaths ?? [])
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(p => p, StringComparer.Ordinal)
             .ToArray();
 
-        var narrowed = reads.Count != declared.AllowedReadPaths.Count
-                       || writes.Count != declared.AllowedWritePaths.Count;
+        if (declared is null && denies.Length == 0)
+            return (null, false);
+
+        var narrowed = reads.Count != (declared?.AllowedReadPaths.Count ?? 0)
+                       || writes.Count != (declared?.AllowedWritePaths.Count ?? 0);
 
         return (
             new FileAccessPolicy

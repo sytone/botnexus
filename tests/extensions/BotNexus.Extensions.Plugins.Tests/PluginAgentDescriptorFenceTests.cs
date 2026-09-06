@@ -243,8 +243,11 @@ public sealed class PluginAgentDescriptorFenceTests
         var result = PluginAgentDescriptorFence.Apply(Minimal(), Ceiling());
 
         result.IsAccepted.ShouldBeTrue();
-        result.Descriptor!.FileAccess.ShouldBeNull(
+        var policy = result.Descriptor.ShouldNotBeNull().FileAccess.ShouldNotBeNull();
+        policy.AllowedReadPaths.ShouldBeEmpty(
             "a plugin agent that declares no fileAccess must not be handed the ceiling as a grant.");
+        policy.AllowedWritePaths.ShouldBeEmpty();
+        policy.DeniedPaths.ShouldBe(Ceiling().DeniedPaths);
     }
 
     [Fact]
@@ -394,6 +397,105 @@ public sealed class PluginAgentDescriptorFenceTests
         var casePolicy = caseResult.Descriptor.ShouldNotBeNull().FileAccess.ShouldNotBeNull();
         casePolicy.AllowedReadPaths.Count.ShouldBe(OperatingSystem.IsWindows() ? 1 : 0);
         casePolicy.AllowedWritePaths.Count.ShouldBe(OperatingSystem.IsWindows() ? 1 : 0);
+    }
+
+    [Theory]
+    [InlineData("omitted", false)]
+    [InlineData("omitted", true)]
+    [InlineData("null", false)]
+    [InlineData("null", true)]
+    [InlineData("empty", false)]
+    [InlineData("empty", true)]
+    [InlineData("explicit", false)]
+    [InlineData("explicit", true)]
+    public void Apply_SerializedPolicy_PreservesCeilingDenials_InRealValidator(string shape, bool glob)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "plugin-denials-3969");
+        var workspace = Path.Combine(root, "workspace");
+        var protectedPath = Path.Combine(workspace, "protected", "key.secret");
+        var neighbor = Path.Combine(workspace, "public.txt");
+        var external = Path.Combine(root, "external");
+        var candidate = DeserializePolicyShape(shape);
+        if (shape is "omitted" or "null")
+            candidate.FileAccess.ShouldBeNull("the regression must exercise the null-policy branch");
+        var denial = glob ? "*.secret" : Path.GetDirectoryName(protectedPath).ShouldNotBeNull();
+        var ceiling = new FileAccessPolicy
+        {
+            AllowedReadPaths = [external], AllowedWritePaths = [external], DeniedPaths = [denial]
+        };
+
+        var result = PluginAgentDescriptorFence.Apply(candidate, ceiling);
+
+        result.IsAccepted.ShouldBeTrue();
+        var effective = result.Descriptor.ShouldNotBeNull().FileAccess;
+        var validator = new BotNexus.Gateway.Security.DefaultPathValidator(effective, workspace);
+        validator.CanRead(protectedPath).ShouldBeFalse("omission must not erase the ceiling's read denial");
+        validator.CanWrite(protectedPath).ShouldBeFalse("omission must not erase the ceiling's write denial");
+        validator.CanRead(neighbor).ShouldBeTrue();
+        validator.CanWrite(neighbor).ShouldBeTrue();
+        validator.CanRead(Path.Combine(external, "file.txt")).ShouldBeFalse();
+        validator.CanWrite(Path.Combine(external, "file.txt")).ShouldBeFalse();
+        var policy = effective.ShouldNotBeNull();
+        policy.AllowedReadPaths.ShouldBeEmpty();
+        policy.AllowedWritePaths.ShouldBeEmpty();
+        policy.DeniedPaths.ShouldContain(denial);
+        if (shape == "explicit")
+        {
+            policy.DeniedPaths.ShouldContain("*.plugin-private");
+            validator.CanRead(Path.Combine(workspace, "key.plugin-private")).ShouldBeFalse();
+            validator.CanWrite(Path.Combine(workspace, "key.plugin-private")).ShouldBeFalse();
+        }
+    }
+
+    [Theory]
+    [InlineData("omitted")]
+    [InlineData("null")]
+    [InlineData("empty")]
+    [InlineData("explicit")]
+    public void Apply_SerializedPolicy_RejectsAmbiguousCeilingDeny_EvenWhenOmitted(string shape)
+    {
+        var result = PluginAgentDescriptorFence.Apply(DeserializePolicyShape(shape), new FileAccessPolicy
+        {
+            DeniedPaths = [Path.Combine("..", "protected")]
+        });
+
+        result.IsAccepted.ShouldBeFalse();
+        result.Descriptor.ShouldBeNull();
+        result.Rejections.ShouldContain(message => message.Contains("FileAccess.DeniedPaths", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Apply_OmittedPolicy_WithoutCeilingDenials_RetainsWorkspaceOnlyDefault(bool emptyCeiling)
+    {
+        var candidate = DeserializePolicyShape("omitted");
+        var result = PluginAgentDescriptorFence.Apply(candidate, emptyCeiling ? new FileAccessPolicy() : null);
+
+        result.IsAccepted.ShouldBeTrue();
+        result.Descriptor.ShouldNotBeNull().FileAccess.ShouldBeNull();
+        var root = Path.Combine(Path.GetTempPath(), "plugin-default-3969");
+        var workspace = Path.Combine(root, "workspace");
+        var validator = new BotNexus.Gateway.Security.DefaultPathValidator(result.Descriptor.FileAccess, workspace);
+        validator.CanRead(Path.Combine(workspace, "file.txt")).ShouldBeTrue();
+        validator.CanWrite(Path.Combine(workspace, "file.txt")).ShouldBeTrue();
+        validator.CanRead(Path.Combine(root, "outside.txt")).ShouldBeFalse();
+        validator.CanWrite(Path.Combine(root, "outside.txt")).ShouldBeFalse();
+    }
+
+    private static AgentDescriptor DeserializePolicyShape(string shape)
+    {
+        var field = shape switch
+        {
+            "omitted" => "",
+            "null" => ",\"fileAccess\":null",
+            "empty" => ",\"fileAccess\":{}",
+            "explicit" => ",\"fileAccess\":{\"deniedPaths\":[\"*.plugin-private\"]}",
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+        var json = "{\"id\":\"omission-agent\",\"model\":\"gpt-5\",\"provider\":\"github-copilot\"" + field + "}";
+        return System.Text.Json.JsonSerializer.Deserialize<PluginAgentDefinition>(json)
+            .ShouldNotBeNull().ToDescriptor("omission-plugin");
     }
 
     // ---- structural completeness -----------------------------------------
