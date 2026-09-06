@@ -130,7 +130,13 @@ window. They remain independent worktrees and `main`-based PRs.
 
 ### Client preflight
 
-GitHub stacked PRs require GitHub CLI 2.90.0 or later and the official extension:
+BotNexus supports GitHub CLI **2.90.0 or later** with the official `github/gh-stack` extension for
+this workflow; this is the BotNexus supported floor, not the upstream extension's minimum. The
+[upstream installation README](https://github.com/github/gh-stack/blob/e07a4aa06d72c3929da022547bf6108eb6691330/README.md#installation)
+states `gh` v2.0+. Compatibility across every older CLI version has not been tested here; do not lower
+the BotNexus helper's 2.90.0 gate on the strength of that upstream requirement.
+
+Check versions and, if needed, install the official extension:
 
 ```powershell
 gh --version
@@ -138,8 +144,9 @@ gh extension install github/gh-stack   # once
 gh stack --version
 ```
 
-If either requirement is absent, stop with an actionable prerequisite error. Do not emulate cascading
-rebases and PR retargeting with ad-hoc scripts.
+If `gh` is missing or below 2.90.0, stop and request an upgrade to the BotNexus supported floor. If the
+official extension is missing or its version check fails, stop and report the install command above and
+the observed error. Do not emulate cascading rebases and PR retargeting with ad-hoc scripts.
 
 ### Layer contract
 
@@ -163,6 +170,50 @@ rebases and PR retargeting with ad-hoc scripts.
 GitHub's stack map, branch-protection propagation, CI coverage, and automatic retargeting remove manual
 branch choreography. They do not make a dependent layer independent, nor do they turn one issue into
 several honestly closable units by themselves.
+
+### Inspect and navigate a stack
+
+Use `gh stack view` to inspect branch ordering and PR links before acting. The
+[upstream navigation reference](https://github.com/github/gh-stack/blob/e07a4aa06d72c3929da022547bf6108eb6691330/README.md#navigation)
+provides these checkout-changing commands:
+
+```powershell
+gh stack view        # inspect the current stack
+gh stack up          # move up one layer; optionally supply a count
+gh stack down        # move down one layer; optionally supply a count
+gh stack top         # switch to the top branch
+gh stack bottom      # switch to the bottom branch
+gh stack trunk       # switch to the trunk branch
+gh stack switch      # interactively select a stack branch
+```
+
+Navigation changes the checkout, not worktree ownership. Never run checkout-changing navigation in
+canonical `main`, a shared worktree, or another owner's worktree, and never bypass the dedicated
+issue/branch/worktree identity. For this repository's one-worktree-per-layer workflow, move to the
+already assigned layer worktree instead of switching its branch. Do not use `trunk` to repurpose a
+layer worktree as `main` or force a branch out of another worktree.
+
+### Link existing policy-checked PRs
+
+Create or update each layer's PR through `New-BotNexusPr.ps1` first, including its dry run and current
+validation evidence. Verify the existing PR numbers, repository, head branches, and expected base chain
+before linking. Prefer **existing verified helper-created PR numbers**, passed **bottom-to-top**:
+
+```powershell
+# Illustrative numbers only: replace with verified PRs in the admitted stack.
+gh stack link 10 20 30
+```
+
+The [upstream link reference](https://github.com/github/gh-stack/blob/e07a4aa06d72c3929da022547bf6108eb6691330/README.md#gh-stack-link)
+states that `link` creates or updates the GitHub stack without local tracking and can correct existing
+PR bases to match the chain. Verify the resulting topology and base branches afterward. It adds to an
+existing stack rather than removing existing members.
+
+**Branch-name arguments are not a harmless substitute:** `link` automatically pushes those branches
+and can create PRs when none exist. Do not use that path to bypass the sanctioned helper. No topology
+command (`init`, `add`, `link`, `push`, or `submit`) substitutes for per-layer title/body/trailer,
+identity, issue, scope, and validation gates. Linking is not merge authorization; the bottom-up merge,
+revalidation, and cleanup boundaries above still apply.
 
 ## Closing an issue: the clause-by-clause rule
 
