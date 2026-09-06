@@ -13,11 +13,11 @@ The normalized contract is three types, all in `BotNexus.Agent.Providers.Core`:
 
 | Type | File | Role |
 |---|---|---|
-| `AssistantMessageEvent` | `src/agent/BotNexus.Agent.Providers.Core/Streaming/AssistantMessageEvent.cs` | Abstract record with 14 sealed derivations — the discriminated union of streamed semantics |
+| `AssistantMessageEvent` | `src/agent/BotNexus.Agent.Providers.Core/Streaming/AssistantMessageEvent.cs` | Abstract record with 13 sealed derivations — the discriminated union of streamed semantics |
 | `LlmStream` | `src/agent/BotNexus.Agent.Providers.Core/Streaming/LlmStream.cs` | Unbounded `Channel<AssistantMessageEvent>` plus a `TaskCompletionSource<AssistantMessage>` for the final result |
 | `AssistantMessage` | `src/agent/BotNexus.Agent.Providers.Core/Models/Messages.cs:29-39` | The terminal snapshot: content blocks, `Usage`, `StopReason`, `ErrorMessage`, `ResponseId` |
 
-The 14 event cases (`AssistantMessageEvent.cs`) are `start`, `text_start`/`text_delta`/`text_end`,
+The 13 event cases (`AssistantMessageEvent.cs`) are `start`, `text_start`/`text_delta`/`text_end`,
 `thinking_start`/`thinking_delta`/`thinking_end`, `toolcall_start`/`toolcall_delta`/`toolcall_end`, `warning`,
 `done`, and `error`. `warning` is explicitly non-terminal and carries a stable machine-readable `Code`, a
 content-free diagnostic `Message`, and the unchanged partial assistant message. Block lifecycle events carry
@@ -33,7 +33,7 @@ The contract has exactly two consumers and five producers:
   non-streaming paths), `ResponsesStreamParser`, `CopilotMessagesStreamParser`, `IntegrationMockProvider`.
 
 The transport boundary #2074 asks about is **already clean at the type level**: no SSE frame, WebSocket
-message, or provider DTO appears in any of the 14 event records. The gaps below are all about *semantics that
+message, or provider DTO appears in any of the 13 event records. The gaps below are all about *semantics that
 have nowhere to go*, not about wire framing leaking through.
 
 ## Gap analysis

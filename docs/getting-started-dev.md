@@ -103,7 +103,7 @@ Use `dev-loop.ps1 -SkipTests` for the local edit → build → run cycle on a de
 |---|---|
 | Agent definitions, models, enabled/disabled | No — hot-reloads in ~500ms |
 | Provider settings (API keys, base URLs) | No — hot-reloads |
-| Agent workspace files (`SOUL.md`, `IDENTITY.md`, etc.) | No — takes effect on next message |
+| Agent workspace prompt files (`SOUL.md`, `IDENTITY.md`, etc.) | In-process handles load these when created; editing a file does not refresh an existing handle on its next message |
 | `gateway.listenUrl` (port binding) | Yes |
 | Extension DLL additions | Yes |
 
@@ -126,7 +126,7 @@ For documentation-only changes, run `npm run docs:build` instead of the remote t
 
 ## 5. Customize your agent
 
-Each agent gets a workspace at `~/.botnexus/agents/{agent-name}/`:
+With the default BotNexus home, each regular agent gets a workspace at `~/.botnexus/agents/{agent-name}/workspace/` (under `agents/{agent-name}/workspace/` if you configure a different home):
 
 | File | Purpose |
 |------|---------|
@@ -135,7 +135,7 @@ Each agent gets a workspace at `~/.botnexus/agents/{agent-name}/`:
 | `USER.md` | User preferences |
 | `MEMORY.md` | Long-term distilled knowledge |
 
-Edit these files to shape agent behavior. Changes take effect on the next message — no restart needed.
+Edit these files to shape agent behavior. In the current in-process implementation, configured workspace prompt files are read by `WorkspaceContextBuilder.BuildSystemPromptAsync` when `InProcessIsolationStrategy.CreateAsync` creates an agent handle. Subsequent messages reuse that handle's assembled prompt; a file edit alone does not make its contents appear on the next message. The updated files are read when a new handle is created. Do not confuse configuration hot reload with workspace prompt-file refresh.
 
 ### Add more agents
 
