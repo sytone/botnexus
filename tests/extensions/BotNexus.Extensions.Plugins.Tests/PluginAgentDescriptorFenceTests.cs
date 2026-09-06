@@ -23,9 +23,9 @@ public sealed class PluginAgentDescriptorFenceTests
 
     private static FileAccessPolicy Ceiling() => new()
     {
-        AllowedReadPaths = ["/home/user/workspace", "/home/user/docs"],
-        AllowedWritePaths = ["/home/user/workspace"],
-        DeniedPaths = ["/home/user/workspace/.secrets"]
+        AllowedReadPaths = [Path.GetFullPath("/home/user/workspace"), Path.GetFullPath("/home/user/docs")],
+        AllowedWritePaths = [Path.GetFullPath("/home/user/workspace")],
+        DeniedPaths = [Path.GetFullPath("/home/user/workspace/.secrets")]
     };
 
     // ---- happy path -------------------------------------------------------
@@ -189,8 +189,8 @@ public sealed class PluginAgentDescriptorFenceTests
         {
             FileAccess = new FileAccessPolicy
             {
-                AllowedReadPaths = ["/home/user/workspace/sub", "/etc"],
-                AllowedWritePaths = ["/home/user/workspace/out", "/"],
+                AllowedReadPaths = [Path.GetFullPath("/home/user/workspace/sub"), Path.GetFullPath("/etc")],
+                AllowedWritePaths = [Path.GetFullPath("/home/user/workspace/out"), Path.GetFullPath("/")],
                 DeniedPaths = []
             }
         };
@@ -203,15 +203,15 @@ public sealed class PluginAgentDescriptorFenceTests
 
         var effective = result.Descriptor!.FileAccess.ShouldNotBeNull();
 
-        effective.AllowedReadPaths.ShouldContain("/home/user/workspace/sub",
+        effective.AllowedReadPaths.ShouldContain(Path.GetFullPath("/home/user/workspace/sub"),
             "a declared path inside the ceiling must survive narrowing.");
-        effective.AllowedReadPaths.ShouldNotContain("/etc",
+        effective.AllowedReadPaths.ShouldNotContain(Path.GetFullPath("/etc"),
             "a declared read path outside the installing user's ceiling must be dropped - that is "
             + "the escalation the fence exists to prevent.");
-        effective.AllowedWritePaths.ShouldContain("/home/user/workspace/out");
-        effective.AllowedWritePaths.ShouldNotContain("/",
+        effective.AllowedWritePaths.ShouldContain(Path.GetFullPath("/home/user/workspace/out"));
+        effective.AllowedWritePaths.ShouldNotContain(Path.GetFullPath("/"),
             "declaring the filesystem root must not grant the filesystem root.");
-        effective.DeniedPaths.ShouldContain("/home/user/workspace/.secrets",
+        effective.DeniedPaths.ShouldContain(Path.GetFullPath("/home/user/workspace/.secrets"),
             "the ceiling's denials always apply; a plugin cannot un-deny a path by omitting it.");
     }
 
@@ -222,7 +222,7 @@ public sealed class PluginAgentDescriptorFenceTests
         // grants at all - not the grants it asked for.
         var candidate = Minimal() with
         {
-            FileAccess = new FileAccessPolicy { AllowedReadPaths = ["/etc"], AllowedWritePaths = ["/"] }
+            FileAccess = new FileAccessPolicy { AllowedReadPaths = [Path.GetFullPath("/etc")], AllowedWritePaths = [Path.GetFullPath("/")] }
         };
 
         var result = PluginAgentDescriptorFence.Apply(candidate, ceiling: null);
@@ -252,7 +252,7 @@ public sealed class PluginAgentDescriptorFenceTests
     {
         var candidate = Minimal() with
         {
-            FileAccess = new FileAccessPolicy { AllowedReadPaths = ["/etc"] }
+            FileAccess = new FileAccessPolicy { AllowedReadPaths = [Path.GetFullPath("/etc")] }
         };
 
         var result = PluginAgentDescriptorFence.Apply(candidate, Ceiling());
@@ -263,6 +263,137 @@ public sealed class PluginAgentDescriptorFenceTests
         result.Narrowings.ShouldContain(
             n => n.Contains(nameof(AgentDescriptor.FileAccess), StringComparison.Ordinal),
             "Actual: " + string.Join("; ", result.Narrowings));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Apply_RelativeGrant_CannotRebindOutsideCeiling_InRealValidator(bool write)
+    {
+        var cwd = Environment.CurrentDirectory;
+        var workspace = Path.Combine(cwd, "agents", "workspace");
+        var relative = Path.Combine("..", "shared-3941");
+        var approved = Path.GetFullPath(relative, cwd);
+        var rebound = Path.GetFullPath(relative, workspace);
+        rebound.ShouldNotBe(approved);
+        var policy = new FileAccessPolicy
+        {
+            AllowedReadPaths = write ? [] : [relative],
+            AllowedWritePaths = write ? [relative] : []
+        };
+        var ceiling = new FileAccessPolicy { AllowedReadPaths = [approved], AllowedWritePaths = [approved] };
+
+        var result = PluginAgentDescriptorFence.Apply(Minimal() with { FileAccess = policy }, ceiling);
+
+        result.IsAccepted.ShouldBeTrue();
+        var effective = result.Descriptor.ShouldNotBeNull().FileAccess.ShouldNotBeNull();
+        var validator = new BotNexus.Gateway.Security.DefaultPathValidator(effective, workspace);
+        var target = Path.Combine(rebound, "secret.txt");
+        (write ? validator.CanWrite(target) : validator.CanRead(target)).ShouldBeFalse(
+            "a grant approved against cwd must not rebind against workspace outside the ceiling");
+        effective.AllowedReadPaths.ShouldBeEmpty();
+        effective.AllowedWritePaths.ShouldBeEmpty();
+        result.Narrowings.ShouldNotBeEmpty();
+    }
+
+    [Fact]
+    public void Apply_RelativeCeiling_DoesNotAuthorizeAbsoluteGrants()
+    {
+        var relative = Path.Combine("..", "shared-3941");
+        var absolute = Path.GetFullPath(relative);
+        var result = PluginAgentDescriptorFence.Apply(Minimal() with
+        {
+            FileAccess = new FileAccessPolicy { AllowedReadPaths = [absolute], AllowedWritePaths = [absolute] }
+        }, new FileAccessPolicy { AllowedReadPaths = [relative], AllowedWritePaths = [relative] });
+
+        result.IsAccepted.ShouldBeTrue();
+        var policy = result.Descriptor.ShouldNotBeNull().FileAccess.ShouldNotBeNull();
+        policy.AllowedReadPaths.ShouldBeEmpty();
+        policy.AllowedWritePaths.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Apply_RelativeDeny_RejectsInsteadOfTransplanting(bool fromCeiling)
+    {
+        var absolute = Path.GetFullPath("/shared-3941");
+        var relative = Path.Combine("..", "secrets");
+        var result = PluginAgentDescriptorFence.Apply(Minimal() with
+        {
+            FileAccess = new FileAccessPolicy
+            {
+                AllowedReadPaths = [absolute],
+                DeniedPaths = fromCeiling ? [] : [relative]
+            }
+        }, new FileAccessPolicy
+        {
+            AllowedReadPaths = [absolute],
+            DeniedPaths = fromCeiling ? [relative] : []
+        });
+
+        result.IsAccepted.ShouldBeFalse();
+        result.Descriptor.ShouldBeNull();
+        result.Rejections.ShouldContain(message => message.Contains("FileAccess.DeniedPaths", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Apply_AbsoluteSubgrants_KeepDenyPrecedenceAndBoundaries_InRealValidator()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "fence-3941");
+        var allowed = Path.Combine(root, "allowed");
+        var sub = Path.Combine(allowed, "sub");
+        var denied = Path.Combine(sub, "secret");
+        var sibling = allowed + "-sibling";
+        var traversal = Path.Combine(allowed, "..", "outside");
+        var result = PluginAgentDescriptorFence.Apply(Minimal() with
+        {
+            FileAccess = new FileAccessPolicy
+            {
+                AllowedReadPaths = [sub, sibling, traversal],
+                AllowedWritePaths = [sub, sibling, traversal],
+                DeniedPaths = ["*.private"]
+            }
+        }, new FileAccessPolicy { AllowedReadPaths = [allowed], AllowedWritePaths = [allowed], DeniedPaths = [denied] });
+
+        result.IsAccepted.ShouldBeTrue();
+        var policy = result.Descriptor.ShouldNotBeNull().FileAccess.ShouldNotBeNull();
+        policy.AllowedReadPaths.ShouldBe([sub]);
+        policy.AllowedWritePaths.ShouldBe([sub]);
+        policy.DeniedPaths.ShouldContain(denied);
+        policy.DeniedPaths.ShouldContain("*.private");
+        var validator = new BotNexus.Gateway.Security.DefaultPathValidator(policy, Path.Combine(root, "workspace"));
+        foreach (var target in new[] { Path.Combine(denied, "key"), Path.Combine(sub, "key.private"), sibling, traversal })
+        {
+            validator.CanRead(target).ShouldBeFalse();
+            validator.CanWrite(target).ShouldBeFalse();
+        }
+        validator.CanRead(Path.Combine(sub, "public.txt")).ShouldBeTrue();
+        validator.CanWrite(Path.Combine(sub, "public.txt")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Apply_RootCeiling_AndPlatformCaseComparison_ArePreserved()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "fence-3941", "MixedCase");
+        var root = Path.GetPathRoot(path).ShouldNotBeNull();
+        var result = PluginAgentDescriptorFence.Apply(Minimal() with
+        {
+            FileAccess = new FileAccessPolicy { AllowedReadPaths = [path], AllowedWritePaths = [path] }
+        }, new FileAccessPolicy { AllowedReadPaths = [root], AllowedWritePaths = [root] });
+        result.IsAccepted.ShouldBeTrue();
+        var rootPolicy = result.Descriptor.ShouldNotBeNull().FileAccess.ShouldNotBeNull();
+        rootPolicy.AllowedReadPaths.ShouldBe([path]);
+        rootPolicy.AllowedWritePaths.ShouldBe([path]);
+
+        var alternateCase = Path.Combine(Path.GetDirectoryName(path).ShouldNotBeNull(), "mixedcase");
+        var caseResult = PluginAgentDescriptorFence.Apply(Minimal() with
+        {
+            FileAccess = new FileAccessPolicy { AllowedReadPaths = [alternateCase], AllowedWritePaths = [alternateCase] }
+        }, new FileAccessPolicy { AllowedReadPaths = [path], AllowedWritePaths = [path] });
+        var casePolicy = caseResult.Descriptor.ShouldNotBeNull().FileAccess.ShouldNotBeNull();
+        casePolicy.AllowedReadPaths.Count.ShouldBe(OperatingSystem.IsWindows() ? 1 : 0);
+        casePolicy.AllowedWritePaths.Count.ShouldBe(OperatingSystem.IsWindows() ? 1 : 0);
     }
 
     // ---- structural completeness -----------------------------------------

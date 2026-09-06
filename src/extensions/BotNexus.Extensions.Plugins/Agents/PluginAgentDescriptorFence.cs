@@ -150,6 +150,25 @@ public static class PluginAgentDescriptorFence
                 + "the plugin's agent descriptor.");
         }
 
+        // A denial cannot be narrowed by dropping it: that would widen access. Without an
+        // explicit owner workspace, a relative directory denial cannot be transferred safely.
+        // Globs are the exception: DefaultPathValidator matches them without workspace anchoring.
+        if (candidate.FileAccess is { } declaredAccess)
+        {
+            foreach (var denied in declaredAccess.DeniedPaths.Concat(ceiling?.DeniedPaths ?? []))
+            {
+                if (!string.IsNullOrWhiteSpace(denied)
+                    && !denied.Contains('*') && !denied.Contains('?')
+                    && !Path.IsPathFullyQualified(denied.Trim()))
+                {
+                    rejections.Add(
+                        $"{nameof(AgentDescriptor.FileAccess)}.{nameof(FileAccessPolicy.DeniedPaths)}: "
+                        + "non-glob denials must be fully qualified absolute paths; a relative "
+                        + "denial has no unambiguous owner workspace and cannot be transplanted.");
+                }
+            }
+        }
+
         if (rejections.Count > 0)
             return PluginAgentFenceResult.Rejected(rejections);
 
@@ -218,6 +237,7 @@ public static class PluginAgentDescriptorFence
 
         return declared
             .Where(path => !string.IsNullOrWhiteSpace(path)
+                           && Path.IsPathFullyQualified(path.Trim())
                            && ceiling.Any(allowed => IsWithin(path, allowed)))
             .ToArray();
     }
@@ -229,7 +249,9 @@ public static class PluginAgentDescriptorFence
     /// </summary>
     private static bool IsWithin(string candidate, string allowed)
     {
-        if (string.IsNullOrWhiteSpace(allowed))
+        // Never infer the installing ceiling's origin from this process's cwd. The consumer
+        // resolves relative policy entries against an agent workspace, which can be elsewhere.
+        if (string.IsNullOrWhiteSpace(allowed) || !Path.IsPathFullyQualified(allowed.Trim()))
             return false;
 
         string candidateFull;
@@ -261,10 +283,13 @@ public static class PluginAgentDescriptorFence
 
     private static string Normalise(string path)
     {
-        var full = Path.GetFullPath(path);
-        return full.Length > 1 && full.EndsWith(Path.DirectorySeparatorChar)
-            ? full.TrimEnd(Path.DirectorySeparatorChar)
-            : full;
+        var full = Path.GetFullPath(path.Trim().Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar));
+        // Keep a drive/UNC/filesystem root intact rather than turning C:\ into drive-relative C:.
+        var root = Path.GetPathRoot(full);
+        return string.Equals(full, root, OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+            ? full
+            : full.TrimEnd(Path.DirectorySeparatorChar);
     }
 
     /// <summary>

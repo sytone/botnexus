@@ -338,6 +338,18 @@ a granted tree. Denials go the other way and are **unioned**: the ceiling's deni
 apply, because a plugin must not be able to un-deny a path by omitting it. Narrowing is logged,
 so an author whose declaration did not fully take effect can find out.
 
+Grant entries and their ceiling entries must be **fully qualified absolute paths**. Relative
+entries (including drive-relative or current-drive-rooted paths on Windows) are dropped: without
+an explicit origin, resolving a grant against the process directory for admission and then the
+agent workspace for use could authorize a different directory (#3941). Use absolute paths even
+when the two directories happen to coincide today.
+
+Non-glob denied paths must also be fully qualified, in both the plugin declaration and the
+installing ceiling. An ambiguous relative denial rejects the descriptor with a
+`FileAccess.DeniedPaths` diagnostic rather than dropping the denial or moving its meaning to a
+new workspace. Glob denials remain unchanged because the runtime matches them as patterns,
+not workspace-relative directories. Absolute denials retain precedence over read/write grants.
+
 A plugin that declares no `fileAccess` is **not** handed the ceiling as a grant; it keeps the
 host's default, workspace-only behaviour. And when the installing user has no path grants of
 their own, a plugin-declared policy narrows to nothing - a plugin can never be granted more than

@@ -108,22 +108,24 @@ public sealed class PluginAgentConfigurationSourceTests
     [Fact]
     public async Task LoadAsync_Narrows_FileAccessToTheInstallingUserCeiling()
     {
-        var fs = Installed("greedy", ("agent.json", """
+        // Fully qualified fixtures express the same absolute-grant intent on Windows and Linux.
+        var workspace = Path.GetFullPath("/home/user/workspace");
+        var fs = Installed("greedy", ("agent.json", System.Text.Json.JsonSerializer.Serialize(new
+        {
+            id = "greedy",
+            model = "gpt-5",
+            provider = "github-copilot",
+            fileAccess = new
             {
-              "id": "greedy",
-              "model": "gpt-5",
-              "provider": "github-copilot",
-              "fileAccess": {
-                "allowedReadPaths": ["/home/user/workspace/sub", "/etc"],
-                "allowedWritePaths": ["/"]
-              }
+                allowedReadPaths = new[] { Path.Combine(workspace, "sub"), Path.GetFullPath("/etc") },
+                allowedWritePaths = new[] { Path.GetFullPath("/") }
             }
-            """));
+        })));
 
         var ceiling = new FileAccessPolicy
         {
-            AllowedReadPaths = ["/home/user/workspace"],
-            AllowedWritePaths = ["/home/user/workspace"]
+            AllowedReadPaths = [workspace],
+            AllowedWritePaths = [workspace]
         };
 
         var descriptors = await new PluginAgentConfigurationSource(
@@ -137,6 +139,36 @@ public sealed class PluginAgentConfigurationSourceTests
             "a read path outside the installing user's ceiling must be dropped.");
         effective.AllowedWritePaths.ShouldBeEmpty(
             "declaring the filesystem root must not grant it.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_RelativeGrants_CannotReachAnotherWorkspaceExternalDirectory()
+    {
+        // Cwd and workspace have different parents, without changing process-global cwd in tests.
+        var cwd = Environment.CurrentDirectory;
+        var workspace = Path.Combine(cwd, "plugin-agents", "workspace");
+        var relative = Path.Combine("..", "shared-3941");
+        var approved = Path.GetFullPath(relative, cwd);
+        var rebound = Path.GetFullPath(relative, workspace);
+        rebound.ShouldNotBe(approved);
+        var fs = Installed("relative", ("agent.json", System.Text.Json.JsonSerializer.Serialize(new
+        {
+            id = "relative",
+            model = "gpt-5",
+            provider = "github-copilot",
+            fileAccess = new { allowedReadPaths = new[] { relative }, allowedWritePaths = new[] { relative } }
+        })));
+        var ceiling = new FileAccessPolicy { AllowedReadPaths = [approved], AllowedWritePaths = [approved] };
+
+        var descriptors = await new PluginAgentConfigurationSource(
+            PluginRoot, ceilingAccessor: () => ceiling, fileSystem: fs).LoadAsync();
+
+        var policy = descriptors.ShouldHaveSingleItem().FileAccess.ShouldNotBeNull();
+        var validator = new BotNexus.Gateway.Security.DefaultPathValidator(policy, workspace);
+        validator.CanRead(Path.Combine(rebound, "secret.txt")).ShouldBeFalse();
+        validator.CanWrite(Path.Combine(rebound, "secret.txt")).ShouldBeFalse();
+        policy.AllowedReadPaths.ShouldBeEmpty();
+        policy.AllowedWritePaths.ShouldBeEmpty();
     }
 
     [Fact]
