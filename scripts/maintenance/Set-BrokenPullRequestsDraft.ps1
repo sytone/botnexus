@@ -32,6 +32,70 @@ $ErrorActionPreference = 'Stop'
 # would eventually disagree about whether a new GitHub conclusion is broken.
 . (Join-Path $PSScriptRoot '../ci-pr-status.ps1')
 
+# CLI rollups are scoped to the PR head but contain historical executions. Never
+# infer chronology from array order or completion time when a start is available:
+# an older cancelled execution can finish after its replacement has succeeded.
+function Get-CurrentDraftChecks {
+    param([Parameter(Mandatory)][object]$PullRequest)
+
+    $groups = @{}
+    foreach ($check in @($PullRequest.statusCheckRollup)) {
+        if ($null -eq $check) { continue }
+        $head = [string]$check.head_sha
+        if (-not $head) { $head = [string]$check.headSha }
+        if ($head -and $head -ne [string]$PullRequest.headRefOid) { continue }
+        $name = ([string]$check.name).Trim()
+        $kind = 'check'
+        if (-not $name -and $check.context) { $name = [string]$check.context; $kind = 'status' }
+        if (-not $name) { $name = 'unnamed' }
+        $workflow = [string]$check.workflowName
+        $app = [string]$check.app.id
+        # JSON tuple prevents delimiter collisions in user-defined check names.
+        $key = ConvertTo-Json -Compress -InputObject @($kind, $name, $workflow, $app)
+        $run = [string]$check.run_id
+        $url = [string]$check.detailsUrl
+        if (-not $url) { $url = [string]$check.details_url }
+        if (-not $run -and $url -match '/actions/runs/(\d+)') { $run = $Matches[1] }
+        $attempt = 0L
+        [void][long]::TryParse([string]$check.run_attempt, [ref]$attempt)
+        $stamp = $null
+        foreach ($value in @($check.startedAt, $check.started_at, $check.createdAt, $check.created_at, $check.completedAt, $check.completed_at)) {
+            if (-not $value) { continue }
+            $parsed = [DateTimeOffset]::MinValue
+            if ([DateTimeOffset]::TryParse([string]$value, [ref]$parsed) -and $parsed.Year -gt 1970) {
+                $stamp = $parsed
+                break
+            }
+        }
+        if (-not $groups.ContainsKey($key)) { $groups[$key] = [Collections.Generic.List[object]]::new() }
+        $groups[$key].Add([pscustomobject]@{ Check=$check; Name=$name; Run=$run; Attempt=$attempt; Stamp=$stamp })
+    }
+
+    foreach ($key in @($groups.Keys | Sort-Object)) {
+        $entries = $groups[$key]
+        foreach ($candidate in $entries) {
+            $newest = $true
+            foreach ($other in $entries) {
+                if ([object]::ReferenceEquals($candidate, $other)) { continue }
+                if ($candidate.Run -and $candidate.Run -eq $other.Run -and
+                    $candidate.Attempt -gt 0 -and $other.Attempt -gt 0 -and $candidate.Attempt -ne $other.Attempt) {
+                    $later = $candidate.Attempt -gt $other.Attempt
+                }
+                else {
+                    $later = $null -ne $candidate.Stamp -and $null -ne $other.Stamp -and $candidate.Stamp -gt $other.Stamp
+                }
+                if (-not $later) { $newest = $false; break }
+            }
+            # Missing/tied chronology cannot prove which duplicate is current.
+            # Fail open rather than quarantine based on a possibly superseded run.
+            if ($newest) {
+                [pscustomobject]@{ name=$candidate.Name; conclusion=$candidate.Check.conclusion; status=$candidate.Check.status; state=$candidate.Check.state }
+                break
+            }
+        }
+    }
+}
+
 function Get-DraftReason {
     param([Parameter(Mandatory)][object]$PullRequest)
 
@@ -40,7 +104,7 @@ function Get-DraftReason {
         return 'merge-conflict'
     }
 
-    $checks = @($PullRequest.statusCheckRollup)
+    $checks = @(Get-CurrentDraftChecks -PullRequest $PullRequest)
     foreach ($check in $checks) {
         $name = ([string]$check.name).Trim()
         if (-not $name) { $name = 'unnamed' }
@@ -64,7 +128,18 @@ function Get-OpenPullRequests {
     $json = gh pr list --repo $Repo --state open --limit 500 --json number,title,isDraft,mergeable,mergeStateStatus,statusCheckRollup,headRefOid,updatedAt
     if ($LASTEXITCODE -ne 0) { throw "gh pr list failed for $Repo" }
     if (-not $json) { return @() }
-    return @($json | ConvertFrom-Json)
+    $pullRequests = @($json | ConvertFrom-Json)
+    # CLI list pagination is bounded. Refuse saturation BEFORE returning anything
+    # to the mutating loop; 500 results cannot prove there is no 501st PR.
+    if ($pullRequests.Count -ge 500) { throw 'Open PR enumeration reached cap 500; refusing an incomplete scan.' }
+    foreach ($pr in $pullRequests) {
+        # gh's nested GraphQL query requests contexts(first:100). The flattened
+        # JSON omits pageInfo, so saturation is not evidence of completeness.
+        if (@($pr.statusCheckRollup).Count -ge 100) {
+            throw "PR #$($pr.number) check rollup reached cap 100; refusing an incomplete scan."
+        }
+    }
+    return $pullRequests
 }
 
 function Set-PullRequestDraft {
@@ -99,14 +174,15 @@ function Invoke-BrokenPullRequestDrafting {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $mintedToken = $false
+    # Own cleanup before minting: a failed child can emit a partial credential,
+    # or throw before assignment and leave an inherited credential in the process.
+    $mintedToken = -not $SkipAuthentication
     try {
         if (-not $SkipAuthentication) {
             $env:GH_TOKEN = & pwsh -NoProfile -File $TokenScript
             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
                 throw 'failed to mint a Farnsworth GitHub App token'
             }
-            $mintedToken = $true
         }
 
         $results = @(Invoke-BrokenPullRequestDrafting -Repo $Repo -DryRun:$DryRun)
