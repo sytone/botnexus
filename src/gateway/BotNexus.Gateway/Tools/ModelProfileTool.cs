@@ -24,7 +24,7 @@ namespace BotNexus.Gateway.Tools;
 /// </para>
 /// <para>
 /// <b>Everything reported is read from the shipping machinery, never re-derived.</b> The resolved
-/// rungs come from <see cref="PromptVariantRegistry.Declarations"/> — the same frozen corpus the
+/// rungs come from <see cref="PromptVariantRegistry.ResolveDeclarations"/> — the same frozen corpus the
 /// prompt path resolves against — the version comes from <see cref="ModelFamilyVersion"/> (#2374),
 /// the family from <see cref="ModelFamilyDetector"/>, the on-disk variants from
 /// <see cref="ContextFileVariants"/> (#2435), and the capabilities from the provider's own
@@ -154,18 +154,18 @@ public sealed class ModelProfileTool : IAgentTool
         sb.AppendLine($"- recoversLeakedToolCallMarkup: `{_capabilities.RecoversLeakedToolCallMarkup}`");
         sb.AppendLine($"- systemPromptPlacement: `{_capabilities.SystemPromptPlacement}`");
 
-        AppendResolvedRungs(sb, family, version);
+        AppendResolvedRungs(sb, family);
         AppendVariantFiles(sb, requestedBaseFile);
         AppendGrammar(sb);
 
         return sb.ToString().TrimEnd();
     }
 
-    private void AppendResolvedRungs(StringBuilder sb, string family, ModelVersion? version)
+    private void AppendResolvedRungs(StringBuilder sb, string family)
     {
         sb.AppendLine();
         sb.AppendLine("## Prompt-section variant rungs (#2433)");
-        sb.AppendLine("Resolution is least-specific first: `default`, then `family`, then `family+version`. Each rung OVERLAYS the one beneath it by stable rule id.");
+        sb.AppendLine("Resolution is least-specific first: `default`, then `family`, then opted-in `family@N.*`, then exact `family+version`. Each rung OVERLAYS the one beneath it by stable rule id.");
 
         var sections = _registry.Declarations
             .Select(static declaration => declaration.SectionId)
@@ -181,9 +181,7 @@ public sealed class ModelProfileTool : IAgentTool
 
         foreach (var sectionId in sections)
         {
-            var applied = _registry.Declarations
-                .Where(declaration => string.Equals(declaration.SectionId, sectionId, StringComparison.OrdinalIgnoreCase))
-                .Where(declaration => AppliesToThisTurn(declaration, family, version))
+            var applied = _registry.ResolveDeclarations(sectionId, family, _modelId)
                 .Select(DescribeRung)
                 .ToList();
 
@@ -191,29 +189,14 @@ public sealed class ModelProfileTool : IAgentTool
         }
     }
 
-    /// <summary>
-    /// True when <paramref name="declaration"/> is a rung the CURRENT turn actually climbs. This
-    /// mirrors <see cref="PromptVariantRegistry.Resolve"/>'s ladder exactly: the default always
-    /// applies, a family rung applies on a family match, and a family+version rung applies only when
-    /// the model id carried a parseable version equal to the declared one.
-    /// </summary>
-    private static bool AppliesToThisTurn(PromptVariantDeclaration declaration, string family, ModelVersion? version)
-    {
-        if (declaration.IsDefault)
-            return true;
-
-        if (!string.Equals(declaration.Family, family, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        return declaration.Version is null || (version is not null && declaration.Version.Value == version.Value);
-    }
-
     private static string DescribeRung(PromptVariantDeclaration declaration) =>
         declaration.IsDefault
             ? "default"
             : declaration.Version is null
                 ? $"{declaration.Family}"
-                : $"{declaration.Family}@{declaration.Version.Value}";
+                : declaration.MatchMajorVersion
+                    ? $"{declaration.Family}@{declaration.Version.Value.Major}.*"
+                    : $"{declaration.Family}@{declaration.Version.Value}";
 
     private void AppendVariantFiles(StringBuilder sb, string? requestedBaseFile)
     {

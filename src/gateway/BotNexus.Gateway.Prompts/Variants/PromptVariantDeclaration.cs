@@ -27,6 +27,12 @@ public sealed record PromptVariantDeclaration(
     IReadOnlyList<PromptRule> Rules,
     string Site)
 {
+    /// <summary>
+    /// True when this declaration matches every minor of <see cref="Version"/>'s major, rather
+    /// than the exact version. Init-only to preserve the existing positional constructor.
+    /// </summary>
+    public bool MatchMajorVersion { get; init; }
+
     /// <summary>True when this declaration is the section's default rung.</summary>
     public bool IsDefault => Family is null;
 }

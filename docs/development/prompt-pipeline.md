@@ -507,7 +507,9 @@ assembly runs on every turn of every agent, so a type scan there would be a perm
 ```csharp
 [PromptVariant(ModelGuidanceSection.Id)]                                  // default / agnostic
 [PromptVariant(ModelGuidanceSection.Id, Family = "gpt")]                   // family
-[PromptVariant(ModelGuidanceSection.Id, Family = "gpt", Version = "5")]    // family + version
+[PromptVariant(ModelGuidanceSection.Id, Family = "gpt", Version = "5")]    // exact 5.0 (unchanged)
+[PromptVariant(ModelGuidanceSection.Id, Family = "gpt", Version = "6", MatchMajorVersion = true)] // all 6.x
+[PromptVariant(ModelGuidanceSection.Id, Family = "gpt", Version = "6-1")]  // exact 6.1
 [PromptVariant(ModelGuidanceSection.Id, Family = "gpt", Replace = true)]   // escape hatch
 ```
 
@@ -517,8 +519,18 @@ The annotated member must be a static parameterless method or a static readable 
 **Resolution ladder** - least specific first, each rung overlaying the one below it:
 
 ```text
-default  ->  family  ->  family + version
+default  ->  family  ->  opted-in family + major version  ->  exact family + version
 ```
+
+`MatchMajorVersion = true` opts a declaration into major-version matching. It requires a family
+and a major-only `Version` token, such as `"6"`; missing versions and minor-version spellings such
+as `"6-1"` are rejected. Without the opt-in, `Version = "6"` still means exact 6.0, preserving
+existing declarations. Major and exact declarations can coexist: a GPT-6.1 model receives the
+6.x overlay before an exact 6.1 overlay. Suffixes and version separators are interpreted by the
+existing `ModelFamilyVersion` parser, not by a model-name prefix check. GPT-60 does not match 6.x.
+
+`model_profile` uses the registry's resolved declaration sequence to report the same ladder,
+including `gpt@6.*` for the major overlay and `gpt@6.1` for an exact overlay.
 
 **Overlay is the default.** A variant may reword a rule (same id), add one (new id), or drop one
 (`PromptRule.Remove(id)`), so there is one source of truth for shared intent and a family does not
@@ -543,6 +555,7 @@ of the instruction text.
 | default (mandatory) | verify with a tool rather than recall; read a file before describing it; state uncertainty; check tool output before assuming success |
 | `claude` | prefer targeted edits over whole-file writes; keep edit match windows small; use extended thinking |
 | `gpt` | tool-schema fidelity; retry circuit breaker; narration threshold |
+| `gpt@6.*` | authorized follow-through; material clarification and approval boundaries; skill-conflict transparency; persona-aware writing; bounded delegation; proportionate verification |
 | `gemini` | absolute paths; workspace-root-relative references |
 
 The GPT rung was empty until #3375, on the reasoning that the verification rules it once carried had
@@ -558,8 +571,34 @@ count rather than "when it helps", which evaluates to false for every individual
 `Family` and `Version` use the same lowercase token grammar as the override file suffixes
 (alphanumerics, `-` between tokens), and `Version` is parsed by `ModelFamilyVersion` - the one
 sanctioned family/version parser in the tree (#2374). Malformed declarations - a duplicate
-`(section, family, version)` key, a version with no family, a duplicate or blank rule id, a removal
-on the default rung - are rejected while freezing, not silently ignored at resolve time.
+`(section, family, version, match scope)` key, a version with no family, an invalid major-match
+declaration, a duplicate or blank rule id, a removal on the default rung - are rejected while
+freezing, not silently ignored at resolve time.
+
+#### GPT-6 behavioral guidance
+
+The GPT-6 overlay is adapted from [OpenAI's Astra prompting guide](https://github.com/openai/codex/blob/008bbd5884122dc95aaece19ecfe0fc6a59dcf36/codex-rs/skills/src/assets/samples/openai-docs/references/prompting-guide.md).
+It is internal prompt text, not model training or a change to provider request settings. It
+encourages completing authorized work, preparing concrete results before asking blocking questions,
+explaining relevant skill conflicts, following the agent's persona, delegating bounded independent
+work through available tools, and completing required checks without unnecessary repetition.
+Inherited truthfulness, schema discipline, safety requirements, and explicit approval gates remain
+in force. A real blocker must still be reported.
+
+Parsed GPT major version 6 receives this overlay, including Astra and minor/suffix variants. Other
+major versions, unknown models, and other families retain their existing guidance. The effective
+runtime model selects the overlay through normal system-prompt construction; prompt mode `None`
+retains its existing minimal behavior. Selecting a model does not create tools or provider capabilities.
+
+Regression tests establish selection, precedence, inherited-rule preservation, and prompt inclusion.
+They do not establish improved LLM performance. Evaluate representative tasks with unchanged
+reasoning settings before drawing behavioral conclusions; measure task completion, unnecessary
+clarification, tool failures/retries, evidence quality, and approval compliance.
+
+Built-in declarations are frozen at process startup and changes take effect when the operator
+deploys a new build. Existing filesystem prompt-section overrides retain their separate replacement
+semantics; no version-specific filenames are added under `prompts/system/model/` by this change.
+Workspace instruction-file variants still select a single file rather than overlaying stable rule IDs.
 
 The gateway's `SystemPromptBuilder` registers further sections by `PromptOrder` key rather than by
 section ID, including the `<conversations>` capability guidance at order 145 (conditional: only when
