@@ -242,10 +242,13 @@ try {
     $requiredArtifactsPresent = $Mode -ne 'strict' -or $null -ne $playwrightArtifact
 
     # BEGIN EXACT SOURCE RECEIPT GUARD
-    Assert-SourceSnapshotResult -Result $result -Digest $fingerprint.sourceSnapshot.digest -RunId $runId -Mode $Mode
-    if ($status.properties.status -ne 'Succeeded' -or -not $requiredArtifactsPresent) { throw 'Validation execution/artifacts do not prove success.' }
-    $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
-    if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before receipt; validation cannot certify this worktree.' }
+    # Failed executions retain the established diagnostic/cleanup path below. Only a
+    # prospective success may reach the proof check and receipt writer.
+    if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
+        Assert-SourceSnapshotResult -Result $result -Digest $fingerprint.sourceSnapshot.digest -RunId $runId -Mode $Mode
+        $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+        if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before receipt; validation cannot certify this worktree.' }
+    }
     # END EXACT SOURCE RECEIPT GUARD
 
     if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {

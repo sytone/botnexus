@@ -234,6 +234,51 @@ AfterAll {
         { & (Join-Path $PSScriptRoot 'Get-WorktreeValidationFingerprint.ps1') -WorktreePath $repo -BaseRef missing-ref } | Should -Throw
         Test-Path Env:GIT_INDEX_FILE | Should -BeFalse
     }
+    It 'roundtrips a tracked file replaced by an unstaged directory' {
+        Git-Fixture @('-C', $repo, 'mv', 'keep.md', 'config') | Out-Null
+        Git-Fixture @('-C', $repo, 'commit', '-am', 'config file') | Out-Null
+        Remove-Item -LiteralPath (Join-Path $repo 'config')
+        [IO.Directory]::CreateDirectory((Join-Path $repo 'config')) | Out-Null
+        [IO.File]::WriteAllText((Join-Path $repo 'config/settings.json'), '{"new":true}')
+        $restored = Invoke-ProductionTransport $repo $area
+        Test-Path -LiteralPath (Join-Path $restored 'config') -PathType Container | Should -BeTrue
+        [IO.File]::ReadAllText((Join-Path $restored 'config/settings.json')) | Should -Be '{"new":true}'
+    }
+    It 'roundtrips an unstaged case-only rename on a real case-sensitive filesystem' -Tag LinuxCaseSensitive {
+        $IsLinux | Should -BeTrue -Because 'this acceptance test requires the isolated Linux harness'
+        Git-Fixture @('-C', $repo, 'mv', 'keep.md', 'A.cs') | Out-Null
+        Git-Fixture @('-C', $repo, 'commit', '-am', 'uppercase file') | Out-Null
+        [IO.File]::Move((Join-Path $repo 'A.cs'), (Join-Path $repo 'a.cs'))
+        Test-Path -LiteralPath (Join-Path $repo 'A.cs') | Should -BeFalse
+        $restored = Invoke-ProductionTransport $repo $area
+        Test-Path -LiteralPath (Join-Path $restored 'A.cs') | Should -BeFalse
+        [IO.File]::ReadAllText((Join-Path $restored 'a.cs')) | Should -Be 'keep me'
+    }
+    It 'rejects two existing case-colliding files on a case-sensitive filesystem' -Tag LinuxCaseSensitive {
+        $IsLinux | Should -BeTrue
+        [IO.File]::WriteAllText((Join-Path $repo 'A.cs'), 'upper')
+        [IO.File]::WriteAllText((Join-Path $repo 'a.cs'), 'lower')
+        @(Get-ChildItem -LiteralPath $repo | Where-Object Name -CLike '*.cs').Count | Should -Be 2
+        { Get-SourceSnapshotManifest -RepoRoot $repo } | Should -Throw '*Unsafe case-colliding source path*'
+    }
+    It 'rejects only link attributes in an otherwise valid archive and accepts its regular-file control' {
+        $manifest = Get-SourceSnapshotManifest -RepoRoot $repo
+        $capture = Join-Path $area 'link-control'
+        [IO.Directory]::CreateDirectory($capture) | Out-Null
+        Get-SourceSnapshotManifest -RepoRoot $repo -CaptureRoot $capture | Out-Null
+        $archive = Join-Path $area 'matching.zip'
+        [IO.Compression.ZipFile]::CreateFromDirectory($capture, $archive)
+        $zip = [IO.Compression.ZipFile]::Open($archive, [IO.Compression.ZipArchiveMode]::Update)
+        try { $zip.GetEntry('keep.md').ExternalAttributes = [int](0xA000 -shl 16) } finally { $zip.Dispose() }
+        [IO.File]::WriteAllText((Join-Path $repo 'keep.md'), 'destination sentinel')
+        { Restore-SourceSnapshot -Root $repo -Archive $archive -Manifest $manifest -RunId test } | Should -Throw '*Unsupported archive link/directory.*'
+        [IO.File]::ReadAllText((Join-Path $repo 'keep.md')) | Should -Be 'destination sentinel'
+        $zip = [IO.Compression.ZipFile]::Open($archive, [IO.Compression.ZipArchiveMode]::Update)
+        try { $zip.GetEntry('keep.md').ExternalAttributes = [int](0x8000 -shl 16) } finally { $zip.Dispose() }
+        $proof = Restore-SourceSnapshot -Root $repo -Archive $archive -Manifest $manifest -RunId test
+        $proof.verified | Should -BeTrue
+        [IO.File]::ReadAllText((Join-Path $repo 'keep.md')) | Should -Be 'keep me'
+    }
     It 'does not resurrect a staged deletion from bundled HEAD' {
         Git-Fixture @('-C', $repo, 'rm', '--', 'deleted-staged.md') | Out-Null
         $restored = Invoke-ProductionTransport $repo $area
