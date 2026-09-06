@@ -31,7 +31,7 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 
 All endpoints follow REST conventions and return JSON responses. The default port is **5005** (configurable via `config.json`).
 
-**Authentication:** `/api/*` endpoints require API-key authentication when keys are configured, except for the explicit bypass routes listed in [Authentication](#authentication). `GET /health` is outside `/api` and unauthenticated. With no configured key, the gateway runs in development mode and grants callers an admin identity.
+**Authentication:** Requests handled by `GatewayAuthMiddleware` require a gateway API key when keys are configured, except for the explicit middleware bypasses listed in [Authentication](#authentication). Bypassing this middleware does not bypass an endpoint's own authentication. When the API-key handler has no configured identities, it uses development-mode admin access, subject to the optional browser-Origin guard described below.
 
 ---
 
@@ -98,13 +98,34 @@ GET /api/agents
 X-Api-Key: your-api-key-here
 ```
 
-Or pass it as a query parameter:
+Alternatively, send the same gateway API key as a Bearer credential:
 
 ```http
-GET /api/agents?apiKey=your-api-key-here
+GET /api/agents
+Authorization: Bearer your-api-key-here
 ```
 
-**Exemptions:** `/health` and `/swagger` are exempt from authentication. The Blazor WebUI is also exempt when running in development mode.
+The built-in `ApiKeyGatewayAuthHandler` reads headers only; an `apiKey` query parameter is not supported. A nonblank `X-Api-Key` header takes precedence over `Authorization: Bearer` if both are present.
+
+### Gateway API-key middleware bypasses
+
+`GatewayAuthMiddleware.ShouldSkipAuth` bypasses this middleware for the following requests. These are not a blanket declaration that the endpoints are unsecured: endpoint-specific authentication and other middleware still apply.
+
+| Request | Scope of the bypass |
+|---|---|
+| Exact `/health` path | Bypasses the gateway API-key middleware. |
+| `/swagger` path prefix | Bypasses the gateway API-key middleware. |
+| `/api/federation/cross-world` path prefix | Uses federation authentication at the endpoint; the relay checks `X-Cross-World-Key` against the source world and target agent. |
+| `POST` under `/api/webhooks`, except the `/api/webhooks/registrations` and `/api/webhooks/runs` prefixes | Inbound delivery uses its registered webhook secret and HMAC signature verification. Registration/run management is not covered by this bypass. |
+| `GET` or `HEAD` for an existing non-directory file in the web root, outside `/api` | The static-file check is independent of development mode. It does not exempt arbitrary WebUI paths, missing files, directories, or API routes. |
+
+Prefixes above use path-segment matching, not arbitrary string-prefix matching. A bypass does not create an endpoint or imply that every HTTP method is supported there.
+
+### No-key development mode
+
+When the handler's configured API-key identity map is empty, it normally grants the `gateway-dev` admin identity. If the optional `GatewayDevOriginEnforcement` feature flag is enabled, a nonblank browser `Origin` must match `gateway.cors.allowedOrigins`; a rejected Origin produces an authentication failure (`401` from this middleware), not an admin identity. Missing or blank Origin headers are allowed by this guard. With no usable configured origins, the allow-list falls back to `http://localhost:5005`.
+
+The Origin guard is off by default. This no-key behavior applies to requests that reach the API-key handler; endpoints bypassing it retain their own authentication requirements. Do not treat no-key development mode as a production authentication policy.
 
 ### Request & Response Headers
 
