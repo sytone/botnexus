@@ -84,7 +84,7 @@ else
                     </optgroup>
                 }
             </select>
-            <button class="refresh-btn" @onclick="ManualRefreshAsync" disabled="@_isRefreshing" aria-label="Refresh" data-testid="refresh-btn" title="Refresh conversations">
+            <button class="refresh-btn" @onclick="ManualRefreshAsync" disabled="@_isRefreshing" aria-label="Refresh conversations and this transcript" data-testid="refresh-btn" title="Refresh conversations and this transcript">
                 @(_isRefreshing ? "↻" : "↺")
             </button>
             <div class="overflow-menu-wrapper">
@@ -564,8 +564,10 @@ else
     }
 
     /// <summary>
-    /// Handles the manual refresh button tap: re-fetches data and reconnects.
-    /// Shows a brief spinning indicator while in progress.
+    /// Handles the manual refresh button tap: re-fetches the agent and conversation rosters AND
+    /// the active conversation's transcript (#3846), and reconnects the hub if needed. The
+    /// transcript reconciliation lives in <c>PortalLoadService.RefreshAsync</c> so mobile and
+    /// desktop share one implementation; this page only drives the spinner and the scroll.
     /// </summary>
     private async Task ManualRefreshAsync()
     {

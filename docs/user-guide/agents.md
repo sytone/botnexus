@@ -740,6 +740,9 @@ Disabled agents:
 - Do not appear in the WebUI dropdown
 - Cannot receive messages
 - Retain their configuration for later re-enabling
+- **Keep their workspace directory.** `botnexus doctor agents --cleanup-orphans` deletes only
+  workspaces whose agent id is absent from `config.json` entirely; a disabled agent is still a
+  declared agent and is reported as `declared`, never `orphaned`.
 
 ### Removal
 
