@@ -1000,8 +1000,23 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (!record.TryMarkKilled(out var updatedInfo))
             return false;
 
-        record.CancelTimeout();
-        await CleanupChildAgentAsync(subAgentId, info.ChildSessionId, SubAgentStatus.Killed, ct);
+        try
+        {
+            record.CancelTimeout();
+        }
+        catch (AggregateException ex)
+        {
+            // Cancellation invokes third-party callbacks. The kill already owns the terminal
+            // disposition; a callback failure must be visible but cannot strand owned resources.
+            _logger.LogWarning(ex,
+                "Sub-agent '{SubAgentId}' cancellation callback failed; the kill remains authoritative and cleanup will be attempted.",
+                subAgentId);
+        }
+        finally
+        {
+            // Teardown is owned by the winning kill, not by the caller's cancellation lifetime.
+            await CleanupChildAgentAsync(subAgentId, info.ChildSessionId, SubAgentStatus.Killed, CancellationToken.None);
+        }
 
         _logger.LogInformation(
             "Killed sub-agent '{SubAgentId}' for parent session '{ParentSessionId}'.",
@@ -1995,8 +2010,16 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             var cts = Interlocked.Exchange(ref _timeoutCts, null);
             if (cts is null)
                 return;
-            cts.Cancel();
-            cts.Dispose();
+            try
+            {
+                cts.Cancel();
+            }
+            finally
+            {
+                // The field has already been exchanged to null, so no other path can dispose
+                // this source if a registered cancellation callback throws.
+                cts.Dispose();
+            }
         }
 
         /// <summary>Disposes the timeout source without cancelling (used by the run loop's finally). Idempotent.</summary>

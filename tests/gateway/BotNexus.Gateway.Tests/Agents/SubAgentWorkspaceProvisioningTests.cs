@@ -135,6 +135,45 @@ public sealed class SubAgentWorkspaceProvisioningTests
         fixture.Audits.Single().ShouldContain(nameof(SubAgentStatus.Completed));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Kill_ThrowingChildCallback_DisposesAndCleansExactlyOnce(bool raceCompletion, bool workspaceAlreadyAbsent)
+    {
+        await using var fixture = new SpawnFixture(throwOnCancellation: true, raceCompletion: raceCompletion);
+        var spawned = await fixture.SpawnAsync();
+        await fixture.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var child = AgentId.From(spawned.ChildAgentId.ShouldNotBeNull());
+        var workspace = fixture.Workspace.ShouldNotBeNull();
+        Directory.Exists(workspace).ShouldBeTrue();
+        if (workspaceAlreadyAbsent)
+            Directory.Delete(Path.GetDirectoryName(workspace).ShouldNotBeNull(), recursive: true);
+
+        (await fixture.Manager.KillAsync(spawned.SubAgentId, SpawnFixture.ParentSession)).ShouldBeTrue();
+        await fixture.WaitForCleanupAsync();
+        if (fixture.CompletionRace is { } race)
+            await race;
+        await fixture.Manager.OnCompletedAsync(spawned.SubAgentId, "late completion");
+
+        fixture.ThrowingCallbackCount.ShouldBe(1);
+        fixture.StopCount.ShouldBe(1);
+        fixture.Registry.Verify(r => r.Unregister(child), Times.Once);
+        fixture.Registry.Object.Contains(child).ShouldBeFalse();
+        Directory.Exists(workspace).ShouldBeFalse();
+        fixture.Manager.IsRetiredForTest(spawned.SubAgentId).ShouldBeTrue();
+        (await fixture.Manager.GetAsync(spawned.SubAgentId)).ShouldNotBeNull().Status.ShouldBe(SubAgentStatus.Killed);
+        Should.Throw<ObjectDisposedException>(() => { _ = fixture.ChildToken.WaitHandle; });
+        fixture.Warnings.ShouldContain(w => w.Contains("cancellation", StringComparison.OrdinalIgnoreCase)
+            && w.Contains("callback exploded", StringComparison.Ordinal));
+        fixture.Audits.Count.ShouldBe(workspaceAlreadyAbsent ? 0 : 1);
+        if (!workspaceAlreadyAbsent)
+            fixture.Audits.Single().ShouldContain(nameof(SubAgentStatus.Killed));
+        (await fixture.Manager.KillAsync(spawned.SubAgentId, SpawnFixture.ParentSession)).ShouldBeFalse();
+        fixture.StopCount.ShouldBe(1);
+        fixture.Registry.Verify(r => r.Unregister(child), Times.Once);
+    }
+
     private sealed class SpawnFixture : IAsyncDisposable
     {
         internal static readonly SessionId ParentSession = SessionId.From("provision-parent-session");
@@ -157,7 +196,13 @@ public sealed class SubAgentWorkspaceProvisioningTests
         internal IReadOnlyList<IAgentTool>? Tools { get; private set; }
         internal Task<SubAgentInfo?>? CancellationSnapshot { get; private set; }
 
-        internal SpawnFixture()
+        internal CancellationToken ChildToken { get; private set; }
+        internal int ThrowingCallbackCount;
+        internal int StopCount;
+        internal Task? CompletionRace { get; private set; }
+        internal ConcurrentQueue<string> Warnings { get; } = new();
+
+        internal SpawnFixture(bool throwOnCancellation = false, bool raceCompletion = false)
         {
             var fileSystem = new FileSystem();
             Workspaces = new FileAgentWorkspaceManager(new BotNexusHome(fileSystem, Path.Combine(_root, "home")), fileSystem,
@@ -179,11 +224,19 @@ public sealed class SubAgentWorkspaceProvisioningTests
                 {
                     // Register the observer after WaitAsync's cancellation callback so it captures
                     // the state synchronously before cancellation can unwind and dispose it.
+                    ChildToken = ct;
                     var waitForRelease = Release.Task.WaitAsync(ct);
                     using var registration = ct.Register(() =>
                     {
                         if (_subAgentId is not null)
                             CancellationSnapshot = Manager.ShouldNotBeNull().GetAsync(_subAgentId);
+                        if (raceCompletion && _subAgentId is not null)
+                            CompletionRace = Manager.ShouldNotBeNull().OnCompletedAsync(_subAgentId, "callback completion");
+                        if (throwOnCancellation)
+                        {
+                            Interlocked.Increment(ref ThrowingCallbackCount);
+                            throw new InvalidOperationException("callback exploded");
+                        }
                     });
                     Entered.TrySetResult();
                     await waitForRelease;
@@ -204,6 +257,7 @@ public sealed class SubAgentWorkspaceProvisioningTests
                     return Task.FromResult(handle.Object);
                 });
             supervisor.Setup(s => s.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+                .Callback(() => Interlocked.Increment(ref StopCount))
                 .Returns(Task.CompletedTask);
             var activity = new Mock<IActivityBroadcaster>();
             activity.Setup(a => a.PublishAsync(It.IsAny<GatewayActivity>(), It.IsAny<CancellationToken>()))
@@ -214,7 +268,7 @@ public sealed class SubAgentWorkspaceProvisioningTests
                 }).Returns(ValueTask.CompletedTask);
             Manager = new DefaultSubAgentManager(supervisor.Object, Registry.Object, activity.Object,
                 Mock.Of<IChannelDispatcher>(), new TestOptionsMonitor<GatewayOptions>(new GatewayOptions()),
-                new AuditLogger(Audits), workspaceManager: Workspaces);
+                new AuditLogger(Audits, Warnings), workspaceManager: Workspaces);
         }
 
         internal async Task<SubAgentInfo> SpawnAsync(bool shared = false)
@@ -237,13 +291,16 @@ public sealed class SubAgentWorkspaceProvisioningTests
             if (_subAgentId is not null)
             {
                 await Manager.KillAsync(_subAgentId, ParentSession);
-                await _unregistered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                // A deliberately failing RED kill may never retire. Do not mask that assertion
+                // with a second timeout while disposing the test's private filesystem fixture.
+                if (Manager.IsRetiredForTest(_subAgentId))
+                    await _unregistered.Task.WaitAsync(TimeSpan.FromSeconds(30));
             }
             if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
         }
     }
 
-    private sealed class AuditLogger(ConcurrentQueue<string> audits) : ILogger<DefaultSubAgentManager>
+    private sealed class AuditLogger(ConcurrentQueue<string> audits, ConcurrentQueue<string> warnings) : ILogger<DefaultSubAgentManager>
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
@@ -251,6 +308,8 @@ public sealed class SubAgentWorkspaceProvisioningTests
             Func<TState, Exception?, string> formatter)
         {
             var message = formatter(state, exception);
+            if (logLevel == LogLevel.Warning)
+                warnings.Enqueue(message + " " + exception);
             if (logLevel == LogLevel.Information && message.Contains(SubAgentWorkspaceReclamationAudit.MessagePrefix, StringComparison.Ordinal))
                 audits.Enqueue(message);
         }
