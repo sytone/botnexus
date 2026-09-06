@@ -16,12 +16,14 @@ Set the provider on your agent in `config.json`:
 {
   "agents": {
     "my-agent": {
-      "apiProvider": "copilot",
-      "modelId": "claude-sonnet-4-20250514"
+      "provider": "github-copilot",
+      "model": "claude-sonnet-4"
     }
   }
 }
 ```
+
+`provider` names the model-registry provider instance; `copilot` is also a supported alias for `github-copilot`. `model` is the registered model ID, not an API name. These are platform configuration keys; tool and template contracts can separately use `apiProvider` and `modelId`.
 
 ### Authentication
 
@@ -50,29 +52,33 @@ See the [CLI Reference](../cli-reference.md#provider-copilot) for the full `prov
 
 ## Supported Models
 
-Copilot provides access to models from multiple families. Availability depends on your subscription tier:
+The following examples are a subset of BotNexus's built-in Copilot registrations in `BuiltInModels.RegisterCopilotModels`. The limits are registry metadata, not a guarantee of account entitlement or current upstream availability.
 
-| Model | Family |
-|-------|--------|
-| `claude-sonnet-4-20250514` | Claude (Anthropic) |
-| `claude-opus-4-20250514` | Claude (Anthropic) |
-| `claude-opus-5` | Claude (Anthropic) |
-| `gpt-4o` | GPT (OpenAI) |
-| `gpt-4.1` | GPT (OpenAI) |
-| `o3-mini` | GPT (OpenAI) |
+| Model | API path | Context Window | Max Output Tokens |
+|-------|----------|---------------:|------------------:|
+| `claude-sonnet-4` | Messages | 216,000 | 16,000 |
+| `claude-sonnet-4.5` | Messages | 144,000 | 32,000 |
+| `claude-opus-4.5` | Messages | 160,000 | 32,000 |
+| `claude-opus-5` | Messages | 200,000 | 64,000 |
+| `gpt-4o` | Completions | 128,000 | 4,096 |
+| `gpt-4.1` | Completions | 128,000 | 16,384 |
+| `gpt-5.6` | Responses | 922,000 | 128,000 |
 
-Run `botnexus provider copilot models` to see the full list available to your account.
+Run `botnexus provider copilot models` to inspect the catalog returned for your account. An ID absent from this built-in catalog requires a discovered or custom registration before use; absence from the built-ins does not establish upstream unavailability.
 
 ## Features
 
 ### Dynamic Model Discovery
 
-BotNexus can query Copilot's model catalog at runtime to discover available models and their capabilities. This happens automatically when using the CLI discovery command.
+At gateway startup, BotNexus queries Copilot's catalog and overlays discovered models and capabilities onto the built-in registry. Discovery can add IDs or replace metadata for an existing ID. It is best-effort: failures leave the built-in entries available as a fallback. The CLI discovery command also lets you inspect the account catalog.
 
 ### API and transport selection
 
 - **Messages API** — Claude models are accessed via the Messages-compatible path.
-- **Responses API** — OpenAI models use the Responses API for native tool call flow.
+- **Completions API** — built-in `gpt-4o`, `gpt-4.1`, Gemini and Grok entries use the Completions path.
+- **Responses API** — built-in GPT-5-family entries use the Responses path for native tool call flow.
+
+The selected model registration determines the API; model family alone is not sufficient.
 
 For Responses models, discovery also records the endpoints advertised for each model. When a model advertises `ws:/responses`, BotNexus uses the WebSocket transport automatically; otherwise it keeps the Server-Sent Events (SSE) path. If the WebSocket fails before producing any semantic output, the provider safely retries over SSE. After output begins, it does not replay the request, avoiding duplicated text or tool calls.
 
@@ -80,12 +86,7 @@ Transport selection is capability-driven and has no user-facing configuration se
 
 ### Context Window
 
-Claude models reached through GitHub Copilot are capped at a fixed 200K context window.
-There is no 1M option on the Copilot path: BotNexus offers no context-size toggle for these
-models and never sends Anthropic's 1M `context-1m-2025-08-07` beta header. The selectable
-200K / 1M window is an Anthropic-direct feature only (see the Anthropic provider page). If
-you need a 1M context window for a Claude model, configure that model on the `anthropic`
-provider instead.
+Context and output limits are model-specific; use the named registration rather than a fixed 200K assumption. The table above shows built-in values. Runtime discovery or custom registration may replace those values. The Copilot built-ins do not opt into `SupportsExtendedContextWindow`; do not infer an Anthropic-direct 1M tier from a Claude model name.
 
 ### Usage Tracking
 
@@ -100,5 +101,5 @@ Copilot supports prompt caching for compatible models. The `<!-- BOTNEXUS_CACHE_
 - Model availability varies by Copilot subscription tier
 - Rate limits are managed by GitHub — not configurable per-user
 - Some models may not support all features (e.g., extended thinking availability depends on the model)
-- Claude models are fixed at a 200K context window - the 1M window is Anthropic-direct only
+- Built-in limits are fallback metadata; inspect the effective registration after discovery rather than assuming every Claude model has the same context window
 - OAuth token refresh requires `gh` CLI to be installed and authenticated
