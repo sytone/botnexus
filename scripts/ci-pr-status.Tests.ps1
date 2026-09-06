@@ -418,3 +418,146 @@ Describe 'AC1/AC2 (#3773) - every gh list call carries an explicit --limit' {
         ($unbounded -join "`n") | Should -BeNullOrEmpty
     }
 }
+
+Describe '#3932 verified current-target freshness' {
+    BeforeAll {
+        # Shadow gh in-process and in child pwsh: fixtures never contact GitHub.
+        function gh {
+            $a = @($args)
+            $global:LASTEXITCODE = 0
+            if ($a[0] -eq 'pr' -and $a[1] -eq 'list') {
+                if ($script:Scenario -eq 'list-http') { $global:LASTEXITCODE = 1; return '{"message":"HTTP 403"}' }
+                if ($script:Scenario -eq 'empty') { return '[]' }
+                if ($script:Scenario -eq 'list-malformed') { return '{bad' }
+                if ($script:Scenario -eq 'list-object') { return '{}' }
+                $head = '1d64221de118ae9c0f3286007ba7d0a5328653ff'
+                if ($script:Scenario -eq 'missing-head') { $head = '' }
+                $branch = if ($script:Scenario -like 'same-*') { 'fix/local-branch' } else { 'upstream/ui-portal-overhaul' }
+                return (@(@{ number = 3557; title = 'fixture'; headRefName = $branch; headRefOid = $head; baseRefName = 'release/next'; baseRefOid = '31b8986fe3c508a33eb750ec8e376f6edd5cc6e0'; mergeable = 'MERGEABLE' }) | ConvertTo-Json -Compress -AsArray)
+            }
+            if ($a[0] -eq 'pr' -and $a[1] -eq 'checks') {
+                if ($script:Scenario -eq 'ack') { $global:LASTEXITCODE = 1; return '[{"name":"Sensitive File Guard","state":"FAILURE"},{"name":"build","state":"SUCCESS"}]' }
+                return '[{"name":"build","state":"SUCCESS"}]'
+            }
+            if ($a[0] -eq 'api') {
+                $script:Requests.Add([string]$a[1])
+                if ($a[1] -eq 'repos/Sytone/botnexus/git/ref/heads/release%2Fnext') {
+                    switch ($script:Scenario) {
+                        'ref-http' { $global:LASTEXITCODE = 1; return '{"message":"HTTP 404"}' }
+                        'ref-malformed' { return '{broken' }
+                        'ref-missing' { return '{}' }
+                        'ref-array' { return '[{"object":{"type":"commit","sha":"a5d0a3376432670890e68a7cdd187536cbe45a95"}}]' }
+                        'ref-wrong-type' { return '{"object":{"type":"tag","sha":"a5d0a3376432670890e68a7cdd187536cbe45a95"}}' }
+                    }
+                    return '{"object":{"type":"commit","sha":"a5d0a3376432670890e68a7cdd187536cbe45a95"}}'
+                }
+                if ($a[1] -eq 'repos/Sytone/botnexus/compare/a5d0a3376432670890e68a7cdd187536cbe45a95...1d64221de118ae9c0f3286007ba7d0a5328653ff') {
+                    switch ($script:Scenario) {
+                        'compare-http' { $global:LASTEXITCODE = 1; return '{"behind_by":0,"ahead_by":12}' }
+                        'compare-malformed' { return '<html>bad gateway</html>' }
+                        'compare-missing' { return '{"ahead_by":12}' }
+                        'compare-null' { return '{"behind_by":null,"ahead_by":12}' }
+                        'compare-string' { return '{"behind_by":"0","ahead_by":12}' }
+                        'compare-negative' { return '{"behind_by":-1,"ahead_by":12}' }
+                        'compare-fraction' { return '{"behind_by":0.5,"ahead_by":12}' }
+                        'compare-array' { return '[{"behind_by":0,"ahead_by":12}]' }
+                        'compare-ahead-missing' { return '{"behind_by":0}' }
+                        'zero' { return '{"behind_by":0,"ahead_by":12}' }
+                        'same-zero' { return '{"behind_by":0,"ahead_by":12}' }
+                        'same-behind' { return '{"behind_by":7,"ahead_by":2}' }
+                    }
+                    return '{"behind_by":41,"ahead_by":12}'
+                }
+                # A PR object's stale base would succeed but answer the wrong question.
+                if ($a[1] -match '/compare/31b8986') { return '{"behind_by":0,"ahead_by":12}' }
+                $global:LASTEXITCODE = 1
+                return
+            }
+            throw "Unexpected fixture command: $($a -join ' ')"
+        }
+    }
+    BeforeEach {
+        $script:Scenario = 'fork'
+        $script:Requests = [Collections.Generic.List[string]]::new()
+    }
+
+    It 'compares independently captured current target and immutable fork head, not stale PR base' {
+        $r = @(Get-CiPrStatusReport -Repo 'Sytone/botnexus')[0]
+        $r.behindBy | Should -Be 41
+        $r.aheadBy | Should -Be 12
+        $r.freshnessStatus | Should -Be 'verified'
+        $r.targetRef | Should -Be 'release/next'
+        $r.targetSha | Should -Be 'a5d0a3376432670890e68a7cdd187536cbe45a95'
+        $r.headSha | Should -Be '1d64221de118ae9c0f3286007ba7d0a5328653ff'
+        $r.freshnessDiagnostic | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 2
+        $script:Requests[0] | Should -Be 'repos/Sytone/botnexus/git/ref/heads/release%2Fnext'
+        $script:Requests[1] | Should -Be 'repos/Sytone/botnexus/compare/a5d0a3376432670890e68a7cdd187536cbe45a95...1d64221de118ae9c0f3286007ba7d0a5328653ff'
+    }
+
+    It 'preserves verified zero separately from unavailable evidence' {
+        $script:Scenario = 'zero'
+        $r = @(Get-CiPrStatusReport -Repo 'Sytone/botnexus')[0]
+        $r.behindBy | Should -Be 0
+        $r.freshnessStatus | Should -Be 'verified'
+    }
+
+    It 'fails closed for <caseName> without changing passing check health' -TestCases @(
+        'ref-http', 'ref-malformed', 'ref-missing', 'ref-array', 'ref-wrong-type', 'missing-head',
+        'compare-http', 'compare-malformed', 'compare-missing', 'compare-null',
+        'compare-string', 'compare-negative', 'compare-fraction', 'compare-array', 'compare-ahead-missing'
+    | ForEach-Object { @{ caseName = $_ } }) {
+        param($caseName)
+        $script:Scenario = $caseName
+        $r = @(Get-CiPrStatusReport -Repo 'Sytone/botnexus')[0]
+        $r.freshnessStatus | Should -Be 'unknown'
+        $r.behindBy | Should -BeNullOrEmpty
+        $r.aheadBy | Should -BeNullOrEmpty
+        $r.freshnessDiagnostic | Should -Not -BeNullOrEmpty
+        $r.ciStatus | Should -Be 'passing'
+    }
+
+    It 'preserves same-repository <caseName> counts' -TestCases @(
+        @{ caseName = 'same-zero'; behind = 0; ahead = 12 },
+        @{ caseName = 'same-behind'; behind = 7; ahead = 2 }
+    ) {
+        param($caseName, $behind, $ahead)
+        $script:Scenario = $caseName
+        $r = @(Get-CiPrStatusReport -Repo 'Sytone/botnexus')[0]
+        $r.branch | Should -Be 'fix/local-branch'
+        $r.freshnessStatus | Should -Be 'verified'
+        $r.behindBy | Should -Be $behind
+        $r.aheadBy | Should -Be $ahead
+    }
+
+    It 'retains maintainer-ack classification when gh checks exits nonzero' {
+        $script:Scenario = 'ack'
+        $r = @(Get-CiPrStatusReport -Repo 'Sytone/botnexus')[0]
+        $r.ciStatus | Should -Be 'awaiting-ack'
+        $r.awaitingAck.headSha | Should -Be $r.headSha
+        $r.behindBy | Should -Be 41
+    }
+
+    It 'defines real entrypoint process exit <expectedExit> for <caseName>' -TestCases @(
+        @{ caseName = 'fork'; expectedExit = 0; freshness = 'verified' },
+        @{ caseName = 'compare-http'; expectedExit = 0; freshness = 'unknown' },
+        @{ caseName = 'ref-http'; expectedExit = 0; freshness = 'unknown' },
+        @{ caseName = 'empty'; expectedExit = 0; freshness = '' },
+        @{ caseName = 'list-http'; expectedExit = 1; freshness = '' },
+        @{ caseName = 'list-malformed'; expectedExit = 1; freshness = '' },
+        @{ caseName = 'list-object'; expectedExit = 1; freshness = '' }
+    ) {
+        param($caseName, $expectedExit, $freshness)
+        $path = (Join-Path $PSScriptRoot 'ci-pr-status.ps1').Replace("'", "''")
+        $body = (Get-Command gh -CommandType Function).ScriptBlock.ToString().Replace('$script:Scenario', '$global:Scenario').Replace('$script:Requests', '$global:Requests')
+        $code = '$global:Scenario = ''' + $caseName + '''; $global:Requests = [Collections.Generic.List[string]]::new(); function gh {' + $body + '}; & ''' + $path + '''; exit $LASTEXITCODE'
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
+        $output = & (Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })) -NoProfile -EncodedCommand $encoded 2>$null
+        $LASTEXITCODE | Should -Be $expectedExit
+        if ($expectedExit -eq 0) {
+            $json = ($output -join [Environment]::NewLine) | ConvertFrom-Json -NoEnumerate
+            if ($caseName -eq 'empty') { @($json).Count | Should -Be 0 }
+            else { @($json)[0].freshnessStatus | Should -Be $freshness }
+        }
+    }
+}

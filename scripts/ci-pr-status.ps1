@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Queries GitHub for all open PRs, their check statuses, and how far behind
-    main they are. Outputs a JSON array suitable for consumption by maintenance
+    their independently captured current target branch they are. Outputs a JSON array suitable for consumption by maintenance
     automation scripts.
 
     Check entries arrive in two different shapes depending on which GitHub API
@@ -26,7 +26,9 @@
 .OUTPUTS
     JSON array of objects with: number, title, branch, ciStatus, behindBy,
     failingChecks, pendingChecks, stuckChecks, checkConclusions, mergeable,
-    headSha, awaitingAck.
+    headSha, awaitingAck, aheadBy, freshnessStatus, freshnessDiagnostic,
+    targetRef, targetSha. Unknown freshness has null counts. A complete board
+    exits 0 (including unknown freshness); a collection failure exits 1.
 
 .EXAMPLE
     pwsh -NoProfile -File scripts/ci-pr-status.ps1
@@ -215,6 +217,58 @@ function Get-PrCiStatus {
     return 'passing'
 }
 
+<#
+.SYNOPSIS
+    Captures the current target ref independently, then compares immutable SHAs.
+.DESCRIPTION
+    A PR object's base OID can lag the target branch. Never use it as freshness
+    evidence. Unknown transport/schema results retain null counts, not zero.
+#>
+function Get-PrFreshness {
+    [CmdletBinding()]
+    param([string]$Repo, [AllowNull()][object]$Pr)
+
+    $result = [ordered]@{
+        freshnessStatus = 'unknown'
+        targetRef = [string]$Pr.baseRefName
+        targetSha = $null
+        behindBy = $null
+        aheadBy = $null
+        freshnessDiagnostic = $null
+    }
+    $stage = 'target-ref'
+    try {
+        if ([string]::IsNullOrWhiteSpace($result.targetRef)) { throw 'Missing target branch name.' }
+        if ([string]$Pr.headRefOid -notmatch '\A[0-9a-fA-F]{40}\z') { throw 'Missing or invalid captured PR head SHA.' }
+        $refPath = [Uri]::EscapeDataString($result.targetRef)
+        $raw = gh api "repos/$Repo/git/ref/heads/$refPath" 2>$null
+        if ($LASTEXITCODE -ne 0) { throw "GitHub target-ref request failed (exit $LASTEXITCODE)." }
+        $target = ($raw -join [Environment]::NewLine) | ConvertFrom-Json -NoEnumerate
+        if ($target -is [array] -or $target -isnot [pscustomobject] -or $target.object.type -ne 'commit' -or
+            [string]$target.object.sha -notmatch '\A[0-9a-fA-F]{40}\z') {
+            throw 'Target-ref response lacks a valid commit SHA.'
+        }
+        $result.targetSha = [string]$target.object.sha
+        $stage = 'compare'
+        $raw = gh api "repos/$Repo/compare/$($result.targetSha)...$($Pr.headRefOid)" 2>$null
+        if ($LASTEXITCODE -ne 0) { throw "GitHub compare request failed (exit $LASTEXITCODE)." }
+        $comparison = ($raw -join [Environment]::NewLine) | ConvertFrom-Json -NoEnumerate
+        if ($comparison -is [array] -or $comparison -isnot [pscustomobject]) { throw 'Compare response must be a JSON object.' }
+        foreach ($field in @('behind_by', 'ahead_by')) {
+            $value = $comparison.$field
+            if (($value -isnot [int] -and $value -isnot [long]) -or $value -lt 0) {
+                throw "Compare response lacks a nonnegative integer $field."
+            }
+        }
+        $result.behindBy = $comparison.behind_by
+        $result.aheadBy = $comparison.ahead_by
+        $result.freshnessStatus = 'verified'
+    } catch {
+        $result.freshnessDiagnostic = "${stage}: $($_.Exception.Message)"
+    }
+    return [pscustomobject]$result
+}
+
 function Get-CiPrStatusReport {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Repo)
@@ -226,9 +280,11 @@ function Get-CiPrStatusReport {
     # convention of 100 used by Get-PrFailureCause.ps1 / Invoke-IssueClaim.ps1,
     # which is deliberate: this is the instrument the whole maintenance loop
     # reads its open-PR count from, and that count gates dispatch.
-    $prs = gh pr list --repo $Repo --state open --limit 500 --json number,title,headRefName,headRefOid,mergeable | ConvertFrom-Json
-
-    if (-not $prs -or @($prs).Count -eq 0) { return @() }
+    $raw = gh pr list --repo $Repo --state open --limit 500 --json number,title,headRefName,headRefOid,baseRefName,mergeable
+    if ($LASTEXITCODE -ne 0) { throw "GitHub PR list failed (exit $LASTEXITCODE)." }
+    $prs = ($raw -join [Environment]::NewLine) | ConvertFrom-Json -NoEnumerate
+    if ($prs -isnot [array]) { throw 'GitHub PR list response must be a JSON array.' }
+    if ($prs.Count -eq 0) { return @() }
 
     $results = @()
     foreach ($pr in $prs) {
@@ -236,12 +292,7 @@ function Get-CiPrStatusReport {
         if (-not $checks) { $checks = @() }
         $checks = @($checks)
 
-        $behind = 0
-        try {
-            $behind = [int](gh api "repos/$Repo/compare/main...$($pr.headRefName)" --jq '.behind_by' 2>$null)
-        } catch {
-            $behind = 0
-        }
+        $freshness = Get-PrFreshness -Repo $Repo -Pr $pr
 
         $failing = @($checks | Where-Object { (Get-CheckBucket -Check $_) -eq 'failing' })
         $pending = @($checks | Where-Object { (Get-CheckBucket -Check $_) -eq 'pending' })
@@ -260,7 +311,12 @@ function Get-CiPrStatusReport {
             headSha          = [string]$pr.headRefOid
             ciStatus         = $ciStatus
             awaitingAck      = $awaitingAck
-            behindBy         = $behind
+            freshnessStatus  = $freshness.freshnessStatus
+            freshnessDiagnostic = $freshness.freshnessDiagnostic
+            targetRef        = $freshness.targetRef
+            targetSha        = $freshness.targetSha
+            behindBy         = $freshness.behindBy
+            aheadBy          = $freshness.aheadBy
             failingChecks    = @($failing | ForEach-Object { $_.name })
             pendingChecks    = @($pending | ForEach-Object { $_.name })
             stuckChecks      = @($stuck | ForEach-Object { $_.name })
@@ -280,10 +336,14 @@ function Get-CiPrStatusReport {
 
 # Only run when executed directly; dot-sourcing (tests) just loads the functions.
 if ($MyInvocation.InvocationName -ne '.') {
-    $report = @(Get-CiPrStatusReport -Repo 'Sytone/botnexus')
-    if ($report.Count -eq 0) {
-        Write-Output '[]'
-    } else {
-        $report | ConvertTo-Json -Depth 6
+    try {
+        $report = @(Get-CiPrStatusReport -Repo 'Sytone/botnexus')
+        ConvertTo-Json -InputObject $report -Depth 6
+        # A complete board can contain unknown freshness; incidental gh exit
+        # codes must not override this deliberate reporting contract.
+        exit 0
+    } catch {
+        [Console]::Error.WriteLine("CI PR status collection failed: $($_.Exception.Message)")
+        exit 1
     }
 }
