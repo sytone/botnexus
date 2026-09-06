@@ -86,11 +86,11 @@ and the executable
 | `SaveAsync(session)` | FullReplace | caller-owned **session-row columns** remain unguarded; history uses append/targeted reconciliation, not whole-transcript replacement |
 | `SaveAsync(session, fence)` | Fenced | same session columns and history delta, gated on `SessionFenceEvaluator.Passes` over a lock-scoped re-read |
 | `AppendEntriesAsync` | NarrowPatch | new `session_history` rows + `updated_at`; refused against a terminal row |
-| `PatchMetadataAsync` | Merge | the `metadata` column only, read-merge-written under one lock |
-| `TransitionStatusAsync` | CompareAndSwap | `status` only, via `UPDATE … WHERE status = $expected` |
+| `PatchMetadataAsync` | Merge | `metadata` + `updated_at`, read-merge-written under one lock |
+| `TransitionStatusAsync` | CompareAndSwap | `status` + `updated_at`, via `UPDATE … WHERE status = $expected` |
 | `DeleteAsync` | NarrowPatch | removes the row and its history |
 | `ArchiveAsync` | NarrowPatch (logical mutation) | seals status + advances `updated_at` via an authoritative row upsert after draining the run and re-loading **inside** the lock (#2903); history is untouched |
-| `Save`/`UpdateSubAgentSessionAsync` | Create / NarrowPatch | `sub_agent_sessions` side table |
+| `SaveSubAgentSessionAsync`/`UpdateSubAgentSessionAsync` | Create / NarrowPatch | `sub_agent_sessions` side table |
 
 `ArchiveAsync` is classified as `NarrowPatch` for its logical mutation, **not** because it issues
 a status-only SQL `UPDATE`. It drains the active run before taking the lock, then reloads the
