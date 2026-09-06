@@ -45,6 +45,15 @@ if ($null -eq $budgets -or $null -eq $remote) {
     throw 'Maintenance state must define budgets and remoteValidation ceilings.'
 }
 
+# Missing ceilings are malformed input, not an explicit budget of zero. Validate
+# before evaluating candidates so even an idle cycle cannot conceal a bad state.
+foreach ($key in @('implementation', 'repair', 'recovery', 'maxImplementationStartsPerCycle', 'openPrSoftCap')) {
+    $property = $budgets.PSObject.Properties[$key]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        throw "Maintenance state is missing required gating key: budgets.$key"
+    }
+}
+
 $workers = @(Get-PropertyValue $state 'workers' @())
 $candidates = @(Get-PropertyValue $state 'candidates' @())
 $dispatch = [Collections.Generic.List[object]]::new()

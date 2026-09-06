@@ -10,7 +10,11 @@ The planner has separate `implementation`, `repair`, and validation-only `recove
 
 ## Input contract
 
-Pass a JSON file with this shape:
+Pass a JSON file with this shape. All five `budgets` keys are required:
+`implementation`, `repair`, `recovery`, `maxImplementationStartsPerCycle`, and
+`openPrSoftCap`. An absent or null key throws an error naming its `budgets.<key>`
+path before any candidate is evaluated, even when the candidate list is empty.
+An explicit zero is valid and retains its existing capacity meaning.
 
 ```json
 {
@@ -24,7 +28,7 @@ Pass a JSON file with this shape:
     "maxImplementationStartsPerCycle": 4,
     "openPrSoftCap": 5
   },
-  "validationMode": "local",
+  "validationMode": "remote",
   "remoteValidation": {
     "active": 0,
     "maxConcurrent": 2,
@@ -61,9 +65,22 @@ Invoke it with:
 $plan = scripts/maintenance/Get-MaintenanceDispatchPlan.ps1 -StatePath maintenance-state.json
 ```
 
+Prefer the versioned producer over hand-authoring the nested budget object:
+
+```powershell
+# Supply candidates, workers, reservations, and ceilings from the current board.
+& ./scripts/maintenance/New-MaintenanceState.ps1 -OpenPrCount 2 -OpenPrSoftCap 5 -ValidationMode remote -OutPath maintenance-state.json
+$plan = & ./scripts/maintenance/Get-MaintenanceDispatchPlan.ps1 -StatePath maintenance-state.json
+```
+
+The producer emits and validates all eleven gating paths, including non-budget
+fields, and validates supplied candidates before writing state. Its default
+`ValidationMode` is `remote`. The planner independently guards the five budget
+keys so input from other producers cannot bypass that check.
+
 Candidate order is priority order. The runtime owns issue/PR discovery and must populate `trusted`, `decisionFree`, and the complete intended file set from authoritative evidence. Put every path changed by an open PR in `reservedFiles`; active workers contribute their file sets automatically. Missing evidence fails closed, and an issue already assigned to an active worker is rejected as `already-active`.
 
-Set `validationMode` to `local` or `remote`; omitted values default to `remote`, matching the repository gate (#2158). Workers still run `scripts/repo/Validate-PreCommit.ps1`; the planner records the selected plane but does not replace strict validation. In remote mode, `validationRequired` reserves capacity and `remoteValidation.maxConcurrent`/`maxCost` remain hard ceilings. Local mode is an explicit opt-in that reserves no remote capacity and lets `Invoke-LocalValidation.ps1` globally serialize host work; it must not be selected on a host running a live gateway, because local test hosts outlive their parent and claim the live gateway's scheduled jobs.
+Set `validationMode` to `local` or `remote`. For compatibility, the planner itself defaults omitted values to `local`; this is distinct from the producer and repository validation gate, which default to `remote`. On the workstation hosting the live gateway, always pass `remote` explicitly; the compatibility default is not permission to run local gateway tests. Workers still run `scripts/repo/Validate-PreCommit.ps1`; the planner records the selected plane but does not replace strict validation. In remote mode, `validationRequired` reserves capacity and `remoteValidation.maxConcurrent`/`maxCost` remain hard ceilings. Local mode is an explicit opt-in that reserves no remote capacity and lets `Invoke-LocalValidation.ps1` globally serialize host work; it must not be selected on a host running a live gateway, because local test hosts outlive their parent and claim the live gateway's scheduled jobs.
 
 ## Preserved gates
 
@@ -93,13 +110,14 @@ Persist one result per trigger and aggregate by `cycleId`. Report PR repair sepa
 
 ## Tests
 
-Run the focused deterministic suite on PowerShell 7:
+Run the focused deterministic script suites on PowerShell 7 (these do not start .NET test hosts or a gateway):
 
 ```powershell
-scripts/maintenance/Get-MaintenanceDispatchPlan.Tests.ps1
+pwsh -NoProfile -File scripts/maintenance/Get-MaintenanceDispatchPlan.Tests.ps1
+pwsh -NoProfile -File scripts/maintenance/New-MaintenanceState.Tests.ps1
 ```
 
-The tests cover independent lanes, push-based refill, every preserved gate, validation ceilings, existing-worktree recovery, and telemetry accumulation.
+The tests cover independent lanes, push-based refill, every preserved gate, validation ceilings, existing-worktree recovery, and telemetry accumulation. They also cover each missing/null budget key, explicit zero budgets, the complete-input PR-cap verdict, producer schema/source agreement, and producer entry-point rejection. The planner suite reports numeric PASS/FAIL tallies for mutation verification.
 
 
 ## Throughput proof and production soak
