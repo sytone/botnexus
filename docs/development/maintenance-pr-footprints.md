@@ -45,7 +45,8 @@ The returned object contains `repository`, `collectedAtUtc`, `isComplete`,
 | Field | Evidence |
 |---|---|
 | `number`, `files` | PR identity and exact REST `filename` values in page order |
-| `expectedCount`, `actualCount` | REST PR `changed_files` compared with unique file records |
+| `expectedCount`, `actualCount` | REST PR `changed_files` compared with unique file records, not ownership paths |
+| `reservedFiles` | Per-PR union of current filenames and validated previous filenames for renames |
 | `pages` | Each sequential page's number, endpoint and actual record count |
 | `headSha`, `baseSha` | Metadata versions checked before and after file enumeration |
 | `isComplete`, `evidence` | Passed pagination, uniqueness, exact-count and snapshot checks |
@@ -59,10 +60,21 @@ cap cannot silently become success: if fewer paths than `changed_files` are
 available, admission stops.
 
 Filenames are neither trimmed nor case-folded. Deleted paths remain reservations.
-The collector records REST `filename`, not rename aliases; it does not infer
-additional ownership policy. The union deduplicates exact ordinal strings across
-PRs, while retaining each PR's own count and paths. The existing planner's
-case-insensitive overlap policy remains unchanged.
+Record completeness and ownership completeness are distinct: `files` retains one
+REST `filename` per changed record, while per-PR and top-level `reservedFiles`
+include both `filename` and `previous_filename` for a `renamed` record. One rename
+therefore has expected/actual count **1**, but reserves **2** paths. Feed the
+reservation union, never `files`, to the planner.
+
+Every record requires a recognized string `status`. Renames require a nonblank
+string previous filename different from the current filename (ordinal comparison,
+so case-only renames remain valid). Missing/malformed aliases, duplicate old aliases
+within one PR, and previous filenames on non-renamed records fail closed. Duplicate
+current filenames/pages still fail rather than being deduplicated into success.
+An old alias matching another record's current path is valid (for example, a rename
+chain); the ownership union deduplicates that shared path without changing record
+counts. The union also deduplicates exact ordinal strings across PRs. The existing
+planner's case-insensitive overlap policy remains unchanged.
 
 This is a point-in-time collection, not an atomic GitHub lock. Recollect after PR
 updates or an inventory change and immediately before a new admission decision.
@@ -85,7 +97,13 @@ candidate touching path 122 is rejected for `file-overlap`. Other fixtures cover
 small/multiple/exact-boundary pages, malformed and duplicate responses, count
 guards, snapshot movement, multiple PRs, zero-file verification and caller
 environment preservation. `-CollectorPath` supports testing temporary mutated
-collector copies without editing the planner or weakening any assertion.
+collector copies without editing the planner or weakening any assertion. The rename
+integration fixture invokes the unchanged planner with old-side, new-side and
+disjoint candidates: only the disjoint candidate is admitted. Removing old-path
+reservation must fail `RenamePlannerBlocksBothSidesAndAdmitsDisjoint`.
+
+Runtime callers must consume the top-level `reservedFiles` union to include rename
+aliases; flattening only per-PR `files` recreates the old-path reservation defect.
 
 The runtime maintenance playbook is owned outside the repository. Its caller must
 use this same verified-object contract; this page does not silently update that

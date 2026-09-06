@@ -76,6 +76,9 @@ foreach ($number in $PullRequestNumbers) {
     $files = [Collections.Generic.List[string]]::new()
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $pages = [Collections.Generic.List[object]]::new()
+    $aliases = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $owned = [Collections.Generic.List[string]]::new()
+    $ownedSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $page = 1
     do {
         $endpoint = "repos/$Repository/pulls/$number/files?per_page=100&page=$page"
@@ -88,7 +91,24 @@ foreach ($number in $PullRequestNumbers) {
                 throw "Invalid filename in page response: $endpoint"
             }
             if (-not $seen.Add($record.filename)) { throw "Duplicate filename/page response for PR $number at page $page" }
+            if (-not $record.Contains('status') -or $record.status -isnot [string] -or
+                $record.status -cnotin @('added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged')) {
+                throw "Invalid file status in page response: $endpoint"
+            }
             $files.Add($record.filename)
+            if ($ownedSet.Add($record.filename)) { $owned.Add($record.filename) }
+            if ($record.status -ceq 'renamed') {
+                if (-not $record.Contains('previous_filename') -or $record.previous_filename -isnot [string] -or
+                    [string]::IsNullOrWhiteSpace($record.previous_filename) -or $record.previous_filename -ceq $record.filename) {
+                    throw "Invalid rename alias in page response: $endpoint"
+                }
+                if (-not $aliases.Add($record.previous_filename)) { throw "Duplicate rename alias in page response: $endpoint" }
+                # Ownership has two paths; changed_files still counts this record once.
+                if ($ownedSet.Add($record.previous_filename)) { $owned.Add($record.previous_filename) }
+            }
+            elseif ($record.Contains('previous_filename')) {
+                throw "Unexpected rename alias for status '$($record.status)': $endpoint"
+            }
         }
         $pages.Add([pscustomobject]@{ page = $page; endpoint = $endpoint; actualCount = $records.Count })
         # A short page ends transport enumeration, not the completeness check below.
@@ -105,9 +125,10 @@ foreach ($number in $PullRequestNumbers) {
     $footprints.Add([pscustomobject]@{
         number = $number; files = $files.ToArray(); expectedCount = $expected; actualCount = $files.Count
         isComplete = $true; pages = $pages.ToArray(); headSha = $before.head.sha; baseSha = $before.base.sha
-        evidence = 'rest-pages+unique-filenames+exact-count+stable-head-base'
+        reservedFiles = $owned.ToArray()
+        evidence = 'rest-pages+unique-filenames+exact-count+stable-head-base+validated-rename-aliases'
     })
-    foreach ($file in $files) { if ($union.Add($file)) { $reserved.Add($file) } }
+    foreach ($file in $owned) { if ($union.Add($file)) { $reserved.Add($file) } }
 }
 
 # One success object, only after every PR has passed. Never catch-and-return [].

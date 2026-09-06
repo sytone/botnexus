@@ -29,7 +29,7 @@ function New-Fixture([string[]]$Files, [int]$Expected = -1) {
     $metadata = @{ number = 3557; changed_files = $Expected; head = @{ sha = ('a' * 40) }; base = @{ sha = ('b' * 40) } } | ConvertTo-Json -Depth 5 -Compress
     $responses = @{ 'repos/owner/repo/pulls/3557' = $metadata }
     for ($page = 1; $page -le [Math]::Floor($Files.Count / 100) + 1; $page++) {
-        $rows = @($Files | Select-Object -Skip (($page - 1) * 100) -First 100 | ForEach-Object { @{ filename = $_ } })
+        $rows = @($Files | Select-Object -Skip (($page - 1) * 100) -First 100 | ForEach-Object { @{ filename = $_; status = 'modified' } })
         $responses["repos/owner/repo/pulls/3557/files?per_page=100&page=$page"] = ConvertTo-Json -InputObject $rows -Compress
     }
     return @{ responses = $responses; calls = [Collections.Generic.List[string]]::new() }
@@ -166,7 +166,7 @@ try {
     Test-Case 'MultiplePrsKeepPerPrEvidenceAndUnion' {
         $fixture = New-Fixture @('shared.cs', 'first.cs')
         $fixture.responses['repos/owner/repo/pulls/3558'] = '{"number":3558,"changed_files":2,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"},"base":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
-        $fixture.responses['repos/owner/repo/pulls/3558/files?per_page=100&page=1'] = '[{"filename":"shared.cs"},{"filename":"second.cs"}]'
+        $fixture.responses['repos/owner/repo/pulls/3558/files?per_page=100&page=1'] = '[{"filename":"shared.cs","status":"modified"},{"filename":"second.cs","status":"added"}]'
         $map = Invoke-Fixture $fixture @(3557, 3558)
         Assert-That ($map.pullRequests.Count -eq 2 -and $map.reservedFiles.Count -eq 3) 'PR records or union lost.'
         Assert-That ($map.pullRequests[1].actualCount -eq 2 -and $map.pullRequests[1].isComplete) 'Second PR evidence incorrect.'
@@ -190,6 +190,74 @@ try {
         Assert-Rejected $fixture 'JSON response'
     }
     Test-Case 'RejectNonpositivePrInput' { Assert-Rejected (New-Fixture @('src/a.cs')) 'invalid PR number' @(0) }
+    Test-Case 'RenamePlannerBlocksBothSidesAndAdmitsDisjoint' {
+        $fixture = New-Fixture @('new.cs')
+        $fixture.responses['repos/owner/repo/pulls/3557/files?per_page=100&page=1'] = '[{"filename":"new.cs","status":"renamed","previous_filename":"old.cs"}]'
+        $map = Invoke-Fixture $fixture
+        $state = @{
+            cycleId = 'rename-regression'; validationMode = 'remote'; openPrCount = 1
+            budgets = @{ implementation = 3; repair = 1; recovery = 1; maxImplementationStartsPerCycle = 4; openPrSoftCap = 5 }
+            remoteValidation = @{ active = 0; maxConcurrent = 2; committedCost = 0; maxCost = 120 }
+            reservedFiles = @($map.reservedFiles); workers = @()
+            candidates = @(foreach ($path in @('old.cs', 'new.cs', 'disjoint.cs')) {
+                @{ id = $path; lane = 'implementation'; trusted = $true; decisionFree = $true; files = @($path) }
+            })
+        }
+        $statePath = Join-Path $scratch 'rename-state.json'
+        $state | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $statePath -Encoding utf8NoBOM
+        $plan = & (Join-Path $PSScriptRoot 'Get-MaintenanceDispatchPlan.ps1') -StatePath $statePath
+        Assert-That (@($plan.blockers | Where-Object { $_.id -eq 'old.cs' -and $_.reason -eq 'file-overlap' }).Count -eq 1) 'Planner admitted the old side of a rename.'
+        Assert-That (@($plan.blockers | Where-Object { $_.id -eq 'new.cs' -and $_.reason -eq 'file-overlap' }).Count -eq 1) 'Planner admitted the new side of a rename.'
+        Assert-That ($plan.dispatch.Count -eq 1 -and $plan.dispatch[0].id -eq 'disjoint.cs') 'Disjoint candidate should be admitted alone.'
+        Assert-That ($map.isComplete -and $map.pullRequests[0].expectedCount -eq 1 -and $map.pullRequests[0].actualCount -eq 1) 'Rename must count as one changed record.'
+        Assert-That ($map.reservedFiles.Count -eq 2 -and $map.pullRequests[0].reservedFiles.Count -eq 2) 'Both ownership aliases must be evidenced.'
+        Assert-That ($map.pullRequests[0].files.Count -eq 1 -and $map.pullRequests[0].files[0] -ceq 'new.cs') 'Record filename compatibility changed.'
+    }
+    foreach ($bad in @(
+        '{"filename":"new.cs","status":"renamed"}',
+        '{"filename":"new.cs","status":"renamed","previous_filename":null}',
+        '{"filename":"new.cs","status":"renamed","previous_filename":" "}',
+        '{"filename":"new.cs","status":"renamed","previous_filename":42}',
+        '{"filename":"new.cs","status":"renamed","previous_filename":["old.cs"]}',
+        '{"filename":"new.cs","status":"renamed","previous_filename":"new.cs"}',
+        '{"filename":"new.cs"}',
+        '{"filename":"new.cs","status":null}',
+        '{"filename":"new.cs","status":42}',
+        '{"filename":"new.cs","status":"mystery"}',
+        '{"filename":"new.cs","status":"modified","previous_filename":"old.cs"}'
+    )) {
+        Test-Case "RejectRenameMetadata:$bad" {
+            $fixture = New-Fixture @('new.cs')
+            $fixture.responses['repos/owner/repo/pulls/3557/files?per_page=100&page=1'] = "[$bad]"
+            Assert-Rejected $fixture 'status|alias'
+        }
+    }
+    Test-Case 'RejectDuplicateRenameAliases' {
+        $fixture = New-Fixture @('new1.cs', 'new2.cs')
+        $fixture.responses['repos/owner/repo/pulls/3557/files?per_page=100&page=1'] = '[{"filename":"new1.cs","status":"renamed","previous_filename":"old.cs"},{"filename":"new2.cs","status":"renamed","previous_filename":"old.cs"}]'
+        Assert-Rejected $fixture 'duplicate.*alias'
+    }
+    Test-Case 'RenameCaseOnlyPreservesExactAliases' {
+        $fixture = New-Fixture @('src/a.cs')
+        $fixture.responses['repos/owner/repo/pulls/3557/files?per_page=100&page=1'] = '[{"filename":"src/a.cs","status":"renamed","previous_filename":"src/A.cs"}]'
+        $map = Invoke-Fixture $fixture
+        Assert-That (($map.reservedFiles -join '|') -ceq 'src/a.cs|src/A.cs') 'Case-only rename aliases collapsed.'
+    }
+    Test-Case 'RenameChainDeduplicatesOwnershipNotRecords' {
+        $fixture = New-Fixture @('middle.cs', 'new.cs')
+        $fixture.responses['repos/owner/repo/pulls/3557/files?per_page=100&page=1'] = '[{"filename":"middle.cs","status":"renamed","previous_filename":"old.cs"},{"filename":"new.cs","status":"renamed","previous_filename":"middle.cs"}]'
+        $map = Invoke-Fixture $fixture
+        Assert-That ($map.pullRequests[0].actualCount -eq 2 -and $map.reservedFiles.Count -eq 3) 'Shared aliases must not inflate record counts.'
+        Assert-That (($map.reservedFiles -join '|') -ceq 'middle.cs|old.cs|new.cs') 'Rename-chain reservation missing.'
+    }
+    Test-Case 'RejectDuplicateAliasAcrossPages' {
+        $fixture = New-Fixture (New-Files 101)
+        $rows = @((New-Files 100) | ForEach-Object { @{ filename = $_; status = 'modified' } })
+        $rows[0] = @{ filename = 'src/file-001.cs'; status = 'renamed'; previous_filename = 'old.cs' }
+        $fixture.responses['repos/owner/repo/pulls/3557/files?per_page=100&page=1'] = ConvertTo-Json -InputObject $rows -Compress
+        $fixture.responses['repos/owner/repo/pulls/3557/files?per_page=100&page=2'] = '[{"filename":"src/file-101.cs","status":"renamed","previous_filename":"old.cs"}]'
+        Assert-Rejected $fixture 'duplicate.*alias'
+    }
     Test-Case 'PreserveCallerEnvironment' {
         foreach ($name in $environmentBefore.Keys) {
             Assert-That ([Environment]::GetEnvironmentVariable($name) -ceq $environmentBefore[$name]) "Caller environment changed: $name"
