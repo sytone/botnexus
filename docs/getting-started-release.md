@@ -123,13 +123,7 @@ Check that it's running:
 curl http://localhost:5005/health
 ```
 
-Expected response:
-
-```json
-{
-  "status": "ok"
-}
-```
+For a healthy, recently active gateway, the response contains `"status": "ok"`. It also includes `lastActivity` and `inactivitySeconds`; inactivity can produce `warning` or `degraded`, and a health-handler timeout returns HTTP 503. This is a process-health check, not proof that provider authentication succeeds.
 
 **Custom port:**
 
@@ -178,12 +172,12 @@ botnexus agent list
 botnexus config set agents.assistant.provider github-copilot
 botnexus config set agents.assistant.model gpt-4.1
 botnexus config set gateway.defaultAgentId assistant
-botnexus config set agents.defaults.toolTimeoutSeconds 300
+botnexus config set agents.assistant.toolTimeoutSeconds 300
 botnexus config set agents.assistant.memory.enabled true
 botnexus validate
 ```
 
-The CLI writes through the active configuration backend. BotNexus initializes the agent workspace on first use. An example layout after instruction and memory files have been created is:
+The CLI writes through the active configuration backend. Set values on the named agent: the current agent loader does not merge `agents.defaults` into it. BotNexus initializes the agent workspace on first use. An example layout after instruction and memory files have been created is:
 
 ```text
 ~/.botnexus/agents/assistant/workspace/
