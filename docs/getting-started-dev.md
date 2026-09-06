@@ -20,10 +20,12 @@ The single guide for building, running, and developing BotNexus from source. If 
 ```powershell
 git clone https://github.com/sytone/botnexus.git
 cd botnexus
-.\scripts\dev-loop.ps1
+.\scripts\dev-loop.ps1 -SkipTests
 ```
 
-That's it. `dev-loop.ps1` builds the full solution, runs Gateway tests, and starts the Gateway — stopping at the first failure.
+`dev-loop.ps1 -SkipTests` builds the solution and starts a development Gateway, stopping if the build fails. Without `-SkipTests`, the script runs local Gateway tests before startup; always include the switch for this workflow and use [remote validation](#running-tests) for tests.
+
+> Run this only on a dedicated development host without a live Gateway. `-SkipTests` suppresses tests, not Gateway startup; a different port alone does not isolate shared runtime state.
 
 The Gateway starts at `http://localhost:5005` with the WebUI at the root URL.
 
@@ -82,17 +84,17 @@ Key features:
 
 ## 4. Development workflow
 
-Use `dev-loop.ps1` for the edit → build → test → run cycle:
+Use `dev-loop.ps1 -SkipTests` for the local edit → build → run cycle on a dedicated development host. Run tests separately through the remote validation gate:
 
 ```powershell
-# Build + test + run (the standard workflow)
-.\scripts\dev-loop.ps1
+# Build + run, without local tests
+.\scripts\dev-loop.ps1 -SkipTests
 
-# Watch mode — auto-rebuild on source changes
-.\scripts\dev-loop.ps1 -Watch
+# Watch mode — auto-rebuild on source changes, without local tests
+.\scripts\dev-loop.ps1 -Watch -SkipTests
 
-# Custom port
-.\scripts\dev-loop.ps1 -Port 9090
+# Custom port, without local tests (not runtime-state isolation)
+.\scripts\dev-loop.ps1 -Port 9090 -SkipTests
 ```
 
 ### What changes need a restart?
@@ -115,8 +117,10 @@ scripts/repo/Validate-PreCommit.ps1
 scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>
 ```
 
-All tests must pass before pushing. Test execution runs remotely - see
-[Validation](development/azure-build-test-runner.md). No git hook runs tests.
+All required tests must pass before pushing code changes. Test execution runs remotely - see
+[Validation](development/azure-build-test-runner.md). Do not run local `dotnet test` or select local validation on a host with a live Gateway. The `-SkipTests` development loop is not validation evidence. No git hook runs tests.
+
+For documentation-only changes, run `npm run docs:build` instead of the remote test gate.
 
 ---
 
