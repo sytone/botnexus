@@ -15,7 +15,8 @@ namespace BotNexus.Persistence.Seam.Tests.Sessions;
 /// <remarks>
 /// <para>
 /// The guarantees under test live in SQL and in the store's striped per-session lock: the
-/// unconditional <c>INSERT … ON CONFLICT DO UPDATE</c> upsert plus full-history rewrite behind
+/// unconditional <c>INSERT … ON CONFLICT DO UPDATE</c> session-row upsert plus append/targeted
+/// history persistence behind
 /// <see cref="SqliteSessionStore.SaveAsync(GatewaySession, System.Threading.CancellationToken)"/>,
 /// the lock-scoped fence re-read behind the fenced overload, the insert-only append, the
 /// read-merge-write metadata patch, and the conditional status <c>UPDATE</c>. A mock or an

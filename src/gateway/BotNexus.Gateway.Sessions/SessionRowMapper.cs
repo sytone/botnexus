@@ -100,6 +100,8 @@ internal static class SessionRowMapper
     internal static SessionEntry MapHistoryEntry(SqliteDataReader reader)
         => new()
         {
+            PersistenceId = reader.GetInt64(reader.GetOrdinal("id")),
+            PersistenceKey = GetNullableString(reader, "persistence_key"),
             Role = MessageRole.FromString(reader.IsDBNull(reader.GetOrdinal("role")) ? "user" : reader.GetString(reader.GetOrdinal("role"))),
             Content = GetNullableString(reader, "content") ?? string.Empty,
             Timestamp = ParseTimestamp(GetNullableString(reader, "timestamp")),
