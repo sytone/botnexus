@@ -141,6 +141,25 @@ deleted rather than maintained.
 - **Indentation is 4 spaces, UTF-8, LF line endings**, per
   [`.editorconfig`](https://github.com/sytone/botnexus/blob/main/.editorconfig).
 
+### Operations belong to their subject
+
+When an operation acts on an existing type that is genuinely its subject, default
+to an extension method on that type rather than a static helper taking the
+subject as argument zero. A new helper class needs a reason. Name the extension
+class for the subject so the operation is discoverable at the call site.
+
+Factories and parsers that create a subject, and genuinely multi-subject
+operations with no single owner, remain static. This is not a blanket conversion
+of private file-local helpers; change those only where readability improves.
+Before converting a call, verify the proposed name against the subject's instance
+members: an applicable instance method takes precedence over an extension and can
+silently change which implementation runs. Preserve the operation's semantics.
+
+See [`CronExpressionExtensions`](https://github.com/sytone/botnexus/blob/main/src/gateway/BotNexus.Cron/CronExpressionExtensions.cs):
+`expression.NextRun(now, tz)` operates on Cronos' sealed `CronExpression` without
+wrapping or owning that type. Its summary explains the shared scheduling policy
+and why the extension uses a distinct name rather than `GetNextOccurrence`.
+
 ### Cross-platform code is mandatory
 
 BotNexus runs on **Windows and Linux**, and CI runs both. Production code injects
