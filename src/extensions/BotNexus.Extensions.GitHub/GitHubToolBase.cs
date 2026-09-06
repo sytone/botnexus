@@ -117,12 +117,15 @@ public abstract class GitHubToolBase : IAgentTool
     /// <remarks>
     /// Errors are objects too, not prose: an agent deciding whether to retry needs the status code
     /// as a field, and the previous shell-based path forced it to pattern-match stderr text.
+    /// Identity is the configured human-readable label, not proof of an authenticated GitHub login;
+    /// keeping it alongside the repository makes access failures actionable without exposing credentials.
     /// </remarks>
-    protected static AgentToolResult ErrorResult(string tool, string repository, GitHubApiResponse response) =>
+    protected AgentToolResult ErrorResult(string tool, string repository, GitHubApiResponse response) =>
         StructuredResult(new
         {
             tool,
             repository,
+            identity = Config.Identity,
             ok = false,
             status = response.StatusCode,
             error = response.ErrorMessage ?? $"GitHub returned status {response.StatusCode}.",
