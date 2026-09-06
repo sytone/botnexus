@@ -3704,7 +3704,7 @@ http://localhost:5005/hub/gateway
 
 **Transport:** SignalR negotiation (WebSocket / Server-Sent Events / Long Polling as available).
 
-**Authentication:** Subject to `GatewayAuthMiddleware` rules. In development mode (no API keys configured), connections are allowed without auth.
+**Authentication:** See [Authentication](#authentication) for gateway API-key middleware rules, including the optional [no-key Origin guard](#no-key-development-mode). Separately, `GatewayHub` applies the `SignalRHubAuth` authorization policy: registered authentication schemes require an authenticated user; with no schemes, that hub requirement permits anonymous callers. No configured API keys alone is not a guarantee that a connection is allowed. See [SignalR authorization](./api/signalr.md#authorization) for the hub policy and per-method scope guards.
 
 For the full hub method contract (client-to-server invocations and server-to-client events), see the [SignalR Hub Contract](./signalr-hub-contract.md).
 
