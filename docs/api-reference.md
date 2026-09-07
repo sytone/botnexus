@@ -37,9 +37,11 @@ All endpoints follow REST conventions and return JSON responses. The default por
 
 ## Sparse Fieldsets (`?fields=`)
 
-Any `GET` endpoint accepts an optional `?fields=` query parameter that projects each returned
-object down to only the requested **top-level** fields. This is useful for reducing payload size
-and bandwidth when a client only needs a few properties.
+Supported MVC controller `GET` responses accept an optional `?fields=` query parameter that
+projects returned JSON objects down to the requested **top-level** fields. The gateway registers
+`SparseFieldsetResultFilter` through `AddControllers`; it is not middleware or a filter for minimal
+API endpoints. Projection requires a non-null `ObjectResult` with a successful status (2xx, or no
+explicit status), a non-`ProblemDetails` value, and at least one usable requested field name.
 
 **Default is everything.** When `?fields=` is omitted (or empty/whitespace), the response is the
 full object, byte-for-byte identical to the behaviour before this feature existed. Sparse fieldsets
@@ -47,14 +49,18 @@ are strictly additive and never change the default response shape.
 
 ### Rules
 
+For responses that enter the MVC result filter:
+
 - **Comma-separated:** `?fields=agentId,displayName`.
 - **Case-insensitive:** field names are matched case-insensitively against the JSON property names
   (`?fields=agentid,DISPLAYNAME` works).
 - **Lenient / unknown fields ignored:** unknown field names are silently dropped and never produce a
-  `400`. If none of the requested names match, an empty object `{}` is returned per item.
+  `400`. If none of the requested names match, each projected JSON object becomes `{}`.
 - **Empty parameter = full object:** `?fields=` or `?fields=%20%20` returns the full object.
-- **Applies to lists and single items:** both array responses (list endpoints) and single-object
-  responses (get-by-id endpoints) are projected. For arrays, every element is projected.
+- **Objects and arrays:** single JSON objects and object elements of JSON arrays are projected.
+  Non-object array elements remain unchanged; nested objects inside a selected property are not filtered.
+- **Other results pass through:** null values, other MVC result kinds, scalar JSON payloads, and
+  values whose serialization raises `NotSupportedException` are left unchanged.
 - **Top-level only:** nested field selection (e.g. `?fields=metadata.builtin`) is **not** supported
   in v1. Only top-level properties are projected.
 - **Errors pass through:** non-2xx responses and `ProblemDetails` error bodies are never projected.
@@ -82,8 +88,11 @@ X-Api-Key: your-api-key
 { "agentId": "farnsworth", "displayName": "Farnsworth" }
 ```
 
-The same parameter works on `GET /api/conversations` and `GET /api/conversations/{id}` and, by
-virtue of being a global result filter, on all other `GET` endpoints.
+The same parameter works on the MVC `GET /api/conversations` and `GET /api/conversations/{id}`
+responses. It does not follow that every `GET` endpoint supports projection: `/api/version`,
+`/api/uptime`, and `/api/world` are mapped separately as minimal `Results.Ok` handlers and do not
+enter this MVC filter. See the [filter implementation](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Api/Filters/SparseFieldsetResultFilter.cs)
+and [endpoint registration](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Api/Program.cs).
 
 ---
 
@@ -3532,67 +3541,32 @@ Each tool call shows:
 
 ## Loop Detection & Iteration Limits
 
-### Configuration-Only Feature
+### Platform configuration boundary
 
-Agent loop detection and iteration limits are configured via `config.json` and the [Configuration Guide](configuration.md) — they are not exposed through REST API endpoints. This is intentional to ensure consistency and prevent accidental runtime misconfigurations.
+`MaxToolIterations` and `MaxRepeatedToolCalls` are not settings on the platform's
+[`AgentDefinitionConfig`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/PlatformConfig.cs)
+or the agent-core [`AgentLoopConfig`](https://github.com/Sytone/botnexus/blob/main/src/agent/BotNexus.Agent.Core/Configuration/AgentLoopConfig.cs).
+The `MaxToolIterations` property in the standalone
+[`CodingAgentConfig` example](https://github.com/Sytone/botnexus/blob/main/examples/BotNexus.CodingAgent/CodingAgentConfig.cs)
+is not a platform agent setting. There is no platform binding for `MaxRepeatedToolCalls`.
+Do not add these keys or the obsolete `BotNexus/Agents/Named` recipe to platform configuration.
 
-### Settings
+The earlier duplicate-call counter, blocking algorithm, and tuning recommendations described here
+were not supported by those source contracts. They must not be relied on as a safety control.
+Runtime tool timeouts, pre-tool hooks, and retry settings are distinct mechanisms, not aliases for
+a universal tool-iteration limit or an identical-arguments call counter.
 
-Two settings control the agent loop behavior:
+### Separate delegated turn budgets
 
-| Setting | Default | Purpose |
-|---------|---------|---------|
-| `MaxToolIterations` | 40 | Max number of LLM calls in a single agent cycle |
-| `MaxRepeatedToolCalls` | 2 | Max times the same tool can be called with identical arguments |
+These options apply to delegated work, not all tool calls in a normal agent run:
 
-### Configuration Example
+| Source contract | Scope |
+|---|---|
+| [`SubAgentOptions.DefaultMaxTurns` and `MaxTurnsCeiling`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/SubAgentOptions.cs) | Default turn budget and requested-turn ceiling for sub-agent runs. |
+| [`AgentExchangeOptions.MaxTurnsCeiling`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/AgentExchangeOptions.cs) | Upper bound on back-and-forth turns within a single `agent_converse` invocation. |
 
-```json
-{
-  "BotNexus": {
-    "Agents": {
-      "MaxToolIterations": 40,
-      "MaxRepeatedToolCalls": 2,
-      "Named": {
-        "careful-agent": {
-          "MaxToolIterations": 10,
-          "MaxRepeatedToolCalls": 1
-        },
-        "researcher": {
-          "MaxToolIterations": 100,
-          "MaxRepeatedToolCalls": 5
-        }
-      }
-    }
-  }
-}
-```
-
-### How Loop Detection Works
-
-When an agent repeatedly calls the same tool with identical arguments:
-
-1. **First call:** Tool signature computed (`tool_name + normalized_arguments`)
-2. **Second call:** Signature compared to first; counter incremented to 2
-3. **Threshold reached:** If counter ≥ `MaxRepeatedToolCalls`, execution is blocked
-4. **LLM receives error:** Error returned to agent: `"Tool 'X' called N times with identical arguments"`
-5. **Agent recovers:** Agent can now try a different tool or modify arguments
-
-**Example:**
-
-```text
-Iteration 0: search_files("") → executes (count: 1)
-Iteration 1: search_files("") → executes (count: 2)
-Iteration 2: search_files("") → BLOCKED (count: 2 >= MaxRepeatedToolCalls: 2)
-```
-
-### Best Practices
-
-- **Most agents (10-40 iterations):** Default settings work well
-- **Safety-critical agents:** Use `MaxToolIterations=10-20, MaxRepeatedToolCalls=1`
-- **Exploratory/research agents:** Use `MaxToolIterations=50+, MaxRepeatedToolCalls=3-5`
-
-For detailed configuration guidance, see [Configuration Guide § Agent Iteration & Loop Detection](configuration.md#agent-iteration--loop-detection).
+Neither contract establishes a platform-wide duplicate-tool-call guard. Consult the owning source
+and the specific delegation surface rather than translating the retired knobs into similarly named settings.
 
 ---
 
@@ -3658,7 +3632,7 @@ The key is written to the log; the value never is.
 ## Webhooks
 
 Webhooks let external systems deliver a message to an agent over signed HTTP. All
-routes live under pi/webhooks. This section is a summary; see the full
+routes live under `/api/webhooks`. This section is a summary; see the full
 [Webhooks API reference](api/webhooks.md) and the [Webhooks guide](guides/webhooks.md)
 for concepts, response modes, and worked HMAC signing examples.
 
@@ -3676,10 +3650,10 @@ for concepts, response modes, and worked HMAC signing examples.
 
 ### Inbound delivery
 
-`	ext
+```http
 POST /api/webhooks/{agentId}/{webhookId}
 X-BotNexus-Signature-256: sha256=<hex>
-`
+```
 
 Body: `{ "message": string, "responseMode": "async"|"sync"|"callback"|null,
 "agentAction": bool|null, "callbackUrl": string|null }`.
