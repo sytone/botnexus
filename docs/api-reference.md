@@ -31,15 +31,17 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 
 All endpoints follow REST conventions and return JSON responses. The default port is **5005** (configurable via `config.json`).
 
-**Authentication:** All endpoints require API key authentication (see [Authentication](#authentication) below).
+**Authentication:** Requests handled by `GatewayAuthMiddleware` require a gateway API key when keys are configured, except for the explicit middleware bypasses listed in [Authentication](#authentication). Bypassing this middleware does not bypass an endpoint's own authentication. When the API-key handler has no configured identities, it uses development-mode admin access, subject to the optional browser-Origin guard described below.
 
 ---
 
 ## Sparse Fieldsets (`?fields=`)
 
-Any `GET` endpoint accepts an optional `?fields=` query parameter that projects each returned
-object down to only the requested **top-level** fields. This is useful for reducing payload size
-and bandwidth when a client only needs a few properties.
+Supported MVC controller `GET` responses accept an optional `?fields=` query parameter that
+projects returned JSON objects down to the requested **top-level** fields. The gateway registers
+`SparseFieldsetResultFilter` through `AddControllers`; it is not middleware or a filter for minimal
+API endpoints. Projection requires a non-null `ObjectResult` with a successful status (2xx, or no
+explicit status), a non-`ProblemDetails` value, and at least one usable requested field name.
 
 **Default is everything.** When `?fields=` is omitted (or empty/whitespace), the response is the
 full object, byte-for-byte identical to the behaviour before this feature existed. Sparse fieldsets
@@ -47,14 +49,18 @@ are strictly additive and never change the default response shape.
 
 ### Rules
 
+For responses that enter the MVC result filter:
+
 - **Comma-separated:** `?fields=agentId,displayName`.
 - **Case-insensitive:** field names are matched case-insensitively against the JSON property names
   (`?fields=agentid,DISPLAYNAME` works).
 - **Lenient / unknown fields ignored:** unknown field names are silently dropped and never produce a
-  `400`. If none of the requested names match, an empty object `{}` is returned per item.
+  `400`. If none of the requested names match, each projected JSON object becomes `{}`.
 - **Empty parameter = full object:** `?fields=` or `?fields=%20%20` returns the full object.
-- **Applies to lists and single items:** both array responses (list endpoints) and single-object
-  responses (get-by-id endpoints) are projected. For arrays, every element is projected.
+- **Objects and arrays:** single JSON objects and object elements of JSON arrays are projected.
+  Non-object array elements remain unchanged; nested objects inside a selected property are not filtered.
+- **Other results pass through:** null values, other MVC result kinds, scalar JSON payloads, and
+  values whose serialization raises `NotSupportedException` are left unchanged.
 - **Top-level only:** nested field selection (e.g. `?fields=metadata.builtin`) is **not** supported
   in v1. Only top-level properties are projected.
 - **Errors pass through:** non-2xx responses and `ProblemDetails` error bodies are never projected.
@@ -82,8 +88,11 @@ X-Api-Key: your-api-key
 { "agentId": "farnsworth", "displayName": "Farnsworth" }
 ```
 
-The same parameter works on `GET /api/conversations` and `GET /api/conversations/{id}` and, by
-virtue of being a global result filter, on all other `GET` endpoints.
+The same parameter works on the MVC `GET /api/conversations` and `GET /api/conversations/{id}`
+responses. It does not follow that every `GET` endpoint supports projection: `/api/version`,
+`/api/uptime`, and `/api/world` are mapped separately as minimal `Results.Ok` handlers and do not
+enter this MVC filter. See the [filter implementation](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Api/Filters/SparseFieldsetResultFilter.cs)
+and [endpoint registration](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Api/Program.cs).
 
 ---
 
@@ -98,13 +107,34 @@ GET /api/agents
 X-Api-Key: your-api-key-here
 ```
 
-Or pass it as a query parameter:
+Alternatively, send the same gateway API key as a Bearer credential:
 
 ```http
-GET /api/agents?apiKey=your-api-key-here
+GET /api/agents
+Authorization: Bearer your-api-key-here
 ```
 
-**Exemptions:** `/health` and `/swagger` are exempt from authentication. The Blazor WebUI is also exempt when running in development mode.
+The built-in `ApiKeyGatewayAuthHandler` reads headers only; an `apiKey` query parameter is not supported. A nonblank `X-Api-Key` header takes precedence over `Authorization: Bearer` if both are present.
+
+### Gateway API-key middleware bypasses
+
+`GatewayAuthMiddleware.ShouldSkipAuth` bypasses this middleware for the following requests. These are not a blanket declaration that the endpoints are unsecured: endpoint-specific authentication and other middleware still apply.
+
+| Request | Scope of the bypass |
+|---|---|
+| Exact `/health` path | Bypasses the gateway API-key middleware. |
+| `/swagger` path prefix | Bypasses the gateway API-key middleware. |
+| `/api/federation/cross-world` path prefix | Uses federation authentication at the endpoint; the relay checks `X-Cross-World-Key` against the source world and target agent. |
+| `POST` under `/api/webhooks`, except the `/api/webhooks/registrations` and `/api/webhooks/runs` prefixes | Inbound delivery uses its registered webhook secret and HMAC signature verification. Registration/run management is not covered by this bypass. |
+| `GET` or `HEAD` for an existing non-directory file in the web root, outside `/api` | The static-file check is independent of development mode. It does not exempt arbitrary WebUI paths, missing files, directories, or API routes. |
+
+Prefixes above use path-segment matching, not arbitrary string-prefix matching. A bypass does not create an endpoint or imply that every HTTP method is supported there.
+
+### No-key development mode
+
+When the handler's configured API-key identity map is empty, it normally grants the `gateway-dev` admin identity. If the optional `GatewayDevOriginEnforcement` feature flag is enabled, a nonblank browser `Origin` must match `gateway.cors.allowedOrigins`; a rejected Origin produces an authentication failure (`401` from this middleware), not an admin identity. Missing or blank Origin headers are allowed by this guard. With no usable configured origins, the allow-list falls back to `http://localhost:5005`.
+
+The Origin guard is off by default. This no-key behavior applies to requests that reach the API-key handler; endpoints bypassing it retain their own authentication requirements. Do not treat no-key development mode as a production authentication policy.
 
 ### Request & Response Headers
 
@@ -3511,67 +3541,32 @@ Each tool call shows:
 
 ## Loop Detection & Iteration Limits
 
-### Configuration-Only Feature
+### Platform configuration boundary
 
-Agent loop detection and iteration limits are configured via `config.json` and the [Configuration Guide](configuration.md) — they are not exposed through REST API endpoints. This is intentional to ensure consistency and prevent accidental runtime misconfigurations.
+`MaxToolIterations` and `MaxRepeatedToolCalls` are not settings on the platform's
+[`AgentDefinitionConfig`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/PlatformConfig.cs)
+or the agent-core [`AgentLoopConfig`](https://github.com/Sytone/botnexus/blob/main/src/agent/BotNexus.Agent.Core/Configuration/AgentLoopConfig.cs).
+The `MaxToolIterations` property in the standalone
+[`CodingAgentConfig` example](https://github.com/Sytone/botnexus/blob/main/examples/BotNexus.CodingAgent/CodingAgentConfig.cs)
+is not a platform agent setting. There is no platform binding for `MaxRepeatedToolCalls`.
+Do not add these keys or the obsolete `BotNexus/Agents/Named` recipe to platform configuration.
 
-### Settings
+The earlier duplicate-call counter, blocking algorithm, and tuning recommendations described here
+were not supported by those source contracts. They must not be relied on as a safety control.
+Runtime tool timeouts, pre-tool hooks, and retry settings are distinct mechanisms, not aliases for
+a universal tool-iteration limit or an identical-arguments call counter.
 
-Two settings control the agent loop behavior:
+### Separate delegated turn budgets
 
-| Setting | Default | Purpose |
-|---------|---------|---------|
-| `MaxToolIterations` | 40 | Max number of LLM calls in a single agent cycle |
-| `MaxRepeatedToolCalls` | 2 | Max times the same tool can be called with identical arguments |
+These options apply to delegated work, not all tool calls in a normal agent run:
 
-### Configuration Example
+| Source contract | Scope |
+|---|---|
+| [`SubAgentOptions.DefaultMaxTurns` and `MaxTurnsCeiling`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/SubAgentOptions.cs) | Default turn budget and requested-turn ceiling for sub-agent runs. |
+| [`AgentExchangeOptions.MaxTurnsCeiling`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/AgentExchangeOptions.cs) | Upper bound on back-and-forth turns within a single `agent_converse` invocation. |
 
-```json
-{
-  "BotNexus": {
-    "Agents": {
-      "MaxToolIterations": 40,
-      "MaxRepeatedToolCalls": 2,
-      "Named": {
-        "careful-agent": {
-          "MaxToolIterations": 10,
-          "MaxRepeatedToolCalls": 1
-        },
-        "researcher": {
-          "MaxToolIterations": 100,
-          "MaxRepeatedToolCalls": 5
-        }
-      }
-    }
-  }
-}
-```
-
-### How Loop Detection Works
-
-When an agent repeatedly calls the same tool with identical arguments:
-
-1. **First call:** Tool signature computed (`tool_name + normalized_arguments`)
-2. **Second call:** Signature compared to first; counter incremented to 2
-3. **Threshold reached:** If counter ≥ `MaxRepeatedToolCalls`, execution is blocked
-4. **LLM receives error:** Error returned to agent: `"Tool 'X' called N times with identical arguments"`
-5. **Agent recovers:** Agent can now try a different tool or modify arguments
-
-**Example:**
-
-```text
-Iteration 0: search_files("") → executes (count: 1)
-Iteration 1: search_files("") → executes (count: 2)
-Iteration 2: search_files("") → BLOCKED (count: 2 >= MaxRepeatedToolCalls: 2)
-```
-
-### Best Practices
-
-- **Most agents (10-40 iterations):** Default settings work well
-- **Safety-critical agents:** Use `MaxToolIterations=10-20, MaxRepeatedToolCalls=1`
-- **Exploratory/research agents:** Use `MaxToolIterations=50+, MaxRepeatedToolCalls=3-5`
-
-For detailed configuration guidance, see [Configuration Guide § Agent Iteration & Loop Detection](configuration.md#agent-iteration--loop-detection).
+Neither contract establishes a platform-wide duplicate-tool-call guard. Consult the owning source
+and the specific delegation surface rather than translating the retired knobs into similarly named settings.
 
 ---
 
@@ -3637,7 +3632,7 @@ The key is written to the log; the value never is.
 ## Webhooks
 
 Webhooks let external systems deliver a message to an agent over signed HTTP. All
-routes live under pi/webhooks. This section is a summary; see the full
+routes live under `/api/webhooks`. This section is a summary; see the full
 [Webhooks API reference](api/webhooks.md) and the [Webhooks guide](guides/webhooks.md)
 for concepts, response modes, and worked HMAC signing examples.
 
@@ -3655,16 +3650,16 @@ for concepts, response modes, and worked HMAC signing examples.
 
 ### Inbound delivery
 
-`	ext
+```http
 POST /api/webhooks/{agentId}/{webhookId}
 X-BotNexus-Signature-256: sha256=<hex>
-`
+```
 
 Body: `{ "message": string, "responseMode": "async"|"sync"|"callback"|null,
 "agentAction": bool|null, "callbackUrl": string|null }`.
 
 - **async** (default): 202 + Location poll URL; agent runs in background.
-- **sync**: 200 with the agent response inline (≤120s, else downgrades to 202).
+- **sync**: 200 with the inline response when the run record is `Completed`; 503 if execution returns without a completed run. Caught queue-timeout or cancellation paths, when the caller has not cancelled, mark the run timed out and return 202 with a Location poll URL. Poll that URL: 202 is not proof of execution or continued background processing, and a queued request may never have been dispatched. Admission can be rejected before waiting. The handler requests cancellation after 120 seconds and links caller/shutdown cancellation; this is not a guarantee that processing stops at exactly 120 seconds. Caller cancellation is not handled by those 202 catches.
 - **callback**: 202; result POSTed to callbackUrl on completion.
 
 The signature is sha256= + lowercase hex of HMAC-SHA256(secret, rawBody). An
@@ -3683,7 +3678,7 @@ http://localhost:5005/hub/gateway
 
 **Transport:** SignalR negotiation (WebSocket / Server-Sent Events / Long Polling as available).
 
-**Authentication:** Subject to `GatewayAuthMiddleware` rules. In development mode (no API keys configured), connections are allowed without auth.
+**Authentication:** See [Authentication](#authentication) for gateway API-key middleware rules, including the optional [no-key Origin guard](#no-key-development-mode). Separately, `GatewayHub` applies the `SignalRHubAuth` authorization policy: registered authentication schemes require an authenticated user; with no schemes, that hub requirement permits anonymous callers. No configured API keys alone is not a guarantee that a connection is allowed. See [SignalR authorization](./api/signalr.md#authorization) for the hub policy and per-method scope guards.
 
 For the full hub method contract (client-to-server invocations and server-to-client events), see the [SignalR Hub Contract](./signalr-hub-contract.md).
 
