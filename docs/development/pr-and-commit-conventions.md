@@ -154,8 +154,14 @@ the observed error. Do not emulate cascading rebases and PR retargeting with ad-
 - The bottom PR targets `main`; every upper PR targets the branch immediately below it.
 - Every layer has its own issue, or uses the sanctioned partial-work form so no umbrella issue closes early.
 - Run the normal compile, remote-validation, PR-title/body, issue-link, UI-evidence, and scope gates for
-  **each layer**. Layer scope is the diff against its immediate parent; whole-stack safety is still checked
-  against `origin/main`.
+  **each layer**. The helper evaluates layer scope against its immediate parent and enforces ancestry:
+  the parent must be an ancestor of the layer, and current `origin/main` must be an ancestor of the parent.
+- **Manual whole-stack review is required:** review the complete diff against `origin/main` for
+  contamination and protected-path changes under the applicable ownership and authorization rules.
+  The helper's `wholeStackStat` is printed for inspection; it does not enforce a separate whole-stack
+  contamination or protected-path rejection policy. Automatic enforcement remains an explicit gap in
+  [#3909 AC3](https://github.com/Sytone/botnexus/issues/3909); a passing helper invocation is not proof
+  that this manual review occurred.
 - Prepare and validate each layer with the sanctioned PR helper before linking/submitting the stack. The
   stack client manages topology; it does not replace BotNexus policy checks.
 - Use `gh stack init` / `add` to establish topology, `gh stack rebase` for cascading rebases, and
