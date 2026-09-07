@@ -1,512 +1,494 @@
 # Agent Execution Architecture
 
-This document describes how agents are loaded, instantiated, executed, and managed within BotNexus Gateway.
+This page describes how BotNexus Gateway loads descriptors, creates session-bound
+instances, executes turns, and manages tools, context, and shutdown. The examples
+are source-aligned excerpts, not replacement interface definitions or a benchmark.
 
 ## Overview
 
-Agent execution follows a layered approach:
-
-1. **Agent Registry** (`IAgentRegistry`) → Agent metadata and configuration
-2. **Agent Supervisor** (`IAgentSupervisor`) → Instance lifecycle management
-3. **Isolation Strategy** (`IIsolationStrategy`) → Agent execution environment
-4. **Agent Handle** (`IAgentHandle`) → Execution interface
-5. **AgentCore** (`BotNexus.Agent.Core.Agent`) → Core agent loop
-6. **Agent Loop Runner** (`AgentLoopRunner`) → LLM interaction cycle
+| Layer | Responsibility |
+| --- | --- |
+| `IAgentConfigurationSource` / `IAgentRegistry` | Load and store agent descriptors |
+| `IAgentSupervisor` | Create, reuse, inspect, and stop session-bound instances |
+| `IIsolationStrategy` | Construct an execution environment and return a handle |
+| `IAgentHandle` | Blocking prompts, streaming, and run-control operations |
+| `BotNexus.Agent.Core.Agent` | Own agent state and message queues |
+| `AgentLoopRunner` / `ToolExecutor` | Run model turns and execute requested tools |
 
 ## Agent Descriptor Loading
 
 ### AgentDescriptor Model
 
+[`AgentDescriptor`](https://github.com/Sytone/botnexus/blob/main/src/domain/BotNexus.Domain/Gateway/Models/AgentDescriptor.cs)
+is a sealed record containing static registration settings; runtime instance state
+belongs to `AgentInstance`. Selected members (other descriptor fields omitted):
+
 ```csharp
-public record AgentDescriptor
-{
-    public AgentId AgentId { get; init; }
-    public string DisplayName { get; init; }
-    public string? Description { get; init; }
-    
-    // Model Configuration
-    public string ApiProvider { get; init; }
-    public string ModelId { get; init; }
-    
-    // Execution
-    public ExecutionStrategy ExecutionStrategy { get; init; }  // InProcess, Container, Remote
-    public int MaxConcurrentSessions { get; init; }
-    
-    // Tools and Capabilities
-    public List<string> Tools { get; init; }
-    public List<string> SubAgentIds { get; init; }
-    
-    // Prompts
-    public string? SystemPrompt { get; init; }
-    public string? HeartbeatPrompt { get; init; }
-    
-    // Security
-    public FileAccessPolicy FileAccess { get; init; }
-    
-    // Extensions
-    public List<ExtensionReference> Extensions { get; init; }
-    
-    // Soul Configuration
-    public SoulAgentConfig? Soul { get; init; }
-}
+public required AgentId AgentId { get; init; }
+public required string DisplayName { get; init; }
+public required string ModelId { get; init; }
+public required string ApiProvider { get; init; }
+public string IsolationStrategy { get; init; } = "in-process";
+public int MaxConcurrentSessions { get; init; }
+public IReadOnlyList<string> ToolIds { get; init; } = [];
+public IReadOnlyList<string> SubAgentIds { get; init; } = [];
+public string? SystemPrompt { get; init; }
+public string? SystemPromptFile { get; init; }
+public IReadOnlyList<string> SystemPromptFiles { get; init; } = [];
+public HeartbeatAgentConfig? Heartbeat { get; init; }
+public SoulAgentConfig? Soul { get; init; }
+public FileAccessPolicy? FileAccess { get; init; }
+public IReadOnlyDictionary<string, System.Text.Json.JsonElement> ExtensionConfig
+    { get; init; } = new Dictionary<string, System.Text.Json.JsonElement>();
 ```
+
+`ApiProvider` is the **provider instance key** used by the model registry, not an
+API contract name. `Kind` defaults to `Named`; `SubAgent` is reserved for runtime
+spawning. Thinking and context-window overrides are separate descriptor fields.
+There is no per-descriptor `ToolExecutionMode` setting.
 
 ### Configuration Sources
 
-**PlatformConfig (Primary):**
+[`PlatformConfigAgentSource`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/PlatformConfigAgentSource.cs)
+projects the `PlatformConfig.Agents` dictionary into descriptors. The dictionary
+key supplies the agent ID. This JSON shows the agent section's shape; replace the
+illustrative provider and model strings with a pair registered in your deployment:
 
 ```json
 {
-  "worldId": "my-world",
-  "agents": [
-    {
-      "id": "gateway",
-      "displayName": "Gateway Assistant",
-      "model": "copilot:gpt-4o",
-      "executionStrategy": "in-process",
-      "tools": ["read", "write", "edit", "exec", "grep", "glob"],
-      "systemPrompt": "You are a helpful coding assistant.",
-      "fileAccess": {
-        "workspaceRoot": "~/projects",
-        "allowedPaths": ["~/projects/**"]
-      }
+  "agents": {
+    "coding-agent": {
+      "displayName": "Coding Assistant",
+      "provider": "registered-provider-instance",
+      "model": "registered-model-id",
+      "isolationStrategy": "in-process",
+      "maxConcurrentSessions": 1,
+      "toolIds": ["read", "write", "edit", "shell", "grep", "glob"],
+      "systemPromptFiles": ["AGENTS.md", "SOUL.md"]
     }
-  ]
+  }
 }
 ```
 
-**File-based Configuration:**
+This is not an array and is not a recipe for a standalone per-agent JSON source.
+The source reads the options monitor's effective platform configuration; it does
+not discover agent definitions by scanning individual agent files. See
+[configuration](../configuration.md) for persistence and configuration entry points.
 
-```json
-// ~/.botnexus/agents/my-agent.json
-{
-  "id": "my-agent",
-  "displayName": "My Agent",
-  "model": "anthropic:claude-sonnet-4",
-  "executionStrategy": "in-process"
-}
-```
+The current loader:
 
-### Configuration Loading
+- Skips disabled agents, the reserved `defaults` entry, and reserved sub-agent
+  archetype IDs.
+- Maps `provider` / `model` to `ApiProvider` / `ModelId`, `toolIds` to `ToolIds`,
+  `heartbeat` to `Heartbeat`, and `extensions` to the `ExtensionConfig` bag.
+- Uses each agent block as authored: `agents.defaults` is **not merged** here.
+- Validates each projected descriptor and logs/skips invalid entries; a corrected
+  configuration can be retried on reload.
 
-**Loading Pipeline:**
+### Configuration Loading and Validation
 
-1. `PlatformConfigAgentSource`: the single registered `IAgentConfigurationSource`, projecting
-   the `agents` section of `~/.botnexus/config.json` into descriptors
-2. `IAgentRegistry.Register()`: Validates and registers descriptors
-3. `AgentConfigurationHostedService`: watches every registered source for changes and
-   synchronizes the registry
+[`AgentConfigurationHostedService`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/AgentConfigurationHostedService.cs)
+loads every registered source, watches for changes, and debounces registry
+synchronization. It retains each source's latest descriptor set. Code-registered
+agents take precedence; earlier sources win duplicate IDs. The platform source
+also suppresses notifications whose effective descriptors have not changed.
 
-Additional sources can be contributed by an extension; the hosted service fans out over all
-of them and tracks each source's latest descriptor set separately.
+[`DefaultAgentRegistry.Register`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Agents/DefaultAgentRegistry.cs)
+rejects duplicate IDs; it does **not** run descriptor validation itself. Do not
+mistake storage in the registry for proof that a descriptor can execute.
 
-**Validation:**
+[`AgentDescriptorValidator`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/Validation/AgentDescriptorValidator.cs)
+checks required display/model/provider values, field-length bounds, nonnegative
+session limits, and a nonempty isolation strategy. It checks strategy membership
+when a nonempty available-strategy set is supplied. `ValidateForConfig` additionally
+rejects `Kind = SubAgent`.
 
-- `AgentDescriptorValidator.Validate()`:
-  - Required fields: `AgentId`, `DisplayName`, `ApiProvider`, `ModelId`
-  - Model exists in `ModelRegistry`
-  - Execution strategy is registered
-  - Tool names are valid (if `DefaultToolRegistry` is used)
-  - File access paths are absolute
+Thinking syntax is checked when supplied. Capability validation uses the selected
+model only when a model registry and a matching model are available; an unknown
+model is not rejected by that capability check. In-process creation performs the
+model lookup and throws when the provider/model pair is unregistered. The
+validator does not establish tool-name validity or absolute file-access paths;
+tool resolution and path enforcement happen at their consuming boundaries.
 
 ## Agent Supervisor
 
 ### Instance Management
 
-**IAgentSupervisor Responsibilities:**
+[`DefaultAgentSupervisor`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Agents/DefaultAgentSupervisor.cs)
+keys instances by `AgentSessionKey.From(agentId, sessionId)`. Each pair gets a
+handle and agent-loop state, created lazily on demand rather than eagerly for
+every registered agent. Different sessions of the same agent still use that
+agent's workspace, not independent filesystem sandboxes.
 
-- Manages agent instances per (agentId, sessionId) pair
-- Creates instances via `IIsolationStrategy`
-- Enforces concurrency limits
-- Caches healthy instances
-- Coordinates shutdown
-
-**Instance Key:**
+The supervisor exposes this creation signature:
 
 ```csharp
-AgentSessionKey = (AgentId, SessionId)
+Task<IAgentHandle> GetOrCreateAsync(
+    AgentId agentId,
+    SessionId sessionId,
+    CancellationToken cancellationToken = default);
 ```
-
-Each session gets its own agent instance. This enables:
-- Session-specific state isolation
-- Concurrent conversations with same agent
-- Independent lifecycle per conversation
-- Clean memory/resource boundaries
 
 ### GetOrCreateAsync Flow
 
-```csharp
-Task<IAgentHandle> GetOrCreateAsync(AgentId agentId, SessionId sessionId, CancellationToken ct);
-```
+1. Resolve the registered descriptor and stored session, including permitted
+   session model overrides.
+2. Reuse a cached `Idle` or `Running` instance if its resolved descriptor matches.
+   A changed descriptor removes the cached entry and starts disposing its handle.
+3. Share an existing pending creation for the same key. Otherwise check the
+   agent's concurrency limit and reserve a pending creation under the lock.
+4. Validate the descriptor against registered strategies and pass stored history
+   and execution parameters in `AgentExecutionContext` to `CreateAsync`.
+5. Cache the returned handle with an `Idle` instance; clear the pending entry.
+   Creation failures clear the pending entry and propagate to callers.
 
-The method checks for an existing healthy instance in the cache, enforces concurrency limits from the descriptor, creates a new instance via the appropriate `IIsolationStrategy`, and caches the result.
+### Concurrency Control
 
-See [DefaultAgentSupervisor](../../src/gateway/BotNexus.Gateway/Agents/DefaultAgentSupervisor.cs) for the full implementation.
+| `MaxConcurrentSessions` | Actual supervisor behavior |
+| --- | --- |
+| `0` | No configured session-count limit |
+| `1` | Admit at most one counted session; reject excess creation |
+| Positive `N` | Admit up to `N` counted sessions; reject excess creation |
 
-**Concurrency Control:**
+The count includes cached instances that are neither `Stopped` nor `Faulted`
+(**including idle instances**) and pending creations, deduplicated by session ID.
+Excess creation throws `AgentConcurrencyLimitExceededException`; it is not queued
+for serialized execution. Waiting on creation of the **same** session is a
+separate mechanism. Steering/follow-up queues and tool-batch parallelism below are
+also separate from this session admission limit.
 
-- `MaxConcurrentSessions = 0`: Unlimited (default)
-- `MaxConcurrentSessions = 1`: Single active session (serialized execution)
-- `MaxConcurrentSessions = N`: Up to N concurrent sessions
+### Instance Status and Metadata
 
-**Instance Status:**
+[`AgentInstance`](https://github.com/Sytone/botnexus/blob/main/src/domain/BotNexus.Domain/Gateway/Models/AgentInstance.cs)
+is a sealed class with required `InstanceId`, `AgentId`, `SessionId`, and
+`IsolationStrategy`, plus mutable `Status` and `LastActiveAt` and a `CreatedAt`
+timestamp. Its status vocabulary is:
 
 ```csharp
 public enum AgentInstanceStatus
 {
-    Idle,      // Created, waiting for prompt
-    Running,   // Actively processing a request
-    Stopping,  // Shutdown in progress
-    Stopped    // Fully terminated
+    Starting,
+    Idle,
+    Running,
+    Stopping,
+    Stopped,
+    Faulted
 }
 ```
 
-### Instance Metadata
-
-```csharp
-public record AgentInstance
-{
-    public string InstanceId { get; init; }  // Unique ID for this instance
-    public AgentId AgentId { get; init; }
-    public SessionId SessionId { get; init; }
-    public string IsolationStrategy { get; init; }
-    public AgentInstanceStatus Status { get; set; }
-    public DateTimeOffset CreatedAt { get; init; }
-    public DateTimeOffset? LastActiveAt { get; set; }
-}
-```
+The class defaults to `Starting`; the supervisor publishes successfully created
+entries as `Idle`. This enum is not a claim that every path emits every transition.
+`StopAsync` removes the cached entry, marks it `Stopping`, disposes its handle,
+and marks it `Stopped` on successful disposal. `StopAllAsync` clears cached and
+pending entries, then disposes the captured handles, logging disposal failures.
 
 ## Isolation Strategies
 
 ### InProcessIsolationStrategy (Default)
 
-**Characteristics:**
-- Runs agent in Gateway process
-- Direct `BotNexus.Agent.Core.Agent` instantiation
-- No process/container boundaries
-- Lowest latency (<10ms startup)
-- Shared memory space (trusted agents only)
+[`InProcessIsolationStrategy.CreateAsync`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Isolation/InProcessIsolationStrategy.cs)
+runs the core agent in the Gateway process. It is not an OS security boundary.
 
-**Creation Flow:**
+Creation resolves effective model/thinking/context settings, passes those same
+settings into prompt construction, obtains the workspace, and creates
+workspace-scoped tools with a path validator. It then assembles registry tools,
+optional memory tools, gateway tool providers, and extension contributions before
+applying the conversation's narrowing-only tool override.
 
-The creation steps listed above (resolve model, build system prompt, setup workspace, create tools, load extensions, setup hooks, create `AgentCore.Agent`, wrap in handle) are implemented sequentially in `CreateAsync`.
-
-See [InProcessIsolationStrategy](../../src/gateway/BotNexus.Gateway/Isolation/InProcessIsolationStrategy.cs) for the full implementation.
+The strategy wires tool audit and hook delegates, projects resumable history
+(including folding compacted summaries into the system prompt), creates the core
+agent with `AgentOptions`, and wraps it in `InProcessAgentHandle`. Model lookup,
+authentication, context, and tool setup can fail; no startup latency is promised.
 
 ### ContainerIsolationStrategy
 
-**Characteristics:**
-- Runs agent in Docker container
-- Network-isolated execution
-- Resource limits (CPU, memory)
-- Slower startup (~1-3 seconds)
-- Stronger security boundary
-
-**Not fully implemented yet** — placeholder for future container-based execution.
+**Not implemented.** [`CreateAsync`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Isolation/ContainerIsolationStrategy.cs)
+throws `NotSupportedException`. Container execution, explicit mounts, resource
+limits, and network restrictions are planned capabilities, not current guarantees.
 
 ### RemoteIsolationStrategy
 
-**Characteristics:**
-- Connects to remote agent endpoint
-- Agent runs on different machine/cluster
-- HTTP/gRPC communication
-- Distributed execution
-- Horizontal scaling
-
-**Not fully implemented yet** — placeholder for distributed agent architecture.
+**Not implemented.** [`CreateAsync`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Isolation/RemoteIsolationStrategy.cs)
+throws `NotSupportedException`. Forwarding execution and streaming over a remote
+transport is a planned boundary, not an available backend or scaling recipe.
 
 ### SandboxIsolationStrategy
 
-**Characteristics:**
-- Runs agent in sandboxed process
-- OS-level isolation (AppDomain/.NET sandbox)
-- Limited file system access
-- Moderate startup (~100-500ms)
-
-**Not fully implemented yet** — placeholder for process-level sandboxing.
+**Not implemented.** [`CreateAsync`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Isolation/SandboxIsolationStrategy.cs)
+throws `NotSupportedException`. A separate process with OS confinement is planned;
+no sandbox implementation, confinement guarantee, or startup measurement is implied.
 
 ## Agent Handle
 
 ### IAgentHandle Interface
 
-```csharp
-public interface IAgentHandle : IAsyncDisposable
-{
-    AgentId AgentId { get; }
-    SessionId SessionId { get; }
-    
-    // Execution
-    Task<AgentResponse> PromptAsync(string message, CancellationToken ct = default);
-    Task<AgentResponse> ContinueAsync(CancellationToken ct = default);
-    Task SteerAsync(string message, CancellationToken ct = default);
-    Task FollowUpAsync(string message, CancellationToken ct = default);
-    Task AbortAsync(CancellationToken ct = default);
-    
-    // State
-    Task<IReadOnlyList<SessionEntry>> GetHistoryAsync(CancellationToken ct = default);
-    Task<AgentHealthResponse> GetHealthAsync(CancellationToken ct = default);
-}
-```
-
-### InProcessAgentHandle
-
-Wraps `BotNexus.Agent.Core.Agent` and bridges to Gateway contracts.
-
-**PromptAsync Implementation:**
-
-`PromptAsync` subscribes to `AgentCore` events, converts them to gateway stream events (broadcast via `IChannelAdapter`), delegates to the underlying `Agent.PromptAsync`, and returns the accumulated response.
-
-See [InProcessAgentHandle](../../src/gateway/BotNexus.Gateway/Isolation/InProcessIsolationStrategy.cs) for the full implementation.
-
-**Event Conversion:**
+[`IAgentHandle`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentHandle.cs)
+extends `IAsyncDisposable` and exposes `AgentId`, `SessionId`, and `IsRunning`.
+The principal execution members are shown below; this is a partial excerpt:
 
 ```csharp
-AgentStreamEvent ConvertToGatewayEvent(AgentEvent coreEvent)
-{
-    return coreEvent switch
-    {
-        MessageStartEvent => new AgentStreamEvent { Type = MessageStart },
-        TextDeltaEvent delta => new AgentStreamEvent { Type = ContentDelta, Delta = delta.Delta },
-        ThinkingDeltaEvent thinking => new AgentStreamEvent { Type = ThinkingDelta, Delta = thinking.Delta },
-        ToolCallStartEvent tool => new AgentStreamEvent { Type = ToolStart, ToolName = tool.Name },
-        ToolCallEndEvent tool => new AgentStreamEvent { Type = ToolEnd, ToolName = tool.Name },
-        MessageEndEvent => new AgentStreamEvent { Type = MessageEnd },
-        ErrorEvent error => new AgentStreamEvent { Type = Error, ErrorMessage = error.Message },
-        _ => null
-    };
-}
+Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default);
+Task<AgentResponse> PromptAsync(AgentUserMessage message, CancellationToken cancellationToken = default);
+IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, CancellationToken cancellationToken = default);
+IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentUserMessage message, CancellationToken cancellationToken = default);
+Task AbortAsync(CancellationToken cancellationToken = default);
+Task SteerAsync(string message, CancellationToken cancellationToken = default);
+Task FollowUpAsync(string message, CancellationToken cancellationToken = default);
+Task FollowUpAsync(AgentTranscriptMessage message, CancellationToken cancellationToken = default);
 ```
+
+Other control members are significant, not optional substitutes for those calls:
+
+| Member | Contract |
+| --- | --- |
+| `ObserveTurns(Action)` | Returns a disposable turn subscription, or `null` when the handle cannot expose turns; `null` does not mean zero turns consumed |
+| `SteerAsync(AgentUserMessage, ...)` | Multimodal steering; the in-process handle preserves the typed message |
+| `SteerDeferrableAsync(string, ...)` | Queues a side turn that the in-process loop defers while busy |
+| `TryFollowUpWhileRunningAsync(string/AgentUserMessage, ...)` | Returns `true` if queued for the active run; `false` requires normal inbound delivery instead |
+| `InterruptAndSteerAsync(string/AgentUserMessage, ...)` | Redirects execution through the handle's abort-and-steer control path |
+
+The interface's default multimodal steer/redirect implementations degrade to
+text through an image-drop guard; implementations with typed queues override
+them. Its default conditional follow-up implementation returns `false`.
+In-process conditional follow-up uses enqueue/reverify/reclaim rather than a racy
+`IsRunning` check followed by enqueue. Queue overflow is an exception, not a silent
+drop. `ContinueAsync`, `GetHistoryAsync`, and `GetHealthAsync` are not members of
+this Gateway handle contract; history and instance inspection use their own services.
+
+### InProcessAgentHandle and Event Conversion
+
+`PromptAsync` calls the core prompt API and builds an `AgentResponse` from returned
+messages. It does not itself broadcast through an `IChannelAdapter`.
+`StreamAsync` uses `StreamCoreAsync`, subscribes to core events, maps them into an
+async channel, and yields Gateway events to its caller. Downstream delivery is
+separate from the handle's mapping.
+
+The actual `InProcessAgentHandle.MapAgentEvent` mapping in the
+[in-process implementation](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Isolation/InProcessIsolationStrategy.cs)
+is summarized here:
+
+| Core event | Gateway event / payload |
+| --- | --- |
+| `AgentStartEvent` / `AgentEndEvent` | `RunStarted` / `RunEnded`, bracketing the whole run |
+| Assistant `MessageStartEvent` | `MessageStart` |
+| `MessageUpdateEvent` with non-null delta and `IsThinking == false` | `ContentDelta` with `ContentDelta` payload |
+| `MessageUpdateEvent` with non-null delta and `IsThinking == true` | `ThinkingDelta` with `ThinkingContent` payload |
+| `ToolExecutionStartEvent` | `ToolStart` with call ID, name, and arguments |
+| `ToolExecutionEndEvent` | `ToolEnd` with call ID, name, extracted result text, and error flag |
+| Assistant `MessageEndEvent` | `MessageEnd` with reconciled `FinalContent` and optional usage |
+| `ToolExecutionUpdateEvent` carrying `AskUserRequest` | `UserInputRequired` |
+| `TurnEndEvent` | `TurnEnd` |
+| `ClaimAuditEvent` | `ClaimAudit` with its blocking decision and unbacked claims |
+| Other events | No mapped event (`null`) |
+
+Mapped events carry the supplied `MessageId`. Run boundaries must not be inferred
+from individual message/tool endings: a run can continue through multiple model
+turns and follow-ups. Error propagation and deliberate teardown classification
+also live in the stream pipeline; there is no generic core `ErrorEvent` arm in
+this mapper.
 
 ## Agent Loop Runner
 
 ### Core Loop (AgentCore)
 
-The `AgentLoopRunner` implements the agent-tool execution cycle:
+[`AgentLoopRunner`](https://github.com/Sytone/botnexus/blob/main/src/agent/BotNexus.Agent.Core/Loop/AgentLoopRunner.cs)
+coordinates the model/tool cycle. In outline, not exhaustive retry/error pseudocode:
 
-```text
-1. Drain pending steering messages
-2. Convert agent messages to LLM context
-3. Call LlmClient.StreamAsync()
-4. Accumulate streaming response
-5. If tool calls requested:
-   a. Execute tools (sequential or parallel)
-   b. Append tool results to timeline
-   c. Goto 1
-6. Return final response
-```
+1. Check optional compaction at an outer-loop boundary and obtain queued input.
+2. Incorporate eligible steering messages, build/transform model context, and
+   obtain the streamed assistant response.
+3. Execute requested tools only when the assistant finishes with `ToolUse` and
+   carries tool calls, then append their results. Partial calls on other finish
+   reasons are not dispatched.
+4. Emit turn completion and inspect steering again. Deferrable side turns wait
+   until there are no outstanding tool calls or other pending messages.
+5. Continue model turns while work remains. At the idle boundary, queued
+   follow-ups can seed another outer iteration; otherwise the run ends.
 
-See [AgentLoopRunner](../../src/agent/BotNexus.Agent.Core/Loop/AgentLoopRunner.cs) for the full implementation.
+The Gateway configures `SteeringMode` and `FollowUpMode` as `QueueMode.All`.
+These are input-drain choices, not session admission or parallel-tool controls.
 
 ### Tool Execution
 
-The `ToolExecutor` supports two modes: **sequential** (default), which executes tool calls one at a time, and **parallel**, which executes all tool calls concurrently via `Task.WhenAll`. The mode is configured per-agent via `ToolExecutionMode` in the descriptor.
+[`ToolExecutor`](https://github.com/Sytone/botnexus/blob/main/src/agent/BotNexus.Agent.Core/Loop/ToolExecutor.cs)
+supports sequential execution and parallel execution. The in-process Gateway
+explicitly selects `ToolExecutionMode.Parallel` in `AgentOptions`; it does not
+read a descriptor switch for this.
 
-See [ToolExecutor](../../src/agent/BotNexus.Agent.Core/Loop/ToolExecutor.cs) for the full implementation.
-
-**Hook Execution:**
-
-Before each tool call, registered hooks are evaluated in order — any hook returning `HookAction.Block` short-circuits execution. After execution, hooks may inspect or modify the result. This enables security policies, audit logging, and result transformation.
-
-See [HookDispatcher](../../src/gateway/BotNexus.Gateway/Hooks/HookDispatcher.cs) for the full implementation.
+Parallel mode prepares calls in source order, runs prepared calls with
+`Task.WhenAll`, then processes their outcomes in source order. Calls rejected
+during preparation can emit an immediate end event before later start events;
+do not assume all event starts precede all ends. Result ordering does not make
+side effects sequential or make dependent tool calls safe to run concurrently.
+This batch-level concurrency is independent of `MaxConcurrentSessions`.
 
 ## Tool Registry
 
-### Default Tool Registry
+### Available Tools
 
-**Built-in Tools:**
+The final tool set is assembled, not guaranteed by a static list on this page:
 
-- `read`: Read files/directories
-- `write`: Write complete files
-- `edit`: Surgical string replacement edits
-- `exec`: Execute shell commands (bash/PowerShell)
-- `grep`: Regex search across files
-- `glob`: File pattern matching
+- Workspace tools come from `IAgentToolFactory`.
+- Registered extension tools come from the tool registry. Workspace tools win
+  same-name collisions with those registry tools.
+- Memory enablement, gateway provider dependencies, and extension contributions
+  can add tools. Session tool overrides narrow the assembled set last.
+- An empty `ToolIds` list or the single wildcard `["*"]` means unrestricted
+  selection at this boundary, **not no tools**. Explicit IDs select workspace
+  and registry tools; individual provider/contributor gates also matter.
 
-**Gateway Tools:**
-
-- `sessions`: Session management (save, list, archive)
-- `conversation`: Conversation metadata, purpose and instructions
-- `agent_converse`: Peer agent conversations
-- `spawn_subagent`: Spawn task-specific sub-agents
-- `list_subagents`: List running sub-agents
-- `manage_subagent`: Control sub-agent lifecycle
-- `watch_file`: Watch files for changes
-- `delay`: Scheduled delays/reminders
-- `cron`: Register cron jobs
-
-**Extension Tools:**
-
-- Loaded from `IExtension` implementations
-- MCP tools (via `BotNexus.Extensions.Mcp`)
-- Web tools (via `BotNexus.Extensions.WebTools`)
-- Skill tools (via `BotNexus.Extensions.Skills`)
-- Memory tools (via `BotNexus.Memory`)
+Consult the actual exposed schema for names, arguments, and availability of
+session, conversation, sub-agent, scheduling, skill, memory, or external tools.
+A delay inside an executing call and a durable scheduled job are distinct concepts;
+the tool list is not a promise of either one's scheduling semantics.
 
 ### Tool Factory
 
+Current [`IAgentToolFactory`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentToolFactory.cs)
+member:
+
 ```csharp
-public interface IAgentToolFactory
-{
-    IReadOnlyList<IAgentTool> CreateTools(
-        string workspacePath,
-        IPathValidator pathValidator);
-}
+IReadOnlyList<IAgentTool> CreateTools(
+    WorkingDir workingDirectory,
+    IPathValidator? pathValidator = null,
+    string[]? shellCommand = null);
 ```
 
-**DefaultAgentToolFactory** creates the built-in tool set (read, write, edit, shell, grep, glob), injecting the workspace path and path validator into each tool.
-
-See [DefaultAgentToolFactory](../../src/gateway/BotNexus.Gateway/Agents/DefaultAgentToolFactory.cs) for the full implementation.
+[`DefaultAgentToolFactory`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Agents/DefaultAgentToolFactory.cs)
+creates read, write, edit, shell, directory-listing, grep, glob, and tool-output
+continuation tools. It resolves `WorkingDir` to a full path; the value object
+itself does not promise an absolute path. File tools receive the effective path
+validator. Shell-command selection prefers the per-agent override, then the
+factory's gateway command, then preference-based detection. `ShellTool` is not
+passed `IPathValidator`; file-tool path checks are not shell confinement.
 
 ## Workspace and Context
 
 ### Workspace Management
 
-**IAgentWorkspaceManager:**
+Selected [`IAgentWorkspaceManager`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentWorkspaceManager.cs)
+members (memory overloads omitted):
 
 ```csharp
-public interface IAgentWorkspaceManager
-{
-    string GetWorkspacePath(AgentId agentId);
-    Task EnsureWorkspaceExistsAsync(AgentId agentId, CancellationToken ct);
-}
+Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken cancellationToken = default);
+Task SaveMemoryAsync(string agentName, string content, CancellationToken cancellationToken = default);
+string GetWorkspacePath(string agentName);
+bool TryCleanupWorkspace(string agentName) => false;
 ```
 
-**FileAgentWorkspaceManager (Default):**
+[`FileAgentWorkspaceManager`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Agents/FileAgentWorkspaceManager.cs)
+resolves named-agent workspaces beneath the configured BotNexus home as
+`agents/{agentId}/workspace`. It does not use `workspaces/{agentId}`, and
+`FileAccessPolicy` does not select the workspace directory.
 
-- Creates workspace directory: `~/.botnexus/workspaces/{agentId}/`
-- Isolates file operations per agent
-- Supports custom workspace roots via `FileAccessPolicy`
+`LoadWorkspaceAsync` reads the soul, identity, user, and memory files, returning
+empty content for missing files. `SaveMemoryAsync` appends beneath the memory root
+and creates required directories; its overloads support a target file and a
+workspace-relative memory-root override. There is no `EnsureWorkspaceExistsAsync`
+member. Runtime sub-agent workspace names use a separate temporary/configured
+root; cleanup is restricted to those temporary workspaces, not named agents.
 
 ### System Prompt Building
 
-**IContextBuilder:**
+Current [`IContextBuilder`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Contracts/Agents/IContextBuilder.cs)
+primary member:
 
 ```csharp
-public interface IContextBuilder
-{
-    Task<string> BuildSystemPromptAsync(
-        AgentDescriptor descriptor,
-        CancellationToken ct);
-}
+Task<string> BuildSystemPromptAsync(
+    AgentDescriptor descriptor,
+    AgentExecutionContext? executionContext,
+    EffectiveExecutionSettings? effectiveSettings = null,
+    CancellationToken cancellationToken = default);
 ```
 
-**WorkspaceContextBuilder:**
+A second overload accepts `ConversationScope` before the cancellation token.
+Pass the already-resolved execution settings when a run exists so the runtime
+prompt describes the same model/thinking/context selection as execution.
 
-1. Gather context files from workspace
-2. Build prompt params (workspace dir, tools, timezone, etc.)
-3. Call `SystemPromptBuilder.Build(params)`
-4. Return final system prompt
-
-**SystemPromptBuilder (BotNexus.Prompts):**
-
-Uses `PromptPipeline` to compose sections:
-- Identity and role
-- Workspace and file structure
-- Available tools
-- Context files (codebase docs)
-- Extensions and skills
-- Runtime environment
-- Guidelines and examples
+[`WorkspaceContextBuilder`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Agents/WorkspaceContextBuilder.cs)
+resolves workspace and conversation context, chooses prompt-file variants using
+the effective model/provider, loads configured instruction files and world
+instructions, and incorporates eligible memory/context-hook contributions.
+It filters owner-private context files for shared conversations before calling
+`SystemPromptBuilder.Build(SystemPromptParams)`, then merges prompt-hook results.
+The resulting prompt includes workspace context, runtime and conversation data,
+heartbeat configuration, and configured prompt contributors. This is prompt
+composition, not a filesystem sandbox or a substitute for tool policy.
 
 ## Security and Validation
 
 ### Path Validation
 
-**IPathValidator:**
+The actual [`IPathValidator`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Contracts/Security/IPathValidator.cs)
+contract is:
 
 ```csharp
-public interface IPathValidator
-{
-    bool IsPathAllowed(string path);
-    string NormalizePath(string path);
-}
+bool CanRead(string absolutePath);
+bool CanWrite(string absolutePath);
+string? ValidateAndResolve(string rawPath, FileAccessMode mode);
 ```
 
-**DefaultPathValidator:**
-
-- Checks paths against `FileAccessPolicy`
-- Validates absolute paths
-- Prevents directory traversal
-- Enforces workspace boundaries
+[`DefaultPathValidator`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Security/DefaultPathValidator.cs)
+uses workspace-relative resolution and separate read/write allowlists plus denies.
+A null or empty policy is workspace-only. `ValidateAndResolve` checks lexical
+resolution and then a link-aware target walk, returning `null` when access is
+refused. Do not replace this operation with an invented `IsPathAllowed` API or
+claim descriptor validation alone proves filesystem containment.
 
 ### Tool Policy
 
-**IToolPolicy:**
+[`IToolPolicyProvider`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Contracts/Security/ToolPolicy.cs)
+provides `GetRiskLevel`, `RequiresApproval`, `GetApprovalFallback`,
+`GetDeniedForHttp`, and `IsToolAvailable`. It is not an asynchronous
+`IToolPolicy.EvaluateAsync(arguments)` interface.
 
-```csharp
-public interface IToolPolicy
-{
-    Task<ToolPolicyResult> EvaluateAsync(
-        string toolName,
-        IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken ct);
-}
-```
-
-**DefaultToolPolicyProvider:**
-
-- Enforces path restrictions on file tools
-- Validates shell command safety
-- Blocks dangerous operations (configurable)
+[`DefaultToolPolicyProvider`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Security/DefaultToolPolicyProvider.cs)
+supplies policy to consumers, while
+[`ToolPolicyHookHandler`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Hooks/ToolPolicyHookHandler.cs)
+denies blocked tools and handles approval-required calls. At this hook seam there
+is no interactive approval workflow: the configured fallback is `Allow` by default
+or opt-in `Deny`, with an audit decision. Do not interpret `RequiresApproval` alone
+as evidence that a human approved execution. This tool-level policy is distinct
+from file-path checks and any tool-specific command validation.
 
 ### Hook Dispatcher
 
-**IHookDispatcher:**
+[`HookDispatcher`](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Hooks/HookDispatcher.cs)
+registers typed handlers and invokes a snapshot in ascending priority order,
+collecting non-null results. It does not short-circuit on a `HookAction.Block`.
 
-Coordinates multiple hook handlers:
-
-```csharp
-public async Task<BeforeToolCallResult> BeforeToolCallAsync(BeforeToolCallContext context)
-{
-    foreach (var handler in _handlers)
-    {
-        var result = await handler.BeforeAsync(context);
-        if (result.Action == HookAction.Block)
-            return result;
-    }
-    return BeforeToolCallResult.Allow();
-}
-```
-
-**Built-in Handlers:**
-
-- `ToolPolicyHookHandler`: Enforces tool policies
+The in-process before-tool delegate durably records the invocation first, dispatches
+Gateway before-tool hooks, and converts a returned `Denied` result into the core
+blocking result. The core executor can apply after-tool replacements, but the
+current Gateway after-tool delegate dispatches notifications and returns `null`;
+it does not apply returned Gateway result rewrites. Keep the dispatcher contract,
+core executor capabilities, and this concrete adapter's behavior distinct.
 
 ## Performance Characteristics
 
-**In-Process Agent Startup:**
-- Cold start: ~10-50ms (model lookup, workspace setup, tool creation)
-- Warm instance reuse: <1ms (cached handle lookup)
+This page makes **no measured startup, throughput, latency, or memory claims**.
+Source inspection cannot establish a benchmark, and the unimplemented strategies
+cannot supply one.
 
-**LLM Latency:**
-- First token: 200-1000ms (depends on provider and model)
-- Streaming: 20-100 tokens/second (provider-dependent)
-
-**Tool Execution:**
-- File tools: <1-10ms (local I/O)
-- Shell tools: 10ms-60s (depends on command)
-- Agent converse: 500ms-30s (depends on peer agent latency)
-
-**Memory Usage:**
-- Agent instance: ~5-20MB (depends on prompt size and message history)
-- Concurrency scaling: Linear per session (isolated instances)
+For a reproducible performance report, publish the source revision, environment
+(OS/runtime/hardware), provider/model, input and tool workload, settings, sample
+count, warm-up policy, and measurement harness/command. Separate cold creation
+from cached-handle lookup, queue/admission wait from execution, and provider
+first-token latency from total turn time. Define token and memory counters, record
+failures/cancellations, and report distributions rather than unexplained single
+numbers. Run such measurements in an isolated, explicitly authorized environment;
+a docs build checks rendering and links, not runtime speed or isolation security.
 
 ## Summary
 
-**Key Design Principles:**
-
-1. **Isolation per session**: Each (agent, session) pair gets its own instance
-2. **Pluggable execution**: Isolation strategies enable different deployment models
-3. **Hook-based extension**: Before/after tool hooks enable security and audit
-4. **Stream-first design**: All LLM interactions stream events to clients
-5. **Workspace isolation**: File tools operate in agent-specific workspace directories
-6. **Lazy instantiation**: Agents created on-demand, not at startup
-7. **Concurrency control**: Configurable limits prevent resource exhaustion
-
-**Future Enhancements:**
-
-- Container-based isolation for untrusted agents
-- Remote agent execution for distributed deployments
-- Agent instance pooling for faster cold starts
-- Advanced tool policies (rate limiting, cost controls)
-- Multi-turn tool execution (tool → tool chains without LLM round-trip)
+- Instances and agent-loop state are session-bound; workspaces are agent-bound.
+- Descriptors are loaded and validated at explicit boundaries, not by mere registry
+  insertion.
+- Session admission, steering/follow-up queues, and parallel tool batches are
+  different controls.
+- Handles separate blocking responses, streams, and run control; event consumers
+  must distinguish run, message, tool, and turn boundaries.
+- Context, file access, tool policy, and isolation are separate mechanisms.
+- Container, remote, and sandbox execution remain future work. Instance pooling
+  and further policy/execution optimizations require their own implementations and
+  evidence; they are not capabilities established by this guide.
