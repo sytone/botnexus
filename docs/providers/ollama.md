@@ -134,7 +134,7 @@ Update `baseUrl` in config accordingly:
 - **Local trust boundary** — the example omits credentials; secure access before exposing the endpoint remotely
 - **Model availability** — models must be pulled before use (`ollama pull <model>`)
 - **Context window** — varies by model; BotNexus cannot auto-detect limits for all models
-- **Token counting** — uses tiktoken-compatible estimates which may be inaccurate for non-OpenAI architectures
+- **Token counting** — local text estimates use BotNexus's approximate, script-aware character heuristic (`TokenEstimator`), not tokenizer output, and can differ from the target model's tokenizer. For prompt usage, provider-reported prompt-token counts are authoritative where supplied; local context diagnostics remain estimates, with tool-schema estimates using a separate character-count fallback. These counters do not all have the same source.
 - **Structured outputs** — JSON mode support depends on the specific model
 
 ## See Also

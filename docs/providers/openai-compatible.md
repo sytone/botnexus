@@ -72,5 +72,5 @@ Function calling is converted to the OpenAI format. Compatibility depends on the
 ## Known Limitations
 
 - Feature support varies by target API — not all support function calling, streaming, or structured outputs
-- Token counting may be inaccurate for non-OpenAI models (BotNexus uses tiktoken-compatible estimates)
+- Token counting may differ from the target model's tokenizer: local text estimates use BotNexus's approximate, script-aware character heuristic (`TokenEstimator`), not tokenizer output. For prompt usage, provider-reported prompt-token counts are authoritative where supplied; local context diagnostics remain estimates, with tool-schema estimates using a separate character-count fallback. These counters do not all have the same source.
 - Some APIs may not support all parameters (temperature, top_p, etc.) — unsupported parameters are silently ignored by most services
