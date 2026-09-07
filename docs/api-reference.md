@@ -3659,7 +3659,7 @@ Body: `{ "message": string, "responseMode": "async"|"sync"|"callback"|null,
 "agentAction": bool|null, "callbackUrl": string|null }`.
 
 - **async** (default): 202 + Location poll URL; agent runs in background.
-- **sync**: 200 with the agent response inline (≤120s, else downgrades to 202).
+- **sync**: 200 with the inline response when the run record is `Completed`; 503 if execution returns without a completed run. Caught queue-timeout or cancellation paths, when the caller has not cancelled, mark the run timed out and return 202 with a Location poll URL. Poll that URL: 202 is not proof of execution or continued background processing, and a queued request may never have been dispatched. Admission can be rejected before waiting. The handler requests cancellation after 120 seconds and links caller/shutdown cancellation; this is not a guarantee that processing stops at exactly 120 seconds. Caller cancellation is not handled by those 202 catches.
 - **callback**: 202; result POSTed to callbackUrl on completion.
 
 The signature is sha256= + lowercase hex of HMAC-SHA256(secret, rawBody). An
