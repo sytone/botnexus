@@ -9,34 +9,43 @@ The OpenAI-Compatible provider connects BotNexus to any LLM API that implements 
 
 ## Configuration
 
-Set the provider on your agent in `config.json`:
+Declare a provider instance with its endpoint, credentials and chat model registrations, then select that instance and model on the agent in `config.json`. This local example assumes the server already serves a model with the placeholder ID `my-local-model`:
 
 ```json
 {
+  "providers": {
+    "local-llm": {
+      "baseUrl": "http://localhost:8000/v1",
+      "chat": {
+        "api": "openai-compat",
+        "models": ["my-local-model"]
+      }
+    }
+  },
   "agents": {
     "my-agent": {
-      "apiProvider": "openai-compat",
-      "modelId": "deepseek-chat",
-      "apiBaseUrl": "https://api.deepseek.com/v1",
-      "apiKey": "your-api-key"
+      "provider": "local-llm",
+      "model": "my-local-model"
     }
   }
 }
 ```
 
-### Required Fields
+### Configuration boundaries
 
-| Field | Description |
-|-------|-------------|
-| `apiProvider` | Must be `"openai-compat"` |
-| `modelId` | The model identifier as expected by the target API |
-| `apiBaseUrl` | The base URL for the API (e.g. `https://api.deepseek.com/v1`) |
+| Location | Field | Description |
+|----------|-------|-------------|
+| `providers.local-llm` | `baseUrl` | Base URL of your server's Chat Completions endpoint |
+| `providers.local-llm` | `apiKey` | Optional credential when the service requires one; a literal key or `auth:<entry>` reference to a configured `auth.json` entry |
+| `providers.local-llm.chat` | `api` | `"openai-compat"` selects this API implementation |
+| `providers.local-llm.chat` | `models` | Exact server model IDs to register under this provider instance |
+| `providers.local-llm.chat` | `contextWindow` | Optional context metadata override for config-declared models |
+| `agents.my-agent` | `provider` | Provider instance key, here `"local-llm"`, not the API contract name |
+| `agents.my-agent` | `model` | Registered model ID, here `"my-local-model"` |
 
-### Optional Fields
+Replace the placeholder model ID in both locations. It is not a built-in model and this configuration does not download it or verify upstream availability. Gateway startup registers `chat.models` with a 128,000-token context default when no `chat.contextWindow` is supplied, and 32,000-token maximum-output metadata. Those defaults are not a measurement of the server's limits; set context metadata to match the model/server you operate.
 
-| Field | Description |
-|-------|-------------|
-| `apiKey` | API key for authentication (if the service requires one) |
+Endpoint and credential settings belong under `providers`, never under the agent. Keep real secrets out of committed configuration. Flat provider `api`/`models` fields remain legacy-compatible, but the nested `chat` fields take precedence per field. Tool/template parameters such as `apiProvider` and `modelId` are separate contracts and are not renamed by this platform-config recipe.
 
 ## Compatible Services
 
