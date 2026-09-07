@@ -31,9 +31,9 @@ Set the provider on your agent in `config.json`:
 
 The gateway's `GatewayAuthManager.GetApiKeyAsync` resolves credentials in this order:
 
-1. The BotNexus `auth.json` entry for `github-copilot`.
-2. A declared `providers.github-copilot.apiKey`, including an `auth:<entry>` reference. A declared blank value does not fall through to ambient credentials.
-3. Ambient credentials, only when no provider credential is declared: the first nonblank value of `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`.
+1. A usable BotNexus `auth.json` entry for `github-copilot` takes precedence.
+2. Otherwise, resolve `providers.github-copilot.apiKey`, including an `auth:<entry>` reference. A declared blank literal value blocks ambient fallback.
+3. If that resolution returns null, try ambient credentials: the first nonblank value of `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`. Null can mean no declaration or an unresolved declared auth reference; see the current limitation below.
 
 For stored OAuth credentials, BotNexus refreshes the Copilot session token by re-exchanging the retained GitHub credential directly over HTTP through `CopilotOAuth.RefreshAsync`. It does not invoke `gh` or read GitHub CLI auth state.
 
@@ -103,6 +103,8 @@ BotNexus parses Copilot usage billing snapshots and emits activity tags for obse
 Copilot supports prompt caching for compatible models. The `<!-- BOTNEXUS_CACHE_BOUNDARY -->` marker is respected.
 
 ## Known Limitations
+
+- **Unresolved auth-reference fallback ([#4043](https://github.com/Sytone/botnexus/issues/4043))** — currently, when there is no usable primary auth entry, an empty/whitespace `auth:` target, a missing named entry, an entry without usable access, or a named-reference refresh failure can resolve to null and admit a relevant ambient credential despite the explicit declaration. A blank literal instead blocks fallback; a usable primary auth entry still wins. This is a known runtime defect, not an intentional credential policy or a fix implemented by this documentation change. The runtime repair is tracked separately in #4043; do not rely on an unresolved reference to prevent ambient credential use.
 
 - Model availability varies by Copilot subscription tier
 - Rate limits are managed by GitHub — not configurable per-user
