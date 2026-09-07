@@ -188,6 +188,7 @@ export default defineConfig({
           { text: 'Stale-Base Merges', link: '/development/stale-base-merges' },
           { text: 'Documentation Grooming', link: '/development/documentation-grooming' },
           { text: 'Azure Build and Test Runner', link: '/development/azure-build-test-runner' },
+          { text: 'Exact-Source Remote Snapshots', link: '/development/remote-source-snapshots' },
           { text: 'Maintenance Orchestration', link: '/development/autonomous-maintenance-orchestration' },
           { text: 'Validation Receipts', link: '/development/validation-receipts' },
           { text: 'Spike: Workflow Conversations', link: '/development/spike-workflow-conversations' },

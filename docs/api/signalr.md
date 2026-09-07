@@ -6,7 +6,9 @@ WebUI (desktop and mobile portals) and by satellite clients.
 > **Relationship to [`signalr-hub-contract.md`](../signalr-hub-contract.md).** That page is
 > the narrative protocol guide: connection lifecycle, query parameters, event semantics, and
 > client behaviour rules. **This page is the API-surface reference**: the exact hub method
-> signatures, their required authorization scope, and the wire shape of every payload record.
+> signatures, their required authorization scope, and the local hub payload records.
+> Shared gateway response/event types are identified by source links below rather than
+> reproduced as an exhaustive transitive schema.
 > Read the contract page for *how to use* the hub; read this page for *what exists*.
 
 Source of truth for everything below:
@@ -162,7 +164,9 @@ entering the normal dispatch queue, and throws `HubException` when:
 | `conversationId` blank | `Conversation ID is required.` |
 | `requestId` blank | `Request ID is required.` |
 | Conversation not found | `Conversation '<id>' not found.` |
-| No matching pending request | `No matching ask_user request is pending for this conversation.` |
+| No matching pending request and no durable fallback resolution | `No matching ask_user request is pending for this conversation.` |
+| Durable checkpoint has a different active request id | `This ask_user prompt is no longer the active prompt for the conversation.` |
+| Invalid submission | The resolver's failure reason, or `The ask_user response was rejected.` |
 
 > **Authorisation is the `gateway:control` scope, not a channel binding (#2744).** An earlier
 > revision also rejected the call when the conversation carried no `signalr` channel binding.
@@ -173,6 +177,9 @@ entering the normal dispatch queue, and throws `HubException` when:
 > scoped connection is still rejected by the `gateway:control` scope check.
 
 `selectedValues` entries are trimmed and blank entries dropped; an empty result becomes `null`.
+If the in-memory resolver finds no pending prompt, the hub can resolve through the durable
+checkpoint service. An already-resolved checkpoint is an idempotent no-op, not necessarily
+an error. Invalid submissions are not retried through that fallback.
 
 > `OnConnectedAsync` and `OnDisconnectedAsync` are SignalR lifecycle overrides, not
 > client-callable methods.
@@ -216,8 +223,19 @@ name. Semantics for each event are documented in
 
 ## Payload reference
 
-All records live in `HubContracts.cs` and carry explicit `[JsonPropertyName]` attributes, so
-the JSON field names below are exact.
+The local records tabulated below live in `HubContracts.cs` and carry explicit
+`[JsonPropertyName]` attributes. Several methods/events also expose shared types:
+
+- [`AgentStreamEvent`](../../src/domain/BotNexus.Domain/Gateway/Models/AgentExecution.cs),
+  the structured streaming envelope.
+- [`SessionSummary`](../../src/gateway/BotNexus.Gateway.Contracts/Sessions/SessionSummary.cs),
+  returned inside `SubscribeAllResult.sessions`.
+- [`AgentDescriptor`](../../src/domain/BotNexus.Domain/Gateway/Models/AgentDescriptor.cs)
+  and [`AgentInstance`](../../src/domain/BotNexus.Domain/Gateway/Models/AgentInstance.cs),
+  returned by `GetAgents` and `GetAgentStatus`.
+
+These source links identify the shared contracts; the tables here do not enumerate all
+of their nested payloads or custom serialization behavior.
 
 ### Method return types
 
@@ -279,6 +297,14 @@ never written one.
 | `conversationId` | string \| null |
 
 #### ContentDeltaPayload
+
+`ContentDelta` has an `object` parameter because it carries two forms. The adapter's
+`SendAsync` and `SendStreamDeltaAsync` paths emit the compact record below. Its
+`SendStreamEventAsync` path emits an `AgentStreamEvent` with session/conversation
+routing ids filled in, including `type`, `contentDelta` and `timestamp`; this shared
+record has no `role` property. Do not require the compact role-bearing shape on every
+content event. See the
+[adapter producers](../../src/extensions/BotNexus.Extensions.Channels.SignalR/SignalRChannelAdapter.cs).
 
 | Field | Type | Notes |
 |-------|------|-------|
