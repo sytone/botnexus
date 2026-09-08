@@ -28,10 +28,14 @@ hero:
 ## Find a specific answer
 
 - [Install BotNexus](getting-started-release.md): follow the setup steps and send your first message.
+- [Providers and models](user-guide/providers.md): choose a model service and connect your account.
+- [Use extensions](user-guide/using-extensions.md): configure existing tools and connections without writing code.
+- [Use BotNexus features](user-guide/capabilities.md): work with memory, schedules, Canvas and checklists.
+- [Usage ideas](user-guide/usage-ideas.md): try a useful task and check the result.
 - [Configuration reference](configuration.md): look up settings and their meaning.
 - [Command-line interface (CLI) reference](cli-reference.md): look up commands you enter in a terminal.
 - [Application programming interface (API) reference](api-reference.md): connect another program to BotNexus.
-- [Extension development](extension-development.md): learn how to add capabilities.
+- [Extension development](extension-development.md): write and test code for a new capability.
 - [Observability](observability.md): inspect logs and other diagnostic information.
 - [Releases](releases/): read version history and release notes.
 - [GitHub repository](https://github.com/sytone/botnexus): browse source code, report issues, and contribute.

@@ -14,6 +14,25 @@ Apply it to new pages and changed sections now. Improve existing pages in small,
 
 Readers in all three groups may use English as a second language. A technical audience is not a reason to use complicated English. Name the audience and goal near the top of each page. Link deeper explanations rather than putting the full architecture before a user's first task.
 
+## Organize by what the reader wants to do
+
+Providers, extensions, channels and features belong in the **User guide** when the page explains how to choose, configure or use them. Do not make users visit the Developer guide merely because a capability is implemented as an extension.
+
+The **Developer guide** explains how to build, test or integrate a capability. The **Architecture guide** explains its internal design and trade-offs. A folder name does not decide the audience: keep an existing URL when possible and place its navigation link where the intended reader will look.
+
+A user-facing capability guide must answer:
+
+1. What does it do, and when would I use it?
+2. What accounts, software, permissions or costs should I know about?
+3. How do I enable or configure it on my installation?
+4. What can I try first, and what result should I check?
+5. What are some other useful tasks or example requests?
+6. What can fail, what are its limits, and how do I turn it off or stop it where applicable?
+
+Label suggested requests as examples, not guaranteed or previously observed outcomes. State required tools and access before each example. Do not claim that writing a prompt installs an extension or grants permission. Link the exact reference for advanced options instead of duplicating it.
+
+Keep technical detail available, but outside the beginner's main path. When a page mixes audiences, add a clear user introduction and link the implementation explanation, or split the content while retaining links from the original URL. Use the [documentation map](documentation-map.md) to find the owning section and known exceptions.
+
 ## Write plainly and name things consistently
 
 - Use short sentences, direct verbs, and one main idea per paragraph. Address the reader as “you.”

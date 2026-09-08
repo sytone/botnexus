@@ -9,7 +9,7 @@ Use this guide to build BotNexus, change its source code, or add an extension. I
 - **Build and run the project:** start with [Developer setup](../getting-started-dev.md). Read its prerequisites and development-host safety warning before running commands.
 - **Contribute a change:** read [Contributing](https://github.com/sytone/botnexus/blob/main/CONTRIBUTING.md), then [Code standards](code-standards.md) and [PR and commit conventions](pr-and-commit-conventions.md). A pull request (PR) proposes a repository change for review.
 - **Write or review documentation:** use the [Documentation standards](documentation-standards.md) and [Documentation grooming](documentation-grooming.md).
-- **Add a capability:** read [Extension development](../extension-development.md).
+- **Build a capability:** read [Extension development](../extension-development.md) for code you write and test. To configure an existing capability without writing code, use [Use extensions](../user-guide/using-extensions.md).
 - **Understand the design:** use the [Architecture guide](../architecture/README.md) for component boundaries and design decisions.
 - **Use BotNexus without changing code:** use the [User guide](../user-guide/README.md).
 
@@ -28,6 +28,8 @@ This directory contains detailed documentation for developers working on or exte
 ## Contents
 
 ### Implementation Details
+
+These are deeper explanations, also grouped under **Architecture → Runtime and data flows** in the sidebar. Read them when you need to understand a component, not as prerequisites for your first build.
 
 - **[agent-execution.md](agent-execution.md)** — Agent lifecycle, isolation strategies, instance management
 - **[llm-request-lifecycle.md](llm-request-lifecycle.md)** — How user messages become LLM API calls (stateless context)
@@ -76,6 +78,12 @@ Start with [Developer setup](../getting-started-dev.md) to prepare your tools an
 5. **[message-flow.md](message-flow.md)** — How messages route through the system
 
 ---
+
+## How the documentation is organized
+
+The sidebar separates **using** a capability from **building** it. Provider setup, extension use, feature tasks and usage ideas belong in the [User guide](../user-guide/README.md). Developer sections cover contributing, authoring, API reference, testing and engineering operations. Architecture sections cover internal behavior and design choices.
+
+Use the [documentation map](documentation-map.md) when adding a page or checking where an existing topic belongs. The map records older URLs that remain in place even though their audience changed.
 
 ## Related Documentation
 

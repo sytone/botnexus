@@ -1,122 +1,59 @@
 # Getting Started with BotNexus
 
-Welcome to BotNexus! This page will help you get up and running. Choose the guide that matches your path:
-
-## Prerequisites (Both Paths)
-
-Before you start, you'll need:
-
-| Requirement | Details |
-|---|---|
-| **GitHub account** | Required for the Copilot provider's OAuth flow. You need an active GitHub Copilot subscription. |
-| **.NET 10 runtime or SDK** | See the guide for your path below. |
-
-Optional but recommended:
-
-- **curl** — for testing API endpoints (built into modern Windows and macOS)
-- A modern browser — for the built-in WebUI (SignalR client)
+BotNexus runs AI assistants called **agents**. You can chat with them in a browser and give them tools for tasks such as reading files or keeping a checklist. You choose which tools and information an agent may use.
 
 ## Choose Your Path
 
-### 👤 I Want to Install and Run BotNexus
+| What you want to do | Start here |
+| --- | --- |
+| Install BotNexus and use an agent | [User guide](user-guide/README.md) |
+| Choose a model service or connect an account | [Providers and models](user-guide/providers.md) |
+| Add tools and other capabilities | [Use extensions](user-guide/using-extensions.md) |
+| Find useful things to try | [Usage ideas](user-guide/usage-ideas.md) |
+| Change BotNexus code or build an extension | [Developer guide](development/README.md) |
+| Understand how BotNexus works inside | [Architecture guide](architecture/README.md) |
 
-You're an **end user** who wants to install a released version of BotNexus.
+## Prerequisites (Both Paths)
 
-👉 **[Install from Release](getting-started-release.md)**
+The requirements depend on the task. Read the chosen guide before installing software or running commands.
 
-This guide covers:
-- Installing the `botnexus` CLI tool from GitHub Releases (if available)
-- Setting up the gateway and extensions
-- Configuring your first provider (Copilot)
-- Creating and running your first agent
+- **To install and use BotNexus:** the current [installation guide](getting-started-release.md) requires Git and a .NET SDK compatible with the downloaded source. The SDK contains the tools that build BotNexus. The runtime alone is not enough for that source-build workflow.
+- **To connect a model:** choose a provider you can access. Some require an account, subscription or API key. A GitHub Copilot subscription is needed for the Copilot route, not for every provider.
+- **To contribute code:** follow [Developer setup](getting-started-dev.md) for the SDK, PowerShell and Git requirements. Keep development and tests separate from a running installation.
 
-**Requires:** .NET 10 runtime (not the full SDK)
-
-### I want to build and develop BotNexus
-
-You're a **developer** who cloned the repository and wants to build from source.
-
-👉 **[Developer guide](getting-started-dev.md)**
-
-This guide covers everything: clone, build, run, configure, dev workflow, testing, and reference.
-
-**Requires:** .NET 10 SDK, PowerShell 7+, Git, and a GitHub Copilot subscription
-
----
+A browser is needed for the web interface. Some setup steps use a **terminal**, an application where you type commands. The [provider guide](user-guide/providers.md#before-you-start) explains how to prepare for those steps after installation.
 
 ## What is BotNexus?
 
-BotNexus is a platform for building and running AI agents. It provides:
+Think of an agent as an assistant with instructions and a set of allowed actions. A **provider** supplies the language model that writes its responses. An **extension** adds a capability, such as web access or a connection to another service.
 
-- **A multi-agent framework** — Run multiple independent agents with different personalities and skills
-- **Multiple channels** — Connect agents through Telegram, Azure Service Bus, Agent 365, Matrix, SignalR, or custom interfaces
-- **Pluggable providers** — Use Copilot, OpenAI, or other LLM backends
-- **A web interface** — Chat with your agents from your browser
-- **Persistent memory** — Agents remember conversations and learn from long-term interactions
-- **Cron scheduling** — Automate tasks and regular briefings
-- **Developer-friendly** — Build custom extensions and integrate with your own tools
-
-This guide will get you from zero to your first conversation with an AI agent in about 10 minutes.
-
----
+You do not need to write code to use a capability that is already installed and configured. You do need to understand its access requirements and limits. Start with [Use BotNexus features](user-guide/capabilities.md).
 
 ## Quick Overview
 
-Here's what happens when you start BotNexus:
-
-1. **Initialize** — BotNexus creates a home directory (`~/.botnexus/`) with configuration, agent workspaces, and logs (use `botnexus init`)
-2. **Configure** — You add a provider (like Copilot) to your config
-3. **Create an agent** — Add a named agent to your config with its own personality and memory
-4. **Chat** — Open the WebUI and start chatting with your agent
-5. **Extend** — Add channels, tools, cron jobs, or custom providers as needed
-
-Platform settings are managed through the `botnexus` CLI and agent behaviour through workspace Markdown files. Existing JSON-backed homes and SQLite-backed homes use the same CLI commands.
+1. Follow [Install BotNexus](getting-started-release.md). That guide owns the installation commands.
+2. Connect a provider and choose an available model.
+3. Open the web interface and send a first message.
+4. Add only the capabilities you need. Check the result of each change before adding another.
 
 ### Using the CLI
 
-Use the command line rather than editing the storage representation directly. The same commands work whether the home currently stores configuration in JSON or SQLite:
+The **command-line interface (CLI)** is the `botnexus` program used in setup instructions. Use the exact commands in the relevant task guide. The [CLI reference](cli-reference.md) describes their options.
 
-```powershell
-# Initialize the home and configure a provider
-botnexus init
-botnexus provider setup
-
-# Read and update settings
-botnexus config get gateway.listenUrl
-botnexus config set gateway.listenUrl http://localhost:8080
-
-# Create and inspect agents
-botnexus agent add coder --provider copilot --model gpt-5.6-sol
-botnexus agent list
-
-# Inspect the backend and validate configuration
-botnexus config store status
-botnexus validate
-```
-
-See the [CLI Reference](cli-reference.md) for all available commands.
-
----
+Do not paste commands from a different shell or another installation without checking their paths and placeholders. Never paste a real API key into a public issue or example.
 
 ## Directory Layout
 
-| Path | Purpose | Used by |
-|---|---|---|
-| `%LOCALAPPDATA%\BotNexus` (Windows) or `/usr/local/bin` (macOS/Linux) | Installed binaries (CLI, gateway, extensions) | Release guide |
-| `~/.botnexus/` | User data (config, agents, tokens, logs) | Both paths |
-| `~/.botnexus/backups/` | Timestamped `config.json` backups, written automatically before each config mutation | Both paths |
+BotNexus source code, installed tools and user data are different things. The [installation guide's location table](getting-started-release.md#2-initialize-botnexus) explains the defaults. Custom home or data locations can change them.
 
----
+Use the [configuration guide](configuration.md) before changing storage settings. A configuration backup is not a backup of every conversation, memory store or workspace.
 
 ## Next Steps
 
-Once you finish your setup guide, check out:
-
-- **[Workspace & Memory](development/workspace-and-memory.md)** — Customize your agents with personality files
-- **[Configuration Guide](configuration.md)** — Reference for every config option
-- **[Extension Development](extension-development.md)** — Build custom channels and tools
-- **[Architecture Overview](architecture/overview.md)** — Understand how the system works
-
----
-
-*If something isn't working, see the troubleshooting sections in your setup guide or check the [Configuration Guide](configuration.md) for reference.*
+- [User guide](user-guide/README.md): everyday use, settings, troubleshooting and backups.
+- [Providers and models](user-guide/providers.md): choose and connect a model service.
+- [Use extensions](user-guide/using-extensions.md): find and set up capabilities.
+- [Use BotNexus features](user-guide/capabilities.md): understand memory, scheduling, Canvas and other features.
+- [Usage ideas](user-guide/usage-ideas.md): try a small, safe task and check its result.
+- [Extension Development](extension-development.md): build a capability rather than configure an existing one.
+- [Workspace & Memory](development/workspace-and-memory.md) and [Architecture Overview](architecture/overview.md): deeper technical reading.

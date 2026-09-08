@@ -9,7 +9,7 @@ An **agent** is an artificial intelligence (AI) assistant with its own instructi
 The current installation steps use a terminal, an application where you type commands. The linked guide still assumes some terminal knowledge. If opening a terminal or choosing the right command is unfamiliar, ask for help before running the steps. We are adding more beginner-level explanations as these guides improve.
 
 1. **[Install BotNexus](../getting-started-release.md).** Read the prerequisites before running commands. The current installation guide uses the released command-line interface (CLI), a program you use by typing commands in a terminal. It then builds the gateway from a copy of the source code. It does not install a prebuilt gateway package.
-2. **[Set up a provider](../getting-started-release.md#4-configure-your-first-provider-copilot).** A provider is the service that supplies the language model used by your agent. This walkthrough uses GitHub Copilot; check its account requirements and protect your sign-in credentials.
+2. **[Choose and set up a provider](providers.md).** A provider is the service that supplies the language model used by your agent. The installation walkthrough uses GitHub Copilot, but you can choose another configured provider. Check its account requirements and protect your sign-in credentials.
 3. **[Send your first message](../getting-started-release.md#send-your-first-message).** After completing setup, open Chat in the web interface, select an agent, and start a conversation.
 
 If you want to change BotNexus's source code, use the [Developer guide](../development/README.md) instead.
@@ -24,6 +24,19 @@ If you want to change BotNexus's source code, use the [Developer guide](../devel
 | Check the gateway or read logs | [Manage your system](../getting-started-release.md#8-manage-your-system) |
 
 A **conversation** is a saved thread of messages. A **session** is the agent's active context within that conversation. They are not the same thing; the Conversations guide explains when to use each.
+
+## Add capabilities and find ideas
+
+Providers, extensions and features are part of using BotNexus, not subjects reserved for programmers.
+
+| Your goal | Read |
+| --- | --- |
+| Choose a model service and connect your account | [Providers and models](providers.md) |
+| Add web access, service connections or other tools | [Use extensions](using-extensions.md) |
+| Understand memory, scheduling, Canvas and checklists | [Use BotNexus features](capabilities.md) |
+| Try useful example requests with clear checks | [Usage ideas](usage-ideas.md) |
+
+These guides explain what to prepare, what to try, what to check, and what can go wrong. Detailed provider and extension pages are available beneath the same User guide navigation for advanced settings.
 
 ## Change settings
 
