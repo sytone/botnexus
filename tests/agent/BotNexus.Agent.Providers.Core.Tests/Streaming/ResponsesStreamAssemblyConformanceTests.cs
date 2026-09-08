@@ -59,8 +59,7 @@ public class ResponsesStreamAssemblyConformanceTests
 
     private static async Task<string> RunAsync(
         IEnumerable<string> deltas,
-        string? doneText,
-        Func<LlmModel, string, string>? normalize = null)
+        string? doneText)
     {
         var stream = new LlmStream();
         var reader = new StreamReader(new MemoryStream(Encoding.UTF8.GetBytes(Sse(deltas, doneText))));
@@ -75,7 +74,6 @@ public class ResponsesStreamAssemblyConformanceTests
             emitError: (_, _, _, _) => { },
             onParsedEvent: null,
             resolveConfiguredServiceTier: null,
-            normalizeTextDelta: normalize,
             ct: CancellationToken.None);
 
         var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
@@ -105,15 +103,16 @@ public class ResponsesStreamAssemblyConformanceTests
     public async Task AssembledTextDivergesFromFinalText_ProviderFinalTextWins()
         => (await RunAsync(["Hello", "\r\n world"], "Hello world")).ShouldBe("Hello world");
 
-    // A normalizer that over-strips is itself an assembly defect. The conformance check must catch
-    // its own transport hook eating legitimate content, otherwise it only guards other people's bugs.
+    // Content missing from the assembled buffer that the provider's own final text DOES carry is
+    // an assembly defect regardless of who caused it. Until #3442 this case was produced by
+    // injecting an over-aggressive normalizer hook; the hook is gone, so the loss is expressed
+    // directly on the wire - deltas that omit a CRLF the provider's final text contains. The
+    // conformance check must still restore it, which is why StreamAssemblyConformance is RETAINED
+    // by #3442 while the transport normalizer is deleted.
     [Fact]
-    public async Task OverAggressiveNormalizerDeletesContent_ConformanceRestoresIt()
+    public async Task AssembledTextIsMissingContentTheFinalTextCarries_ConformanceRestoresIt()
     {
-        var assembled = await RunAsync(
-            ["Hello", "\r\nworld"],
-            "Hello\r\nworld",
-            normalize: static (_, delta) => delta.StartsWith("\r\n", StringComparison.Ordinal) ? delta[2..] : delta);
+        var assembled = await RunAsync(["Hello", "world"], "Hello\r\nworld");
 
         assembled.ShouldBe("Hello\r\nworld");
     }
@@ -139,7 +138,7 @@ public class ResponsesStreamAssemblyConformanceTests
         await ResponsesStreamParser.ParseAsync(
             stream, reader, Model(), options: null, api: "openai-responses",
             logger: NullLogger.Instance, emitError: (_, _, _, _) => { }, onParsedEvent: null,
-            resolveConfiguredServiceTier: null, normalizeTextDelta: null, ct: CancellationToken.None);
+            resolveConfiguredServiceTier: null, ct: CancellationToken.None);
 
         var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
         result.Content.OfType<TextContent>().ShouldBeEmpty();

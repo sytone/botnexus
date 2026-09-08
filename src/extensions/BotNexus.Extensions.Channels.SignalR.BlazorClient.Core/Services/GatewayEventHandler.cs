@@ -19,6 +19,14 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     private readonly IClientStateStore _store;
     private readonly GatewayHubConnection _hub;
+
+    // #3212: the ONLY visibility source this handler has. Every "is the user looking at this pane"
+    // decision -- unread counts, badge suppression, recovery-path bracket clearing -- goes through
+    // this route-derived predicate. The handler deliberately holds no ambient fallback of its own:
+    // AgentState.ActiveConversationId is a per-agent last-selected marker, not an answer about what
+    // is rendered, and consulting it made N agents simultaneously "active" while the browser showed
+    // exactly one. Do not reintroduce a read of it here.
+    private readonly IDisplayedConversation _displayed;
     private readonly ILogger<GatewayEventHandler> _logger;
     private readonly HashSet<string> _streamingWhenDisconnected = new();
 
@@ -35,11 +43,16 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     // work runs outside it -- the lock is never held across an await.
     private readonly object _stateGate = new();
 
-    public GatewayEventHandler(IClientStateStore store, GatewayHubConnection hub, ILogger<GatewayEventHandler> logger)
+    public GatewayEventHandler(
+        IClientStateStore store,
+        GatewayHubConnection hub,
+        ILogger<GatewayEventHandler> logger,
+        IDisplayedConversation displayed)
     {
         _store = store;
         _hub = hub;
         _logger = logger;
+        _displayed = displayed;
 
         _hub.OnConnected += HandleConnected;
         _hub.OnRunStarted += HandleRunStarted;
@@ -107,7 +120,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleRunStarted(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -147,7 +160,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         // Harden the recovery: clear the resolved conversation when it exists, and always also clear
         // the agent's active conversation bracket as a fallback so a null/mismatched hint can never
         // strand the user.
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId);
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
 
         var cleared = false;
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
@@ -158,14 +171,17 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             // nothing can still be pending — whatever was queued was injected or discarded.
             // RunEnded is therefore the honest, already-existing injection signal for the chip.
             _store.ClearSteeringQueue(convId);
-            cleared = convId == agent.ActiveConversationId;
+            cleared = _displayed.IsConversationDisplayed(agentId, convId);
         }
 
-        // Fallback: the resolved conversation was unknown (misrouted hint) or was not the active
-        // one -- clear the active conversation's bracket so the portal reliably swaps back to Send.
+        // #2195 recovery, now route-derived (#3212): the resolved conversation was unknown
+        // (misrouted hint) or was not the DISPLAYED one -- clear the displayed conversation's
+        // bracket so the portal reliably swaps back to Send. Keying this on the route means the
+        // recovery only ever touches the pane the user is actually looking at, instead of every
+        // agent's independently-remembered last selection.
         if (!cleared
-            && agent!.ActiveConversationId is { } activeConvId
-            && agent.Conversations.GetValueOrDefault(activeConvId) is { } activeConv)
+            && _displayed.DisplayedConversationIdFor(agentId) is { } activeConvId
+            && agent!.Conversations.GetValueOrDefault(activeConvId) is { } activeConv)
         {
             activeConv.StreamState.EndRun();
             // #2439: same defensive reasoning as the bracket — a misrouted hint must not strand
@@ -184,7 +200,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleMessageStart(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId);
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -200,7 +216,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleContentDelta(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId);
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -221,7 +237,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleThinkingDelta(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId);
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -235,7 +251,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleToolStart(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -263,7 +279,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             MessageId = msg.Id
         };
 
-        if (convId != agent.ActiveConversationId)
+        // #3212: unread is a VISIBILITY question, answered by the route-derived predicate.
+        if (!_displayed.IsConversationDisplayed(agentId, convId))
             conv.UnreadCount++;
         _store.NotifyChanged();
     }
@@ -271,7 +288,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleToolEnd(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -323,7 +340,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             ToolDuration = duration
         });
 
-        if (convId != agent.ActiveConversationId)
+        // #3212: unread is a VISIBILITY question, answered by the route-derived predicate.
+        if (!_displayed.IsConversationDisplayed(agentId, convId))
             conv.UnreadCount++;
 
         agent.ProcessingStage = agent.IsStreaming ? "🤖 Agent is responding…" : null;
@@ -344,7 +362,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleMessageEnd(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
         if (convId is null) return;
 
         var conv = agent!.Conversations.GetValueOrDefault(convId);
@@ -383,10 +401,13 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             // with a recent timestamp, creating noise for cron wakeups that had nothing to say (#773).
             conv.UpdatedAt = DateTimeOffset.UtcNow;
 
-            if (agent.AgentId != _store.ActiveAgentId)
+            // #3212: the agent badge is likewise route-derived -- it counts activity on agents
+            // whose pane is not the one being rendered.
+            if (!_displayed.IsAgentDisplayed(agent.AgentId))
                 agent.UnreadCount++;
 
-            if (convId != agent.ActiveConversationId)
+            // #3212: unread is a VISIBILITY question, answered by the route-derived predicate.
+            if (!_displayed.IsConversationDisplayed(agentId, convId))
                 conv.UnreadCount++;
         }
 
@@ -401,7 +422,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleError(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
 
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
@@ -433,7 +454,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleTurnInterrupted(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
 
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
@@ -468,8 +489,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         // Only take action if still streaming -- if MessageEnd already cleared it, this is a no-op.
         if (!agent.IsStreaming) return;
 
-        var convId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId)
-            ?? agent!.ActiveConversationId;
+        var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
             // A tool-only turn may have buffered content (e.g. a partial NO_REPLY).
@@ -494,7 +514,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         var resolvedConversationId = prompt.ConversationId;
         if (string.IsNullOrWhiteSpace(resolvedConversationId))
-            resolvedConversationId = ResolveConversationId(agentId!, agent!, evt.SessionId, evt.ConversationId) ?? agent!.ActiveConversationId;
+            resolvedConversationId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
         if (string.IsNullOrWhiteSpace(resolvedConversationId))
             return;
 
@@ -513,8 +533,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             // We can't remove from _sessionToAgent directly; re-registering with null clears it next time
             agent.SessionId = null;
 
-        if (agent.ActiveConversationId is not null &&
-            agent.Conversations.GetValueOrDefault(agent.ActiveConversationId) is { } conv)
+        // #3212: the recovery path clears the bracket for the conversation the user is actually
+        // LOOKING AT, resolved from the route, not the agent's ambient last-selected marker.
+        if (_displayed.DisplayedConversationIdFor(payload.AgentId) is { } displayedConvId &&
+            agent.Conversations.GetValueOrDefault(displayedConvId) is { } conv)
         {
             conv.StreamState.EndRun();
             // Do NOT clear conv.Messages or set HistoryLoaded=false.
@@ -540,7 +562,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     {
         if (!ResolveAgent(payload.SessionId, out var agentId, out var agent, payload.ConversationId)) return;
         // PR1.5 (#682): SubAgentSignalRBridge stamps payload.ConversationId — prefer it.
-        var convId = ResolveConversationId(agentId!, agent!, payload.SessionId, payload.ConversationId);
+        var convId = ResolveConversationId(agentId!, payload.SessionId, payload.ConversationId);
 
         agent.SubAgents[payload.SubAgentId] = new SubAgentInfo
         {
@@ -665,7 +687,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (agent is null) return;
 
-        convId ??= agent.ActiveConversationId;
+        // #3212: steering feedback that names no conversation is DROPPED rather than attributed to
+        // the agent's ambient last-selected conversation, which could paint a "Steering injected"
+        // chip into a conversation that never asked for one.
         if (convId is null || !agent.Conversations.TryGetValue(convId, out var conv)) return;
 
         if (payload.Kind == SteeringFeedbackKind.Injected)
@@ -799,8 +823,11 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
                 agent.IsStreaming = false;
                 agent.ProcessingStage = null;
 
-                if (agent.ActiveConversationId is not null &&
-                    agent.Conversations.GetValueOrDefault(agent.ActiveConversationId) is { } conv)
+                // #3212: reconnect recovery repairs the pane the user is LOOKING AT, resolved from
+                // the route. For every other agent the stale stream state is already cleared above
+                // via IsStreaming/ProcessingStage; there is no rendered buffer to reconcile.
+                if (_displayed.DisplayedConversationIdFor(agentId) is { } displayedConvId &&
+                    agent.Conversations.GetValueOrDefault(displayedConvId) is { } conv)
                 {
                     conv.StreamState.Reset();
                     // Force history reload so the UI fetches server-persisted state.
@@ -856,7 +883,21 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         return false;
     }
 
-    private string? ResolveConversationId(string agentId, AgentState agent, string? sessionId, string? conversationIdHint = null)
+    /// <summary>
+    /// Resolves the conversation an inbound event belongs to, using ONLY information the event
+    /// itself carries: the stamped conversation id, or the session-to-conversation binding.
+    /// </summary>
+    /// <remarks>
+    /// #3212 deleted the trailing <c>?? agent.ActiveConversationId</c> attribution fallback that used
+    /// to close this method. That fallback attributed an event which named no conversation to
+    /// whichever conversation the agent happened to have selected last -- an arbitrary target that
+    /// could append another conversation's messages, tool cards and errors into the one on screen.
+    /// #3065 (closed) guarantees every conversation-scoped inbound event carries a conversation id,
+    /// so the fallback has no legitimate input left: an event that still cannot name its conversation
+    /// is a defect upstream and is now DROPPED (this returns null and every caller returns early)
+    /// rather than misattributed. Do not restore it.
+    /// </remarks>
+    private string? ResolveConversationId(string agentId, string? sessionId, string? conversationIdHint = null)
     {
         // PR1.5 (#682): SignalR stamps ConversationId on stream payloads so the client
         // does not need a session→conversation lookup at all. Prefer the hint when set;
@@ -865,7 +906,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             return conversationIdHint;
         if (_store.TryResolveConversationBySession(agentId, sessionId, out var convId))
             return convId;
-        return agent.ActiveConversationId;
+        // #3212: no ambient fallback. See the remarks above -- an unattributable event is dropped.
+        return null;
     }
 
     private string? ResolveSubAgentConversationId(string agentId, AgentState agent, SubAgentEventPayload payload)

@@ -19,7 +19,11 @@ public class ProviderNewlineSeamArchitectureTests : ArchitectureTest
     /// <summary>The only files permitted to perform CR-aware mutation of streamed text.</summary>
     private static readonly string[] SeamFiles =
     [
-        "src/agent/BotNexus.Agent.Providers.Copilot/CopilotTextDeltaNormalizer.cs",
+        // CopilotTextDeltaNormalizer.cs was removed from this allow-list by #3442: mitm captures
+        // showed 0 raw CR bytes across 3,025 Copilot deltas, so the CRLF it stripped was never on
+        // the wire. The real defect was our own separator injection (#3425, fixed by #3428), which
+        // the FinalAssistantText_IsConcatenatedWithoutASeparator fence below now pins. One seam
+        // remains, and it is the origin-agnostic one.
         "src/agent/BotNexus.Agent.Providers.Core/Streaming/StreamAssemblyConformance.cs",
     ];
 
@@ -80,9 +84,10 @@ public class ProviderNewlineSeamArchitectureTests : ArchitectureTest
 
         violations.ShouldBeEmpty(
             "Carriage-return-aware mutation of streamed assistant text must live in the declared " +
-            "provider seam (#2443), not in a stream-assembly participant. Route the transport quirk " +
-            "through CopilotTextDeltaNormalizer, or the reconciliation through " +
-            "StreamAssemblyConformance, so a fourth transport cannot reintroduce #2170. Violations: " +
+            "provider seam (#2443), not in a stream-assembly participant. Route the reconciliation " +
+            "through StreamAssemblyConformance. Note that the transport-quirk explanation was " +
+            "falsified by #3442 - if you are here chasing a newline defect, the cause is assembly " +
+            "(#3425), not framing. Violations: " +
             string.Join("; ", violations));
     }
 

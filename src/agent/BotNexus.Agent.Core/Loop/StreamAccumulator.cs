@@ -8,7 +8,8 @@ namespace BotNexus.Agent.Core.Loop;
 /// Accumulates streaming LLM events into a final AssistantAgentMessage.
 /// </summary>
 /// <remarks>
-/// Handles StartEvent, text/thinking/tool-call delta lifecycle events, DoneEvent, and ErrorEvent.
+/// Handles StartEvent, text/thinking/tool-call delta lifecycle events, WarningEvent, DoneEvent, and
+/// ErrorEvent.
 /// Emits corresponding AgentEvent for each provider event.
 /// Maintains tool call state to correlate deltas with tool IDs/names.
 /// </remarks>
@@ -225,6 +226,14 @@ internal static class StreamAccumulator
                     }
 
                     await emit(new MessageEndEvent(final, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    break;
+
+                case WarningEvent:
+                    // Non-terminal by contract (#3291): accumulation continues, no MessageEndEvent
+                    // is emitted, `final` is left alone, and the loop keeps reading. The channel now
+                    // exists end to end; gateway/channel presentation of a warning is a separate
+                    // contract (#2078) and is deliberately not decided here, so the event is
+                    // consumed without emitting a gateway event.
                     break;
 
                 case ErrorEvent error:

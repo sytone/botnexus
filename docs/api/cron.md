@@ -28,7 +28,8 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/CronController.cs`.
 
 Lists all cron jobs. The response merges jobs persisted in the cron store with jobs
 declared in configuration (`cron.jobs`) that are not already persisted. Results are
-ordered by `createdAt` descending.
+ordered by `createdAt` descending, and **filtered to the jobs the caller may manage**
+(see [Ownership](#ownership)).
 
 Returns `200 OK` with a JSON array of `CronJob` objects.
 
@@ -38,7 +39,8 @@ Returns `200 OK` with a JSON array of `CronJob` objects.
 |-----------|----|------|-------|
 | `jobId` | path | string | The job identifier. |
 
-Returns `200 OK` with the `CronJob`, or `404 Not Found` when it does not exist.
+Returns `200 OK` with the `CronJob`, `404 Not Found` when it does not exist, or
+`403 Forbidden` when it exists but is not manageable by the caller (see [Ownership](#ownership)).
 
 ### `POST /api/cron`
 
@@ -68,11 +70,53 @@ Updates an existing job from the request body. The route `jobId` wins over any `
 in the body, and the original `createdAt` is preserved. `nextRunAt`, when present, is
 range-validated as on create.
 
+#### Omitted fields are preserved (#3808)
+
+**A field absent from the request body leaves the stored value unchanged.** Only a field the
+caller actually sends is written, so editing a job's schedule cannot silently clear policy the
+request never mentioned. This is the same omitted-field rule the `cron` agent tool has applied
+since #2634, and the two seams are asserted to agree.
+
+This matters most for the six policy columns, because their CLR defaults are indistinguishable
+from a deliberate "turn it off":
+
+| Field | Omitted | Explicit value |
+|-------|---------|----------------|
+| `failureAlertsEnabled` | keeps stored value | `true`/`false` applied |
+| `failureAlertConversationId` | keeps stored value | applied; `null` or `""` **clears** the target |
+| `deleteJobAfterRun` | keeps stored value | `true`/`false` applied |
+| `deleteAfterRun` | keeps stored value | `true`/`false` applied |
+| `expiresAt` | keeps stored value | applied; `null` or `""` **clears** the expiry |
+| `executionClass` | keeps stored value | `true`/`false` applied |
+
+The same rule applies to the ordinary definition fields (`name`, `schedule`, `actionType`,
+`message`, `templateName`, `templateParameters`, `model`, `webhookUrl`, `shellCommand`,
+`enabled`, `system`, `timeZone`, `metadata`, `nextRunAt`).
+
+A partial edit is therefore the recommended shape - send only what changes:
+
+```http
+PUT /api/cron/daily-briefing
+Content-Type: application/json
+X-Api-Key: <key>
+
+{ "schedule": "0 9 * * *" }
+```
+
+The job's alert routing, one-shot disposition, expiry and execution class all survive that request.
+Round-tripping the full record returned by `GET /api/cron/{jobId}` also remains correct, since
+nothing is omitted.
+
+Only a **supplied** `failureAlertConversationId` is validated against the conversation store. A
+retained one is not re-checked, so a job whose alert conversation was later deleted stays editable
+rather than becoming permanently un-saveable because of a field the caller never touched.
+
 `agentId` and `createdBy` are **not** caller-authored on this route (#3575). `createdBy` is
 server-stamped provenance and is always taken from the stored row; `agentId` moves only to an
 agent the authenticated caller is itself scoped to, and otherwise keeps its stored value. This
-mirrors the existing `scheduleActivatedAt` stripping (#2554) - the request binds the domain
-record directly, so any column the store writes must be governed explicitly here.
+mirrors the existing `scheduleActivatedAt` stripping (#2554) - any column the store writes must be
+governed explicitly here. The scheduler-owned runtime bookkeeping (`lastRunAt`, `lastRunStatus`,
+`lastRunError`, `backoffUntil`, `conversationId`) is likewise not accepted from this route (#2133).
 
 Returns `200 OK` with the updated job, `404 Not Found` when the job does not exist,
 `403 Forbidden` when the job exists but is not manageable by the caller, or `409 Conflict` when
@@ -89,13 +133,19 @@ Deletes a cron job through the scheduler, which also archives the job's pinned
 conversation. Returns `204 No Content`, or `403 Forbidden` when the job exists but is not
 manageable by the caller.
 
-### Ownership on the mutating routes
+### Ownership
 
-`PUT` and `DELETE` apply the same ownership rule as the `cron` agent tool, through the shared
-`CronJobOwnership` predicate: a job is manageable when the caller is scoped to the agent that
+`GET`, `PUT` and `DELETE` all apply the same ownership rule as the `cron` agent tool, through the
+shared `CronJobOwnership` predicate: a job is manageable when the caller is scoped to the agent that
 created it or to the agent it targets. A caller whose API key carries no `allowedAgents` scope,
 or which is marked `isAdmin`, is already trusted platform-wide by the gateway auth middleware and
 is not further restricted here.
+
+The read routes were unscoped until #3778: a caller limited to one agent could enumerate every job
+definition on the platform (including `shellCommand` and `webhookUrl`), every run's `sessionId`, and
+platform-wide cost rollups. The single-job routes now answer `403`; the collection routes (`GET
+/api/cron` and `GET /api/cron/costs`) filter their result set instead, since there is no single
+subject to refuse.
 
 An unauthorized target answers `403 Forbidden`, not `404` - the caller has already learned the
 job exists from the route's own `404` contract, so collapsing the two would trade a truthful
@@ -113,8 +163,10 @@ describing the started run, or `404 Not Found` when the job does not exist.
 | `jobId` | path | string | The job identifier. |
 | `limit` | query | int | Maximum runs to return. Defaults to `20`. |
 
-Returns `200 OK` with a JSON array of `CronRun` objects (most recent first), or
-`404 Not Found` when the job does not exist.
+Returns `200 OK` with a JSON array of `CronRun` objects (most recent first),
+`404 Not Found` when the job does not exist, or `403 Forbidden` when it exists but is not
+manageable by the caller (see [Ownership](#ownership)). Run records carry the `sessionId` that
+keys into the owning agent's transcript, so the check runs before the history is read.
 
 Each `CronRun` carries a `cost` object with the per-run measurements recorded at run
 finalization (#2641):
@@ -137,7 +189,9 @@ a free one and invert the cost ranking.
 
 ### `GET /api/cron/costs`
 
-Per-job cost rollup derived from run history, ordered by **total** spend descending.
+Per-job cost rollup derived from run history, ordered by **total** spend descending. The rollup is
+built from the jobs the caller may manage (see [Ownership](#ownership)); a scoped caller that owns
+no jobs receives an empty array rather than an unscoped query.
 
 | Parameter | In | Type | Notes |
 |-----------|----|------|-------|

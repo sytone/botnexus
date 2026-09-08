@@ -128,18 +128,27 @@ A machine-readable OpenAPI 3.0 description of the full surface is also available
 > The gateway hosts additional controllers (channels, models, providers, memory,
 > stats, and more) that are not yet documented as hand-written pages; they do
 > appear in `openapi.json`.
-### Routes registered outside the controller set
 
-Some routes are registered through the `IEndpointContributor` seam by an extension rather than as
-a controller in `BotNexus.Gateway.Api`, because a gateway project may not reference an extension
-project. They are real, authenticated `/api/*` routes, but they will never appear in a listing
-derived from `Controllers/`:
+---
 
-| Base route | Registered by | Reference |
-|------------|---------------|-----------|
-| `api/plugins` | `PluginsEndpointContributor` | [Plugins](../api-reference.md#plugins) |
+## Routes registered outside the controller set
+
+**The controller reference above is not a complete inventory of `/api/*`.** Some route groups are
+registered through the `IEndpointContributor` seam - `MapGroup`/`MapGet`/`MapPut` minimal-API
+registrations contributed by an extension or a gateway sub-assembly - rather than as a controller in
+`src/gateway/BotNexus.Gateway.Api/Controllers/`. This is deliberate: a gateway project may not
+reference an extension project (enforced by `GatewayProjectDependencyBoundaryTests`), so a surface
+that needs extension types cannot live in a controller.
+
+The practical consequence is that every controller-derived audit - including the table above - is
+structurally blind to these routes. They are nonetheless real, authenticated `/api/*` routes subject
+to the same API-key rules as everything else.
+
+| Route group | Contributor | Reference |
+|-------------|-------------|-----------|
+| `api/plugins` | `PluginsEndpointContributor` | [Plugins Management](../api-reference.md#plugins-management) |
 | `api/skills` | `SkillsEndpointContributor` | [Skills Management](../api-reference.md#skills-management) |
-| `api/telemetry` | `TelemetryEndpointContributor` | [Telemetry](../api-reference.md#telemetry) |
+| `api/telemetry` | `TelemetryEndpointContributor` | [Telemetry Metrics](../api-reference.md#telemetry-metrics) |
 
 ---
 

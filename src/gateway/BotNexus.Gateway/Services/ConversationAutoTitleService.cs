@@ -353,10 +353,31 @@ public sealed class ConversationAutoTitleService
                     ? new SimpleStreamOptions { SessionId = resolvedSessionId.Value }
                     : null;
 
-            completion = await _llmClient
-                .CompleteSimpleAsync(model, context, streamOptions)
-                .WaitAsync(TimeSpan.FromSeconds(effectiveTimeout), ct)
-                .ConfigureAwait(false);
+            // #3833: the auto-title call goes through the auth manager's bounded invalidate-and-
+            // retry so a credential rotating mid-flight costs one wasted round trip rather than a
+            // silently skipped title (the catch below swallows the failure into a warning, which is
+            // exactly the shape that made a rotation look like "auto-title just never works").
+            completion = _authManager is not null
+                ? await _authManager
+                    .InvokeWithAuthRetryAsync(
+                        model.Provider,
+                        async (apiKey, _) =>
+                        {
+                            var attemptOptions = string.IsNullOrWhiteSpace(apiKey) || streamOptions is null
+                                ? streamOptions
+                                : streamOptions with { ApiKey = apiKey };
+
+                            return await _llmClient
+                                .CompleteSimpleAsync(model, context, attemptOptions)
+                                .WaitAsync(TimeSpan.FromSeconds(effectiveTimeout), ct)
+                                .ConfigureAwait(false);
+                        },
+                        ct)
+                    .ConfigureAwait(false)
+                : await _llmClient
+                    .CompleteSimpleAsync(model, context, streamOptions)
+                    .WaitAsync(TimeSpan.FromSeconds(effectiveTimeout), ct)
+                    .ConfigureAwait(false);
         }
         catch (Exception ex)
         {

@@ -490,4 +490,109 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
         // conv-b has no history of its own: the draft is untouched and nothing leaks in.
         Assert.Equal("draft-in-b", InputValue(cut));
     }
+
+    // ---------------------------------------------------------------------------------
+    // #3451 - the seed is blind to prompts revealed by a transcript load-more
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// #3451. <c>Messages</c> is the PAGINATED transcript, and the seed latched per conversation, so
+    /// prompts that only became visible after <c>LoadMoreHistory</c> prepended an older page were
+    /// permanently unreachable: Up stopped dead at the oldest prompt of whichever page happened to
+    /// be loaded at first recall.
+    ///
+    /// Modelled exactly as it happens: seed from the loaded page (one Up), then prepend an older
+    /// page through <c>PrependMessages</c> - the same call <c>AgentInteractionService
+    /// .LoadMoreHistoryAsync</c> makes (#1691) - and keep pressing Up.
+    ///
+    /// Falsification: restore the unconditional <c>ContainsKey</c> early-return in
+    /// <c>SeedHistoryFromTranscript</c> and this fails at the third Up, which sticks on
+    /// "page-two-old" because "page-one-oldest" was never in the list.
+    /// </summary>
+    [Fact]
+    public void Load_more_prepend_makes_older_prompts_reachable()
+    {
+        SeedAgent("agent-1");
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = new ConversationState { ConversationId = "conv-a", Title = "conv-a" };
+        // The page that is loaded when the panel first renders.
+        conv.AppendMessage(new ChatMessage("User", "page-two-old", DateTimeOffset.UtcNow));
+        conv.AppendMessage(new ChatMessage("Assistant", "reply", DateTimeOffset.UtcNow));
+        conv.AppendMessage(new ChatMessage("User", "page-two-new", DateTimeOffset.UtcNow));
+        agent.Conversations["conv-a"] = conv;
+        agent.ActiveConversationId = "conv-a";
+
+        var cut = Render("agent-1", conversationId: "conv-a");
+        StubCaret(onFirstLine: true, onLastLine: true);
+
+        // First recall seeds from the loaded page only.
+        Key(cut, "ArrowUp");
+        Assert.Equal("page-two-new", InputValue(cut));
+
+        // Scroll-to-top load-more prepends the older page.
+        conv.PrependMessages(
+        [
+            new ChatMessage("User", "page-one-oldest", DateTimeOffset.UtcNow),
+            new ChatMessage("Assistant", "older reply", DateTimeOffset.UtcNow),
+            new ChatMessage("User", "page-one-newer", DateTimeOffset.UtcNow),
+        ]);
+
+        Key(cut, "ArrowUp");
+        Assert.Equal("page-two-old", InputValue(cut));
+        Key(cut, "ArrowUp");
+        Assert.Equal("page-one-newer", InputValue(cut));
+        Key(cut, "ArrowUp");
+        Assert.Equal("page-one-oldest", InputValue(cut));
+
+        // Oldest reached - a further Up must hold there.
+        Key(cut, "ArrowUp");
+        Assert.Equal("page-one-oldest", InputValue(cut));
+    }
+
+    /// <summary>
+    /// #3451 acceptance 2 + 3: the re-seed only ever adds AHEAD of what recall already holds. Live
+    /// prompts recorded by this panel keep their identity, their order, and their multiplicity
+    /// across a load-more, and a prepend into one conversation cannot reach another.
+    ///
+    /// Falsification: re-derive the whole list from the transcript on every read instead of
+    /// splicing only the newly-visible prefix, and "typed-two" is either lost (it is not in the
+    /// transcript) or duplicated once the server echo lands.
+    /// </summary>
+    [Fact]
+    public void Load_more_prepend_does_not_disturb_live_recorded_prompts_or_cross_conversations()
+    {
+        SeedAgent("agent-1");
+        var agent = _store.GetAgent("agent-1")!;
+
+        var conv = new ConversationState { ConversationId = "conv-a", Title = "conv-a" };
+        conv.AppendMessage(new ChatMessage("User", "seeded-prompt", DateTimeOffset.UtcNow));
+        agent.Conversations["conv-a"] = conv;
+
+        var other = new ConversationState { ConversationId = "conv-b", Title = "conv-b" };
+        agent.Conversations["conv-b"] = other;
+        agent.ActiveConversationId = "conv-a";
+
+        var cut = Render("agent-1", conversationId: "conv-a");
+        Send(cut, "typed-one");
+        Send(cut, "typed-two");
+
+        conv.PrependMessages([new ChatMessage("User", "older-prompt", DateTimeOffset.UtcNow)]);
+        // conv-b also gains an older page; it must remain invisible to this panel.
+        other.PrependMessages([new ChatMessage("User", "b-only-prompt", DateTimeOffset.UtcNow)]);
+
+        StubCaret(onFirstLine: true, onLastLine: true);
+
+        Key(cut, "ArrowUp");
+        Assert.Equal("typed-two", InputValue(cut));
+        Key(cut, "ArrowUp");
+        Assert.Equal("typed-one", InputValue(cut));
+        Key(cut, "ArrowUp");
+        Assert.Equal("seeded-prompt", InputValue(cut));
+        Key(cut, "ArrowUp");
+        Assert.Equal("older-prompt", InputValue(cut));
+
+        // No duplicate of a live-recorded prompt, and nothing from conv-b, beyond the oldest.
+        Key(cut, "ArrowUp");
+        Assert.Equal("older-prompt", InputValue(cut));
+    }
 }

@@ -36,6 +36,7 @@ public static class PlatformConfigValidator
         }
 
         ValidateLocationWarnings(config.Gateway?.Locations, warnings);
+        ValidateProviderDeprecationWarnings(config.Providers, warnings);
 
         return warnings;
     }
@@ -462,7 +463,7 @@ public static class PlatformConfigValidator
             // in that case - both the CLI `provider add --base-url` help text and the
             // ProviderConfig.Api docs already describe this carve-out.
             var isIntegrationMock = string.Equals(
-                providerConfig.Api, "integration-mock", StringComparison.OrdinalIgnoreCase);
+                providerConfig.ResolveChatApi(), "integration-mock", StringComparison.OrdinalIgnoreCase);
 
             if (!isIntegrationMock &&
                 !string.IsNullOrWhiteSpace(providerConfig.BaseUrl) &&
@@ -471,7 +472,77 @@ public static class PlatformConfigValidator
             {
                 errors.Add($"providers.{providerKey}.baseUrl must be a valid http or https absolute URL.");
             }
+
+            ValidateProviderEmbeddings(providerKey, providerConfig.Embeddings, errors);
         }
+    }
+
+    /// <summary>
+    /// #2854: shape rules for the nested embeddings capability object. An embeddings object with no
+    /// model is the failure this issue exists to make representable-and-checkable -- before the
+    /// split it could not even be expressed, so it also could not be diagnosed.
+    /// </summary>
+    private static void ValidateProviderEmbeddings(
+        string providerKey,
+        ProviderEmbeddingsConfig? embeddings,
+        List<string> errors)
+    {
+        if (embeddings is null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(embeddings.Model))
+        {
+            errors.Add(
+                $"providers.{providerKey}.embeddings.model is required when an embeddings capability is configured.");
+        }
+
+        if (embeddings.Dimensions is { } dimensions && dimensions <= 0)
+            errors.Add($"providers.{providerKey}.embeddings.dimensions must be greater than zero.");
+    }
+
+    /// <summary>
+    /// #2854: the flat chat-shaped fields on <see cref="ProviderConfig"/> are retained for one
+    /// release so an existing config keeps binding, and each one that is still in use earns a
+    /// warning naming its nested replacement path. A warning rather than an error is the whole
+    /// compatibility bargain: the old document still WORKS, it just says where it is going.
+    /// </summary>
+    private static void ValidateProviderDeprecationWarnings(
+        Dictionary<string, ProviderConfig>? providers,
+        List<string> warnings)
+    {
+        if (providers is null)
+            return;
+
+        foreach (var (providerKey, providerConfig) in providers)
+        {
+            if (string.IsNullOrWhiteSpace(providerKey) || providerConfig is null)
+                continue;
+
+            Deprecate(providerKey, "api", "chat.api", providerConfig.Api is not null, warnings);
+            Deprecate(providerKey, "defaultModel", "chat.defaultModel", providerConfig.DefaultModel is not null, warnings);
+            Deprecate(providerKey, "models", "chat.models", providerConfig.Models is not null, warnings);
+            Deprecate(providerKey, "input", "chat.input", providerConfig.Input is not null, warnings);
+            Deprecate(providerKey, "reasoning", "chat.reasoning", providerConfig.Reasoning is not null, warnings);
+            Deprecate(providerKey, "supportsExtraHighThinking", "chat.supportsExtraHighThinking", providerConfig.SupportsExtraHighThinking is not null, warnings);
+            Deprecate(providerKey, "supportsExtendedContextWindow", "chat.supportsExtendedContextWindow", providerConfig.SupportsExtendedContextWindow is not null, warnings);
+            Deprecate(providerKey, "contextWindow", "chat.contextWindow", providerConfig.ContextWindow is not null, warnings);
+        }
+    }
+
+    private static void Deprecate(
+        string providerKey,
+        string flatField,
+        string nestedField,
+        bool isSet,
+        List<string> warnings)
+    {
+        if (!isSet)
+            return;
+
+        warnings.Add(
+            $"providers.{providerKey}.{flatField} is deprecated (#2854); " +
+            $"move it to providers.{providerKey}.{nestedField}. " +
+            "The flat field still applies until it is removed in a later release.");
     }
 
     private static void ValidateChannels(Dictionary<string, ChannelConfig>? channels, List<string> errors)

@@ -36,6 +36,15 @@ namespace BotNexus.Integration.Cli.Tests;
 /// every test in this collection fails together and none fails when the interleaving misses -
 /// the observed all-or-nothing flake.</para>
 ///
+/// <para><b>Why only the PACKAGE carries the synthetic version stamp (issue #3237).</b> The pack
+/// passes <c>/p:PackageVersion=99.99.99-local-&lt;id&gt;</c> but leaves MSBuild <c>Version</c> at the
+/// repo's real assembly version. Setting both - the behaviour before this fix - propagated the
+/// synthetic value through every <c>ProjectReference</c>, so the CLI was compiled to bind
+/// <c>BotNexus.Agent.Providers.Core, Version=99.99.99.0</c> while the copy of that dependency the
+/// pack collected could still carry the repo version. The installed tool then started and died
+/// during <c>init</c> with exactly that message. See <see cref="CliPackIsolation"/> for the full
+/// mechanism; the equivalent fix for the E2E project is #3388.</para>
+///
 /// <para>The fix isolates the shared state rather than serialising against it: the pack builds
 /// into <c>&lt;sandbox&gt;/build</c> via <c>ArtifactsPath</c>, so it neither reads nor writes any
 /// path another fixture touches. Node reuse and the shared compilation/MSBuild servers are also
@@ -102,6 +111,20 @@ public sealed class LocalCliInstallFixture : IAsyncLifetime
     /// </summary>
     public IReadOnlyList<string> VersionMismatches { get; private set; } = [];
 
+    /// <summary>
+    /// The repo's real assembly version, passed to the pack as <c>Version</c>. Captured so tests can
+    /// assert the #3237 contract against the LIVE fixture rather than only against a constructed
+    /// argument string.
+    /// </summary>
+    public Version AssemblyVersion { get; private set; } = new(0, 0, 0, 0);
+
+    /// <summary>
+    /// The assembly version the installed CLI actually binds its dependencies against. Since the
+    /// #3237 fix this is the repo version, NOT the synthetic <c>99.99.99</c> pack stamp: the stamp
+    /// identifies the package only.
+    /// </summary>
+    public Version ExpectedBoundVersion { get; private set; } = new(0, 0, 0, 0);
+
     public async Task InitializeAsync()
     {
         try
@@ -128,8 +151,17 @@ public sealed class LocalCliInstallFixture : IAsyncLifetime
             // performed by the runner and by two other integration fixtures (issue #3255).
             // nodeReuse / UseSharedCompilation / MSBUILD_SERVER are disabled for the same reason
             // a shared build node would carry repo-rooted state across into this isolated build.
+            //
+            // The synthetic 99.99.99 stamp identifies the PACKAGE only; MSBuild `Version` stays at
+            // the repo's real assembly version (issue #3237, mirroring #3388). Stamping `Version`
+            // too propagated the synthetic value through every ProjectReference, so the CLI was
+            // compiled to bind `BotNexus.Agent.Providers.Core, Version=99.99.99.0` while the copy
+            // of that dependency packaged alongside it could carry the repo version - which is
+            // exactly the load failure this issue records.
+            AssemblyVersion = CliPackIsolation.RepoAssemblyVersion;
+            ExpectedBoundVersion = CliPackIsolation.ExpectedBoundVersion(AssemblyVersion);
             PackArguments = CliPackIsolation.BuildPackArguments(
-                cliProject, PackVersion, PackOutputDir, PackArtifactsDir);
+                cliProject, AssemblyVersion, PackVersion, PackOutputDir, PackArtifactsDir);
 
             var packResult = await ProcessRunner.RunAsync(
                 "dotnet",
@@ -181,15 +213,15 @@ public sealed class LocalCliInstallFixture : IAsyncLifetime
             }
 
             // Presence is not enough: the observed #3237 failure had the file on disk and still
-            // could not bind, because a dependency carried an assembly version other than the
-            // pack-time stamp the CLI was compiled against.
-            VersionMismatches = CliInstallLayout.FindVersionMismatches(
-                ToolPath, CliInstallLayout.ToAssemblyVersion(PackVersion));
+            // could not bind, because a dependency carried an assembly version other than the one
+            // the CLI was compiled against. The expected version is the REPO version, not the
+            // synthetic pack stamp - see the AssemblyVersion remarks.
+            VersionMismatches = CliInstallLayout.FindVersionMismatches(ToolPath, ExpectedBoundVersion);
             if (VersionMismatches.Count > 0)
             {
                 LayoutFailure = CliInstallLayout.FormatVersionMismatchFailure(
                     ToolPath,
-                    CliInstallLayout.ToAssemblyVersion(PackVersion),
+                    ExpectedBoundVersion,
                     VersionMismatches,
                     InstalledFiles);
                 return;

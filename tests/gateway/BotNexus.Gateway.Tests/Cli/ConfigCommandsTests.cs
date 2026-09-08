@@ -44,7 +44,7 @@ public sealed class ConfigCommandsTests
         var result = await fixture.RunCliAsync("config", "get", "gateway.listenUrl");
 
         result.ExitCode.ShouldBe(1);
-        result.CombinedOutput.ShouldContain("config file not found");
+        result.CombinedOutput.ShouldContain("No configuration found");
     }
 
     [Fact]

@@ -168,6 +168,46 @@ public sealed class FileSessionStoreTests
     }
 
     [Fact]
+    public async Task SaveAsync_AfterAppend_AppendsOneJsonlLineWithoutRewritingPrefix()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("append-only"), AgentId.From("agent-a"));
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "first" });
+        await store.SaveAsync(session);
+        var historyPath = fixture.HistoryPath("append-only");
+        var firstWrite = fixture.FileSystem.File.ReadAllText(historyPath);
+
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "second" });
+        await store.SaveAsync(session);
+
+        var secondWrite = fixture.FileSystem.File.ReadAllText(historyPath);
+        secondWrite.StartsWith(firstWrite, StringComparison.Ordinal).ShouldBeTrue(
+            "ordinary file-store saves must append rather than recreate prior JSONL history");
+        secondWrite.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task SaveAsync_AfterDestructiveMutation_RewritesJsonlWithCurrentHistory()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("replace"), AgentId.From("agent-a"));
+        session.AddEntries([
+            new SessionEntry { Role = MessageRole.User, Content = "remove" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "keep" }
+        ]);
+        await store.SaveAsync(session);
+
+        session.ReplaceHistory(session.GetHistorySnapshot().Where(entry => entry.Content == "keep").ToArray());
+        await store.SaveAsync(session);
+
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("replace"));
+        reloaded.ShouldNotBeNull();
+        reloaded.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(["keep"]);
+    }
+
+    [Fact]
     public async Task GetAsync_WithUnknownSession_ReturnsNull()
     {
         using var fixture = new StoreFixture();
@@ -684,6 +724,9 @@ public sealed class FileSessionStoreTests
 
         public FileSessionStore CreateStore(IConversationStore? conversationStore = null)
             => new(StorePath, NullLogger<FileSessionStore>.Instance, FileSystem, conversationStore ?? Conversations);
+
+        public string HistoryPath(string sessionId)
+            => Path.Combine(StorePath, SessionFileNames.HistoryFileName(sessionId));
 
         public void Dispose()
         {

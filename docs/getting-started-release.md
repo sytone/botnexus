@@ -155,28 +155,13 @@ dotnet run --project src\gateway\BotNexus.Cli -- serve --port 8080
 
 ## 4. Configure Your First Provider (Copilot)
 
-BotNexus doesn't ship with a pre-configured provider. Add the Copilot provider to your config:
+BotNexus doesn't ship with a pre-configured provider. Configure GitHub Copilot with the interactive CLI wizard:
 
-Edit `~/.botnexus/config.json`:
-
-```json
-{
-  "BotNexus": {
-    "ExtensionsPath": "~/.botnexus/extensions",
-    "Providers": {
-      "copilot": {
-        "Auth": "oauth",
-        "DefaultModel": "gpt-4o",
-        "ApiBase": "https://api.githubcopilot.com"
-      }
-    }
-  }
-}
+```powershell
+botnexus provider setup --provider github-copilot
 ```
 
-**Note:** The `ExtensionsPath` is automatically set during installation and should point to where provider DLLs are stored.
-
-The config is loaded automatically — no restart required.
+The wizard completes the OAuth setup and writes the provider through the active configuration backend. The same command works for JSON-backed and SQLite-backed homes.
 
 ### The OAuth device code flow
 
@@ -202,40 +187,17 @@ The token is cached and refreshed automatically. You only do this once (until th
 
 ## 5. Create Your First Agent
 
-Agents are named configurations with their own workspace, personality, and settings. Add one to your config:
+Agents are named configurations with their own workspace, personality, and settings. Create the first agent and select it as the default:
 
-Edit `~/.botnexus/config.json`:
-
-```json
-{
-  "extensionsPath": "~/.botnexus/extensions",
-  "providers": {
-    "copilot": {
-      "auth": "oauth",
-      "defaultModel": "gpt-4o",
-      "apiBase": "https://api.githubcopilot.com"
-    }
-  },
-  "agents": {
-    "defaults": {
-      "toolTimeoutSeconds": 300
-    },
-    "assistant": {
-      "displayName": "Assistant",
-      "provider": "copilot",
-      "model": "gpt-4o",
-      "memory": { "enabled": true }
-    }
-  }
-}
+```powershell
+botnexus agent add assistant --provider github-copilot --model gpt-4o --display-name Assistant
+botnexus config set gateway.defaultAgentId assistant
+botnexus config set agents.defaults.toolTimeoutSeconds 300
+botnexus config set agents.assistant.memory.enabled true
+botnexus validate
 ```
 
-> Agents are keyed **directly** under `agents` by agent id - there is no `named` sub-dictionary. The one
-> reserved key is `defaults`, which holds the world-level defaults merged into every agent. See the
-> [configuration reference](configuration.md#agents-agent-definitions-and-agents-defaults) for the full
-> per-agent key list.
-
-The configuration is loaded automatically. BotNexus creates a workspace directory for your agent:
+The CLI writes through the active configuration backend. BotNexus creates a workspace directory for your agent:
 
 ```text
 ~/.botnexus/agents/assistant/
@@ -364,29 +326,16 @@ Expand **Providers** and **Tools** to see what's available.
 
 Add more agents with different personalities or specialized roles:
 
-Edit `~/.botnexus/config.json`:
+```powershell
+botnexus agent add researcher --provider github-copilot --model gpt-4o --display-name Researcher
+botnexus agent add note-taker --provider github-copilot --model gpt-4o --display-name "Note Taker"
 
-```json
-"agents": {
-  "assistant": {
-    "displayName": "Assistant",
-    "provider": "copilot",
-    "model": "gpt-4o",
-    "memory": { "enabled": true }
-  },
-  "researcher": {
-    "displayName": "Researcher",
-    "provider": "copilot",
-    "model": "gpt-4o",
-    "toolIds": ["read", "web_search", "web_fetch"]
-  },
-  "note-taker": {
-    "displayName": "Note Taker",
-    "provider": "copilot",
-    "model": "gpt-4o",
-    "systemPromptFiles": ["SOUL.md", "IDENTITY.md"]
-  }
-}
+# Add optional per-agent settings by dotted path
+botnexus config set agents.researcher.toolIds '["read","web_search","web_fetch"]'
+botnexus config set agents.note-taker.systemPromptFiles '["SOUL.md","IDENTITY.md"]'
+
+botnexus agent list
+botnexus validate
 ```
 
 Each agent gets its own workspace directory and appears in the WebUI **Agents** panel. You can target specific agents in the chat or via the API.
@@ -505,11 +454,11 @@ filesystem backup of `~/.botnexus/`:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Port already in use | Another process on 5005 | Edit `~/.botnexus/config.json` and change `Gateway.Port` |
-| OAuth code expired | Took too long to authorize | Send another message to get a fresh code |
+| Port already in use | Another process on 5005 | Run `botnexus config set gateway.listenUrl http://localhost:<PORT>` and restart the gateway |
+| OAuth code expired | Took too long to authorize | Run `botnexus provider setup --provider github-copilot` to get a fresh code |
 | WebUI shows "Disconnected" | Gateway isn't running | Run `botnexus start` |
-| "No providers found" in health check | Provider DLLs not in extensions directory | Verify `ExtensionsPath` in config.json points to the correct location |
-| Agent not appearing | Agent not in `Named` config section | Add agent to `Agents.Named` and reload config |
+| "No providers found" in health check | No provider is configured | Run `botnexus provider setup` and then `botnexus validate` |
+| Agent not appearing | Agent is absent or disabled | Run `botnexus agent list`, then add or enable it through the CLI |
 | Extension loading warnings | Missing extension folders on first run | Expected — folders are created on-demand |
 
 ---

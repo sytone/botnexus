@@ -63,6 +63,62 @@ public static class WorldIdResolver
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
         ArgumentNullException.ThrowIfNull(fileSystem);
 
+        return TryReadFromFile(configPath, fileSystem) ?? TryReadFromStore(configPath, fileSystem);
+    }
+
+    /// <summary>
+    /// Reads the world ID from the SQLite config store beside <paramref name="configPath"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The world ID is resolved during DI registration, before any service - and therefore before any
+    /// configuration provider - exists, so it cannot go through <c>IConfiguration</c> and must read a
+    /// persisted source directly. When the store is authoritative and no <c>config.json</c> exists,
+    /// reading only the file reports "no identity persisted" for a home that has one.
+    /// </para>
+    /// <para>
+    /// The consequence is not a missing value, it is a <em>wrong</em> one: the caller generates a
+    /// fresh identity, and <c>SqliteStoreIdentityGuard</c> is then configured with a world that does
+    /// not match the stores this home already owns. Every existing sessions/cron/webhook database is
+    /// refused as belonging to another world, and the home is effectively re-provisioned as new
+    /// (#3823). Observed on a store-only test instance: 22 configured agents present in the store,
+    /// but a freshly generated world ID written back over them.
+    /// </para>
+    /// <para>
+    /// Deliberately best-effort and dependency-free - a missing, locked or malformed store yields
+    /// null and the caller generates an identity exactly as it did before.
+    /// </para>
+    /// </remarks>
+    private static WorldId? TryReadFromStore(string configPath, IFileSystem fileSystem)
+    {
+        try
+        {
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, fileSystem);
+            if (!fileSystem.File.Exists(storePath))
+                return null;
+
+            var store = new Store.SqliteConfigStore($"Data Source={storePath}");
+            var entries = store.ReadEntriesAsync().GetAwaiter().GetResult();
+
+            if (!entries.TryGetValue(ConfigPropertyName, out var entry))
+                return null;
+            if (entry.State != Store.ConfigValueState.Value || entry.Value is null)
+                return null;
+
+            // Store values are canonical JSON, so a string value arrives quoted.
+            var text = entry.Value.Trim('"');
+            return Guid.TryParse(text, out var parsed) && parsed != Guid.Empty
+                ? new WorldId(parsed)
+                : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static WorldId? TryReadFromFile(string configPath, IFileSystem fileSystem)
+    {
         if (!fileSystem.File.Exists(configPath))
             return null;
 

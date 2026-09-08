@@ -55,14 +55,20 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
 $repoRoot = $repoRoot.Trim()
 Import-Module (Join-Path $PSScriptRoot 'AzureBuildTestArtifacts.psm1') -Force
 $fingerprintScript = Join-Path $PSScriptRoot 'Get-WorktreeValidationFingerprint.ps1'
-$fingerprint = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+Import-Module (Join-Path $PSScriptRoot 'SourceSnapshot.psm1') -Force
 $runId = "{0}-{1}" -f ([DateTime]::UtcNow.ToString('yyyyMMddHHmmss')), ([Guid]::NewGuid().ToString('N').Substring(0, 8))
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $repoRoot "artifacts/azure-buildtest/$runId"
 }
 
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "botnexus-buildtest-$runId"
-$workspaceArchive = Join-Path $tempRoot 'workspace.tar.gz'
+# #3805: the download lands under $tempRoot, which the finally block removes unconditionally.
+# These two are declared out here so the finally can tell "artifacts were never downloaded"
+# from "artifacts were downloaded and a later step threw before they were placed" - the second
+# case is the one that used to delete the only copy of the diagnosis.
+$downloadStaging = Join-Path $tempRoot 'artifacts'
+$artifactsPlaced = $false
+$workspaceArchive = Join-Path $tempRoot 'workspace.zip'
 $bundlePath = Join-Path $tempRoot 'repository.bundle'
 $payloadArchive = Join-Path $tempRoot 'payload.tar.gz'
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -71,38 +77,29 @@ try {
     $account = Invoke-AzJson @('account', 'show', '--subscription', $SubscriptionId, '-o', 'json')
     Write-Host "Using Azure identity $($account.user.name) in subscription $($account.name)." -ForegroundColor Cyan
 
-    & git -C $repoRoot bundle create $bundlePath --all
+    # BEGIN EXACT SOURCE CAPTURE
+    $fingerprint = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+    $captureRoot = Join-Path $tempRoot 'captured-workspace'
+    [IO.Directory]::CreateDirectory($captureRoot) | Out-Null
+    $manifest = Get-SourceSnapshotManifest -RepoRoot $repoRoot -CaptureRoot $captureRoot
+    if ($manifest.digest -cne $fingerprint.sourceSnapshot.digest) { throw 'Source changed during capture.' }
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $tempRoot 'source-manifest.json') -Encoding utf8NoBOM
+    Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $fingerprintScript) 'SourceSnapshot.psm1') -Destination (Join-Path $tempRoot 'SourceSnapshot.psm1')
+    & git -C $repoRoot bundle create $bundlePath --all HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Failed to create repository bundle.' }
-
-    $archiveFileList = Join-Path $tempRoot 'workspace-files.txt'
-    $trackedFiles = @(& git -C $repoRoot ls-files --cached --others --exclude-standard | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to enumerate worktree files.' }
-    if ($trackedFiles.Count -eq 0) { throw 'Worktree overlay contains no files.' }
-    # Use LF explicitly: Windows PowerShell's Set-Content emits CRLF, which GNU tar treats as
-    # part of each pathname when this script runs under Git's Unix toolchain.
-    [IO.File]::WriteAllText($archiveFileList, (($trackedFiles -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
-
-    Push-Location $repoRoot
-    try {
-        # Resolve tar.exe explicitly. Git's /usr/bin/tar interprets a Windows drive-letter
-        # archive path as a remote host specification ("C:"), while bsdtar handles it.
-        $tarCommand = if ($IsWindows) {
-            Join-Path $env:SystemRoot 'System32/tar.exe'
-        }
-        else {
-            (Get-Command tar -CommandType Application | Select-Object -First 1).Source
-        }
-        & $tarCommand -T $archiveFileList -czf $workspaceArchive
-        if ($LASTEXITCODE -ne 0) { throw 'Failed to create worktree overlay archive.' }
-    }
-    finally { Pop-Location }
-
+    # ZIP is read entry-by-entry by the verifier: no tar list-file quoting/options or links.
+    $workspaceArchive = Join-Path $tempRoot 'workspace.zip'
+    [IO.Compression.ZipFile]::CreateFromDirectory($captureRoot, $workspaceArchive)
+    Assert-SourceSnapshot -Root $captureRoot -Manifest $manifest
     Push-Location $tempRoot
     try {
-        tar -czf $payloadArchive 'repository.bundle' 'workspace.tar.gz'
+        tar -czf $payloadArchive 'repository.bundle' 'workspace.zip' 'source-manifest.json' 'SourceSnapshot.psm1'
         if ($LASTEXITCODE -ne 0) { throw 'Failed to create source payload.' }
     }
     finally { Pop-Location }
+    $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+    if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before upload.' }
+    # END EXACT SOURCE CAPTURE
 
     $sourceBlob = "$runId/source.tar.gz"
     & az storage blob upload --subscription $SubscriptionId --account-name $StorageAccount --container-name sources --name $sourceBlob --file $payloadArchive --auth-mode login --overwrite true --only-show-errors
@@ -202,11 +199,11 @@ try {
     # already named "<runId>/...". Downloading straight into $OutputPath therefore applied the run
     # id twice. Stage the download, then flatten the prefix so $OutputPath - the single variable
     # the success and failure messages both report - is the directory that holds result.json.
-    $downloadStaging = Join-Path $tempRoot 'artifacts'
     New-Item -ItemType Directory -Path $downloadStaging -Force | Out-Null
     & az storage blob download-batch --subscription $SubscriptionId --account-name $StorageAccount --source artifacts --destination $downloadStaging --pattern "$runId/*" --auth-mode login --overwrite true --only-show-errors
     if ($LASTEXITCODE -ne 0) { throw 'Artifact download failed.' }
     $OutputPath = Move-AzureBuildTestArtifacts -StagingRoot $downloadStaging -RunId $runId -Destination $OutputPath
+    $artifactsPlaced = $true
 
     # Deliberately NOT recursive: the contract must be at the advertised path or the run is not
     # provably green (#3115). A nested copy is a regression, not an acceptable location.
@@ -231,7 +228,11 @@ try {
     # `"projectCosts": []`, so without this wrapper $projectCosts was $null and the .Count below
     # threw "The property 'Count' cannot be found on this object" under Set-StrictMode, replacing
     # the verdict this script exists to report with what looked like a tooling breakage.
-    $projectCosts = @(if ($result -and $result.PSObject.Properties['projectCosts']) { @($result.projectCosts) } else { @() })
+    # #3805: read through ConvertTo-CountableArray. `@($result.projectCosts)` is unrolled back to
+    # a bare $null when the property is JSON null, and `.Count` on $null throws under StrictMode -
+    # which is precisely the shape a BUILD failure produces (test phase skipped), so the failure
+    # path was the only path that could hit it and the secondary error masked the real cause.
+    $projectCosts = ConvertTo-CountableArray ($(if ($result -and $result.PSObject.Properties['projectCosts']) { $result.projectCosts } else { $null }))
     if ($projectCosts.Count -gt 0) {
         $topCosts = ($projectCosts | Select-Object -First 3 | ForEach-Object { "{0} {1:N1}s" -f $_.project, $_.seconds }) -join '; '
         Write-Host "Most expensive projects: $topCosts (full table: runner-cost.log)." -ForegroundColor DarkGray
@@ -240,6 +241,13 @@ try {
     $playwrightArtifact = Get-ChildItem -Path $OutputPath -Filter playwright.log -Recurse | Select-Object -First 1
     $requiredArtifactsPresent = $Mode -ne 'strict' -or $null -ne $playwrightArtifact
 
+    # BEGIN EXACT SOURCE RECEIPT GUARD
+    Assert-SourceSnapshotResult -Result $result -Digest $fingerprint.sourceSnapshot.digest -RunId $runId -Mode $Mode
+    if ($status.properties.status -ne 'Succeeded' -or -not $requiredArtifactsPresent) { throw 'Validation execution/artifacts do not prove success.' }
+    $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+    if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before receipt; validation cannot certify this worktree.' }
+    # END EXACT SOURCE RECEIPT GUARD
+
     if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
         $gitDirectory = (& git -C $repoRoot rev-parse --git-dir).Trim()
         if (-not [IO.Path]::IsPathRooted($gitDirectory)) { $gitDirectory = Join-Path $repoRoot $gitDirectory }
@@ -247,6 +255,7 @@ try {
         New-Item -ItemType Directory -Path $receiptDirectory -Force | Out-Null
         @{
             version = 1
+            sourceSnapshot = $result.sourceSnapshot
             fingerprint = $fingerprint.fingerprint
             head = $fingerprint.head
             baseRef = $fingerprint.baseRef
@@ -273,11 +282,33 @@ try {
             (' The run reached the {0} min replica timeout, so it was killed rather than completing - treat this as a hang, not a test failure.' -f $budgetMinutes)
         }
         else { '' }
-        throw "Azure validation failed. Execution status: $($status.properties.status).$artifactFailure$timeoutNote Artifacts: $OutputPath"
+        # #3805: name the test outcome as well as the execution status. A build failure reports
+        # `tests: null`, and "Execution status: Failed" alone gave the caller no way to tell a
+        # compile break from a red suite without re-reading result.json themselves.
+        $testSummary = if ($null -eq $result) { ' No result contract was produced.' }
+        elseif (-not $result.PSObject.Properties['tests'] -or $null -eq $result.tests) { ' The test phase did not report (tests: null) - read build.log; this is normally a build failure, not a test failure.' }
+        else { '' }
+        throw "Azure validation failed. Execution status: $($status.properties.status).$artifactFailure$timeoutNote$testSummary Artifacts: $OutputPath"
     }
 
     Write-Host "Azure validation passed. Artifacts: $OutputPath" -ForegroundColor Green
 }
 finally {
+    # #3805: a failing gate is the case where the artifacts matter MOST. If anything threw between
+    # the download and the flatten, the only copy of result.json and build.log was inside $tempRoot
+    # and this cleanup deleted it - while the remote blobs had already been deleted too unless
+    # -KeepRemoteArtifacts was passed. Retain first, then clean up, and print the path we verified
+    # rather than one we assert.
+    if (-not $artifactsPlaced) {
+        try {
+            $rescued = Save-AzureBuildTestFailureArtifacts -StagingRoot $downloadStaging -RunId $runId -Destination $OutputPath
+            if ($rescued) { Write-Warning "Run did not complete cleanly. Downloaded artifacts were retained at: $rescued" }
+        }
+        catch {
+            # Retention is a diagnostic. It must never replace the original failure with its own.
+            Write-Warning "Could not retain downloaded artifacts: $($_.Exception.Message)"
+        }
+    }
+
     if (Test-Path $tempRoot) { Remove-Item $tempRoot -Recurse -Force }
 }

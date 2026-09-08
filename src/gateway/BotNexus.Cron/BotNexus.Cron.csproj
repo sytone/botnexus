@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Compile Include="CronJob.cs" />
+    <Compile Include="CronJobExpiry.cs" />
     <Compile Include="CronWebhookUrl.cs" />
     <Compile Include="CronRun.cs" />
     <Compile Include="CronRunCost.cs" />

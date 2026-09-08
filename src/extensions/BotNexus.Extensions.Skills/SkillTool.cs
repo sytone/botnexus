@@ -209,11 +209,32 @@ public sealed class SkillTool(
         return TextResult($"""
             ## Skill: {skill.Name}
             **Path:** {skill.SourcePath}
+            **Resolved from:** {DescribeRoot(skill.Source)} skill root
+
+            Resolve scripts and support files against this directory - skills live under more than
+            one root and the shared root is not always the right one (#3712).
 
             {skill.Content}
             {RenderLinkedFiles(skill)}
             """);
     }
+
+    /// <summary>
+    /// Names the discovery tier a skill was resolved from (#3712). The bare path alone is not
+    /// enough: with four roots in play, an agent that sees only a directory cannot tell whether
+    /// the skill is shared or agent-local, and hard-codes the shared root for a local skill -
+    /// producing a "not recognized as the name of a script file" error that names the wrong
+    /// problem. Naming the tier makes the correct root visible at point of use.
+    /// </summary>
+    private static string DescribeRoot(SkillSource source)
+        => source switch
+        {
+            SkillSource.Plugin => "Plugin",
+            SkillSource.Global => "Global",
+            SkillSource.Agent => "Agent",
+            SkillSource.Workspace => "Workspace",
+            _ => source.ToString()
+        };
 
     /// <summary>
     /// Renders the "Linked files" listing grouped by support directory plus a usage hint

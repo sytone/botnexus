@@ -18,7 +18,7 @@ public sealed class CanvasPerConversationTests
 
     public CanvasPerConversationTests()
     {
-        _handler = new GatewayEventHandler(_store, _hub, Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        _handler = new GatewayEventHandler(_store, _hub, Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance, _store);
         _interaction = new AgentInteractionService(_store, _hub, _restClient, Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentInteractionService>.Instance);
     }
 

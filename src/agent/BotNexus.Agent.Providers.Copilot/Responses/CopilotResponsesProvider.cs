@@ -72,10 +72,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
     /// </summary>
     public ProviderCapabilities Capabilities { get; } = new(
         RecoversLeakedToolCallMarkup: true,
-        SystemPromptPlacement: SystemPromptPlacement.FirstMessage,
-        // #3336: the CRLF delta framing is a Copilot TRANSPORT artifact, declared here rather than
-        // sniffed from a model-id prefix that the claude-opus-5 evidence falsified.
-        FramesStreamedTextDeltasWithCrlf: CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf);
+        SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
 
     /// <inheritdoc />
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
@@ -199,7 +196,6 @@ public sealed class CopilotResponsesProvider : IApiProvider
                         static (stream, failedModel, message, content) => ResponsesStreamEngine.EmitError(stream, "github-copilot-responses", failedModel, message, content),
                         static root => Telemetry.CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
                         static value => value is CopilotResponsesOptions responseOptions ? responseOptions.ServiceTier : null,
-                        NormalizeTextDelta,
                         options?.CancellationToken ?? CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -370,7 +366,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
             ResponsesStreamParser.ParseAsync(stream, reader, model, options, api, logger, emitError,
                 static root => Telemetry.CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
                 static value => value is CopilotResponsesOptions responseOptions ? responseOptions.ServiceTier : null,
-                NormalizeTextDelta, ct),
+                ct),
         DecorateHeaders: static (request, _, messages, options) =>
         {
             var hasImages = CopilotHeaders.HasVisionInput(messages);
@@ -382,10 +378,6 @@ public sealed class CopilotResponsesProvider : IApiProvider
             ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "Copilot Responses", redactor),
         OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current),
         SecretRedactor: secretRedactor);
-
-    private static string NormalizeTextDelta(LlmModel model, string delta)
-        => CopilotTextDeltaNormalizer.Normalize(
-            CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf, delta);
 
     private static string MapThinkingLevel(ThinkingLevel level) => level switch
     {

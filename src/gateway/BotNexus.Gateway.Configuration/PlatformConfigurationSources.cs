@@ -111,6 +111,72 @@ public static class PlatformConfigurationSources
             .AddPlatformConfiguration(configPath, onLoadFailure)
             .Build();
 
+        return BuildMonitor(configuration, configPath);
+    }
+
+    /// <summary>
+    /// Builds a bound <see cref="PlatformConfig"/> reading through an injected
+    /// <paramref name="fileSystem"/> rather than the physical disk (#3824).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a second overload rather than a parameter on the first.</b> The framework's JSON file
+    /// provider is backed by a PHYSICAL file provider and cannot read an
+    /// <see cref="IFileSystem"/> abstraction. Two CLI call sites take an injected filesystem, and
+    /// that is precisely why they were left behind when the other twelve migrated: routing them
+    /// through the physical pipeline would read the real disk while the caller supplied a mock.
+    /// </para>
+    /// <para>
+    /// The fix is to feed the framework a STREAM obtained from the injected filesystem
+    /// (<c>AddJsonStream</c>), then add the SQLite store in the same precedence order as everywhere
+    /// else. Parsing, binding and precedence remain the framework's job; this still adds sources and
+    /// stops. What it gives up relative to the physical overload is hot reload and the
+    /// last-known-good retention of <see cref="ResilientJsonConfigurationSource"/>, neither of which
+    /// is reachable for a stream in a short-lived CLI process anyway - and unlike the hand-load it
+    /// replaces, it can see the store.
+    /// </para>
+    /// </remarks>
+    public static IOptionsMonitor<PlatformConfig> BuildMonitor(
+        string configPath,
+        IFileSystem fileSystem,
+        Action<string, Exception?>? onLoadFailure = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
+        ArgumentNullException.ThrowIfNull(fileSystem);
+
+        var builder = new ConfigurationBuilder();
+
+        if (fileSystem.File.Exists(configPath))
+        {
+            // Copied into memory deliberately. AddJsonStream does not read at Add time - the provider
+            // reads when the builder is built, which happens below - so handing it a stream we then
+            // close yields an empty, silently wrong configuration.
+            var buffer = new MemoryStream(fileSystem.File.ReadAllBytes(configPath));
+            builder.AddJsonStream(buffer);
+        }
+
+        var directory = fileSystem.Path.GetDirectoryName(configPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            var storePath = fileSystem.Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
+            if (fileSystem.File.Exists(storePath))
+            {
+                builder.AddSqliteConfigStore(
+                    new SqliteConfigStore($"Data Source={storePath}"),
+                    onLoadFailure);
+            }
+        }
+
+        // The raw-JSON post-configure step reads the physical file directly, so it is given no path
+        // here: an injected filesystem's file may not exist on disk at all. It falls back to the
+        // provider scan, finds no physical JSON provider, and leaves the bound values alone.
+        return BuildMonitor(builder.Build(), configFilePath: null);
+    }
+
+    private static IOptionsMonitor<PlatformConfig> BuildMonitor(
+        IConfiguration configuration,
+        string? configFilePath)
+    {
         var services = new ServiceCollection();
         // IConfiguration must be registered, not merely used to bind: PlatformConfigPostConfigure
         // resolves it to re-read raw JSON for the parts of the document a POCO binding cannot carry
@@ -120,7 +186,7 @@ public static class PlatformConfigurationSources
         services.AddSingleton<IConfiguration>(configuration);
         services.Configure<PlatformConfig>(configuration);
         services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(
-            new PlatformConfigPostConfigure(configuration, configPath));
+            new PlatformConfigPostConfigure(configuration, configFilePath));
 
         return services.BuildServiceProvider().GetRequiredService<IOptionsMonitor<PlatformConfig>>();
     }

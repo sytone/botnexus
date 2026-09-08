@@ -169,6 +169,41 @@ public sealed class PersistentAgentWorkspaceReconcilerTests : IDisposable
     }
 
     [Fact]
+    public void BuildPlan_ReportsSizeAndNewestContentTimestampForEachDirectory()
+    {
+        var agents = Path.Combine(_root, "agents");
+        var orphan = Directory.CreateDirectory(Path.Combine(agents, "orphan", "data")).FullName;
+        File.WriteAllText(Path.Combine(orphan, "memory.sqlite"), new string('x', 2048));
+        var newest = new DateTime(2026, 7, 5, 12, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(Path.Combine(orphan, "memory.sqlite"), newest);
+
+        var entry = new PersistentAgentWorkspaceReconciler().BuildPlan(agents, new PlatformConfig()).Single();
+
+        entry.SizeBytes.ShouldBe(2048);
+        entry.NewestContentUtc.ShouldBe(newest);
+    }
+
+    [Fact]
+    public void DeleteOrphans_RefusesDirectoryWhoseIdIsRegisteredEvenIfMarkedOrphaned()
+    {
+        var agents = Directory.CreateDirectory(Path.Combine(_root, "agents")).FullName;
+        var registered = Directory.CreateDirectory(Path.Combine(agents, "keeper")).FullName;
+        var config = new PlatformConfig
+        {
+            Agents = new(StringComparer.OrdinalIgnoreCase) { ["keeper"] = new() }
+        };
+
+        // The caller has mis-classified a REGISTERED agent as an orphan. Deletion is irreversible,
+        // so the reconciler must re-derive registration itself rather than trust the flag.
+        var plan = new[] { new PersistentAgentWorkspaceEntry("keeper", registered, true, false, 0, null) };
+
+        Should.Throw<InvalidOperationException>(
+            () => new PersistentAgentWorkspaceReconciler().DeleteOrphans(agents, plan, config));
+
+        Directory.Exists(registered).ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task ExecuteAgentsAsync_NonInteractiveDoesNotDeleteWithoutOptIn()
     {
         var agents = Path.Combine(_root, "agents");
@@ -228,5 +263,50 @@ public sealed class PersistentAgentWorkspaceReconcilerTests : IDisposable
 
         result.ShouldBe(0);
         Directory.Exists(registered).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Regression for issue #3700: a disabled agent is still a declared agent, so its workspace must
+    /// survive cleanup. The genuinely absent agent in the same batch keeps the test non-vacuous - it
+    /// cannot pass by deleting nothing at all.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAgentsAsync_DisabledAgentWorkspaceSurvivesWhileAbsentAgentIsDeleted()
+    {
+        var disabled = Directory.CreateDirectory(Path.Combine(_root, "agents", "dormant")).FullName;
+        var absent = Directory.CreateDirectory(Path.Combine(_root, "agents", "gone")).FullName;
+        await File.WriteAllTextAsync(
+            Path.Combine(_root, "config.json"),
+            "{\"agents\":{\"dormant\":{\"enabled\":false}}}");
+
+        var result = await new DoctorCommand().ExecuteAgentsAsync(_root, true, false, CancellationToken.None);
+
+        result.ShouldBe(0);
+        Directory.Exists(disabled).ShouldBeTrue();
+        Directory.Exists(absent).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Issue #3700 at the classification layer: orphaned means "absent from config.json entirely",
+    /// not "not currently enabled".
+    /// </summary>
+    [Fact]
+    public void BuildPlan_TreatsDisabledAgentAsRegisteredAndAbsentAgentAsOrphaned()
+    {
+        var agents = Path.Combine(_root, "agents");
+        Directory.CreateDirectory(Path.Combine(agents, "dormant"));
+        Directory.CreateDirectory(Path.Combine(agents, "gone"));
+        var config = new PlatformConfig
+        {
+            Agents = new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["dormant"] = new() { Enabled = false }
+            }
+        };
+
+        var plan = new PersistentAgentWorkspaceReconciler().BuildPlan(agents, config);
+
+        plan.Single(x => x.DirectoryName == "dormant").IsOrphaned.ShouldBeFalse();
+        plan.Single(x => x.DirectoryName == "gone").IsOrphaned.ShouldBeTrue();
     }
 }

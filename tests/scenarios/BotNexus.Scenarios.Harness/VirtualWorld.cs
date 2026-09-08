@@ -41,10 +41,18 @@ namespace BotNexus.Scenarios.Harness;
 /// </remarks>
 public sealed class VirtualWorld : IAsyncDisposable
 {
+    /// <summary>
+    /// Upper bound on waiting for a config-plane agent registration to land. Deliberately generous:
+    /// it exists to turn a hang into a readable failure, not to police how fast startup is, so
+    /// raising it is never the fix for a scenario that fails here.
+    /// </summary>
+    private static readonly TimeSpan RegistrationHangGuard = TimeSpan.FromSeconds(30);
+
     private readonly IHost _host;
     private readonly VirtualChannelAdapter _adapter;
     private readonly ScenarioFakeApiProvider _provider;
     private readonly string _tempHomePath;
+    private readonly IOptionsMonitor<PlatformConfig> _platformConfig;
     private readonly IAgentRegistry _agentRegistry;
     private readonly IConversationStore _conversationStore;
     private readonly ISessionStore _sessionStore;
@@ -56,6 +64,7 @@ public sealed class VirtualWorld : IAsyncDisposable
         VirtualChannelAdapter adapter,
         ScenarioFakeApiProvider provider,
         string tempHomePath,
+        IOptionsMonitor<PlatformConfig> platformConfig,
         IAgentRegistry agentRegistry,
         IConversationStore conversationStore,
         ISessionStore sessionStore,
@@ -66,6 +75,7 @@ public sealed class VirtualWorld : IAsyncDisposable
         _adapter = adapter;
         _provider = provider;
         _tempHomePath = tempHomePath;
+        _platformConfig = platformConfig;
         _agentRegistry = agentRegistry;
         _conversationStore = conversationStore;
         _sessionStore = sessionStore;
@@ -116,8 +126,11 @@ public sealed class VirtualWorld : IAsyncDisposable
 
         // PlatformConfig is consumed by GatewayAuthManager + isolation strategies. Register a
         // default-shaped options monitor (no provider configuration) so DI resolves cleanly
-        // without reaching for a real config.json on disk.
-        services.AddOptions<PlatformConfig>();
+        // without reaching for a real config.json on disk. When the world is booting through the
+        // real config plane, AddPlatformConfiguration binds this same options type from the file
+        // instead, so registering an unbound one here would only obscure where the values came from.
+        if (!options.ReconcileBundledAgents)
+            services.AddOptions<PlatformConfig>();
 
         // GatewayAuthManager is registered by AddPlatformConfiguration in production, NOT by
         // AddBotNexusGateway. Scenarios don't call AddPlatformConfiguration (it touches the
@@ -127,9 +140,28 @@ public sealed class VirtualWorld : IAsyncDisposable
 
         // Empty in-memory agent config source so AddBotNexusGateway's default file-based
         // source is skipped. Scenarios register agents programmatically via GivenAgentAsync.
-        services.AddSingleton<IAgentConfigurationSource, EmptyAgentConfigurationSource>();
+        if (!options.ReconcileBundledAgents)
+            services.AddSingleton<IAgentConfigurationSource, EmptyAgentConfigurationSource>();
 
         services.AddBotNexusGateway();
+
+        // #3699. Hosted services registered up to THIS point are harness scaffolding that the
+        // default world strips. Snapshotting them here (rather than after the config plane is
+        // added) is what lets the strip below remove exactly those and keep everything
+        // AddPlatformConfiguration registers - in its own registration order, which is the
+        // mechanism that puts the bundled-agent reconciler ahead of agent registration.
+        var strippableHostedDescriptors = services
+            .Where(d => d.ServiceType == typeof(IHostedService))
+            .ToList();
+
+        if (options.ReconcileBundledAgents)
+        {
+            var configPath = await SeedConfigStoreAsync(
+                tempHomePath,
+                options.SeedConfigAgentId,
+                cancellationToken);
+            services.AddPlatformConfiguration(configPath);
+        }
 
         // The single virtual channel — register the concrete type AND the IChannelAdapter
         // contract that ChannelManager scans for.
@@ -147,15 +179,13 @@ public sealed class VirtualWorld : IAsyncDisposable
             return new LlmClient(apis, models);
         });
 
-        // Strip ALL background hosted services and re-add only GatewayHost — it owns the
-        // channel-adapter startup loop and the dispatch pipeline that scenarios drive. The
-        // rest (UpdateCheckService, MemoryIndexer, SessionWarmupService, SessionCleanupService,
-        // AgentConfigurationHostedService) are noise that slows startup and drags in extra
-        // dependencies (HttpClient, file watchers) that scenarios don't exercise.
-        var hostedDescriptors = services
-            .Where(d => d.ServiceType == typeof(IHostedService))
-            .ToList();
-        foreach (var descriptor in hostedDescriptors)
+        // Strip the background hosted services registered by AddBotNexusGateway and re-add only
+        // GatewayHost — it owns the channel-adapter startup loop and the dispatch pipeline that
+        // scenarios drive. The rest (UpdateCheckService, MemoryIndexer, SessionWarmupService,
+        // SessionCleanupService, AgentConfigurationHostedService) are noise that slows startup and
+        // drags in extra dependencies (HttpClient, file watchers) that scenarios don't exercise.
+        // Config-plane hosted services added after the snapshot survive on purpose.
+        foreach (var descriptor in strippableHostedDescriptors)
             services.Remove(descriptor);
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<BotNexus.Gateway.GatewayHost>());
 
@@ -174,6 +204,7 @@ public sealed class VirtualWorld : IAsyncDisposable
             adapter,
             provider,
             tempHomePath,
+            host.Services.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),
             host.Services.GetRequiredService<IAgentRegistry>(),
             host.Services.GetRequiredService<IConversationStore>(),
             host.Services.GetRequiredService<ISessionStore>(),
@@ -363,6 +394,43 @@ public sealed class VirtualWorld : IAsyncDisposable
     }
 
     /// <summary>
+    /// Waits until <paramref name="agentId"/> appears in the live registered-agent set, then
+    /// returns it.
+    /// </summary>
+    /// <remarks>
+    /// Needed for agents that arrive via the CONFIG plane rather than
+    /// <see cref="GivenAgentAsync"/> (#3699): those are registered by a hosted service during
+    /// startup, so a bare read immediately after <see cref="StartAsync"/> races the registration.
+    /// This is a hang guard, not a latency budget - a scenario that genuinely never registers the
+    /// agent fails with the registered set named in the message rather than a bare timeout.
+    /// </remarks>
+    /// <exception cref="TimeoutException">The agent never appeared within the wait.</exception>
+    public async Task<RegisteredAgent> WaitForRegisteredAgentAsync(
+        string agentId,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
+        try
+        {
+            await TestAwait.EventuallyAsync(
+                () => _agentRegistry.Contains(AgentId.From(agentId)),
+                $"agent '{agentId}' to be registered",
+                timeout ?? RegistrationHangGuard,
+                cancellationToken: cancellationToken);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new TimeoutException(BuildRegistrationDiagnostic(agentId), ex);
+        }
+
+        var descriptor = _agentRegistry.Get(AgentId.From(agentId))
+            ?? throw new InvalidOperationException(
+                $"Agent '{agentId}' was observed as registered but could not be read back.");
+        return new RegisteredAgent(descriptor.AgentId.Value, descriptor.DisplayName);
+    }
+
+    /// <summary>
     /// Returns a read-only snapshot view of the conversation for assertion purposes.
     /// </summary>
     public async Task<ConversationView?> GetConversationAsync(string conversationId, CancellationToken cancellationToken = default)
@@ -423,6 +491,15 @@ public sealed class VirtualWorld : IAsyncDisposable
         _host.Dispose();
         try
         {
+            ConfigStoreBootstrap.ReleaseConnections(
+                Path.Combine(_tempHomePath, ConfigStoreBootstrap.StoreFileName));
+        }
+        catch
+        {
+            // Best-effort release; a world without the config store has no pooled connection.
+        }
+        try
+        {
             if (Directory.Exists(_tempHomePath))
                 Directory.Delete(_tempHomePath, recursive: true);
         }
@@ -430,6 +507,65 @@ public sealed class VirtualWorld : IAsyncDisposable
         {
             // Best-effort cleanup; tests should not fail on temp dir cleanup races.
         }
+    }
+
+    /// <summary>
+    /// Creates the authoritative SQLite configuration store a config-plane world boots from
+    /// (#3699): one enabled agent pointed at the scenario fake provider, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The JSON path is still supplied to the production composition root because <c>config.db</c>
+    /// is discovered beside it, but no JSON seed is written. The store file existing is the
+    /// production opt-in, and <see cref="ConfigStoreBootstrap.PopulateAsync"/> is the supported
+    /// bootstrap seam. This makes the journey fail if startup silently falls back to file-only
+    /// configuration.
+    /// </para>
+    /// <para>
+    /// The seed agent is not decoration. <c>PlatformAgentReconciliationService</c> copies its
+    /// provider/model onto the bundled entry it inserts; with an empty config the reconciler would
+    /// resolve nothing and insert the bundled agent DISABLED, so the scenario would be asserting
+    /// against the fallback path rather than the one a real install with a working agent takes.
+    /// </para>
+    /// </remarks>
+    private static async Task<string> SeedConfigStoreAsync(
+        string homePath,
+        string seedAgentId,
+        CancellationToken cancellationToken)
+    {
+        var configPath = Path.Combine(homePath, "config.json");
+        var storePath = Path.Combine(homePath, ConfigStoreBootstrap.StoreFileName);
+        var document = new System.Text.Json.Nodes.JsonObject
+        {
+            ["agents"] = new System.Text.Json.Nodes.JsonObject
+            {
+                [seedAgentId] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["displayName"] = seedAgentId,
+                    ["provider"] = ScenarioFakeApiProvider.ProviderName,
+                    ["model"] = ScenarioFakeApiProvider.ModelId,
+                    ["isolationStrategy"] = "in-process",
+                    ["enabled"] = true
+                }
+            }
+        };
+
+        await ConfigStoreBootstrap.PopulateAsync(storePath, document, cancellationToken);
+        return configPath;
+    }
+
+    private string BuildRegistrationDiagnostic(string agentId)
+    {
+        var registered = string.Join(", ", _agentRegistry.GetAll().Select(d => d.AgentId.Value));
+        var configured = string.Join(", ", _platformConfig.CurrentValue.Agents?.Keys ?? Enumerable.Empty<string>());
+        var storePath = Path.Combine(_tempHomePath, ConfigStoreBootstrap.StoreFileName);
+        var store = new BotNexus.Gateway.Configuration.Store.SqliteConfigStore($"Data Source={storePath}");
+        var persisted = store.ReadEntriesAsync().GetAwaiter().GetResult().Keys
+            .Where(key => key.StartsWith("agents.", StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.OrdinalIgnoreCase);
+
+        return $"Agent '{agentId}' was not registered. Registered=[{registered}]; "
+            + $"boundConfigAgents=[{configured}]; persistedAgentKeys=[{string.Join(", ", persisted)}].";
     }
 
     private static async Task WaitForAdapterStartAsync(VirtualChannelAdapter adapter, TimeSpan timeout, CancellationToken cancellationToken)

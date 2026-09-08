@@ -166,8 +166,12 @@ public sealed class SubAgentWorkspaceSweeper
                 // AC4: log EACH removal, not just an aggregate count. The original defect left no
                 // trace naming what removed a live sub-agent's workspace, which is why the cause
                 // stayed unconfirmed across 66 failures.
+                //
+                // #3670: the wording now comes from the shared reclamation vocabulary, so this
+                // backstop line and the lifecycle line emitted at terminal transition share one
+                // greppable prefix and differ only in their route/reason suffix.
                 _logger.LogInformation(
-                    "Sub-agent workspace sweep removed '{Directory}' ({BytesReclaimed} bytes): idle for {AgeHours:F1}h, exceeding the {RetentionHours:F1}h retention, and its sub-agent is not registered as running.",
+                    SubAgentWorkspaceReclamationAudit.BackstopTemplate,
                     name,
                     size,
                     age.TotalHours,

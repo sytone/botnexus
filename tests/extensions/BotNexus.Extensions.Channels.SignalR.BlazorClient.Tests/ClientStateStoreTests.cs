@@ -107,6 +107,11 @@ public sealed class ClientStateStoreTests
         var store = CreateSeededStore();
         store.SeedConversations("a-1", [CreateConversation("c-1", "a-1", "General")]);
         store.GetAgent("a-1")!.Conversations["c-1"].UnreadCount = 3;
+        // #3212 MIGRATION (not a relaxation): unread now clears only when the conversation becomes
+        // DISPLAYED, which is a route question. This test previously relied on the unconditional
+        // clear, so it now states the route that makes a-1 the displayed agent. The assertion that
+        // unread reaches 0 is unchanged.
+        store.SelectView("a-1", string.Empty, SelectionSource.RouteNavigation);
 
         store.SetActiveConversation("a-1", "c-1");
 

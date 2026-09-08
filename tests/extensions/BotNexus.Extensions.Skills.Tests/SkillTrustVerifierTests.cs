@@ -1,3 +1,4 @@
+using BotNexus.Extensions.Plugins.Security;
 using BotNexus.Extensions.Skills.Security;
 using System.IO.Abstractions.TestingHelpers;
 using System.Text;

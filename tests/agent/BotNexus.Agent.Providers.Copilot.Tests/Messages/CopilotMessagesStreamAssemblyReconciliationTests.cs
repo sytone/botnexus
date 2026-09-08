@@ -73,20 +73,19 @@ public class CopilotMessagesStreamAssemblyReconciliationTests
     }
 
     [Fact]
-    public async Task CrlfFramedDeltas_OnANonGpt56Model_AreNormalizedByTheTransportFlagAlone()
+    public async Task CrLfBearingDeltas_WithNoProviderFinalText_ArePreservedByteIdentically()
     {
-        // No provider final text here, so reconciliation has nothing to check against: this pins
-        // the OTHER half of the fix, the transport-declared strip replacing the gpt-5.6 model-id
-        // prefix gate. Under the old gate a claude-* id skipped normalization entirely and the
-        // CRLFs reached content.
+        // #3442: with no provider final text, reconciliation has nothing to check against, so this
+        // pins raw accumulation. It used to assert the transport-declared strip removed the CRLFs;
+        // captures show Copilot never sends them, so a CR that DOES arrive is model content and
+        // deleting it would be the data-loss path the normalizer quietly had.
         var result = await RunAsync(BuildBody(
             deltas: ["\r\nalpha", "\r\n beta"],
             finalText: null));
 
         var text = result.Content.OfType<TextContent>().ShouldHaveSingleItem().Text;
 
-        text.ShouldBe("alpha beta");
-        text.ShouldNotContain("\r");
+        text.ShouldBe("\r\nalpha\r\n beta");
     }
 
     private static string BuildBody(string[] deltas, string? finalText)

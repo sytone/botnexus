@@ -38,6 +38,24 @@ public sealed class GatewayAuthManager
     private Dictionary<string, AuthEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
 
+    /// <summary>
+    /// #3673: the observed on-disk state of the auth files at the moment the cache was populated.
+    ///
+    /// <para>
+    /// The cache used to be a one-shot latch (<see cref="_loaded"/> set once, never reset), so a
+    /// credential written <b>out of process</b> - which is exactly what <c>botnexus provider login</c>
+    /// does - was invisible to a running gateway. It kept serving the revoked token and every call
+    /// failed <c>HTTP 403</c> until someone restarted the daemon. Recording the files' last-write
+    /// stamp and size lets the next resolution notice the rewrite and re-read.
+    /// </para>
+    /// <para>
+    /// A stat is deliberately used rather than a read: the steady state must not perform disk I/O on
+    /// every credential resolution, and an unchanged stamp is sufficient evidence that the cached
+    /// entries still match the file.
+    /// </para>
+    /// </summary>
+    private string? _loadedSignature;
+
     public GatewayAuthManager(IOptionsMonitor<PlatformConfig> platformConfig, ILogger<GatewayAuthManager> logger, IFileSystem fileSystem)
         : this(platformConfig, logger, fileSystem, NullProviderHealthObserver.Instance)
     {
@@ -497,11 +515,95 @@ public sealed class GatewayAuthManager
         }
     }
 
+    /// <summary>
+    /// Runs a provider call with a single, bounded invalidate-and-retry on an authentication
+    /// failure (#3833).
+    ///
+    /// <para>
+    /// #3673 shortened the stale-credential window from "until a gateway restart" to "until the next
+    /// resolution", but it could not remove the call that <i>discovers</i> the staleness: a turn
+    /// already in flight when the credential rotates still spends a real provider round trip and
+    /// surfaces an opaque 403 that advises rotating a key which has already been rotated. This is
+    /// the seam that closes that gap - it hands the resolved credential to the operation, and on a
+    /// 401/403 drops the cache via <see cref="InvalidateCache"/>, re-resolves from disk and runs the
+    /// operation exactly once more.
+    /// </para>
+    ///
+    /// <para>
+    /// The bound is <b>structural, not configured</b>. There is no loop and no retry count: the
+    /// second attempt is a straight-line second call, so "at most one forced reload per failed call"
+    /// is a property of the shape of this method rather than of a policy object someone could later
+    /// widen. A second failure propagates unmodified, so the caller sees the provider's own message
+    /// and not a wrapper.
+    /// </para>
+    ///
+    /// <para>
+    /// Only <see cref="ProviderAuthenticationException"/> triggers the retry. A 500 or a timeout is
+    /// not evidence that the cached credential is wrong, and spending an invalidation on one would
+    /// turn every upstream outage into a disk re-read storm across every in-flight turn.
+    /// </para>
+    /// </summary>
+    /// <typeparam name="TResult">The provider call's result type.</typeparam>
+    /// <param name="provider">The provider whose credential backs the call.</param>
+    /// <param name="operation">
+    /// The provider call, receiving the freshly resolved API key (null when none is configured, so
+    /// the provider's own environment fallback still applies) and the cancellation token.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<TResult> InvokeWithAuthRetryAsync<TResult>(
+        string provider,
+        Func<string?, CancellationToken, Task<TResult>> operation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        var apiKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await operation(apiKey, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ProviderAuthenticationException ex)
+        {
+            _logger.LogWarning(
+                "Provider '{Provider}' rejected the cached credential (HTTP {StatusCode}); invalidating " +
+                "the auth cache and retrying once (#3833).",
+                provider,
+                ex.StatusCode is { } status ? (int)status : 0);
+
+            InvalidateCache();
+        }
+
+        // Outside the catch deliberately: the retry's own failure must reach the caller as itself,
+        // not as an exception thrown while handling another one.
+        var refreshedKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        return await operation(refreshedKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Drops the cached <c>auth.json</c> entries so the next resolution re-reads from disk (#3673).
+    ///
+    /// <para>
+    /// The mtime check below already covers the ordinary rotation case. This is the explicit escape
+    /// hatch for a caller that has independent evidence the cache is wrong - most usefully a provider
+    /// that just answered 401/403 - and does not want to depend on filesystem timestamp granularity
+    /// to find out.
+    /// </para>
+    /// </summary>
+    public void InvalidateCache()
+    {
+        lock (_sync)
+        {
+            _loaded = false;
+            _loadedSignature = null;
+        }
+    }
+
     private void LoadAuthEntries()
     {
         lock (_sync)
         {
-            if (_loaded)
+            var signature = ComputeAuthFileSignature();
+            if (_loaded && string.Equals(_loadedSignature, signature, StringComparison.Ordinal))
             {
                 return;
             }
@@ -530,7 +632,46 @@ public sealed class GatewayAuthManager
             }
 
             _loaded = true;
+            _loadedSignature = signature;
         }
+    }
+
+    /// <summary>
+    /// Stats the candidate auth files and renders their observable state as a comparison token (#3673).
+    /// Last-write time alone is not enough on filesystems with coarse timestamp granularity, so the
+    /// length participates too - two rewrites within the same tick that changed the token almost
+    /// always differ in length, and the explicit <see cref="InvalidateCache"/> seam covers the rest.
+    /// A stat failure renders as a stable marker rather than a changing one: a transient error must
+    /// not be able to turn every subsequent resolution into a disk read.
+    /// </summary>
+    private string ComputeAuthFileSignature()
+    {
+        var builder = new System.Text.StringBuilder();
+        foreach (var candidatePath in new[] { _legacyAuthFilePath, _authFilePath })
+        {
+            builder.Append(candidatePath).Append('|');
+            try
+            {
+                var info = _fileSystem.FileInfo.New(candidatePath);
+                if (info.Exists)
+                {
+                    builder.Append(info.LastWriteTimeUtc.Ticks).Append(':').Append(info.Length);
+                }
+                else
+                {
+                    builder.Append("absent");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to stat auth file '{AuthPath}' for staleness detection.", candidatePath);
+                builder.Append("unknown");
+            }
+
+            builder.Append(';');
+        }
+
+        return builder.ToString();
     }
 
     private void SaveAuthEntries()
@@ -546,6 +687,11 @@ public sealed class GatewayAuthManager
         // #2392: auth.json holds OAuth refresh/access tokens. Narrow it to the owner on every
         // save, not just first create - a token refresh rewrites this file routinely.
         SecureFilePermissions.RestrictToOwner(_fileSystem, _authFilePath);
+
+        // #3673: this process just rewrote the file, so the cache already matches what is on disk.
+        // Re-baselining the signature keeps an in-process refresh from being mistaken for a foreign
+        // rotation and forcing a pointless re-read of our own write.
+        _loadedSignature = ComputeAuthFileSignature();
     }
 
     private static bool TryGetProviderConfig(

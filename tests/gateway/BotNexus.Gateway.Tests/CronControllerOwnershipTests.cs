@@ -2,6 +2,7 @@ using BotNexus.Cron;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Api.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
@@ -29,7 +30,7 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "job-victim",
-            CreateJob("job-victim") with { Name = "Hijacked" },
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-victim") with { Name = "Hijacked" }),
             CancellationToken.None);
 
         var status = result.Result.ShouldBeOfType<ObjectResult>();
@@ -72,7 +73,7 @@ public sealed partial class CronControllerTests
             CreatedBy = "agent-b"
         };
 
-        var result = await controller.Update("job-victim", capture, CancellationToken.None);
+        var result = await controller.Update("job-victim", CronJobUpdateRequest.FromCronJob(capture), CancellationToken.None);
 
         result.Result.ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
 
@@ -96,12 +97,12 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "job-owned",
-            CreateJob("job-owned") with
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-owned") with
             {
                 Name = "Renamed",
                 AgentId = AgentId.From("agent-z"),
                 CreatedBy = "agent-z"
-            },
+            }),
             CancellationToken.None);
 
         (result.Result as OkObjectResult).ShouldNotBeNull();
@@ -123,7 +124,7 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "job-owned",
-            CreateJob("job-owned") with { Name = "Edited by owner" },
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-owned") with { Name = "Edited by owner" }),
             CancellationToken.None);
 
         var saved = (result.Result as OkObjectResult)?.Value as CronJob;
@@ -161,7 +162,7 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "job-created",
-            CreateJob("job-created") with { Name = "Edited by creator" },
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-created") with { Name = "Edited by creator" }),
             CancellationToken.None);
 
         (result.Result as OkObjectResult).ShouldNotBeNull();
@@ -188,7 +189,7 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "job-1",
-            CreateJob("job-1") with { Name = "Admin edit" },
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-1") with { Name = "Admin edit" }),
             CancellationToken.None);
 
         (result.Result as OkObjectResult).ShouldNotBeNull();
@@ -203,7 +204,7 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "no-such-job",
-            CreateJob("no-such-job"),
+            CronJobUpdateRequest.FromCronJob(CreateJob("no-such-job")),
             CancellationToken.None);
 
         result.Result.ShouldBeOfType<NotFoundResult>();
@@ -224,12 +225,12 @@ public sealed partial class CronControllerTests
 
         var result = await controller.Update(
             "job-raced",
-            CreateJob("job-raced") with
+            CronJobUpdateRequest.FromCronJob(CreateJob("job-raced") with
             {
                 Name = "Committed under a stale owner",
                 AgentId = AgentId.From("agent-a"),
                 CreatedBy = "agent-a"
-            },
+            }),
             CancellationToken.None);
 
         result.Result.ShouldBeOfType<ConflictObjectResult>();

@@ -66,10 +66,15 @@ public sealed class ContributorBuiltInParticipationFenceArchitectureTests : Arch
                 "decision; an unimplemented contract cannot be known to work.",
 
             ["IPromptContributor"] =
-                "Zero implementations anywhere (#3539), AND not collected on any production path: " +
-                "SystemPromptBuilder composes its PromptPipeline exclusively via Add(IPromptSection) " +
-                "and never calls AddContributors, so an implementation would be silently ignored. " +
-                "Retained pending the keep-or-remove decision.",
+                "Zero built-in implementations, but the contract is genuinely wired as of #3667: " +
+                "WorkspaceContextBuilder resolves IEnumerable<IPromptContributor> from DI and " +
+                "threads it through SystemPromptParams.PromptContributors into " +
+                "PromptPipeline.AddContributors, so a registered implementation now reaches the " +
+                "assembled prompt. No built-in uses it because every gateway-owned block is an " +
+                "IPromptSection composed directly by the builder, which is the same mechanism " +
+                "reached by a shorter route rather than a privileged bypass; this contract exists " +
+                "for assemblies that cannot reach that pipeline at compile time. The wiring is " +
+                "held by a through-the-builder test, so it cannot rot back to silence.",
         };
 
     /// <summary>

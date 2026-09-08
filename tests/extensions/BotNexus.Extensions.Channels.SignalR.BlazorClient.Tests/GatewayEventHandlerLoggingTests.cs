@@ -19,7 +19,7 @@ public sealed class GatewayEventHandlerLoggingTests
         // A fresh, unconnected GatewayHubConnection makes SubscribeAllAsync fail inside
         // HandleReconnectedAsync -- the exact recovery-failure path that previously wrote to
         // Console.Error.
-        _handler = new GatewayEventHandler(_store, new GatewayHubConnection(), _logger);
+        _handler = new GatewayEventHandler(_store, new GatewayHubConnection(), _logger, _store);
 
         _store.UpsertAgent(new AgentState
         {
@@ -35,6 +35,9 @@ public sealed class GatewayEventHandlerLoggingTests
             Title = "Conversation 1",
             HistoryLoaded = true
         };
+        // #3212: the reconnect recovery path repairs the DISPLAYED pane, resolved from the route.
+        // Establish that route selection explicitly instead of relying on the ambient marker.
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
     }
 
     [Fact]

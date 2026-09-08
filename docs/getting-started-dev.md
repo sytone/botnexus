@@ -48,29 +48,13 @@ curl http://localhost:5005/health
 
 ## 2. Configure the Copilot provider
 
-Edit `~/.botnexus/config.json`:
+Use the CLI so the same setup works with JSON-backed and SQLite-backed homes:
 
-```json
-{
-  "gateway": {
-    "listenUrl": "http://localhost:5005",
-    "defaultAgentId": "assistant"
-  },
-  "providers": {
-    "copilot": {
-      "apiKey": "auth:copilot",
-      "baseUrl": "https://api.githubcopilot.com",
-      "defaultModel": "gpt-4.1"
-    }
-  },
-  "agents": {
-    "assistant": {
-      "provider": "copilot",
-      "model": "gpt-4.1",
-      "enabled": true
-    }
-  }
-}
+```powershell
+botnexus provider setup --provider github-copilot
+botnexus agent add assistant --provider github-copilot --model gpt-4.1
+botnexus config set gateway.defaultAgentId assistant
+botnexus validate
 ```
 
 On your first message to the agent, you'll see:

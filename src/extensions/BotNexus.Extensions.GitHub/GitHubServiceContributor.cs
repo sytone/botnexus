@@ -88,7 +88,10 @@ public sealed class GitHubServiceContributor : IServiceContributor
                 options.AgentIdentities.Count == 0 && options.Identities.Count == 0
                     ? fallback
                     : new AgentScopedGitHubCredentialProvider(resolver, agentId),
-                options));
+                options),
+                // #3750: without a logger, an agent whose botnexus-github entry is malformed is
+                // indistinguishable from one that never configured it - both silently yield no tools.
+                provider.GetService<ILoggerFactory>()?.CreateLogger<GitHubToolsContributor>());
         });
     }
 }

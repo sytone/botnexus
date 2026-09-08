@@ -82,6 +82,31 @@ public sealed class LocalCliMockProviderTests : IAsyncLifetime
         _fixture.PackIsolationFailure.ShouldBeNull();
     }
 
+    /// <summary>
+    /// #3237 root-cause pin, asserted against the LIVE fixture: the synthetic <c>99.99.99</c> stamp
+    /// must identify the package only, and every startup-critical assembly in the real install
+    /// layout must carry the one repo assembly version the CLI was actually compiled against.
+    /// Before this fix the pack stamped MSBuild <c>Version</c> too, so the CLI bound
+    /// <c>99.99.99.0</c> while its dependencies could carry the repo version - the intermittent
+    /// <c>Could not load file or assembly</c> this issue records.
+    /// </summary>
+    [Fact]
+    public void LocalInstallLayout_BindsOneConsistentAssemblyVersion()
+    {
+        AssertFixture();
+
+        _fixture.PackArguments.ShouldContain($"/p:PackageVersion={_fixture.PackVersion}");
+        _fixture.PackArguments.ShouldNotContain("/p:Version=99.99.99",
+            customMessage: "The synthetic stamp must not be MSBuild Version (#3237).\n" + _fixture.PackArguments);
+        _fixture.ExpectedBoundVersion.ShouldBe(
+            CliPackIsolation.ExpectedBoundVersion(_fixture.AssemblyVersion));
+
+        var mismatches = CliInstallLayout.FindVersionMismatches(
+            _fixture.ToolPath, _fixture.ExpectedBoundVersion);
+        mismatches.ShouldBeEmpty(CliInstallLayout.FormatVersionMismatchFailure(
+            _fixture.ToolPath, _fixture.ExpectedBoundVersion, mismatches, _fixture.InstalledFiles));
+    }
+
     [Fact]
     public async Task Init_ThenProviderAdd_MockProvider_WritesExpectedConfig()
     {

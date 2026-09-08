@@ -24,7 +24,7 @@ public sealed class GatewayEventHandlerConcurrencyTests
     {
         // A fresh, unconnected GatewayHubConnection makes SubscribeAllAsync fail inside
         // HandleReconnectedAsync (the reconnect-recovery failure path).
-        _handler = new GatewayEventHandler(_store, new GatewayHubConnection(), _logger);
+        _handler = new GatewayEventHandler(_store, new GatewayHubConnection(), _logger, _store);
 
         _store.UpsertAgent(new AgentState
         {
@@ -40,6 +40,9 @@ public sealed class GatewayEventHandlerConcurrencyTests
             Title = "Conversation 1",
             HistoryLoaded = true
         };
+        // #3212: reconnect recovery repairs the DISPLAYED pane, which is now route-derived.
+        // The fixture must state the route rather than lean on the ambient per-agent marker.
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
     }
 
     // ── (b) fire-and-forget observation ──────────────────────────────────────
@@ -123,6 +126,8 @@ public sealed class GatewayEventHandlerConcurrencyTests
 
         // Register the session so the drain (which routes by session) can resolve the agent.
         _store.RegisterSession("agent-1", "sess-1", conversationId: "conv-1");
+        // #3212: visibility is route-derived; state the displayed pane explicitly.
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         agent.Conversations["conv-1"].ActiveSessionId = "sess-1";
 
         // A no-op refresh delegate keeps the drain side effect-free and fast.

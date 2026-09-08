@@ -63,9 +63,33 @@ An empty inventory is a build error rather than silence, following the #2769 pre
 make every consumer subscribe to nothing, which is precisely the "nothing was received" failure the
 generator exists to remove.
 
-## What is still hand-written
+## What is still hand-written - and why it stays that way
 
-The Blazor client's `On<T>(...)` registration block in `GatewayHubConnection.cs` is **not** generated.
-It matches the interface exactly today (24/24) and each registration carries distinct delegate
-wiring and payload types, so emitting it is a separate, larger change than the inventory. See
-[#3318](https://github.com/Sytone/botnexus/issues/3318) and its follow-up for that half.
+The Blazor client's `On<T>(...)` registration block in `GatewayHubConnection.cs` is **not** generated,
+and [#3430](https://github.com/Sytone/botnexus/issues/3430) measured that it cannot be. Three
+independent blockers, any one of which is decisive:
+
+1. **The dependency edge runs the wrong way, deliberately.** The block lives in
+   `BlazorClient.Core`, whose only permitted project reference is `BotNexus.Domain.Wire` - enforced
+   by `WasmPayloadDependencyArchitectureTests`, because every assembly reachable from a WASM entry
+   point is downloaded by the browser ([#2329](https://github.com/Sytone/botnexus/issues/2329)).
+   `IGatewayHubClient` sits in an assembly that transitively drags `BotNexus.Domain` and Vogen. A
+   generator needs the annotated interface's symbol in the *consuming* compilation, so generating
+   the block means breaching that payload fence to delete 24 lines.
+2. **The payload types are not the interface's payload types.** The client registers its own mirror
+   records from `Services/HubContracts.cs`. Most sharply, `IGatewayHubClient.ContentDelta` declares
+   `object` while the client registers `AgentStreamEvent` - emitting the interface's type verbatim
+   would change what the portal deserialises.
+3. **The delegate bodies are not uniform.** `CanvasUpdated`, `CanvasStateChanged` and `TodoUpdated`
+   destructure into positional `Action<,,>` invocations rather than the single-argument shape the
+   other twenty-one use.
+
+The emission is therefore not a true projection of the interface, which is the exact condition
+[#2770](https://github.com/Sytone/botnexus/issues/2770) AC4 uses to rule generation out.
+
+What *is* projectable is the set of names, and that is pinned by
+`HubRegistrationExhaustivenessTests` in `BotNexus.Gateway.Tests` - the one project that references
+both the SignalR extension (for the generated `HubEvents.All`) and the Blazor client. It parses the
+`On<...>("Name", ...)` literals out of `GatewayHubConnection.cs` and diffs them against the
+generated inventory in both directions, so adding a member to `IGatewayHubClient` without a matching
+registration fails **naming the missing event** instead of reporting a count mismatch.

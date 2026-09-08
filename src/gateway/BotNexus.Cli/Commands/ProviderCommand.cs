@@ -303,7 +303,7 @@ internal sealed class ProviderCommand
                 name,
                 provider.Enabled ? "[green]Yes[/]" : "[red]No[/]",
                 authDisplay,
-                provider.DefaultModel ?? "[dim]—[/]",
+                provider.ResolveChatDefaultModel() ?? "[dim]—[/]",
                 provider.BaseUrl ?? "[dim]default[/]");
         }
 

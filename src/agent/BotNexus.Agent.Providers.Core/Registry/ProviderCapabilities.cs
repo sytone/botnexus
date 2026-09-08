@@ -62,27 +62,9 @@ public enum SystemPromptPlacement
 /// <param name="SystemPromptPlacement">
 /// How this provider transmits the system prompt. See <see cref="Registry.SystemPromptPlacement"/>.
 /// </param>
-/// <param name="FramesStreamedTextDeltasWithCrlf">
-/// True when the transport is known to prefix streamed text deltas with CRLF framing that is not
-/// model content (#2049 -> #2119 -> #2170 -> #2140 -> #3336). Only the Copilot transports declare
-/// it: that is where the artifact was observed, on more than one model family.
-/// <para>
-/// This replaces the <c>modelId.StartsWith("gpt-5.6")</c> check that previously decided whether the
-/// strip applied. A model-id string prefix is the wrong discriminator for a TRANSPORT framing
-/// artifact - it encoded a 2026-07 hypothesis that the quirk belonged to one model family, which
-/// the <c>claude-opus-5</c> evidence in #3336 falsifies. The quirk belongs to the wire, so it is
-/// declared by the thing that owns the wire.
-/// </para>
-/// <para>
-/// The strip is a lossy last resort, deliberately narrow (leading CRLF pairs only). The general,
-/// origin-agnostic protection is <c>StreamAssemblyConformance.Reconcile</c>, which every parser
-/// with a terminal block value now applies regardless of this flag.
-/// </para>
-/// </param>
 public sealed record ProviderCapabilities(
     bool RecoversLeakedToolCallMarkup = false,
-    SystemPromptPlacement SystemPromptPlacement = SystemPromptPlacement.FirstMessage,
-    bool FramesStreamedTextDeltasWithCrlf = false)
+    SystemPromptPlacement SystemPromptPlacement = SystemPromptPlacement.FirstMessage)
 {
     /// <summary>
     /// The capabilities assumed for a provider that declares nothing -- an out-of-tree extension

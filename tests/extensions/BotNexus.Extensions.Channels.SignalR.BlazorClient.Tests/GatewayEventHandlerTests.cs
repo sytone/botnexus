@@ -9,7 +9,7 @@ public sealed class GatewayEventHandlerTests
 
     public GatewayEventHandlerTests()
     {
-        _handler = new GatewayEventHandler(_store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        _handler = new GatewayEventHandler(_store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance, _store);
 
         _store.UpsertAgent(new AgentState
         {
@@ -28,6 +28,9 @@ public sealed class GatewayEventHandlerTests
             ActiveSessionId = "sess-1"
         };
         _store.RegisterSession("agent-1", "sess-1");
+        // #3212: visibility is route-derived, so the fixture must state which pane is DISPLAYED.
+        // This replaces the ambient AgentState.ActiveConversationId the handler used to read.
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
     }
 
     [Fact]
@@ -497,7 +500,7 @@ public sealed class GatewayEventHandlerTests
         var conv = agent.Conversations["conv-1"];
         var initialCount = conv.Messages.Count;
 
-        _handler.HandleSteeringFeedback(new SteeringFeedbackPayload("agent-1", "sess-1", SteeringFeedbackKind.Injected));
+        _handler.HandleSteeringFeedback(new SteeringFeedbackPayload("agent-1", "sess-1", SteeringFeedbackKind.Injected, ConversationId: "conv-1"));
 
         Assert.Equal(initialCount + 1, conv.Messages.Count);
         var msg = conv.Messages.Last();
@@ -512,7 +515,7 @@ public sealed class GatewayEventHandlerTests
         var conv = agent.Conversations["conv-1"];
         var initialCount = conv.Messages.Count;
 
-        _handler.HandleSteeringFeedback(new SteeringFeedbackPayload("agent-1", "sess-1", SteeringFeedbackKind.Queued));
+        _handler.HandleSteeringFeedback(new SteeringFeedbackPayload("agent-1", "sess-1", SteeringFeedbackKind.Queued, ConversationId: "conv-1"));
 
         Assert.Equal(initialCount + 1, conv.Messages.Count);
         var msg = conv.Messages.Last();
@@ -571,7 +574,8 @@ public sealed class GatewayEventHandlerTests
             TurnsUsed: 0,
             ResultSummary: null,
             TimedOut: false,
-            ChildSessionId: null));
+            ChildSessionId: null,
+            ConversationId: "conv-1"));
 
         _store.SetActiveConversation("agent-1", "conv-2");
 
@@ -623,7 +627,8 @@ public sealed class GatewayEventHandlerTests
             TurnsUsed: 0,
             ResultSummary: null,
             TimedOut: false,
-            ChildSessionId: null));
+            ChildSessionId: null,
+            ConversationId: "conv-1"));
 
         _store.SetActiveConversation("agent-1", "conv-2");
 
@@ -675,7 +680,8 @@ public sealed class GatewayEventHandlerTests
             TurnsUsed: 0,
             ResultSummary: null,
             TimedOut: false,
-            ChildSessionId: null));
+            ChildSessionId: null,
+            ConversationId: "conv-1"));
 
         _store.SetActiveConversation("agent-1", "conv-2");
 
@@ -735,7 +741,8 @@ public sealed class GatewayEventHandlerTests
             TurnsUsed: 0,
             ResultSummary: null,
             TimedOut: false,
-            ChildSessionId: null));
+            ChildSessionId: null,
+            ConversationId: "conv-1"));
 
         var msg = conv.Messages.Last();
         Assert.Equal("System", msg.Role);
@@ -762,7 +769,8 @@ public sealed class GatewayEventHandlerTests
             TurnsUsed: 0,
             ResultSummary: null,
             TimedOut: false,
-            ChildSessionId: null));
+            ChildSessionId: null,
+            ConversationId: "conv-1"));
 
         var msg = conv.Messages.Last();
         Assert.Equal("System", msg.Role);

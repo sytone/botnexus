@@ -49,6 +49,28 @@ public sealed class SubAgentWorkspaceSweeperTests
         return dir;
     }
 
+    /// <summary>
+    /// #3845 AC2: the reap must take the sub-agent's SQLite memory store with it. Every reaped
+    /// directory retains a 56 KB initialised store, and 40 of them had accumulated on the live host.
+    /// The sweeper deletes recursively so this holds today - the test exists so a future change to
+    /// selective deletion cannot silently start stranding stores again.
+    /// </summary>
+    [Fact]
+    public void Sweep_RemovesMemoryStoreAlongsideTheReapedWorkspace()
+    {
+        var dir = AddSubAgentDir("farnsworth--subagent--coder--store01", NowUtc - TimeSpan.FromHours(48));
+        var storePath = _fileSystem.Path.Combine(dir, "data", "memory.sqlite");
+        _fileSystem.Directory.CreateDirectory(_fileSystem.Path.Combine(dir, "data"));
+        _fileSystem.File.WriteAllBytes(storePath, new byte[57344]);
+        _fileSystem.Directory.SetLastWriteTimeUtc(dir, NowUtc - TimeSpan.FromHours(48));
+
+        var result = _sweeper.Sweep(_agentsRoot, TimeSpan.FromHours(24), TimeSpan.FromHours(1), NowUtc);
+
+        result.Removed.ShouldBe(1);
+        _fileSystem.File.Exists(storePath).ShouldBeFalse();
+        _fileSystem.Directory.Exists(dir).ShouldBeFalse();
+    }
+
     [Fact]
     public void Sweep_RemovesSubAgentDirectory_OlderThanRetention()
     {

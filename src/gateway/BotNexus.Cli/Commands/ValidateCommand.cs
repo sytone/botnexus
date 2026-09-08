@@ -48,14 +48,14 @@ internal sealed class ValidateCommand
         AnsiConsole.MarkupLine("BotNexus config validation [dim](local)[/]");
         AnsiConsole.MarkupLine($"Config path: [dim]{CliText.SafeDisplay(configPath)}[/]");
 
-        if (!File.Exists(configPath))
+        if (!ConfigPresence.Exists(configPath))
         {
             PrintResult(
                 valid: false,
                 warnings: [],
                 errors:
                 [
-                    $"Config file not found at '{configPath}'.",
+                    $"No configuration found at '{configPath}' or in a SQLite store beside it.",
                     "Create ~/.botnexus/config.json (or set BOTNEXUS_HOME) and retry."
                 ]);
             return 1;

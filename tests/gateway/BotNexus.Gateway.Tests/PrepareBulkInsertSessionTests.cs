@@ -9,8 +9,8 @@ namespace BotNexus.Gateway.Tests;
 
 /// <summary>
 /// Regression coverage for the #1628 bulk-insert hoist in
-/// <c>SqliteSessionStore.ReplaceHistoryAsync</c>. The DELETE-then-INSERT loop was
-/// refactored to prepare the <c>INSERT</c> command and its parameters once and only
+/// <c>SqliteSessionStore</c>. The row-insert loop prepares the <c>INSERT</c> command
+/// and its parameters once and only
 /// reset <c>.Value</c> per row. A correct hoist must reset EVERY row-varying parameter
 /// on EVERY iteration; a stale shared parameter would let an earlier row's value bleed
 /// into a later row. These tests round-trip a multi-entry history whose per-row values
@@ -174,7 +174,7 @@ public sealed class PrepareBulkInsertSessionTests : IDisposable
     }
 
     [Fact]
-    public async Task ReplaceHistory_OnReSave_ReplacesCleanly_DeleteThenInsert()
+    public async Task ReplaceHistory_OnReSave_ReconcilesCleanlyByIdentity()
     {
         var store = CreateStore();
         var session = await store.GetOrCreateAsync(SessionId.From("s-resave"), AgentId.From("agent-a"));
@@ -187,13 +187,13 @@ public sealed class PrepareBulkInsertSessionTests : IDisposable
         ]);
         await store.SaveAsync(session);
 
-        // Re-save with a completely different history. ReplaceHistory deletes the prior rows
-        // then re-inserts; the reload must reflect ONLY the new set (no stale rows, no stale
-        // per-row parameter bleed across the new rows).
+        // Re-save with a completely different history. Targeted reconciliation deletes only the
+        // removed row ids and inserts this new set; the reload must reflect ONLY the new set (no
+        // stale rows, no stale per-row parameter bleed across the new rows).
         var reloaded = await CreateStore().GetAsync(SessionId.From("s-resave"));
         reloaded.ShouldNotBeNull();
         // ReplaceHistory clears the in-memory history and sets the new set; SaveAsync then
-        // drives ReplaceHistoryAsync (DELETE-then-INSERT) against SQLite.
+        // drives targeted identity-based reconciliation against SQLite.
         reloaded!.ReplaceHistory(
         [
             new SessionEntry { Role = MessageRole.System, Content = "second-only" },

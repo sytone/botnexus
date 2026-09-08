@@ -41,6 +41,12 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     private readonly ISessionStore? _sessionStore;
     private readonly IAgentMemoryFactory? _agentMemoryFactory;
     private readonly IToolPolicyProvider? _toolPolicyProvider;
+    /// <summary>
+    /// Prompt contributors resolved from the host container (#3667). Null when the composing
+    /// constructor was not used, which is every direct-construction test; the builder then passes
+    /// an empty set and the prompt renders exactly as it did before.
+    /// </summary>
+    private readonly IReadOnlyList<IPromptContributor>? _promptContributors;
     private readonly string? _homePath;
 
     public WorkspaceContextBuilder(IAgentWorkspaceManager workspaceManager, IFileSystem fileSystem)
@@ -147,6 +153,40 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         _sessionStore = sessionStore;
         _agentMemoryFactory = agentMemoryFactory;
         _toolPolicyProvider = toolPolicyProvider;
+        _hookDispatcher = hookDispatcher;
+    }
+
+    /// <summary>
+    /// Full composition including DI-resolved prompt contributors (#3667). This is the constructor
+    /// the container selects, and the only route by which an <see cref="IPromptContributor"/>
+    /// registered by an extension reaches the assembled system prompt.
+    /// </summary>
+    /// <remarks>
+    /// Added as an additional overload rather than a parameter change for the same reason as the
+    /// #3468 one above: several tests construct this type directly, and they must keep compiling
+    /// and keep their present behaviour. A null contributor set is treated as empty, so a prompt
+    /// built through any earlier constructor is byte-identical to its pre-#3667 output.
+    /// </remarks>
+    public WorkspaceContextBuilder(
+        IAgentWorkspaceManager workspaceManager,
+        IFileSystem fileSystem,
+        BotNexusHome botNexusHome,
+        IConversationStore conversationStore,
+        ISessionStore sessionStore,
+        IAgentMemoryFactory agentMemoryFactory,
+        IToolPolicyProvider toolPolicyProvider,
+        IEnumerable<IPromptContributor> promptContributors,
+        IHookDispatcher? hookDispatcher = null)
+    {
+        ArgumentNullException.ThrowIfNull(promptContributors);
+        _workspaceManager = workspaceManager;
+        _fileSystem = fileSystem;
+        _homePath = botNexusHome.RootPath;
+        _conversationStore = conversationStore;
+        _sessionStore = sessionStore;
+        _agentMemoryFactory = agentMemoryFactory;
+        _toolPolicyProvider = toolPolicyProvider;
+        _promptContributors = promptContributors.Where(static c => c is not null).ToList();
         _hookDispatcher = hookDispatcher;
     }
 
@@ -266,7 +306,10 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             MemoryPromptInjection = memoryPromptInjection,
             Scope = scope,
             ConversationContext = ToConversationContext(conversation, runStartedAt),
-            PromptMode = PromptMode.Full
+            PromptMode = PromptMode.Full,
+            // #3667: DI-resolved prompt contributors. Null (non-composing constructor) means an
+            // empty set, which the builder treats as a no-op.
+            PromptContributors = _promptContributors
         });
 
         // Dispatch BeforePromptBuild hooks (e.g. skills injection)

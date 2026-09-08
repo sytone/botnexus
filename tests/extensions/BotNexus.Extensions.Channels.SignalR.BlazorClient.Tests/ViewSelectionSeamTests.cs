@@ -39,7 +39,7 @@ public sealed class ViewSelectionSeamTests
 
     public ViewSelectionSeamTests()
     {
-        _handler = new GatewayEventHandler(_store, new GatewayHubConnection(), NullLogger<GatewayEventHandler>.Instance);
+        _handler = new GatewayEventHandler(_store, new GatewayHubConnection(), NullLogger<GatewayEventHandler>.Instance, _store);
         _service = new AgentInteractionService(_store, new GatewayHubConnection(), _restClient, NullLogger<AgentInteractionService>.Instance);
 
         // Active user agent with an active conversation + registered session.

@@ -73,7 +73,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback(() => updatesSeen.TrySetResult());
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        await updatesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await updatesSeen.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         dispatcher.Invocations
@@ -153,12 +153,23 @@ public sealed class TelegramChannelAdapterTests
     /// Hang guard for a signal that the polling loop is expected to raise essentially immediately.
     /// </summary>
     /// <remarks>
-    /// This is deliberately NOT a scheduling budget (#3303). The observation the test makes is
-    /// signal-gated: the fake handler parks every poll after the second one, so the loop cannot
-    /// out-run or hot-loop past the assertion, and "the second poll happened" is an awaited fact
-    /// rather than a race against thread-pool latency on a contended container. The only job left
-    /// for a wall clock is to convert a genuine dead loop into a failing test rather than a hung
-    /// one, which is why the value is generous: when the test is green it is never waited on.
+    /// <para>
+    /// This is deliberately NOT a scheduling budget (#3303, #3855). Every observation these tests
+    /// make is signal-gated: the fake handler parks every poll after the second one, so the loop
+    /// cannot out-run or hot-loop past the assertion, and "the second poll happened" is an awaited
+    /// fact rather than a race against thread-pool latency on a contended container. The only job
+    /// left for a wall clock is to convert a genuine dead loop into a failing test rather than a
+    /// hung one, which is why the value is generous: when the test is green it is never waited on.
+    /// </para>
+    /// <para>
+    /// #3855 extended this from the one call site #3303 fixed to every wait in the file. The
+    /// remaining fixed 5 s budgets were the same defect wearing a different test name: e.g.
+    /// <c>Polling_PhotoMessage_DispatchedWithBinaryContentPart</c> gave 5 s to cover start,
+    /// a <c>getUpdates</c> long-poll, <c>getFile</c>, a stubbed byte download and the dispatcher
+    /// callback, and threw a bare <see cref="TimeoutException"/> - no Shouldly message, so no
+    /// contract had been violated - whenever a loaded 4-CPU runner scheduled the worker late.
+    /// Do not reintroduce a fixed budget here: if a wait needs a bound, it needs this one.
+    /// </para>
     /// </remarks>
     private static readonly TimeSpan PollingSignalHangGuard = TimeSpan.FromMinutes(2);
 
@@ -256,7 +267,7 @@ public sealed class TelegramChannelAdapterTests
         await adapter.StartAsync(Mock.Of<IChannelDispatcher>(), CancellationToken.None);
 
         var stopTask = adapter.StopAsync(CancellationToken.None);
-        var completed = await Task.WhenAny(stopTask, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(stopTask, Task.Delay(PollingSignalHangGuard));
         completed.ShouldBe(stopTask);
     }
 
@@ -308,7 +319,7 @@ public sealed class TelegramChannelAdapterTests
         }, handler);
 
         await adapter.StartAsync(Mock.Of<IChannelDispatcher>(), CancellationToken.None);
-        await pollingSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await pollingSeen.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         calls.Select(c => c.MethodName).ShouldContain("deleteWebhook");
@@ -565,7 +576,7 @@ public sealed class TelegramChannelAdapterTests
         }, handler);
 
         await adapter.StartAsync(Mock.Of<IChannelDispatcher>(), CancellationToken.None);
-        await pollSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await pollSeen.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         pollingCall.ShouldNotBeNull();
@@ -716,7 +727,7 @@ public sealed class TelegramChannelAdapterTests
         }, handler);
 
         await adapter.StartAsync(Mock.Of<IChannelDispatcher>(), CancellationToken.None);
-        await pollSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await pollSeen.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         pollingCall.ShouldNotBeNull();
@@ -785,7 +796,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var message = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         message.RoutingHints.ShouldNotBeNull();
@@ -839,7 +850,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var message = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         // Adapter dispatches without BindingId — GatewayHost stamps it after routing
@@ -900,7 +911,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback(() => dispatched = true);
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        await updatesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await updatesSeen.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         dispatched.ShouldBeFalse();
@@ -948,7 +959,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var msg = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         msg.Content.ShouldBe("hello");
@@ -996,7 +1007,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var msg = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         msg.Content.ShouldBe("hello");
@@ -1053,7 +1064,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback(() => dispatched = true);
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        await updatesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await updatesSeen.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         dispatched.ShouldBeFalse();
@@ -1112,7 +1123,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback(() => dispatched = true);
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        await updatesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await updatesSeen.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         dispatched.ShouldBeFalse();
@@ -1160,7 +1171,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var msg = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         msg.Content.ShouldBe("edited text");
@@ -1218,7 +1229,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback(() => dispatched = true);
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        await updatesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await updatesSeen.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         dispatched.ShouldBeFalse();
@@ -1280,7 +1291,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var msg = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         msg.Content.ShouldBe("here is a photo");
@@ -1337,7 +1348,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var msg = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         msg.Content.ShouldBe(string.Empty);
@@ -1390,7 +1401,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var msg = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         // Adapter must still dispatch; falls back to caption-only (no ContentParts)
@@ -1456,7 +1467,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         usedFileId.ShouldBe("hd_id");
@@ -1512,7 +1523,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var msg = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         // Must not throw and should dispatch with at least one ContentPart (or none if download fails)
@@ -1568,7 +1579,7 @@ public sealed class TelegramChannelAdapterTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var msg = await dispatched.Task.WaitAsync(PollingSignalHangGuard);
         await adapter.StopAsync(CancellationToken.None);
 
         msg.ContentParts.ShouldNotBeNull();

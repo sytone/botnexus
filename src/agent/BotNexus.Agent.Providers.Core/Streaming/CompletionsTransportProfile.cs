@@ -46,12 +46,6 @@ namespace BotNexus.Agent.Providers.Core.Streaming;
 /// shell from its own injected redactor and handed to <paramref name="ThrowForError"/> by the engine.
 /// Null is a deliberate no-op so an unwired provider keeps its diagnostics rather than losing them.
 /// </param>
-/// <param name="NormalizeTextDelta">
-/// Optional transport-compatibility hook applied to every text delta before it is accumulated,
-/// mirroring the identical hook on the Responses and Messages paths so Copilot's CRLF-framing quirk
-/// has exactly one implementation applied by all three transports (#2443). Leaving it null - as
-/// OpenAI does - means deltas are accumulated byte-identically.
-/// </param>
 public sealed record CompletionsTransportProfile(
     string Api,
     string ActivityName,
@@ -60,5 +54,4 @@ public sealed record CompletionsTransportProfile(
     Action<HttpResponseMessage, string, ISecretRedactor?> ThrowForError,
     Action<HttpResponseMessage>? OnResponseHeaders = null,
     Action<JsonElement>? InspectChunk = null,
-    ISecretRedactor? SecretRedactor = null,
-    Func<LlmModel, string, string>? NormalizeTextDelta = null);
+    ISecretRedactor? SecretRedactor = null);

@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Services;
@@ -31,6 +32,17 @@ public interface IPlatformConfigAccessor
     /// throwing, matching the previous loaders' <c>optional: true</c> behaviour.
     /// </remarks>
     PlatformConfig Get(string configPath);
+
+    /// <summary>
+    /// Returns the effective configuration for <paramref name="configPath"/>, reading through
+    /// <paramref name="fileSystem"/> rather than the physical disk (#3824).
+    /// </summary>
+    /// <remarks>
+    /// For the two call sites that take an injected <see cref="IFileSystem"/> test seam - the
+    /// <c>subagent workspace</c> command group and the <c>subagent-workspaces</c> doctor check.
+    /// Precedence is unchanged: JSON first, store second, store wins.
+    /// </remarks>
+    PlatformConfig Get(string configPath, IFileSystem fileSystem);
 }
 
 /// <inheritdoc />
@@ -68,5 +80,14 @@ public sealed class PlatformConfigAccessor : IPlatformConfigAccessor
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
 
         return PlatformConfigurationSources.BuildMonitor(configPath).CurrentValue;
+    }
+
+    /// <inheritdoc />
+    public PlatformConfig Get(string configPath, IFileSystem fileSystem)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
+        ArgumentNullException.ThrowIfNull(fileSystem);
+
+        return PlatformConfigurationSources.BuildMonitor(configPath, fileSystem).CurrentValue;
     }
 }

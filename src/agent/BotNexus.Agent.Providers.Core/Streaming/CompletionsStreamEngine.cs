@@ -196,8 +196,7 @@ public static class CompletionsStreamEngine
             (s, m, msg, partial) => EmitError(s, profile.Api, m, msg, partial),
             () => logger.LogDebug("Skipping malformed SSE chunk"),
             ct,
-            inspectChunk: profile.InspectChunk,
-            normalizeTextDelta: profile.NormalizeTextDelta);
+            inspectChunk: profile.InspectChunk);
     }
 
     /// <summary>

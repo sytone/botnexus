@@ -282,7 +282,12 @@ public sealed class PluginLifecycleManagerTests : IDisposable
         await _manager.InstallAsync(new PluginInstallRequest { Source = "https://example.com/hello.git" });
 
         var recorded = _store.Find("hello-world")!.Files;
-        Assert.Equal([".botnexus-plugin/plugin.json", "skills/greet/SKILL.md"], recorded);
+
+        // trust.json is part of the recorded set because install materialises it too (#2682); a
+        // catalog omitted from the removal manifest would be left behind as a husk. The subject of
+        // this test - that removal works from the RECORD and not from a directory scan - is
+        // unchanged and is asserted by the impostor below.
+        Assert.Equal([".botnexus-plugin/plugin.json", "skills/greet/SKILL.md", "trust.json"], recorded);
 
         // Indistinguishable from installed content by shape, but absent from the record.
         var impostor = Path.Combine(_root, "hello-world", "skills", "extra", "SKILL.md");

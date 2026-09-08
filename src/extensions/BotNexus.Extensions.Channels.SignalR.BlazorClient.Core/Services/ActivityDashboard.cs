@@ -112,6 +112,58 @@ public enum ActivityLiveFilter
 }
 
 /// <summary>
+/// How much the client actually knows about the liveness of the session a row's
+/// <see cref="ActivityRow.ActiveSessionId"/> points at (#3713).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <c>ActiveSessionId</c> is a <em>routing binding</em> ("where does the next inbound message go?"),
+/// not a liveness assertion. Three gateway paths terminalise a session without clearing the pointer -
+/// <c>CronSessionStartupReconciler</c> (seals every active cron session on every gateway start),
+/// <c>SessionCleanupService</c> (TTL expiry) and <c>SessionConsistencyChecker</c>'s
+/// <c>stale-active-cron</c> branch - so a non-empty pointer alone can name a long-dead session.
+/// This enum records what the session roster had to say about that pointer, so the projection can
+/// answer the present-tense question with present-tense evidence.
+/// </para>
+/// <para>
+/// The fail direction is deliberately asymmetric (the #3421 lesson): only
+/// <see cref="Running"/> and <see cref="Unverifiable"/> can render live, and
+/// <see cref="Unverifiable"/> does so only because it means "no roster was supplied at all", which
+/// must degrade to the pre-#3713 rendering rather than blanking every badge on a failed fetch.
+/// A roster that was supplied and simply does not contain the id yields <see cref="Absent"/>, which
+/// is NOT live: asserting present-tense activity on unverifiable evidence is the exact defect.
+/// </para>
+/// </remarks>
+public enum ActivitySessionLiveness
+{
+    /// <summary>
+    /// No session roster was supplied to the projection, so the pointer could not be corroborated at
+    /// all. Falls back to the pre-#3713 behaviour: a non-blank pointer renders live. This is the
+    /// degradation path for a failed or absent <c>GET /api/sessions</c> fetch, and it is also what
+    /// every row carries when the row names no session.
+    /// </summary>
+    Unverifiable,
+
+    /// <summary>The roster names this session and its status is one the client recognises as running.</summary>
+    Running,
+
+    /// <summary>
+    /// The roster names this session but its status is not a running one - <c>Sealed</c>,
+    /// <c>Expired</c>, <c>Suspended</c>, blank, or any value from a newer gateway that this client
+    /// does not recognise. Unrecognised is grouped here rather than with <see cref="Running"/>
+    /// because an unclassifiable status must never be promoted to a present-tense claim.
+    /// </summary>
+    NotRunning,
+
+    /// <summary>
+    /// A roster was supplied and does not contain this session id. Distinct from
+    /// <see cref="Unverifiable"/>: there the client had no evidence to consult, here it consulted
+    /// the evidence and the session was not in it.
+    /// </summary>
+    Absent
+}
+
+/// <summary>
 /// Immutable, composable filter for the Home / Activity dashboard. Each facet is independent so new
 /// facets can be added without changing existing call sites, and the whole record is cheap to copy
 /// with <c>with</c> when a single facet changes from the filter bar.
@@ -277,6 +329,11 @@ public sealed record ActivityCronHealth(
 /// for a non-cron row even when <see cref="ActivityRow.SourceId"/> is set, because <c>SourceId</c> is
 /// meaningful only paired with <c>Source</c> - the same pairing discipline <c>SourceLabel</c> enforces.
 /// </param>
+/// <param name="SessionLiveness">
+/// What the session roster said about <paramref name="ActiveSessionId"/> (#3713). Defaults to
+/// <see cref="ActivitySessionLiveness.Unverifiable"/> so a hand-constructed row, and every caller
+/// that supplies no roster, behaves exactly as it did before this shipped.
+/// </param>
 /// <param name="Purpose">
 /// The author's own one-line description of why this conversation exists (#3204), or
 /// <see langword="null"/> when none was set. Carried straight through from the server-stamped
@@ -310,16 +367,34 @@ public sealed record ActivityRow(
     string? ActiveSessionId = null,
     string? SourceId = null,
     string? Purpose = null,
-    ActivityCronHealth? CronHealth = null)
+    ActivityCronHealth? CronHealth = null,
+    ActivitySessionLiveness SessionLiveness = ActivitySessionLiveness.Unverifiable)
 {
     /// <summary>
     /// Whether a session is running in this conversation right now. Computed from
-    /// <see cref="ActiveSessionId"/> rather than stored, so the flag and the id structurally cannot
-    /// disagree - the same drift class the computed <see cref="IsCron"/> removes. Whitespace-only
-    /// ids count as idle: a blank id is an absent id, and treating it as live would light up the
-    /// badge for a conversation with nothing running.
+    /// <see cref="ActiveSessionId"/> corroborated against <see cref="SessionLiveness"/> rather than
+    /// stored, so the flag and its inputs structurally cannot disagree - the same drift class the
+    /// computed <see cref="IsCron"/> removes. Whitespace-only ids count as idle: a blank id is an
+    /// absent id, and treating it as live would light up the badge for a conversation with nothing
+    /// running.
     /// </summary>
-    public bool IsLive => !string.IsNullOrWhiteSpace(ActiveSessionId);
+    /// <remarks>
+    /// <para>
+    /// The pointer is necessary but no longer sufficient (#3713). It is a routing binding the
+    /// gateway deliberately keeps durable across seal/expire, so on its own it answers "where would
+    /// the next message go?" and not "is anything happening?". Both conditions must hold.
+    /// </para>
+    /// <para>
+    /// <see cref="ActivitySessionLiveness.Unverifiable"/> still renders live because it means the
+    /// caller supplied no roster at all - a failed <c>GET /api/sessions</c> must degrade the badge
+    /// to its pre-#3713 rendering, not silently blank every badge on the page.
+    /// <see cref="ActivitySessionLiveness.Absent"/> is a different claim and is NOT live: there the
+    /// client did consult the roster and the session was not in it.
+    /// </para>
+    /// </remarks>
+    public bool IsLive =>
+        !string.IsNullOrWhiteSpace(ActiveSessionId) &&
+        SessionLiveness is ActivitySessionLiveness.Running or ActivitySessionLiveness.Unverifiable;
 
     /// <summary>
     /// Whether this is a cron/scheduled conversation. Computed from <see cref="Source"/> rather than
@@ -521,6 +596,93 @@ public static class ActivityDashboardProjection
     }
 
     /// <summary>
+    /// Session statuses this client recognises as <em>currently running</em> (#3713). Deliberately a
+    /// closed allow-list rather than a deny-list of terminal states: a status string from a newer
+    /// gateway that this client cannot classify must resolve to "not running", never to a
+    /// present-tense claim it cannot substantiate.
+    /// </summary>
+    /// <remarks>
+    /// <c>Suspended</c> is excluded alongside <c>Sealed</c> and <c>Expired</c>. It is resumable, but
+    /// "could resume" is not "is happening", and the Live badge answers the latter.
+    /// </remarks>
+    private static readonly HashSet<string> RunningSessionStatuses =
+        new(StringComparer.OrdinalIgnoreCase) { "Active" };
+
+    /// <summary>
+    /// Builds the session-id to status map the dashboard projection consumes (#3713), from the
+    /// roster the portal already fetches via <see cref="SessionRosterLoader.LoadAllAsync"/>
+    /// (<c>GET /api/sessions</c>). Pure and dependency-free: the fetch stays at the call site so the
+    /// projection remains unit-testable without HTTP, matching <see cref="CronHealthById"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see langword="null"/> or an empty roster yields an empty map rather than throwing - a failed
+    /// session fetch must degrade the dashboard to its pre-#3713 rendering, never break it and never
+    /// blank every Live badge on the page.
+    /// </para>
+    /// <para>
+    /// First-wins on a duplicated session id, matching <see cref="CronHealthById"/> and
+    /// <see cref="InvolvedAgents"/>: a roster naming the same id twice must resolve deterministically
+    /// rather than to whichever page happened to arrive last.
+    /// </para>
+    /// </remarks>
+    /// <param name="sessions">The session roster, or <see langword="null"/> on a failed fetch.</param>
+    public static IReadOnlyDictionary<string, string?> SessionStatusById(
+        IEnumerable<SessionSummary>? sessions)
+    {
+        var map = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        if (sessions is null)
+            return map;
+
+        foreach (var session in sessions)
+        {
+            if (session is null || string.IsNullOrWhiteSpace(session.SessionId))
+                continue;
+
+            var id = session.SessionId.Trim();
+            if (map.ContainsKey(id))
+                continue;
+
+            // Blank collapses to null, matching NormalizeRole/NormalizePurpose, so "present but
+            // empty" and "absent status" cannot classify differently. Both land on NotRunning.
+            map[id] = string.IsNullOrWhiteSpace(session.Status) ? null : session.Status.Trim();
+        }
+
+        return map;
+    }
+
+    /// <summary>
+    /// Resolves what a conversation's <c>ActiveSessionId</c> pointer can actually claim about
+    /// liveness (#3713), given the session-status map from <see cref="SessionStatusById"/>.
+    /// </summary>
+    /// <remarks>
+    /// An absent or empty map means the caller supplied no corroborating evidence, so every row
+    /// resolves to <see cref="ActivitySessionLiveness.Unverifiable"/> and the projection is
+    /// byte-identical to its pre-#3713 output. Once a roster IS supplied, a pointer it does not
+    /// name resolves to <see cref="ActivitySessionLiveness.Absent"/> - which is not live.
+    /// </remarks>
+    /// <param name="activeSessionId">The conversation's routing pointer.</param>
+    /// <param name="sessionStatus">The session-status map, or <see langword="null"/>/empty when none was fetched.</param>
+    public static ActivitySessionLiveness ResolveSessionLiveness(
+        string? activeSessionId,
+        IReadOnlyDictionary<string, string?>? sessionStatus)
+    {
+        if (sessionStatus is null || sessionStatus.Count == 0)
+            return ActivitySessionLiveness.Unverifiable;
+
+        if (string.IsNullOrWhiteSpace(activeSessionId))
+            return ActivitySessionLiveness.Unverifiable;
+
+        if (!sessionStatus.TryGetValue(activeSessionId.Trim(), out var status))
+            return ActivitySessionLiveness.Absent;
+
+        return status is not null && RunningSessionStatuses.Contains(status)
+            ? ActivitySessionLiveness.Running
+            : ActivitySessionLiveness.NotRunning;
+    }
+
+    /// <summary>
     /// Maximum rendered length of a cron job name before it is elided (#3421). Matches
     /// <see cref="SourceIdDisplayLength"/>: the name occupies exactly the slot the raw id used to,
     /// so it must obey the same bound or a verbosely-named job would reflow the row.
@@ -606,11 +768,21 @@ public static class ActivityDashboardProjection
     /// shipped. Passed in rather than fetched here to keep the projection pure, matching the
     /// <c>PortalConversationGrouping</c> precedent.
     /// </param>
+    /// <param name="sessionStatus">
+    /// Session-id to status map from <see cref="SessionStatusById"/> (#3713), built from the
+    /// <c>GET /api/sessions</c> roster the portal already loads. A <see langword="null"/> or empty
+    /// map - which is what a failed session fetch yields - leaves every row's
+    /// <see cref="ActivityRow.SessionLiveness"/> at <see cref="ActivitySessionLiveness.Unverifiable"/>,
+    /// so the Live badge, the <c>live now</c> count and the liveness facet all behave exactly as they
+    /// did before this shipped. Passed in rather than fetched here to keep the projection pure,
+    /// matching <paramref name="cronHealth"/>.
+    /// </param>
     public static IReadOnlyList<ActivityRow> Project(
         IEnumerable<ConversationSummaryDto> conversations,
         ActivityDashboardFilter filter,
         DateTimeOffset now,
-        IReadOnlyDictionary<string, ActivityCronHealth>? cronHealth = null)
+        IReadOnlyDictionary<string, ActivityCronHealth>? cronHealth = null,
+        IReadOnlyDictionary<string, string?>? sessionStatus = null)
     {
         ArgumentNullException.ThrowIfNull(conversations);
         ArgumentNullException.ThrowIfNull(filter);
@@ -623,7 +795,8 @@ public static class ActivityDashboardProjection
                 Kind = ConversationOrigin.ParseKind(c.Kind),
                 Visibility = ConversationOrigin.ParseVisibility(c.Visibility),
                 IsCron = IsCronConversation(c),
-                Agents = InvolvedAgents(c)
+                Agents = InvolvedAgents(c),
+                Liveness = ResolveSessionLiveness(c.ActiveSessionId, sessionStatus)
             })
             // #2692: InternalHidden is excluded UNCONDITIONALLY and ahead of every facet. The enum's
             // contract is "never rendered to a user", so this is not a facet - no filter combination
@@ -636,7 +809,12 @@ public static class ActivityDashboardProjection
             .Where(x => MatchesRecency(x.Dto.UpdatedAt, filter.Recency, now))
             .Where(x => MatchesOrigin(x.Source, x.Kind, filter.Origin))
             .Where(x => MatchesPinned(x.Dto.IsPinned, filter.Pinned))
-            .Where(x => MatchesLive(!string.IsNullOrWhiteSpace(x.Dto.ActiveSessionId), filter.Live))
+            // #3713: the facet selects on the SAME corroborated predicate the badge renders, so a
+            // row selected by Live can never render without the badge. Reading the raw pointer here
+            // is exactly the defect - it is a routing binding, not a liveness fact.
+            .Where(x => MatchesLive(
+                IsRowLive(x.Dto.ActiveSessionId, x.Liveness),
+                filter.Live))
             // Pinned-first is a GROUPING key applied ahead of the existing ordering keys, mirroring
             // ConversationsController's pinned-first list ordering rather than inventing a second
             // rule. The UpdatedAt-descending / ConversationId-ordinal contract is untouched and
@@ -662,9 +840,17 @@ public static class ActivityDashboardProjection
                 // Normalised at the projection boundary, not at render time, so every consumer of a
                 // row sees the same collapsed value and "present but empty" cannot reach the DOM.
                 NormalizePurpose(x.Dto.Purpose),
-                ResolveCronHealth(x.Source, x.Dto.SourceId, cronHealth)))
+                ResolveCronHealth(x.Source, x.Dto.SourceId, cronHealth),
+                x.Liveness))
             .ToList();
     }
+
+    // The single liveness rule, shared by the filter predicate above and ActivityRow.IsLive. Kept in
+    // one place so a facet and the badge on the row it selected structurally cannot drift apart -
+    // the same duplicated-rule defect class ClassifyOrigin removes for the origin facet.
+    private static bool IsRowLive(string? activeSessionId, ActivitySessionLiveness liveness) =>
+        !string.IsNullOrWhiteSpace(activeSessionId) &&
+        liveness is ActivitySessionLiveness.Running or ActivitySessionLiveness.Unverifiable;
 
     /// <summary>
     /// Resolves a row's cron job id to its health record (#3421). Gated on <c>Source == Cron</c>,

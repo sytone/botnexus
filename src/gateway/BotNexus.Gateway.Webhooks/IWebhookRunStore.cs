@@ -23,8 +23,9 @@ public interface IWebhookRunStore
         CancellationToken ct = default);
 
     /// <summary>
-    /// Purges completed, failed, and timed-out runs older than the specified cutoff.
-    /// Runs in Pending or Running state are never purged regardless of age.
+    /// Purges terminal runs older than the specified cutoff — <c>Completed</c>, <c>Failed</c>,
+    /// <c>Timeout</c> and <c>Rejected</c>. Runs still in flight (<c>Pending</c>, <c>Queued</c> or
+    /// <c>Running</c>) are never purged regardless of age.
     /// </summary>
     /// <param name="cutoff">Runs with CompletedAt before this time will be deleted.</param>
     /// <param name="ct">Cancellation token.</param>

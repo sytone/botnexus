@@ -24,6 +24,13 @@ public sealed class LlmStream : IAsyncEnumerable<AssistantMessageEvent>
     /// Push an event into the stream. Providers call this to emit events.
     /// When a DoneEvent or ErrorEvent is pushed, the final result is captured.
     /// </summary>
+    /// <remarks>
+    /// <see cref="WarningEvent"/> is explicitly <b>not</b> terminal (#3291): it is written to the
+    /// channel like any other mid-stream event and leaves <c>_done</c>, the channel writer and the
+    /// result task untouched, so a recoverable condition can reach the consumer without ending the
+    /// turn. It needs no case in the switch below - the absence of one is the behaviour - but the
+    /// absence is load-bearing, so it is stated here rather than left to be inferred.
+    /// </remarks>
     public void Push(AssistantMessageEvent evt)
     {
         if (_done)

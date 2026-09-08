@@ -59,14 +59,12 @@ public class ModelProfileToolTests
     {
         var declared = new ProviderCapabilities(
             RecoversLeakedToolCallMarkup: true,
-            SystemPromptPlacement: SystemPromptPlacement.DedicatedField,
-            FramesStreamedTextDeltasWithCrlf: true);
+            SystemPromptPlacement: SystemPromptPlacement.DedicatedField);
 
         var report = Create(capabilities: declared).BuildReport(null);
 
         Assert.Contains("recoversLeakedToolCallMarkup: `True`", report, StringComparison.Ordinal);
         Assert.Contains("systemPromptPlacement: `DedicatedField`", report, StringComparison.Ordinal);
-        Assert.Contains("framesStreamedTextDeltasWithCrlf: `True`", report, StringComparison.Ordinal);
     }
 
     [Fact]

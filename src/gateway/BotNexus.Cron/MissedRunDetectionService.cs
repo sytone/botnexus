@@ -13,8 +13,10 @@ namespace BotNexus.Cron;
 public sealed class MissedRunDetectionService(
     ICronStore cronStore,
     CronScheduler scheduler,
-    ILogger<MissedRunDetectionService> logger) : IHostedService
+    ILogger<MissedRunDetectionService> logger,
+    TimeProvider? timeProvider = null) : IHostedService
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     internal const string CatchUpMetadataKey = "catchUp";
 
     /// <summary>Status stamped on history rows for occurrences that elapsed during downtime.</summary>
@@ -32,12 +34,31 @@ public sealed class MissedRunDetectionService(
         await cronStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         var jobs = await cronStore.ListAsync(ct: cancellationToken).ConfigureAwait(false);
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
 
         foreach (var job in jobs)
         {
             if (!job.Enabled || string.IsNullOrWhiteSpace(job.Schedule))
             {
+                continue;
+            }
+
+            // #3546: a job past its expiry is dropped from the missed-run scan exactly as it is
+            // dropped from the due scan and the fire path (#2634). Its post-expiry occurrences are
+            // by-design non-events, not missed runs: recording them corrupts run history and cost
+            // rollups, and lets an expired job burn the 100-occurrence cap so the truncation
+            // warning fires for a window that should never have been scanned. The predicate is the
+            // shared one in CronJobExpiry - the scanner deliberately owns no ExpiresAt comparison
+            // of its own.
+            //
+            // This is the whole-job early-out. The partial case - a job that expired PARTWAY
+            // through the window - is handled by the ceiling clamp inside GetMissedRuns, which
+            // keeps the occurrences that fell strictly before ExpiresAt.
+            if (CronJobExpiry.IsExpired(job, now))
+            {
+                logger.LogDebug(
+                    "Cron job '{JobName}' ({JobId}) is past its expiry ({ExpiresAt:o}); skipping the missed-run scan.",
+                    job.Name, job.Id, job.ExpiresAt);
                 continue;
             }
 
@@ -172,13 +193,24 @@ public sealed class MissedRunDetectionService(
             return [];
         }
 
+        // ...and up to the shared ceiling (#3546): min(now, expiresAt). Expiry clamps the window's
+        // UPPER bound, the exact mirror of the #2554 lower-bound clamp, so a job that expired
+        // partway through the window keeps the occurrences that really were missed and drops only
+        // the ones at or after the expiry instant. ExpiresAt = null yields `now` unchanged, which
+        // is what keeps non-expiring behaviour byte-identical.
+        var ceiling = CronJobExpiry.GetScanCeilingUtc(job, now);
+        if (ceiling <= floor.Value)
+        {
+            return [];
+        }
+
         // #2810: this walk advances a cursor through HISTORY, so it is the one next-run computation
         // that necessarily crosses past DST transitions. It is therefore defined in
         // CronExpressionExtensions alongside the forward computation - the two must agree instant for
         // instant, and a local loop here could drift from the forward path without anything noticing.
         // The cap still bounds runaway iteration for frequent schedules after long downtime.
         return expression
-            .RunsBetweenUtc(floor.Value, now.UtcDateTime, MaxMissedRunsPerJob, tz)
+            .RunsBetweenUtc(floor.Value, ceiling, MaxMissedRunsPerJob, tz)
             .Select(occurrence => new DateTimeOffset(occurrence, TimeSpan.Zero))
             .ToList();
     }
@@ -208,9 +240,11 @@ public sealed class MissedRunDetectionService(
         var tz = CronTimeZoneResolver.Resolve(job.TimeZone, jobId: job.Id);
 
         // Continue from the last recorded occurrence, which the shared floor already bounded
-        // (#2554) — WasTruncated must never look at a window GetMissedRuns refused to scan.
+        // (#2554) — WasTruncated must never look at a window GetMissedRuns refused to scan. The
+        // same applies at the top end (#3546): compare against the expiry-clamped ceiling, so an
+        // expired job cannot report truncation for occurrences the scan correctly declined to walk.
         var next = expression.NextRunUtc(missed[^1].UtcDateTime, tz);
-        return next is not null && next.Value < now.UtcDateTime;
+        return next is not null && next.Value < CronJobExpiry.GetScanCeilingUtc(job, now);
     }
 
     private static bool HasCatchUp(CronJob job)

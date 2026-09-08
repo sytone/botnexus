@@ -60,19 +60,24 @@ public sealed class CopilotResponsesTransportTests
     }
 
     [Fact]
-    public async Task Gpt56_WebSocketAndSse_StripRepeatedChunkCrLf_WithEquivalentDeltaAndFinalText()
+    public async Task Gpt56_WebSocketAndSse_ProduceEquivalentDeltasAndFinalText()
     {
-        // #2119 acceptance: reproduce via the actual capability-aware WebSocket path AND the
-        // SSE fallback for the same GPT-5.6 frame sequence, asserting both the emitted
-        // TextDeltaEvent values and the final accumulated assistant text on each path. The
-        // model advertises both endpoints so Auto selects WebSocket; the SSE run pins the
-        // transport explicitly so the two paths are compared head-to-head.
+        // Transport parity acceptance: reproduce via the actual capability-aware WebSocket path AND
+        // the SSE fallback for the same frame sequence, asserting both the emitted TextDeltaEvent
+        // values and the final accumulated assistant text on each path. The model advertises both
+        // endpoints so Auto selects WebSocket; the SSE run pins the transport explicitly so the two
+        // paths are compared head-to-head.
+        //
+        // #3442: the frames no longer carry a synthetic CRLF prefix. This test used to assert both
+        // transports stripped it (#2119), but mitm captures contain 0 raw CR bytes across 3,025
+        // Copilot deltas - the framing was never on the wire. The parity property is untouched and
+        // is what the test was always really worth: two transports, one assembled result.
         var frames = new[]
         {
             "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}",
-            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"\\r\\n\\r\\nUnder\"}",
-            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"\\r\\n\\r\\nstood\"}",
-            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"\\r\\n\\r\\n now\"}",
+            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"Under\"}",
+            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"stood\"}",
+            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\" now\"}",
             "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}"
         };
         var model = MapModel(["/responses", "ws:/responses"], "gpt-5.6-sol");
@@ -575,7 +580,7 @@ public sealed class CopilotResponsesTransportTests
         using var reader = new StreamReader(stream);
         var llm = new LlmStream();
         await ResponsesStreamParser.ParseAsync(llm, reader, BaseModel(), null, "test", NullLogger.Instance,
-            static (_, _, _, _) => { }, null, null, null, CancellationToken.None);
+            static (_, _, _, _) => { }, null, null, CancellationToken.None);
         return await CollectAsync(llm);
     }
 
@@ -584,7 +589,7 @@ public sealed class CopilotResponsesTransportTests
     {
         var llm = new LlmStream();
         await ResponsesStreamParser.ParseEventsAsync(llm, read, BaseModel(), null, "test", NullLogger.Instance,
-            static (_, _, _, _) => { }, null, null, null, CancellationToken.None);
+            static (_, _, _, _) => { }, null, null, CancellationToken.None);
         return await CollectAsync(llm);
     }
 

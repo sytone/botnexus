@@ -41,4 +41,31 @@ public sealed class VirtualWorldOptions
     /// a regression failing this gate produces fast, readable failures.
     /// </summary>
     public TimeSpan DefaultOutboundWaitTimeout { get; init; } = TimeSpan.FromSeconds(5);
+    /// <summary>
+    /// Boots the world the way a SQLite-enabled install boots (#3699): an authoritative
+    /// <c>config.db</c>, the platform configuration pipeline bound over it, the bundled-agent
+    /// reconciler, and the config-driven agent source - instead of programmatic registration.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Default worlds deliberately register agents in code and strip every hosted service but
+    /// <c>GatewayHost</c>, which makes them fast but blind to the entire config plane. A bundled
+    /// agent is only real if it survives that plane: the reconciler writes through the production
+    /// multi-store seam, the authoritative SQLite provider rehydrates it, the config source turns it
+    /// into a descriptor, the validator accepts it, and the registry ends up holding a live agent.
+    /// Opting in here asserts that chain end to end rather than inspecting a persisted template.
+    /// </para>
+    /// <para>
+    /// The seed agent named by <see cref="SeedConfigAgentId"/> is written into the store so the
+    /// reconciler has a provider/model pair to copy - mirroring an installation that already has
+    /// one working agent, which is the case the Trailguide insert is designed for.
+    /// </para>
+    /// </remarks>
+    public bool ReconcileBundledAgents { get; init; }
+    /// <summary>
+    /// Id of the pre-existing enabled agent written into the seeded <c>config.db</c> when
+    /// <see cref="ReconcileBundledAgents"/> is set. It supplies the provider/model the reconciler
+    /// copies onto the bundled entry.
+    /// </summary>
+    public string SeedConfigAgentId { get; init; } = "seed-agent";
 }

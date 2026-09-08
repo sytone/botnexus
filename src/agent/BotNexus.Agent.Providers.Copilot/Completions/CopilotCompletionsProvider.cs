@@ -48,9 +48,7 @@ public sealed class CopilotCompletionsProvider(
     /// </summary>
     public ProviderCapabilities Capabilities { get; } = new(
         RecoversLeakedToolCallMarkup: true,
-        SystemPromptPlacement: SystemPromptPlacement.FirstMessage,
-        // #3336: transport-declared CRLF delta framing, not a model-id prefix guess.
-        FramesStreamedTextDeltasWithCrlf: CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf);
+        SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
         => CompletionsStreamEngine.StreamAsync(BuildProfile(secretRedactor), _httpClient, logger, model, context, options);
@@ -103,10 +101,10 @@ public sealed class CopilotCompletionsProvider(
             ProviderHttpErrorHelper.ThrowForFailedResponse(response, providerError, "Copilot Completions", redactor),
         OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current),
         InspectChunk: static root => CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
-        SecretRedactor: secretRedactor,
-        // Third transport, same single normalizer (#2443). Responses and Messages already applied
-        // it; Completions did not, which is the asymmetry that let #2170 reproduce #2049 verbatim
-        // after model discovery switched endpoints.
-        NormalizeTextDelta: static (model, delta) => CopilotTextDeltaNormalizer.Normalize(
-            CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf, delta));
+        // No text-delta normalization hook: #3442 established from mitm captures (0 raw CR bytes
+        // across 3,025 provider deltas) that Copilot never frames deltas with CRLF. The corruption
+        // blamed on the wire in #2049/#2119/#2170/#2443/#3336 was injected by our own
+        // string.Join(Environment.NewLine, ...) in MessageConverter.ToAgentMessage, fixed in #3428.
+        // Deltas accumulate byte-identically here, as on every non-Copilot transport.
+        SecretRedactor: secretRedactor);
 }

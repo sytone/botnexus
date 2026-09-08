@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Shouldly;
 using Xunit;
 
@@ -36,8 +37,11 @@ public sealed class CliPackIsolationTests : IDisposable
         }
     }
 
+    private static readonly Version RepoVersion = new(0, 45, 0);
+
     private string Args(string artifactsDir) => CliPackIsolation.BuildPackArguments(
         cliProject: "/repo/src/gateway/BotNexus.Cli/BotNexus.Cli.csproj",
+        assemblyVersion: RepoVersion,
         packVersion: "99.99.99-local-deadbeef",
         packOutputDir: Path.Combine(_root, "pack"),
         artifactsDir: artifactsDir);
@@ -142,5 +146,86 @@ public sealed class CliPackIsolationTests : IDisposable
         message.ShouldContain("received no build output");
         message.ShouldNotContain("missing required isolation switch");
         message.ShouldContain("shared bin/obj trees");
+    }
+
+    // ---- #3237: the synthetic stamp must identify the PACKAGE only ----------------------------
+
+    /// <summary>
+    /// The load-bearing assertion for #3237. Reverting this to <c>/p:Version=99.99.99-...</c>
+    /// reddens this case, which is the whole point: <c>Version</c> is a global MSBuild property,
+    /// so a synthetic value there propagates through every <c>ProjectReference</c> and makes the
+    /// CLI bind a dependency version that no Release build on the machine ever produced.
+    /// </summary>
+    [Fact]
+    public void BuildPackArguments_StampsTheSyntheticVersionOnThePackageOnly()
+    {
+        var args = Args(Path.Combine(_root, "build"));
+
+        var version = Regex.Match(args, @"/p:Version=(?<v>\S+)");
+        version.Success.ShouldBeTrue($"Pack must pass an explicit /p:Version.\nArgs: {args}");
+        version.Groups["v"].Value.ShouldBe(RepoVersion.ToString(3),
+            "MSBuild Version must stay at the repo assembly version; only PackageVersion is synthetic (#3237).");
+
+        args.ShouldContain("/p:PackageVersion=99.99.99-local-deadbeef");
+        args.ShouldNotContain("/p:Version=99.99.99",
+            customMessage: "Stamping the synthetic version as MSBuild Version is the #3237 defect.");
+    }
+
+    /// <summary>
+    /// Source-level guard against the defect being reintroduced by editing the builder rather than
+    /// its call site. A string interpolation putting the pack stamp into <c>/p:Version=</c> is the
+    /// exact shape that produced the intermittent load failure.
+    /// </summary>
+    [Fact]
+    public void PackArgumentBuilderSource_DoesNotInterpolateThePackStampIntoMsBuildVersion()
+    {
+        var source = ReadSource("CliPackIsolation.cs");
+
+        Regex.IsMatch(source, @"/p:Version=\{?\$?\w*[Pp]ackVersion").ShouldBeFalse(
+            "CliPackIsolation must not interpolate the pack stamp into MSBuild Version (#3237).");
+        source.ShouldContain("/p:Version={assemblyVersion.ToString(3)}");
+    }
+
+    /// <summary>
+    /// The guard's expected version and the pack's actual <c>Version</c> must be the same number.
+    /// If they drift, the layout guard either never fires or fires on every healthy run - both of
+    /// which destroy the AC1/AC2 signal this issue exists to protect.
+    /// </summary>
+    [Fact]
+    public void ExpectedBoundVersion_MatchesTheVersionThePackStamps()
+    {
+        var expected = CliPackIsolation.ExpectedBoundVersion(RepoVersion);
+
+        expected.ShouldBe(new Version(0, 45, 0, 0));
+        expected.ToString(3).ShouldBe(
+            Regex.Match(Args(Path.Combine(_root, "build")), @"/p:Version=(?<v>\S+)").Groups["v"].Value,
+            "The version the guard expects must be the version the pack stamps (#3237).");
+        expected.ShouldNotBe(CliInstallLayout.ToAssemblyVersion("99.99.99-local-deadbeef"),
+            "Expecting the synthetic stamp is precisely the mistake that left the guard silent.");
+    }
+
+    /// <summary>
+    /// The live fixture must pass the repo version, not the pack stamp. Asserted against the
+    /// fixture's own source so it holds without paying for a real pack.
+    /// </summary>
+    [Fact]
+    public void FixtureSource_PassesTheRepoAssemblyVersionToThePack()
+    {
+        var source = ReadSource("LocalCliInstallFixture.cs");
+
+        source.ShouldContain("CliPackIsolation.RepoAssemblyVersion");
+        source.ShouldContain("CliPackIsolation.ExpectedBoundVersion(AssemblyVersion)");
+        source.ShouldNotContain("CliInstallLayout.ToAssemblyVersion(PackVersion)",
+            customMessage: "The layout guard must expect the repo version, not the synthetic pack stamp (#3237).");
+    }
+
+    private static string ReadSource(string fileName)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, fileName)))
+            dir = dir.Parent;
+
+        dir.ShouldNotBeNull($"Could not locate {fileName} above {AppContext.BaseDirectory}.");
+        return File.ReadAllText(Path.Combine(dir!.FullName, fileName));
     }
 }

@@ -1775,7 +1775,8 @@ public sealed class ChatPanelTests : IDisposable
         var handler = new GatewayEventHandler(
             _store,
             new GatewayHubConnection(),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance,
+            _store);
         handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-1",

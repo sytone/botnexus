@@ -982,7 +982,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         record.CancelTimeout();
 
-        await CleanupChildAgentAsync(subAgentId, info.ChildSessionId, ct);
+        // The kill is the terminal disposition, but the record's status does not flip to Killed
+        // until after this teardown returns. Pass the disposition explicitly so the reclamation
+        // audit names Killed rather than the stale Running it would otherwise read (#3670).
+        await CleanupChildAgentAsync(subAgentId, info.ChildSessionId, SubAgentStatus.Killed, ct);
 
         if (!TryUpdateSubAgent(
             subAgentId,
@@ -1145,7 +1148,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             finally
             {
                 // Teardown half: always release the child agent/session, even if dispatch threw.
-                await CleanupChildAgentAsync(subAgentId, updated.ChildSessionId, CancellationToken.None);
+                await CleanupChildAgentAsync(subAgentId, updated.ChildSessionId, updated.Status, CancellationToken.None);
             }
 
             // Re-read the record so the activity payload carries the delivery verdict that
@@ -1660,7 +1663,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
     }
 
-    private async Task CleanupChildAgentAsync(string subAgentId, SessionId childSessionId, CancellationToken ct)
+    private async Task CleanupChildAgentAsync(
+        string subAgentId,
+        SessionId childSessionId,
+        SubAgentStatus terminalStatus,
+        CancellationToken ct)
     {
         // The cleanup body must run at most once per sub-agent: it stops the child agent,
         // removes the dynamic deny-list, unregisters the descriptor and reclaims the
@@ -1707,9 +1714,20 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         {
             if (_workspaceManager.TryCleanupWorkspace(childAgentId.Value))
             {
-                _logger.LogDebug(
-                    "Cleaned up temporary workspace for child agent '{ChildAgentId}'.",
-                    childAgentId);
+                // #3670 AC4: the lifecycle route is an audit event, not a debug breadcrumb. It is
+                // logged at Information using the vocabulary the backstop sweep also emits, so one
+                // operator query returns every reclamation from either route and the suffix says
+                // which mechanism acted. Previously this was a Debug line with unrelated wording:
+                // invisible in production and unjoinable with the sweeper's trail.
+                //
+                // It is emitted only when TryCleanupWorkspace actually removed something. A line
+                // logged unconditionally would report phantom reclamations - for a shared-workspace
+                // child there is no isolated directory to reclaim and nothing is deleted - and an
+                // audit trail that overstates what happened is worse than none.
+                _logger.LogInformation(
+                    SubAgentWorkspaceReclamationAudit.LifecycleTemplate,
+                    childAgentId.Value,
+                    terminalStatus);
             }
         }
         catch (Exception ex)

@@ -356,7 +356,9 @@ internal static class AnthropicStreamParser
                     "anthropic-messages",
                     "sse",
                     textDeltaCounts.GetValueOrDefault(index),
-                    logger);
+                    logger,
+                    stream,
+                    () => buildMessage(model, contentBlocks, usage, StopReason.Stop, null, responseId));
                 contentBlocks.Add(new TextContent(accumulated, signature));
                 var textPartial = buildMessage(model, contentBlocks, usage, StopReason.Stop, null, responseId);
                 stream.Push(new TextEndEvent(index, accumulated, textPartial));

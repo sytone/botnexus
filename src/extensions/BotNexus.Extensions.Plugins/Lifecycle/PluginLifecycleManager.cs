@@ -1,4 +1,5 @@
 using BotNexus.Extensions.Plugins.Cron;
+using BotNexus.Extensions.Plugins.Security;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -112,6 +113,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
             }
 
             var files = Promote(staged.Directory!, destination);
+            files = WriteTrustCatalog(destination, manifest.Name, files);
 
             var record = new InstalledPlugin
             {
@@ -223,6 +225,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
 
             var destination = GetPluginDirectory(name);
             var files = Promote(staged.Directory!, destination);
+            files = WriteTrustCatalog(destination, name, files);
 
             var record = existing with
             {
@@ -413,6 +416,70 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
 
         written.Sort(StringComparer.Ordinal);
         return written;
+    }
+
+    /// <summary>
+    /// Records a SHA-256 catalog over what was just materialised (#2682 AC1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Generated from the CONTENT ON DISK rather than from <c>Files</c> or from anything the
+    /// manifest declared. Those are claims about what should have been written; the hash must
+    /// describe what actually was, or the catalog attests to the wrong thing.
+    /// </para>
+    /// <para>
+    /// Update regenerates it for the same reason install writes it: after new content is promoted,
+    /// the previous catalog describes files that no longer exist, and every later verification
+    /// would refuse a legitimately updated plugin.
+    /// </para>
+    /// <para>
+    /// A catalog that cannot be written must NOT fail an install that has already materialised its
+    /// content - the plugin is on disk either way, and reporting a failed install the caller could
+    /// act on destructively is worse than an unverifiable plugin. Under Enforce the missing catalog
+    /// is itself a refusal, so failing open here does not hand out trust.
+    /// </para>
+    /// <para>
+    /// The catalog is added to the returned removal manifest because install genuinely materialised
+    /// it. Leaving it out would make removal leave a <c>trust.json</c> husk behind - and worse, a
+    /// later reinstall would find a directory that exists but is not recorded, which install
+    /// correctly refuses.
+    /// </para>
+    /// </remarks>
+    /// <param name="destination">Plugin directory just materialised.</param>
+    /// <param name="pluginName">Plugin identifier, for the log record.</param>
+    /// <param name="files">Files <c>Promote</c> wrote.</param>
+    /// <returns>The removal manifest, including the catalog when one was written.</returns>
+    private List<string> WriteTrustCatalog(string destination, string pluginName, List<string> files)
+    {
+        try
+        {
+            var catalog = ContentTrustCatalog.GenerateCatalog(
+                destination,
+                includeFile: ContentTrustCatalog.IncludeEveryFile,
+                generatedAt: _timeProvider.GetUtcNow());
+
+            ContentTrustCatalog.WriteCatalog(destination, catalog);
+
+            _logger.LogInformation(
+                "Recorded trust catalog for plugin {Plugin} covering {EntryCount} files.",
+                pluginName,
+                catalog.Entries.Count);
+
+            if (!files.Contains(ContentTrustCatalog.CatalogFileName, StringComparer.Ordinal))
+            {
+                files.Add(ContentTrustCatalog.CatalogFileName);
+                files.Sort(StringComparer.Ordinal);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Plugin {Plugin} was materialised, but its trust catalog could not be written. The plugin will not verify under Warn or Enforce.",
+                pluginName);
+        }
+
+        return files;
     }
 
     // Deletes the recorded set only. Directories are pruned bottom-up and ONLY when empty, so a

@@ -49,9 +49,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
     /// </summary>
     public ProviderCapabilities Capabilities { get; } = new(
         RecoversLeakedToolCallMarkup: true,
-        SystemPromptPlacement: SystemPromptPlacement.DedicatedField,
-        // #3336: transport-declared CRLF delta framing, not a model-id prefix guess.
-        FramesStreamedTextDeltasWithCrlf: CopilotTextDeltaNormalizer.CopilotTransportFramesTextDeltasWithCrlf);
+        SystemPromptPlacement: SystemPromptPlacement.DedicatedField);
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
     {

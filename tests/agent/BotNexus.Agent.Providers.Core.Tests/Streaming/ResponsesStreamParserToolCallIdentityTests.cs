@@ -112,7 +112,6 @@ public class ResponsesStreamParserToolCallIdentityTests
             emitError: (_, _, _, _) => { },
             onParsedEvent: null,
             resolveConfiguredServiceTier: null,
-            normalizeTextDelta: null,
             ct: CancellationToken.None);
 
         var events = new List<AssistantMessageEvent>();

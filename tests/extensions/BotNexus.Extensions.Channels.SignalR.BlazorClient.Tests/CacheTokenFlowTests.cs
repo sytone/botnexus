@@ -27,8 +27,10 @@ public sealed class CacheTokenFlowTests
             ActiveSessionId = "sess-1"
         };
         store.RegisterSession("agent-1", "sess-1");
+        // #3212: visibility is route-derived; state the displayed pane explicitly.
+        store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
-        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        var handler = new GatewayEventHandler(store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance, store);
         return (handler, store);
     }
 

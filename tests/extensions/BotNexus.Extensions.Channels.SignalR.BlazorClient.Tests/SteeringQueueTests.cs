@@ -182,12 +182,14 @@ public sealed class SteeringQueueTests : IDisposable
     {
         var (agent, conv) = SetupAgentWithConversation();
         _store.RegisterSession("agent-1", "session-1");
+        // #3212: visibility is route-derived; state the displayed pane explicitly.
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
         // Add a pending entry
         _store.AddSteeringEntry("conv-1", new SteeringEntry("e1", "Do this instead", SteeringEntryKind.Steer, SteeringEntryStatus.Pending));
 
         // Simulate SteeringFeedback.Injected via the event handler
-        var handler = new GatewayEventHandler(_store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        var handler = new GatewayEventHandler(_store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance, _store);
 
         handler.HandleSteeringFeedback(new SteeringFeedbackPayload(
             AgentId: "agent-1",
@@ -212,11 +214,13 @@ public sealed class SteeringQueueTests : IDisposable
     {
         var (agent, conv) = SetupAgentWithConversation();
         _store.RegisterSession("agent-1", "session-1");
+        // #3212: visibility is route-derived; state the displayed pane explicitly.
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
         // Add a pending entry
         _store.AddSteeringEntry("conv-1", new SteeringEntry("e1", "Queue this", SteeringEntryKind.Steer, SteeringEntryStatus.Pending));
 
-        var handler = new GatewayEventHandler(_store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+        var handler = new GatewayEventHandler(_store, new GatewayHubConnection(), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance, _store);
 
         handler.HandleSteeringFeedback(new SteeringFeedbackPayload(
             AgentId: "agent-1",
@@ -269,6 +273,8 @@ public sealed class SteeringQueueTests : IDisposable
     {
         SetupAgentWithConversation();
         _store.RegisterSession("agent-1", "session-1");
+        // #3212: visibility is route-derived; state the displayed pane explicitly.
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
         var cut = _ctx.Render<SteeringQueuePanel>(p => p.Add(c => c.ConversationId, "conv-1"));
 
@@ -284,7 +290,7 @@ public sealed class SteeringQueueTests : IDisposable
         });
 
         var handler = new GatewayEventHandler(_store, new GatewayHubConnection(),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance);
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance, _store);
         handler.HandleRunEnded(new AgentStreamEvent { SessionId = "session-1", ConversationId = "conv-1" });
 
         cut.WaitForAssertion(() =>

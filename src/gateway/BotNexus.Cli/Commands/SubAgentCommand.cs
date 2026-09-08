@@ -106,14 +106,14 @@ internal sealed class SubAgentCommand
         try
         {
             var configPath = _fileSystem.Path.Combine(CliPaths.ResolveTarget(target), "config.json");
-            if (!_fileSystem.File.Exists(configPath))
-                return null;
 
-            // Reads through the injected IFileSystem, NOT the provider pipeline (#3504). The framework's
-        // file provider is backed by the physical filesystem and cannot serve an injected
-        // abstraction, so routing this through IOptions would silently read the real disk while the
-        // caller supplied a mock. Exempted in ConfigurationReadPathFenceTests with this reason.
-        var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false, fileSystem: _fileSystem);
+            // Resolved through IPlatformConfigAccessor (#3824), so this sees the same effective
+            // configuration as the gateway - JSON plus the SQLite store, store winning. It used to
+            // call PlatformConfigLoader.Load, which could not see the store and returned an
+            // all-defaults PlatformConfig when config.json was absent. The absence check is gone
+            // deliberately: under #3823 a missing file is the normal case and the store is the only
+            // source, so returning early on it is exactly the bug.
+            var config = PlatformConfigAccessor.Shared.Get(configPath, _fileSystem);
             return config.Gateway?.SubAgents?.WorkspaceRoot;
         }
         catch
