@@ -129,13 +129,14 @@ botnexus gateway start
 
 Before this first start, complete [provider setup](#4-configure-your-first-provider-copilot) below. Starting builds the default checkout, deploys its extensions and launches a detached gateway. For foreground development instead, `botnexus serve` builds and runs with its restart loop; see [Developer Setup](getting-started-dev.md). Do not launch a second gateway against a home already in use.
 
-Check that it's running:
+Check status with the CLI first:
 
-```bash
-curl http://localhost:5005/health
+```powershell
+botnexus gateway status
+botnexus validate
 ```
 
-For a healthy, recently active gateway, the response contains `"status": "ok"`. It also includes `lastActivity` and `inactivitySeconds`; inactivity can produce `warning` or `degraded`, and a health-handler timeout returns HTTP 503. This is a process-health check, not proof that provider authentication succeeds.
+The first checks the gateway process; the second checks configuration. Neither proves that your model account works. After setup, use the [first-agent CLI test](tutorials/first-agent.md#cli-first-send-one-request) to check a model response, then use the browser interface as an alternative.
 
 **Custom port:**
 
@@ -243,7 +244,19 @@ For the current in-process strategy, configured prompt files are read when a new
 
 ## 6. Open the WebUI
 
-The **WebUI** is the easiest way to chat with your agents.
+### CLI first: test your configured agent
+
+After configuring the `assistant` agent and starting the default local gateway, send one request:
+
+```powershell
+botnexus agent exec assistant 'Hello. Explain what you can help me with in three short bullets. Do not use tools.'
+```
+
+This uses model quota and prints the answer in the terminal. Stop and resolve any error before relying on the setup. A custom gateway address needs the `agent exec` connection options in the CLI reference; a settings-home override does not automatically change the request address.
+
+### UI alternative: open the browser
+
+The **WebUI** supports browsing conversations and continuing an interactive chat.
 
 Open your browser to:
 

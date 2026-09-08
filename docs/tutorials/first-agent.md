@@ -148,6 +148,18 @@ Open `http://localhost:5005` in your browser for a default local installation. I
 
 ## 7) Chat with your agent
 
+### CLI first: send one request
+
+This sends a real request to your running local gateway and may use provider quota:
+
+```powershell
+botnexus agent exec my-first-agent 'Hi Botty. Explain what an agent is in three short sentences. Do not use tools.'
+```
+
+Check for an answer in the terminal and resolve any reported error. This is a single request, not an interactive terminal chat. It uses the default local gateway address; if your gateway uses a different address, consult the CLI reference for `agent exec` connection options. Selecting a custom settings home does not change this request address automatically.
+
+### UI alternative: chat in the browser
+
 1. Open the web interface and choose **My First Agent** (`my-first-agent`).
 2. Start a conversation with it.
 3. Send: “Hi Botty. Explain what an agent is in three short sentences. Do not use tools.”
@@ -166,7 +178,7 @@ Use numbered steps when explaining a task.
 Keep routine answers under 100 words when possible.
 ```
 
-Save the file. The current in-process implementation assembles prompt files when it creates an agent handle. Saving a file does not guarantee that an existing handle reloads it on the next message.
+Save the file. A running agent may keep the instructions it loaded earlier. Saving the file does not guarantee that the next message uses the new instructions.
 
 For this local tutorial installation, restart only when no other work is running:
 

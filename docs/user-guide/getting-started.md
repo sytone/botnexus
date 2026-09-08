@@ -106,17 +106,28 @@ Available controls can differ by layout and version. An agent's actual tools dep
 
 ## Verify Installation
 
-### Health Check Endpoint
+<a id="health-check-endpoint"></a>
+<a id="api-status"></a>
 
-For the beginner check, use `botnexus gateway status` and open the browser interface. Process status does not prove that your model account works; send the test message below.
+### CLI check
 
-If you need the HTTP health response, see the [installation health explanation](../getting-started-release.md#3-start-the-gateway). Do not compare against an invented fixed JSON response.
+Run `botnexus gateway status` to check the process and `botnexus validate` to check settings. These do not prove that your model account works; send the test message below.
 
-### API Status
+### UI check
 
-Direct API checks are an optional integration task, not a prerequisite for a first chat. See the [API reference](../api-reference.md) for authentication and actual response formats.
+Open the configured browser address. Check that the portal connects and your agent is available.
 
 ## Test Your Agent
+
+### Using the CLI
+
+After configuring an agent and starting your local gateway, run one request. Replace `AGENT_ID` with its exact ID from `botnexus agent list`:
+
+```powershell
+botnexus agent exec 'AGENT_ID' 'Explain what an agent is in three short sentences. Do not use tools.'
+```
+
+This sends a real model request and may use paid quota. A plain-language answer should appear in the terminal; report any error rather than assuming success. These examples use the default local gateway. A custom or remote address needs the supported connection settings in the CLI reference; changing the configuration home does not automatically select the request address. Do not publish gateway credentials.
 
 ### Using the WebUI
 
@@ -126,9 +137,9 @@ Direct API checks are an optional integration task, not a prerequisite for a fir
 
 This is a suggested test, not a recorded result. The answer can vary and may use paid quota. Do not assume every capability named in a model's answer is actually available; check tools before relying on them.
 
-### Using the REST API
+<a id="using-the-rest-api"></a>
 
-For programmatic access, use the [developer API reference](../api-reference.md) after the browser test succeeds. Do not copy an unauthenticated request into a shared installation.
+For this user task, use either method above. Programmatic integration is a separate developer task, not another required onboarding step.
 
 ## Next Steps
 
