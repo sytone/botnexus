@@ -1,23 +1,27 @@
 # Getting Started from Release — Installing BotNexus
 
-> Install the released BotNexus CLI, then use it to build and run the gateway from a checkout. For an edit/build workflow in your own development clone, see [Developer Setup](getting-started-dev.md).
+> Install BotNexus with its command-line interface (CLI), then use `botnexus` commands to configure and run it. You do not need Git commands or repository knowledge. If you want to change the source code, use [Developer Setup](getting-started-dev.md) instead.
 
 ---
 
 ## Install
 
+Read [Prerequisites](#prerequisites) first. Open PowerShell from the Windows Start menu or a Bash terminal on Linux. Run the commands below one line at a time from any folder, using the same operating-system account and BotNexus home throughout. Stop if a command fails. If the CLI is already installed, skip the first command.
+
+For a complete first-agent exercise, follow [Your First AI Agent](tutorials/first-agent.md). The short sequence below prepares a default installation; provider/model and agent settings still need checking before you rely on a response.
+
 ```bash
 # Install the CLI as a global dotnet tool
 dotnet tool install -g BotNexus.Cli
 
-# Clone and build the platform (one-time setup; requires the SDK and Git)
+# Let the CLI download and prepare BotNexus
 botnexus install --build
 
 # Set up your home directory and configure a provider
 botnexus init
 botnexus provider setup
 
-# Start the gateway
+# Start only when configuration is ready and this home has no running gateway
 botnexus gateway start
 
 # Open the portal at http://localhost:5005
@@ -31,8 +35,8 @@ botnexus gateway start
 
 | Requirement | Details |
 |---|---|
-| **.NET SDK** | [Download](https://dotnet.microsoft.com/download). The current source targets .NET 10; use an SDK compatible with the cloned repository's `global.json`. Check installed SDKs with `dotnet --list-sdks`. The runtime alone cannot build the gateway. |
-| **Git** | Required by `botnexus install`. Verify with `git --version`. |
+| **.NET SDK** | [Download .NET 10](https://dotnet.microsoft.com/download/dotnet/10.0). The current source specifies SDK `10.0.204` with compatible minor-version updates. Check installed SDKs with `dotnet --list-sdks`. The CLI uses the SDK to prepare the application; the runtime alone is not enough. |
+| **Git** | [Install Git](https://git-scm.com/downloads). The CLI uses it internally to download BotNexus. You do not need to learn or run Git commands. |
 | **GitHub account** | Required for the Copilot provider's OAuth flow. You need an active GitHub Copilot subscription. |
 
 Optional but recommended:
@@ -42,11 +46,15 @@ Optional but recommended:
 
 ---
 
-## 1. Clone and Build
+<a id="_1-clone-and-build"></a>
 
-The released global tool supplies the CLI. The gateway and extensions in this workflow are built from a source checkout; installing the CLI does not install a prebuilt gateway bundle. The default clone follows the repository's default branch, not necessarily the version of the installed CLI package.
+## 1. Install BotNexus
 
-### Clone the repository
+The CLI downloads the application files and prepares them to run. Git and the .NET SDK must be installed, but the CLI performs those steps for you.
+
+<a id="clone-the-repository"></a>
+
+### Prepare the application
 
 After installing the global tool above, run:
 
@@ -54,9 +62,13 @@ After installing the global tool above, run:
 botnexus install --build
 ```
 
-This clones to `~/botnexus` and builds in Release configuration. Without `--build`, `install` only clones. Do not use `dotnet run --project src/...` to bootstrap an installation before that source tree exists.
+Wait for the command to finish without an error. The default application folder is `botnexus` inside your operating-system home folder. Keep `--build`: without it, the command downloads files but does not prepare the application.
 
-To clone to a custom location, use `--source`, not `--path`:
+### Advanced installation details
+
+The CLI package and gateway application are separate. The current installation process downloads source and builds it internally; it does not install a prebuilt gateway bundle. It follows the source repository's default branch, not necessarily the release version of the installed CLI. These implementation details do not require you to operate Git.
+
+For a custom application location, use `--source`, not `--path`:
 
 ```powershell
 # Windows example; use an appropriate absolute path on Linux
@@ -407,7 +419,7 @@ The configuration-backup surface does not include the following. Back them up at
 
 ## 10. Next Steps
 
-- **[Using Channels](user-guide/extensions.md)** — Connect agents through the shipped channels or your own interfaces
+- **[Use extensions](user-guide/using-extensions.md)** — Configure existing capabilities without writing code
 - **[Configuring Cron Jobs](cron-and-scheduling.md)** — Automate recurring tasks
 - **[Workspace & Memory](development/workspace-and-memory.md)** — Deep dive into agent personality files
 - **[Configuration Guide](configuration.md)** — Full reference for every config option

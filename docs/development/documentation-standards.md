@@ -33,6 +33,14 @@ Label suggested requests as examples, not guaranteed or previously observed outc
 
 Keep technical detail available, but outside the beginner's main path. When a page mixes audiences, add a clear user introduction and link the implementation explanation, or split the content while retaining links from the original URL. Use the [documentation map](documentation-map.md) to find the owning section and known exceptions.
 
+## Use the installed CLI for user setup
+
+When the installed CLI supports a task, user instructions must use `botnexus` commands. Start with installing the CLI, then let it install, configure and run the platform. Do not require users to clone a repository, navigate source folders, run solution builds or launch source projects. Those workflows belong in the Developer guide.
+
+Declare real installation dependencies without requiring knowledge of them. For example, Git and the .NET SDK are currently required by `botnexus install --build`, but the CLI uses them internally; users do not need Git commands. Do not turn this into a false promise of a prebuilt or dependency-free installation.
+
+Prefer provider setup's secret prompt and supported configuration commands to copying API keys or complete JSON files. Explain the terminal, home/account, placeholders, side effects and result checks. If the CLI cannot perform a task, state the gap and link an explicitly advanced setup path rather than inventing a command.
+
 ## Write plainly and name things consistently
 
 - Use short sentences, direct verbs, and one main idea per paragraph. Address the reader as “you.”
