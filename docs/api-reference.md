@@ -1,6 +1,8 @@
 # BotNexus API Reference
 
-Complete reference for BotNexus REST API endpoints, including agents, sessions, providers, skills, and system status.
+Reference for BotNexus REST API endpoints, including agents, sessions, providers,
+skills, and system status. This page is not an exhaustive route inventory; see the
+[REST API index](./api/README.md) for the owning per-area references and their scope.
 
 ## Table of Contents
 
@@ -2283,6 +2285,41 @@ to continue an in-flight exchange; omit it to mint a fresh session and conversat
 
 ## System & Status
 
+### Version, Startup Time, and World Snapshot
+
+These read-only endpoints use the normal [gateway authentication](#authentication)
+policy. They are minimal API handlers, not MVC actions, so `?fields=` does not project
+their responses. Successful calls return `200 OK`.
+
+| Endpoint | Response | Meaning |
+|----------|----------|---------|
+| `GET /api/version` | `{ "version": "20260908010000", "commit": "abc1234" }` | `version` is the gateway assembly file's UTC last-write timestamp, formatted as `yyyyMMddHHmmss`; it is **not SemVer**. `commit` is nullable. The example values are illustrative. |
+| `GET /api/uptime` | `{ "startedAt": "2026-09-08T01:00:00+00:00" }` | A UTC timestamp captured during application setup, not an elapsed duration. It does not prove when the server began accepting requests. |
+| `GET /api/world` | A `WorldDescriptor` object | The descriptor built during application setup, not a live registry or satellite-health refresh. |
+
+The version handler obtains `commit` by running `git rev-parse --short HEAD` in the
+process's working directory. It returns `null` if no hash is obtained; the value is
+not embedded build provenance. Use `GET /api/gateway/info` below for the separate
+runtime/build-information contract, including `uptimeSeconds`.
+
+The world snapshot has these top-level fields:
+
+| Field | Meaning |
+|-------|---------|
+| `identity` | The resolved world identity. |
+| `hostedAgents` | Enabled configured agent IDs combined with IDs registered when the descriptor was built. |
+| `hostedUsers` | User IDs; the current builder leaves this list empty. |
+| `locations` | Locations resolved from platform configuration and built-in gateway/agent paths. |
+| `availableStrategies` | Execution strategies resolved from enabled agents, registered agents, and registered isolation strategies. |
+| `crossWorldPermissions` | Configured cross-world permission records. |
+| `satellites` | Configured satellite descriptors at setup time; use `/api/satellites` for live connection status. |
+
+Sources: [endpoint handlers](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Api/Program.cs),
+[descriptor builder](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/WorldDescriptorBuilder.cs),
+and [world contract](https://github.com/Sytone/botnexus/blob/main/src/domain/BotNexus.Domain/World/WorldDescriptor.cs).
+The linked contract defines nested record shapes; the table above is not a complete
+schema for those records.
+
 ### Gateway Information
 
 **Endpoint:** `GET /api/gateway/info`
@@ -2746,16 +2783,21 @@ X-Api-Key: your-api-key
   {
     "id": "sat_desktop_home",
     "displayName": "Home Desktop",
-    "owner": "jon",
+    "ownerUserId": "jon",
     "platform": "windows",
     "capabilities": ["notify", "canvas"],
     "status": "online",
-    "lastSeenUtc": "2026-06-10T14:30:00Z"
+    "lastSeen": "2026-06-10T14:30:00Z",
+    "connectionId": "connection-01"
   }
 ]
 ```
 
 ---
+
+The [satellite reference](./api/satellites.md#heartbeat-timeout) explains
+`gateway.satellites.<id>.staleTimeoutSeconds` and the transition to `offline`.
+The timeout is a configuration setting, not a field in this response.
 
 ### Get Satellite
 
@@ -2773,6 +2815,28 @@ X-Api-Key: your-api-key
 
 ---
 
+### Available Providers
+
+**Endpoint:** `GET /api/providers`
+
+Returns `200 OK` with an array from the model filter's available-provider list.
+This is a discovery call, not a credential or reachability test. Each row contains
+three strings with the same provider identifier:
+
+| Field | Meaning |
+|-------|---------|
+| `name` | The provider identifier, not a separate friendly display name. |
+| `providerId` | The provider identifier. |
+| `id` | An alias of `providerId`. |
+
+For example, a returned row may be
+`{ "name": "anthropic", "providerId": "anthropic", "id": "anthropic" }`.
+The endpoint uses normal [gateway authentication](#authentication). As an MVC
+`OkObjectResult`, it supports [sparse fieldsets](#sparse-fieldsets-fields), unlike
+`/api/version`, `/api/uptime`, and `/api/world`.
+
+Source: [ProvidersController](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Api/Controllers/ProvidersController.cs).
+
 ### Provider Health Check
 
 **Endpoint:** `GET /api/providers/{id}/health`
@@ -2787,7 +2851,11 @@ X-Api-Key: your-api-key
 {
   "providerId": "anthropic",
   "status": "healthy",
-  "checkedAtUtc": "2026-06-12T10:00:00Z"
+  "latencyMs": 120,
+  "checkedAt": "2026-06-12T10:00:00Z",
+  "models": 3,
+  "hasCredentials": true,
+  "error": null
 }
 ```
 
@@ -2796,12 +2864,20 @@ X-Api-Key: your-api-key
 {
   "providerId": "anthropic",
   "status": "unhealthy",
-  "reason": "API key not configured",
-  "checkedAtUtc": "2026-06-12T10:00:00Z"
+  "latencyMs": 10000,
+  "checkedAt": "2026-06-12T10:00:00Z",
+  "models": 0,
+  "hasCredentials": false,
+  "error": "Health check timed out after 10 seconds."
 }
 ```
 
 ---
+
+The example values above are illustrative. The health action returns `404 Not Found`
+when the health-check service is unavailable or the provider is absent from the
+model filter. Its internal 10-second cancellation budget produces the timeout
+response shown above; caller cancellation follows the request cancellation path.
 
 ### Session Statistics
 

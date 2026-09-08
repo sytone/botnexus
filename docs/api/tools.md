@@ -46,9 +46,16 @@ header pointing at `GET /api/tools/{id}` and the created tool in the body.
 
 ### `PUT /api/tools/{id}` / `PATCH /api/tools/{id}`
 
-Updates an existing tool. The route `id` wins over any `id` in the body, and the
-original `createdAt` is preserved. Returns `200 OK` with the updated tool, or
-`404 Not Found` when the tool does not exist.
+Replaces an existing tool. Both verbs use the same handler: `PATCH` is **not** an
+omitted-field-preserving merge or a JSON Patch operation. Send a complete tool body,
+including the required `id`, `name`, and `url` fields. The route `id` wins over the
+body's `id`, and the original `createdAt` is preserved.
+
+All other fields come from the submitted body. Omitting an optional field uses its
+model default rather than keeping the stored value: `icon` becomes `""`, `order`
+becomes `0`, and `sandboxEnabled` becomes `true`. To keep those values, include them
+in the request. Returns `200 OK` with the updated tool, or `404 Not Found` when the
+tool does not exist.
 
 ### `DELETE /api/tools/{id}`
 
