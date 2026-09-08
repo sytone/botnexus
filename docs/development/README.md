@@ -1,6 +1,21 @@
-# Development Documentation
+<a id="development-documentation"></a>
 
-**Purpose:** Detailed implementation guides, code-level walkthroughs, and in-depth technical documentation.
+# Developer guide
+
+Use this guide to build BotNexus, change its source code, or add an extension. It is for readers with basic programming knowledge, roughly first-year computer science. You do not need prior .NET or BotNexus experience to start. .NET is the software platform used to build and run BotNexus; the setup guide lists the tools you need.
+
+## Choose your next step
+
+- **Build and run the project:** start with [Developer setup](../getting-started-dev.md). Read its prerequisites and development-host safety warning before running commands.
+- **Contribute a change:** read [Contributing](https://github.com/sytone/botnexus/blob/main/CONTRIBUTING.md), then [Code standards](code-standards.md) and [PR and commit conventions](pr-and-commit-conventions.md). A pull request (PR) proposes a repository change for review.
+- **Write or review documentation:** use the [Documentation standards](documentation-standards.md) and [Documentation grooming](documentation-grooming.md).
+- **Add a capability:** read [Extension development](../extension-development.md).
+- **Understand the design:** use the [Architecture guide](../architecture/README.md) for component boundaries and design decisions.
+- **Use BotNexus without changing code:** use the [User guide](../user-guide/README.md).
+
+The detailed topics below are reference and follow-on reading. Existing pages are being improved incrementally; use the setup route before the deeper implementation material.
+
+The sections below explain how individual parts of the code work.
 
 ---
 
@@ -52,7 +67,7 @@ This directory contains detailed documentation for developers working on or exte
 
 ## For Newcomers
 
-**Start here:**
+Start with [Developer setup](../getting-started-dev.md) to prepare your tools and build the project. After that, use this optional reading order to understand the code:
 
 1. **[../architecture/overview.md](../architecture/overview.md)** — High-level architecture
 2. **[../architecture/system-flows.md](../architecture/system-flows.md)** — Key runtime flows

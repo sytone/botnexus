@@ -44,13 +44,12 @@ export default defineConfig({
     logo: { svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm1 17.93V18a1 1 0 0 0-2 0v1.93A8 8 0 0 1 4.07 13H6a1 1 0 0 0 0-2H4.07A8 8 0 0 1 11 4.07V6a1 1 0 0 0 2 0V4.07A8 8 0 0 1 19.93 11H18a1 1 0 0 0 0 2h1.93A8 8 0 0 1 13 19.93Z"/></svg>' },
 
     nav: [
-      { text: 'Home', link: '/' },
-      { text: 'Getting Started', link: '/getting-started' },
-      { text: 'User Guide', link: '/user-guide/getting-started' },
+      { text: 'User guide', link: '/user-guide/README' },
+      { text: 'Developer guide', link: '/development/README' },
+      { text: 'Architecture guide', link: '/architecture/README' },
       { text: 'Reference', link: '/cli-reference' },
-      { text: 'Architecture', link: '/architecture/overview' },
-      { text: 'Development', link: '/development/README' },
       { text: 'Releases', link: '/releases/' },
+      { text: 'GitHub', link: 'https://github.com/sytone/botnexus' },
     ],
 
     sidebar: [
@@ -69,8 +68,9 @@ export default defineConfig({
         ],
       },
       {
-        text: 'User Guide',
+        text: 'User guide',
         items: [
+          { text: 'User guide overview', link: '/user-guide/README' },
           { text: 'Getting Started', link: '/user-guide/getting-started' },
           { text: 'Agents', link: '/user-guide/agents' },
           { text: 'Conversations', link: '/user-guide/conversations' },
@@ -136,10 +136,10 @@ export default defineConfig({
         ],
       },
       {
-        text: 'Architecture',
+        text: 'Architecture guide',
         items: [
-          { text: 'Overview', link: '/architecture/overview' },
-          { text: 'arc42-lite Overview', link: '/architecture/README' },
+          { text: 'Guide overview (arc42-lite)', link: '/architecture/README' },
+          { text: 'Architecture overview', link: '/architecture/overview' },
           { text: 'C4 Diagrams', link: '/architecture/c4-diagrams' },
           { text: 'Runtime View', link: '/architecture/runtime-view' },
           { text: 'Domain Model', link: '/architecture/domain-model' },
@@ -155,9 +155,10 @@ export default defineConfig({
         ],
       },
       {
-        text: 'Development',
+        text: 'Developer guide',
         items: [
-          { text: 'Overview', link: '/development/README' },
+          { text: 'Guide overview', link: '/development/README' },
+          { text: 'Documentation standards', link: '/development/documentation-standards' },
           { text: 'Agent Execution', link: '/development/agent-execution' },
           { text: 'Message Flow', link: '/development/message-flow' },
           { text: 'Inbound Delivery Modes', link: '/development/inbound-delivery-modes' },

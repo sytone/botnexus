@@ -125,6 +125,15 @@ chore(deps): bump Microsoft.Extensions.* to 10.0.1
 
 ---
 
+## Writing Documentation
+
+When writing or reviewing documentation, follow the shared
+[Documentation standards](docs/development/documentation-standards.md). They define the three
+audiences, plain-language guidance, evidence requirements, and agent review boundaries. Use
+[Documentation grooming](docs/development/documentation-grooming.md) for the existing checks and
+[PR and commit conventions](docs/development/pr-and-commit-conventions.md) for the submission format.
+Apply the standard incrementally and respect document ownership headers.
+
 ## Code Style
 
 BotNexus enforces a few hard conventions. The full detail lives in
