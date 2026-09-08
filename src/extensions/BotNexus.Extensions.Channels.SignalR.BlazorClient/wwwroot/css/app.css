@@ -6622,3 +6622,48 @@ h3.conversation-title.editable:hover {
     text-decoration: none;
     color: inherit;
 }
+
+/* BEGIN generated icon tones -- scripts/generate-icons.py */
+/* The tone each icon was drawn in. Kept here rather than on the element so any
+   context can override it -- a disabled control, a selected nav row, a button
+   that needs the icon to match its label. */
+.bn-icon-activity { color: #22C55E; }
+.bn-icon-add { color: #3B82F6; }
+.bn-icon-agents { color: #3B82F6; }
+.bn-icon-assistant { color: #8B5CF6; }
+.bn-icon-avoid { color: #EF4444; }
+.bn-icon-bot { color: #06B6D4; }
+.bn-icon-canvas { color: #8B5CF6; }
+.bn-icon-chat { color: #3B82F6; }
+.bn-icon-check { color: #22C55E; }
+.bn-icon-conversation { color: #3B82F6; }
+.bn-icon-cron-jobs { color: #F59E0B; }
+.bn-icon-dark-mode { color: #6366F1; }
+.bn-icon-delete { color: #EF4444; }
+.bn-icon-error { color: #EF4444; }
+.bn-icon-folder { color: #F59E0B; }
+.bn-icon-guide { color: #3B82F6; }
+.bn-icon-help { color: #3B82F6; }
+.bn-icon-light-mode { color: #F59E0B; }
+.bn-icon-pause { color: #F59E0B; }
+.bn-icon-pin { color: #F59E0B; }
+.bn-icon-plugins { color: #14B8A6; }
+.bn-icon-reports { color: #14B8A6; }
+.bn-icon-send { color: #3B82F6; }
+.bn-icon-skills { color: #8B5CF6; }
+.bn-icon-stop { color: #EF4444; }
+.bn-icon-thinking { color: #8B5CF6; }
+.bn-icon-todo { color: #22C55E; }
+.bn-icon-tools { color: #F59E0B; }
+.bn-icon-usage { color: #22C55E; }
+.bn-icon-warning { color: #F59E0B; }
+.bn-icon-workspace { color: #6366F1; }
+
+/* Drop a gradient for the icon's flat tone, for a context with its own colour.
+   Beats the root's stroke="url(#...)" because any declaration outranks a
+   presentation attribute, and the children inherit stroke from the root. */
+.bn-icon-flat { stroke: currentColor; }
+
+/* Where an icon must read as part of its label rather than as its own object. */
+.bn-icon-inherit { color: inherit; stroke: currentColor; }
+/* END generated icon tones */
