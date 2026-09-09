@@ -206,7 +206,7 @@ public sealed class ConversationToolTests
         // SpeakAs is null (no override) so GatewayHost derives the role from the
         // agent-kind sender; the posted sender must be the calling agent so that
         // derivation resolves to assistant rather than user.
-        orchestrator.Received(1).Post(
+        await orchestrator.Received(1).PostAsync(
             Arg.Is<InboundMessage>(m =>
                 m.RoutingHints != null &&
                 m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "nova" &&
@@ -215,7 +215,8 @@ public sealed class ConversationToolTests
                 m.RoutingHints.RequestedConversationId != null && m.RoutingHints.RequestedConversationId.Value.Value == conversationId &&
                 m.Sender.Kind == CitizenKind.Agent &&
                 m.SpeakAs == null &&
-                m.ChannelType.Equals(ChannelKey.From("internal"))));
+                m.ChannelType.Equals(ChannelKey.From("internal"))),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -240,11 +241,37 @@ public sealed class ConversationToolTests
             message: "Kick off on behalf of the user",
             speakAs: "user"));
 
-        orchestrator.Received(1).Post(
+        await orchestrator.Received(1).PostAsync(
             Arg.Is<InboundMessage>(m =>
                 m.Content == "Kick off on behalf of the user" &&
                 m.Sender.Kind == CitizenKind.Agent &&
-                m.SpeakAs != null && m.SpeakAs == MessageRole.User));
+                m.SpeakAs != null && m.SpeakAs == MessageRole.User),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task New_WithMessage_WhenQueueAdmissionIsRefused_ThrowsInsteadOfReportingSuccess()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
+        orchestrator.PostAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(InboundDispatchStatus.Busy);
+        var tool = new ConversationTool(
+            conversationStore,
+            AgentId.From("orchestrator"),
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            messageOrchestrator: orchestrator);
+
+        var act = () => tool.ExecuteAsync("call-refused", Args(
+            "new",
+            agentId: "nova",
+            displayName: "Refused handoff",
+            message: "Do not lose this"));
+
+        var exception = await act.ShouldThrowAsync<InvalidOperationException>();
+        exception.Message.ShouldContain("could not be admitted", Case.Insensitive);
     }
 
     [Fact]
@@ -323,19 +350,45 @@ public sealed class ConversationToolTests
 
         // Assert: dispatcher called with the agent-authored message. SpeakAs is null
         // (no override) so GatewayHost derives the role from the agent-kind sender.
-        orchestrator.Received(1).Post(
+        await orchestrator.Received(1).PostAsync(
             Arg.Is<InboundMessage>(m =>
                 m.Content == "Hello Nova!" &&
                 m.RoutingHints != null &&
                 m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "nova" &&
                 m.Sender.Kind == CitizenKind.Agent &&
                 m.SpeakAs == null &&
-                m.ChannelType == ChannelKey.From("internal")));
+                m.ChannelType == ChannelKey.From("internal")),
+            Arg.Any<CancellationToken>());
 
         // Result includes conversation and session IDs
         using var document = JsonDocument.Parse(ReadText(result));
         document.RootElement.GetProperty("conversationId").GetString().ShouldBe(conversation.ConversationId.Value);
         document.RootElement.GetProperty("sessionId").GetString().ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenQueueAdmissionIsRefused_ThrowsInsteadOfReportingSuccess()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
+        orchestrator.PostAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(InboundDispatchStatus.Busy);
+        var conversation = await conversationStore.CreateAsync(CreateConversation("nova", "Planning", null));
+        var tool = new ConversationTool(
+            conversationStore,
+            AgentId.From("orchestrator"),
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            messageOrchestrator: orchestrator);
+
+        var act = () => tool.ExecuteAsync("call-refused", Args(
+            "message",
+            conversationId: conversation.ConversationId.Value,
+            message: "Do not lose this"));
+
+        var exception = await act.ShouldThrowAsync<InvalidOperationException>();
+        exception.Message.ShouldContain("could not be admitted", Case.Insensitive);
     }
 
     [Fact]
@@ -396,11 +449,12 @@ public sealed class ConversationToolTests
             message: "Kick off on behalf of the user",
             speakAs: "user"));
 
-        orchestrator.Received(1).Post(
+        await orchestrator.Received(1).PostAsync(
             Arg.Is<InboundMessage>(m =>
                 m.Content == "Kick off on behalf of the user" &&
                 m.Sender.Kind == CitizenKind.Agent &&
-                m.SpeakAs != null && m.SpeakAs == MessageRole.User));
+                m.SpeakAs != null && m.SpeakAs == MessageRole.User),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]

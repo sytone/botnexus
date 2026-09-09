@@ -108,6 +108,26 @@ public sealed class ConversationMessagesControllerTests
         inbound.Content.ShouldBe("PR #123 has a failing check.");
     }
 
+    [Theory]
+    [InlineData(InboundDispatchStatus.Busy)]
+    [InlineData(InboundDispatchStatus.NoRoute)]
+    [InlineData(InboundDispatchStatus.Stalled)]
+    [InlineData(InboundDispatchStatus.Rejected)]
+    public async Task Post_WithWake_WhenDispatchIsNotAccepted_DoesNotReturn202(InboundDispatchStatus status)
+    {
+        var conversation = await CreateConversationAsync();
+        _orchestrator.PostAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(status);
+        var controller = CreateController();
+
+        var result = await controller.PostMessage(
+            AgentSlug, conversation.ConversationId.Value,
+            new PostConversationMessageRequest("Do not lose this"),
+            CancellationToken.None);
+
+        result.ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(StatusCodes.Status503ServiceUnavailable);
+    }
+
     // ── clause 2: lands in the EXISTING conversation's session, not a fresh one ────────────────
 
     /// <summary>
