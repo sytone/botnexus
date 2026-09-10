@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "allowedTypes": ["feat", "fix", "chore", "docs", "refactor", "test", "perf", "style", "ci", "build"],
+  "maximumTitleLength": 72,
+  "requiredSections": {
+    "base": ["summary", "changes", "anti-reinvention", "validation", "risk & rollback", "merge notes"],
+    "tested": ["tests"],
+    "fix": ["root cause"]
+  },
+  "typesWithoutTests": ["docs", "chore", "style", "ci", "build"],
+  "placeholderPatterns": [
+    "<[^>]+>",
+    "\\b(?:TODO|TBD|FIXME)\\b",
+    "replace every placeholder",
+    "describe the problem",
+    "describe a behavioral change",
+    "name the existing seams",
+    "name happy/error/boundary",
+    "record commands",
+    "describe blast radius",
+    "describe rollback",
+    "state dependencies"
+  ],
+  "issueLink": {
+    "full": "\\b(?:closes|fixes|resolves)\\s+#(?<issue>\\d+)\\b",
+    "partial": "\\brefs:?\\s+#(?<issue>\\d+)\\b"
+  }
+}
