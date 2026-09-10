@@ -35,11 +35,14 @@ public interface ISessionCompactionCoordinator
     /// regardless of token thresholds or preserved-turn limits. Used by
     /// user-initiated /compact commands where the user's intent overrides
     /// automatic heuristics.</param>
+    /// <param name="handlePolicy">Controls whether an applied compaction evicts the cached handle.
+    /// Mid-loop callers must keep their executing handle and resynchronise its context instead.</param>
     Task<SessionCompactionOutcome> CompactAsync(
         AgentId agentId,
         GatewaySession session,
         CancellationToken cancellationToken,
-        bool force = false);
+        bool force = false,
+        CompactionHandlePolicy handlePolicy = CompactionHandlePolicy.Evict);
 
     /// <summary>
     /// Build the canonical user-facing notification text for an outcome.
@@ -63,8 +66,21 @@ public interface ISessionCompactionCoordinator
         CancellationToken cancellationToken);
 }
 
+
 /// <summary>
-/// Result of <see cref="ISessionCompactionCoordinator.CompactAndNotifyAsync"/>.
+/// Selects how the coordinator treats the cached agent handle after an applied compaction.
+/// </summary>
+public enum CompactionHandlePolicy
+{
+    /// <summary>Evict the cached handle so a later external turn rebuilds from persisted history.</summary>
+    Evict,
+
+    /// <summary>Keep the currently executing handle; the caller must resynchronise its live context.</summary>
+    KeepCurrent,
+}
+
+/// <summary>
+/// Result of <see cref="ISessionCompactionCoordinator.CompactAsync"/>.
 /// </summary>
 /// <param name="Succeeded">Whether <see cref="ISessionCompactor"/> returned a valid summary.</param>
 /// <param name="Applied">Whether the new history was actually applied to the session.</param>

@@ -81,7 +81,7 @@ public record AgentOptions(
     int? MaxRetryDelayMs = AgentLoopConfig.DefaultMaxRetryDelayMs,
     TimeSpan? ToolTimeout = null,
     Diagnostics.ClaimAuditOptions? ClaimAudit = null,
-    Func<CancellationToken, Task>? MaybeCompactAsync = null,
+    Func<CancellationToken, Task<AgentContext?>>? MaybeCompactAsync = null,
     TimeSpan? BeforeToolCallTimeout = null,
     Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
     string? AuthProfile = null,
