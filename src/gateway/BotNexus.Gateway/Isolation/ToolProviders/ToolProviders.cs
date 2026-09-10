@@ -608,7 +608,9 @@ internal sealed class ListLocationsToolProvider(
     /// <inheritdoc />
     public Task<IReadOnlyList<IAgentTool>> CreateToolsAsync(ToolProviderContext context)
     {
-        IReadOnlyList<IAgentTool> tools = [new ListLocationsTool(platformConfig!)];
+        // #3232: the caller id is what makes the listing agent-scoped. Without it every agent
+        // sees every configured location, which is what shipped.
+        IReadOnlyList<IAgentTool> tools = [new ListLocationsTool(platformConfig!, context.AgentId)];
         return Task.FromResult(tools);
     }
 }

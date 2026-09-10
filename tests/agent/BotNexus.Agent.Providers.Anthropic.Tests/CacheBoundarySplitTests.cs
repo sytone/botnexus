@@ -134,10 +134,13 @@ public class CacheBoundarySplitTests
         // OAuth: Claude Code block + stable prefix (cached) + dynamic tail (not cached)
         system.Count.ShouldBe(3);
 
-        // First block = Claude Code system (always has cache_control)
+        // First block = Claude Code preamble, deliberately NOT stamped. It sits immediately in
+        // front of the stable prefix and is equally stable, so the single marker on that prefix
+        // already caches it. Stamping both spent one of the four breakpoints for nothing and put
+        // the OAuth path one over the API's ceiling once the conversation grew.
         var ccBlock = system[0]!.AsObject();
         ccBlock["text"]!.GetValue<string>().ShouldContain("Claude Code");
-        ccBlock.ContainsKey("cache_control").ShouldBeTrue();
+        ccBlock.ContainsKey("cache_control").ShouldBeFalse();
 
         // Second block = stable prefix WITH cache_control
         var stableBlock = system[1]!.AsObject();
