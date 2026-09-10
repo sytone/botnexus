@@ -152,7 +152,7 @@ public sealed class ConversationSaveRetryTests
         });
         var execution = tool.ExecuteAsync("call-1", arguments, onUpdate: updates.Add);
 
-        await persisted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await TestAwait.SignaledAsync(persisted.Task, "the ask-user request to be persisted");
 
         var pending = await store.GetAsync(convId);
         pending!.PendingAskUserJson.ShouldNotBeNull("the register path must persist despite the CAS conflict");
@@ -168,7 +168,7 @@ public sealed class ConversationSaveRetryTests
             RequestId = request.RequestId,
             FreeFormText = "staging",
         }).ShouldBeTrue();
-        await execution.WaitAsync(TimeSpan.FromSeconds(10));
+        await TestAwait.SignaledAsync(execution, "the tool execution to commit its cleared state");
 
         var cleared = await store.GetAsync(convId);
         cleared!.PendingAskUserJson.ShouldBeNull("the clear path must commit despite the CAS conflict");

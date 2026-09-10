@@ -148,15 +148,24 @@ Create `botnexus-extension.json` in your project root:
 
 ```json
 {
-  "extensionId": "my-tool",
+  "id": "my-tool",
   "name": "My Custom Tool",
   "version": "1.0.0",
   "description": "Custom tool extension for BotNexus",
-  "author": "Your Name",
-  "assembly": "BotNexus.Extensions.MyTool.dll",
-  "dependencies": []
+  "entryAssembly": "BotNexus.Extensions.MyTool.dll",
+  "extensionTypes": ["tool"],
+  "dependencies": [],
+  "enabled": true
 }
 ```
+
+The loader reads `id`, `name`, `version`, `entryAssembly`, `extensionTypes`, `dependencies`,
+`enabled`, `configSchema` and `nav`. Other fields — `description` above — are carried for humans
+and ignored at load time.
+
+`id` is the directory name under `~/.botnexus/extensions/`, and `entryAssembly` is resolved
+relative to that directory. Setting `enabled` to `false` leaves the extension discovered but not
+loaded, which is the supported way to switch one off without deleting it.
 
 ### Build and Deploy
 
@@ -610,6 +619,65 @@ Response: 200 OK
 **5. Test with agents:**
 - Verify agents understand and apply the skill
 - Iterate based on agent behavior
+
+---
+
+## Serving UI from an extension
+
+An extension can serve a web UI and appear in the portal sidebar without the portal being changed
+to know about it.
+
+### Contributing a menu entry
+
+Declare it in `botnexus-extension.json`:
+
+```json
+"nav": [
+  {
+    "id": "my-thing",
+    "label": "My Thing",
+    "path": "/my-thing",
+    "icon": "tools",
+    "order": 65,
+    "external": true
+  }
+]
+```
+
+- `path` must be site-relative, starting with `/`. Absolute URLs, protocol-relative `//host` and
+  `javascript:` are rejected rather than rendered.
+- `icon` is a portal icon **name**, never markup — an extension cannot inject SVG into the portal.
+  An unknown name falls back to a default.
+- `order` sorts among the built-ins, which sit 10 apart (Agents 60, Cron 70), so 65 lands between
+  them.
+- Ids must be unique across all extensions; the first declaration of an id wins.
+
+### Claiming a path
+
+Contributors map in `Order` sequence, and the portal declares itself last, so an extension's
+middleware runs before the portal's catch-all and serves its own route. Endpoint-routed
+contributors — controllers, `MapGet`, route groups — are recognised by routing and pass through
+automatically. Neither case requires registering your path anywhere.
+
+Implement `Order` on `IEndpointContributor` only if you need to run relative to another
+contributor; it defaults to 0 and contributors sharing a value keep their registration sequence.
+
+### Embedded views and theming
+
+A contributed view opens inside the portal at `/extension/<id>`, framed in the main canvas with the
+sidebar and header still present. Set `"fullPage": true` to replace the window instead.
+
+If your UI styles itself from `prefers-color-scheme` — the ordinary way a standalone web app does
+it — it follows the portal's light/dark toggle with no code of its own. The portal drives the
+frame's colour scheme.
+
+The portal URL does not track navigation inside a framed view, so deep links into your view's
+internal state are not currently shareable.
+
+### Shipping it as a plugin
+
+An extension can be delivered by a plugin instead of being copied into place by hand, which makes
+it installable from the portal. See the [Plugins & marketplace guide](plugins.md).
 
 ---
 

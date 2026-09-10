@@ -21,6 +21,7 @@ canvas concern was extracted into its own controller (#1688) but deliberately ke
 | Verb | Route | Purpose |
 |------|-------|---------|
 | GET | `/api/conversations` | List conversations (optionally filtered by agent). |
+| GET | `/api/conversations/search` | Search transcripts by what was said, not just titles. |
 | GET | `/api/conversations/costs` | Aggregate per-conversation cost roll-up. |
 | GET | `/api/conversations/{conversationId}` | Get a conversation with its bindings. |
 | POST | `/api/conversations` | Create a conversation. |
@@ -172,6 +173,58 @@ different agent would silently re-route a live channel to a different brain.
 Both the source and target conversations emit an `updated` change notification, and
 the move is recorded in the audit log as `binding_moved` (attach and detach record
 `binding_added` / `binding_removed`).
+
+### `GET /api/conversations/search`
+
+Searches **what was actually said**, across every conversation, rather than only
+conversation titles. Backed by a SQLite FTS5 index over session history.
+
+| Parameter | In | Type | Notes |
+|-----------|----|------|-------|
+| `q` | query | string | **Required.** Free text. Every term must match. Sanitised before it reaches FTS5, so ordinary prose — apostrophes, a stray quote, a bare `*` — is safe to send. |
+| `limit` | query | int | Max **conversations** to return. Default `20`, clamped to `1..50`. |
+
+Returns `200 OK`, or `400 Bad Request` when `q` is missing or blank.
+
+```json
+{
+  "query": "gateway restart",
+  "results": [
+    {
+      "conversationId": "conv-8f2a",
+      "matchCount": 3,
+      "snippet": "why does the gateway restart lose its pid file",
+      "role": "user",
+      "sessionId": "sess-41c9",
+      "timestamp": "2026-09-02T18:41:07+00:00"
+    }
+  ],
+  "count": 1
+}
+```
+
+**One row per conversation, best match first.** The store returns message-level
+hits in bm25 relevance order; this endpoint groups them so a caller asking "which
+conversation was that in?" gets conversations, while keeping the best-ranked hit's
+`snippet` as the evidence for *why* that conversation. `matchCount` is how many
+messages in it matched. Snippets are collapsed to one line and truncated at 240
+characters.
+
+It deliberately returns **ids and snippets, not whole conversations** — clients
+already hold the roster with titles, so joining client-side keeps this endpoint
+cheap and stops it becoming a second, divergent conversation projection.
+
+Two things are excluded from results by design: platform **replay banners**, which
+are machinery rather than anything a person said, and **tool output**, which would
+otherwise outrank the prose that actually answers the question by sheer repetition.
+
+> **This endpoint is not visibility-filtered.** It walks session history, which
+> knows nothing about archived rows, runtime-internal threads, or observer agents.
+> A client that renders results as navigable rows must apply its own reachability
+> filter — measured against a real instance holding 103 conversations, 60 of them
+> archived, ordinary queries returned 31 distinct archived conversations. The
+> portal's switcher filters them out client-side; anything else consuming this
+> endpoint must do the same.
 
 ### `GET /api/conversations/{conversationId}/history`
 

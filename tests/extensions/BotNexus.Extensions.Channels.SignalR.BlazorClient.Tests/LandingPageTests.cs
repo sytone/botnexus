@@ -119,14 +119,17 @@ public sealed class LandingPageTests : IDisposable
     // -- Loading / summary ----------------------------------------------------------
 
     [Fact]
-    public void Shows_connecting_spinner_when_portal_not_ready()
+    public void Shows_a_skeleton_of_the_landing_page_when_portal_not_ready()
     {
         _portalLoad.IsReady.Returns(false);
 
         var cut = _ctx.Render<Landing>();
 
-        cut.Find(".portal-loading");
-        Assert.Contains("Connecting", cut.Markup);
+        cut.Find("[data-testid='portal-skeleton']")
+            .GetAttribute("data-variant").ShouldBe("Home");
+        // The status moved from visible text into an sr-only live region when the body
+        // stopped being empty. "Loading" is what assistive tech is now told.
+        Assert.Contains("Loading", cut.Markup);
     }
 
     [Fact]

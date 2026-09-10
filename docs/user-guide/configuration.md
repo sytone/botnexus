@@ -197,9 +197,47 @@ botnexus config set gateway.world.id local-gateway
 | `dateTimeInjection.enabled` | bool | `false` | Prepend the current datetime to every user message so the agent has reliable temporal context |
 | `dateTimeInjection.timezone` | string | `null` | IANA timezone used to format the injected datetime. Falls back to the gateway default timezone, then UTC |
 | `dateTimeInjection.format` | string | `iso8601` | Output format. Only `iso8601` is supported today |
-| `agentExchange.accessPolicy` | string | `open` | Which agents may start an `agent_converse` exchange: `open` (any registered agent) or `whitelist` (initiator must have the target in `subAgentIds` or a matching `subAgentRoles` grant) |
+| `agentExchange.accessPolicy` | string | `open` | Which agents may reach another agent — through **both** `agent_converse` **and** a Mirror `spawn_subagent`: `open` (any registered agent) or `whitelist` (initiator must have the target in `subAgentIds` or a matching `subAgentRoles` grant). Embody spawns clone the parent's own descriptor, reach no other agent, and are not subject to it |
 | `agentExchange.maxTurnsCeiling` | int | `30` | Upper bound on the `maxTurns` of a single `agent_converse` call, whatever the agent requests. Values below 1 are treated as 1 |
 | `agentExchange.maxInboundQueueDepth` | int | `8` | How many exchanges may queue for one busy agent before further callers are refused with backpressure. The in-flight exchange does not count. Values below 1 are treated as 1 |
+
+### Shared memory stores
+
+By default every agent's memory is private, and stays that way until you configure a store. A
+shared store is a named memory space several agents can reach:
+
+```json
+{
+  "gateway": {
+    "memory": {
+      "sharedStores": [
+        {
+          "name": "platform-knowledge",
+          "description": "Facts about this deployment that every agent should share.",
+          "readers": ["*"],
+          "writers": ["curator"],
+          "retentionDays": 365
+        }
+      ]
+    }
+  }
+}
+```
+
+| Property | Type | Default | Purpose |
+|----------|------|---------|---------|
+| `name` | string | — | Unique store name. An entry without one is dropped rather than half-created |
+| `description` | string | none | What the store is for. Shown wherever the store is listed |
+| `readers` | string[] | empty | Agent ids that may read it. `"*"` means every agent; **empty means nobody** |
+| `writers` | string[] | empty | Agent ids that may write to it. Same `"*"` rule, and normally much shorter than `readers` |
+| `retentionDays` | int | none | Days entries are kept. Absent keeps them indefinitely |
+
+`readers` and `writers` take **agent ids**, so a typo is an invisible non-grant — the store is
+created and that agent simply never sees it. Check the reader count shown on the Configuration
+page, which is the editor for these; there is no separate shared-memory screen.
+
+For promotion rules, trust tiers and retention behaviour, see
+[Workspace and memory](../development/workspace-and-memory.md).
 
 ### Remote and mesh access
 
@@ -276,6 +314,10 @@ The value supports `~` (home directory) and environment-variable expansion and i
 |---------|------|---------|-------------|
 | `displayName` | string | (required) | Human-readable agent name shown in UI |
 | `description` | string | `null` | Optional description of agent's purpose |
+| `responsibility` | string | `null` | One short line naming what this agent owns. Shown under the agent's name in the roster and preferred over `description` in the identity chip. Descriptive only — see the note below the table |
+| `boundaries` | string | `null` | What this agent must not do. Shown in the agent detail panel. Descriptive only — see the note below the table |
+| `emoji` | string | `null` | Emoji shown alongside the agent name |
+| `avatarHue` | int | `null` | Avatar colour in degrees (0-359). Unset generates a stable hue from the agent id |
 | `provider` | string | (required) | Provider key (e.g., `copilot`, `anthropic`, `openai`) |
 | `model` | string | (required) | Default model ID for this agent |
 | `allowedModels` | array | `[]` | Models this agent can use. Empty = unrestricted within provider |
@@ -308,6 +350,12 @@ The value supports `~` (home directory) and environment-variable expansion and i
 | `fileAccess.allowedReadPaths` | array | `[]` | Paths the agent can read (exact or glob). Workspace always readable |
 | `fileAccess.allowedWritePaths` | array | `[]` | Paths the agent can write (exact or glob). Workspace always writable |
 | `fileAccess.deniedPaths` | array | `[]` | Paths explicitly denied even if otherwise allowed |
+
+> **`responsibility` and `boundaries` describe an agent; they do not constrain it.** Neither is
+> injected into the system prompt, and nothing enforces them. Writing "must not delete files" in
+> `boundaries` documents your intent for whoever reads the roster — it does not stop the agent. For
+> limits that actually hold, use `toolIds`, `toolPolicy.denied` and `fileAccess`. Anyone with portal
+> access can edit these from the persona drawer.
 
 ### `agents.defaults`
 
@@ -348,6 +396,35 @@ botnexus config set agents.ps-agent.shellCommand '["pwsh","-NoLogo","-NoProfile"
 botnexus config set agents.bash-agent.shellCommand '["/bin/bash","-l","-c"]'
 botnexus config set agents.nu-agent.shellCommand '["nu","-c"]'
 ```
+
+**Environment variables are not inherited.**
+
+A `shell` or `exec` command runs with an environment built **from empty** and populated from a
+fixed allow-list — `PATH`, `HOME`, `TMPDIR`, `SHELL`, locale and timezone, and similar. It does
+*not* receive the variables the gateway itself runs under.
+
+This is a security boundary, not an oversight: the gateway's environment carries provider API keys
+and whatever you exported for `env:` credential references, and any agent holding `shell` would
+otherwise be able to read all of them.
+
+So a command like `curl -H "Authorization: Bearer $TOKEN" ...` sends an empty header. If a
+toolchain genuinely needs a variable — `DOTNET_ROOT`, `NODE_OPTIONS` — name it explicitly:
+
+```json
+{
+  "gateway": {
+    "toolEnvironmentPassThrough": ["DOTNET_ROOT", "NODE_OPTIONS"]
+  }
+}
+```
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `toolEnvironmentPassThrough` | string[] | `[]` | Extra variable names copied into `shell` and `exec` child processes, on top of the built-in allow-list |
+
+Anything you name here is readable by **every agent that can run a command**, so never add a
+variable that authenticates to something. There is deliberately no setting that restores wholesale
+inheritance.
 
 See [Shell Execution](/features/shell-execution) for the full configuration hierarchy, ArgumentList execution model, and troubleshooting.
 
@@ -459,7 +536,7 @@ sizes to offer, each dynamic model carries a capability set:
   single window; an extended-context model additionally exposes the 1M tier.
 
 When you omit the capability fields, BotNexus **infers sensible defaults from the model
-family** (for example `claude-opus-4.6` and `gpt-5.2` are recognised as reasoning models with
+family** (for example `claude-opus-4-6` and `gpt-5.2` are recognised as reasoning models with
 the extra-high tiers; `claude-sonnet-4*` carries the extended context window). Declare the
 fields explicitly when the family heuristic does not recognise your model id - for example a
 local Ollama or LM Studio build:
@@ -493,7 +570,7 @@ declared `reasoning: false` is ignored (a non-reasoning model has no thinking ti
 The Copilot provider supports **26 models** across multiple families:
 
 **Claude (via Copilot):**
-- `claude-sonnet-4-20250514`, `claude-opus-4.6`, `claude-haiku-4.5`
+- `claude-sonnet-5`, `claude-opus-4-6`, `claude-haiku-4-5-20251001`
 
 **GPT-4 & GPT-4o:**
 - `gpt-4.1`, `gpt-4o`, `gpt-4-turbo`

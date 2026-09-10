@@ -32,6 +32,14 @@
                     (the site sends <code>X-Frame-Options</code> / <code>frame-ancestors</code>,
                     which the browser enforces and we cannot override).
                 </p>
+                @if (!string.IsNullOrWhiteSpace(_refusalReason))
+                {
+                    @* Naming the actual header turns "it did not work" into something the reader
+                       can go and check on the site itself. *@
+                    <p class="tool-host-refused-reason" data-testid="tool-host-refused-reason">
+                        <code>@_refusalReason</code>
+                    </p>
+                }
                 <a class="tool-host-open-external"
                    data-testid="tool-host-open-external"
                    href="@_tool!.Url"
@@ -85,6 +93,7 @@
     private HostState _state = HostState.Loading;
     private ToolDto? _tool;
     private bool _sandbox = true;
+    private string? _refusalReason;
     private ElementReference _iframeRef;
     private DotNetObjectReference<ToolHost>? _dotNetRef;
     private bool _watching;
@@ -108,7 +117,27 @@
         }
 
         _sandbox = _tool.SandboxEnabled;
-        // Show the frame immediately with an overlay; the load / timeout race decides the outcome.
+
+        // Ask the gateway whether the site will allow itself to be framed BEFORE trying.
+        //
+        // The browser will not tell us. A refused frame raises the same load event a working one
+        // does, and reading into it throws SecurityError either way - a client-side probe was
+        // written, tested, and could not tell the two apart, which is how a blocked site came to
+        // show a blank white panel while the page believed it had loaded. The server can simply
+        // read the response headers.
+        //
+        // A check that could not be performed is treated as permission to try: the gateway and
+        // the browser may sit on different networks, and refusing to frame something on the
+        // strength of the gateway not reaching it would be worse than the blank panel.
+        var verdict = await Tools.GetEmbeddableAsync(Id);
+
+        if (verdict is { Checked: true, Embeddable: false })
+        {
+            _refusalReason = verdict.Reason;
+            _state = HostState.Refused;
+            return;
+        }
+
         _state = HostState.Framing;
     }
 
@@ -137,10 +166,14 @@
     /// </summary>
     private void OnFrameLoad()
     {
-        // A load after we already gave up (Refused) is ignored - the fallback stays put so the
-        // user is never bounced back into a half-broken frame.
+        // The load event is not evidence the site rendered - a blocked frame raises it too, for
+        // the page the browser substitutes. It is only used to stop showing the spinner; whether
+        // the frame is real was already decided by the gateway before we got here.
         if (_state == HostState.Framing)
+        {
             _state = HostState.Ready;
+            StateHasChanged();
+        }
     }
 
     /// <summary>

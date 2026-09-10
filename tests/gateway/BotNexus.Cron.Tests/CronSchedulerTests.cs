@@ -935,7 +935,7 @@ public sealed class CronSchedulerTests
         var runTask = scheduler.RunNowAsync(JobId.From("job-1"), cts.Token);
 
         // Wait until the action is actually executing, then abort via the host token.
-        await action.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(action.Started.Task, "the cron action to start executing");
         await cts.CancelAsync();
 
         // Cancellation semantics are preserved: the abort propagates to the caller.
@@ -969,7 +969,7 @@ public sealed class CronSchedulerTests
 
         using var cts = new CancellationTokenSource();
         var runTask = scheduler.RunNowAsync(JobId.From("job-1"), cts.Token);
-        await action.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(action.Started.Task, "the cron action to start executing");
         await cts.CancelAsync();
         await Should.ThrowAsync<OperationCanceledException>(async () => await runTask);
 

@@ -278,6 +278,22 @@ public interface ISessionStore
     /// </summary>
     /// <param name="agentId">If set, only returns sessions for this agent.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <summary>
+    /// Full-text search over what was actually said, not just conversation titles.
+    /// </summary>
+    /// <remarks>
+    /// The default implementation returns nothing, following the additive pattern the rest of this
+    /// interface uses: a store with no text index simply finds no content, and callers render an
+    /// empty result rather than an error. Only the SQLite store, which owns the FTS index,
+    /// overrides it.
+    /// </remarks>
+    /// <param name="query">Free text. Implementations sanitise it; callers pass what the user typed.</param>
+    /// <param name="limit">Maximum matching messages to return.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IReadOnlyList<ConversationSearchHit>> SearchHistoryAsync(
+        string query, int limit = 25, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<ConversationSearchHit>>([]);
+
     Task<IReadOnlyList<GatewaySession>> ListAsync(AgentId? agentId = null, CancellationToken cancellationToken = default);
 
     /// <summary>

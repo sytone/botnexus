@@ -1,0 +1,60 @@
+@*
+    One agent's avatar: its own emoji when it has one, otherwise a generated monogram tinted by a
+    hue derived from its id.
+
+    Only the hue crosses from C# into the DOM, as a custom property. Saturation and lightness are
+    the stylesheet's business because they differ per theme, and a colour computed here would have
+    to pick one theme and be wrong in the other.
+*@
+<span class="agent-avatar @(Avatar.UsesEmoji ? "is-emoji" : "is-monogram") @Class"
+      style="--agent-hue: @Avatar.Hue"
+      data-testid="agent-avatar"
+      data-agent-hue="@Avatar.Hue"
+      data-agent-activity="@(Activity?.CssModifier)"
+      title="@Title"
+      aria-hidden="true">@(Avatar.UsesEmoji ? Avatar.Emoji : Avatar.Monogram)@if (Activity is { ShowsIndicator: true } activity)
+    {
+        @* Inside the avatar, so identity and activity occupy one piece of real estate rather than
+           two. aria-hidden with the rest: the state reaches a screen reader through the text label
+           the caller renders, because a colour is not an announcement. *@
+        <span class="agent-avatar-activity activity-@activity.CssModifier"
+              data-testid="agent-avatar-activity"></span>
+    }</span>
+
+@code {
+    /// <summary>The agent's stable id. Seeds the hue.</summary>
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    /// <summary>The agent's display name. Seeds the monogram.</summary>
+    [Parameter]
+    public string? DisplayName { get; set; }
+
+    /// <summary>The agent's configured emoji, if any. Wins over the generated monogram.</summary>
+    [Parameter]
+    public string? Emoji { get; set; }
+
+    /// <summary>Operator-chosen hue, or null to generate one from the agent id.</summary>
+    [Parameter]
+    public int? Hue { get; set; }
+
+    /// <summary>
+    /// What this agent is doing, drawn as a dot on the avatar. Null draws nothing, which is also
+    /// what an idle agent gets: an indicator on all sixteen agents distinguishes none of them.
+    /// </summary>
+    [Parameter]
+    public AgentActivitySpec? Activity { get; set; }
+
+    /// <summary>Extra classes, e.g. a size modifier.</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>
+    /// Tooltip text. The element is aria-hidden because it always sits beside the agent's name in
+    /// text - announcing "PA" after "Proxmox Administrator" would be noise, not information.
+    /// </summary>
+    [Parameter]
+    public string? Title { get; set; }
+
+    private AgentAvatarSpec Avatar => AgentAvatarModel.For(AgentId, DisplayName, Emoji, Hue);
+}

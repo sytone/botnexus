@@ -92,7 +92,7 @@ public class ResponsesStreamEngineTests
             resolveConfiguredServiceTier: null,
             ct: CancellationToken.None);
 
-        return await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        return await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
     }
 
     /// <summary>

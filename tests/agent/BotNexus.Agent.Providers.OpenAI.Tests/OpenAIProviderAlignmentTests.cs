@@ -25,7 +25,7 @@ public class OpenAIProviderAlignmentTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         handler.RequestCount.ShouldBe(1);
         handler.LastRequestUri.ShouldNotBeNull();
@@ -50,7 +50,7 @@ public class OpenAIProviderAlignmentTests
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
         var events = await ReadAllEventsAsync(stream);
-        var final = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var final = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         events.Where(e => e is ThinkingStartEvent).ShouldHaveSingleItem();
         events.OfType<ThinkingDeltaEvent>().Select(e => e.Delta)
@@ -79,7 +79,7 @@ public class OpenAIProviderAlignmentTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        var final = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var final = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         var thinking = final.Content.OfType<ThinkingContent>().Single();
         thinking.Thinking.ShouldBe("step-1");
@@ -101,7 +101,7 @@ public class OpenAIProviderAlignmentTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        var final = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var final = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         var toolCalls = final.Content.OfType<ToolCallContent>().ToDictionary(tc => tc.Id, tc => tc.ThoughtSignature);
         toolCalls["call_a"]!.ShouldContain("\"data\":\"sig-a\"");

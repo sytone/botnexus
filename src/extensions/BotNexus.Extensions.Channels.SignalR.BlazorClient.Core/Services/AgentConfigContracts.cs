@@ -230,11 +230,20 @@ public static class AgentConfigSnapshotBuilder
     /// <summary>Field key for the model row.</summary>
     public const string ModelKey = "model";
 
-    /// <summary>Placeholder rendered when the agent has no active conversation (#2795 AC4).</summary>
-    public const string NoActiveConversation = "no active conversation";
+    /// <summary>
+    /// Placeholder rendered when no conversation is open in this view.
+    /// </summary>
+    /// <remarks>
+    /// Worded as a statement about the VIEW, not the agent. These three rows read empty for a
+    /// perfectly healthy agent that simply has not been talked to yet, and the previous wording -
+    /// "no active conversation" / "no active session" - was read twice by an operator as the agent
+    /// having failed to start. A panel headed by an agent's name and showing three blanks invites
+    /// that reading, so the text has to rule it out rather than merely be technically accurate.
+    /// </remarks>
+    public const string NoActiveConversation = "none open in this view";
 
     /// <summary>Placeholder rendered when there is no live session to read context from.</summary>
-    public const string NoActiveSession = "no active session";
+    public const string NoActiveSession = "starts with the first message";
 
     /// <summary>
     /// Projects client state and the two endpoint payloads into the ordered field list.

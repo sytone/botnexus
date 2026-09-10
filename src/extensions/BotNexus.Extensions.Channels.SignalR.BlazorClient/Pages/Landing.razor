@@ -27,21 +27,17 @@
 
 @if (!PortalLoad.IsReady)
 {
-    <div class="portal-loading">
-        @if (PortalLoad.LoadError is not null)
-        {
-            <div class="portal-load-error"><Icon Name="warning" Size="15" /> @PortalLoad.LoadError</div>
-        }
-        else
-        {
-            <div class="portal-load-spinner">Connecting&#x2026;</div>
-        }
-    </div>
+    <PortalLoadingSkeleton Variant="PortalLoadingSkeleton.SkeletonVariant.Home"
+                           Error="@PortalLoad.LoadError" />
 }
 else
 {
+    @* Two bands. .home-page is the reading column and keeps its 60rem cap - the boot skeleton
+       copies that geometry and a test pins the copy. The roster sits OUTSIDE it, as a sibling,
+       so it can use the full canvas without the page losing the cap. *@
+    <div class="home-canvas">
     <div class="home-page" data-testid="home-page">
-        <section class="home-summary" data-testid="home-summary" aria-label="Site and agent summary">
+        <section class="home-summary stats-bar" data-testid="home-summary" aria-label="Site and agent summary">
             <PlatformStatsPanel />
             <div class="home-agent-summary">
                 <span class="home-agent-count" data-testid="home-agent-count">@_agents.Count</span>
@@ -151,14 +147,22 @@ else
                 }
             </section>
 
-            <section class="home-agent-roster" data-testid="home-agent-roster" aria-labelledby="home-agent-roster-title">
-                <div class="home-agent-roster-heading">
-                    <h2 id="home-agent-roster-title">Meet your agents</h2>
-                    <p>Choose an agent to continue its most recent conversation and see what each one is built to do.</p>
-                </div>
-                <AgentDashboard />
-            </section>
         }
+    </div>
+
+    @* Same condition as the starter branch above rather than one shared block, because this
+       section has to sit outside .home-page to escape its cap. Document order is unchanged:
+       the starter still precedes the roster, which is what LandingPageTests asserts. *@
+    @if (_agents.Count > 0)
+    {
+        <section class="home-agent-roster" data-testid="home-agent-roster" aria-labelledby="home-agent-roster-title">
+            <div class="home-agent-roster-heading">
+                <h2 id="home-agent-roster-title">Meet your agents</h2>
+                <p>Choose an agent to continue its most recent conversation and see what each one is built to do.</p>
+            </div>
+            <AgentDashboard />
+        </section>
+    }
     </div>
 }
 

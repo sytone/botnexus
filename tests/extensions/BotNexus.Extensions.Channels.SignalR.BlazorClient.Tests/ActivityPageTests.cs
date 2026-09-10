@@ -41,14 +41,17 @@ public sealed class ActivityPageTests : IDisposable
     public void Dispose() => _ctx.Dispose();
 
     [Fact]
-    public void Shows_connecting_spinner_when_not_ready()
+    public void Shows_a_skeleton_of_the_activity_table_when_not_ready()
     {
         _portalLoad.IsReady.Returns(false);
 
         var cut = _ctx.Render<Activity>();
 
-        cut.Find(".portal-loading");
-        Assert.Contains("Connecting", cut.Markup);
+        cut.Find("[data-testid='portal-skeleton']")
+            .GetAttribute("data-variant").ShouldBe("Activity");
+        // The status moved from visible text into an sr-only live region when the body
+        // stopped being empty. "Loading" is what assistive tech is now told.
+        Assert.Contains("Loading", cut.Markup);
     }
 
     [Fact]
@@ -72,5 +75,6 @@ public sealed class ActivityPageTests : IDisposable
 
         cut.Find("[data-testid='activity-dashboard']");
         Assert.Empty(cut.FindAll(".portal-loading"));
+        Assert.Empty(cut.FindAll("[data-testid='portal-skeleton']"));
     }
 }

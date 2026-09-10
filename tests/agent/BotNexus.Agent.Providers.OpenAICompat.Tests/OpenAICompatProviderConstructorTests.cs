@@ -21,7 +21,7 @@ public class OpenAICompatProviderConstructorTests
         var context = MakeContext();
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         handler.RequestCount.ShouldBe(1);
         handler.LastRequestUri.ShouldNotBeNull();

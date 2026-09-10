@@ -84,6 +84,18 @@ public sealed class AgentTemplateDescriptor
     [JsonPropertyName("emoji")]
     public string? Emoji { get; set; }
 
+    /// <summary>Operator-chosen avatar hue in degrees (0-359); null generates one from the agent id.</summary>
+    [JsonPropertyName("avatarHue")]
+    public int? AvatarHue { get; set; }
+
+    /// <summary>One short line naming what the agent owns.</summary>
+    [JsonPropertyName("responsibility")]
+    public string? Responsibility { get; set; }
+
+    /// <summary>What the agent must not do.</summary>
+    [JsonPropertyName("boundaries")]
+    public string? Boundaries { get; set; }
+
     [JsonPropertyName("modelId")]
     public string? ModelId { get; set; }
 

@@ -99,9 +99,21 @@ nav:
       - Your First AI Agent: tutorials/first-agent.md
   - User Guide:
       - Getting Started: user-guide/getting-started.md
+      - The Portal: user-guide/portal.md
+      - Conversations & Sessions: user-guide/conversations.md
       - Agents: user-guide/agents.md
-      - Configuration: user-guide/configuration.md
+      - Servers & Credentials: user-guide/secrets-and-locations.md
+      - Automation & Scheduling: user-guide/automation.md
+      - Tools: user-guide/tools.md
+      - Notifications: user-guide/notifications.md
+      - Channels:
+          - Portal (SignalR): user-guide/channels/signalr.md
+          - Telegram: user-guide/channels/telegram.md
+          - Service Bus: user-guide/channels/service-bus.md
+          - Service Bus Envelope: user-guide/channels/service-bus-envelope.md
+      - Plugins & Marketplace: user-guide/plugins.md
       - Extensions: user-guide/extensions.md
+      - Configuration: user-guide/configuration.md
       - Troubleshooting: user-guide/troubleshooting.md
   - Reference:
       - Configuration: configuration.md
@@ -112,12 +124,13 @@ nav:
           - Agents: api/agents.md
           - Conversations: api/conversations.md
           - Cron: api/cron.md
+          - Exchanges: api/exchanges.md
+          - Plugins: api/plugins.md
           - Satellites: api/satellites.md
           - Sessions: api/sessions.md
           - Webhooks: api/webhooks.md
           - Tools: api/tools.md
       - SignalR Hub Reference: api/signalr.md
-      - WebSocket Protocol: websocket-protocol.md
   - Architecture:
       - arc42 Overview: architecture/README.md
       - C4 Diagrams: architecture/c4-diagrams.md

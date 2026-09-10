@@ -21,6 +21,31 @@ public sealed record SkillDefinition
     /// <summary>Arbitrary key-value metadata.</summary>
     public IReadOnlyDictionary<string, string> Metadata { get; init; } = new Dictionary<string, string>();
 
+    /// <summary>
+    /// Declared parameters, keyed by slot name, with the description a caller reads when supplying
+    /// one. Empty for the overwhelming majority of skills, which take no parameters and load exactly
+    /// as they always have.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Parsed from a <c>parameters:</c> map in the frontmatter. Every declared parameter is
+    /// REQUIRED: loading the skill without one is an error rather than a blank substitution. That is
+    /// deliberate and is the point of declaring them at all — a skill whose instructions quietly
+    /// lose a value replays wrongly and looks like it worked, which is worse than not replaying.
+    /// </para>
+    /// <para>
+    /// Slot names are matched case-INSENSITIVELY, throughout. That is forced rather than chosen:
+    /// the frontmatter parser's nested-block reader folds case, so two declarations differing only
+    /// in case cannot survive parsing, and a case-sensitive loader would refuse
+    /// <c>{{Title}}</c> against a frontmatter that declares <c>Title</c>.
+    /// </para>
+    /// <para>
+    /// Written by <c>skill_record</c> from parameters an operator confirmed, but nothing stops a
+    /// hand-authored skill declaring them; the loader does not care which produced the file.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> Parameters { get; init; } = new Dictionary<string, string>();
+
     /// <summary>Space-delimited list of pre-approved tools. Experimental.</summary>
     public string? AllowedTools { get; init; }
 

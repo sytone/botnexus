@@ -5,7 +5,12 @@
 
 @if (_show)
 {
-    <div class="usage-overlay" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
+    @* tabindex and @ref together are what make the Escape handler reachable: a keydown handler
+       only fires while its own element holds focus, and clicking the Usage button in the banner
+       leaves focus on the button. Without the focus call in OnAfterRenderAsync this handler can
+       never run. *@
+    <div class="usage-overlay" @ref="_overlayRef"
+         @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
         <div class="usage-panel material-overlay" role="dialog" aria-modal="true"
              aria-labelledby="usage-title" data-testid="provider-usage-panel" @onclick:stopPropagation="true">
 
@@ -136,11 +141,21 @@
     private List<ProviderUsage> _providers = [];
     private ProviderUsage? _current;
     private Timer? _poll;
+    private ElementReference _overlayRef;
+    private ElementReference? _returnFocusTo;
+    private bool _focusOverlay;
+    private bool _restoreFocus;
 
     /// <summary>Opens the panel and starts polling.</summary>
-    public async Task OpenAsync()
+    /// <param name="returnFocusTo">
+    /// The control that opened the panel, so focus goes back where it came from on close. Optional:
+    /// a caller that does not pass one just leaves focus on the overlay when it closes.
+    /// </param>
+    public async Task OpenAsync(ElementReference? returnFocusTo = null)
     {
         _show = true;
+        _returnFocusTo = returnFocusTo;
+        _focusOverlay = true;
         StateHasChanged();
         await RefreshAsync();
         // Only while open. Polling a closed panel would burn a request every few seconds for a
@@ -155,6 +170,7 @@
     private void Close()
     {
         _show = false;
+        _restoreFocus = true;
         StopPolling();
         StateHasChanged();
     }
@@ -162,6 +178,37 @@
     private void HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
     {
         if (e.Key == "Escape") Close();
+    }
+
+    // Focus follows the panel: onto the overlay when it opens, so Escape has somewhere to land,
+    // and back to whatever opened it on close, which is what a keyboard user expects.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusOverlay && _show)
+        {
+            _focusOverlay = false;
+            await TryFocusAsync(_overlayRef);
+        }
+        else if (_restoreFocus && !_show)
+        {
+            _restoreFocus = false;
+
+            if (_returnFocusTo is { } trigger)
+                await TryFocusAsync(trigger);
+        }
+    }
+
+    private static async Task TryFocusAsync(ElementReference element)
+    {
+        try
+        {
+            await element.FocusAsync();
+        }
+        catch
+        {
+            // The element went away between render and focus, or JS is unavailable. Focus is a
+            // convenience here; losing it is not worth an exception out of a banner component.
+        }
     }
 
     private async Task RefreshAsync()

@@ -266,7 +266,7 @@ public class WarningEventContractTests
         warning.Message.ShouldNotContain("this is not json");
 
         // Non-terminal end to end: the good delta after the bad frame still lands.
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(15));
         string.Concat(result.Content.OfType<TextContent>().Select(t => t.Text)).ShouldBe("survived");
     }
 

@@ -1,0 +1,631 @@
+@using System.Net.Http.Json
+@inject IClientStateStore Store
+@inject NavigationManager Nav
+@inject IServiceProvider Services
+@implements IDisposable
+
+@*
+    The agent persona slide-out. Opened by clicking the agent's name in the top bar; slides in from
+    the right edge for fast persona edits, with /agents/{id} kept as the deep settings page.
+
+    THREE THINGS HERE ARE LOAD-BEARING AND LOOK LIKE STYLE CHOICES:
+
+    1. It is mounted by MainLayout OUTSIDE .app-shell, and positioned `fixed`, never `absolute`.
+       Six ancestors of the identity chip set overflow:hidden (app.css:531/568/589/643/654/1222),
+       so a panel rendered inside the chip is clipped to nothing - the exact defect that already
+       forced ConversationSwitcher onto fixed positioning.
+
+    2. It needs NO JavaScript. The conversation switcher anchors to a moving trigger and therefore
+       needs measuring; a right-edge drawer pins to the viewport, so there is nothing to measure
+       and none of the switcher's stale-coordinates-on-resize bug to inherit.
+
+    3. It prefills from IClientStateStore rather than fetching the descriptor. AgentState already
+       carries all six persona fields, so opening is instant and there is no load-failure state.
+       Saving goes to PUT /api/agents/{id}/persona - a narrow route that applies exactly these six
+       fields server-side. It deliberately does NOT reuse PUT /api/agents/{id}, which binds a whole
+       AgentDescriptor and full-replaces it: every property the client fails to model is dropped to
+       its default and then deleted from config.json by the writer.
+*@
+
+@if (_open && _model is not null)
+{
+    <div class="agent-persona-overlay"
+         data-testid="agent-persona-overlay"
+         tabindex="-1"
+         @ref="_overlay"
+         @onclick="Close"
+         @onkeydown="HandleKeyDown">
+        <div class="agent-persona-panel"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="agent-persona-panel-title"
+             data-testid="agent-persona-panel"
+             @onclick="NoOp"
+             @onclick:stopPropagation="true">
+
+            <div class="agent-persona-header">
+                <AgentAvatar AgentId="@_agentId"
+                             DisplayName="@_model.DisplayName"
+                             Emoji="@_model.Emoji"
+                             Hue="@_model.AvatarHue"
+                             Class="agent-persona-avatar" />
+                <div class="agent-persona-heading">
+                    <h3 id="agent-persona-panel-title">Persona</h3>
+                    <span class="agent-persona-id">@_agentId</span>
+                </div>
+                <button type="button"
+                        class="agent-persona-close"
+                        data-testid="agent-persona-close"
+                        title="Close"
+                        aria-label="Close persona panel"
+                        @onclick="Close">
+                    <Icon Name="close" Size="14" Class="bn-icon-inherit" />
+                </button>
+            </div>
+
+            <div class="agent-persona-tabs" role="tablist">
+                <button type="button" role="tab" class="agent-persona-tab @(_tab == PersonaTab ? "selected" : "")"
+                        aria-selected="@(_tab == PersonaTab)" data-testid="agent-persona-tab-persona"
+                        @onclick="() => SetTab(PersonaTab)">Persona</button>
+                <button type="button" role="tab" class="agent-persona-tab @(_tab == MemoryTab ? "selected" : "")"
+                        aria-selected="@(_tab == MemoryTab)" data-testid="agent-persona-tab-memory"
+                        @onclick="ShowMemoryAsync">Memory</button>
+            </div>
+
+            <div class="agent-persona-body">
+            @if (_tab == PersonaTab)
+            {
+                <label for="agent-persona-name">Name</label>
+                <input id="agent-persona-name"
+                       class="agent-persona-input"
+                       data-testid="agent-persona-name"
+                       maxlength="256"
+                       @bind="_model.DisplayName"
+                       @bind:event="oninput" />
+
+                <label for="agent-persona-responsibility">Responsibility</label>
+                <p class="agent-persona-hint">One line naming what this agent owns.</p>
+                <input id="agent-persona-responsibility"
+                       class="agent-persona-input"
+                       data-testid="agent-persona-responsibility"
+                       maxlength="256"
+                       @bind="_model.Responsibility"
+                       @bind:event="oninput" />
+
+                <label for="agent-persona-description">Description</label>
+                <p class="agent-persona-hint">The work it does. This reaches the agent's prompt.</p>
+                <textarea id="agent-persona-description"
+                          class="agent-persona-textarea"
+                          data-testid="agent-persona-description"
+                          rows="4"
+                          @bind="_model.Description"
+                          @bind:event="oninput"></textarea>
+
+                <label for="agent-persona-boundaries">Boundaries</label>
+                <p class="agent-persona-hint">What it must not do.</p>
+                <textarea id="agent-persona-boundaries"
+                          class="agent-persona-textarea"
+                          data-testid="agent-persona-boundaries"
+                          rows="3"
+                          @bind="_model.Boundaries"
+                          @bind:event="oninput"></textarea>
+
+                <label for="agent-persona-emoji">Emoji</label>
+                <input id="agent-persona-emoji"
+                       class="agent-persona-input agent-persona-emoji-input"
+                       data-testid="agent-persona-emoji"
+                       maxlength="8"
+                       @bind="_model.Emoji"
+                       @bind:event="oninput" />
+
+                @* Hues, not colours - the stylesheet owns saturation and lightness per theme, which
+                   is what keeps every agent's avatar at the same contrast. Same twelve steps as the
+                   deep settings page so the two surfaces cannot disagree. *@
+                <label>Colour</label>
+                <div class="agent-hue-row" data-testid="agent-persona-hue-row">
+                    <button type="button"
+                            class="agent-hue-swatch auto @(_model.AvatarHue is null ? "selected" : "")"
+                            data-testid="agent-persona-hue-auto"
+                            title="Auto - generated from the agent id"
+                            @onclick="() => SetHue(null)">Auto</button>
+                    @foreach (var hue in HuePalette)
+                    {
+                        <button type="button"
+                                class="agent-hue-swatch @(_model.AvatarHue == hue ? "selected" : "")"
+                                style="--agent-hue: @hue"
+                                data-testid="agent-persona-hue-swatch"
+                                data-hue="@hue"
+                                title="Hue @hue"
+                                aria-label="Hue @hue"
+                                @onclick="() => SetHue(hue)"></button>
+                    }
+                </div>
+
+                @if (_error is not null)
+                {
+                    <p class="agent-persona-error" role="alert" data-testid="agent-persona-error">@_error</p>
+                }
+            }
+            else
+            {
+                @* Memory edits apply immediately - there is no batching here and no Save button for
+                   them. Persona is a form you fill in and submit; memory is a list you act on, and
+                   pretending otherwise would leave a half-edited list behind a Cancel. *@
+                <p class="agent-persona-hint">Notes this agent carries into every future conversation.</p>
+
+                @if (_memoryUnavailable)
+                {
+                    <p class="agent-persona-empty" data-testid="agent-persona-memory-unavailable">
+                        Memory is not enabled for this agent.
+                    </p>
+                }
+                else if (_memoryLoading)
+                {
+                    <p class="agent-persona-empty" data-testid="agent-persona-memory-loading">Loading...</p>
+                }
+                else
+                {
+                    <div class="agent-persona-add">
+                        <textarea class="agent-persona-textarea"
+                                  data-testid="agent-persona-memory-new"
+                                  rows="2"
+                                  placeholder="Something to remember..."
+                                  @bind="_newNote"
+                                  @bind:event="oninput"></textarea>
+                        <button type="button" class="toolbar-btn primary"
+                                data-testid="agent-persona-memory-add"
+                                disabled="@(string.IsNullOrWhiteSpace(_newNote) || _busy)"
+                                @onclick="AddNoteAsync">Add</button>
+                    </div>
+
+                    @if (_memoryError is not null)
+                    {
+                        <p class="agent-persona-error" role="alert" data-testid="agent-persona-memory-error">@_memoryError</p>
+                    }
+
+                    @if (_memory.Count == 0)
+                    {
+                        <p class="agent-persona-empty" data-testid="agent-persona-memory-empty">
+                            Nothing remembered yet.
+                        </p>
+                    }
+                    else
+                    {
+                        <ul class="agent-persona-memory-list">
+                            @foreach (var note in _memory)
+                            {
+                                <li class="agent-persona-memory-item" data-testid="agent-persona-memory-item">
+                                    @if (_editingId == note.Id)
+                                    {
+                                        <textarea class="agent-persona-textarea"
+                                                  data-testid="agent-persona-memory-edit"
+                                                  rows="3"
+                                                  @bind="_editDraft"
+                                                  @bind:event="oninput"></textarea>
+                                        <div class="agent-persona-memory-actions">
+                                            <button type="button" class="toolbar-btn"
+                                                    data-testid="agent-persona-memory-edit-cancel"
+                                                    @onclick="CancelEdit">Cancel</button>
+                                            <button type="button" class="toolbar-btn primary"
+                                                    data-testid="agent-persona-memory-edit-save"
+                                                    disabled="@(string.IsNullOrWhiteSpace(_editDraft) || _busy)"
+                                                    @onclick="() => SaveEditAsync(note.Id)">Save</button>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <p class="agent-persona-memory-text">@note.Content</p>
+                                        <div class="agent-persona-memory-meta">
+                                            @* Surfaced because it is usually WHY someone is looking:
+                                               a note the agent must not treat as its own knowledge. *@
+                                            @if (!note.IsFirstParty)
+                                            {
+                                                <span class="agent-persona-memory-trust"
+                                                      data-testid="agent-persona-memory-trust"
+                                                      title="Not treated as this agent's own knowledge.">@note.TrustTier</span>
+                                            }
+                                            <span class="agent-persona-memory-source">@note.SourceType</span>
+                                            <span class="agent-persona-memory-spacer"></span>
+                                            <button type="button" class="agent-persona-memory-btn"
+                                                    data-testid="agent-persona-memory-edit-btn"
+                                                    @onclick="() => BeginEdit(note)">Edit</button>
+                                            <button type="button" class="agent-persona-memory-btn danger"
+                                                    data-testid="agent-persona-memory-delete-btn"
+                                                    disabled="@_busy"
+                                                    @onclick="() => DeleteNoteAsync(note.Id)">Delete</button>
+                                        </div>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                }
+            }
+            </div>
+
+            <div class="agent-persona-footer">
+                <a class="agent-persona-deep-link"
+                   data-testid="agent-persona-deep-link"
+                   href="@($"agents/{_agentId}")">All settings</a>
+                <span class="agent-persona-footer-spacer"></span>
+                @if (_tab == PersonaTab)
+                {
+                    <button type="button"
+                            class="toolbar-btn"
+                            data-testid="agent-persona-cancel"
+                            @onclick="Close">Cancel</button>
+                    <button type="button"
+                            class="toolbar-btn primary"
+                            data-testid="agent-persona-save"
+                            disabled="@(!CanSave)"
+                            @onclick="SaveAsync">@(_saving ? "Saving..." : "Save")</button>
+                }
+                else
+                {
+                    <button type="button"
+                            class="toolbar-btn"
+                            data-testid="agent-persona-done"
+                            @onclick="Close">Done</button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// The offered hues: twelve steps around the wheel, so adjacent choices are visibly different.
+    /// Kept identical to the deep settings page - two pickers offering different palettes for the
+    /// same field would let an agent hold a colour one surface cannot represent.
+    /// </summary>
+    private static readonly int[] HuePalette = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+
+    private bool _open;
+    private bool _saving;
+    private bool _focusPending;
+    private string _agentId = "";
+    private string? _error;
+    private PersonaEdit? _model;
+    private ElementReference _overlay;
+    private HttpClient? _http;
+    private IAgentPersonaLauncher? _launcher;
+
+    private const string PersonaTab = "persona";
+    private const string MemoryTab = "memory";
+    private string _tab = PersonaTab;
+    private bool _memoryLoading;
+    private bool _memoryUnavailable;
+    private bool _busy;
+    private string? _memoryError;
+    private string? _newNote;
+    private string? _editingId;
+    private string? _editDraft;
+    private List<MemoryNote> _memory = [];
+
+    /// <summary>
+    /// Resolved rather than injected. This panel is rendered by <c>MainLayout</c>, so a hard
+    /// <c>@inject HttpClient</c> would turn every existing MainLayout fixture that does not
+    /// register one into a DI resolution failure. Absent, the panel still opens and reads; only
+    /// saving is unavailable.
+    /// </summary>
+    protected override void OnInitialized()
+    {
+        _http = Services.GetService(typeof(HttpClient)) as HttpClient;
+
+        // Resolved, not injected, for the same reason as the HttpClient above: this panel is
+        // rendered by MainLayout, so a hard @inject would break every existing MainLayout fixture
+        // that does not register the service.
+        _launcher = Services.GetService(typeof(IAgentPersonaLauncher)) as IAgentPersonaLauncher;
+        if (_launcher is not null)
+            _launcher.Requested += HandleRequested;
+    }
+
+    private void HandleRequested(string agentId) => InvokeAsync(() => OpenAsync(agentId));
+
+    public void Dispose()
+    {
+        if (_launcher is not null)
+            _launcher.Requested -= HandleRequested;
+    }
+
+    private bool CanSave =>
+        !_saving && _http is not null && !string.IsNullOrWhiteSpace(_model?.DisplayName);
+
+    /// <summary>Open the panel for one agent, prefilled from the store.</summary>
+    public Task OpenAsync(string agentId)
+    {
+        if (string.IsNullOrWhiteSpace(agentId))
+            return Task.CompletedTask;
+
+        var agent = Store.GetAgent(agentId);
+        _agentId = agentId;
+        _error = null;
+        _saving = false;
+        _model = new PersonaEdit
+        {
+            DisplayName = agent?.DisplayName ?? agentId,
+            Emoji = agent?.Emoji,
+            AvatarHue = agent?.AvatarHue,
+            Responsibility = agent?.Responsibility,
+            Description = agent?.Description,
+            Boundaries = agent?.Boundaries
+        };
+        _tab = PersonaTab;
+        _memory = [];
+        _memoryError = null;
+        _memoryUnavailable = false;
+        _newNote = null;
+        _editingId = null;
+        _open = true;
+        _focusPending = true;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void Close()
+    {
+        _open = false;
+        _model = null;
+        _error = null;
+        _saving = false;
+    }
+
+    /// <summary>
+    /// Exists so the panel has a real onclick handler alongside @onclick:stopPropagation. The
+    /// modifier alone stops the click reaching the dismissing overlay in a browser, but a test host
+    /// cannot dispatch a click to an element whose only handler IS the modifier - so without this
+    /// the "clicking inside must not close the panel" behaviour is untestable.
+    /// </summary>
+    private static void NoOp()
+    {
+        // Intentionally empty - see remarks.
+    }
+
+    private void SetTab(string tab) => _tab = tab;
+
+    private async Task ShowMemoryAsync()
+    {
+        _tab = MemoryTab;
+        // Loaded on first view rather than on open: most visits are a persona tweak, and fetching
+        // an agent's whole memory to render a form nobody asked for is work for nothing.
+        if (_memory.Count == 0 && !_memoryUnavailable)
+            await LoadMemoryAsync();
+    }
+
+    private async Task LoadMemoryAsync()
+    {
+        if (_http is null)
+            return;
+
+        _memoryLoading = true;
+        _memoryError = null;
+        StateHasChanged();
+
+        try
+        {
+            var response = await _http.GetAsync(MemoryUrl("entries/recent?limit=100"));
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // The route 404s both for an unknown agent and for one without memory enabled.
+                // Either way there is nothing to manage, and an error would overstate it.
+                _memoryUnavailable = true;
+                return;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _memoryError = $"Could not load memory ({(int)response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<MemoryListResponse>();
+            _memory = payload?.Entries?.ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            _memoryError = $"Could not load memory: {ex.Message}";
+        }
+        finally
+        {
+            _memoryLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task AddNoteAsync()
+    {
+        if (_http is null || string.IsNullOrWhiteSpace(_newNote))
+            return;
+
+        await MutateAsync(
+            () => _http.PostAsJsonAsync(MemoryUrl("entries"), new { content = _newNote }),
+            onSuccess: () => _newNote = null);
+    }
+
+    private void BeginEdit(MemoryNote note)
+    {
+        _editingId = note.Id;
+        _editDraft = note.Content;
+        _memoryError = null;
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _editDraft = null;
+    }
+
+    private async Task SaveEditAsync(string entryId)
+    {
+        if (_http is null || string.IsNullOrWhiteSpace(_editDraft))
+            return;
+
+        await MutateAsync(
+            () => _http.PutAsJsonAsync(MemoryUrl($"entries/{Uri.EscapeDataString(entryId)}"), new { content = _editDraft }),
+            onSuccess: CancelEdit);
+    }
+
+    private async Task DeleteNoteAsync(string entryId)
+    {
+        if (_http is null)
+            return;
+
+        await MutateAsync(() => _http.DeleteAsync(MemoryUrl($"entries/{Uri.EscapeDataString(entryId)}")));
+    }
+
+    /// <summary>
+    /// One write, then a reload. Re-reading rather than patching the local list keeps the panel
+    /// honest: the server owns ids, timestamps and the derived trust tier, and a locally-patched
+    /// row would show a note as first-party that the store had just classified otherwise.
+    /// </summary>
+    private async Task MutateAsync(Func<Task<HttpResponseMessage>> write, Action? onSuccess = null)
+    {
+        _busy = true;
+        _memoryError = null;
+        StateHasChanged();
+
+        try
+        {
+            var response = await write();
+            if (!response.IsSuccessStatusCode)
+            {
+                _memoryError = $"That did not save ({(int)response.StatusCode}).";
+                return;
+            }
+
+            onSuccess?.Invoke();
+            await LoadMemoryAsync();
+        }
+        catch (Exception ex)
+        {
+            _memoryError = $"That did not save: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private string MemoryUrl(string suffix) =>
+        $"{Nav.BaseUri.TrimEnd('/')}/api/memory/{Uri.EscapeDataString(_agentId)}/{suffix}";
+
+    private void SetHue(int? hue)
+    {
+        if (_model is not null)
+            _model.AvatarHue = hue;
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (string.Equals(e.Key, "Escape", StringComparison.Ordinal))
+            Close();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_model is null || _http is null || _saving)
+            return;
+
+        _saving = true;
+        _error = null;
+
+        try
+        {
+            var url = $"{Nav.BaseUri.TrimEnd('/')}/api/agents/{Uri.EscapeDataString(_agentId)}/persona";
+            var response = await _http.PutAsJsonAsync(url, new
+            {
+                displayName = _model.DisplayName,
+                emoji = Blank(_model.Emoji),
+                avatarHue = _model.AvatarHue,
+                responsibility = Blank(_model.Responsibility),
+                description = Blank(_model.Description),
+                boundaries = Blank(_model.Boundaries)
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = $"Save failed ({(int)response.StatusCode}).";
+                _saving = false;
+                return;
+            }
+
+            // Reflect the change locally rather than waiting for a refresh: RefreshAgentsAsync
+            // silently drops Description for an agent already in the store, so a round trip would
+            // leave the top-bar chip showing the old text. UpsertAgent's merge branch copies these
+            // six fields and raises OnChanged, which every persona-rendering component listens to.
+            var existing = Store.GetAgent(_agentId);
+            Store.UpsertAgent(new AgentState
+            {
+                AgentId = _agentId,
+                DisplayName = _model.DisplayName ?? _agentId,
+                Emoji = Blank(_model.Emoji),
+                AvatarHue = _model.AvatarHue,
+                Responsibility = Blank(_model.Responsibility),
+                Description = Blank(_model.Description),
+                Boundaries = Blank(_model.Boundaries),
+                IsConnected = existing?.IsConnected ?? true
+            });
+
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Save failed: {ex.Message}";
+            _saving = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusPending)
+            return;
+
+        _focusPending = false;
+        await TryFocusAsync(_overlay);
+    }
+
+    /// <summary>
+    /// Focus is best-effort. A test host has no real DOM element behind the reference, and a
+    /// failure to focus must never take the panel down with it.
+    /// </summary>
+    private static async Task TryFocusAsync(ElementReference element)
+    {
+        try
+        {
+            await element.FocusAsync();
+        }
+        catch (Exception)
+        {
+            // Ignored - see remarks.
+        }
+    }
+
+    /// <summary>Whitespace is not a value: an all-spaces boundary line is an empty one.</summary>
+    private static string? Blank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private sealed record MemoryListResponse(IReadOnlyList<MemoryNote>? Entries);
+
+    /// <summary>
+    /// Mirrors the management projection, which carries the WHOLE note - not the 200-character
+    /// preview the search projection returns. Editing a preview and saving it back would silently
+    /// truncate the note, which is why the two projections are separate server-side.
+    /// </summary>
+    private sealed record MemoryNote(
+        string Id,
+        string Content,
+        string SourceType,
+        string TrustTier,
+        bool IsFirstParty);
+
+    private sealed class PersonaEdit
+    {
+        public string? DisplayName { get; set; }
+        public string? Emoji { get; set; }
+        public int? AvatarHue { get; set; }
+        public string? Responsibility { get; set; }
+        public string? Description { get; set; }
+        public string? Boundaries { get; set; }
+    }
+}

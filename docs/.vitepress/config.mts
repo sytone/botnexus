@@ -55,7 +55,31 @@ export default defineConfig({
       {
         text: "User guide",
         items: [
-          { text: "User guide overview", link: "/user-guide/README" },
+          { text: 'Overview', link: '/getting-started' },
+          { text: 'Install from Release', link: '/getting-started-release' },
+          { text: 'Developer Setup', link: '/getting-started-dev' },
+        ],
+      },
+      {
+        text: 'Tutorials',
+        items: [
+          { text: 'Your First AI Agent', link: '/tutorials/first-agent' },
+        ],
+      },
+      {
+        text: 'User Guide',
+        items: [
+          { text: 'Getting Started', link: '/user-guide/getting-started' },
+          { text: 'The Portal', link: '/user-guide/portal' },
+          { text: 'Agents', link: '/user-guide/agents' },
+          { text: 'Conversations', link: '/user-guide/conversations' },
+          { text: 'Automation', link: '/user-guide/automation' },
+          { text: 'Tools', link: '/user-guide/tools' },
+          { text: 'Notifications', link: '/user-guide/notifications' },
+          { text: 'Configuration', link: '/user-guide/configuration' },
+          { text: 'Servers, Credentials and Agents', link: '/user-guide/secrets-and-locations' },
+          { text: 'Plugins and the Marketplace', link: '/user-guide/plugins' },
+          { text: 'Extensions', link: '/user-guide/extensions' },
           {
             text: "Install and first conversation",
             collapsed: true,

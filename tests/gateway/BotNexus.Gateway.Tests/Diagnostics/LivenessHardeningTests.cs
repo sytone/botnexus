@@ -200,7 +200,9 @@ public sealed class LockTimeoutLoggerTests
         // Act: try to acquire with very short threshold — will log warning
         var acquireTask = lockLogger.AcquireAsync(semaphore, "TestLock", CancellationToken.None);
 
-        var requestedDelay = await warningDelayStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var requestedDelay = await TestAwait.SignaledAsync(
+            warningDelayStarted.Task,
+            "the lock to request its contention-warning delay");
         requestedDelay.ShouldBe(TimeSpan.FromMilliseconds(50));
         releaseWarningDelay.TrySetResult();
         await TestAwait.EventuallyAsync(

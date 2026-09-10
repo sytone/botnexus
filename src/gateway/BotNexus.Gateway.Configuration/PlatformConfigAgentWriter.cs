@@ -53,6 +53,9 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
 
             // Simple scalar surface.
             SetOptionalString(entry, "emoji", descriptor.Emoji);
+            SetOptionalString(entry, "responsibility", descriptor.Responsibility);
+            SetOptionalString(entry, "boundaries", descriptor.Boundaries);
+            SetOptionalNullableInt(entry, "avatarHue", descriptor.AvatarHue);
             SetOptionalString(entry, "description", descriptor.Description);
             // #3596: the agent-owned summary persists on the same path as every other descriptor
             // field, so a self-written summary survives a gateway restart without a second store.
@@ -147,10 +150,11 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         target[propertyName] = value;
     }
 
-    // Nullable int variant: absent (null) removes the key; any set value (including a large
-    // context window) is written verbatim. Distinct from SetOptionalInt, whose <=0 sentinel
-    // does not apply to a selectable context-window size.
-    private static void SetOptionalContextWindow(JsonObject target, string propertyName, int? value)
+    // Nullable int: absent (null) removes the key; any set value is written verbatim, zero and
+    // negatives included. Distinct from SetOptionalCount, whose <=0 sentinel means "unset" - a
+    // meaning that is wrong for a selectable context-window size and wrong for a hue of 0, which
+    // is red.
+    private static void SetOptionalNullableInt(JsonObject target, string propertyName, int? value)
     {
         if (value is null)
         {
@@ -160,6 +164,9 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
 
         target[propertyName] = value.Value;
     }
+
+    private static void SetOptionalContextWindow(JsonObject target, string propertyName, int? value) =>
+        SetOptionalNullableInt(target, propertyName, value);
 
     private static void SetOptionalObject(JsonObject target, string propertyName, IReadOnlyDictionary<string, object?> values)
     {

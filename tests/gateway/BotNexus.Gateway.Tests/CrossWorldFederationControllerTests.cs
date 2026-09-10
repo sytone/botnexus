@@ -950,7 +950,9 @@ public sealed class CrossWorldFederationControllerTests
             CancellationToken.None));
 
         // Wait until caller A is parked inside PromptAsync — this proves A has the lock.
-        await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(
+            barrier.Entered.Task,
+            "caller A to park inside PromptAsync holding the session lock");
         Volatile.Read(ref barrier.PromptCallCount).ShouldBe(1,
             "Pre-condition: caller A's PromptAsync must have been invoked and parked.");
 
@@ -981,8 +983,10 @@ public sealed class CrossWorldFederationControllerTests
 
         // Release caller A — caller B should now acquire the lock, run, and complete.
         barrier.Release.SetResult();
-        var aResponse = await callerATask.WaitAsync(TimeSpan.FromSeconds(5));
-        var bResponse = await callerBTask.WaitAsync(TimeSpan.FromSeconds(5));
+        var aResponse = await TestAwait.SignaledAsync(callerATask, "caller A's relay to complete once released");
+        var bResponse = await TestAwait.SignaledAsync(
+            callerBTask,
+            "caller B's relay to complete after acquiring the freed lock");
 
         aResponse.Result.ShouldBeOfType<OkObjectResult>();
         bResponse.Result.ShouldBeOfType<OkObjectResult>();

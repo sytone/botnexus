@@ -49,8 +49,14 @@ Configure the exchange access policy in the gateway section:
 
 | Policy | Behavior |
 |--------|----------|
-| `open` | Any agent can converse with any other agent (default). |
-| `whitelist` | Only agents listed in `subAgentIds` on the initiator can be contacted. |
+| `open` | Any agent can reach any other agent (default). |
+| `whitelist` | Only agents listed in `subAgentIds` on the initiator — or matching one of its `subAgentRoles` grants — can be reached. |
+
+**The policy covers both paths to another agent**, not just this tool. `agent_converse` and a
+**Mirror** `spawn_subagent` are both checked against it. That matters because a Mirror spawn is the
+stronger of the two: it runs the *target's* descriptor verbatim, so the child holds the target's
+tools rather than the parent's. An **Embody** spawn clones the parent's own descriptor, reaches no
+other agent, and is not subject to the policy.
 
 When `open` is set, the `ListAgents` tool shows `canConverse: true` for all agents. Under `whitelist`, the legacy `SubAgentIds` / `SubAgentRoles` restrictions apply.
 

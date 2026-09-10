@@ -1223,10 +1223,10 @@ public sealed partial class GatewayHostTests
             sessionQueueCapacity: 1);
 
         var first = host.DispatchAsync(CreateMessage("one", sessionId: "session-1"));
-    await promptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await TestAwait.SignaledAsync(promptStarted.Task, "the first prompt to start and occupy the session queue");
         var second = host.DispatchAsync(CreateMessage("two", sessionId: "session-1"));
         await host.DispatchAsync(CreateMessage("three", sessionId: "session-1"));
-    releasePrompts.TrySetResult();
+        releasePrompts.TrySetResult();
         await Task.WhenAll(first, second);
 
         channel.Verify(c => c.SendAsync(
@@ -1292,10 +1292,10 @@ public sealed partial class GatewayHostTests
             sessionQueueCapacity: 8);
 
         var first = host.DispatchAsync(CreateMessage("one", sessionId: "session-1"));
-    await firstPromptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await TestAwait.SignaledAsync(firstPromptStarted.Task, "the first prompt to start and hold the session queue");
         var second = host.DispatchAsync(CreateMessage("two", sessionId: "session-1"));
-    maxInFlight.ShouldBe(1);
-    releaseFirstPrompt.TrySetResult();
+        maxInFlight.ShouldBe(1);
+        releaseFirstPrompt.TrySetResult();
         await Task.WhenAll(first, second);
 
         maxInFlight.ShouldBe(1);
@@ -1374,7 +1374,7 @@ public sealed partial class GatewayHostTests
 
         await host.StartAsync(CancellationToken.None);
         // Wait until the channel adapter's StartAsync has been invoked (event-driven, not time-based).
-        await channelStartedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(channelStartedTcs.Task, "the channel adapter's StartAsync to be invoked");
         await host.StopAsync(CancellationToken.None);
 
         firstChannel.Verify(c => c.StartAsync(It.IsAny<IChannelDispatcher>(), It.IsAny<CancellationToken>()), Times.Once);

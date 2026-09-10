@@ -25,7 +25,7 @@ public class AnthropicProviderAlignmentTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         handler.RequestCount.ShouldBe(1);
         handler.RequestBody.ShouldNotBeNull();
@@ -57,7 +57,9 @@ public class AnthropicProviderAlignmentTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.StopReason.ShouldBe(expected);
     }
@@ -80,7 +82,9 @@ public class AnthropicProviderAlignmentTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.Usage.Input.ShouldBe(11);
         result.Usage.Output.ShouldBe(5);
@@ -104,7 +108,7 @@ public class AnthropicProviderAlignmentTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         handler.RequestCount.ShouldBe(1);
         handler.LastRequestUri.ShouldNotBeNull();
@@ -133,7 +137,7 @@ public class AnthropicProviderAlignmentTests
             ]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var messages = body.RootElement.GetProperty("messages");
@@ -179,7 +183,7 @@ public class AnthropicProviderAlignmentTests
             Messages: [new UserMessage(new UserMessageContent("hello"), timestamp), assistant]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var assistantMsg = body.RootElement.GetProperty("messages")[1];
@@ -225,7 +229,7 @@ public class AnthropicProviderAlignmentTests
             Messages: [new UserMessage(new UserMessageContent("hello"), timestamp), assistant]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var redacted = body.RootElement.GetProperty("messages")[1].GetProperty("content")[0];
@@ -264,7 +268,7 @@ public class AnthropicProviderAlignmentTests
             Messages: [new UserMessage(new UserMessageContent("hello"), timestamp), assistant]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var toolUse = body.RootElement.GetProperty("messages")[1].GetProperty("content")[0];
@@ -292,7 +296,7 @@ public class AnthropicProviderAlignmentTests
         };
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         body.RootElement.GetProperty("thinking").GetProperty("type").GetString().ShouldBe("disabled");
@@ -313,7 +317,7 @@ public class AnthropicProviderAlignmentTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.StreamSimple(model, context, new SimpleStreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         body.RootElement.GetProperty("thinking").GetProperty("type").GetString().ShouldBe("disabled");
@@ -340,7 +344,7 @@ public class AnthropicProviderAlignmentTests
         };
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         body.RootElement.GetProperty("thinking").GetProperty("type").GetString().ShouldBe("adaptive");
@@ -367,7 +371,7 @@ public class AnthropicProviderAlignmentTests
         };
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         body.RootElement.TryGetProperty("temperature", out _).ShouldBeFalse();
@@ -388,7 +392,7 @@ public class AnthropicProviderAlignmentTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         handler.RequestHeaders.ShouldContainKey("accept");
         handler.RequestHeaders["accept"].ShouldContain("application/json");
@@ -427,7 +431,7 @@ public class AnthropicProviderAlignmentTests
             ]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         handler.RequestHeaders.ShouldContainKey("X-Initiator");
         handler.RequestHeaders["X-Initiator"].ShouldContain("agent");
@@ -449,7 +453,7 @@ public class AnthropicProviderAlignmentTests
         var options = new AnthropicOptions { ApiKey = "test-key", ToolChoice = "any" };
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         body.RootElement.GetProperty("tool_choice").GetProperty("type").GetString().ShouldBe("any");
@@ -479,7 +483,7 @@ public class AnthropicProviderAlignmentTests
         };
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var toolChoice = body.RootElement.GetProperty("tool_choice");
@@ -505,7 +509,7 @@ public class AnthropicProviderAlignmentTests
             Messages: [new UserMessage(new UserMessageContent("hello \uD800 world"), timestamp)]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         body.RootElement.GetProperty("messages")[0]
@@ -546,7 +550,7 @@ public class AnthropicProviderAlignmentTests
             Messages: [new UserMessage(new UserMessageContent("hello"), timestamp), assistant]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var toolUse = body.RootElement.GetProperty("messages")[1].GetProperty("content")[0];
@@ -584,7 +588,7 @@ public class AnthropicProviderAlignmentTests
             Messages: [new UserMessage(new UserMessageContent("hello"), timestamp), assistant]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var toolUse = body.RootElement.GetProperty("messages")[1].GetProperty("content")[0];
@@ -614,7 +618,7 @@ public class AnthropicProviderAlignmentTests
         SetToolChoice(options, configuredToolChoice);
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var toolChoice = body.RootElement.GetProperty("tool_choice");
@@ -651,7 +655,7 @@ public class AnthropicProviderAlignmentTests
         SetToolChoice(options, configured);
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var toolChoice = body.RootElement.GetProperty("tool_choice");
@@ -683,7 +687,7 @@ public class AnthropicProviderAlignmentTests
         SetToolChoice(options, configured);
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         using var body = JsonDocument.Parse(handler.RequestBody!);
         var toolChoice = body.RootElement.GetProperty("tool_choice");

@@ -67,7 +67,9 @@ public sealed class AskUserResponseRegistryTests
         using var registry = new AskUserResponseRegistry();
         var pending = registry.Register(ConversationId.From("conversation-7"), TimeSpan.FromMilliseconds(50));
 
-        var result = await pending.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var result = await TestAwait.SignaledAsync(
+            pending.Task,
+            "the registry's own 50ms timeout to complete the pending request");
         result.RequestId.ShouldBe(pending.RequestId);
         result.WasTimeout.ShouldBeTrue();
     }

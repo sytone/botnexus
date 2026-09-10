@@ -9,6 +9,12 @@
       "blurb": "Install, first run, and checking the gateway is healthy."
     },
     {
+      "id": "portal",
+      "file": "portal.md",
+      "title": "The portal",
+      "blurb": "The shell you look at: toolbar, sidebar, and what Activity's filters do."
+    },
+    {
       "id": "conversations",
       "file": "conversations.md",
       "title": "Conversations & sessions",
@@ -39,6 +45,18 @@
       "blurb": "Cron, headless runs, exit codes and approval posture."
     },
     {
+      "id": "tools",
+      "file": "tools.md",
+      "title": "Tools",
+      "blurb": "Pinning your other web interfaces into the portal, and why some refuse to embed."
+    },
+    {
+      "id": "notifications",
+      "file": "notifications.md",
+      "title": "Notifications",
+      "blurb": "Being told when a run fails or an agent blocks, in the portal and on your desktop."
+    },
+    {
       "id": "channels",
       "file": "channels/signalr.md",
       "title": "Channels",
@@ -65,6 +83,12 @@
           "title": "Service Bus envelope"
         }
       ]
+    },
+    {
+      "id": "plugins",
+      "file": "plugins.md",
+      "title": "Plugins & marketplace",
+      "blurb": "Adding repositories to browse, installing what they offer, and building a plugin yourself."
     },
     {
       "id": "extensions",

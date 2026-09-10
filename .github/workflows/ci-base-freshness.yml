@@ -41,8 +41,12 @@ name: "CI: Base Freshness & Main Health"
 on:
   pull_request:
     branches: [ main ]
-  # Primary main-health trigger: probe as soon as main's own build verdict exists.
-  # This does not depend on cron delivery at all.
+  # Fires the moment main's build CONCLUDES, so a red main is surfaced in seconds
+  # rather than whenever the scheduler next happens to run. Deliberately not `push`:
+  # on a push the newest CI run for main is the one that push just queued, whose
+  # conclusion is still null, and the probe below would read that as "not failure"
+  # and report green on every single merge - a false green masking the real result
+  # minutes later.
   workflow_run:
     workflows: ["CI: Build & Test"]
     branches: [ main ]
@@ -61,6 +65,11 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  # main-health files and closes the "main is RED" issue. That issue IS the
+  # notification: GitHub emails and push-notifies the assignee, which a red tick in the
+  # Actions tab does not. main sat red for three days and twelve runs precisely because
+  # the probe was only ever visible to someone who went looking.
+  issues: write
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -192,14 +201,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Probe latest main run
+        id: probe
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          # --status completed is required: without it the newest row can be an
-          # in-progress run whose `conclusion` is null, which would report a red main
-          # as unknown-and-therefore-fine. We want the latest CONCLUDED verdict.
+          # --status completed is load-bearing: an in-flight run reports conclusion
+          # null, which is not "failure", so without this filter the probe would call a
+          # main whose tests are still running green.
           RUN_JSON="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow 'CI: Build & Test' \
             --branch main --status completed --limit 1 --json conclusion,databaseId,headSha,url \
             --jq '.[0] // empty')"
@@ -220,10 +230,118 @@ jobs:
             echo "| run id | [$RUN_ID]($URL) |"
             echo "| commit | \`$SHA\` |"
           } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "conclusion=$CONCLUSION"
+            echo "sha=$SHA"
+            echo "run_id=$RUN_ID"
+            echo "url=$URL"
+          } >> "$GITHUB_OUTPUT"
+
           if [ "$CONCLUSION" = "failure" ]; then
             echo "::error::main is RED at $SHA (run $RUN_ID). Every PR branched from it inherits this failure."
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "**\`main\` is RED.** Every open PR inherits it. Fix forward on \`main\`; do not disable tests." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
+          else
+            echo "main is green at $SHA (run $RUN_ID)."
           fi
-          echo "main is green at $SHA (run $RUN_ID)."
+
+      # The issue is the delivery mechanism, not bookkeeping. One open issue is kept for
+      # the whole outage - reopening a fresh one on every 15-minute tick would train the
+      # reader to ignore it, which is the failure mode this is meant to cure.
+      - name: Find the open main-is-red issue
+        id: find
+        if: steps.probe.outputs.conclusion == 'failure' || steps.probe.outputs.conclusion == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['ci'],
+              state: 'open',
+              per_page: 20,
+            });
+            const existing = issues.find(i => i.title.includes('main is RED'));
+            return existing ? existing.number : null;
+
+      - name: Open or update the main-is-red issue
+        if: steps.probe.outputs.conclusion == 'failure'
+        uses: actions/github-script@v7
+        env:
+          # Dynamic values arrive via process.env rather than ${{ }} interpolation into the
+          # script body - the same rule the security workflow follows. A commit message or
+          # run URL interpolated directly is both a script-injection vector and a way to
+          # terminate a template literal with a stray backtick.
+          RED_SHA: ${{ steps.probe.outputs.sha }}
+          RED_URL: ${{ steps.probe.outputs.url }}
+          RED_RUN_ID: ${{ steps.probe.outputs.run_id }}
+          EXISTING: ${{ steps.find.outputs.result }}
+        with:
+          script: |
+            const sha = process.env.RED_SHA || 'unknown';
+            const url = process.env.RED_URL || '';
+            const runId = process.env.RED_RUN_ID || '';
+            const raw = process.env.EXISTING;
+            const existing = raw && raw !== 'null' ? Number(raw) : null;
+
+            const detail = [
+              `**Commit:** \`${sha}\``,
+              `**Failing run:** [${runId}](${url})`,
+              '',
+              'Every PR branched from `main` inherits this failure, so it will look like',
+              'unrelated PRs are breaking. Fix forward on `main`; do not disable tests.',
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing,
+                body: `### Still red\n\n${detail}`,
+              });
+              core.info(`Updated existing issue #${existing}`);
+            } else {
+              const { data: issue } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '\u{1F6A8} main is RED - CI: Build & Test is failing',
+                body: detail,
+                labels: ['ci', 'bug'],
+                assignees: [context.repo.owner],
+              });
+              core.info(`Opened issue #${issue.number}: ${issue.html_url}`);
+            }
+
+      - name: Close the issue once main is green
+        if: steps.probe.outputs.conclusion == 'success' && steps.find.outputs.result != 'null'
+        uses: actions/github-script@v7
+        env:
+          GREEN_SHA: ${{ steps.probe.outputs.sha }}
+          GREEN_URL: ${{ steps.probe.outputs.url }}
+          EXISTING: ${{ steps.find.outputs.result }}
+        with:
+          script: |
+            const raw = process.env.EXISTING;
+            const existing = raw && raw !== 'null' ? Number(raw) : null;
+            if (!existing) return;
+            const sha = process.env.GREEN_SHA || 'unknown';
+            const url = process.env.GREEN_URL || '';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: existing,
+              body: `main is green again at \`${sha}\` ([run](${url})). Closing.`,
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: existing,
+              state: 'closed',
+            });
+            core.info(`Closed #${existing}`);
+
+      # Last, so the steps above always run. The red check still matters for anyone who
+      # IS looking at the Actions tab; the issue is for everyone who is not.
+      - name: Fail the job when main is red
+        if: steps.probe.outputs.conclusion == 'failure'
+        run: exit 1

@@ -58,6 +58,20 @@ public sealed class SkillsConfig
     public bool AllowSharedSkillManagement { get; set; }
 
     /// <summary>
+    /// Allow the agent to record a completed run as a skill via the skill_record tool, through the
+    /// propose-and-confirm cycle. Defaults to true, and is subordinate to
+    /// <see cref="AllowSkillCreation"/>: recording ends in a skill being written, so an agent denied
+    /// creation cannot obtain it by recording instead.
+    /// </summary>
+    /// <remarks>
+    /// Set this to false to keep skill authoring by hand while leaving skill_manage available. The
+    /// two differ in what they read, not only in what they write: the recorder reads back the
+    /// session's own tool-call arguments in order to check a proposal against the run, so an agent
+    /// whose transcript is sensitive may warrant hand-authored skills even where creation is fine.
+    /// </remarks>
+    public bool AllowSkillRecording { get; set; } = true;
+
+    /// <summary>
     /// Operator-recorded acknowledgements of specific critical security-scan findings (#3355).
     /// Each entry clears exactly one <c>skill + ruleId + relative file path</c> triple, optionally
     /// pinned to a <c>sha256</c> of the reviewed file. This is intentionally NOT a "disable

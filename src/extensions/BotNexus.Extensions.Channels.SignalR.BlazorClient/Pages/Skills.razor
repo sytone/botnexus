@@ -9,6 +9,16 @@
         <a class="help-link" href="guide/skills" title="About skills" aria-label="About skills" data-testid="help-link-skills">?</a>
     </header>
 
+    @* This page is a file browser over ONE directory, but it is titled "Skills", so it reads as
+       the full inventory. It is not: an agent also picks up skills from installed plugins and
+       from its own folder and workspace, and those outnumbered the ones listed here on the first
+       machine anyone checked. Say what the list covers rather than let the omission be inferred. *@
+    <p class="config-note" data-testid="skills-scope-note">
+        Showing skills in <code>~/.botnexus/skills</code>, which is the folder you can edit here.
+        Agents can also use skills from installed <a href="plugins">plugins</a> and from an agent's
+        own folder or workspace — those are available without appearing in this list.
+    </p>
+
     <div class="config-page">
         <div class="config-panel-canvas skills-panel-canvas">
             @switch (Section?.ToLowerInvariant() ?? "explorer")

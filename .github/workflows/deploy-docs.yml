@@ -1,5 +1,28 @@
 name: "Deploy: Documentation"
 
+# The site build is a PR GATE, not only a post-merge step.
+#
+# It used to run exclusively on push to main, so a dead link landed on main and the failure
+# appeared where nobody looks - `Deploy: Documentation` sat red for days over two `./skills`
+# links in docs/user-guide/plugins.md, and the published site silently stopped updating the
+# whole time. VitePress fails the build on a dead link, which makes it a perfectly good
+# pre-merge check; nothing about it required waiting until the change was unrevertable.
+#
+# One workflow rather than a separate PR-validation copy, deliberately: the gate must build
+# the site EXACTLY the way the deploy builds it. A second workflow with its own node version
+# or install command is free to drift into passing what the real build rejects, and a gate
+# that disagrees with the thing it guards is worse than no gate.
+#
+# The split is by event, not by content: `build` runs everywhere, `deploy` is skipped on
+# pull_request, and the two Pages-specific steps are skipped with it. A PR therefore never
+# needs Pages credentials and can never publish.
+#
+# The `build` JOB always runs on a PR and decides for itself whether to build, rather than
+# being filtered out by `paths`. That is what makes it safe to mark REQUIRED on main: GitHub
+# does not treat a filtered-out required check as skipped, it waits for it forever, and with
+# enforce_admins on that blocks every PR that happens to touch no documentation - including
+# an admin's.
+
 on:
   push:
     branches: [main]
@@ -7,25 +30,41 @@ on:
       - 'docs/**'
       - 'package.json'
       - 'package-lock.json'
+      - '.github/workflows/deploy-docs.yml'
+  # NO `paths` filter on the pull_request side, deliberately. A required check that does not
+  # run is not skipped - it sits "Expected - waiting for status to be reported" forever, and
+  # with enforce_admins on that blocks everyone including an admin. So the job always runs and
+  # decides for itself whether there is anything to build. Same reasoning as
+  # .github/workflows/docs-impact.yml: run everywhere, exit early.
+  #
+  # This also keeps the gate self-gating for free - a PR editing this file runs it.
+  pull_request:
   workflow_dispatch:
 
+# Least privilege at the top; the two jobs that genuinely need Pages ask for it themselves.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# Allow only one concurrent deployment
+# Deploys keep the single serialized `pages` group and are never cancelled. PR builds are
+# per-ref and DO cancel, so a run superseded by a new push stops instead of queueing behind
+# the deployment lane.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
+    name: Docs site builds (a dead link fails the PR)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
+          # VitePress reads git history for last-updated timestamps.
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -33,27 +72,69 @@ jobs:
           node-version: '20'
           cache: npm
 
+      # Decides whether this PR can possibly affect the site. A push to main skips this and
+      # always builds, because the push trigger is already filtered to the same paths.
+      - name: Does this change affect the docs site?
+        id: scope
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          # Three dots. `git diff A B` compares the two TIPS, so anything merged to main after
+          # this branch was cut would count as a file this PR changed - the bug fixed in #95.
+          # `A...B` diffs from the merge base, which needs fetch-depth: 0 above.
+          if ! changed=$(git diff --name-only "$BASE_SHA...$HEAD_SHA"); then
+            echo "::error::Could not diff $BASE_SHA...$HEAD_SHA; refusing to report a pass on an unknown change set."
+            exit 1
+          fi
+          echo "Changed files: $(printf '%s\n' "$changed" | grep -c . || true)"
+          if printf '%s\n' "$changed" | grep -qE '^(docs/|package(-lock)?\.json$|\.github/workflows/deploy-docs\.yml$)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "Docs site inputs touched; building."
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing that can reach the docs site; skipping the build."
+          fi
+
       - name: Install dependencies
+        if: github.event_name != 'pull_request' || steps.scope.outputs.relevant == 'true'
         run: npm ci
 
+      # THE GATE. Exits non-zero on a dead link, which is the whole point of running it here.
       - name: Build VitePress site
+        if: github.event_name != 'pull_request' || steps.scope.outputs.relevant == 'true'
         run: npm run docs:build
 
+      # Pages-only from here down. `base` is hardcoded in docs/.vitepress/config.mts and this
+      # step runs after the build, so skipping it on a PR cannot change what the gate checked.
       - name: Setup GitHub Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/.vitepress/dist
 
   deploy:
+    name: Publish to GitHub Pages
+    # A pull request validates; it never publishes.
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Matches the official Pages pattern. Job-level `permissions` sets every unlisted scope to
+    # none, so these are stated in full rather than trimmed to what looks necessary.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     steps:
       - name: Deploy to GitHub Pages
         id: deployment

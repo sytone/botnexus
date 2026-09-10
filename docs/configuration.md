@@ -647,6 +647,9 @@ overrides the corresponding `agents.defaults` value. The `Inherits` column state
 | `emoji` | string | `null` | `LocalOnly` | Optional emoji shown alongside the agent name |
 | `description` | string | `null` | `LocalOnly` | Description of the agent's purpose. Human-owned - written once at registration and never rewritten by the agent |
 | `summary` | string | `null` | `LocalOnly` | Agent-maintained account of what the agent is *currently* doing. Written by the agent itself through `update_agent`, and only for its own id - a cross-agent summary write is refused with a policy denial. Length is bounded by `gateway.agentSummary.maxLength` (default 500); a longer summary is refused rather than truncated. When unset the field is omitted from every projection entirely |
+| `responsibility` | string | `null` | `LocalOnly` | One short line naming what this agent owns. Shown under the agent's name in the roster and in the identity chip, where it is preferred over `description` because it survives one-line truncation intact. **Descriptive only — see the note below.** |
+| `boundaries` | string | `null` | `LocalOnly` | What this agent must not do. Shown in the agent detail panel. **Descriptive only — see the note below.** |
+| `avatarHue` | int? | `null` | `LocalOnly` | Avatar colour in degrees (0-359). Leave unset to generate a stable hue from the agent id, which is what most agents do |
 | `model` | string | `null` | `ScalarOverride` | Model identifier (for example `gpt-4.1`) |
 | `allowedModels` | array | `null` | `ReplaceAsUnit` | Model ids this agent may use. Null means unrestricted within the provider allowlist |
 | `systemPromptFiles` | array | `null` | `ReplaceAsUnit` | Ordered list of files to load as the system prompt. Empty means the default order |
@@ -677,6 +680,12 @@ overrides the corresponding `agents.defaults` value. The `Inherits` column state
 
 See [Agent Settings Reference](./user-guide/configuration.md#agent-settings-reference) in the user guide
 for the nested `memory.*`, `soul.*`, `sessionAccess.*`, `toolPolicy.*` and `fileAccess.*` keys.
+
+> **`responsibility` and `boundaries` describe an agent; they do not constrain it.** Both are
+> persona fields rendered by the portal — they are never injected into the system prompt, and
+> nothing enforces them. Writing "must not delete files" in `boundaries` documents your intent for
+> a human reader; it does not stop the agent. Use `toolIds`, `toolPolicy.denied` and `fileAccess`
+> for anything that has to actually hold.
 
 > **No `named` sub-dictionary, and no iteration limits.** Agents are keyed directly under `agents`;
 > there is no `agents.named` wrapper. There is likewise no `maxToolIterations`, `maxRepeatedToolCalls`,
@@ -934,6 +943,42 @@ botnexus config set channels.agent365.inboundRoute /agent365/messages
 | `agentId` | yes | BotNexus agent ID inbound messages route to. |
 | `inboundRoute` | no | HTTP route the message endpoint is hosted on. Defaults to `/agent365/messages`. |
 
+#### Discord Channel
+
+**Folder:** `extensions/channels/discord/`
+
+```json
+{
+  "channels": {
+    "instances": {
+      "discord": {
+        "enabled": true,
+        "botToken": "MzA5NTkyMzAzMTgyNzIzODQw.C_DUbA.Tz3u1NBoI7K-xypwWD",
+        "allowFrom": []
+      }
+    }
+  }
+}
+```
+
+#### Slack Channel
+
+**Folder:** `extensions/channels/slack/`
+
+```json
+{
+  "channels": {
+    "instances": {
+      "slack": {
+        "enabled": true,
+        "botToken": "<your-slack-bot-token>",
+        "signingSecret": "<your-slack-signing-secret>",
+        "allowFrom": []
+      }
+    }
+  }
+}
+```
 
 ---
 
@@ -971,6 +1016,8 @@ Gateway HTTP server settings.
 | `AgentConversationMaxDepth` | int | 3 | Maximum depth for `agent_converse` call chains. A value of zero or less falls back to the built-in default rather than disabling the guard. |
 | `AutoReplayInterruptedTurns` | bool | false | When true, the gateway automatically re-dispatches the last user message from interactive sessions interrupted by an unclean restart. Off by default until the replay path is confirmed stable; when off, the interrupted session gets a notification instead of a replay. |
 | `MaxAutoReplayAttempts` | int | 2 | Maximum automatic replay attempts for a single interrupted session before falling back to the notification-only path. The counter lives in session metadata, so a message that always crashes the agent cannot produce an infinite replay loop. |
+| `ToolEnvironmentPassThrough` | string[] | _(none)_ | Extra environment variable names handed to `shell`/`bash` and `exec` child processes. Tool subprocesses are built from an **empty** environment and populated from a fixed allow-list (`PATH`, `HOME`, `TMPDIR`, locale, and similar), so an agent holding a shell cannot read the provider keys or `env:` credentials the gateway runs under. This list is the escape hatch and is per-name on purpose — anything named here is readable by every agent that can run a command, so never add a variable that authenticates. There is deliberately no setting that restores wholesale inheritance. See [Servers, credentials and agents](user-guide/secrets-and-locations.md#acting-on-a-target--read-this-before-you-plan-around-it). |
+| `Memory.SharedStores` | array | _(none)_ | Shared memory stores that named agents can read and write in common. See [Workspace and memory](development/workspace-and-memory.md). |
 | `EnableProviderRequestLogging` | bool | false | When true, every provider HTTP request and response is logged at **Debug** level for observability (issue #453). Auth headers (`x-api-key`, `Authorization`, `Proxy-Authorization`) are always redacted by name, and request/response bodies are additionally passed through the shared `SecretRedactor` so leaked keys/tokens are scrubbed. Non-streamed responses also log a best-effort token `usage` summary and elapsed ms. Streaming (`text/event-stream`) responses log status + headers + duration only — the body is never buffered, so streaming is never broken. Off by default; enable only for debugging unexpected provider responses (never at Info in production). |
 
 
@@ -1081,7 +1128,7 @@ Governs agent-to-agent conversations started with the `agent_converse` tool. Bou
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `AgentExchange.AccessPolicy` | string | `open` | Which agents may initiate conversations with others. `open` lets any registered agent converse with any other; `whitelist` requires the initiator to have the target in its `SubAgentIds` list or a matching `SubAgentRoles` grant. Compared case-insensitively. |
+| `AgentExchange.AccessPolicy` | string | `open` | Which agents may reach another agent. `open` lets any registered agent reach any other; `whitelist` requires the initiator to have the target in its `SubAgentIds` list or a matching `SubAgentRoles` grant. Compared case-insensitively. **Enforced on both paths that reach another agent**: `agent_converse` and a Mirror `spawn_subagent`, which is the stronger of the two because it runs the target's descriptor verbatim. Embody spawns clone the parent's own descriptor and are not subject to it. |
 | `AgentExchange.MaxTurnsCeiling` | int | 30 | Upper bound applied to the `maxTurns` argument of a single `agent_converse` call, regardless of the value the agent requests. This is what stops one tool call from driving an unbounded number of provider round-trips — the conversation budget tracker caps exchanges per agent pair, not turns within an exchange. Values below 1 are treated as 1, so a misconfiguration can never disable exchanges entirely. |
 | `AgentExchange.MaxInboundQueueDepth` | int | 8 | How many inbound exchanges may **wait** for one agent's single execution slot before further callers are refused with explicit backpressure. An in-process agent runs one turn at a time; without a bound, a busy agent accumulates waiters until each expires on its own caller-side deadline, which is precisely the silent message loss this setting makes visible. The in-flight exchange itself does not count toward the bound — only genuinely blocked callers do. Values below 1 are treated as 1. |
 | `AgentExchange.DailyTurnCap` | int | 200 | Maximum total turns per agent pair per calendar day (UTC). Counts **turns**, not exchanges, so one long conversation consumes the same budget as several short ones. Surfaced per pair as `dailyTurnCap` by [`GET /api/exchanges/budget`](api/exchanges.md). |

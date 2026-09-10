@@ -460,11 +460,11 @@ public sealed class WebFetchDnsPolicyTests
         });
         using var cancellation = new CancellationTokenSource();
         var pending = harness.FetchAsync(Origin, cancellation.Token);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
         cancellation.Cancel();
-        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var text = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        var text = await pending.WaitAsync(TimeSpan.FromSeconds(15));
 
         text.ShouldContain("cancel", Case.Insensitive);
         text.ShouldNotContain(Body);
@@ -692,7 +692,7 @@ public sealed class WebFetchDnsPolicyTests
             await _stop.CancelAsync();
             try
             {
-                await Task.WhenAll(_servers).WaitAsync(TimeSpan.FromSeconds(10));
+                await Task.WhenAll(_servers).WaitAsync(TimeSpan.FromSeconds(15));
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested)
             {

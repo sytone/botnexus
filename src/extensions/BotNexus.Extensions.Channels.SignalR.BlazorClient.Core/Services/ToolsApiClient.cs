@@ -77,6 +77,34 @@ public sealed class ToolsApiClient
     /// client-generated (#2232). Returns <c>null</c> on any failure so the management UI can show an
     /// inline error instead of throwing out of an event handler.
     /// </summary>
+    /// <summary>
+    /// Asks the gateway whether a tool's site will permit being framed.
+    /// </summary>
+    /// <remarks>
+    /// The browser cannot answer this. A refused frame raises the same load event a working one
+    /// does, and reading into it throws SecurityError either way, so the check has to happen where
+    /// the response headers are visible.
+    /// </remarks>
+    /// <param name="id">Tool identifier.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<ToolEmbeddableDto?> GetEmbeddableAsync(string id, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _http.GetAsync(
+                $"/api/tools/{Uri.EscapeDataString(id)}/embeddable", ct);
+
+            return response.IsSuccessStatusCode
+                ? await response.Content.ReadFromJsonAsync<ToolEmbeddableDto>(JsonOptions, ct)
+                : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or NotSupportedException)
+        {
+            // Unknown, which the caller treats as permission to try framing anyway.
+            return null;
+        }
+    }
+
     public async Task<ToolDto?> CreateAsync(ToolDto tool, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(tool);
@@ -173,4 +201,17 @@ public sealed class ToolDto
     /// explicitly opts out (<c>false</c>) the iframe is rendered without the <c>sandbox</c> attribute.
     /// </summary>
     [JsonPropertyName("sandboxEnabled")] public bool SandboxEnabled { get; set; } = true;
+}
+
+/// <summary>Whether a tool's site permits being framed, as reported by the gateway.</summary>
+public sealed class ToolEmbeddableDto
+{
+    /// <summary>False when a response header will make the browser refuse the frame.</summary>
+    public bool Embeddable { get; set; }
+
+    /// <summary>The header responsible, for telling the user why. Null when embeddable.</summary>
+    public string? Reason { get; set; }
+
+    /// <summary>False when the check could not be performed - unknown, not permitted.</summary>
+    public bool Checked { get; set; }
 }

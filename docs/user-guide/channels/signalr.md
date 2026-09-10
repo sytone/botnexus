@@ -78,12 +78,10 @@ row, and control characters in a name or description are normalised to single sp
 
 ![A 300-character label truncating on one line](/images/portal-density/adversarial-long300-desktop-1920.png)
 
-The left sidebar behaves as follows:
-
-- **Tools** subnav is **collapsed by default**; expand it to list the active agent's
-  tools. When an agent has no tools configured the subnav simply stays empty — no
-  placeholder "No tools configured" row is rendered.
-- **My Sections** is collapsible, so the sections list can be folded away when not in use.
+Navigation has since moved out of the sidebar and into a toolbar under the top bar, and
+the sidebar is now the conversation list, shown only on the routes where picking up a
+conversation is the task. The shell — toolbar, overflow menu, sub-navigation, sidebar
+and loading skeletons — is described in [The portal](../portal.md).
 
 ### Interface density
 

@@ -301,6 +301,62 @@ After a gateway restart, conversations, history, and active sessions are fully r
 
 ---
 
+## Finding a conversation (portal)
+
+The conversation switcher filters by **title** as you type, and — from three
+characters — also searches **what was said inside** each conversation.
+
+That second half matters more here than in most tools: agents run unattended and
+generate transcripts nobody titles, so "the conversation where we fixed the
+gateway restart" was previously findable only if someone had happened to title it
+that.
+
+- **Both run together.** Title matches come from the roster the portal already
+  holds and appear instantly; content matches arrive from the gateway a moment
+  later and are listed with the matching line as a snippet, so you can tell why a
+  row is there.
+- **Every term must match.** Two words narrows, it does not widen.
+- **Ordered by relevance**, best match first — not by recency.
+- **Archived and internal conversations are excluded**, the same ones the sidebar
+  already hides.
+- **Tool output and platform replay banners are not searched.** You are searching
+  what was said, so a tool that printed a word forty times does not outrank the
+  sentence that answers your question.
+- **If the search fails, the title list still stands.** A supplementary search
+  that could not answer degrades quietly rather than replacing a usable list with
+  an error.
+
+Searching is read-only and never changes what an agent sees.
+
+---
+
+## What a run actually did (portal)
+
+The agent panel's **Steps** tab answers "what has this thing been doing?" without
+scrolling the transcript. It lists every tool call in the conversation in order,
+each with its status and how long it took, and a bar scaled to the slowest step so
+the expensive ones are obvious at a glance.
+
+A step is in one of four states:
+
+| Status | Meaning |
+|---|---|
+| **Running** | Started, still going. |
+| **Succeeded** | Finished and returned a result. |
+| **Failed** | Finished and returned an error. |
+| **Never finished** | Started, and no result or error was ever recorded — usually a restart or a cancel mid-call. |
+
+The summary line counts the steps, the failures and the never-finished ones, and
+**Problems only** filters the list to just those two. That last category is the
+reason the tab is useful: a step that never finished leaves no error in the
+transcript to scroll to, so before this it was visible only by noticing something
+absent.
+
+The tab is a projection of the transcript that is already stored — it adds no
+tracking, and it is populated for past conversations too, not only live ones.
+
+---
+
 ## Steering a running agent (portal)
 
 While an agent is working — anywhere in its loop, including the gaps between tool

@@ -7,7 +7,7 @@ namespace BotNexus.Memory;
 /// In-memory registry of shared memory stores backed by SQLite.
 /// Stores are located at {basePath}/shared/{store-name}.db.
 /// </summary>
-public sealed class SharedMemoryStoreRegistry : ISharedMemoryStoreRegistry
+public sealed class SharedMemoryStoreRegistry : ISharedMemoryStoreRegistry, IDisposable
 {
     private readonly IReadOnlyList<SharedMemoryStoreConfig> _configs;
     private readonly string _basePath;
@@ -84,6 +84,25 @@ public sealed class SharedMemoryStoreRegistry : ISharedMemoryStoreRegistry
 
         _stores.Clear();
     }
+
+    /// <summary>
+    /// Synchronous disposal, for containers that dispose synchronously.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ISharedMemoryStoreRegistry"/> is <see cref="IAsyncDisposable"/> only, and a
+    /// <c>ServiceProvider</c> disposed with <c>Dispose()</c> THROWS on an async-only disposable
+    /// rather than falling back - so registering this type in DI without a sync path turns a
+    /// synchronous shutdown into an <see cref="InvalidOperationException"/>. That is a poor way
+    /// to find out, and it is why this exists.
+    /// <para>
+    /// Blocking here is safe rather than merely tolerable: every store's disposal is synchronous
+    /// work behind an async signature (<c>SqliteMemoryStore</c> disposes a semaphore and returns
+    /// a completed <see cref="ValueTask"/>), so in practice nothing is waited on. The
+    /// <c>GetAwaiter().GetResult()</c> is there for correctness if that ever stops being true,
+    /// and container disposal has no synchronisation context to deadlock against.
+    /// </para>
+    /// </remarks>
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
 
     private SharedMemoryStoreConfig? FindConfig(string storeName)
         => _configs.FirstOrDefault(c => string.Equals(c.Name, storeName, StringComparison.OrdinalIgnoreCase));

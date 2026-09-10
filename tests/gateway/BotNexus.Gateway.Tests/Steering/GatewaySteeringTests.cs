@@ -215,17 +215,17 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
 
         // Step 1: Normal message enters queue → agent starts running
         var normalTask = orchestrator.AcceptAsync(CreateMessage("do work"));
-        await agentRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(agentRunning.Task, "the agent to start running");
 
         // Step 2: Steer enters the same queue (blocked behind running dispatch)
         var steerTask = orchestrator.AcceptAsync(CreateSteerMessage("change direction"));
 
         // Step 3: Agent finishes
         agentCanFinish.TrySetResult();
-        await normalTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(normalTask, "the normal message's dispatch to complete");
 
         // Step 4: Steer dequeued — NOW it’s processed
-        await steerTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(steerTask, "the queued steer to be dequeued and processed");
 
         // FIXED: SteerAsync IS called even though agent finished
         handle.Verify(h => h.SteerAsync("change direction", It.IsAny<CancellationToken>()), Times.Once);
@@ -256,7 +256,7 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
 
         // Agent running
         var normalTask = orchestrator.AcceptAsync(CreateMessage("work"));
-        await agentRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(agentRunning.Task, "the agent to start running");
 
         // Send 3 steers while agent is busy
         var steer1 = orchestrator.AcceptAsync(CreateSteerMessage("steer-1"));
@@ -265,7 +265,9 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
 
         // Agent finishes
         agentCanFinish.TrySetResult();
-        await Task.WhenAll(normalTask, steer1, steer2, steer3).WaitAsync(TimeSpan.FromSeconds(10));
+        await TestAwait.SignaledAsync(
+            Task.WhenAll(normalTask, steer1, steer2, steer3),
+            "the normal message and all three steers to complete");
 
         // ALL steers injected
         handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
@@ -317,19 +319,21 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
 
         // Session A: agent running
         var normalTask = orchestrator.AcceptAsync(CreateMessage("work", sessionId: "session-1"));
-        await agentRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(agentRunning.Task, "the agent to start running on session A");
 
         // Session B: steer on a different session — should NOT be blocked
         var steerMsg = CreateSteerMessage("steer for B", sessionId: "session-2");
         var steerTask = orchestrator.AcceptAsync(steerMsg);
-        await steerTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(
+            steerTask,
+            "the steer on the other session to complete without waiting for session A");
 
         // Steer on B succeeded because it's a different queue key
         handleB.Verify(h => h.SteerAsync("steer for B", It.IsAny<CancellationToken>()), Times.Once);
 
         // Cleanup
         agentCanFinish.TrySetResult();
-        await normalTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(normalTask, "session A's dispatch to complete");
     }
 
     [Fact]
@@ -416,14 +420,16 @@ public sealed class GatewaySteeringTests : IAsyncLifetime
 
         // Start agent
         var normalTask = orchestrator.AcceptAsync(CreateMessage("work"));
-        await agentRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(agentRunning.Task, "the agent to start running");
 
         // Send steer while busy
         var steerTask = orchestrator.AcceptAsync(CreateSteerMessage("redirect"));
 
         // Agent finishes
         agentCanFinish.TrySetResult();
-        await Task.WhenAll(normalTask, steerTask).WaitAsync(TimeSpan.FromSeconds(10));
+        await TestAwait.SignaledAsync(
+            Task.WhenAll(normalTask, steerTask),
+            "the normal message and the queued steer to complete");
 
         // FIXED: SteeringInjected IS published (portal resolves 🕒 to ✅)
         activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.SteeringInjected);

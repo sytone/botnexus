@@ -178,7 +178,9 @@ public sealed class DefaultInboundMessageOrchestratorTests
         var secondTask = orchestrator.AcceptAsync(CreateMessage("addr-B"));
 
         // Both should reach "started" without either gate being released.
-        await Task.WhenAll(firstStarted.Task, secondStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(
+            Task.WhenAll(firstStarted.Task, secondStarted.Task),
+            "both queue keys to start processing concurrently");
 
         firstGate.SetResult(true);
         secondGate.SetResult(true);
@@ -266,7 +268,9 @@ public sealed class DefaultInboundMessageOrchestratorTests
         // Now release the processor and verify it completed successfully, proving
         // the inner work was NOT cancelled by the caller.
         releaseProcessor.SetResult(true);
-        await processorFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(
+            processorFinished.Task,
+            "the processor to run to completion after the caller stopped waiting");
     }
 
     private static InboundMessage CreateMessage(string address, string? sessionId = null)
@@ -376,7 +380,7 @@ public sealed class DefaultInboundMessageOrchestratorTests
         first.ShouldBeTrue();
 
         // 2. Wait until worker has consumed the first item (buffer now empty, worker in ProcessAsync)
-        await processorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(processorStarted.Task, "the worker to consume the first queued message");
 
         // 3. Second Post fills the buffer again
         var second = orchestrator.Post(CreateMessage("addr-full"));

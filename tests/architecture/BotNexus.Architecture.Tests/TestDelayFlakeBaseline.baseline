@@ -54,7 +54,6 @@ tests/gateway/BotNexus.Gateway.Tests/Configuration/PlatformAgentReconciliationSe
 tests/gateway/BotNexus.Gateway.Tests/Configuration/PlatformConfigWriterNoOpTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/ConversationAutoTitleServiceTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/ConversationScopedEventAttributionTests.cs|1
-tests/gateway/BotNexus.Gateway.Tests/DefaultAgentRegistryTests.cs|2
 tests/gateway/BotNexus.Gateway.Tests/DefaultAgentSupervisorTests.cs|2
 tests/gateway/BotNexus.Gateway.Tests/Diagnostics/MemoryPressureMonitorTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/DockerSandboxIsolationStrategyTests.cs|3
@@ -85,7 +84,7 @@ tests/gateway/BotNexus.Gateway.Tests/Steering/GatewaySteeringTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/StreamingPipelineTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/StreamingSessionHelperTests.cs|1
 tests/gateway/BotNexus.Gateway.Tests/Tools/DelayToolTests.cs|1
-tests/gateway/BotNexus.Gateway.Tests/Tools/FileWatcherToolTests.cs|2
+tests/gateway/BotNexus.Gateway.Tests/Tools/FileWatcherToolTests.cs|1
 tests/gateway/BotNexus.Memory.Tests/MarkdownAgentMemoryBudgetTests.cs|1
 tests/gateway/BotNexus.Memory.Tests/MarkdownNoteIndexingTests.cs|1
 tests/gateway/BotNexus.Memory.Tests/MemoryIsolationTests.cs|1

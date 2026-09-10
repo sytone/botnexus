@@ -67,7 +67,7 @@ public class AnthropicDirectRequestSnapshotTests
             Tools: [new Tool("list_primes", "Returns the first N prime numbers.", toolParams)]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = apiKey });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         handler.RequestBody.ShouldNotBeNull();
         handler.LastRequestUri.ShouldNotBeNull();

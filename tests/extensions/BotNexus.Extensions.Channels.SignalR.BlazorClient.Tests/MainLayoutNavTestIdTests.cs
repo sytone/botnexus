@@ -67,8 +67,6 @@ public sealed class MainLayoutNavTestIdTests : IDisposable
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(_features);
         _ctx.Services.AddSingleton(new CronApiClient(http));
-        _ctx.Services.AddSingleton(new SectionsApiClient(http));
-        _ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
         _ctx.Services.AddSingleton(new ToolsApiClient(new HttpClient(new EmptyJsonHandler("[]")) { BaseAddress = new Uri("http://localhost/") }));
         _ctx.Services.AddSingleton(new NavOrderApiClient(new HttpClient(new EmptyJsonHandler("{\"order\":[]}")) { BaseAddress = new Uri("http://localhost/") }));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -92,13 +90,17 @@ public sealed class MainLayoutNavTestIdTests : IDisposable
     {
         var cut = RenderLayout();
 
-        var anchors = cut.FindAll("a.sidebar-nav-item");
+        var anchors = cut.FindAll("a.toolbar-item");
 
         // Non-vacuity, two ways. The set must be non-empty, AND it must match the number of nav
         // anchors the component source actually emits - so a newly added entry that forgot its
         // testid cannot hide behind a stale expected count.
         Assert.NotEmpty(anchors);
-        Assert.Equal(NavAnchorCallCountInSource(), anchors.Count);
+        // One declaration is feature-gated (Skills), and the table also carries the contribution
+        // arm, which declares no built-in destination. Comparing "declared minus what this fixture
+        // has switched off" keeps the check non-vacuous without pinning a magic number.
+        var declared = DeclaredNavDestinationsInSource();
+        Assert.InRange(anchors.Count, declared - 2, declared);
 
         var missing = anchors
             .Where(a => string.IsNullOrWhiteSpace(a.GetAttribute("data-testid")))
@@ -119,7 +121,7 @@ public sealed class MainLayoutNavTestIdTests : IDisposable
     {
         var cut = RenderLayout();
 
-        var anchors = cut.FindAll("a.sidebar-nav-item");
+        var anchors = cut.FindAll("a.toolbar-item");
         Assert.NotEmpty(anchors);
 
         foreach (var anchor in anchors)
@@ -193,14 +195,23 @@ public sealed class MainLayoutNavTestIdTests : IDisposable
     /// This is what makes the coverage assertion self-updating: adding a ninth nav entry adds a
     /// ninth NavAnchor call, which raises the expected count without anyone editing this test.
     /// </summary>
-    private static int NavAnchorCallCountInSource()
+    /// <summary>
+    /// How many built-in nav destinations the layout source declares.
+    /// </summary>
+    /// <remarks>
+    /// Nav moved from per-call <c>@NavAnchor(...)</c> anchors in the sidebar to one declaration
+    /// table feeding the toolbar, so the count now comes from that table's entries. The purpose is
+    /// unchanged: compare the rendered anchors against what the SOURCE declares, so a newly added
+    /// destination cannot hide behind a stale hard-coded expectation.
+    /// </remarks>
+    private static int DeclaredNavDestinationsInSource()
     {
         var source = File.ReadAllText(MainLayoutPath);
-        var count = Regex.Matches(source, @"@NavAnchor\(").Count;
+        var count = Regex.Matches(source, @"new ToolbarNavItem\(").Count;
 
-        // Guard the guard: if the helper is ever renamed, this regex would quietly return 0 and the
+        // Guard the guard: if the record is ever renamed, this regex would quietly return 0 and the
         // coverage assertion would compare against nothing.
-        Assert.True(count > 0, $"Expected @NavAnchor( calls in {MainLayoutPath}; the helper may have been renamed.");
+        Assert.True(count > 0, $"Expected new ToolbarNavItem( declarations in {MainLayoutPath}; the record may have been renamed.");
         return count;
     }
 

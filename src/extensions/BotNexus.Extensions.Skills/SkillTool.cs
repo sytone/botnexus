@@ -5,6 +5,7 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Extensions.Plugins.Lifecycle;
+using BotNexus.Extensions.Skills.Recording;
 using BotNexus.Extensions.Skills.Security;
 using BotNexus.Extensions.Skills.Telemetry;
 using System.IO.Abstractions;
@@ -91,6 +92,11 @@ public sealed class SkillTool(
                 "filePath": {
                   "type": "string",
                   "description": "Relative path (within the skill directory) of the linked support file to view (required for 'view_file'). Must live under references/, templates/, scripts/, or assets/."
+                },
+                "parameters": {
+                  "type": "object",
+                  "description": "Values for a parameterised skill, as a flat object of slotName -> value. Only for 'load', and only for skills whose listing shows parameters. Every declared parameter must be supplied; loading with one missing is refused rather than substituted blank.",
+                  "additionalProperties": { "type": "string" }
                 }
               },
               "required": ["action"]
@@ -148,6 +154,7 @@ public sealed class SkillTool(
             {
                 lines.Add($"- **{s.Name}**: {s.Description}");
                 lines.Add($"  Path: {s.SourcePath}");
+                AppendParameterHint(lines, s);
             }
             lines.Add("");
         }
@@ -161,6 +168,7 @@ public sealed class SkillTool(
                 lines.Add($"- **{s.Name}**: {s.Description}");
                 if (!string.IsNullOrEmpty(s.SourcePath))
                     lines.Add($"  Path: {s.SourcePath}");
+                AppendParameterHint(lines, s);
             }
             lines.Add("");
         }
@@ -200,23 +208,189 @@ public sealed class SkillTool(
         if (!resolution.Loaded.Any(s => string.Equals(s.Name, skillName, StringComparison.OrdinalIgnoreCase)))
             return TextResult($"Skill '{skillName}' cannot be loaded (budget exceeded).");
 
+        // Parameter substitution runs BEFORE the skill is marked loaded: a refused load must leave
+        // the session exactly as it was, or a retry with the corrected values reports "already
+        // loaded" and the caller never gets the content.
+        if (!TryResolveParameters(skill, arguments, out var parameterValues, out var parameterError))
+            return TextResult(parameterError);
+
         if (!_sessionLoaded.TryAdd(skill.Name, 0))
             return TextResult($"Skill '{skill.Name}' is already loaded.");
 
         // Record the load as a use once it has actually been added to the session (#1833).
         await RecordAsync(t => t.RecordUseAsync(skill.Name, cancellationToken)).ConfigureAwait(false);
 
+        var body = parameterValues.Count > 0
+            ? SkillDraftValidator.Substitute(skill.Content, parameterValues)
+            : skill.Content;
+
         return TextResult($"""
             ## Skill: {skill.Name}
             **Path:** {skill.SourcePath}
+            {RenderAppliedParameters(parameterValues)}
             **Resolved from:** {DescribeRoot(skill.Source)} skill root
 
             Resolve scripts and support files against this directory - skills live under more than
             one root and the shared root is not always the right one (#3712).
 
-            {skill.Content}
+            {body}
             {RenderLinkedFiles(skill)}
             """);
+    }
+
+    /// <summary>
+    /// Matches the values supplied on a load against the parameters the skill declares.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Three refusals, and each exists because the silent alternative produces a skill that looks
+    /// like it worked. A MISSING value would leave <c>{{slot}}</c> in the instructions, so a replay
+    /// runs the placeholder as if it were the value. An UNKNOWN value is a caller believing it
+    /// changed something it did not — usually a renamed slot. And supplying values to a skill that
+    /// declares NONE means the caller has the wrong skill, or a skill that lost its declarations in
+    /// an edit; either way, substituting nothing and saying nothing is the wrong answer.
+    /// </para>
+    /// <para>
+    /// A skill that declares no parameters and is loaded without any takes this path to a byte-identical
+    /// result — which is every skill that existed before recording did.
+    /// </para>
+    /// </remarks>
+    private static bool TryResolveParameters(
+        SkillDefinition skill,
+        IReadOnlyDictionary<string, object?> arguments,
+        out IReadOnlyDictionary<string, string> values,
+        out string error)
+    {
+        values = EmptyParameters;
+        error = string.Empty;
+
+        var supplied = ReadParameterMap(arguments);
+
+        // A case-insensitive VIEW of the declarations, rather than trusting the comparer the
+        // definition happens to carry. SkillParser always produces one, but a SkillDefinition built
+        // in code need not, and a declaration matched by one comparer while substitution uses
+        // another yields a load that reports success with the placeholder still in the text.
+        var declared = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in skill.Parameters)
+            declared[pair.Key] = pair.Value;
+
+        if (declared.Count == 0)
+        {
+            if (supplied.Count == 0)
+                return true;
+
+            error = $"Skill '{skill.Name}' declares no parameters, but {supplied.Count} " +
+                    $"({string.Join(", ", supplied.Keys.Order(StringComparer.Ordinal))}) were supplied. " +
+                    "Load it without parameters, or check whether you meant a different skill.";
+            return false;
+        }
+
+        var unknown = supplied.Keys
+            .Where(k => !declared.ContainsKey(k))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+
+        if (unknown.Count > 0)
+        {
+            error = $"Skill '{skill.Name}' does not declare: {string.Join(", ", unknown)}. " +
+                    $"It declares: {string.Join(", ", declared.Keys.Order(StringComparer.Ordinal))}.";
+            return false;
+        }
+
+        var missing = declared
+            .Where(p => !supplied.ContainsKey(p.Key))
+            .OrderBy(p => p.Key, StringComparer.Ordinal)
+            .ToList();
+
+        if (missing.Count > 0)
+        {
+            var described = missing.Select(p => string.IsNullOrWhiteSpace(p.Value)
+                ? $"- {p.Key}"
+                : $"- {p.Key}: {p.Value}");
+
+            error = $"Skill '{skill.Name}' requires parameter(s) that were not supplied. Loading " +
+                    "without them would leave the placeholders in the instructions, so the load was " +
+                    $"refused.\n{string.Join("\n", described)}";
+            return false;
+        }
+
+        values = supplied;
+        return true;
+    }
+
+    /// <summary>Reads the flat <c>parameters</c> object off a load call. Absent reads as empty.</summary>
+    private static IReadOnlyDictionary<string, string> ReadParameterMap(
+        IReadOnlyDictionary<string, object?> arguments)
+    {
+        if (!arguments.TryGetValue("parameters", out var raw) || raw is null)
+            return EmptyParameters;
+
+        JsonElement element;
+        if (raw is JsonElement je)
+        {
+            element = je;
+        }
+        else
+        {
+            try
+            {
+                element = JsonSerializer.SerializeToElement(raw);
+            }
+            catch (NotSupportedException)
+            {
+                return EmptyParameters;
+            }
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+            return EmptyParameters;
+
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in element.EnumerateObject())
+        {
+            map[property.Name] = property.Value.ValueKind == JsonValueKind.String
+                ? property.Value.GetString() ?? string.Empty
+                : property.Value.ToString();
+        }
+
+        return map;
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyParameters =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Names a skill's required parameters in the listing.
+    /// </summary>
+    /// <remarks>
+    /// Without this the parameters are discoverable only by loading the skill and being refused.
+    /// A required argument that is announced by an error message is an argument nobody supplies
+    /// first time, and the retry costs a whole turn.
+    /// </remarks>
+    private static void AppendParameterHint(List<string> lines, SkillDefinition skill)
+    {
+        if (skill.Parameters.Count == 0)
+            return;
+
+        var names = skill.Parameters.Keys.Order(StringComparer.Ordinal);
+        lines.Add($"  Requires parameters: {string.Join(", ", names)}");
+    }
+
+    /// <summary>
+    /// Echoes the values that were substituted, so the filled-in skill is self-describing: the
+    /// reader can tell which words in the instructions came from the caller and which were written
+    /// into the skill.
+    /// </summary>
+    private static string RenderAppliedParameters(IReadOnlyDictionary<string, string> values)
+    {
+        if (values.Count == 0)
+            return string.Empty;
+
+        var lines = values
+            .OrderBy(v => v.Key, StringComparer.Ordinal)
+            .Select(v => $"- `{v.Key}` = `{v.Value}`");
+
+        return $"\n**Parameters applied:**\n{string.Join("\n", lines)}\n";
     }
 
     /// <summary>

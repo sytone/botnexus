@@ -9,10 +9,20 @@ using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tools;
 
-public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IPathValidator? pathValidator = null) : IAgentTool
+public sealed class FileWatcherTool(
+    IOptions<FileWatcherToolOptions> options,
+    IPathValidator? pathValidator = null,
+    IFileChangeWatcherFactory? watcherFactory = null) : IAgentTool
 {
     private readonly FileWatcherToolOptions _options = options?.Value ?? new FileWatcherToolOptions();
     private readonly IPathValidator? _pathValidator = pathValidator;
+
+    /// <summary>
+    /// Defaults to the real <see cref="FileSystemWatcher"/>. Tests substitute a watcher they can
+    /// raise events on directly, so they exercise this tool's debounce, readiness-ordering and
+    /// result formatting without waiting on the operating system to deliver a filesystem event.
+    /// </summary>
+    private readonly IFileChangeWatcherFactory _watcherFactory = watcherFactory ?? new FileSystemChangeWatcherFactory();
 
     public string Name => "watch_file";
 
@@ -119,11 +129,9 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
 
         try
         {
-            using var watcher = new FileSystemWatcher(directory, fileName);
-            watcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime;
-
-            void HandleEvent(string detectedEvent)
+            void HandleEvent(FileChangeKind kind)
             {
+                var detectedEvent = Describe(kind);
                 var previousTimer = Interlocked.Exchange(ref debounceTimer, null);
                 previousTimer?.Dispose();
 
@@ -136,27 +144,10 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
                 }
             }
 
-            if (eventType is "modified" or "any")
-            {
-                watcher.Changed += (_, _) => HandleEvent("modified");
-            }
+            using var watcher = _watcherFactory.Create(directory, fileName, KindsFor(eventType));
+            watcher.Changed += HandleEvent;
 
-            if (eventType is "created" or "any")
-            {
-                watcher.Created += (_, _) => HandleEvent("created");
-            }
-
-            if (eventType is "deleted" or "any")
-            {
-                watcher.Deleted += (_, _) => HandleEvent("deleted");
-            }
-
-            if (eventType is "any")
-            {
-                watcher.Renamed += (_, _) => HandleEvent("renamed");
-            }
-
-            watcher.EnableRaisingEvents = true;
+            watcher.Arm();
 
             // Announce readiness only AFTER the watcher is live. Emitting it earlier made the notice a
             // lie: a caller that acted on it could still mutate the file before events were being
@@ -192,6 +183,24 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
             finalTimer?.Dispose();
         }
     }
+
+    /// <summary>Maps the tool's <c>event</c> argument onto the change kinds the watcher must report.</summary>
+    private static IReadOnlyCollection<FileChangeKind> KindsFor(string eventType) => eventType switch
+    {
+        "modified" => [FileChangeKind.Modified],
+        "created" => [FileChangeKind.Created],
+        "deleted" => [FileChangeKind.Deleted],
+        _ => [FileChangeKind.Modified, FileChangeKind.Created, FileChangeKind.Deleted, FileChangeKind.Renamed]
+    };
+
+    /// <summary>Renders a change kind as the verb the result message reports.</summary>
+    private static string Describe(FileChangeKind kind) => kind switch
+    {
+        FileChangeKind.Modified => "modified",
+        FileChangeKind.Created => "created",
+        FileChangeKind.Deleted => "deleted",
+        _ => "renamed"
+    };
 
     private static string? ReadString(IReadOnlyDictionary<string, object?> args, string key)
     {

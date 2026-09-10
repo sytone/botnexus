@@ -176,13 +176,8 @@ internal static class ToolExecutor
 
         var executionTasks = preparedItems.Select(async item =>
         {
-            var execution = await ExecutePreparedToolCallAsync(
-                    item.Prepared,
-                    emit,
-                    cancellationToken,
-                    config.ToolTimeout)
-                .ConfigureAwait(false);
-            var outcome = new ToolExecutionOutcome(
+            var execution = await ExecutePreparedToolCallAsync(item.Prepared, emit, cancellationToken, config.ToolTimeout).ConfigureAwait(false);
+            return new ToolExecutionOutcome(
                 item.Index,
                 item.Prepared.ToolCall,
                 execution.Result,
@@ -190,25 +185,48 @@ internal static class ToolExecutor
                 item.Prepared.ValidatedArgs,
                 true,
                 item.Prepared.Tool);
-
-            // Persist each sibling as soon as it completes. Waiting for the whole batch before
-            // emitting any terminal event made one non-cooperative tool hide every completed
-            // sibling and left the conversation looking entirely frozen (#4128).
-            resultSlots[item.Index] = await FinalizeToolOutcomeAsync(
-                    context,
-                    assistantMessage,
-                    outcome,
-                    config,
-                    emit,
-                    cancellationToken)
-                .ConfigureAwait(false);
-            return outcome;
         });
 
         completedItems.AddRange(await Task.WhenAll(executionTasks).ConfigureAwait(false));
+        var ordered = completedItems.OrderBy(result => result.Index).ToList();
 
-        // Slots are populated concurrently but returned in the assistant's original call order,
-        // which is the ordering required by provider tool-result threading.
+        foreach (var outcome in ordered)
+        {
+            var result = outcome.Result;
+            var isError = outcome.IsError;
+
+            if (outcome.ApplyAfterHook && outcome.ValidatedArgs is not null)
+            {
+                (result, isError) = await ApplyAfterToolCallAsync(
+                        context,
+                        assistantMessage,
+                        outcome.ToolCall,
+                        outcome.ValidatedArgs,
+                        outcome.Result,
+                        outcome.IsError,
+                        config,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            result = ApplyOutputBudget(result, config, outcome.Tool);
+
+            await emit(new ToolExecutionEndEvent(
+                outcome.ToolCall.Id,
+                outcome.ToolCall.Name,
+                result,
+                isError,
+                DateTimeOffset.UtcNow)).ConfigureAwait(false);
+
+            resultSlots[outcome.Index] = await EmitToolResultMessageAsync(
+                    outcome.ToolCall,
+                    result,
+                    isError,
+                    emit,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         return resultSlots.Where(result => result is not null).Select(result => result!).ToList();
     }
 
@@ -506,71 +524,28 @@ internal static class ToolExecutor
             timeoutCts.CancelAfter(effectiveTimeout.Value);
         }
         var effectiveToken = timeoutCts?.Token ?? cancellationToken;
-        var terminalState = 0;
-        Task<AgentToolResult>? executionTask = null;
-
-        void EmitUpdate(AgentToolResult partialResult)
-        {
-            // A tool may ignore cancellation and later call its update callback after the executor
-            // has already published an incomplete result. Such stale updates belong to an obsolete
-            // turn and must not mutate the transcript or portal (#4128).
-            if (Volatile.Read(ref terminalState) != 0)
-            {
-                return;
-            }
-
-            updateTasks.Add(emit(new ToolExecutionUpdateEvent(
-                prepared.ToolCall.Id,
-                prepared.ToolCall.Name,
-                prepared.ValidatedArgs,
-                partialResult,
-                DateTimeOffset.UtcNow)));
-        }
 
         try
         {
-            executionTask = prepared.Tool.ExecuteAsync(
+            result = await prepared.Tool.ExecuteAsync(
                 prepared.ToolCall.Id,
                 prepared.ValidatedArgs,
                 effectiveToken,
-                EmitUpdate);
-
-            // CancelAfter only requests cooperative cancellation. WaitAsync supplies the hard
-            // executor-side bound: a tool that blocks or ignores its token can no longer hold the
-            // owning agent turn and conversation queue forever.
-            result = effectiveTimeout.HasValue
-                ? await executionTask.WaitAsync(effectiveTimeout.Value, cancellationToken).ConfigureAwait(false)
-                : await executionTask.ConfigureAwait(false);
-            Interlocked.Exchange(ref terminalState, 1);
-        }
-        catch (TimeoutException) when (effectiveTimeout.HasValue && !cancellationToken.IsCancellationRequested)
-        {
-            Interlocked.Exchange(ref terminalState, 1);
-            timeoutCts?.Cancel();
-            ObserveAbandonedToolExecution(executionTask);
-            result = BuildErrorResult(
-                $"Tool '{prepared.ToolCall.Name}' timed out after {effectiveTimeout.Value.TotalSeconds:0}s. " +
-                "The operation did not complete; an incomplete result was recorded and late output will be ignored.");
-            isError = true;
+                partialResult => updateTasks.Add(emit(new ToolExecutionUpdateEvent(
+                    prepared.ToolCall.Id,
+                    prepared.ToolCall.Name,
+                    prepared.ValidatedArgs,
+                    partialResult,
+                    DateTimeOffset.UtcNow)))).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (timeoutCts is not null && timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            Interlocked.Exchange(ref terminalState, 1);
-            // Tool cooperated with its timeout. Return the same explicit terminal shape as the hard
-            // wait deadline so callers do not need to distinguish implementation details.
-            result = BuildErrorResult(
-                $"Tool '{prepared.ToolCall.Name}' timed out after {effectiveTimeout!.Value.TotalSeconds:0}s. " +
-                "The operation did not complete.");
+            // Tool timed out (not user/turn cancellation) — return structured error to LLM.
+            result = BuildErrorResult($"Tool '{prepared.ToolCall.Name}' timed out after {effectiveTimeout!.Value.TotalSeconds:0}s. The operation did not complete.");
             isError = true;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            Interlocked.Exchange(ref terminalState, 1);
-            throw;
         }
         catch (Exception ex)
         {
-            Interlocked.Exchange(ref terminalState, 1);
             result = BuildErrorResult(ex.Message);
             isError = true;
         }
@@ -581,63 +556,6 @@ internal static class ToolExecutor
         }
 
         return (result, isError);
-    }
-
-    private static async Task<ToolResultAgentMessage> FinalizeToolOutcomeAsync(
-        AgentContext context,
-        AssistantAgentMessage assistantMessage,
-        ToolExecutionOutcome outcome,
-        AgentLoopConfig config,
-        Func<AgentEvent, Task> emit,
-        CancellationToken cancellationToken)
-    {
-        var result = outcome.Result;
-        var isError = outcome.IsError;
-
-        if (outcome.ApplyAfterHook && outcome.ValidatedArgs is not null)
-        {
-            (result, isError) = await ApplyAfterToolCallAsync(
-                    context,
-                    assistantMessage,
-                    outcome.ToolCall,
-                    outcome.ValidatedArgs,
-                    outcome.Result,
-                    outcome.IsError,
-                    config,
-                    cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        result = ApplyOutputBudget(result, config, outcome.Tool);
-
-        await emit(new ToolExecutionEndEvent(
-            outcome.ToolCall.Id,
-            outcome.ToolCall.Name,
-            result,
-            isError,
-            DateTimeOffset.UtcNow)).ConfigureAwait(false);
-
-        return await EmitToolResultMessageAsync(
-                outcome.ToolCall,
-                result,
-                isError,
-                emit,
-                cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    private static void ObserveAbandonedToolExecution(Task? executionTask)
-    {
-        if (executionTask is null)
-        {
-            return;
-        }
-
-        _ = executionTask.ContinueWith(
-            static completed => _ = completed.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
     }
 
     private static async Task<(AgentToolResult Result, bool IsError)> ApplyAfterToolCallAsync(

@@ -34,6 +34,38 @@ Set `BotNexus.Gateway` as the startup project and run with debugging (F5). The
 Gateway starts on `http://localhost:5005` with the WebUI at the root URL. Set
 breakpoints anywhere in the solution and they bind normally.
 
+### "Address already in use" on start
+
+A start that dies with
+
+```
+Failed to bind to address http://...:5005: address already in use
+```
+
+buried under cancelled background services, a minidump and exit code 134 means something else
+already holds the port. Usually it is another gateway — from a different worktree, a previous
+session, or one suspended with Ctrl+Z.
+
+`botnexus gateway` will not have stopped it, and that is deliberate rather than a bug: it tracks
+its process by PID file and refuses to signal anything it cannot identify as its own binary, which
+is what stops it killing an unrelated `dotnet`. A gateway built somewhere else is invisible to it,
+so it truthfully reports stopping the one it manages while a different one keeps the port.
+
+Ask the only question that cannot lie — who holds the port:
+
+```bash
+scripts/gateway-restart.sh --status
+```
+
+It names the PID, the address actually bound, and the **build directory** the holder came from, so
+a stray from another worktree identifies itself. `scripts/gateway-restart.sh` with no arguments
+then restarts cleanly: it stops the holder (resuming it first if it is suspended, since a stopped
+process cannot act on SIGTERM), waits for the *port* to free rather than for the PID to vanish,
+escalates to SIGKILL only if it must, and probes readiness against the address the gateway actually
+bound rather than assuming localhost.
+
+It refuses to signal a port holder that is not a gateway unless you pass `--force`.
+
 ### Attach to a running Gateway
 
 If you started the Gateway with `.\scripts\dev-loop.ps1` or

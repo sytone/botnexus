@@ -46,7 +46,15 @@ public sealed record AgentSummary(
     [property: JsonPropertyName("displayName")] string DisplayName,
     [property: JsonPropertyName("emoji")] string? Emoji = null,
     [property: JsonPropertyName("description")] string? Description = null,
-    [property: JsonPropertyName("summary")] string? Summary = null);
+    [property: JsonPropertyName("summary")] string? Summary = null,
+    [property: JsonPropertyName("canDelegate")] bool CanDelegate = false,
+    // Persona, appended last with null defaults so an older client binding this payload is
+    // unaffected. The portal needs these on the hub roster as well as over REST: the roster the
+    // client holds is refreshed from BOTH, and an agent recoloured in the panel would otherwise
+    // revert to its generated hue on the next hub push.
+    [property: JsonPropertyName("avatarHue")] int? AvatarHue = null,
+    [property: JsonPropertyName("responsibility")] string? Responsibility = null,
+    [property: JsonPropertyName("boundaries")] string? Boundaries = null);
 
 /// <summary>Hub capabilities advertised on connect.</summary>
 public sealed record HubCapabilities(

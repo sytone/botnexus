@@ -87,7 +87,7 @@ public class CopilotRequestSnapshotTests
         };
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         handler.RequestBody.ShouldNotBeNullOrWhiteSpace();
         handler.RequestUri.ShouldNotBeNull();

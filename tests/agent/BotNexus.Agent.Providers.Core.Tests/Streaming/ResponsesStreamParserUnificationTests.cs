@@ -80,7 +80,9 @@ public class ResponsesStreamParserUnificationTests
             resolveConfiguredServiceTier: null,
             ct: CancellationToken.None);
 
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
         result.StopReason.ShouldBe(StopReason.Stop);
         // The per-event hook fired once per parsed SSE event that carried a response id
         // (response.created + response.completed) -- proves the Copilot telemetry seam runs for all events.
@@ -118,7 +120,9 @@ public class ResponsesStreamParserUnificationTests
             },
             ct: CancellationToken.None);
 
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
         tierResolverCalled.ShouldBeTrue("the service-tier resolver delegate must be consulted on completion.");
         // priority tier = 2x multiplier applied to a non-zero cost model.
         result.Usage.Cost.Total.ShouldBeGreaterThan(0m);

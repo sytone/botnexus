@@ -48,24 +48,28 @@ public sealed class HomePageTests : IDisposable
     public void Dispose() => _ctx.Dispose();
 
     [Fact]
-    public void Shows_connecting_spinner_when_not_ready()
+    public void Shows_a_skeleton_of_the_transcript_when_not_ready()
     {
         _portalLoad.IsReady.Returns(false);
         _portalLoad.LoadError.Returns((string?)null);
 
         var cut = _ctx.Render<Home>();
 
-        Assert.Contains("Connecting", cut.Markup);
+        // Was a centred "Connecting…" over an empty body. The body now carries the shape of
+        // the transcript that is arriving; the status moved into an sr-only live region.
+        cut.Find("[data-testid='portal-skeleton']");
+        Assert.Contains("Loading", cut.Markup);
     }
 
     [Fact]
-    public void Shows_portal_loading_container_when_not_ready()
+    public void Shows_the_chat_skeleton_variant_when_not_ready()
     {
         _portalLoad.IsReady.Returns(false);
 
         var cut = _ctx.Render<Home>();
 
-        cut.Find(".portal-loading");
+        cut.Find("[data-testid='portal-skeleton']")
+            .GetAttribute("data-variant").ShouldBe("Chat");
     }
 
     [Fact]
@@ -100,6 +104,7 @@ public sealed class HomePageTests : IDisposable
         var cut = _ctx.Render<Home>();
 
         Assert.Empty(cut.FindAll(".portal-loading"));
+        Assert.Empty(cut.FindAll("[data-testid='portal-skeleton']"));
         cut.Find(".agent-dashboard");
     }
 
@@ -111,6 +116,7 @@ public sealed class HomePageTests : IDisposable
         var cut = _ctx.Render<Home>();
 
         Assert.Empty(cut.FindAll(".portal-loading"));
+        Assert.Empty(cut.FindAll("[data-testid='portal-skeleton']"));
     }
 
     [Fact]

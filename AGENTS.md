@@ -165,6 +165,27 @@ Before every `git push` on a PR branch:
   ```
   Use the hardened helper `scripts/repo/Remove-Worktree.ps1`: it retries boundedly, returns a structured `locked` outcome when Windows file locks hold the directory, and never deletes the branch unless removal succeeded (issue #2104). Never chain `git worktree remove ...` straight into `git branch -d/-D ...` - on a failed removal that orphans the directory and strands the commits.
 
+- **Never check a branch out in a tree that a running deployment is served from.** A deployment tree
+  is whatever tree the live process was launched from - its `bin/` holds the binaries that process
+  has open, and the extension payloads copied out of it are what the portal serves. Checking a
+  feature branch out there, even briefly, is a deploy hazard for two independent reasons: any build
+  in that tree rewrites the live binaries *underneath the running process*, and a build from a
+  feature branch mixes that branch's artefacts into the deployed set.
+
+  The failure mode is deceptive rather than loud. Mixed artefacts produce a gateway that starts
+  healthy and answers every REST endpoint with 200 while the portal fails to load, because the
+  client hits a `MissingMethodException` for a member that exists only on the branch that was mixed
+  in - so it reads as a client bug and the tree is the last place anyone looks.
+
+  Use a dedicated worktree for the work (see the first bullet). If you find a deployment tree parked
+  on a feature branch, return it to its deployment branch before doing anything else - the branch
+  and its commits are unaffected by the checkout, so nothing is lost:
+  ```bash
+  git checkout <deployment-branch> && git pull --ff-only origin main
+  ```
+  Rebuild after syncing, and remember that a build output left behind from a *different* commit is
+  itself a trap: artefacts and tree source must come from the same commit or neither can be trusted.
+
 - **If you find local changes on `main`:** Move them to a worktree immediately before continuing work:
   1. `git worktree add ../botnexus-recover -b <type>/<recovery-slug>`
   2. Cherry-pick or push the changes to the worktree

@@ -65,6 +65,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\..\BotNexus.Testing\SqlitePoolCleanup.cs" Link="Shared\SqlitePoolCleanup.cs" />
+    <Compile Include="..\..\BotNexus.Testing\ManualTimeProvider.cs" Link="Shared\ManualTimeProvider.cs" />
     <Using Include="BotNexus.Testing" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>

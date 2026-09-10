@@ -63,6 +63,15 @@
                  role="tabpanel">
             <TodoPanel AgentId="@AgentId" ConversationId="@EffectiveConversationId" />
         </section>
+
+        @* Available on sub-agents too, deliberately. A sub-agent run is the one nobody watched
+           at all, so "what did it actually do" is if anything a sharper question there. *@
+        <section id="@GetPanelId(AgentPanelTab.Steps)"
+                 data-testid="agent-panel-steps"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Steps) ? "active" : "")"
+                 role="tabpanel">
+            <RunTimelinePanel AgentId="@AgentId" ConversationId="@EffectiveConversationId" />
+        </section>
     </div>
 </div>
 
@@ -124,7 +133,8 @@
         (AgentPanelTab.Workspace, "Workspace", "folder", "Files this agent can read and write"),
         (AgentPanelTab.Reports, "Reports", "reports", "Reports this agent has produced"),
         (AgentPanelTab.Canvas, "Canvas", "canvas", "Shared canvas for this conversation"),
-        (AgentPanelTab.Todo, "Todo", "todo", "This agent's task list")
+        (AgentPanelTab.Todo, "Todo", "todo", "This agent's task list"),
+        (AgentPanelTab.Steps, "Steps", "activity", "What this run did, step by step")
     ];
 
     private AgentState? CurrentAgent => Store.GetAgent(AgentId);
@@ -259,6 +269,7 @@
             "reports" => AgentPanelTab.Reports,
             "canvas" => AgentPanelTab.Canvas,
             "todo" => AgentPanelTab.Todo,
+            "steps" => AgentPanelTab.Steps,
             _ => AgentPanelTab.Conversation
         };
 
@@ -266,7 +277,8 @@
                || value.Equals("workspace", StringComparison.OrdinalIgnoreCase)
                || value.Equals("reports", StringComparison.OrdinalIgnoreCase)
                || value.Equals("canvas", StringComparison.OrdinalIgnoreCase)
-               || value.Equals("todo", StringComparison.OrdinalIgnoreCase);
+               || value.Equals("todo", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("steps", StringComparison.OrdinalIgnoreCase);
     }
 
     private enum AgentPanelTab
@@ -275,6 +287,7 @@
         Workspace,
         Reports,
         Canvas,
-        Todo
+        Todo,
+        Steps
     }
 }

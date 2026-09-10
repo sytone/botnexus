@@ -47,8 +47,6 @@ public sealed class ConversationGroupingTests : IDisposable
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(new CronApiClient(http));
-        _ctx.Services.AddSingleton(new SectionsApiClient(http));
-        _ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
         _ctx.Services.AddStubNavOrderApiClient();
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -389,8 +387,6 @@ public sealed class ConversationGroupingTests : IDisposable
         ctx.Services.AddSingleton(httpWithMock);
         ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         ctx.Services.AddSingleton(new CronApiClient(httpWithMock));
-        ctx.Services.AddSingleton(new SectionsApiClient(httpWithMock));
-        ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
         ctx.Services.AddSingleton(new ToolsApiClient(httpWithMock));
         ctx.Services.AddStubNavOrderApiClient();
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;

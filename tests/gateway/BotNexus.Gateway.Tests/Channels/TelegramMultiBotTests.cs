@@ -95,7 +95,14 @@ public sealed class TelegramMultiBotTests
             });
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        await twoMessagesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The stub dispatcher's callback is the happens-before edge: it fires on the adapter's own
+        // polling thread once both updates have been routed, so this wait needs no clock of its own.
+        // It carried a five-second deadline until #103, which is why an unrelated portal PR (#75) went
+        // red here - two real polling loops plus two HTTP round trips through the stub handler simply
+        // did not fit in five seconds on a saturated runner. The deadline exists only to turn a hang
+        // into a readable failure, so it is now the shared generous one.
+        await TestAwait.SignaledAsync(twoMessagesSeen.Task, "both configured bots to dispatch their update");
         await adapter.StopAsync(CancellationToken.None);
 
         dispatchedMessages.ShouldContain(m => m.RoutingHints != null && m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "agent-b" && m.Content == "hello from bot1");
@@ -147,7 +154,9 @@ public sealed class TelegramMultiBotTests
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
         await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var message = await TestAwait.SignaledAsync(
+            dispatched.Task,
+            "the legacy single-bot adapter to dispatch its update");
         await adapter.StopAsync(CancellationToken.None);
 
         message.RoutingHints.ShouldNotBeNull();

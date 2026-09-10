@@ -52,9 +52,10 @@ public sealed class InboundQueueRecreationRegressionTests
         var logger = new CapturingLogger();
         await using var orchestrator = new DefaultInboundMessageOrchestrator(processor, logger);
 
-        var first = await orchestrator
-            .AcceptAsync(CreateMessage("addr-seal"))
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var first = await TestAwait.SignaledAsync(
+            orchestrator
+                .AcceptAsync(CreateMessage("addr-seal")),
+            "the first message to reach a terminal status");
         first.Status.ShouldBe(InboundDispatchStatus.NoRoute);
 
         // Second message on the SAME isolation key, after the queue sealed. Pre-fix this could land

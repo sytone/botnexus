@@ -43,8 +43,9 @@ public sealed class BeforeToolCallTimeoutTests
             },
             beforeToolCallTimeout: ShortBudget);
 
-        var results = await ExecuteAsync(config, tool, "dangerous", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var results = await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "dangerous", CancellationToken.None),
+            "the tool execution to complete");
 
         toolInvoked.ShouldBeFalse();
         results.ShouldHaveSingleItem();
@@ -71,8 +72,9 @@ public sealed class BeforeToolCallTimeoutTests
             beforeToolCallTimeout: ShortBudget,
             onDiagnostic: diagnostics.Enqueue);
 
-        await ExecuteAsync(config, tool, "dangerous", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "dangerous", CancellationToken.None),
+            "the tool execution to complete");
 
         var messages = diagnostics.ToArray();
         messages.ShouldNotBeEmpty();
@@ -158,8 +160,9 @@ public sealed class BeforeToolCallTimeoutTests
             beforeToolCallTimeout: TimeSpan.FromSeconds(5),
             onDiagnostic: diagnostics.Enqueue);
 
-        var results = await ExecuteAsync(config, tool, "safe", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var results = await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "safe", CancellationToken.None),
+            "the tool execution to complete");
 
         toolInvoked.ShouldBeTrue();
         results[0].IsError.ShouldBeFalse();
@@ -186,8 +189,9 @@ public sealed class BeforeToolCallTimeoutTests
                 Task.FromResult<BeforeToolCallResult?>(new BeforeToolCallResult(Block: true, Reason: "denied by policy")),
             beforeToolCallTimeout: TimeSpan.FromSeconds(5));
 
-        var results = await ExecuteAsync(config, tool, "dangerous", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var results = await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "dangerous", CancellationToken.None),
+            "the tool execution to complete");
 
         toolInvoked.ShouldBeFalse();
         results[0].IsError.ShouldBeTrue();
@@ -220,10 +224,11 @@ public sealed class BeforeToolCallTimeoutTests
         using var cts = new CancellationTokenSource();
         var executeTask = ExecuteAsync(config, tool, "dangerous", cts.Token);
 
-        await hookEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await TestAwait.SignaledAsync(hookEntered.Task, "the before-tool-call hook to be entered");
         await cts.CancelAsync();
 
-        await Should.ThrowAsync<OperationCanceledException>(() => executeTask.WaitAsync(TimeSpan.FromSeconds(10)));
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => TestAwait.SignaledAsync(executeTask, "the cancelled execution to surface its cancellation"));
         diagnostics.ShouldBeEmpty();
     }
 

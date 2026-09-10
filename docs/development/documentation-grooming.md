@@ -58,6 +58,13 @@ documentation, where its first satisfying branch is "this PR also changes docume
 green from the day it landed without once being able to fail, which is indistinguishable from a
 working gate.
 
+It is a separate workflow because the two want opposite triggers (issue #84). Docs lint runs on
+`paths: docs/**`; the docs-vs-source trigger has to run on the *source* PRs that change no docs at
+all, so it carries no `paths` filter and exits early when nothing documentation-sensitive was
+touched. While the two shared a file it could only ever run on PRs that had already changed
+documentation — where its first satisfying branch is "this PR also changes documentation" — so it
+was green from the day it landed without once being able to fail.
+
 ### Tuning the rules
 
 - **Fact registry** — `scripts/repo/docs-lint-facts.json`. Each entry carries an `id`, the `defect`

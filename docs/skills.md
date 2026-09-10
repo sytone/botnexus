@@ -6,14 +6,15 @@ Skills are modular knowledge packages that enhance agent capabilities without co
 
 1. [What are skills?](#what-are-skills)
 2. [Quick start](#quick-start)
-3. [SKILL.md format](#skillmd-format)
-4. [Skill directory structure](#skill-directory-structure)
-5. [Skill placement](#skill-placement)
-6. [Agent configuration](#agent-configuration)
-7. [How skills load](#how-skills-load)
-8. [Agent skill tool](#agent-skill-tool)
-9. [Best practices](#best-practices)
-10. [Complete example](#complete-example)
+3. [Skills that ship with BotNexus](#skills-that-ship-with-botnexus)
+4. [SKILL.md format](#skillmd-format)
+5. [Skill directory structure](#skill-directory-structure)
+6. [Skill placement](#skill-placement)
+7. [Agent configuration](#agent-configuration)
+8. [How skills load](#how-skills-load)
+9. [Agent skill tool](#agent-skill-tool)
+10. [Best practices](#best-practices)
+11. [Complete example](#complete-example)
 
 ---
 
@@ -70,6 +71,40 @@ The skill is now discoverable. Agents can list it with the `skills` tool and loa
 
 ---
 
+## Skills that ship with BotNexus
+
+Two skills live in this repository. Neither is installed automatically — skills live under
+`~/.botnexus/`, which is user data, so an operator decides whether an agent gets one. Each has an
+install script that copies it into place:
+
+| Skill | What it does | Install |
+|---|---|---|
+| `botnexus-guide` | Teaches an agent the platform it is running on — agents, conversations vs sessions, channels, tools, cron, extensions and configuration. Its reference files are copies of `docs/user-guide`. | `scripts/install-guide-skill.sh` |
+| `get-to-know-you` | Interviews the person the agent works for and records what it learns to agent memory, so the agent stops asking the same questions. | `scripts/install-interview-skill.sh` |
+
+Both take `--home <dir>` to install into a non-default BotNexus home. Only
+`install-interview-skill.sh` also takes `--agent <agent-id>`:
+
+```bash
+# Global - every agent can load it
+scripts/install-interview-skill.sh
+
+# Scoped to one agent instead
+scripts/install-interview-skill.sh --agent my-assistant
+
+# Install into a non-default home
+scripts/install-guide-skill.sh --home /srv/botnexus
+```
+
+**Prefer `--agent` for `get-to-know-you`.** Installed globally it is loadable by every agent,
+including unattended cron workers that have nobody to interview.
+
+**`botnexus-guide` is a copy, not a link.** Its reference files are snapshots of the user guide
+taken at install time, so re-run `scripts/install-guide-skill.sh` after upgrading or the agent will
+answer from the previous version's documentation.
+
+---
+
 ## SKILL.md format
 
 Every skill requires a `SKILL.md` file containing YAML frontmatter and a markdown body.
@@ -83,6 +118,7 @@ Every skill requires a `SKILL.md` file containing YAML frontmatter and a markdow
 | `license` | No | — | License name or reference to a bundled license file. |
 | `compatibility` | No | 1–500 chars if provided. | Environment requirements (intended product, system packages, network access). |
 | `metadata` | No | String key → string value map. | Arbitrary key-value data for client-specific extensions. |
+| `parameters` | No | String key → string value map. Keys are slot names, matched case-insensitively. | Values that vary between runs. Each key is substituted into the body wherever `{{key}}` appears, and the value is the description a caller reads. Every declared parameter is required at load time. |
 | `allowed-tools` | No | Space-delimited tool names. | Pre-approved tools the skill may use. Experimental — support varies by agent. |
 | `disable-model-invocation` | No | Boolean. Default `false`. | BotNexus extension. When `true`, the skill is excluded from model context (used for agent-internal skills). |
 
@@ -110,6 +146,38 @@ The markdown body after frontmatter contains the skill instructions. Write whate
 - Common edge cases and how to handle them
 
 The agent loads the entire body when it activates a skill. For large skills, move detailed content into [reference files](#skill-directory-structure).
+
+### Parameterised skills
+
+A skill that is the same procedure each time but a different *value* each time can declare those
+values instead of hard-coding them:
+
+```markdown
+---
+name: add-film
+description: Adds a film to Radarr and reports when it lands.
+parameters:
+  title: "The film to add; different every run."
+---
+1. POST {{title}} to Radarr at http://nas:7878.
+2. Poll the queue until it clears.
+```
+
+The caller supplies values when it loads the skill, and `{{title}}` is replaced before the
+instructions reach the model:
+
+```json
+{ "action": "load", "skillName": "add-film", "parameters": { "title": "Dune" } }
+```
+
+**Every declared parameter is required.** A load that omits one is refused rather than substituted
+blank — instructions that quietly lose a value produce a run that looks like it worked and is wrong.
+The `list` action names each skill's parameters, so callers do not discover them by being refused.
+
+Note what stayed literal in the example: the Radarr host is part of the skill, and the film is not.
+That distinction is a judgement about intent, not something derivable from the text — which is why
+the `skill_record` tool asks an operator to confirm it rather than inferring it. See
+[the Skills extension reference](extensions/skills.md#skill_record).
 
 ---
 
@@ -148,7 +216,17 @@ Static resources like templates, schemas, lookup tables, and example files.
 
 ## Skill placement
 
-BotNexus discovers skills from three locations, scanned in priority order:
+BotNexus discovers skills from four sources, scanned in priority order:
+
+### 0. Plugin skills
+
+Shipped by an installed plugin, under that plugin's own `skills/` directory (#2684). You do not
+place these by hand — installing the plugin puts them there and removing it takes them away, and a
+machine with no plugins installed simply has none.
+
+They are scanned **first**, which is what gives them the *lowest* priority: the resolver fills a
+dictionary keyed by skill name and a later source overwrites an earlier one. So a plugin shares the
+global tier but loses a name collision with anything you wrote yourself.
 
 ### 1. Global skills
 
@@ -193,9 +271,12 @@ Use workspace skills for project-specific conventions that travel with the codeb
 
 When multiple locations define a skill with the same name, higher-priority sources override lower ones:
 
-**Workspace** (highest) → **Per-agent** → **Global** (lowest)
+**Workspace** (highest) → **Per-agent** → **Global** → **Plugin** (lowest)
 
 For example, if both `~/.botnexus/skills/security/SKILL.md` and `my-project/skills/security/SKILL.md` exist, the workspace version is used.
+
+Plugin skills sit at the bottom deliberately: a plugin is code you installed rather than content you
+wrote, so a skill you author at any level wins over one it ships.
 
 ---
 

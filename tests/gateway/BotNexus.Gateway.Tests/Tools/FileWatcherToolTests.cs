@@ -20,6 +20,21 @@ public sealed class FileWatcherToolTests : IDisposable
         tool.Label.ShouldBe("Watch File");
     }
 
+    /// <summary>
+    /// The one test in this file that drives a REAL <see cref="FileSystemWatcher"/> end to end.
+    /// </summary>
+    /// <remarks>
+    /// Its siblings raise the change through <see cref="FakeFileChangeWatcher"/> so they test this
+    /// tool rather than the operating system's event delivery. That would leave the default
+    /// <see cref="FileSystemChangeWatcherFactory"/> — the wiring every real caller uses — with no
+    /// coverage at all, so exactly one test keeps the real path: a broken <c>Arm()</c>, a wrong
+    /// <c>NotifyFilter</c>, or an unsubscribed event still fails here.
+    /// <para>
+    /// It is the only test whose budget is spent waiting on something outside the process, so it is
+    /// also the only one that needs a generous budget rather than a deterministic signal. See
+    /// <see cref="WatchBudgetSeconds"/>.
+    /// </para>
+    /// </remarks>
     [Fact]
     public async Task FileWatcherTool_DetectsFileModification()
     {
@@ -32,9 +47,9 @@ public sealed class FileWatcherToolTests : IDisposable
         {
             ["path"] = path,
             ["event"] = "modified",
-            ["timeout"] = 5
+            ["timeout"] = WatchBudgetSeconds
         });
-        await ready;
+        await TestAwait.SignaledAsync(ready, "the real FileSystemWatcher to report itself armed");
         await File.WriteAllTextAsync(path, "updated");
 
         var result = await watchTask;
@@ -44,18 +59,27 @@ public sealed class FileWatcherToolTests : IDisposable
     [Fact]
     public async Task FileWatcherTool_DetectsFileCreation()
     {
-        var tool = CreateTool();
+        var watchers = new FakeFileChangeWatcherFactory();
+        var tool = CreateTool(watcherFactory: watchers);
         var root = CreateTempDirectory();
         var path = Path.Combine(root, "created.txt");
 
-        var (watchTask, ready) = StartWatch(tool, new Dictionary<string, object?>
+        var watchTask = ExecuteAsync(tool, new Dictionary<string, object?>
         {
             ["path"] = path,
             ["event"] = "created",
-            ["timeout"] = 5
+            ["timeout"] = WatchBudgetSeconds
         });
-        await ready;
-        await File.WriteAllTextAsync(path, "created");
+
+        var watcher = await ArmedWatcherAsync(watchers, watchTask);
+        watcher.RequestedKinds.ShouldBe([FileChangeKind.Created]);
+
+        // The tool splits the requested path into the directory to watch and the file to filter on;
+        // getting that wrong is invisible to a real-filesystem test that watches a whole directory.
+        watcher.Directory.ShouldBe(root);
+        watcher.FileName.ShouldBe("created.txt");
+
+        watcher.Raise(FileChangeKind.Created);
 
         var result = await watchTask;
         ReadText(result).ShouldContain("File created:");
@@ -64,41 +88,47 @@ public sealed class FileWatcherToolTests : IDisposable
     [Fact]
     public async Task FileWatcherTool_DetectsFileDeletion()
     {
-        var tool = CreateTool();
+        var watchers = new FakeFileChangeWatcherFactory();
+        var tool = CreateTool(watcherFactory: watchers);
         var root = CreateTempDirectory();
         var path = Path.Combine(root, "deleted.txt");
         await File.WriteAllTextAsync(path, "delete me");
 
-        var (watchTask, ready) = StartWatch(tool, new Dictionary<string, object?>
+        var watchTask = ExecuteAsync(tool, new Dictionary<string, object?>
         {
             ["path"] = path,
             ["event"] = "deleted",
-            ["timeout"] = 5
+            ["timeout"] = WatchBudgetSeconds
         });
-        await ready;
-        File.Delete(path);
+
+        var watcher = await ArmedWatcherAsync(watchers, watchTask);
+        watcher.RequestedKinds.ShouldBe([FileChangeKind.Deleted]);
+        watcher.Raise(FileChangeKind.Deleted);
 
         var result = await watchTask;
         ReadText(result).ShouldContain("File deleted:");
+        watcher.Disposed.ShouldBeTrue("the tool must dispose the watcher it armed");
     }
 
     /// <summary>
     /// Pins the ordering contract of #2988: the readiness notice must not be emitted until the watcher is
-    /// actually raising events. This deletes the file synchronously ON the callback thread, so the
-    /// mutation is strictly ordered between the notice and whatever the tool does next. With the notice
-    /// emitted before <c>EnableRaisingEvents = true</c> the deletion is provably unobservable and the
-    /// watch always times out; the assertion therefore fails 100% of the time against the unfixed code
-    /// rather than merely narrowing a window.
+    /// actually raising events. This raises the deletion synchronously ON the callback thread, so the
+    /// event is strictly ordered between the notice and whatever the tool does next. With the notice
+    /// emitted before <see cref="IFileChangeWatcher.Arm"/> the event is provably unobservable — the fake
+    /// drops pre-arm events exactly as <c>EnableRaisingEvents = false</c> does — and the watch always
+    /// times out; the assertion therefore fails 100% of the time against the unfixed code rather than
+    /// merely narrowing a window.
     /// </summary>
     [Fact]
     public async Task FileWatcherTool_ReadinessNotice_IsEmittedOnlyAfterWatcherIsArmed()
     {
-        var tool = CreateTool();
+        var watchers = new FakeFileChangeWatcherFactory();
+        var tool = CreateTool(watcherFactory: watchers);
         var root = CreateTempDirectory();
         var path = Path.Combine(root, "armed.txt");
         await File.WriteAllTextAsync(path, "delete me");
 
-        var deleted = false;
+        var notified = false;
 
         var result = await ExecuteAsync(
             tool,
@@ -106,7 +136,7 @@ public sealed class FileWatcherToolTests : IDisposable
             {
                 ["path"] = path,
                 ["event"] = "deleted",
-                ["timeout"] = 5
+                ["timeout"] = WatchBudgetSeconds
             },
             CancellationToken.None,
             update =>
@@ -114,18 +144,27 @@ public sealed class FileWatcherToolTests : IDisposable
                 var text = update.Content
                     .FirstOrDefault(c => c.Type == AgentToolContentType.Text)?.Value;
 
-                if (deleted || text is null || !text.Contains("Watching '", StringComparison.Ordinal))
+                if (notified || text is null || !text.Contains("Watching '", StringComparison.Ordinal))
                     return;
 
                 // Acting on the notice the instant it arrives is precisely what a real caller does.
-                deleted = true;
-                File.Delete(path);
+                notified = true;
+                watchers.Watcher.ShouldNotBeNull("the notice must not precede the watcher's creation");
+                watchers.Watcher!.Raise(FileChangeKind.Deleted);
             });
 
-        deleted.ShouldBeTrue("the tool must emit a readiness notice");
+        notified.ShouldBeTrue("the tool must emit a readiness notice");
+        watchers.Watcher!.RaiseCount.ShouldBe(
+            1,
+            "the change raised on the notice was dropped, so the notice arrived before the watcher was armed");
         ReadText(result).ShouldContain("File deleted:");
     }
 
+    /// <summary>
+    /// The timeout IS the assertion here, so — unlike <see cref="WatchBudgetSeconds"/> — a short
+    /// budget is correct: it is spent on every passing run, and load can only make the tool MORE
+    /// likely to report a timeout, never less.
+    /// </summary>
     [Fact]
     public async Task FileWatcherTool_TimesOut()
     {
@@ -253,47 +292,58 @@ public sealed class FileWatcherToolTests : IDisposable
     [Fact]
     public async Task FileWatcherTool_ReportsElapsedTime()
     {
-        var tool = CreateTool();
+        var watchers = new FakeFileChangeWatcherFactory();
+        var tool = CreateTool(watcherFactory: watchers);
         var root = CreateTempDirectory();
         var path = Path.Combine(root, "elapsed.txt");
         await File.WriteAllTextAsync(path, "initial");
 
-        var (watchTask, ready) = StartWatch(tool, new Dictionary<string, object?>
+        var watchTask = ExecuteAsync(tool, new Dictionary<string, object?>
         {
             ["path"] = path,
             ["event"] = "modified",
-            ["timeout"] = 5
+            ["timeout"] = WatchBudgetSeconds
         });
-        await ready;
-        await File.WriteAllTextAsync(path, "updated");
+
+        var watcher = await ArmedWatcherAsync(watchers, watchTask);
+        watcher.Raise(FileChangeKind.Modified);
 
         var result = await watchTask;
         ReadText(result).ShouldMatch(@"after \d+ seconds");
     }
 
+    /// <summary>
+    /// Five changes inside one debounce window must coalesce into a single result.
+    /// </summary>
+    /// <remarks>
+    /// The events were previously produced by writing the file five times with a 40ms sleep between
+    /// each. The sleep was never what made the changes "rapid" — the 500ms debounce window is — so
+    /// raising the events back to back exercises the same coalescing path (timer replacement under
+    /// <see cref="Interlocked"/>, which is where a debounce bug would actually live) without a clock.
+    /// </remarks>
     [Fact]
     public async Task FileWatcherTool_DebouncesProdRapidChanges()
     {
-        var tool = CreateTool();
+        var watchers = new FakeFileChangeWatcherFactory();
+        var tool = CreateTool(watcherFactory: watchers);
         var root = CreateTempDirectory();
         var path = Path.Combine(root, "debounced.txt");
         await File.WriteAllTextAsync(path, "start");
 
-        var (watchTask, ready) = StartWatch(tool, new Dictionary<string, object?>
+        var watchTask = ExecuteAsync(tool, new Dictionary<string, object?>
         {
             ["path"] = path,
             ["event"] = "modified",
-            ["timeout"] = 5
+            ["timeout"] = WatchBudgetSeconds
         });
-        await ready;
+
+        var watcher = await ArmedWatcherAsync(watchers, watchTask);
         for (var i = 0; i < 5; i++)
-        {
-            await File.WriteAllTextAsync(path, $"change-{i}");
-            await Task.Delay(40);
-        }
+            watcher.Raise(FileChangeKind.Modified);
 
         var result = await watchTask;
         ReadText(result).ShouldContain("File modified:");
+        watcher.RaiseCount.ShouldBe(5, "the tool must have seen every change, not just the last");
     }
 
     public void Dispose()
@@ -321,8 +371,10 @@ public sealed class FileWatcherToolTests : IDisposable
     }
 
     /// <summary>
-    /// Starts a watch and returns once the tool has reported that its <see cref="FileSystemWatcher"/> is
-    /// armed, so the caller can mutate the file knowing the event will be observed (#2988).
+    /// Starts a watch against the REAL <see cref="FileSystemWatcher"/> and returns once the tool has
+    /// reported that it is armed, so the caller can mutate the file knowing the event will be
+    /// observed (#2988). Used only by <see cref="FileWatcherTool_DetectsFileModification"/>; every
+    /// other test drives <see cref="FakeFileChangeWatcher"/> instead.
     /// </summary>
     /// <remarks>
     /// These tests previously slept for a fixed second between starting the watch and touching the file.
@@ -366,13 +418,125 @@ public sealed class FileWatcherToolTests : IDisposable
     private static IAgentTool CreateTool(
         int? maxTimeoutSeconds = null,
         int? defaultTimeoutSeconds = null,
-        int? debounceMilliseconds = null)
-        => new FileWatcherTool(Options.Create(new FileWatcherToolOptions
+        int? debounceMilliseconds = null,
+        IFileChangeWatcherFactory? watcherFactory = null)
+        => new FileWatcherTool(
+            Options.Create(new FileWatcherToolOptions
+            {
+                MaxTimeoutSeconds = maxTimeoutSeconds ?? 1800,
+                DefaultTimeoutSeconds = defaultTimeoutSeconds ?? 300,
+                DebounceMilliseconds = debounceMilliseconds ?? 500
+            }),
+            pathValidator: null,
+            watcherFactory: watcherFactory);
+
+    /// <summary>
+    /// The tool-side <c>timeout</c> argument for a watch whose change is raised by the test itself.
+    /// </summary>
+    /// <remarks>
+    /// This is not a budget the test spends: the event is guaranteed, so the watch returns as soon as
+    /// the debounce window closes. It exists only so a broken tool fails instead of hanging the run,
+    /// which means it is never reached on the passing path and there is nothing to buy by keeping it
+    /// tight. The five seconds it replaces is precisely what took an unrelated CLI PR red (#103) —
+    /// a literal second-budget passed as a tool argument is the same wall-clock deadline as
+    /// <c>WaitAsync(TimeSpan.FromSeconds(5))</c>, just spelled where no fence can see it.
+    /// </remarks>
+    private const int WatchBudgetSeconds = 30;
+
+    /// <summary>
+    /// Waits for the tool to arm its watcher and hands back the fake, so the caller can raise a change
+    /// knowing it will be observed. Fails fast with the tool's own message if the watch returned
+    /// before arming — otherwise a rejected path or a missing file reads as a mysterious hang.
+    /// </summary>
+    private static async Task<FakeFileChangeWatcher> ArmedWatcherAsync(
+        FakeFileChangeWatcherFactory watchers,
+        Task<AgentToolResult> watch)
+    {
+        var finished = await TestAwait.SignaledAsync<Task>(
+            Task.WhenAny(watchers.Armed, watch),
+            "the tool to arm its file watcher");
+
+        if (ReferenceEquals(finished, watch))
         {
-            MaxTimeoutSeconds = maxTimeoutSeconds ?? 1800,
-            DefaultTimeoutSeconds = defaultTimeoutSeconds ?? 300,
-            DebounceMilliseconds = debounceMilliseconds ?? 500
-        }));
+            throw new InvalidOperationException(
+                $"The watch returned before arming a watcher: {ReadText(await watch)}");
+        }
+
+        return watchers.Watcher.ShouldNotBeNull();
+    }
+
+    /// <summary>Hands each execution a watcher the test can raise changes on directly.</summary>
+    private sealed class FakeFileChangeWatcherFactory : IFileChangeWatcherFactory
+    {
+        private readonly TaskCompletionSource _armed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>The watcher created by the most recent execution, if any.</summary>
+        public FakeFileChangeWatcher? Watcher { get; private set; }
+
+        /// <summary>Completes once the tool has armed its watcher.</summary>
+        public Task Armed => _armed.Task;
+
+        /// <inheritdoc />
+        public IFileChangeWatcher Create(string directory, string fileName, IReadOnlyCollection<FileChangeKind> kinds)
+            => Watcher = new FakeFileChangeWatcher(directory, fileName, kinds, () => _armed.TrySetResult());
+    }
+
+    /// <summary>
+    /// A watcher whose changes the test raises, standing in for the operating system.
+    /// </summary>
+    /// <remarks>
+    /// It drops changes raised before <see cref="Arm"/>, exactly as a <see cref="FileSystemWatcher"/>
+    /// with <c>EnableRaisingEvents = false</c> does. That is what keeps
+    /// <see cref="FileWatcherTool_ReadinessNotice_IsEmittedOnlyAfterWatcherIsArmed"/> a real assertion
+    /// rather than a race the fake happens to win.
+    /// </remarks>
+    private sealed class FakeFileChangeWatcher(
+        string directory,
+        string fileName,
+        IReadOnlyCollection<FileChangeKind> kinds,
+        Action onArmed) : IFileChangeWatcher
+    {
+        private int _raiseCount;
+        private volatile bool _armed;
+
+        /// <inheritdoc />
+        public event Action<FileChangeKind>? Changed;
+
+        /// <summary>The directory the tool asked to watch.</summary>
+        public string Directory { get; } = directory;
+
+        /// <summary>The file name the tool asked to watch.</summary>
+        public string FileName { get; } = fileName;
+
+        /// <summary>The change kinds the tool subscribed to.</summary>
+        public IReadOnlyCollection<FileChangeKind> RequestedKinds { get; } = kinds;
+
+        /// <summary>Whether the tool disposed the watcher when the execution finished.</summary>
+        public bool Disposed { get; private set; }
+
+        /// <summary>How many changes were delivered, i.e. raised after arming.</summary>
+        public int RaiseCount => Volatile.Read(ref _raiseCount);
+
+        /// <inheritdoc />
+        public void Arm()
+        {
+            _armed = true;
+            onArmed();
+        }
+
+        /// <summary>Delivers a change, or drops it if the watcher has not been armed yet.</summary>
+        public void Raise(FileChangeKind kind)
+        {
+            if (!_armed)
+                return;
+
+            Interlocked.Increment(ref _raiseCount);
+            Changed?.Invoke(kind);
+        }
+
+        /// <inheritdoc />
+        public void Dispose() => Disposed = true;
+    }
 
     private static string ReadText(AgentToolResult result)
         => result.Content.Single(c => c.Type == AgentToolContentType.Text).Value;
