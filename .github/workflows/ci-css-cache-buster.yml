@@ -1,0 +1,128 @@
+name: "CI: CSS Cache-Buster Guard"
+
+# Why this exists
+# ---------------
+# The portal stylesheet is cache-busted by a HAND-MAINTAINED query string in
+# index.html (`css/app.css?v=dsNN`). That string is the cache key: a browser
+# holding `app.css?v=ds16` will not refetch the stylesheet just because its
+# contents changed on the server. Ship CSS without moving the version and every
+# returning visitor keeps the old stylesheet until they happen to hard-refresh.
+#
+# This is not hypothetical. #30 added 20 conversation-switcher rules and left the
+# version at ds16; the component would have rendered completely unstyled for every
+# existing user. It passed review and all thirteen checks, because nothing in CI
+# looked at the pairing - the tests pass, the CSS is present in the file, and even
+# `curl` confirms it is served. The only symptom is a browser that never asks.
+#
+# Both clients are covered. Each carries ONE token, on its stylesheet and on every
+# script it adds itself, so a single bump invalidates that client's whole
+# hand-maintained set. Assets under _framework are fingerprinted by the Blazor
+# build and are deliberately out of scope.
+
+on:
+  pull_request:
+    branches: [ main ]
+
+# Read-only, and deliberately `pull_request` rather than `pull_request_target`:
+# this guard reads two files and runs no code from the PR, so it needs neither a
+# privileged token nor the trusted-base checkout dance that pr-conventions-guard
+# requires.
+permissions:
+  contents: read
+
+concurrency:
+  group: css-cache-buster-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  cache-buster:
+    name: CSS cache-buster bumped with the stylesheet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare stylesheet changes against the version query
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # client:stylesheet:index — one row per client. The token lives on the
+          # stylesheet reference inside that client's index.html.
+          CLIENTS=(
+            "portal:src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/wwwroot:app.css"
+            "mobile:src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile/wwwroot:mobile.css"
+          )
+
+          # Pull a client's version token out of its index.html at a given revision.
+          # Prints nothing if the file or the query string is absent, which the caller
+          # treats as "cannot compare" rather than "unchanged".
+          version_at() { # $1=rev $2=index path $3=stylesheet name
+            git show "$1:$2" 2>/dev/null \
+              | grep -oE "$(echo "$3" | sed 's/\./\\./g')\?v=[A-Za-z0-9._-]+" \
+              | head -1 || true
+          }
+
+          FAILED=0
+          {
+            echo "## Cache-buster check"
+            echo ""
+            echo "| client | stylesheet changed | version at base | version at head |"
+            echo "| --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for row in "${CLIENTS[@]}"; do
+            NAME="${row%%:*}"; REST="${row#*:}"
+            ROOT="${REST%%:*}"; SHEET="${REST#*:}"
+            CSS="$ROOT/css/$SHEET"
+            INDEX="$ROOT/index.html"
+
+            if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- "$CSS"; then
+              echo "$NAME: $SHEET unchanged; nothing to check."
+              echo "| $NAME | no | — | — |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            BASE_V="$(version_at "$BASE_SHA" "$INDEX" "$SHEET")"
+            HEAD_V="$(version_at "$HEAD_SHA" "$INDEX" "$SHEET")"
+
+            if [ -z "$BASE_V" ] || [ -z "$HEAD_V" ]; then
+              echo "::error::$NAME: could not read the $SHEET version query from $INDEX (base='$BASE_V' head='$HEAD_V'). If the cache-busting scheme changed, update this guard."
+              echo "| $NAME | yes | **unreadable** | **unreadable** |" >> "$GITHUB_STEP_SUMMARY"
+              FAILED=1
+              continue
+            fi
+
+            echo "| $NAME | yes | \`$BASE_V\` | \`$HEAD_V\` |" >> "$GITHUB_STEP_SUMMARY"
+
+            if [ "$BASE_V" = "$HEAD_V" ]; then
+              echo "::error::$NAME: $SHEET changed but the cache-buster is still ${BASE_V##*v=}. Every browser holding the old file keeps it, so these changes reach nobody until they hard-refresh."
+              FAILED=1
+            else
+              echo "$NAME: $SHEET changed and the version moved $BASE_V -> $HEAD_V."
+            fi
+          done
+
+          if [ "$FAILED" = "1" ]; then
+            {
+              echo ""
+              echo "**A stylesheet changed without its \`?v=\` moving.**"
+              echo ""
+              echo "The query string is the cache key. A returning visitor keeps the file they"
+              echo "already have, and the new rules never load. Each client carries ONE token,"
+              echo "shared by its stylesheet and its own scripts."
+              echo ""
+              echo "Bump it in the SOURCE \`index.html\` and rebuild, so the pre-compressed"
+              echo "\`.br\`/\`.gz\` variants regenerate with it. Editing a deployed copy leaves"
+              echo "those stale and the change still reaches no one."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Every changed stylesheet moved its version. ✅" >> "$GITHUB_STEP_SUMMARY"

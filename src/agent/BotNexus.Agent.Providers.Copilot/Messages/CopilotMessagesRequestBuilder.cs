@@ -21,11 +21,55 @@ internal static class CopilotMessagesRequestBuilder
         CopilotMessagesOptions? copilotOpts,
         Func<string, bool> isAdaptiveThinkingModel)
     {
+        var retention = options?.CacheRetention ?? CacheRetention.Short;
+        var cacheControl = CopilotMessagesMessageConverter.BuildCacheControl(retention, model.BaseUrl);
+
+        // Same shared budget as the Anthropic builder this path is held byte-identical to: the
+        // Messages wire format rejects a request carrying more than CacheBreakpoints.Max markers,
+        // so tools, system and messages draw from one pool spent in prefix order.
+        var remainingBreakpoints = cacheControl is null ? 0 : CacheBreakpoints.Max;
+
+        List<Dictionary<string, object?>>? toolBlocks = null;
+        if (context.Tools is { Count: > 0 } tools)
+        {
+            toolBlocks = tools.Select(t => new Dictionary<string, object?>
+            {
+                ["name"] = t.Name,
+                ["description"] = t.Description,
+                ["input_schema"] = CopilotMessagesMessageConverter.NormalizeToolSchema(t.Parameters)
+            }).ToList();
+
+            if (remainingBreakpoints > 0)
+            {
+                toolBlocks[^1]["cache_control"] = cacheControl;
+                remainingBreakpoints--;
+            }
+        }
+
+        Dictionary<string, object?>? systemBlock = null;
+        if (context.SystemPrompt is { } systemPrompt)
+        {
+            systemBlock = new Dictionary<string, object?>
+            {
+                ["type"] = "text",
+                ["text"] = systemPrompt.SanitizeSurrogates()
+            };
+
+            if (remainingBreakpoints > 0)
+            {
+                systemBlock["cache_control"] = cacheControl;
+                remainingBreakpoints--;
+            }
+        }
+
         var messages = CopilotMessagesMessageConverter.ConvertMessages(context.Messages, model);
-        CopilotMessagesMessageConverter.ApplyLastUserMessageCacheControl(
-            messages,
-            options?.CacheRetention ?? CacheRetention.Short,
-            model.BaseUrl);
+        if (remainingBreakpoints > 0)
+        {
+            CopilotMessagesMessageConverter.ApplyLastUserMessageCacheControl(
+                messages,
+                retention,
+                model.BaseUrl);
+        }
 
         var body = new JsonObject
         {
@@ -35,32 +79,11 @@ internal static class CopilotMessagesRequestBuilder
             ["stream"] = true
         };
 
-        if (context.SystemPrompt is { } systemPrompt)
-        {
-            var cacheControl = CopilotMessagesMessageConverter.BuildCacheControl(
-                options?.CacheRetention ?? CacheRetention.Short,
-                model.BaseUrl);
+        if (systemBlock is not null)
+            body["system"] = ToNode(new object[] { systemBlock });
 
-            body["system"] = ToNode(new object[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["type"] = "text",
-                    ["text"] = systemPrompt.SanitizeSurrogates(),
-                    ["cache_control"] = cacheControl
-                }
-            });
-        }
-
-        if (context.Tools is { Count: > 0 } tools)
-        {
-            body["tools"] = ToNode(tools.Select(t => new Dictionary<string, object?>
-            {
-                ["name"] = t.Name,
-                ["description"] = t.Description,
-                ["input_schema"] = CopilotMessagesMessageConverter.NormalizeToolSchema(t.Parameters)
-            }).ToList());
-        }
+        if (toolBlocks is not null)
+            body["tools"] = ToNode(toolBlocks);
 
         if (options?.Metadata is { } metadata &&
             metadata.TryGetValue("user_id", out var rawUserId) &&
