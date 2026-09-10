@@ -384,17 +384,7 @@ public sealed class ConversationMessagesControllerTests
     /// </remarks>
     private async Task<InboundMessage> AwaitAcceptedAsync()
     {
-        try
-        {
-            return await _accepted.Task.WaitAsync(HandOffLiveness);
-        }
-        catch (TimeoutException)
-        {
-            throw new InvalidOperationException(
-                $"The controller never handed a message to IInboundMessageOrchestrator.AcceptAsync within " +
-                $"{HandOffLiveness.TotalSeconds:0}s. The dispatch seam saw " +
-                $"{_dispatched.Messages.Count} message(s), so this is a broken wake path, not a slow one.");
-        }
+        return await TestAwait.SignaledAsync(_accepted.Task, "the controller to accept an inbound message");
     }
 
     private async Task<PostConversationMessageResponse> PostAcceptedAsync(

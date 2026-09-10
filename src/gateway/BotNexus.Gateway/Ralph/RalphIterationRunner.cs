@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Audit;
 using Microsoft.Extensions.Logging;
+using BotNexus.Gateway.Streaming;
 
 namespace BotNexus.Gateway.Ralph;
 
@@ -107,6 +108,7 @@ public sealed class RalphIterationRunner(
             foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
                 session.AddEntry(toolEntry);
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            ProviderTokenUsageRecorder.Record(session, response.Usage);
             await sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
             return true;
         }

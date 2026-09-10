@@ -315,7 +315,9 @@ public abstract class StreamingProviderConformanceTests
 
         var provider = CreateProvider(handler);
         var stream = provider.Stream(CreateModel(), CreateContext(), CreateOptions());
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.StopReason.ShouldBe(StopReason.Error);
         result.ErrorMessage.ShouldNotBeNullOrWhiteSpace();
@@ -331,7 +333,9 @@ public abstract class StreamingProviderConformanceTests
 
         var provider = CreateProvider(handler);
         var stream = provider.Stream(CreateModel(), CreateContext(), CreateOptions());
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         // Empty stream should produce either an error or an empty content result
         (result.StopReason == StopReason.Error || result.Content.Count == 0).ShouldBeTrue(
@@ -351,7 +355,9 @@ public abstract class StreamingProviderConformanceTests
 
         var provider = CreateProvider(handler);
         var stream = provider.Stream(CreateModel(), CreateContext(), CreateOptions());
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         // Current behavior: malformed JSON is silently skipped, producing empty result
         // When fixed, this should assert: result.StopReason.ShouldBe(StopReason.Error);
@@ -398,7 +404,9 @@ public abstract class StreamingProviderConformanceTests
         await foreach (var evt in stream.WithCancellation(readTimeout.Token))
             events.Add(evt);
 
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         events.ShouldNotBeEmpty(
             $"{provider.GetType().Name} must emit a terminal event for a cancelled turn, not end the " +
@@ -531,7 +539,9 @@ public abstract class StreamingProviderConformanceTests
         var provider = CreateProvider(handler);
         var stream = provider.Stream(CreateModel(), CreateContext(), CreateOptions());
         var events = await ReadAllEventsAsync(stream);
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         handler.RequestCount.ShouldBe(1);
         return (result, events);

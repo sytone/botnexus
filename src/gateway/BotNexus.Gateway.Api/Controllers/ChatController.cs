@@ -5,6 +5,7 @@ using BotNexus.Gateway.Audit;
 using BotNexus.Domain.Primitives;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using Microsoft.AspNetCore.Mvc;
+using BotNexus.Gateway.Streaming;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -124,6 +125,12 @@ public sealed class ChatController : ControllerBase
             foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
                 session.AddEntry(toolEntry);
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            // The REST chat path is a blocking PromptAsync boundary like every trigger, and it
+            // was the one that never stamped provider usage. Without this the compactor reads no
+            // lastProviderPromptTokens for a REST session and falls back to the chars/4 estimator,
+            // and the cache-efficiency counters stay empty on exactly the transport whose usage a
+            // caller can see in the response body.
+            ProviderTokenUsageRecorder.Record(session, response.Usage);
             await _sessions.SaveAsync(session, CancellationToken.None);
 
             return Ok(new ChatResponse(

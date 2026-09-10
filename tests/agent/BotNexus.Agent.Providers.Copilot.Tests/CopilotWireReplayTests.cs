@@ -71,7 +71,9 @@ public class CopilotWireReplayTests
             Messages: [new UserMessage(new UserMessageContent("replay"), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())]);
 
         var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         // The parser must produce a non-error terminal frame.
         result.ShouldNotBeNull();

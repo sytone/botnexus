@@ -8,10 +8,18 @@
     sub-agents, with peak / total-completed loop counters for context. Kept deliberately minimal so
     it can sit on the portal dashboard without pulling in extra services - it talks to /api/stats
     directly via HttpClient and refreshes on a light timer while mounted.
+
+    Layout: a single-row status strip, not a stacked card. On the Home page (#2037) this sits above
+    the conversation starter, so every row it occupies is a row taken from the primary surface; the
+    idle panel is therefore one line tall and the four counters read left-to-right. The "Platform"
+    heading is sr-only: the counter labels already say what they are, and /platform carries its own
+    visible page heading, so a second visible one only cost vertical space. Peak / completed are
+    wrapped in their own group because they are historical context rather than live state, and the
+    stylesheet mutes them as a set.
 *@
 
 <section class="platform-stats-panel" data-testid="platform-stats-panel">
-    <h3 class="platform-stats-title">Platform</h3>
+    <h3 class="platform-stats-title sr-only">Platform</h3>
 
     @if (_loadError)
     {
@@ -20,7 +28,7 @@
     else
     {
         <div class="platform-stats-grid">
-            <div class="platform-stat" data-testid="stat-active-loops">
+            <div class="platform-stat platform-stat-interactive" data-testid="stat-active-loops">
                 <button type="button"
                         class="platform-stat-disclosure"
                         data-testid="active-loops-toggle"
@@ -36,13 +44,15 @@
                 <span class="platform-stat-value">@_stats.ActiveSubAgents</span>
                 <span class="platform-stat-label">Active sub-agents</span>
             </div>
-            <div class="platform-stat" data-testid="stat-peak-loops">
-                <span class="platform-stat-value">@_stats.PeakAgentLoops</span>
-                <span class="platform-stat-label">Peak loops</span>
-            </div>
-            <div class="platform-stat" data-testid="stat-total-loops">
-                <span class="platform-stat-value">@_stats.TotalCompletedLoops</span>
-                <span class="platform-stat-label">Completed loops</span>
+            <div class="platform-stats-secondary">
+                <div class="platform-stat" data-testid="stat-peak-loops">
+                    <span class="platform-stat-value">@_stats.PeakAgentLoops</span>
+                    <span class="platform-stat-label">Peak loops</span>
+                </div>
+                <div class="platform-stat" data-testid="stat-total-loops">
+                    <span class="platform-stat-value">@_stats.TotalCompletedLoops</span>
+                    <span class="platform-stat-label">Completed loops</span>
+                </div>
             </div>
         </div>
         @if (_loopsExpanded)
@@ -96,13 +106,23 @@
     // Poll cadence for the live counts. Short enough to feel live, long enough to stay cheap.
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Renders the active-loop list already open on first render. Off by default, so the Home
+    /// page's status strip stays one line; /platform sets it, because a page whose whole purpose is
+    /// platform state should not hide its only substantive content behind a click.
+    /// </summary>
+    [Parameter]
+    public bool LoopsInitiallyExpanded { get; set; }
+
     private readonly CancellationTokenSource _cts = new();
     private PlatformStats _stats = new();
     private bool _loadError;
     private bool _refreshError;
     private bool _loaded;
     // Disclosure state is component-owned and never reset by a poll, so a refresh cannot collapse
-    // the operator's chosen view (AC5).
+    // the operator's chosen view (AC5). LoopsInitiallyExpanded only SEEDS it, in OnInitialized -
+    // seeding from OnParametersSet instead would re-open the list under an operator who had just
+    // closed it, every time the parent re-rendered.
     private bool _loopsExpanded;
     private Timer? _timer;
 
@@ -126,6 +146,8 @@
             return $"{(int)age.TotalMinutes}m {age.Seconds}s";
         return $"{(int)age.TotalHours}h {age.Minutes}m";
     }
+
+    protected override void OnInitialized() => _loopsExpanded = LoopsInitiallyExpanded;
 
     protected override async Task OnInitializedAsync()
     {

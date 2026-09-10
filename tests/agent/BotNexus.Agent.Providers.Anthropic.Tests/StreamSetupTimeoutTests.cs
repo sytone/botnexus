@@ -36,7 +36,9 @@ public class StreamSetupTimeoutTests
         };
 
         var stream = provider.Stream(model, context, options);
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the stalled stream to return its error result");
 
         result.StopReason.ShouldBe(StopReason.Error);
     }
@@ -55,7 +57,9 @@ public class StreamSetupTimeoutTests
         };
 
         var stream = provider.Stream(model, context, options);
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.StopReason.ShouldBe(StopReason.Stop);
         result.Content.ShouldNotBeEmpty();
@@ -75,7 +79,9 @@ public class StreamSetupTimeoutTests
         };
 
         var stream = provider.Stream(model, context, options);
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.StopReason.ShouldBe(StopReason.Stop);
     }
@@ -96,7 +102,9 @@ public class StreamSetupTimeoutTests
         };
 
         var stream = provider.Stream(model, context, options);
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the cancelled stream to return its aborted result");
 
         result.StopReason.ShouldBe(StopReason.Aborted);
     }

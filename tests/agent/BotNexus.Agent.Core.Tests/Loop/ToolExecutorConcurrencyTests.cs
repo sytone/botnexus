@@ -68,7 +68,7 @@ public sealed class ToolExecutorConcurrencyTests
         var context = new AgentContext(null, [], [tracker]);
 
         var execution = ToolExecutor.ExecuteAsync(context, assistant, config, _ => Task.CompletedTask, CancellationToken.None);
-        await tracker.AllCallsEntered.WaitAsync(TimeSpan.FromSeconds(10));
+        await TestAwait.SignaledAsync(tracker.AllCallsEntered, "every parallel tool call to enter");
         tracker.ReleaseCalls();
 
         var results = await execution;

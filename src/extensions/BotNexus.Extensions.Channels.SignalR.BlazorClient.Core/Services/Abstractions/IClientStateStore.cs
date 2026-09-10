@@ -221,11 +221,27 @@ public sealed class AgentState
     /// <summary>Optional emoji that visually identifies this agent.</summary>
     public string? Emoji { get; set; }
 
+    /// <summary>Operator-chosen avatar hue (0-359), or null to generate one from the agent id.</summary>
+    public int? AvatarHue { get; set; }
+
+    /// <summary>One short line naming what this agent owns.</summary>
+    public string? Responsibility { get; set; }
+
+    /// <summary>What this agent must not do.</summary>
+    public string? Boundaries { get; set; }
+
     /// <summary>Short description of this agent's purpose.</summary>
     public string? Description { get; set; }
 
     /// <summary>Whether this is a platform built-in agent (sorts after user agents in UI).</summary>
     public bool IsBuiltIn { get; set; }
+
+    /// <summary>
+    /// Whether this agent's tool policy permits it to spawn sub-agents. Drives the "Can delegate"
+    /// chip on the agent roster. Mutable rather than init-only because a refresh re-reads it: an
+    /// agent whose toolIds change should gain or lose the chip without a reload.
+    /// </summary>
+    public bool CanDelegate { get; set; }
 
     /// <summary>Active session ID (last established).</summary>
     public string? SessionId { get; set; }
@@ -295,8 +311,24 @@ public sealed class AgentState
     /// <summary>All conversations for this agent keyed by conversation ID.</summary>
     public Dictionary<string, ConversationState> Conversations { get; } = new();
 
-    /// <summary>In-progress tool calls keyed by tool-call ID.</summary>
-    public Dictionary<string, ActiveToolCall> ActiveToolCalls { get; } = new();
+    /// <summary>
+    /// How many tool calls this agent has in flight, across all of its conversations.
+    /// </summary>
+    /// <remarks>
+    /// DERIVED, and it has to be. This was a <c>Dictionary&lt;string, ActiveToolCall&gt;</c> that
+    /// nothing ever wrote to - the only non-read reference in the whole repo was a
+    /// <c>Clear()</c> on session reset. Tool calls are tracked per CONVERSATION, on
+    /// <see cref="ConversationStreamState.ActiveToolCalls"/>, because that is the scope a run
+    /// belongs to.
+    /// <para>
+    /// The two callers read this to decide whether an agent is "using tools", so an
+    /// always-empty dictionary meant that state was unreachable in the UI while
+    /// <c>AgentActivityModel.For</c>'s own unit tests passed against a hand-supplied count.
+    /// A property that computes the answer cannot go stale the way a field nobody writes does.
+    /// </para>
+    /// </remarks>
+    public int ActiveToolCallCount =>
+        Conversations.Values.Sum(c => c.StreamState.ActiveToolCalls.Count);
 
     /// <summary>Sub-agents spawned by this agent keyed by sub-agent ID.</summary>
     public Dictionary<string, SubAgentInfo> SubAgents { get; } = new();

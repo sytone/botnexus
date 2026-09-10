@@ -84,7 +84,7 @@ public sealed class SqliteConversationStoreArchiveLockTimeoutTests
 
         held.Dispose();
 
-        await archive.WaitAsync(TimeSpan.FromSeconds(10));
+        await TestAwait.SignaledAsync(archive, "the archive to complete once the stripe is released");
         (await store.GetAsync(id))!.Status.ShouldBe(ConversationStatus.Archived);
     }
 

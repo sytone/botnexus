@@ -112,7 +112,9 @@ public class ContentFilterStopReasonParityTests
         await foreach (var evt in stream)
             events.Add(evt);
 
-        return (events, await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+        return (events, await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result"));
     }
 
     private static async Task<(List<AssistantMessageEvent> Events, AssistantMessage Final)> RunResponsesAsync(string sse)
@@ -136,7 +138,9 @@ public class ContentFilterStopReasonParityTests
         await foreach (var evt in stream)
             events.Add(evt);
 
-        return (events, await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+        return (events, await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result"));
     }
 
     // AC1. The mapping itself, named so the regression is legible without reading a fixture.

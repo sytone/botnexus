@@ -76,7 +76,9 @@ public class ResponsesStreamAssemblyConformanceTests
             resolveConfiguredServiceTier: null,
             ct: CancellationToken.None);
 
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
         return string.Concat(result.Content.OfType<TextContent>().Select(t => t.Text));
     }
 
@@ -140,7 +142,9 @@ public class ResponsesStreamAssemblyConformanceTests
             logger: NullLogger.Instance, emitError: (_, _, _, _) => { }, onParsedEvent: null,
             resolveConfiguredServiceTier: null, ct: CancellationToken.None);
 
-        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            stream.GetResultAsync(),
+            "the provider stream to produce its result");
         result.Content.OfType<TextContent>().ShouldBeEmpty();
     }
 }

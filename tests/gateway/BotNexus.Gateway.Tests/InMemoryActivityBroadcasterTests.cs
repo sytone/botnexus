@@ -6,6 +6,53 @@ namespace BotNexus.Gateway.Tests;
 
 public sealed class InMemoryActivityBroadcasterTests
 {
+    /// <summary>
+    /// The subscribe/publish race, pinned at the seam rather than through a consumer.
+    /// </summary>
+    /// <remarks>
+    /// <c>SubscribeAsync</c> used to be an async iterator, so the subscriber was not registered
+    /// until the first <c>MoveNextAsync()</c> — anything published between the call returning and
+    /// enumeration starting went to nobody. There is no sleep here on purpose: a wait would hide
+    /// exactly the window under test, which is how this survived as an intermittent failure in a
+    /// consumer's test instead of a deterministic one here.
+    /// </remarks>
+    [Fact]
+    public async Task SubscribeAsync_RegistersBeforeItReturns_SoAnImmediatePublishIsNotMissed()
+    {
+        var broadcaster = new InMemoryActivityBroadcaster(NullLogger<InMemoryActivityBroadcaster>.Instance);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        var stream = broadcaster.SubscribeAsync(cts.Token);
+
+        // Published before enumeration has begun at all.
+        await broadcaster.PublishAsync(CreateActivity(), cts.Token);
+
+        await using var subscription = stream.GetAsyncEnumerator(cts.Token);
+        (await subscription.MoveNextAsync()).ShouldBeTrue();
+        subscription.Current.Type.ShouldBe(GatewayActivityType.System);
+    }
+
+    /// <summary>
+    /// The deregistration half: a subscriber that has finished enumerating must stop receiving,
+    /// which is what the iterator's <c>finally</c> still owns after the split.
+    /// </summary>
+    [Fact]
+    public async Task SubscribeAsync_DeregistersAfterEnumerationEnds()
+    {
+        var broadcaster = new InMemoryActivityBroadcaster(NullLogger<InMemoryActivityBroadcaster>.Instance);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        var stream = broadcaster.SubscribeAsync(cts.Token);
+        await using (var subscription = stream.GetAsyncEnumerator(cts.Token))
+        {
+            await broadcaster.PublishAsync(CreateActivity(), cts.Token);
+            (await subscription.MoveNextAsync()).ShouldBeTrue();
+        }
+
+        // Publishing after the subscriber is gone must not throw and must not resurrect it.
+        await Should.NotThrowAsync(async () => await broadcaster.PublishAsync(CreateActivity(), cts.Token));
+    }
+
     [Fact]
     public async Task PublishAsync_WithoutSubscribers_DoesNotThrow()
     {

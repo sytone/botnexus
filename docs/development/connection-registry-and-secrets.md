@@ -3,8 +3,8 @@
 A plan for letting an agent act on a named server — a Proxmox host, a NAS, an internal
 API — without ever holding the credential for it.
 
-Status: Phases 1-4 and 6 delivered. Phase 5 (the Proxmox extension) deferred at the
-operator's request, to test the documentation by building one from it.
+Status: Phases 1-4 and 6 delivered. Phase 5 (the Proxmox agent) designed but paused before
+implementation - see its section for the findings and the open questions.
 
 ## The problem
 
@@ -269,8 +269,60 @@ than a command, and an untested P/Invoke would be worse than an honest gap.
 *Verified:* 10 sqlite tests, 14 keyring tests, and the CLI end to end - piped value stored, `600`
 permissions, and the value appearing zero times in `list` output.
 
-**Phase 5 - Proxmox extension. Deferred at the operator's request**, to test whether the
-documentation is enough to build one from.
+**Phase 5 - Proxmox agent. Paused before implementation** (2026-08-25), at the operator's request:
+the Proxmox side needs work first. Nothing was built. The design discussion established the
+following, which is recorded so resuming does not mean rediscovering it.
+
+*What was asked for:* one agent that reaches **any** Proxmox host in the environment and can
+manage, update, deploy, monitor and recommend improvements - with **no add, move or delete without
+explicit approval** - built as a platform agent following the SOUL/IDENTITY/AGENTS/TOOLS/WORLD
+structure.
+
+*Findings about the platform's approval machinery:*
+
+- `IExecApprovalManager.Issue/TryRedeem` is the usable primitive. A token is bound to **session
+  plus canonical action** with a 15-minute TTL, so an approval for one action cannot be spent on
+  another. This is what the mutating path must use.
+- `IToolPolicyProvider.RequiresApproval` is **not** interactive - it returns a bool. The seam that
+  calls it says so outright, in `ToolPolicyHookHandler.cs`: "Approval is required and there is no
+  workflow at this seam that can obtain it. Apply the configured fallback posture instead of falling
+  through silently." It then applies `GetApprovalFallback`, deny or allow. Useful as an outer guard,
+  useless as an ask-a-human loop.
+  (Declared on `IToolPolicyProvider` in `Gateway.Contracts/Security/ToolPolicy.cs`, implemented in
+  `Gateway/Security/DefaultToolPolicyProvider.cs`; the comment is in the caller, not either of them.)
+- Therefore approval must be **enforced in the tool**, never in `SOUL.md`. A prompt-level rule is a
+  preference that a confused turn or injected text bypasses silently, which is the same reasoning
+  that keeps credentials out of agent context.
+- Open UX question with a security edge: if the agent describes the action and the operator says
+  yes, the operator is trusting the agent's description. The approval prompt must render the
+  **canonical action from the tool**, not the agent's summary, or "restart the test VM" can be
+  attached to a token for something else.
+
+*Finding about the agent file structure:* `WORLD.md` is **not** in the default load order.
+`WorkspaceContextBuilder.DefaultPromptFiles` is `AGENTS.md, SOUL.md, TOOLS.md, BOOTSTRAP.md,
+IDENTITY.md, USER.md, MEMORY.md`; only `ModelProfileTool`, a reporting surface, mentions
+`WORLD.md`. A WORLD.md written on the assumption in the quick-start guide would never be read and
+nothing would say so. Name the files explicitly via `AgentDescriptor.SystemPromptFiles` instead of
+relying on defaults. Note also that `BOOTSTRAP.md` loads by default and is absent from that guide,
+and that `USER.md` and `MEMORY.md` are owner-private - they never reach a conversation with
+non-owner participants.
+
+*Proposed shape, not built:*
+
+- Two tools, not one: `proxmox_query` (read-only, no approval) and `proxmox_apply` (mutating,
+  token-gated). Mixing verbs in one tool would force approval on every status check.
+- Multi-host comes free from the locations registry - each host is a location, the tools take a
+  location name.
+- Three layers: a least-privilege Proxmox API token (strongest, because Proxmox enforces it), a
+  per-location `allowWrites` flag, and the per-action approval token.
+- Recommendations need no new machinery - read-only analysis plus a `proxmox-tuning` skill.
+- Sub-phases so it can stop anywhere: 5a read-only query; 5b approval-gated apply; 5c the agent
+  definition and skills; 5d create/delete last, being the largest surface and least reversible.
+
+*Unanswered, needed before starting:* cluster or standalone hosts; how the operator wants to
+approve, and on what surface; whether "update" includes host package updates (which can reboot);
+whether a Proxmox host is `remote-node` with `properties.kind` or a new location type
+(recommendation: the former, rather than growing the enum per vendor); and the PVE version.
 
 **Phase 6 - Documentation. Delivered.**
 

@@ -133,7 +133,7 @@ public class CopilotGatewayRoutingTests
             Messages: [new UserMessage(new UserMessageContent("ping"), 1_700_000_000_000L)]);
 
         var stream = client.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
     }
 
     private static Func<HttpRequestMessage, HttpResponseMessage> MakeResponseFactory() => request =>

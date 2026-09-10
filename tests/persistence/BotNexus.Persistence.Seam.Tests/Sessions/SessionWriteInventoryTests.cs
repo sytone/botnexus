@@ -103,7 +103,13 @@ public sealed class SessionWriteInventoryTests
         // them as the interface grows. Read-only members are excluded by name convention and the
         // remaining set is asserted non-empty, so a filter that swallowed everything fails loudly
         // instead of classifying zero methods and reporting green.
-        var readOnlyPrefixes = new[] { "Get", "List", "Resolve" };
+        // "Search" joins the read-only prefixes rather than the inventory. The inventory records
+        // what a write OWNS and what stops it losing a concurrent update; a query has neither, so
+        // classifying one would put a row in the table that says "nothing" twice and make the
+        // table harder to read. The convention still holds its shape: a method named Search that
+        // mutated session state would be misnamed, and misnaming it is a bigger review problem
+        // than this fence is designed to catch.
+        var readOnlyPrefixes = new[] { "Get", "List", "Resolve", "Search" };
 
         var mutating = typeof(ISessionStore)
             .GetMethods(BindingFlags.Public | BindingFlags.Instance)

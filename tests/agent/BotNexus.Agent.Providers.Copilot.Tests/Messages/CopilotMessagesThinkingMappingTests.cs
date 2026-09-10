@@ -46,7 +46,7 @@ public class CopilotMessagesThinkingMappingTests
             ApiKey = "test-token",
             Reasoning = level,
         });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         var body = JsonNode.Parse(handler.RequestBody!)!.AsObject();
         return body["output_config"]?["effort"]?.GetValue<string>();

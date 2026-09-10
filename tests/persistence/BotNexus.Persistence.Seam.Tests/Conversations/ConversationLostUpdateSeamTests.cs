@@ -294,6 +294,10 @@ public sealed class ConversationLostUpdateSeamTests
         var neverOpened = new SeamGate("never-opened");
 
         var ex = await Should.ThrowAsync<SeamDeadlockException>(
+            // deadline-is-the-assertion: expiry is the passing outcome. The gate is never opened, so
+            // a loaded host can only make this MORE certain to expire, never less. The fence exempts a
+            // thrown TimeoutException automatically; SeamGate reports the same condition under its own
+            // type, which is why the claim has to be made explicitly here.
             () => neverOpened.WaitAsync(TimeSpan.FromMilliseconds(200)));
 
         ex.Message.ShouldContain("never-opened");

@@ -156,6 +156,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         try
         {
             ValidateDependencies(extension.Manifest);
+            ValidateCompatibility(extension.Manifest);
 
             var loadContext = new ExtensionAssemblyLoadContext(
                 extension.EntryAssemblyPath,
@@ -177,7 +178,16 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
                     : " — no discoverable types found");
 
             var hookHandlerTypes = DiscoverHookHandlers(assembly);
+            // Attribution by delta rather than by an out-parameter: every registration path already
+            // appends to _registeredExtensionServices, and a reflective test pins RegisterServices'
+            // signature, so widening it to report the same information twice would break that test
+            // to say something the loader already knows.
+            var registeredBefore = _registeredExtensionServices.Count;
             var registeredServiceNames = RegisterServices(discoveredImplementations, extension.Manifest);
+            var implementationTypeNames = _registeredExtensionServices
+                .Skip(registeredBefore)
+                .Select(entry => entry.Implementation.FullName ?? entry.Implementation.Name)
+                .ToList();
             RegisterHookHandlers(hookHandlerTypes, registeredServiceNames);
             InvokeServiceContributors(assembly, registeredServiceNames);
 
@@ -192,6 +202,9 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
                 LoadedAtUtc = DateTimeOffset.UtcNow,
                 RegisteredServices = registeredServiceNames,
                 Enabled = extension.Manifest.Enabled,
+                Nav = extension.Manifest.Nav,
+                EndpointPhase = extension.Manifest.ResolvedEndpointPhase,
+                RegisteredImplementationTypes = implementationTypeNames,
                 ConfigSchema = extension.Manifest.ConfigSchema
             };
 
@@ -260,8 +273,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
     /// </summary>
     public static void MapExtensionEndpoints(WebApplication app)
     {
-        foreach (var contributor in app.Services.GetServices<IEndpointContributor>())
-            contributor.MapEndpoints(app);
+        MapEndpointContributors(app, ExtensionEndpointPhase.BeforeAuthentication);
 
         foreach (var apiContributor in app.Services.GetServices<IApiContributor>())
         {
@@ -271,6 +283,65 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             var group = app.MapGroup($"/api/extensions/{extId}");
             apiContributor.MapApiRoutes(group);
         }
+    }
+
+    /// <summary>
+    /// Maps the endpoints of every extension that asked to run BEHIND authentication.
+    /// </summary>
+    /// <remarks>
+    /// Called after the authentication middleware, so these routes are subject to the gateway's
+    /// auth and its origin checks like any other API route. Separate from
+    /// <see cref="MapExtensionEndpoints"/> rather than a flag on it, because the two calls have to
+    /// happen at different points in the pipeline and a single call cannot be in two places.
+    /// </remarks>
+    /// <param name="app">The application being built.</param>
+    public static void MapExtensionEndpointsAfterAuthentication(WebApplication app)
+    {
+        MapEndpointContributors(app, ExtensionEndpointPhase.AfterAuthentication);
+    }
+
+    /// <summary>
+    /// Invokes the contributors belonging to one pipeline phase, in <c>Order</c> sequence.
+    /// </summary>
+    /// <remarks>
+    /// A contributor is attributed to an extension by its implementation type name, recorded when
+    /// the extension registered it. A contributor that matches no loaded extension - anything the
+    /// gateway registered directly - is treated as BeforeAuthentication, which is exactly where it
+    /// has always mapped. That default is what keeps this change invisible to everything that was
+    /// working before it.
+    /// </remarks>
+    private static void MapEndpointContributors(WebApplication app, ExtensionEndpointPhase phase)
+    {
+        var phaseByType = BuildPhaseLookup(app);
+
+        // Ordered, not registration order. OrderBy is stable, so contributors sharing an Order keep
+        // their previous relative sequence and only a contributor that asks to move moves.
+        foreach (var contributor in app.Services.GetServices<IEndpointContributor>().OrderBy(c => c.Order))
+        {
+            var name = contributor.GetType().FullName;
+            var contributorPhase = name is not null && phaseByType.TryGetValue(name, out var declared)
+                ? declared
+                : ExtensionEndpointPhase.BeforeAuthentication;
+
+            if (contributorPhase == phase)
+                contributor.MapEndpoints(app);
+        }
+    }
+
+    private static IReadOnlyDictionary<string, ExtensionEndpointPhase> BuildPhaseLookup(WebApplication app)
+    {
+        var lookup = new Dictionary<string, ExtensionEndpointPhase>(StringComparer.Ordinal);
+        var loader = app.Services.GetService<IExtensionLoader>();
+        if (loader is null)
+            return lookup;
+
+        foreach (var extension in loader.GetLoaded())
+        {
+            foreach (var typeName in extension.RegisteredImplementationTypes)
+                lookup[typeName] = extension.EndpointPhase;
+        }
+
+        return lookup;
     }
 
     private static ExtensionManifest ReadAndValidateManifest(IFileSystem fileSystem, string manifestPath, string extensionDirectory)
@@ -352,6 +423,85 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
 
         throw new InvalidOperationException(
             $"Extension '{manifest.Id}' has unresolved dependencies: {string.Join(", ", missingDependencies)}.");
+    }
+
+    /// <summary>
+    /// The gateway contract version extensions are checked against: the version of the
+    /// <c>BotNexus.Gateway.Abstractions</c> assembly this process actually loaded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Read from the loaded assembly rather than a constant, so it cannot drift from the contract
+    /// actually in force. This repository versions every assembly from a single
+    /// <c>&lt;Version&gt;</c> property, so today it equals the product version; resolving the real
+    /// assembly is what keeps the check correct if that ever stops being true.
+    /// </para>
+    /// <para>
+    /// Resolved BY NAME rather than through <c>typeof(IExtensionLoader)</c>: that interface is
+    /// declared in <c>BotNexus.Gateway.Contracts</c> and merely type-forwarded from Abstractions,
+    /// so its assembly is not the one an extension binds against. Falling back to the declaring
+    /// assembly keeps a version available in the odd case where Abstractions is not yet loaded.
+    /// </para>
+    /// </remarks>
+    internal static Version AbstractionsVersion { get; } = ResolveAbstractionsVersion();
+
+    private static Version ResolveAbstractionsVersion()
+    {
+        var abstractions = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => string.Equals(
+                a.GetName().Name, "BotNexus.Gateway.Abstractions", StringComparison.Ordinal));
+
+        return abstractions?.GetName().Version
+            ?? typeof(IExtensionLoader).Assembly.GetName().Version
+            ?? new Version(0, 0, 0, 0);
+    }
+
+    /// <summary>
+    /// Refuses an extension built for a gateway contract this one does not satisfy.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Checked BEFORE the assembly is loaded. A binary compiled against a different Abstractions
+    /// either fails with a type or method load error deep inside startup, or - worse - loads and
+    /// binds against a subtly different contract. Refusing up front turns that into one clear
+    /// sentence naming both versions.
+    /// </para>
+    /// <para>
+    /// An absent or unparseable bound is treated as NO constraint rather than as a failure. The
+    /// field is new, almost every extension omits it, and rejecting an extension because its
+    /// author wrote a version string this parser did not expect would break working deployments to
+    /// enforce a rule they never opted into.
+    /// </para>
+    /// </remarks>
+    internal static void ValidateCompatibility(ExtensionManifest manifest)
+    {
+        var compatibility = manifest.Compatibility;
+        if (compatibility is null)
+            return;
+
+        var current = AbstractionsVersion;
+
+        if (TryParseVersion(compatibility.MinAbstractionsVersion, out var min) && current < min)
+        {
+            throw new InvalidOperationException(
+                $"Extension '{manifest.Id}' requires BotNexus.Gateway.Abstractions {min} or newer, " +
+                $"but this gateway provides {current}. The extension was built for a newer gateway.");
+        }
+
+        if (TryParseVersion(compatibility.MaxAbstractionsVersion, out var max) && current >= max)
+        {
+            throw new InvalidOperationException(
+                $"Extension '{manifest.Id}' supports BotNexus.Gateway.Abstractions below {max}, " +
+                $"but this gateway provides {current}. The extension needs updating for this gateway.");
+        }
+    }
+
+    // Accepts the shapes an author actually writes - "1", "1.4", "1.4.0", "1.4.0.0" - by letting
+    // Version.TryParse handle them; anything else yields no constraint rather than a failure.
+    private static bool TryParseVersion(string? value, out Version version)
+    {
+        version = new Version(0, 0);
+        return !string.IsNullOrWhiteSpace(value) && Version.TryParse(value.Trim(), out version!);
     }
 
     /// <summary>

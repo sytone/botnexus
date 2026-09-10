@@ -11,10 +11,9 @@
 @inject IJSRuntime JS
 @inject IPortalPreferencesService Prefs
 @inject CronApiClient CronApi
-@inject SectionsApiClient SectionsApi
-@inject ConversationSectionsState SectionsState
 @inject ToolsApiClient ToolsApi
 @inject NavOrderApiClient NavOrderApi
+@inject IServiceProvider Services
 @implements IDisposable
 @implements IAsyncDisposable
 
@@ -22,11 +21,14 @@
     @* Top bar with burger + logo *@
     <header class="app-banner">
         <div class="banner-header">
-            <button class="burger-btn" @onclick="ToggleSidebar" aria-label="Toggle menu" data-testid="sidebar-toggle-btn">
-                <span class="burger-line"></span>
-                <span class="burger-line"></span>
-                <span class="burger-line"></span>
-            </button>
+            @if (ShowsConversations)
+            {
+                <button class="burger-btn" @onclick="ToggleSidebar" aria-label="Toggle menu" data-testid="sidebar-toggle-btn">
+                    <span class="burger-line"></span>
+                    <span class="burger-line"></span>
+                    <span class="burger-line"></span>
+                </button>
+            }
             <a href="" class="banner-home-link" data-testid="banner-home-link" title="Home" @onclick="CloseSidebar">
                 <span class="banner-logo">&#x1F916;</span>
                 <span class="banner-title">BotNexus</span>
@@ -40,10 +42,12 @@
                rather than owning a row inside the agent panel. *@
             @if (Store.ActiveAgentId is { Length: > 0 } bannerAgentId)
             {
-                <AgentIdentity AgentId="@bannerAgentId" />
+                <AgentIdentity AgentId="@bannerAgentId"
+                               OnPersonaRequested="@(() => OpenPersonaAsync(bannerAgentId))" />
             }
 
             <button class="banner-usage-btn"
+                    @ref="_usageBtnRef"
                     @onclick="OpenUsage"
                     title="Provider usage and rate limits"
                     aria-label="Provider usage and rate limits"
@@ -51,6 +55,7 @@
                 <span class="banner-usage-dot"></span>
                 <span>Usage</span>
             </button>
+            <NotificationCentre />
             <button class="banner-theme-btn"
                     @onclick="ToggleTheme"
                     title="@(IsLightTheme ? "Switch to dark theme" : "Switch to light theme")"
@@ -79,6 +84,65 @@
     }
 
     @* Two-column body *@
+    @* Primary navigation, in the user's configured order (#2236), with plugin contributions.
+       Items that do not fit move into the overflow menu - measured, not guessed, because the
+       entry count is not fixed: plugins contribute entries and the user reorders them. *@
+    <nav class="app-toolbar" @ref="_toolbarRef" data-testid="app-toolbar">
+        <div class="toolbar-items">
+            @foreach (var item in VisibleToolbarEntries())
+            {
+                @RenderToolbarItem(item)
+            }
+        </div>
+
+        @if (OverflowToolbarEntries().Any())
+        {
+            <div class="toolbar-overflow">
+                <button class="toolbar-item toolbar-more-btn @(_overflowOpen ? "open" : "")"
+                        data-testid="toolbar-more"
+                        @onclick="ToggleOverflow"
+                        aria-expanded="@(_overflowOpen ? "true" : "false")"
+                        aria-haspopup="menu"
+                        title="More">
+                    <Icon Name="more" Size="16" />
+                    <span class="toolbar-item-label">More</span>
+                </button>
+
+                @if (_overflowOpen)
+                {
+                    <div class="toolbar-overflow-backdrop" @onclick="CloseOverflow"></div>
+                    <div class="toolbar-overflow-menu" data-testid="toolbar-overflow-menu" role="menu">
+                        @foreach (var item in OverflowToolbarEntries())
+                        {
+                            @RenderToolbarItem(item, inOverflow: true)
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        @* Off-layout copy of the FULL set. The measurer reads its widths, so an item that is
+           currently inside the overflow menu still has a measurable natural width - otherwise the
+           bar could never work out that it would fit again on widening. *@
+        <div class="toolbar-ghost" aria-hidden="true" data-testid="toolbar-ghost">
+            @foreach (var item in ToolbarNavItems())
+            {
+                @RenderToolbarItem(item, ghost: true)
+            }
+        </div>
+    </nav>
+
+    @* Second row: the sub-navigation for the section you are in. These were inline sub-lists under
+       their sidebar item and are CONTEXTUAL - they appear only while you are on that page - so they
+       become a second toolbar row rather than dropdowns, which would have promised persistent menus
+       the sidebar never had. *@
+    @if (HasActiveSubNav())
+    {
+        <div class="app-subtoolbar" data-testid="app-subtoolbar">
+            @RenderActiveSubNav()
+        </div>
+    }
+
     <div class="app-body" id="app-body">
         @* Mobile overlay - tap to close sidebar *@
         @if (_sidebarOpen)
@@ -86,16 +150,13 @@
             <div class="sidebar-overlay" @onclick="CloseSidebar"></div>
         }
 
+        @if (ShowsConversations)
+        {
         <aside class="main-sidebar @(_sidebarOpen ? "sidebar-open" : "sidebar-closed")">
-            @* #2441: connection status moved to the top bar as a dot; the sidebar row is gone. *@
-            @* Nav links -- rendered in the user's configured order (#2236). The whole nav is driven
-               by a single ordering model: every built-in item has a default order number and the
-               user can override any of them; overrides persist server-side and roam with the user. *@
+            @* Navigation moved to the toolbar under the banner; the sidebar is the conversation
+               list now. The hamburger toggles THIS, which is why its label says conversations. *@
             <nav class="sidebar-nav">
-                @foreach (var key in OrderedNavKeys())
-                {
-                    @RenderNavSection(key)
-                }
+                @RenderConversationsRegion()
             </nav>
 
             @* Build info at bottom *@
@@ -127,6 +188,7 @@
                 }
             </div>
         </aside>
+        }
 
         @* Update confirmation overlay *@
         @if (_showUpdateConfirm)
@@ -151,8 +213,11 @@
            panels already use, rather than a second drag implementation. The JS resolves the left
            pane as this element's previousElementSibling, which is the sidebar. Desktop only: on
            mobile the sidebar is a fixed overlay, so there is no boundary to drag. *@
-        <div class="panel-splitter sidebar-splitter" role="separator" aria-orientation="vertical"
-             aria-label="Resize sidebar" title="Drag to resize"></div>
+        @if (ShowsConversations)
+        {
+            <div class="panel-splitter sidebar-splitter" role="separator" aria-orientation="vertical"
+                 aria-label="Resize sidebar" title="Drag to resize"></div>
+        }
         <main class="main-canvas">
             <GlobalErrorBoundary>
             @Body
@@ -165,25 +230,20 @@
 @* Modal overlays - rendered outside app-shell to avoid flex/overflow containment *@
 <PortalSettingsPanel @ref="_settingsPanel" />
 <ProviderUsagePanel @ref="_usagePanel" />
+<AgentPersonaPanel @ref="_personaPanel" />
 @if (_showDebugPanel)
 {
     <SessionDebugPanel SessionId="@GetActiveSessionId()" OnClose="CloseDebug" />
 }
 
 @code {
-    // Conversation id whose "move to section" menu is currently open (#2324); null when closed.
-    private string? _sectionMenuConversationId;
 
     private bool _cronGroupCollapsed = true;
     private HashSet<string> _cronConversationIds = new(StringComparer.OrdinalIgnoreCase);
     private const string CronCollapsedKey = "botnexus-cron-collapsed";
 
-    // #2441: Tools and My-Sections collapse state persist with the same localStorage key pattern
+    // #2441: collapse state persists with the same localStorage key pattern
     // as the Scheduled group, and both default to collapsed so the nav starts tight.
-    private bool _toolsGroupCollapsed = true;
-    private const string ToolsCollapsedKey = "botnexus-tools-collapsed";
-    private bool _sectionsGroupCollapsed = true;
-    private const string SectionsCollapsedKey = "botnexus-sections-collapsed";
 
     // #2122: Webhooks is its own section, and Pinned / Conversations became collapsible. All three
     // reuse the exact Scheduled-group persistence pattern (a "true"/"false" string under a
@@ -219,6 +279,12 @@
     // Populated from GET /api/nav-order; on any failure it falls back to the built-in defaults so
     // the nav always renders in a sensible, consistent order.
     private IReadOnlyList<string> _navOrder = NavOrderKeys.DefaultOrder;
+    private IReadOnlyDictionary<string, int> _navOrderNumbers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<NavContributionDto> _navContributions = [];
+
+    // Resolved once rather than per load: the sidebar subscribes to it, and resolving a different
+    // instance later would leave the subscription attached to an object nothing raises.
+    private PluginsApiClient? _pluginsApi;
 
     private record Announcement(string Id, string Text, string Type = "info");
     private record SidebarAgentItem(string AgentId, string DisplayLabel);
@@ -227,6 +293,8 @@
     private List<ToolDto> _tools = [];
     private PortalSettingsPanel? _settingsPanel;
     private ProviderUsagePanel? _usagePanel;
+    private AgentPersonaPanel? _personaPanel;
+    private ElementReference _usageBtnRef;
     private bool _showDebugPanel = false;
     private bool _sidebarOpen = false;
     private bool _isMobile = false;
@@ -248,13 +316,14 @@
         public const string Agents = "agents";
         public const string Cron = "cron";
         public const string Plugins = "plugins";
+        public const string Memory = "memory";
         public const string Guide = "guide";
 
         // Guide sits last: it is a reference, not a place work happens. Adding a key here is safe
         // for existing users - the resolver below walks this list and re-inserts anything missing
         // from a saved order next to its neighbours, so a new entry appears without a migration.
         public static readonly IReadOnlyList<string> DefaultOrder =
-            [Home, Activity, Tools, Chat, Configuration, Skills, Agents, Cron, Plugins, Guide];
+            [Home, Activity, Tools, Chat, Configuration, Skills, Agents, Memory, Cron, Plugins, Guide];
     }
 
     /// <summary>
@@ -300,34 +369,6 @@
 
         return result;
     }
-
-    /// <summary>
-    /// #2973: THE single emission point for every top-level sidebar nav anchor.
-    ///
-    /// Why a helper rather than eight hand-written anchors: <c>data-testid</c> used to be typed
-    /// literally into four of the eight render fragments and forgotten in the other four, so being
-    /// addressable by a stable selector depended on author recall. The observable failure was not a
-    /// missing element but a SILENTLY WRONG one - testid-first automation that could not find
-    /// <c>nav-skills</c> retargeted onto the nearest anchor that did have a testid and asserted
-    /// against Cron Jobs while claiming to be on Skills. Deriving the attribute from the route means
-    /// a nav entry added tomorrow cannot ship without one.
-    /// </summary>
-    /// <param name="route">The anchor's href, relative to the base path. Empty string is Home's root route.</param>
-    /// <param name="label">The anchor's rendered content (glyph + text).</param>
-    /// <param name="testIdOverride">
-    /// Only for an anchor whose historical testid does not match its route. Cron Jobs is the sole
-    /// case: its id tracks the label (nav-cron-jobs) rather than the route (cron), and it has in-repo
-    /// and unknown external consumers, so it is preserved rather than renamed. Such an anchor
-    /// additionally carries <c>data-testid-alias</c> with the route-derived id, so both keys select it.
-    /// </param>
-    private RenderFragment NavAnchor(string route, RenderFragment label, string? testIdOverride = null) => __builder =>
-    {
-        <a href="@route"
-           class="sidebar-nav-item @NavClass(NavKeyForRoute(route))"
-           data-testid="@(testIdOverride ?? NavTestId(route))"
-           data-testid-alias="@(testIdOverride is null ? null : NavTestId(route))"
-           @onclick="OnNavClick">@label</a>
-    };
 
     /// <summary>
     /// Maps a nav route to its canonical test id. Home's route is the empty string, which would
@@ -380,82 +421,256 @@
     private static string SubNavTestId(string route) =>
         "subnav-" + System.Text.RegularExpressions.Regex.Replace(route, "[^a-zA-Z0-9-]+", "-").Trim('-');
 
-    private RenderFragment RenderNavSection(string key) => key.ToLowerInvariant() switch
+    /// <summary>
+    /// One primary-navigation destination, resolved for the toolbar.
+    /// </summary>
+    /// <param name="Key">Nav-order key (built-ins) or the contribution id.</param>
+    /// <param name="Route">Base-relative route the item navigates to.</param>
+    /// <param name="Icon">Icon-set name.</param>
+    /// <param name="Label">Visible label.</param>
+    /// <param name="TestId">
+    /// The data-testid this item carried in the sidebar. Preserved deliberately: moving navigation
+    /// into a toolbar changes where the item is, not which item it is, so every existing nav test id
+    /// keeps pointing at the same destination.
+    /// </param>
+    /// <param name="Contribution">
+    /// Set for a plugin-contributed entry. Such an entry is NOT a plain href: a full-page
+    /// contribution needs a forceLoad navigation and an embedded one routes to
+    /// <c>extension/{id}</c>, so it keeps going through <see cref="NavigateToContribution"/>
+    /// rather than being flattened into a link.
+    /// </param>
+    private sealed record ToolbarNavItem(
+        string Key, string Route, string Icon, string Label, string? TestId = null,
+        NavContributionDto? Contribution = null);
+
+    /// <summary>
+    /// The toolbar's items, in the user's configured order, built-ins and plugin contributions
+    /// together. Feature gates are applied here exactly as the sidebar applied them, so a disabled
+    /// extension stays absent rather than moving to the overflow menu.
+    /// </summary>
+    private IReadOnlyList<ToolbarNavItem> ToolbarNavItems()
     {
-        NavOrderKeys.Home => RenderHomeNav(),
-        NavOrderKeys.Activity => RenderActivityNav(),
-        NavOrderKeys.Tools => RenderToolsNav(),
-        NavOrderKeys.Chat => RenderChatNav(),
-        NavOrderKeys.Configuration => RenderConfigurationNav(),
-        NavOrderKeys.Skills => RenderSkillsNav(),
-        NavOrderKeys.Agents => RenderAgentsNav(),
-        NavOrderKeys.Cron => RenderCronNav(),
-        NavOrderKeys.Plugins => RenderPluginsNav(),
-        NavOrderKeys.Guide => RenderGuideNav(),
-        _ => _ => { }
+        var items = new List<ToolbarNavItem>();
+        foreach (var entry in OrderedNavEntries())
+        {
+            if (entry.Contribution is { } contribution)
+            {
+                items.Add(new ToolbarNavItem(
+                    contribution.Id,
+                    $"extension/{contribution.Id}",
+                    ResolveContributedIcon(contribution.Icon),
+                    contribution.Label,
+                    Contribution: contribution));
+                continue;
+            }
+
+            var built = entry.Key.ToLowerInvariant() switch
+            {
+                NavOrderKeys.Home => new ToolbarNavItem(entry.Key, "", "home", "Home"),
+                NavOrderKeys.Activity => new ToolbarNavItem(entry.Key, NavOrderKeys.Activity, "activity", "Activity"),
+                NavOrderKeys.Tools => new ToolbarNavItem(entry.Key, NavOrderKeys.Tools, "tools", "Tools"),
+                NavOrderKeys.Chat => new ToolbarNavItem(entry.Key, NavOrderKeys.Chat, "chat", "Chat"),
+                NavOrderKeys.Configuration => new ToolbarNavItem(entry.Key, NavOrderKeys.Configuration, "configuration", "Configuration"),
+                NavOrderKeys.Skills when ExtensionFeatures.SkillsEnabled
+                    => new ToolbarNavItem(entry.Key, NavOrderKeys.Skills, "skills", "Skills"),
+                NavOrderKeys.Agents => new ToolbarNavItem(entry.Key, NavOrderKeys.Agents, "agents", "Agents"),
+                NavOrderKeys.Cron => new ToolbarNavItem(entry.Key, NavOrderKeys.Cron, "cron-jobs", "Cron Jobs", "nav-cron-jobs"),
+                NavOrderKeys.Memory => new ToolbarNavItem(entry.Key, NavOrderKeys.Memory, "thinking", "Memory"),
+                NavOrderKeys.Plugins => new ToolbarNavItem(entry.Key, NavOrderKeys.Plugins, "plugins", "Plugins"),
+                NavOrderKeys.Guide => new ToolbarNavItem(entry.Key, NavOrderKeys.Guide, "guide", "Guide"),
+                _ => null,
+            };
+
+            if (built is not null)
+                items.Add(built);
+        }
+
+        return items;
+    }
+
+    /// <summary>Items rendered in the bar itself.</summary>
+    private IEnumerable<ToolbarNavItem> VisibleToolbarEntries() =>
+        _visibleNavCount is int n ? ToolbarNavItems().Take(n) : ToolbarNavItems();
+
+    /// <summary>Items pushed into the overflow menu because they do not fit.</summary>
+    private IEnumerable<ToolbarNavItem> OverflowToolbarEntries() =>
+        _visibleNavCount is int n ? ToolbarNavItems().Skip(n) : [];
+
+    /// <summary>
+    /// How many items currently fit in the bar. Null until the measurer has reported, so the first
+    /// paint shows every item rather than an arbitrary guess that would visibly reflow.
+    /// </summary>
+    private int? _visibleNavCount;
+
+    private bool _overflowOpen;
+    private ElementReference _toolbarRef;
+    private DotNetObjectReference<MainLayout>? _toolbarRef_dotNet;
+    private IJSObjectReference? _toolbarObserver;
+
+    private void ToggleOverflow() => _overflowOpen = !_overflowOpen;
+
+    private void CloseOverflow() => _overflowOpen = false;
+
+    /// <summary>
+    /// Called by the measurer with the number of items that fit. Invoked on every resize, so it
+    /// re-renders only when the number actually changed - otherwise a drag of the window edge would
+    /// queue a render per pixel.
+    /// </summary>
+    /// <param name="count">Items that fit in the bar.</param>
+    [JSInvokable]
+    public void SetVisibleNavCount(int count)
+    {
+        var clamped = Math.Clamp(count, 0, ToolbarNavItems().Count);
+        if (_visibleNavCount == clamped)
+            return;
+
+        _visibleNavCount = clamped;
+        // An item that just moved into the menu must not leave the menu open over a stale list.
+        if (clamped >= ToolbarNavItems().Count)
+            _overflowOpen = false;
+
+        StateHasChanged();
+    }
+
+    private async Task RegisterToolbarMeasurerAsync()
+    {
+        try
+        {
+            _toolbarRef_dotNet = DotNetObjectReference.Create(this);
+            _toolbarObserver = await JS.InvokeAsync<IJSObjectReference>(
+                "botnexusNavToolbar.observe", _toolbarRef, _toolbarRef_dotNet);
+        }
+        catch
+        {
+            // No script (test host, or a boot that failed before the file loaded). Every item stays
+            // in the bar - the CSS lets it wrap rather than clipping, so nothing becomes unreachable.
+            _toolbarRef_dotNet?.Dispose();
+            _toolbarRef_dotNet = null;
+        }
+    }
+
+    /// <summary>
+    /// A toolbar item. The ghost copy carries no href or test id: it exists only to be measured, and
+    /// a second element sharing a nav test id would make every existing nav assertion ambiguous.
+    /// </summary>
+    private RenderFragment RenderToolbarItem(ToolbarNavItem item, bool inOverflow = false, bool ghost = false) => __builder =>
+    {
+        if (ghost)
+        {
+            <span class="toolbar-item" data-nav-key="@item.Key">
+                <Icon Name="@item.Icon" Size="16" />
+                <span class="toolbar-item-label">@item.Label</span>
+            </span>
+        }
+        else if (item.Contribution is { } contribution)
+        {
+            @* Every attribute here is load-bearing and tested: the href is the real destination so
+               the row is a link rather than a scripted div, preventDefault + NavigateToContribution
+               keep full-page contributions on a forceLoad and embedded ones on the portal's own
+               extension/{id} route, and the two data-nav-* attributes are how a plugin's entry is
+               attributed and identified as embedded. *@
+            <a href="@ContributionHref(contribution)"
+               class="@(inOverflow ? "toolbar-overflow-item" : "toolbar-item") @NavClass(item.Key)"
+               data-testid="@("nav-" + contribution.Id)"
+               data-nav-contributed-by="@contribution.ExtensionId"
+               data-nav-embedded="@((!contribution.FullPage).ToString().ToLowerInvariant())"
+               data-nav-key="@item.Key"
+               @onclick:preventDefault="true"
+               @onclick="() => OnContributionClick(contribution)">
+                <Icon Name="@item.Icon" Size="16" />
+                <span class="toolbar-item-label">@item.Label</span>
+            </a>
+        }
+        else
+        {
+            <a href="@item.Route"
+               class="@(inOverflow ? "toolbar-overflow-item" : "toolbar-item") @NavClass(item.Key)"
+               data-testid="@(item.TestId ?? NavTestId(item.Route))"
+               data-testid-alias="@(item.TestId is null ? null : NavTestId(item.Route))"
+               data-nav-key="@item.Key"
+               @onclick="OnToolbarNavClick">
+                <Icon Name="@item.Icon" Size="16" />
+                <span class="toolbar-item-label">@item.Label</span>
+            </a>
+        }
     };
+
+    /// <summary>
+    /// True when the current page contributes a sub-navigation row.
+    /// </summary>
+    /// <remarks>
+    /// Kept as its own predicate so the row's container is not rendered empty: an empty bordered
+    /// strip under the toolbar reads as a broken layout rather than as "nothing here".
+    /// </remarks>
+    private bool HasActiveSubNav() =>
+        (IsOnPage(NavOrderKeys.Tools) && _tools.Count > 0)
+        || (IsOnPage("skills") && ExtensionFeatures.SkillsEnabled)
+        || IsOnPage("agents");
+
+    /// <summary>
+    /// The sub-navigation for the active section. Gates and destinations are the sidebar's, moved
+    /// rather than rewritten - Tools lists the user's configured tools, Skills offers Explorer, and
+    /// Agents lists the agents plus Add Agent.
+    /// </summary>
+    private RenderFragment RenderActiveSubNav() => __builder =>
+    {
+        @if (IsOnPage(NavOrderKeys.Tools) && _tools.Count > 0)
+        {
+            @foreach (var tool in _tools)
+            {
+                @SubNavAnchor(
+                    $"tools/{tool.Id}",
+                    @<text>
+                        @if (!string.IsNullOrWhiteSpace(tool.Icon))
+                        {
+                            <span class="tools-subnav-item-icon">@tool.Icon</span>
+                        }
+                        <span class="tools-subnav-item-label">@tool.Name</span>
+                    </text>,
+                    IsToolActive(tool.Id) ? "active" : null,
+                    "tools-subnav-item")
+            }
+        }
+        else if (IsOnPage("skills") && ExtensionFeatures.SkillsEnabled)
+        {
+            @SubNavAnchor("skills/explorer", @<text><Icon Name="workspace" Size="15" /><span>Explorer</span></text>)
+        }
+        else if (IsOnPage("agents"))
+        {
+            @foreach (var agent in _sidebarAgents)
+            {
+                @SubNavAnchor(
+                    $"agents/{agent.AgentId}",
+                    @<text>@agent.DisplayLabel</text>,
+                    IsAgentActive(agent.AgentId) ? "active" : null)
+            }
+            @SubNavAnchor("agents/new", @<text>+ Add Agent</text>, "sidebar-subnav-add")
+        }
+    };
+
+    private void OnToolbarNavClick()
+    {
+        _overflowOpen = false;
+        if (_isMobile)
+            _sidebarOpen = false;
+    }
+
+    private void OnContributionClick(NavContributionDto contribution)
+    {
+        _overflowOpen = false;
+        NavigateToContribution(contribution);
+    }
 
     // #2535: Home owns the root route (Landing.razor, page "/"). Before this it was reachable
     // only via the banner logo, which carries no active state and duplicates the Agents robot
     // glyph. The house glyph keeps it visually distinct from Agents.
-    private RenderFragment RenderHomeNav() => __builder =>
-    {
-        @NavAnchor("", @<text><Icon Name="home" /><span class="sidebar-nav-label">Home</span></text>)
-    };
 
-    private RenderFragment RenderActivityNav() => __builder =>
+    /// <summary>
+    /// The agent picker, conversation search, conversation groups and user sections - the whole
+    /// body of the sidebar now that navigation has moved to the toolbar.
+    /// </summary>
+    private RenderFragment RenderConversationsRegion() => __builder =>
     {
-        @NavAnchor(NavOrderKeys.Activity, @<text><Icon Name="activity" /><span class="sidebar-nav-label">Activity</span></text>)
-    };
-
-    private RenderFragment RenderToolsNav() => __builder =>
-    {
-        @* Tools section. Tools load from GET /api/tools and roam with the user server-side (#2233).
-           Sub-items link to /tools/{id}. Default order sits above Chat (#2236). *@
-        @* #2441: the Tools sub-list is collapsed by default (state persisted in localStorage the
-           same way the Scheduled group is) and the "No tools configured" placeholder row is not
-           rendered at all - an empty section should cost zero vertical space. *@
-        <div class="sidebar-nav-row">
-            @NavAnchor(NavOrderKeys.Tools, @<text><Icon Name="tools" /><span class="sidebar-nav-label">Tools</span></text>)
-            @if (_tools.Count > 0)
-            {
-                <button class="sidebar-nav-toggle" data-testid="tools-collapse-toggle"
-                        aria-expanded="@(!_toolsGroupCollapsed ? "true" : "false")"
-                        title="@(_toolsGroupCollapsed ? "Expand tools" : "Collapse tools")"
-                        @onclick="ToggleToolsGroup">
-                    <span class="group-chevron @(!_toolsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                </button>
-            }
-        </div>
-        @if (_tools.Count > 0 && !_toolsGroupCollapsed)
-        {
-            <div class="sidebar-subnav" data-testid="tools-subnav">
-                @foreach (var tool in _tools)
-                {
-                    @* #3051: "tools-subnav-item" is a GROUP selector (all tool rows), not a row
-                       identity, and has an in-repo consumer - so it is kept verbatim on data-testid
-                       and the unique route-derived subnav-tools-{id} rides alongside on the alias. *@
-                    @SubNavAnchor(
-                        $"tools/{tool.Id}",
-                        @<text>
-                            @if (!string.IsNullOrWhiteSpace(tool.Icon))
-                            {
-                                <span class="tools-subnav-item-icon">@tool.Icon</span>
-                            }
-                            <span class="tools-subnav-item-label">@tool.Name</span>
-                        </text>,
-                        IsToolActive(tool.Id) ? "active" : null,
-                        "tools-subnav-item")
-                }
-            </div>
-        }
-    };
-
-    private RenderFragment RenderChatNav() => __builder =>
-    {
-        @NavAnchor(NavOrderKeys.Chat, @<text><Icon Name="chat" /><span class="sidebar-nav-label">Chat</span></text>)
-
-        @* Scrollable agent/conversation section *@
         <div class="sidebar-scroll-region">
         @* Agent dropdown + session list nested under Chat *@
         @if (Store.Agents.Values.Any(a => !a.IsReadOnly))
@@ -480,6 +695,25 @@
                  Store.Agents.TryGetValue(Store.ActiveAgentId, out var activeAgent))
             {
                 <div class="agent-conversation-list">
+                    @* The findable entry point. The switcher itself lives in the chat header, anchored
+                       to the title it switches away from, where a bare caret is easy to miss - which is
+                       how a shipped search feature can read as absent. This puts a labelled box where
+                       someone looking for conversations already is: above the conversation list. It is
+                       a BUTTON styled as a search field, not an input: typing happens in the switcher's
+                       own box, and two fields that both look like search would be a worse lie than one
+                       that opens the other. *@
+                    @if (SwitcherLauncher is not null)
+                    {
+                    <button class="conversation-search-launcher"
+                            data-testid="sidebar-conversation-search"
+                            @onclick="() => SwitcherLauncher.Request()"
+                            title="Search conversations across all agents (@ShortcutHint)">
+                        <Icon Name="search" Size="13" Class="bn-icon-inherit" />
+                        <span class="conversation-search-launcher-label">Search conversations</span>
+                        <kbd class="conversation-search-launcher-kbd">@ShortcutHint</kbd>
+                    </button>
+                    }
+
                     <div class="agent-conversation-list-header">
                         <span class="agent-conversation-list-title">Conversations</span>
                         @if (!activeAgent.IsReadOnly)
@@ -521,18 +755,8 @@
                             var webhookConversations = allUserConversations
                                 .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && IsWebhookConversation(c))
                                 .ToList();
-                            @* #2325: a conversation assigned to a user-defined section is rendered by
-                               the sections panel, so subtract it here or it renders twice. Subtraction
-                               composes exactly like pinning/cron: it is applied AFTER pinned, cron and
-                               webhook are hoisted out, so a pinned or scheduled conversation keeps its
-                               existing home and only plain default-list rows can move into a section.
-                               Collapsing a section hides its body but never unmounts an assignment, and
-                               an assignment only exists while the owning section exists (deleting a
-                               section returns its conversations to the default list), so this cannot
-                               strand a conversation with no reachable row. *@
                             var normalConversations = allUserConversations
                                 .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && !IsWebhookConversation(c))
-                                .Where(c => !IsRenderedInSection(activeAgent, c))
                                 .Where(MatchesActivityFilter)
                                 .ToList();
 
@@ -670,84 +894,7 @@
             }
         }
 
-        @* #2441: "My sections" is a child of the agent chat section, not a sibling floating at the
-           bottom of the sidebar. It is nested inside the chat region and collapsible so an unused
-           sections feature costs one thin header row instead of a whole block. *@
-        @if (Store.ActiveAgentId is not null &&
-             Store.Agents.TryGetValue(Store.ActiveAgentId, out var sectionsAgent) &&
-             !sectionsAgent.IsReadOnly)
-        {
-            <div class="chat-nav-child" data-testid="chat-sections-child">
-                <button class="conversation-group-header conversation-group-header-toggle chat-nav-child-header"
-                        data-testid="sections-group-toggle"
-                        aria-expanded="@(!_sectionsGroupCollapsed ? "true" : "false")"
-                        @onclick="ToggleSectionsGroup">
-                    <span class="group-chevron @(!_sectionsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                    <span class="conversation-group-label">&#x1F4C1; My sections</span>
-                </button>
-                @* Collapse hides the body via a class rather than unmounting, so the panel keeps its
-                   transient UI state (in-progress create / rename). Section data itself now lives in
-                   the scoped ConversationSectionsState service (#2325), not in this component. *@
-                <div class="chat-nav-child-body @(_sectionsGroupCollapsed ? "collapsed" : "")"
-                     data-testid="chat-sections-body">
-                    <ConversationSectionsPanel AgentId="@sectionsAgent.AgentId"
-                                               TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
-                                               OnConversationSelected="@(id => SelectConversationAsync(sectionsAgent.AgentId, id))"
-                                               ItemActions="@(id => RenderSectionMemberActions(sectionsAgent, id))"
-                                               OnChanged="HandleSectionsChanged" />
-                </div>
-            </div>
-        }
         </div>@* end sidebar-scroll-region *@
-    };
-
-    private RenderFragment RenderConfigurationNav() => __builder =>
-    {
-        @NavAnchor(NavOrderKeys.Configuration, @<text><Icon Name="configuration" /><span class="sidebar-nav-label">Configuration</span></text>)
-    };
-
-    private RenderFragment RenderSkillsNav() => __builder =>
-    {
-        @if (ExtensionFeatures.SkillsEnabled)
-        {
-            @NavAnchor(NavOrderKeys.Skills, @<text><Icon Name="skills" /><span class="sidebar-nav-label">Skills</span></text>)
-
-            @* Skills sub-nav -- shown when on the skills page *@
-            @if (IsOnPage("skills"))
-            {
-                <div class="sidebar-subnav">
-                    @SubNavAnchor("skills/explorer", @<text><Icon Name="workspace" /><span class="sidebar-nav-label">Explorer</span></text>)
-                </div>
-            }
-        }
-    };
-
-    private RenderFragment RenderAgentsNav() => __builder =>
-    {
-        @NavAnchor(NavOrderKeys.Agents, @<text><Icon Name="agents" /><span class="sidebar-nav-label">Agents</span></text>)
-
-        @* Agents sub-nav -- only shown when on the agents page *@
-        @if (IsOnPage("agents"))
-        {
-            <div class="sidebar-subnav">
-                @foreach (var agent in _sidebarAgents)
-                {
-                    @SubNavAnchor(
-                        $"agents/{agent.AgentId}",
-                        @<text>@agent.DisplayLabel</text>,
-                        IsAgentActive(agent.AgentId) ? "active" : null)
-                }
-                @SubNavAnchor("agents/new", @<text>+ Add Agent</text>, "sidebar-subnav-add")
-            </div>
-        }
-    };
-
-    private RenderFragment RenderCronNav() => __builder =>
-    {
-        @* #2973: the one documented override. "nav-cron-jobs" tracks the LABEL, not the route, and
-           predates the helper; renaming it would break live consumers for zero functional gain. The
-           route-derived "nav-cron" is emitted alongside it as data-testid-alias. *@
-        @NavAnchor(NavOrderKeys.Cron, @<text><Icon Name="cron-jobs" /><span class="sidebar-nav-label">Cron Jobs</span></text>, "nav-cron-jobs")
     };
 
     // #3346: the Plugins page (#2687) shipped routed at /plugins but with no sidebar entry, so it
@@ -755,23 +902,21 @@
     // list - it goes through the same NavAnchor helper (so it gets the route-derived nav-plugins
     // testid for free) and the same NavOrderKeys/NavOrderDefaults ordering model, with no
     // special-casing, so user order overrides apply to it exactly as to any other built-in.
-    private RenderFragment RenderPluginsNav() => __builder =>
-    {
-        @NavAnchor(NavOrderKeys.Plugins, @<text><Icon Name="plugins" /><span class="sidebar-nav-label">Plugins</span></text>)
-    };
 
     // The in-app guide. Goes through the same NavAnchor helper as every other entry, so it inherits
     // the route-derived testid, the active-state matching and any user ordering override.
-    private RenderFragment RenderGuideNav() => __builder =>
-    {
-        @NavAnchor(NavOrderKeys.Guide, @<text><Icon Name="guide" /><span class="sidebar-nav-label">Guide</span></text>)
-    };
 
     protected override void OnInitialized()
     {
         Store.OnChanged += HandleStateChanged;
         Nav.LocationChanged += OnLocationChanged;
         ToolsApi.Changed += HandleToolsChanged;
+
+        // Optional, for the same reason it is resolved rather than injected: the sidebar must
+        // render where the plugins client is absent.
+        _pluginsApi = Services.GetService(typeof(PluginsApiClient)) as PluginsApiClient;
+        if (_pluginsApi is not null)
+            _pluginsApi.Changed += HandlePluginsChanged;
         PortalLoad.OnReadyChanged += HandleReadyChanged;
         // #2624: the terminal-close re-dial loop raises this so the indicator can show
         // "Reconnecting" during a gateway restart instead of a terminal "Disconnected".
@@ -780,11 +925,9 @@
         ExtensionFeatures.OnChanged += HandleStateChanged;
         Hub.OnAgentsChanged += HandleSidebarAgentsChanged;
         Prefs.OnChanged += HandleStateChanged;
-        // #2325: the assign menu now resolves sections from the lifted ConversationSectionsState
         // rather than a panel @ref, so the layout must re-render on its changes itself. Without
         // this the menu renders whatever was loaded at first paint and silently goes stale - the
         // component ref it replaced got re-render coupling for free by being in the render tree.
-        SectionsState.Changed += HandleStateChanged;
     }
 
     // Tools and nav order load independently of the JS-driven first-render pipeline so the nav
@@ -854,10 +997,9 @@
             _pinnedGroupCollapsed = pinnedStored == "true";
             var conversationsStored = await JS.InvokeAsync<string?>("localStorage.getItem", ConversationsCollapsedKey);
             _conversationsGroupCollapsed = conversationsStored == "true";
-            var toolsStored = await JS.InvokeAsync<string?>("localStorage.getItem", ToolsCollapsedKey);
-            _toolsGroupCollapsed = toolsStored != "false";
-            var sectionsStored = await JS.InvokeAsync<string?>("localStorage.getItem", SectionsCollapsedKey);
-            _sectionsGroupCollapsed = sectionsStored != "false";
+
+            await RegisterSwitcherShortcutAsync();
+            await RegisterToolbarMeasurerAsync();
             var filterStored = await JS.InvokeAsync<string?>("localStorage.getItem", ActivityFilterKey);
             if (Enum.TryParse<ConversationActivityFilter>(filterStored, out var storedFilter))
                 _activityFilter = storedFilter;
@@ -968,10 +1110,43 @@
             _sidebarOpen = false;
     }
 
-    private void OnNavClick()
+
+    /// <summary>
+    /// Whether this route is one where a list of conversations is part of the task.
+    /// </summary>
+    /// <remarks>
+    /// The sidebar is the conversation list and nothing else since navigation moved to the toolbar,
+    /// yet it was rendered on every route - 240px of chat furniture on Activity, Agents,
+    /// Configuration, Skills and Plugins, which is a quarter of the window on a table that is
+    /// already horizontally dense.
+    /// <para>
+    /// An ALLOW-list, not a deny-list. A deny-list silently regains the old behaviour every time
+    /// someone adds a page: the default should be "this page does not get chat furniture", and a
+    /// page that genuinely wants the conversation list can say so here.
+    /// </para>
+    /// </remarks>
+    private bool ShowsConversations => IsConversationRoute(Nav.ToBaseRelativePath(Nav.Uri));
+
+    /// <summary>Pure route test, so it can be exercised without a NavigationManager.</summary>
+    /// <param name="relativePath">The base-relative path, with or without a trailing slash.</param>
+    /// <returns>True when the conversation sidebar belongs on this route.</returns>
+    internal static bool IsConversationRoute(string? relativePath)
     {
-        if (_isMobile)
-            _sidebarOpen = false;
+        var path = (relativePath ?? string.Empty).TrimEnd('/');
+
+        // The query string is not part of the route decision: /activity?agent=x is still Activity.
+        var queryStart = path.IndexOf('?', StringComparison.Ordinal);
+        if (queryStart >= 0)
+            path = path[..queryStart];
+
+        // Root is the landing page, where picking up a conversation IS the task.
+        if (path.Length == 0)
+            return true;
+
+        return path.Equals("chat", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("chat/", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("agent", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("agent/", StringComparison.OrdinalIgnoreCase);
     }
 
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
@@ -984,7 +1159,14 @@
                 await Interaction.RefreshAgentsAsync();
                 StateHasChanged();
             });
+
+            return;
         }
+
+        // Every OTHER navigation still needs a render: whether the sidebar belongs on the page is
+        // now a function of the route, and without this it would keep whatever shape the previous
+        // page left it in.
+        _ = InvokeAsync(StateHasChanged);
     }
 
     private string NavClass(string page)
@@ -1120,17 +1302,7 @@
         await JS.InvokeVoidAsync("localStorage.setItem", ConversationsCollapsedKey, _conversationsGroupCollapsed ? "true" : "false");
     }
 
-    private async Task ToggleToolsGroup()
-    {
-        _toolsGroupCollapsed = !_toolsGroupCollapsed;
-        await JS.InvokeVoidAsync("localStorage.setItem", ToolsCollapsedKey, _toolsGroupCollapsed ? "true" : "false");
-    }
 
-    private async Task ToggleSectionsGroup()
-    {
-        _sectionsGroupCollapsed = !_sectionsGroupCollapsed;
-        await JS.InvokeVoidAsync("localStorage.setItem", SectionsCollapsedKey, _sectionsGroupCollapsed ? "true" : "false");
-    }
 
     /// <summary>
     /// Recent-activity filter applied to the normal (non-pinned, non-scheduled) conversation list.
@@ -1164,37 +1336,7 @@
         await JS.InvokeVoidAsync("localStorage.setItem", ActivityFilterKey, filter.ToString());
     }
 
-    // #2325: the "move to section" menu is a row affordance. An assigned conversation no longer has
-    // a default-list row, so the menu is projected onto its section member row instead - the
-    // affordance moves with the conversation rather than disappearing when it is assigned.
-    private RenderFragment RenderSectionMemberActions(AgentState agent, string conversationId) => __builder =>
-    {
-        @if (!agent.IsReadOnly && agent.Conversations.TryGetValue(conversationId, out var conversation) && !conversation.IsDefault)
-        {
-            @RenderSectionButton(conversation)
-            @RenderSectionMenu(agent, conversation)
-        }
-    };
 
-    // #2325: true only when this conversation is assigned to a section that WILL actually render a
-    // row for it. Subtracting from the default list is a visibility change, so it is gated on the
-    // section being reachable rather than on the assignment alone:
-    //   * the sections panel is only mounted for a non-read-only agent, so a read-only agent keeps
-    //     every conversation in the default list;
-    //   * an assignment whose section id is not in SectionsState.Sections (deleted server-side, or a
-    //     load that has not landed yet) is ignored, so a stale map can never strand a conversation.
-    // Collapse is deliberately NOT considered: a collapsed section still renders its header and is
-    // one click from its members, exactly as the Pinned group behaves. Assignment composes with the
-    // existing groups rather than overriding them - it is applied only after pinned, cron and
-    // webhook have been hoisted out, so those conversations keep their existing home.
-    private bool IsRenderedInSection(AgentState agent, ConversationState conversation)
-    {
-        if (agent.IsReadOnly)
-            return false;
-        var sectionId = SectionsState.GetAssignedSectionId(conversation.ConversationId);
-        return sectionId is not null
-            && SectionsState.Sections.Any(s => string.Equals(s.SectionId, sectionId, StringComparison.Ordinal));
-    }
 
     private RenderFragment RenderConversationItem(AgentState agent, ConversationState conversation) => __builder =>
     {
@@ -1233,10 +1375,8 @@
                 @* One strip rather than three independently positioned buttons. The old
                    per-button right: offsets were 21.6px apart and never revisited when the
                    buttons gained a 32px minimum hit target, so each overlapped its neighbour
-                   and all three sat on the title. Flex + gap cannot drift out of step. The
-                   section menu stays outside the strip: it positions against the row. *@
+                   and all three sat on the title. Flex + gap cannot drift out of step. *@
                 <div class="conversation-row-actions">
-                    @RenderSectionButton(conversation)
                     <button class="conversation-pin-btn @(conversation.IsPinned ? "pinned" : "")" data-testid="conversation-pin-btn"
                             title="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
                             aria-label="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
@@ -1255,86 +1395,19 @@
                               Size="16" Class="bn-icon-inherit" />
                     </button>
                 </div>
-                @RenderSectionMenu(agent, conversation)
             }
         </div>
     };
 
-    // #2324: the sections feature (#2124) shipped with no way to put a conversation *into* a section -
-    // SectionsApiClient.AssignAsync had zero UI call sites. This is the interim inline affordance the
-    // issue sanctions: a per-row folder button opening a small "move to section" menu. The richer
-    // right-click context menu (#2326) and inline section rendering (#2325) are separate work; when
-    // #2326 lands, this menu's Assign/Unassign handlers are the reusable seam it can call.
-    private RenderFragment RenderSectionButton(ConversationState conversation) => __builder =>
-    {
-        var isOpen = string.Equals(_sectionMenuConversationId, conversation.ConversationId, StringComparison.Ordinal);
-        <button class="conversation-section-btn" data-testid="conversation-section-btn"
-                title="Move to section"
-                aria-label="Move to section"
-                aria-haspopup="menu"
-                aria-expanded="@(isOpen ? "true" : "false")"
-                @onclick:stopPropagation="true"
-                @onclick="() => ToggleSectionMenu(conversation.ConversationId)">
-            <Icon Name="move" Size="16" />
-        </button>
-    };
+
 
     // The menu is a sibling of the actions strip, not a child of it: it positions against
     // .conversation-list-item, and nesting it inside an absolutely positioned strip would
     // re-anchor it to the strip instead.
-    private RenderFragment RenderSectionMenu(AgentState agent, ConversationState conversation) => __builder =>
-    {
-        var isOpen = string.Equals(_sectionMenuConversationId, conversation.ConversationId, StringComparison.Ordinal);
-        @if (isOpen)
-        {
-            var sections = SectionsState.Sections;
-            var currentSectionId = GetAssignedSectionId(conversation.ConversationId);
-            <div class="conversation-section-menu" data-testid="conversation-section-menu" role="menu">
-                <button class="conversation-section-menu-item @(currentSectionId is null ? "active" : "")"
-                        role="menuitem"
-                        data-testid="conversation-section-menu-none"
-                        @onclick:stopPropagation="true"
-                        @onclick="() => UnassignConversationSectionAsync(agent.AgentId, conversation.ConversationId)">None</button>
-                @foreach (var section in sections)
-                {
-                    <button class="conversation-section-menu-item @(string.Equals(currentSectionId, section.SectionId, StringComparison.Ordinal) ? "active" : "")"
-                            role="menuitem"
-                            data-testid="conversation-section-menu-item"
-                            data-section-id="@(section.SectionId)"
-                            @onclick:stopPropagation="true"
-                            @onclick="() => AssignConversationSectionAsync(agent.AgentId, conversation.ConversationId, section.SectionId)">@(section.Name)</button>
-                }
-                @if (sections.Count == 0)
-                {
-                    <div class="conversation-section-menu-empty" data-testid="conversation-section-menu-empty">No sections yet.</div>
-                }
-            </div>
-        }
-    };
 
-    private void ToggleSectionMenu(string conversationId) =>
-        _sectionMenuConversationId = string.Equals(_sectionMenuConversationId, conversationId, StringComparison.Ordinal)
-            ? null
-            : conversationId;
 
-    private string? GetAssignedSectionId(string conversationId) =>
-        SectionsState.GetAssignedSectionId(conversationId);
 
-    private async Task AssignConversationSectionAsync(string agentId, string conversationId, string sectionId)
-    {
-        _sectionMenuConversationId = null;
-        if (await SectionsApi.AssignAsync(agentId, sectionId, conversationId))
-            await SectionsState.ReloadAsync();
-        StateHasChanged();
-    }
 
-    private async Task UnassignConversationSectionAsync(string agentId, string conversationId)
-    {
-        _sectionMenuConversationId = null;
-        if (await SectionsApi.UnassignAsync(agentId, conversationId))
-            await SectionsState.ReloadAsync();
-        StateHasChanged();
-    }
 
     // #2441: agent display names and emoji come from user-editable config and may contain embedded
     // control characters; normalise to a single line so the dropdown row cannot grow.
@@ -1469,7 +1542,10 @@
     private void OpenSettings() => _settingsPanel?.Open();
 
     /// <summary>Opens the provider usage popover, which begins polling while it is visible.</summary>
-    private Task OpenUsage() => _usagePanel?.OpenAsync() ?? Task.CompletedTask;
+    private Task OpenUsage() => _usagePanel?.OpenAsync(_usageBtnRef) ?? Task.CompletedTask;
+
+    private Task OpenPersonaAsync(string agentId) =>
+        _personaPanel?.OpenAsync(agentId) ?? Task.CompletedTask;
 
     private void ShowUpdateConfirm() => _showUpdateConfirm = true;
     private void CancelUpdate() => _showUpdateConfirm = false;
@@ -1486,13 +1562,14 @@
         Store.OnChanged -= HandleStateChanged;
         Nav.LocationChanged -= OnLocationChanged;
         ToolsApi.Changed -= HandleToolsChanged;
+        if (_pluginsApi is not null)
+            _pluginsApi.Changed -= HandlePluginsChanged;
         PortalLoad.OnReadyChanged -= HandleReadyChanged;
         PortalLoad.OnConnectionStateChanged -= HandleStateChanged;
         UpdateStatus.StatusChanged -= HandleStateChanged;
         ExtensionFeatures.OnChanged -= HandleStateChanged;
         Hub.OnAgentsChanged -= HandleSidebarAgentsChanged;
         Prefs.OnChanged -= HandleStateChanged;
-        SectionsState.Changed -= HandleStateChanged;
     }
 
     private bool IsAgentActive(string agentId)
@@ -1552,7 +1629,112 @@
                 .OrderBy(i => i.Order)
                 .Select(i => i.Key)
                 .ToList();
+
+            // The NUMBERS are kept, not just the resulting sequence: a contributed entry declares
+            // an order on the same scale, and slotting it between two built-ins is impossible from
+            // a bare list of keys.
+            _navOrderNumbers = items.ToDictionary(i => i.Key, i => i.Order, StringComparer.OrdinalIgnoreCase);
         }
+
+        var contributions = await NavOrderApi.ListContributionsAsync();
+
+        // A plugin can hide its own contributed entries. The gateway does not filter them, because
+        // the nav endpoint reads loaded EXTENSIONS and knows nothing about which plugin installed
+        // which - the ownership link lives on the plugin record, so the join happens here.
+        _navContributions = FilterHidden(contributions, await HiddenExtensionIdsAsync());
+    }
+
+    /// <summary>
+    /// Re-reads contributed nav entries and the hidden set, without touching the built-in order.
+    /// </summary>
+    private async Task LoadNavContributionsAsync()
+    {
+        var contributions = await NavOrderApi.ListContributionsAsync();
+        _navContributions = FilterHidden(contributions, await HiddenExtensionIdsAsync());
+    }
+
+    // The gateway's nav endpoint reads loaded EXTENSIONS and knows nothing about which plugin
+    // installed which, so the ownership join happens here.
+    private async Task<HashSet<string>> HiddenExtensionIdsAsync()
+    {
+        if (_pluginsApi is null)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return (await _pluginsApi.ListAsync())
+            .Where(p => p.NavHidden && !string.IsNullOrWhiteSpace(p.DeployedExtensionId))
+            .Select(p => p.DeployedExtensionId!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyList<NavContributionDto> FilterHidden(
+        IReadOnlyList<NavContributionDto> contributions,
+        HashSet<string> hidden) =>
+        hidden.Count == 0
+            ? contributions
+            : contributions.Where(c => !hidden.Contains(c.ExtensionId)).ToList();
+
+    /// <summary>
+    /// The sidebar's render list: built-in sections merged with extension-contributed entries by
+    /// effective order.
+    /// </summary>
+    /// <remarks>
+    /// Built-ins fall back to their position scaled by ten when the server did not supply numbers,
+    /// which matches the gap-of-ten scale the nav-order defaults use, so a contribution declaring
+    /// 65 lands between Agents and Cron either way. A contribution tying with a built-in renders
+    /// after it: a built-in the user can reorder should not be displaced by a third party.
+    /// </remarks>
+    private IReadOnlyList<NavRenderEntry> OrderedNavEntries()
+    {
+        var builtIns = OrderedNavKeys().ToList();
+        if (_navContributions.Count == 0)
+        {
+            return builtIns.Select(k => new NavRenderEntry(k, null)).ToList();
+        }
+
+        var ranked = new List<(int Order, int Tie, NavRenderEntry Entry)>(builtIns.Count + _navContributions.Count);
+        for (var i = 0; i < builtIns.Count; i++)
+        {
+            var order = _navOrderNumbers.TryGetValue(builtIns[i], out var known) ? known : (i + 1) * 10;
+            ranked.Add((order, 0, new NavRenderEntry(builtIns[i], null)));
+        }
+
+        foreach (var contribution in _navContributions)
+        {
+            ranked.Add((contribution.Order, 1, new NavRenderEntry(contribution.Id, contribution)));
+        }
+
+        return ranked
+            .OrderBy(r => r.Order)
+            .ThenBy(r => r.Tie)
+            .Select(r => r.Entry)
+            .ToList();
+    }
+
+    /// <summary>One sidebar row: either a built-in section or a contributed entry.</summary>
+    private sealed record NavRenderEntry(string Key, NavContributionDto? Contribution);
+
+    // An embedded view is reached through a PORTAL route that frames it, so the sidebar, header
+    // and theme stay put. Navigating straight at the extension's own path replaces the window and
+    // reads as leaving the app; that is now opt-in via fullPage.
+    private static string ContributionHref(NavContributionDto contribution) =>
+        contribution.FullPage ? contribution.Path : $"extension/{contribution.Id}";
+
+    private static string ResolveContributedIcon(string? icon) =>
+        !string.IsNullOrWhiteSpace(icon) && IconLibrary.Icons.ContainsKey(icon)
+            ? icon
+            : "plugins";
+
+    private void NavigateToContribution(NavContributionDto contribution)
+    {
+        if (_isMobile)
+            _sidebarOpen = false;
+
+        // forceLoad ONLY for a full-page view. The embedded route is an ordinary Blazor route, so
+        // a client-side navigation keeps the portal loaded rather than reloading the whole app.
+        if (contribution.FullPage)
+            Nav.NavigateTo(contribution.Path, forceLoad: true);
+        else
+            Nav.NavigateTo($"extension/{contribution.Id}");
     }
 
     // The management UI (#2235) mutates tools through the same ToolsApiClient the nav reads from,
@@ -1561,6 +1743,15 @@
     private void HandleToolsChanged() => _ = InvokeAsync(async () =>
     {
         await LoadToolsAsync();
+        StateHasChanged();
+    });
+
+    // Hiding or showing a plugin's menu entry repaints the sidebar immediately. Only the
+    // contributions are re-read; the built-in order has not moved and refetching it would make a
+    // menu toggle cost two requests to answer a question about one.
+    private void HandlePluginsChanged() => _ = InvokeAsync(async () =>
+    {
+        await LoadNavContributionsAsync();
         StateHasChanged();
     });
 
@@ -1584,13 +1775,99 @@
     private static string? ResolveConversationTitle(AgentState agent, string conversationId)
         => agent.Conversations.TryGetValue(conversationId, out var conv) ? conv.Title : conversationId;
 
-    // Sections changed (create/rename/reorder/delete/assign/remove): re-render so the sidebar reflects
-    // the new custom grouping. The panel owns its own server-persisted state; the layout just repaints.
-    private Task HandleSectionsChanged()
+
+    /// <summary>
+    /// The platform's spelling of the shortcut, for the sidebar hint. Read once from the browser so
+    /// a Mac user is not told to press Ctrl and a Windows user is not told to press Cmd.
+    /// </summary>
+    private string ShortcutHint => _isMacPlatform ? "\u2318K" : "Ctrl K";
+
+    /// <summary>
+    /// The shared switcher launcher, resolved optionally.
+    /// </summary>
+    /// <remarks>
+    /// <c>GetService</c> rather than <c>@inject</c>, for the same reason <c>ConversationSwitcher</c>
+    /// resolves <c>CronApiClient</c> that way: fifteen existing component-test fixtures render this
+    /// layout and register only the services it needed before, and only ten of them share a common
+    /// setup helper - so a constructor-level dependency would turn the other five into DI
+    /// resolution failures with no single place to fix them. <c>Program.cs</c> registers the
+    /// launcher, so the real portal always has it; a null here means a test host, and costs only
+    /// the sidebar box and the shortcut, never the header caret.
+    /// </remarks>
+    private IConversationSwitcherLauncher? SwitcherLauncher =>
+        _switcherLauncher ??= Services.GetService(typeof(IConversationSwitcherLauncher)) as IConversationSwitcherLauncher;
+
+    private IConversationSwitcherLauncher? _switcherLauncher;
+
+    private bool _isMacPlatform;
+    private DotNetObjectReference<MainLayout>? _shortcutRef;
+    private IJSObjectReference? _shortcutRegistration;
+
+    /// <summary>
+    /// Opens the conversation switcher from the Cmd/Ctrl-K shortcut. Invoked from
+    /// <c>js/conversationSwitcher.js</c>.
+    /// </summary>
+    /// <remarks>
+    /// This raises a request rather than opening anything itself: the switcher is rendered by
+    /// <c>ChatPanel</c>, which this layout does not own. See <see cref="IConversationSwitcherLauncher"/>.
+    /// </remarks>
+    [JSInvokable]
+    public void OpenFromShortcut() => SwitcherLauncher?.Request();
+
+    private async Task RegisterSwitcherShortcutAsync()
     {
-        StateHasChanged();
-        return Task.CompletedTask;
+        // Nothing to open without a launcher, so do not attach a document listener either.
+        if (SwitcherLauncher is null)
+            return;
+
+        try
+        {
+            _isMacPlatform = await JS.InvokeAsync<bool>(
+                "eval",
+                "/mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)");
+        }
+        catch { _isMacPlatform = false; }
+
+        try
+        {
+            _shortcutRef = DotNetObjectReference.Create(this);
+            _shortcutRegistration = await JS.InvokeAsync<IJSObjectReference>(
+                "botnexusConversationSwitcher.registerShortcut", _shortcutRef);
+        }
+        catch
+        {
+            // No script (a test host, or a boot that failed before the file loaded). The sidebar box
+            // and the header caret still open the switcher; only the shortcut is missing.
+            _shortcutRef?.Dispose();
+            _shortcutRef = null;
+        }
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public async ValueTask DisposeAsync()
+    {
+        // The listener is on `document` and outlives this component, so it must be removed or every
+        // re-created layout stacks another handler holding a disposed .NET reference.
+        if (_shortcutRegistration is not null)
+        {
+            try { await _shortcutRegistration.InvokeVoidAsync("dispose"); }
+            catch { /* circuit already gone - the listener dies with the page */ }
+
+            try { await _shortcutRegistration.DisposeAsync(); }
+            catch { /* as above */ }
+        }
+
+        _shortcutRef?.Dispose();
+
+        // Same reasoning as the shortcut listener: the ResizeObserver outlives this component.
+        if (_toolbarObserver is not null)
+        {
+            try { await _toolbarObserver.InvokeVoidAsync("dispose"); }
+            catch { /* circuit already gone */ }
+
+            try { await _toolbarObserver.DisposeAsync(); }
+            catch { /* as above */ }
+        }
+
+        _toolbarRef_dotNet?.Dispose();
+    }
 }

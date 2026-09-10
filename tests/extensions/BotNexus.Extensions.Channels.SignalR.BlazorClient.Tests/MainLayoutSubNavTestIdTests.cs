@@ -80,8 +80,6 @@ public sealed class MainLayoutSubNavTestIdTests : IDisposable
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(_features);
         _ctx.Services.AddSingleton(new CronApiClient(http));
-        _ctx.Services.AddSingleton(new SectionsApiClient(http));
-        _ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
 
         // Two tools, so the tools rows likewise have a sibling to be distinguished from.
         _ctx.Services.AddSingleton(new ToolsApiClient(
@@ -101,21 +99,21 @@ public sealed class MainLayoutSubNavTestIdTests : IDisposable
     public void Dispose() => _ctx.Dispose();
 
     /// <summary>
-    /// Renders the layout at <paramref name="relativeUrl"/> with the tools group expanded, since the
-    /// tools sub-nav is collapsed by default (#2441) and its rows would otherwise not exist.
+    /// Renders the layout at <paramref name="relativeUrl"/>.
     /// </summary>
+    /// <remarks>
+    /// It used to wait for two tool rows on every route, because the sidebar rendered the tools
+    /// sub-list everywhere once expanded. Sub-navigation is contextual now - it renders in the
+    /// toolbar's second row for the section you are actually in - so a blanket wait for tool rows
+    /// would fail on every route except Tools. Each test waits for what its own route renders.
+    /// </remarks>
     private IRenderedComponent<MainLayout> RenderAt(string relativeUrl)
     {
         _features.LoadAsync().GetAwaiter().GetResult();
         _ctx.Services.GetRequiredService<NavigationManager>().NavigateTo("http://localhost/" + relativeUrl);
 
-        var cut = _ctx.Render<MainLayout>(p => p
+        return _ctx.Render<MainLayout>(p => p
             .Add(c => c.Body, (RenderFragment)(_ => { })));
-
-        cut.WaitForAssertion(() => cut.Find("[data-testid='tools-collapse-toggle']"));
-        cut.Find("[data-testid='tools-collapse-toggle']").Click();
-        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='tools-subnav-item']").Count));
-        return cut;
     }
 
     private static IReadOnlyList<AngleSharp.Dom.IElement> SubNavAnchors(IRenderedComponent<MainLayout> cut) =>
@@ -123,9 +121,10 @@ public sealed class MainLayoutSubNavTestIdTests : IDisposable
 
     /// <summary>
     /// Acceptance criterion 1: every rendered sub-nav anchor carries a non-empty data-testid, with an
-    /// explicit non-vacuity floor so an empty sidebar cannot satisfy the assertion by having nothing
-    /// to check. The floor is 5 because the agents route renders two tool rows, two agent rows and
-    /// Add Agent - fewer than that means the fixture stopped exercising a site kind.
+    /// explicit non-vacuity floor so an empty sub-nav cannot satisfy the assertion by having nothing
+    /// to check. The floor is 3: the agents route renders two agent rows and Add Agent. It was 5
+    /// when the sidebar also rendered two tool rows on every route - sub-navigation is contextual
+    /// now, so tool rows belong to the Tools route and are asserted there.
     /// </summary>
     [Fact]
     public void Every_subnav_anchor_carries_a_non_empty_data_testid()
@@ -135,7 +134,7 @@ public sealed class MainLayoutSubNavTestIdTests : IDisposable
         var anchors = SubNavAnchors(cut);
 
         Assert.True(
-            anchors.Count >= 5,
+            anchors.Count >= 3,
             $"Expected at least 5 sub-nav anchors (2 tools + 2 agents + Add Agent); found {anchors.Count}. "
             + "The fixture is no longer exercising every sub-nav site kind, so this test would pass vacuously.");
 
@@ -162,7 +161,7 @@ public sealed class MainLayoutSubNavTestIdTests : IDisposable
         var cut = RenderAt("agents");
 
         var anchors = SubNavAnchors(cut);
-        Assert.True(anchors.Count >= 5, $"Non-vacuity: expected at least 5 sub-nav anchors, found {anchors.Count}.");
+        Assert.True(anchors.Count >= 3, $"Non-vacuity: expected at least 3 sub-nav anchors, found {anchors.Count}.");
 
         var identities = anchors
             .Select(a => a.GetAttribute("data-testid-alias") is { Length: > 0 } alias
@@ -191,7 +190,7 @@ public sealed class MainLayoutSubNavTestIdTests : IDisposable
         var cut = RenderAt("agents");
 
         var anchors = SubNavAnchors(cut);
-        Assert.True(anchors.Count >= 5, $"Non-vacuity: expected at least 5 sub-nav anchors, found {anchors.Count}.");
+        Assert.True(anchors.Count >= 3, $"Non-vacuity: expected at least 3 sub-nav anchors, found {anchors.Count}.");
 
         foreach (var anchor in anchors)
         {
@@ -216,7 +215,9 @@ public sealed class MainLayoutSubNavTestIdTests : IDisposable
     [Fact]
     public void Tools_group_selector_still_matches_every_tool_row()
     {
-        var cut = RenderAt("agents");
+        // Tool rows now render in the toolbar's sub-nav row, which is contextual to the Tools page.
+        var cut = RenderAt("tools");
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='tools-subnav-item']").Count));
 
         var toolRows = cut.FindAll("[data-testid='tools-subnav-item']");
         Assert.Equal(2, toolRows.Count);

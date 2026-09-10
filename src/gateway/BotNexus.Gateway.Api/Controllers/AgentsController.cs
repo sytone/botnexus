@@ -263,6 +263,86 @@ public sealed class AgentsController : ControllerBase
         if (previous is null)
             return NotFound();
 
+        return await PersistCommitAndProvisionAsync(agentId, typedAgentId, descriptor, previous, cancellationToken);
+    }
+
+    /// <summary>
+    /// Replaces the persona of an existing agent: display name, emoji, avatar hue, responsibility,
+    /// description and boundaries. Everything else on the descriptor is left exactly as it is.
+    /// </summary>
+    /// <remarks>
+    /// This exists because <see cref="Update"/> is a whole-descriptor REPLACE. Properties a caller
+    /// does not model bind as their defaults and are then removed from config.json by the writer,
+    /// so a quick-edit surface that sent only persona fields would silently delete ToolIds, Memory,
+    /// Heartbeat and the rest - and would 400 first, because AgentId, DisplayName, ModelId and
+    /// ApiProvider are <c>required</c> and the validator also demands IsolationStrategy.
+    /// <para>
+    /// So the persona is applied with <c>with { }</c> against the LIVE descriptor. Only these six
+    /// fields can be reached from here, which bounds the blast radius of a fast-edit panel to the
+    /// fields it actually shows - a concurrent save from the deep settings page can no longer be
+    /// clobbered wholesale by a persona edit.
+    /// </para>
+    /// <para>
+    /// PUT rather than PATCH: the body carries the whole persona every time, so there is no
+    /// supplied-versus-omitted ambiguity. Null or whitespace clears the four optional text fields;
+    /// a null hue means "Auto", which is a real choice and not an absence.
+    /// </para>
+    /// </remarks>
+    [HttpPut("{agentId}/persona")]
+    [ProducesResponseType(typeof(AgentDescriptor), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<AgentDescriptor>> UpdatePersona(
+        string agentId,
+        [FromBody] AgentPersonaUpdate persona,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseAgentId(agentId, out _, out var routeError))
+            return BadRequest(new { error = routeError });
+
+        var typedAgentId = AgentId.From(agentId);
+        var previous = _registry.Get(typedAgentId);
+        if (previous is null)
+            return NotFound();
+
+        var displayName = persona.DisplayName?.Trim();
+        if (string.IsNullOrWhiteSpace(displayName))
+            return BadRequest(new { error = "DisplayName is required." });
+
+        var descriptor = previous with
+        {
+            DisplayName = displayName,
+            Emoji = Blank(persona.Emoji),
+            AvatarHue = persona.AvatarHue,
+            Responsibility = Blank(persona.Responsibility),
+            Description = Blank(persona.Description),
+            Boundaries = Blank(persona.Boundaries)
+        };
+
+        var validationErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateForConfig(descriptor, null, _modelRegistry);
+        if (validationErrors.Count > 0)
+            return BadRequest(new { error = string.Join(" ", validationErrors) });
+
+        return await PersistCommitAndProvisionAsync(agentId, typedAgentId, descriptor, previous, cancellationToken);
+    }
+
+    /// <summary>Whitespace is not a value: an all-spaces responsibility is an empty one.</summary>
+    private static string? Blank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>
+    /// The failure-atomic commit shared by <see cref="Update"/> and <see cref="UpdatePersona"/>
+    /// (#2065). Config is persisted before the registry is mutated, so a persistence failure leaves
+    /// the registry on the previous descriptor; if provisioning fails after the registry commit,
+    /// both the registry and the config are restored to the previous descriptor.
+    /// </summary>
+    private async Task<ActionResult<AgentDescriptor>> PersistCommitAndProvisionAsync(
+        string agentId,
+        AgentId typedAgentId,
+        AgentDescriptor descriptor,
+        AgentDescriptor previous,
+        CancellationToken cancellationToken)
+    {
         // 1) Persist config first. On failure the registry still holds the previous descriptor.
         try
         {

@@ -31,6 +31,18 @@
             else
             {
                 <div class="config-body">
+                    @* The conversation and session rows are empty for any agent nobody has spoken
+                       to yet. Read alongside the agent's own name they look like a failure to
+                       start, which has cost real diagnosis time - so say plainly that the agent is
+                       fine and what fills them in. Shown only while they ARE empty. *@
+                    @if (_snapshot is not null && !HasActiveConversation)
+                    {
+                        <p class="config-note" data-testid="agent-config-no-conversation">
+                            This agent is loaded and ready. The conversation, session and prompt-size
+                            rows below fill in once you send it a message.
+                        </p>
+                    }
+
                     @if (_snapshot is not null)
                     {
                         @foreach (var field in _snapshot.Fields)
@@ -152,6 +164,16 @@
         _toolOverrideJson = updated.ToolOverrideJson;
         StateHasChanged();
     }
+
+    /// <summary>
+    /// Whether a conversation is open in this view, which is what decides the three empty rows.
+    /// </summary>
+    /// <remarks>
+    /// Read from the snapshot rather than from <c>Agent</c> so the note can never disagree with
+    /// the rows it is explaining - both come from the same field.
+    /// </remarks>
+    private bool HasActiveConversation =>
+        _snapshot?.Field(AgentConfigSnapshotBuilder.ConversationIdKey)?.Value is { Length: > 0 };
 
     /// <summary>Identifier-shaped fields get the monospace treatment (#2795 AC4).</summary>
     private static bool IsMono(string key) =>

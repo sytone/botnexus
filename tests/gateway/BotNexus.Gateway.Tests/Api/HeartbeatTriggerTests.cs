@@ -232,7 +232,7 @@ public sealed class HeartbeatTriggerTests
             .ReturnsAsync(handle.Object);
 
         var triggerTask = trigger.CreateSessionAsync(agentId, "ping");
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(entered.Task, "the heartbeat's LLM call to be entered");
 
         // Concurrent activity on the shared soul session during the LLM window.
         soulSession.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "raced-in" });
@@ -288,7 +288,7 @@ public sealed class HeartbeatTriggerTests
             .ReturnsAsync(handle.Object);
 
         var triggerTask = trigger.CreateSessionAsync(agentId, "ping");
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(entered.Task, "the heartbeat's LLM call to be entered");
 
         // Concurrent destructive mutation — simulates a compactor applying a
         // summary while the heartbeat LLM call is in flight. The compactor's

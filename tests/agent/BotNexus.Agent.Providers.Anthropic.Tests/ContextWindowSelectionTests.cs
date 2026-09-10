@@ -27,7 +27,7 @@ public sealed class ContextWindowSelectionTests
         var options = new AnthropicOptions { ApiKey = "test-key", ContextWindow = TwoHundredK };
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         BetaHeaderValue(handler).ShouldNotContain(OneMillionBetaToken);
     }
@@ -42,7 +42,7 @@ public sealed class ContextWindowSelectionTests
         var options = new AnthropicOptions { ApiKey = "test-key", ContextWindow = OneMillion };
 
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         handler.RequestHeaders.ShouldContainKey("anthropic-beta");
         handler.RequestHeaders["anthropic-beta"].ShouldContain(OneMillionBetaToken);
@@ -58,7 +58,7 @@ public sealed class ContextWindowSelectionTests
 
         // No ContextWindow set -> default behaviour, no beta header.
         var stream = provider.Stream(model, context, new AnthropicOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         BetaHeaderValue(handler).ShouldNotContain(OneMillionBetaToken);
     }
@@ -74,7 +74,7 @@ public sealed class ContextWindowSelectionTests
         // Even if a caller asks for 1M, Copilot is fixed at 200K: no beta header.
         var options = new AnthropicOptions { ApiKey = "test-key", ContextWindow = OneMillion };
         var stream = provider.Stream(model, context, options);
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         BetaHeaderValue(handler).ShouldNotContain(OneMillionBetaToken);
     }
@@ -88,7 +88,7 @@ public sealed class ContextWindowSelectionTests
         var context = TestHelpers.MakeContext();
 
         var stream = provider.Stream(model, context, new AnthropicOptions { ApiKey = "test-key" });
-        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(stream.GetResultAsync(), "the provider stream to produce its result");
 
         BetaHeaderValue(handler).ShouldNotContain(OneMillionBetaToken);
     }

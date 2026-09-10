@@ -215,7 +215,7 @@ public sealed class SubAgentEagerConversationPinTests
 
         // Act
         await manager.SpawnAsync(request);
-        await promptInvoked.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await TestAwait.SignaledAsync(promptInvoked.Task, "the child agent's prompt to be invoked");
 
         // Assert: the recorded order MUST start with the bind and only then prompt.
         events.ShouldNotBeEmpty();

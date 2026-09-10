@@ -76,7 +76,9 @@ public sealed class StripedAsyncLockTests
 
         handle.Dispose(); // release
 
-        var secondHandle = await second.WaitAsync(TimeSpan.FromSeconds(2));
+        var secondHandle = await TestAwait.SignaledAsync(
+            second,
+            "the released stripe to hand the lock to the waiting caller");
         secondHandle.Dispose();
     }
 
@@ -214,7 +216,7 @@ public sealed class StripedAsyncLockTests
 
         held.Dispose();
 
-        (await waiter.WaitAsync(TimeSpan.FromSeconds(5))).Dispose();
+        (await TestAwait.SignaledAsync(waiter, "the released stripe to hand the lock to the bounded waiter")).Dispose();
     }
 
     [Fact]

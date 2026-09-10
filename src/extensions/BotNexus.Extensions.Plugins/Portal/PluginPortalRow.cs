@@ -125,4 +125,15 @@ public sealed record PluginPortalRow
     /// <summary>Why the update probe failed, when <see cref="UpdateState"/> is <see cref="PluginUpdateState.ProbeFailed"/>.</summary>
     [JsonPropertyName("updateProbeError")]
     public string? UpdateProbeError { get; init; }
+
+    /// <summary>
+    /// Extension this plugin deployed, or <c>null</c> for a skills-only plugin. The portal needs it
+    /// to tell which contributed nav entries belong to which plugin.
+    /// </summary>
+    [JsonPropertyName("deployedExtensionId")]
+    public string? DeployedExtensionId { get; init; }
+
+    /// <summary>Whether this plugin's contributed nav entries are hidden from the sidebar.</summary>
+    [JsonPropertyName("navHidden")]
+    public bool NavHidden { get; init; }
 }

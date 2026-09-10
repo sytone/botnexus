@@ -47,7 +47,13 @@ body {
 
 .agent-select,
 .conv-select {
+    /* min-width:0 is what makes `flex: 1` actually shrink these. A flex item defaults to
+       min-width:auto, and for a <select> that resolves to the intrinsic width of its widest
+       <option> - a long conversation title - so the selects refused to give ground and pushed
+       the refresh and overflow buttons off the end of a 375px viewport entirely. The
+       text-overflow rule below could never fire for the same reason. */
     flex: 1;
+    min-width: 0;
     background: #0d1926;
     color: #d0dff0;
     border: 1px solid rgba(100, 160, 220, 0.2);
@@ -68,6 +74,9 @@ body {
 /* ── Overflow (⋮) menu ───────────────────────────────────────────────────── */
 .overflow-menu-wrapper {
     position: relative;
+    /* Never let the menu be the thing that gets squeezed - it is the only route to New
+       conversation, Settings and Archive. */
+    flex-shrink: 0;
 }
 
 .overflow-btn {
@@ -1127,4 +1136,148 @@ body {
 .command-desc {
     color: #8ba3bf;
     font-size: 0.82rem;
+}
+
+/* ── Cross-agent conversation search ─────────────────────────────────────
+   A full-screen overlay, not a bottom sheet: the field takes focus on open and the soft keyboard
+   covers the lower half of a phone viewport, which is where a sheet would put its results. */
+
+.conv-search-btn {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 34px keeps the row's 8px gaps intact on a 375px viewport while staying a comfortable
+       touch target beside the two selects. */
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    background: #0d1926;
+    color: #d0dff0;
+    border: 1px solid rgba(100, 160, 220, 0.2);
+    border-radius: 6px;
+}
+
+.conv-search-overlay {
+    position: fixed;
+    inset: 0;
+    /* Above .overflow-dropdown (100) so an open menu cannot sit on top of the search. */
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    background: #0b1420;
+}
+
+.conv-search-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    /* Keeps the field clear of a notch/status bar when the PWA runs full-screen. */
+    padding-top: max(10px, env(safe-area-inset-top));
+    background: #111d2e;
+    border-bottom: 1px solid rgba(100, 160, 220, 0.15);
+    color: #7f97b3;
+}
+
+.conv-search-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #d0dff0;
+    /* 16px exactly: iOS Safari zooms the viewport when a focused input is under 16px. */
+    font-size: 16px;
+}
+
+.conv-search-input::placeholder {
+    color: #7f97b3;
+}
+
+.conv-search-cancel {
+    flex: 0 0 auto;
+    padding: 6px 4px;
+    background: none;
+    border: none;
+    color: #6fb3ff;
+    font-size: 15px;
+}
+
+.conv-search-results {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+.conv-search-group {
+    padding: 10px 14px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #7f97b3;
+}
+
+.conv-search-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    width: 100%;
+    /* 44px min height is the touch-target floor; title and meta stack rather than compete for
+       width, which is what keeps a long agent name from squeezing the title on a 375px screen. */
+    min-height: 44px;
+    padding: 9px 14px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid rgba(100, 160, 220, 0.08);
+    color: #d0dff0;
+    font-size: 15px;
+    text-align: left;
+}
+
+.conv-search-row:active {
+    background: #14243a;
+}
+
+.conv-search-row-title {
+    width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.conv-search-row-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.conv-search-agent {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12px;
+    color: #7f97b3;
+}
+
+.conv-search-badge {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #14243a;
+    color: #7f97b3;
+    font-size: 11px;
+}
+
+.conv-search-hint,
+.conv-search-empty {
+    padding: 20px 16px;
+    color: #7f97b3;
+    font-size: 14px;
+    text-align: center;
 }

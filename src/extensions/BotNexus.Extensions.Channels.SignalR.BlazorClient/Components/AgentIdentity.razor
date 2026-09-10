@@ -11,31 +11,92 @@
     characters cannot grow the top bar or defeat ellipsis truncation.
 *@
 <div class="agent-identity banner-agent-identity" data-testid="agent-identity">
-    <div class="agent-panel-avatar" aria-hidden="true">@AvatarGlyph</div>
-    <div class="agent-panel-meta" title="@AgentId">
-        <span class="agent-panel-title" data-testid="agent-identity-name">@DisplayName</span>
-        @if (!string.IsNullOrWhiteSpace(Description))
-        {
-            <span class="agent-panel-description">@Description</span>
-        }
-        <span class="agent-panel-id">@AgentId</span>
-    </div>
+    @* THE WHOLE CHIP is the trigger, not just the name. Wrapping only the name gave a 67x20px
+       target with no persistent affordance - findable only if you already knew it was there, which
+       is the "builds the capability then under-signals it" pattern the interface review named.
+
+       A real <button>, not a div with @onclick: under window-controls-overlay the whole
+       .banner-header is the OS drag region and only button/select/a get app-region: no-drag back
+       (app.css:5865-5871), so a clickable div here is inert in the installed PWA.
+
+       .agent-panel-meta is a <span> rather than a <div> because a button's content model is
+       phrasing content; a <div> inside it is invalid HTML that browsers merely tolerate. Its class
+       and its title attribute are unchanged - both are the asserted hover-reveal contract. *@
+    <button type="button"
+            class="agent-identity-trigger"
+            data-testid="agent-persona-trigger"
+            aria-haspopup="dialog"
+            aria-label="@($"Edit {DisplayName}'s persona")"
+            title="Edit this agent's persona"
+            @onclick="() => OnPersonaRequested.InvokeAsync()">
+        <AgentAvatar AgentId="@AgentId" DisplayName="@Agent?.DisplayName" Emoji="@Agent?.Emoji" Hue="@Agent?.AvatarHue" Activity="@Activity" Class="agent-panel-avatar" />
+        <span class="agent-panel-meta" title="@AgentId">
+            <span class="agent-panel-title" data-testid="agent-identity-name">@DisplayName</span>
+            @if (!string.IsNullOrWhiteSpace(Description))
+            {
+                <span class="agent-panel-description">@Description</span>
+            }
+            <span class="agent-panel-id">@AgentId</span>
+        </span>
+        @* Always visible, not hover-only: an affordance that appears only once you are already
+           hovering cannot tell you the control is there. *@
+        <span class="agent-identity-chevron" data-testid="agent-persona-chevron" aria-hidden="true">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" stroke-width="1.4"
+                      stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+        </span>
+    </button>
+    @* OUTSIDE the button, deliberately. The button carries an explicit aria-label, and an
+       aria-label REPLACES the element's inner text for assistive technology - a state span nested
+       inside it would render, pass a "the label exists" test, and never be announced. The chip
+       shows no state text of its own, so without this the dot is information available only to
+       people who can see colour. *@
+    <span class="sr-only" data-testid="agent-identity-activity">@Activity.Label</span>
 </div>
 
 @code {
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
 
+    /// <summary>
+    /// Raised when the agent's name is clicked. Deliberately a callback rather than an injected
+    /// launcher service: the panel is mounted by <c>MainLayout</c> outside the app shell, and an
+    /// <c>@inject</c> here would make every existing fixture that renders this chip - or anything
+    /// containing it - fail DI resolution. Unset is a valid state and clicking is then a no-op.
+    /// </summary>
+    [Parameter]
+    public EventCallback OnPersonaRequested { get; set; }
+
     private AgentState? Agent => Store.GetAgent(AgentId);
+
+    private AgentActivitySpec Activity => AgentActivityModel.For(
+        Agent?.IsConnected ?? false,
+        Agent?.IsStreaming ?? false,
+        Agent?.ActiveToolCallCount ?? 0,
+        Agent?.IsReadOnly ?? false);
 
     private string DisplayName =>
         PortalText.SingleLine(Agent?.DisplayName) is { Length: > 0 } name ? name : PortalText.SingleLine(AgentId);
 
-    // Prefer the agent's configured emoji; fall back to the default robot glyph when none is set.
-    private string AvatarGlyph =>
-        string.IsNullOrWhiteSpace(Agent?.Emoji) ? "\U0001F916" : PortalText.SingleLine(Agent!.Emoji);
-
-    private string Description => PortalText.SingleLine(Agent?.Description);
+    /// <summary>
+    /// The chip's one subtitle line.
+    ///
+    /// <remarks>
+    /// Responsibility wins over Description when both are set. The chip has room for exactly one
+    /// ellipsis-truncated line, and Responsibility is the field defined as "one short line naming
+    /// what it owns" - it survives that truncation intact, where prose gets cut mid-sentence.
+    /// <para>
+    /// The class name stays <c>.agent-panel-description</c> whichever field feeds it: it is the
+    /// documented hover-reveal contract (the id replaces it on hover) and is asserted by component
+    /// and E2E tests. Renaming it to match the source field would break that for no gain.
+    /// </para>
+    /// </remarks>
+    /// </summary>
+    private string Description =>
+        PortalText.SingleLine(Agent?.Responsibility) is { Length: > 0 } responsibility
+            ? responsibility
+            : PortalText.SingleLine(Agent?.Description);
 
     protected override void OnInitialized() => Store.OnChanged += HandleStoreChanged;
 

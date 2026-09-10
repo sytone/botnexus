@@ -219,7 +219,7 @@ public sealed class ToolExecutorTimeoutTests
 
         var executeTask = ToolExecutor.ExecuteAsync(context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
 
-        await enteredTool.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(enteredTool.Task, "the tool to start running");
         releaseProbe.TrySetResult(true);
 
         var results = await executeTask;
@@ -255,7 +255,7 @@ public sealed class ToolExecutorTimeoutTests
         var executeTask = ToolExecutor.ExecuteAsync(context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
 
         // Wait until the tool is running, then release it deterministically.
-        await enteredTool.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(enteredTool.Task, "the tool to start running");
         releaseProbe.TrySetResult(true);
 
         var results = await executeTask;
@@ -290,7 +290,7 @@ public sealed class ToolExecutorTimeoutTests
 
         var executeTask = ToolExecutor.ExecuteAsync(context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
 
-        await enteredTool.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(enteredTool.Task, "the tool to start running");
         releaseProbe.TrySetResult(true);
 
         var results = await executeTask;

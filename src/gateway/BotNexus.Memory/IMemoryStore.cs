@@ -90,6 +90,26 @@ public interface IMemoryStore : IAsyncDisposable
     Task<IReadOnlyList<string>> ListSessionIdsAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<string>>([]);
 
+    /// <summary>
+    /// The most recently created entries, newest first, regardless of session or query.
+    /// </summary>
+    /// <remarks>
+    /// Every other read on this interface needs either a query or a session id, so before this
+    /// there was no way to answer "what does this agent remember?" - which is exactly what an
+    /// operator managing memory by hand needs to see. Search cannot stand in for it: a query
+    /// returns what matches, and the point here is to show what is there.
+    /// <para>
+    /// The default implementation returns an empty set so non-SQLite stores and test doubles keep
+    /// working, following the same additive pattern as <see cref="ListSessionIdsAsync"/> and
+    /// <see cref="DeleteBySessionAsync"/>. A store that returns nothing here renders an empty list,
+    /// never an error.
+    /// </para>
+    /// </remarks>
+    /// <param name="limit">Maximum entries to return.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<IReadOnlyList<MemoryEntry>> ListRecentAsync(int limit = 50, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
+
     Task ClearAsync(CancellationToken ct = default);
     Task<MemoryStoreStats> GetStatsAsync(CancellationToken ct = default);
 }

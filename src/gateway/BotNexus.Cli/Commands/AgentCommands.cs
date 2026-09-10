@@ -127,7 +127,7 @@ internal sealed class AgentCommands
 
         var importFileArgument = new Argument<string>("file", "Path to an agentTemplate/v1 JSON file to import.");
         var importIdOption = new Option<string?>("--id", () => null, "Target agent ID (defaults to the --set id override, then the template file name).");
-        var importSetOption = new Option<string[]>("--set", () => [], "Override a descriptor field before materializing (key=value). Repeatable. Keys: id, displayName, description, emoji, model, provider, thinking, contextWindow.")
+        var importSetOption = new Option<string[]>("--set", () => [], "Override a descriptor field before materializing (key=value). Repeatable. Keys: id, displayName, description, responsibility, boundaries, emoji, avatarHue, model, provider, thinking, contextWindow.")
         {
             AllowMultipleArgumentsPerToken = false
         };
@@ -787,6 +787,30 @@ internal sealed class AgentCommands
                 case "emoji":
                     descriptor.Emoji = value;
                     break;
+                case "responsibility":
+                    descriptor.Responsibility = value;
+                    break;
+                case "boundaries":
+                    descriptor.Boundaries = value;
+                    break;
+                case "avatarhue":
+                    // Empty clears the override back to a generated hue, which is the only way to
+                    // say "go back to the default" without deleting and recreating the agent.
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        descriptor.AvatarHue = null;
+                    }
+                    else if (int.TryParse(value, out var hue) && hue is >= 0 and <= 359)
+                    {
+                        descriptor.AvatarHue = hue;
+                    }
+                    else
+                    {
+                        error = $"--set avatarHue expects a whole number of degrees from 0 to 359, or empty to clear it; got '{value}'.";
+                        return false;
+                    }
+
+                    break;
                 case "model":
                 case "modelid":
                     descriptor.ModelId = value;
@@ -819,7 +843,7 @@ internal sealed class AgentCommands
                     };
                     break;
                 default:
-                    error = $"Unknown --set key '{key}'. Supported: id, displayName, description, emoji, model, provider, systemPrompt, thinking, contextWindow.";
+                    error = $"Unknown --set key '{key}'. Supported: id, displayName, description, responsibility, boundaries, emoji, avatarHue, model, provider, systemPrompt, thinking, contextWindow.";
                     return false;
             }
         }

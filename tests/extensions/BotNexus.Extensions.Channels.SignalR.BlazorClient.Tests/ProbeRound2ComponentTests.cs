@@ -35,8 +35,6 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(new CronApiClient(http));
-        _ctx.Services.AddSingleton(new SectionsApiClient(http));
-        _ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
         _ctx.Services.AddStubNavOrderApiClient();
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
@@ -222,8 +220,6 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         ctx.Services.AddSingleton(http);
         ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         ctx.Services.AddSingleton(new CronApiClient(http));
-        ctx.Services.AddSingleton(new SectionsApiClient(http));
-        ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
         ctx.Services.AddSingleton(new ToolsApiClient(http));
         ctx.Services.AddStubNavOrderApiClient();
         ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
@@ -267,8 +263,6 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(gatewayInfo);
         _ctx.Services.AddSingleton(new ExtensionFeatureService(restClient));
         _ctx.Services.AddSingleton(new CronApiClient(http));
-        _ctx.Services.AddSingleton(new SectionsApiClient(http));
-        _ctx.Services.AddSingleton(sp => new ConversationSectionsState(sp.GetRequiredService<SectionsApiClient>()));
         _ctx.Services.AddSingleton(new ToolsApiClient(http));
 
         _store.SeedAgents([new AgentSummary("a-1", "Agent One")]);

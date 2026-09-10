@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace BotNexus.Cli.Services;
 
@@ -20,7 +21,22 @@ public interface IGatewayProcessHandle
     /// </summary>
     string? ExecutablePath { get; }
 
-    /// <summary>Requests termination of the process.</summary>
+    /// <summary>
+    /// Asks the process to shut down rather than killing it, and reports whether such a signal was
+    /// actually delivered.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when a termination request reached the process, so the caller should
+    /// wait before escalating. <see langword="false"/> when this platform offers no graceful
+    /// signal, or the process is already gone - in both cases waiting would buy nothing.
+    /// </returns>
+    /// <remarks>
+    /// Separate from <see cref="Kill"/> so the escalation is the caller's decision and is
+    /// observable in tests, rather than hidden inside a handle that "sometimes" kills politely.
+    /// </remarks>
+    bool RequestGracefulStop();
+
+    /// <summary>Terminates the process immediately. No opportunity to run shutdown work.</summary>
     void Kill();
 
     /// <summary>Waits up to <paramref name="milliseconds"/> for exit; true when it exited.</summary>
@@ -50,7 +66,44 @@ internal sealed class LiveProcessHandle(Process process, Func<Process, int, bool
         }
     }
 
+    /// <inheritdoc />
+    public bool RequestGracefulStop()
+    {
+        // Windows has no SIGTERM. CloseMainWindow posts WM_CLOSE, which a console host or a
+        // service does not act on, so it would return true having done nothing - worse than
+        // admitting there is no graceful path and letting the caller kill immediately.
+        if (OperatingSystem.IsWindows())
+            return false;
+
+        try
+        {
+            if (process.HasExited)
+                return false;
+
+            // 0 means the signal was accepted. Anything else (ESRCH: gone between the check and
+            // here; EPERM: not ours to signal) means no request is pending, so do not make the
+            // caller wait out a timeout for an exit that was never asked for.
+            return NativeKill(process.Id, Sigterm) == 0;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException
+                                      or InvalidOperationException or NotSupportedException)
+        {
+            // No libc, no such entry point, or the process object cannot answer. Fall back to the
+            // kill path rather than failing the stop outright.
+            return false;
+        }
+    }
+
     public void Kill() => process.Kill();
+
+    /// <summary>SIGTERM. 15 on every Unix platform .NET runs on.</summary>
+    private const int Sigterm = 15;
+
+    // DllImport rather than LibraryImport, matching HostSuspendDetector: the source-generated
+    // marshaller wants <AllowUnsafeBlocks> across the project, which is a disproportionate trade
+    // for one blittable two-int call.
+    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static extern int NativeKill(int pid, int signal);
 
     public bool WaitForExit(int milliseconds)
         => waitForExitOverride is not null

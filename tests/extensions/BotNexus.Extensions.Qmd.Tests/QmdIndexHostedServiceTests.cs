@@ -20,8 +20,8 @@ public sealed class QmdIndexHostedServiceTests
         var service = new QmdIndexHostedService(_mockBackend.Object, config, _mockLogger.Object);
 
         await service.StartAsync(CancellationToken.None);
-    var executionTask = service.ExecuteTask.ShouldNotBeNull();
-    await executionTask.WaitAsync(TimeSpan.FromSeconds(2));
+        var executionTask = service.ExecuteTask.ShouldNotBeNull();
+        await TestAwait.SignaledAsync(executionTask, "the hosted service to complete its execution loop");
         await service.StopAsync(CancellationToken.None);
 
         _mockBackend.Verify(x => x.UpdateIndexAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);

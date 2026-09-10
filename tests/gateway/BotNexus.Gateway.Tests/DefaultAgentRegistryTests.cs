@@ -148,8 +148,12 @@ public sealed class DefaultAgentRegistryTests
         var registry = CreateRegistry(broadcaster);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         await using var subscription = broadcaster.SubscribeAsync(cts.Token).GetAsyncEnumerator(cts.Token);
+        // No sleep before publishing: SubscribeAsync registers the subscriber before it returns,
+        // so by this line the publish cannot be missed. The 20ms wait this replaces was the flake -
+        // on a loaded runner registration had not happened yet, the activity went to nobody, and
+        // the pending MoveNextAsync was then disposed by the `await using`, which reports
+        // NotSupportedException and names neither the race nor the missed event.
         var readTask = subscription.MoveNextAsync().AsTask();
-        await Task.Delay(20, cts.Token);
 
         registry.Register(CreateDescriptor("agent-a"));
 
@@ -167,8 +171,12 @@ public sealed class DefaultAgentRegistryTests
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         await using var subscription = broadcaster.SubscribeAsync(cts.Token).GetAsyncEnumerator(cts.Token);
+        // No sleep before publishing: SubscribeAsync registers the subscriber before it returns,
+        // so by this line the publish cannot be missed. The 20ms wait this replaces was the flake -
+        // on a loaded runner registration had not happened yet, the activity went to nobody, and
+        // the pending MoveNextAsync was then disposed by the `await using`, which reports
+        // NotSupportedException and names neither the race nor the missed event.
         var readTask = subscription.MoveNextAsync().AsTask();
-        await Task.Delay(20, cts.Token);
 
         registry.Unregister(AgentId.From("agent-a"));
 

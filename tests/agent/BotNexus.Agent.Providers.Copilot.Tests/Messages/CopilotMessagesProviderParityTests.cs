@@ -127,12 +127,13 @@ public class CopilotMessagesProviderParityTests
         var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
         var model = BuildModel() with { Id = "gpt-5.6-sol", Name = "gpt-5.6-sol" };
 
-        var result = await provider.Stream(
-                model,
-                BuildContext(),
-                new CopilotMessagesOptions { ApiKey = "test-copilot-token" })
-            .GetResultAsync()
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            provider.Stream(
+                    model,
+                    BuildContext(),
+                    new CopilotMessagesOptions { ApiKey = "test-copilot-token" })
+                .GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.Content.OfType<TextContent>().Single().Text.ShouldBe(expected);
     }
@@ -152,12 +153,13 @@ public class CopilotMessagesProviderParityTests
         var sse = BuildTextSse(["\r\nintentional"]);
         var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
 
-        var result = await provider.Stream(
-                BuildModel(),
-                BuildContext(),
-                new CopilotMessagesOptions { ApiKey = "test-copilot-token" })
-            .GetResultAsync()
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            provider.Stream(
+                    BuildModel(),
+                    BuildContext(),
+                    new CopilotMessagesOptions { ApiKey = "test-copilot-token" })
+                .GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.Content.OfType<TextContent>().Single().Text.ShouldBe("\r\nintentional");
     }
@@ -170,12 +172,13 @@ public class CopilotMessagesProviderParityTests
         var sse = BuildTextSse(["before\r\nafter"]);
         var provider = new CopilotMessagesProvider(new HttpClient(new RecordingHandler(_ => SseResponse(sse))));
 
-        var result = await provider.Stream(
-                BuildModel(),
-                BuildContext(),
-                new CopilotMessagesOptions { ApiKey = "test-copilot-token" })
-            .GetResultAsync()
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            provider.Stream(
+                    BuildModel(),
+                    BuildContext(),
+                    new CopilotMessagesOptions { ApiKey = "test-copilot-token" })
+                .GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.Content.OfType<TextContent>().Single().Text.ShouldBe("before\r\nafter");
     }
@@ -205,10 +208,12 @@ public class CopilotMessagesProviderParityTests
         };
 
         var copilotStream = copilotProvider.Stream(model, context, copilotOpts);
-        _ = await copilotStream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(copilotStream.GetResultAsync(), "the Copilot stream to produce its result");
 
         var anthropicStream = anthropicProvider.Stream(model, context, anthropicOpts);
-        _ = await anthropicStream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(
+            anthropicStream.GetResultAsync(),
+            "the Anthropic stream to produce its result");
 
         return (copilotHandler, anthropicHandler);
     }

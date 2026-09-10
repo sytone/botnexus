@@ -1854,6 +1854,81 @@ public sealed class ActivityDashboardProjectionTests
         Assert.Equal(without, with);
     }
 
+    // ── text query (Interface Review P3) ──────────────────────────────────────
+    // Seven facets narrowed by category and nothing narrowed by name, so finding a known row meant
+    // reasoning about which facet excluded the other thirty.
+
+    private static IReadOnlyList<ActivityRow> ProjectQuery(string? query, params ConversationSummaryDto[] rows) =>
+        ActivityDashboardProjection.Project(rows, new ActivityDashboardFilter(Query: query), Now);
+
+    [Fact]
+    public void A_query_matches_the_title()
+    {
+        var kept = ProjectQuery("gateway",
+            Conv("c-1", title: "Gateway restart post-mortem"),
+            Conv("c-2", title: "Weekly costs"));
+
+        Assert.Single(kept);
+        Assert.Equal("c-1", kept[0].ConversationId);
+    }
+
+    [Fact]
+    public void A_query_matches_the_agent_because_that_is_how_people_describe_a_row()
+    {
+        var kept = ProjectQuery("harbor",
+            Conv("c-1", agentId: "harbor-relay", title: "Tuesday"),
+            Conv("c-2", agentId: "alpha", title: "Tuesday"));
+
+        Assert.Single(kept);
+        Assert.Equal("c-1", kept[0].ConversationId);
+    }
+
+    [Fact]
+    public void Matching_ignores_case()
+    {
+        Assert.Single(ProjectQuery("GATEWAY", Conv("c-1", title: "gateway restart")));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void An_empty_query_restores_the_facets_result_rather_than_emptying_the_table(string? query)
+    {
+        var kept = ProjectQuery(query, Conv("c-1", title: "Alpha"), Conv("c-2", title: "Beta"));
+
+        Assert.Equal(2, kept.Count);
+    }
+
+    [Fact]
+    public void A_query_matching_nothing_returns_nothing_rather_than_everything()
+    {
+        Assert.Empty(ProjectQuery("zzzznotaword", Conv("c-1", title: "Alpha")));
+    }
+
+    [Fact]
+    public void The_query_narrows_within_the_facets_rather_than_reaching_past_them()
+    {
+        // The query is one more AND, not an escape hatch: a row the status facet excluded must not
+        // reappear because its title matches.
+        var rows = ActivityDashboardProjection.Project(
+            [Conv("c-1", title: "Gateway restart", status: "Archived")],
+            new ActivityDashboardFilter(Status: ActivityStatusFilter.Active, Query: "gateway"),
+            Now);
+
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public void A_hidden_conversation_stays_hidden_however_well_the_query_matches()
+    {
+        // InternalHidden is excluded unconditionally and ahead of every facet. A text box is not a
+        // way around that.
+        var rows = ProjectQuery("secret", Conv("c-1", title: "secret", visibility: "InternalHidden"));
+
+        Assert.Empty(rows);
+    }
+
     // ── #3713: Live badge corroborated against the session roster ──────────
 
     private static SessionSummary Session(string id, string? status, string agentId = "alpha") =>

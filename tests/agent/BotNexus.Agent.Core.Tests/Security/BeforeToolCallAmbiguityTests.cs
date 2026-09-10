@@ -41,8 +41,9 @@ public sealed class BeforeToolCallAmbiguityTests
             beforeToolCall: (_, _) => Task.FromResult<BeforeToolCallResult?>(
                 BeforeToolCallResult.Indeterminate()));
 
-        var results = await ExecuteAsync(config, tool, "dangerous", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var results = await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "dangerous", CancellationToken.None),
+            "the tool execution to complete");
 
         toolInvoked.ShouldBeFalse();
         results.ShouldHaveSingleItem();
@@ -63,8 +64,9 @@ public sealed class BeforeToolCallAmbiguityTests
             beforeToolCall: (_, _) => Task.FromResult<BeforeToolCallResult?>(
                 BeforeToolCallResult.Indeterminate("reviewer quorum split")));
 
-        var results = await ExecuteAsync(config, tool, "dangerous", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var results = await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "dangerous", CancellationToken.None),
+            "the tool execution to complete");
 
         results[0].IsError.ShouldBeTrue();
         results[0].Result.Content[0].Value.ShouldContain("reviewer quorum split");
@@ -88,8 +90,9 @@ public sealed class BeforeToolCallAmbiguityTests
             beforeToolCall: (_, _) => Task.FromResult<BeforeToolCallResult?>(
                 BeforeToolCallResult.Indeterminate()));
 
-        var results = await ExecuteAsync(config, tool, "dangerous", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var results = await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "dangerous", CancellationToken.None),
+            "the tool execution to complete");
 
         toolInvoked.ShouldBeFalse();
         results[0].Result.Content[0].Value.ShouldContain("not unambiguously approved");
@@ -116,8 +119,9 @@ public sealed class BeforeToolCallAmbiguityTests
             beforeToolCall: (_, _) => Task.FromResult<BeforeToolCallResult?>(
                 new BeforeToolCallResult(Block: false)));
 
-        var results = await ExecuteAsync(config, tool, "safe", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var results = await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "safe", CancellationToken.None),
+            "the tool execution to complete");
 
         toolInvoked.ShouldBeTrue();
         results[0].IsError.ShouldBeFalse();
@@ -138,8 +142,9 @@ public sealed class BeforeToolCallAmbiguityTests
         var config = TestHelpers.CreateTestConfig(
             beforeToolCall: (_, _) => Task.FromResult<BeforeToolCallResult?>(null));
 
-        var results = await ExecuteAsync(config, tool, "safe", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var results = await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "safe", CancellationToken.None),
+            "the tool execution to complete");
 
         toolInvoked.ShouldBeTrue();
         results[0].IsError.ShouldBeFalse();
@@ -161,8 +166,9 @@ public sealed class BeforeToolCallAmbiguityTests
             beforeToolCall: (_, _) => Task.FromResult<BeforeToolCallResult?>(
                 new BeforeToolCallResult(Block: true, Reason: "denied by policy")));
 
-        var results = await ExecuteAsync(config, tool, "dangerous", CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var results = await TestAwait.SignaledAsync(
+            ExecuteAsync(config, tool, "dangerous", CancellationToken.None),
+            "the tool execution to complete");
 
         toolInvoked.ShouldBeFalse();
         results[0].IsError.ShouldBeTrue();

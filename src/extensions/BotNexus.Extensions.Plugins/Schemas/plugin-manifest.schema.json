@@ -77,6 +77,21 @@
     "mcpServers": {
       "type": "string",
       "description": "Explicit MCP server configuration path. Omit to rely on convention-based discovery."
+    },
+    "extension": {
+      "type": "object",
+      "description": "A prebuilt gateway extension carried by this plugin. Plugins are copied verbatim with no build step, so the referenced assembly and assets must already be built and committed to the plugin repository. Omit for a skills-only plugin.",
+      "additionalProperties": false,
+      "required": [
+        "manifest"
+      ],
+      "properties": {
+        "manifest": {
+          "type": "string",
+          "description": "Plugin-relative path to the carried extension's botnexus-extension.json. Must resolve inside the plugin directory.",
+          "minLength": 1
+        }
+      }
     }
   }
 }

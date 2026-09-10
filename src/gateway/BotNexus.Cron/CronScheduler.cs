@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Notifications;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
@@ -18,7 +19,8 @@ public sealed class CronScheduler(
     IServiceScopeFactory scopeFactory,
     IOptionsMonitor<CronOptions> optionsMonitor,
     ILogger<CronScheduler> logger,
-    TimeProvider? timeProvider = null) : BackgroundService
+    TimeProvider? timeProvider = null,
+    INotificationPublisher? notificationPublisher = null) : BackgroundService
 {
     private readonly ICronStore _cronStore = cronStore;
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
@@ -29,6 +31,12 @@ public sealed class CronScheduler(
     // the scheduler reads "now" through an injectable TimeProvider. Optional and defaulting to the
     // system clock, so every existing registration and call site is unaffected.
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
+    // Optional and defaulting to the no-op, so every existing registration, test and CLI call site
+    // constructs the scheduler unchanged - and so a scheduler can never fail to run a job because
+    // notifications are unavailable.
+    private readonly INotificationPublisher _notificationPublisher =
+        notificationPublisher ?? NullNotificationPublisher.Instance;
     private readonly IReadOnlyDictionary<string, ICronAction> _actions = actions
         .GroupBy(action => action.ActionType, StringComparer.OrdinalIgnoreCase)
         .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
@@ -1606,7 +1614,67 @@ public sealed class CronScheduler(
         // here; passing it separately would reintroduce a read-modify-write clobber window.
         _ = conversationId;
         await _cronStore.RecordRunFinalizationAsync(jobId, triggeredAt, status, error, ct).ConfigureAwait(false);
+
+        await RaiseOutcomeNotificationAsync(jobId, status, error).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Reports a terminal cron outcome to the notification store.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Finalisation is the ONE seam every terminal path routes through - success, error, timeout
+    /// and abort alike - so raising here cannot miss an outcome the way hooking each call site
+    /// would.
+    /// </para>
+    /// <para>
+    /// Only outcomes worth waking someone for are raised. A job on a five-minute schedule would
+    /// otherwise file a hundred notifications a day saying nothing happened, and a feed that is
+    /// mostly noise is one nobody reads - which costs the failures their audience too. Success and
+    /// operator-initiated aborts are recorded in run history, where they are already visible.
+    /// </para>
+    /// <para>
+    /// Raised without the run's cancellation token: a job cancelled by gateway shutdown still needs
+    /// its outcome recorded, and passing the token that just fired would cancel the report of the
+    /// very event worth reporting.
+    /// </para>
+    /// </remarks>
+    private async Task RaiseOutcomeNotificationAsync(JobId jobId, string status, string? error)
+    {
+        if (!IsNotifiableOutcome(status))
+            return;
+
+        var severity = string.Equals(status, CronRunStatus.Ok, StringComparison.Ordinal)
+            ? NotificationSeverity.Info
+            : NotificationSeverity.Error;
+
+        await _notificationPublisher.TryPublishAsync(
+            new Notification
+            {
+                Id = string.Empty,
+                Kind = NotificationKind.CronRunOutcome,
+                Severity = severity,
+                Title = $"Scheduled job '{jobId.Value}' {DescribeStatus(status)}",
+                Body = error,
+                Link = "cron",
+                CreatedAtUtc = default,
+            },
+            _logger,
+            CancellationToken.None).ConfigureAwait(false);
+    }
+
+    // Failures only. Success is visible in run history and does not need to interrupt anyone; an
+    // operator-initiated abort is something they just did, so telling them about it is noise.
+    private static bool IsNotifiableOutcome(string status) =>
+        status is CronRunStatus.Error or CronRunStatus.TimedOut or CronRunStatus.DeliveryFailed;
+
+    private static string DescribeStatus(string status) => status switch
+    {
+        CronRunStatus.Error => "failed",
+        CronRunStatus.TimedOut => "timed out",
+        CronRunStatus.DeliveryFailed => "could not deliver its result",
+        _ => status,
+    };
 
     /// <summary>
     /// Marks cron runs that are still stamped <see cref="CronRunStatus.Running"/> but whose

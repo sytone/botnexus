@@ -51,6 +51,14 @@ public sealed class AgentsListProjectionTests
     /// The list-view fields, matching <c>AgentSummary</c> (<c>HubContracts.cs:18-23</c>) plus the two
     /// fields <c>Pages/Agents.razor:92-93</c> renders as grid columns.
     /// </summary>
+    /// <remarks>
+    /// Widening this list widens the boot payload for every portal cold load and reconnect, so each
+    /// addition is a deliberate decision made here rather than a side effect of adding a descriptor
+    /// field. The persona trio was added because the portal edits it: without these the panel loads
+    /// nulls and cannot round-trip an edit. Each is omitted from the wire when unset, so an agent
+    /// nobody has personalised costs nothing - which is why they are absent from the bare-agent
+    /// case in ListResponse_OmitsAnUnsetPersona.
+    /// </remarks>
     private static readonly string[] ExpectedProperties =
     [
         "agentId",
@@ -60,6 +68,9 @@ public sealed class AgentsListProjectionTests
         "isBuiltIn",
         "apiProvider",
         "modelId",
+        "avatarHue",
+        "responsibility",
+        "boundaries",
     ];
 
     // ── AC1: the list response carries only list-view fields ────────────────────
@@ -251,12 +262,56 @@ public sealed class AgentsListProjectionTests
     /// A descriptor populated with the properties issue #2755 identifies as the payload cost and the
     /// disclosure risk, so a missing projection is unmissable in both the field and the size assertions.
     /// </summary>
+    /// <summary>
+    /// The persona an operator edits must survive the projection.
+    /// </summary>
+    /// <remarks>
+    /// This is the gap that shipped: <c>AvatarHue</c>, <c>Responsibility</c> and <c>Boundaries</c>
+    /// were added to the descriptor, persisted, fingerprinted and rendered by the portal - and the
+    /// list projection did not carry them, so the portal loaded nulls and could never round-trip an
+    /// edit. Everything else was tested; the seam between them was not. Removing a field from
+    /// <see cref="AgentListItem.FromDescriptor"/> must redden this test by name.
+    /// </remarks>
+    [Fact]
+    public void ListResponse_CarriesTheEditablePersona()
+    {
+        var item = AgentListItem.FromDescriptor(CreateFatDescriptor("agent-a"));
+
+        item.AvatarHue.ShouldBe(210);
+        item.Responsibility.ShouldBe("keeps the gantry healthy");
+        item.Boundaries.ShouldBe("never restarts production unasked");
+    }
+
+    /// <summary>
+    /// An agent nobody has personalised costs the payload nothing.
+    /// </summary>
+    [Fact]
+    public void ListResponse_OmitsAnUnsetPersona()
+    {
+        var bare = new AgentDescriptor
+        {
+            AgentId = AgentId.From("bare"),
+            DisplayName = "bare",
+            ModelId = "m",
+            ApiProvider = "p",
+        };
+
+        var json = JsonSerializer.Serialize(AgentListItem.FromDescriptor(bare));
+
+        json.ShouldNotContain("avatarHue");
+        json.ShouldNotContain("responsibility");
+        json.ShouldNotContain("boundaries");
+    }
+
     private static AgentDescriptor CreateFatDescriptor(string agentId) => new()
     {
         AgentId = AgentId.From(agentId),
         DisplayName = $"{agentId}-display",
         Emoji = "🔬",
         Description = "a description",
+        AvatarHue = 210,
+        Responsibility = "keeps the gantry healthy",
+        Boundaries = "never restarts production unasked",
         ModelId = "test-model",
         ApiProvider = "test-provider",
         SystemPrompt = SecretSystemPrompt + new string('p', 4_000),

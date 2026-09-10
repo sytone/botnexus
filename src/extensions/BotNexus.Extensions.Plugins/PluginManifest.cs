@@ -23,6 +23,25 @@ public sealed record PluginParty
 }
 
 /// <summary>
+/// Reference to a prebuilt gateway extension carried inside a plugin repository.
+/// </summary>
+/// <remarks>
+/// Plugins are copied verbatim - <c>GitPluginSourceFetcher</c> clones and
+/// <c>PluginLifecycleManager.Promote</c> copies - so there is no build step at install and no
+/// guaranteed SDK on the host. A carried extension is therefore always prebuilt and committed
+/// to the plugin repository, never compiled from source during install.
+/// </remarks>
+public sealed record PluginExtensionRef
+{
+    /// <summary>
+    /// Plugin-relative path to the carried extension's <c>botnexus-extension.json</c>. Resolved
+    /// against the plugin directory and rejected if it escapes it.
+    /// </summary>
+    [JsonPropertyName("manifest")]
+    public string Manifest { get; init; } = string.Empty;
+}
+
+/// <summary>
 /// Typed projection of <c>.botnexus-plugin/plugin.json</c>. Only <see cref="Name"/> is
 /// required; every component collection is <c>null</c> when the manifest omits it, which
 /// signals that the component should be discovered by convention at the plugin root rather
@@ -82,6 +101,15 @@ public sealed record PluginManifest
     /// <summary>Explicit MCP server configuration path; <c>null</c> means discover by convention.</summary>
     [JsonPropertyName("mcpServers")]
     public string? McpServers { get; init; }
+
+    /// <summary>
+    /// Prebuilt gateway extension carried by this plugin, or <c>null</c> for a skills-only
+    /// plugin. Presence of this field is what makes an install a <i>code</i> install, which
+    /// carries a materially different trust posture: the carried assembly runs in-process in
+    /// the gateway, at full trust, whereas a skill is only ever prompt content.
+    /// </summary>
+    [JsonPropertyName("extension")]
+    public PluginExtensionRef? Extension { get; init; }
 }
 
 /// <summary>One plugin offering inside a marketplace catalog.</summary>

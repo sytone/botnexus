@@ -71,7 +71,7 @@ public sealed class ToolAuditWriteAheadTests
             });
 
         var persistence = Create(store.Object, "s1").PersistStartAsync("call-1", "exec", Args("command", "git status"), default);
-        await saveStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(saveStarted.Task, "the audit record's save to begin");
 
         persistence.IsCompleted.ShouldBeFalse();
 

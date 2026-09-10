@@ -1,0 +1,425 @@
+@page "/memory"
+@page "/memory/{AgentId}"
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject MemoryApiClient MemoryApi
+@inject NavigationManager Nav
+
+<PageTitle>BotNexus &mdash; Memory</PageTitle>
+
+@*
+    The cross-agent half of memory management. The persona drawer already curates ONE agent's notes
+    — list recent, add, edit, delete — so this page deliberately does not repeat that. It answers
+    the two questions the drawer cannot: which agents are holding memory at all, and where in it is
+    a particular thing. Editing stays in the drawer, and this page says so rather than growing a
+    second editor over a truncated preview.
+*@
+
+<div class="agents-page" data-testid="memory-page">
+
+    <header class="agents-toolbar">
+        <h2 class="page-heading"><Icon Name="thinking" Size="24" /><span>Memory</span></h2>
+        <div class="agents-toolbar-actions">
+            @if (!string.IsNullOrEmpty(_status))
+            {
+                <span class="agents-status @_statusClass" role="status" data-testid="memory-status">@_status</span>
+            }
+            <button class="toolbar-btn" @onclick="LoadStoresAsync" disabled="@_loading" title="Refresh store list">
+                <Icon Name="refresh" Size="14" Class="bn-icon-inherit" /> Reload
+            </button>
+        </div>
+    </header>
+
+    @if (_loading && _stores.Count == 0)
+    {
+        <p class="plugin-form-hint" data-testid="memory-loading">Loading memory stores.</p>
+    }
+    else if (_stores.Count == 0)
+    {
+        <p class="plugin-form-hint" data-testid="memory-empty">
+            No agent has memory enabled. Turn it on for an agent under Agents &rarr; Memory.
+        </p>
+    }
+    else
+    {
+        <section class="cron-page-card" data-testid="memory-stores">
+            <h3>Stores</h3>
+            @* The table has five columns and a minimum width; below roughly 440px it is wider than
+               the page. Without its own scroll container it was CLIPPED rather than scrollable - on
+               a 375px viewport the size column was cut mid-value and "last indexed" was unreachable
+               entirely, with no horizontal scroll to get to it. The page body must never scroll
+               sideways, so the overflow belongs here. *@
+            <div class="memory-store-scroller">
+            <table class="memory-store-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Agent</th>
+                        <th scope="col">Entries</th>
+                        <th scope="col">Embedded</th>
+                        <th scope="col">Size</th>
+                        <th scope="col">Last indexed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var store in _stores)
+                    {
+                        <tr class="@(store.AgentId == _selected ? "is-selected" : null)"
+                            data-testid="@($"memory-store-{store.AgentId}")">
+                            <td>
+                                <button class="linklike" @onclick="() => SelectAsync(store.AgentId)"
+                                        data-testid="@($"memory-select-{store.AgentId}")">@store.AgentId</button>
+                            </td>
+                            <td class="num">@store.EntryCount</td>
+                            <td class="num">
+                                @store.EmbeddedEntryCount
+                                @if (store.ExceedsVectorScanCeiling)
+                                {
+                                    @* #3244: more embedded rows than one vector search scans, so older
+                                       entries are reachable lexically but never semantically. A
+                                       store-level fact an operator needs before concluding that
+                                       "memory search does not work". *@
+                                    <span class="memory-badge memory-badge-warn"
+                                          title="@($"More embedded rows than a single vector search scans (ceiling {store.VectorScanCeiling}). Older entries are reachable lexically but not semantically.")"
+                                          data-testid="@($"memory-ceiling-{store.AgentId}")">over scan ceiling</span>
+                                }
+                            </td>
+                            <td class="num">@FormatBytes(store.DatabaseSizeBytes)</td>
+                            <td>@(store.LastIndexedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "never")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            </div>
+        </section>
+
+        @if (_selected is not null)
+        {
+            <section class="cron-page-card" data-testid="memory-entries">
+                <h3>Search @_selected</h3>
+
+                <div class="plugin-install-form">
+                    <input type="search"
+                           class="plugin-install-source"
+                           placeholder="Search this agent's memory."
+                           aria-label="Search memory entries"
+                           data-testid="memory-search-input"
+                           @bind="_query"
+                           @bind:event="oninput"
+                           @onkeyup="OnKeyUpAsync" />
+                    <button class="toolbar-btn"
+                            data-testid="memory-search-submit"
+                            disabled="@(_searching || string.IsNullOrWhiteSpace(_query))"
+                            @onclick="SearchAsync">
+                        @(_searching ? "Searching." : "Search")
+                    </button>
+                </div>
+
+                @* Retrieval is ranked, so there is no "list everything" mode here on purpose. The
+                   drawer is where you browse an agent's notes; this is where you go looking. *@
+                @if (!_searched && _entries.Count == 0)
+                {
+                    <p class="plugin-form-hint" data-testid="memory-search-hint">
+                        Enter a term to search. To browse or edit @(_selected)'s notes, open the
+                        agent and use the persona drawer &mdash; editing needs the whole note, and
+                        these results are 200-character previews.
+                    </p>
+                }
+                else if (_entries.Count == 0)
+                {
+                    <p class="plugin-form-hint" data-testid="memory-no-matches">
+                        No entries matched &ldquo;@_query&rdquo;.
+                        @if (_scan?.PossiblyTruncated == true)
+                        {
+                            <text>
+                                The vector scan was truncated, so older entries may not have been
+                                considered at all rather than considered and rejected.
+                            </text>
+                        }
+                    </p>
+                }
+                else
+                {
+                    @if (_scan?.PossiblyTruncated == true)
+                    {
+                        <p class="memory-scan-note" data-testid="memory-scan-truncated">@_scan.Explanation</p>
+                    }
+
+                    <ul class="memory-entry-list">
+                        @foreach (var entry in _entries)
+                        {
+                            <li class="memory-entry @(entry.IsFirstParty ? null : "is-untrusted")"
+                                data-testid="@($"memory-entry-{entry.Id}")">
+                                <div class="memory-entry-head">
+                                    <span class="memory-badge memory-badge-source">@entry.SourceType</span>
+
+                                    @* Provenance and tier together: provenance says where the bytes
+                                       came from, the tier says what the platform will let them do. A
+                                       quarantined row is kept out of always-on prompt context but is
+                                       still searchable, and only both together show that. *@
+                                    <span class="memory-badge @TrustClass(entry.TrustTier)"
+                                          title="@TrustTitle(entry.TrustTier)"
+                                          data-testid="@($"memory-trust-{entry.Id}")">@entry.Provenance</span>
+
+                                    @if (!entry.IsFirstParty)
+                                    {
+                                        <span class="memory-badge memory-badge-warn"
+                                              data-testid="@($"memory-tier-{entry.Id}")">@entry.TrustTier.ToLowerInvariant()</span>
+                                    }
+
+                                    @if (entry.UserId is not null)
+                                    {
+                                        <span class="memory-badge memory-badge-user"
+                                              title="Attributed to this person. Not yet used to filter retrieval."
+                                              data-testid="@($"memory-user-{entry.Id}")">@entry.UserId</span>
+                                    }
+
+                                    @if (entry.ExpiresAt is { } expires)
+                                    {
+                                        <span class="memory-badge @(expires <= DateTimeOffset.UtcNow ? "memory-badge-warn" : "memory-badge-source")"
+                                              title="@($"Expires {expires.ToLocalTime():yyyy-MM-dd HH:mm}")"
+                                              data-testid="@($"memory-expiry-{entry.Id}")">
+                                            @(expires <= DateTimeOffset.UtcNow ? "expired" : "expires")
+                                        </span>
+                                    }
+
+                                    <span class="memory-entry-date">@entry.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+
+                                    <button class="toolbar-btn memory-forget"
+                                            data-testid="@($"memory-forget-{entry.Id}")"
+                                            disabled="@(_deleting == entry.Id)"
+                                            @onclick="() => ForgetAsync(entry)"
+                                            title="Permanently delete this memory">
+                                        @(_deleting == entry.Id ? "Forgetting." : "Forget")
+                                    </button>
+                                </div>
+                                <p class="memory-entry-preview">@entry.ContentPreview</p>
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
+        }
+    }
+
+    @* Shared stores (#3232). The per-agent table above answers "who holds memory";
+       this answers "who can see whose". Access lists rather than contents: what a store
+       holds is already searchable, but a store several agents WRITE to is a channel one
+       agent can use to influence the others, and until now that relationship was written
+       down only in config.json. *@
+    <section class="cron-page-card" data-testid="memory-shared-stores">
+        <h3>Shared stores</h3>
+        @if (_sharedStores.Count == 0)
+        {
+            <p class="plugin-form-hint" data-testid="memory-shared-empty">
+                No shared stores. Every agent's memory is private to it. Add one under
+                <a href="configuration">Configuration</a> &rarr; Memory &rarr; Shared stores to let
+                several agents read from, or contribute to, the same set of notes.
+            </p>
+        }
+        else
+        {
+            <ul class="memory-shared-list">
+                @foreach (var store in _sharedStores)
+                {
+                    <li class="memory-shared-store" data-testid="@($"memory-shared-{store.Name}")">
+                        <div class="memory-shared-head">
+                            <span class="memory-shared-name">@store.Name</span>
+                            @if (store.RetentionDays is { } days)
+                            {
+                                <span class="memory-badge">kept @days days</span>
+                            }
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(store.Description))
+                        {
+                            <p class="memory-shared-description">@store.Description</p>
+                        }
+                        <div class="memory-shared-access">
+                            <span class="memory-badge memory-badge-source"
+                                  title="@AccessTitle(store.Readers)"
+                                  data-testid="@($"memory-shared-readers-{store.Name}")">@Access(store.ReaderCount, store.Readers) can read</span>
+                            @* Writers gets the warning treatment when it is everyone. A store any
+                               agent can write is not shared knowledge, it is a shared surface. *@
+                            <span class="memory-badge @(IsEveryone(store.Writers) ? "memory-badge-warn" : "memory-badge-source")"
+                                  title="@AccessTitle(store.Writers)"
+                                  data-testid="@($"memory-shared-writers-{store.Name}")">@Access(store.WriterCount, store.Writers) can write</span>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+</div>
+
+@code {
+    [Parameter] public string? AgentId { get; set; }
+
+    private IReadOnlyList<MemoryStoreRowDto> _stores = [];
+    private IReadOnlyList<SharedMemoryStoreDto> _sharedStores = [];
+    private List<MemorySearchHitDto> _entries = [];
+    private MemoryVectorScanDto? _scan;
+
+    private string? _selected;
+    private string _query = string.Empty;
+    private string? _deleting;
+    private bool _loading;
+    private bool _searching;
+    private bool _searched;
+    private string? _status;
+    private string _statusClass = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadStoresAsync();
+        if (!string.IsNullOrWhiteSpace(AgentId))
+            await SelectAsync(AgentId!);
+    }
+
+    private async Task LoadStoresAsync()
+    {
+        _loading = true;
+        try
+        {
+            _stores = await MemoryApi.GetStoresAsync();
+            // Its own try: a gateway without the endpoint, or with no stores, must not blank the
+            // per-agent table that loaded fine.
+            try
+            {
+                _sharedStores = await MemoryApi.GetSharedStoresAsync();
+            }
+            catch
+            {
+                _sharedStores = [];
+            }
+            SetStatus(null);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not load memory stores: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task SelectAsync(string agentId)
+    {
+        _selected = agentId;
+        _entries = [];
+        _scan = null;
+        _searched = false;
+        return Task.CompletedTask;
+    }
+
+    private async Task OnKeyUpAsync(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && !string.IsNullOrWhiteSpace(_query))
+            await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        if (_selected is null || string.IsNullOrWhiteSpace(_query))
+            return;
+
+        _searching = true;
+        try
+        {
+            var result = await MemoryApi.SearchAsync(_selected, _query);
+            _entries = result?.Entries.ToList() ?? [];
+            _scan = result?.VectorScan;
+            _searched = true;
+            SetStatus(null);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Search failed: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            _searching = false;
+        }
+    }
+
+    private async Task ForgetAsync(MemorySearchHitDto entry)
+    {
+        if (_selected is null)
+            return;
+
+        _deleting = entry.Id;
+        try
+        {
+            if (await MemoryApi.DeleteEntryAsync(_selected, entry.Id))
+            {
+                // Removed from the rendered list rather than re-searched: a re-search re-ranks and
+                // can reorder everything around the row just acted on, which reads as the page
+                // losing the operator's place.
+                _entries.RemoveAll(e => e.Id == entry.Id);
+                SetStatus("Forgotten.");
+                await LoadStoresAsync();
+            }
+            else
+            {
+                SetStatus("Could not delete that entry.", isError: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Delete failed: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            _deleting = null;
+        }
+    }
+
+    private void SetStatus(string? message, bool isError = false)
+    {
+        _status = message;
+        _statusClass = isError ? "is-error" : string.Empty;
+    }
+
+    private static string TrustClass(string tier) => tier switch
+    {
+        "Trusted" => "memory-badge-trusted",
+        "Derived" => "memory-badge-source",
+        "Quarantined" => "memory-badge-danger",
+        _ => "memory-badge-warn",
+    };
+
+    private static string TrustTitle(string tier) => tier switch
+    {
+        "Trusted" => "First-party: written by the agent or its owner.",
+        "Derived" => "Derived from first-party content.",
+        "Quarantined" => "Written on a turn that consumed untrusted content. Kept out of always-on prompt context; still searchable.",
+        _ => "Provenance could not be established. Treated as not first-party.",
+    };
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes / (1024.0 * 1024.0):0.#} MB",
+    };
+
+    /// <summary>
+    /// Renders an access list as a count, resolving "*" to what it actually means right now.
+    /// </summary>
+    /// <remarks>
+    /// A wildcard reads as harmless until you notice the roster has sixteen agents on it. Showing
+    /// the resolved number is the difference between "*" and "all 16 agents".
+    /// </remarks>
+    private static string Access(int resolvedCount, IReadOnlyList<string> configured)
+    {
+        if (configured.Count == 0)
+            return "Nobody";
+        if (IsEveryone(configured))
+            return $"All {resolvedCount} agents";
+        return resolvedCount == 1 ? "1 agent" : $"{resolvedCount} agents";
+    }
+
+    private static string AccessTitle(IReadOnlyList<string> configured) =>
+        configured.Count == 0 ? "No agents are granted this" : string.Join(", ", configured);
+
+    private static bool IsEveryone(IReadOnlyList<string> configured) =>
+        configured.Contains("*", StringComparer.Ordinal);
+}

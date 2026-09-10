@@ -732,7 +732,7 @@ public sealed class LegacyConversationBackfillTests
         var firstCall = Task.Run(() => sweepStore.GetAsync(SessionId.From("s-cancel-orphan"), cts.Token));
 
         // Wait until the resolver has entered ListAsync, then cancel.
-        await firstCallStarted.WaitAsync(TimeSpan.FromSeconds(5));
+        await TestAwait.SignaledAsync(firstCallStarted, "the resolver to enter ListAsync");
         cts.Cancel();
         gate.ReleaseAll();
 

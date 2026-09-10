@@ -97,6 +97,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
                     AgentId = agent.AgentId,
                     DisplayName = agent.DisplayName,
                     Emoji = agent.Emoji,
+                    AvatarHue = agent.AvatarHue,
+                    Responsibility = agent.Responsibility,
+                    Boundaries = agent.Boundaries,
                     IsConnected = true
                 });
             }
@@ -104,6 +107,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             {
                 existing.DisplayName = agent.DisplayName;
                 existing.Emoji = agent.Emoji;
+                existing.AvatarHue = agent.AvatarHue;
+                existing.Responsibility = agent.Responsibility;
+                existing.Boundaries = agent.Boundaries;
                 existing.IsConnected = true;
             }
         }
@@ -549,7 +555,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             _store.ClearSteeringQueue(conv.ConversationId);
         }
 
-        agent.ActiveToolCalls.Clear();
+        // Tool calls live on each conversation's stream state, and the loop above already
+        // Reset() them there; the agent has no separate copy to clear.
         agent.SubAgents.Clear();
         agent.UnreadCount = 0;
 

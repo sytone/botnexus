@@ -92,12 +92,13 @@ public class CopilotResponsesProviderParityTests
             NullLogger<CopilotResponsesProvider>.Instance);
         var model = BuildModel() with { Id = "gpt-5.6-sol", Name = "gpt-5.6-sol" };
 
-        var result = await provider.Stream(
-                model,
-                BuildContext(),
-                new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
-            .GetResultAsync()
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            provider.Stream(
+                    model,
+                    BuildContext(),
+                    new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
+                .GetResultAsync(),
+            "the provider stream to produce its result");
 
         var text = result.Content.OfType<TextContent>().Single().Text;
         text.ShouldBe("Karthik\n\n- first\n- second");
@@ -131,12 +132,13 @@ public class CopilotResponsesProviderParityTests
             NullLogger<CopilotResponsesProvider>.Instance);
         var model = BuildModel() with { Id = "gpt-5.6-sol", Name = "gpt-5.6-sol" };
 
-        var result = await provider.Stream(
-                model,
-                BuildContext(),
-                new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
-            .GetResultAsync()
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            provider.Stream(
+                    model,
+                    BuildContext(),
+                    new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
+                .GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.Content.OfType<TextContent>().Single().Text.ShouldBe("Understood now");
     }
@@ -159,12 +161,13 @@ public class CopilotResponsesProviderParityTests
             new HttpClient(handler),
             NullLogger<CopilotResponsesProvider>.Instance);
 
-        var result = await provider.Stream(
-                BuildModel(),
-                BuildContext(),
-                new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
-            .GetResultAsync()
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            provider.Stream(
+                    BuildModel(),
+                    BuildContext(),
+                    new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
+                .GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.Content.OfType<TextContent>().Single().Text.ShouldBe("\r\nintentional");
     }
@@ -183,12 +186,13 @@ public class CopilotResponsesProviderParityTests
             new HttpClient(handler),
             NullLogger<CopilotResponsesProvider>.Instance);
 
-        var result = await provider.Stream(
-                BuildModel(),
-                BuildContext(),
-                new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
-            .GetResultAsync()
-            .WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await TestAwait.SignaledAsync(
+            provider.Stream(
+                    BuildModel(),
+                    BuildContext(),
+                    new CopilotResponsesOptions { ApiKey = "test-copilot-token" })
+                .GetResultAsync(),
+            "the provider stream to produce its result");
 
         result.Content.OfType<TextContent>().Single().Text.ShouldBe("before\r\nafter");
     }
@@ -222,10 +226,10 @@ public class CopilotResponsesProviderParityTests
         };
 
         var copilotStream = copilotProvider.Stream(model, context, copilotOpts);
-        _ = await copilotStream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(copilotStream.GetResultAsync(), "the Copilot stream to produce its result");
 
         var openAiStream = openAiProvider.Stream(model, context, openAiOpts);
-        _ = await openAiStream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(openAiStream.GetResultAsync(), "the OpenAI stream to produce its result");
 
         return (copilotHandler, openAiHandler);
     }

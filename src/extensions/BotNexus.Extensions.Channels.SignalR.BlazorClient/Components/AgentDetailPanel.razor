@@ -63,11 +63,49 @@
                     <label>Display Name</label>
                     <input class="cfg-input" value="@_model.DisplayName" @oninput="OnDisplayNameInput" />
 
+                    @* Responsibility is the one-line role a roster shows under the name; Description
+                       is the prose behind it; Boundaries is what the agent must not do. All three
+                       reach the system prompt, so what is written here changes how the agent behaves
+                       rather than only how it reads. *@
+                    <label>Responsibility</label>
+                    <input class="cfg-input" maxlength="120" placeholder="keeps the media library healthy"
+                           value="@_model.Responsibility" @oninput="OnResponsibilityInput" />
+
                     <label>Description</label>
-                    <input class="cfg-input" value="@_model.Description" @oninput="OnDescriptionInput" />
+                    <textarea class="cfg-input cfg-textarea" rows="3"
+                              placeholder="What this agent does, and how it should go about it."
+                              @oninput="OnDescriptionInput">@_model.Description</textarea>
+
+                    <label>Boundaries</label>
+                    <textarea class="cfg-input cfg-textarea" rows="2"
+                              placeholder="What this agent must not do."
+                              @oninput="OnBoundariesInput">@_model.Boundaries</textarea>
 
                     <label>Emoji</label>
                     <input class="cfg-input" maxlength="4" value="@_model.Emoji" @oninput="OnEmojiInput" />
+
+                    @* Hues, not colours: the stylesheet decides saturation and lightness per theme,
+                       which is what keeps every agent's avatar at the same contrast. Auto is the
+                       default and generates a hue from the agent id. *@
+                    <label>Colour</label>
+                    <div class="agent-hue-row" data-testid="agent-hue-row">
+                        <button type="button"
+                                class="agent-hue-swatch auto @(_model.AvatarHue is null ? "selected" : "")"
+                                data-testid="agent-hue-auto"
+                                title="Auto - generated from the agent id"
+                                @onclick="() => SetAvatarHue(null)">Auto</button>
+                        @foreach (var hue in HuePalette)
+                        {
+                            <button type="button"
+                                    class="agent-hue-swatch @(_model.AvatarHue == hue ? "selected" : "")"
+                                    style="--agent-hue: @hue"
+                                    data-testid="agent-hue-swatch"
+                                    data-hue="@hue"
+                                    title="Hue @hue"
+                                    aria-label="Hue @hue"
+                                    @onclick="() => SetAvatarHue(hue)"></button>
+                        }
+                    </div>
 
                     <label>Provider</label>
                     <div>
@@ -571,6 +609,9 @@
         public string? AgentId { get; set; }
         public string DisplayName { get; set; } = "";
         public string? Emoji { get; set; }
+        public int? AvatarHue { get; set; }
+        public string? Responsibility { get; set; }
+        public string? Boundaries { get; set; }
         public string? Description { get; set; }
         public bool Enabled { get; set; } = true;
         public string ApiProvider { get; set; } = "";
@@ -736,6 +777,8 @@
     private void OnDisplayNameInput(ChangeEventArgs e) { _model!.DisplayName = e.Value?.ToString() ?? ""; MarkDirty(); }
     private void OnDescriptionInput(ChangeEventArgs e) { _model!.Description = e.Value?.ToString(); MarkDirty(); }
     private void OnEmojiInput(ChangeEventArgs e) { _model!.Emoji = e.Value?.ToString(); MarkDirty(); }
+    private void OnResponsibilityInput(ChangeEventArgs e) { _model!.Responsibility = e.Value?.ToString(); MarkDirty(); }
+    private void OnBoundariesInput(ChangeEventArgs e) { _model!.Boundaries = e.Value?.ToString(); MarkDirty(); }
     private void OnProviderInput(ChangeEventArgs e) { _model!.ApiProvider = e.Value?.ToString() ?? ""; MarkDirty(); }
     private void OnModelInput(ChangeEventArgs e) { _model!.ModelId = e.Value?.ToString() ?? ""; MarkDirty(); }
     private void OnModelChange(ChangeEventArgs e) { _model!.ModelId = e.Value?.ToString() ?? ""; RefreshModelCapabilities(); MarkDirty(); }
@@ -980,6 +1023,9 @@
             AgentId = GetStr(el, "agentId"),
             DisplayName = GetStr(el, "displayName") ?? "",
             Emoji = GetStr(el, "emoji"),
+            AvatarHue = GetNullableInt(el, "avatarHue"),
+            Responsibility = GetStr(el, "responsibility"),
+            Boundaries = GetStr(el, "boundaries"),
             Description = GetStr(el, "description"),
             Enabled = GetBool(el, "enabled", true),
             ApiProvider = GetStr(el, "apiProvider") ?? "",
@@ -1103,6 +1149,26 @@
         el.TryGetProperty(key, out var p) ? p.GetBoolean() : def;
     private static int GetInt(JsonElement el, string key, int def) =>
         el.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetInt32() : def;
+
+    /// <summary>
+    /// Reads an optional number. Distinct from <see cref="GetInt"/> because absent must stay absent:
+    /// for the avatar hue, null means "generate one", which no sentinel default could express.
+    /// </summary>
+    private static int? GetNullableInt(JsonElement el, string key) =>
+        el.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetInt32() : null;
+
+    /// <summary>
+    /// The offered hues: twelve steps around the wheel, so adjacent choices are visibly different.
+    /// A free 0-359 picker would let two agents sit one degree apart and look identical, which is
+    /// the problem this whole feature exists to solve.
+    /// </summary>
+    private static readonly int[] HuePalette = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+
+    private void SetAvatarHue(int? hue)
+    {
+        _model!.AvatarHue = hue;
+        MarkDirty();
+    }
 
     // ── Save / Delete / Nav ───────────────────────────────────────────────
     private void GoBack() => Nav.NavigateTo("agents");

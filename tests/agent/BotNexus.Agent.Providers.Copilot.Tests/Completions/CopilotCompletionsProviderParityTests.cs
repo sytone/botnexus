@@ -95,10 +95,10 @@ public class CopilotCompletionsProviderParityTests
         };
 
         var copilotStream = copilotProvider.Stream(model, context, copilotOpts);
-        _ = await copilotStream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(copilotStream.GetResultAsync(), "the Copilot stream to produce its result");
 
         var openAiStream = openAiProvider.Stream(model, context, openAiOpts);
-        _ = await openAiStream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        _ = await TestAwait.SignaledAsync(openAiStream.GetResultAsync(), "the OpenAI stream to produce its result");
 
         return (copilotHandler, openAiHandler);
     }

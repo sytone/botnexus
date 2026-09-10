@@ -20,6 +20,299 @@
         </div>
     </header>
 
+    <section class="cron-page-card" data-testid="plugin-install">
+        <h3>Install one plugin directly</h3>
+        <p class="plugin-form-hint" data-testid="plugin-install-hint">
+            For a repository that <em>is</em> a plugin. Goes straight to install, without listing
+            anything first.
+        </p>
+        <div class="plugin-install-form">
+            <input type="url"
+                   class="plugin-install-source"
+                   placeholder="https://github.com/owner/my-plugin.git"
+                   aria-label="URL of a repository that is itself a plugin"
+                   data-testid="plugin-install-source"
+                   disabled="@_installing"
+                   @bind="_installSource" />
+            <input type="text"
+                   class="plugin-install-reference"
+                   placeholder="branch, tag or commit (optional)"
+                   aria-label="Reference"
+                   data-testid="plugin-install-reference"
+                   disabled="@_installing"
+                   @bind="_installReference" />
+            <button class="toolbar-btn"
+                    data-testid="plugin-install-submit"
+                    disabled="@(_installing || string.IsNullOrWhiteSpace(_installSource))"
+                    @onclick="() => InstallAsync(acknowledgeCarriedExtension: false)">
+                @(_installing ? "Installing." : "Install")
+            </button>
+        </div>
+
+        @* Consent is asked for in RESPONSE to the gateway's refusal, never as a checkbox ticked in
+           advance: whether a source carries code is only knowable once it has been fetched, so a
+           pre-ticked box would be consent given before there was anything to consent to. *@
+        @if (_consentPrompt is not null)
+        {
+            <div class="agents-status warning" role="alert" data-testid="plugin-consent-prompt">
+                <p data-testid="plugin-consent-message">@_consentPrompt</p>
+                <p>
+                    A carried extension runs code inside the gateway process at full trust, with no
+                    sandbox. It stays inert until the gateway is restarted.
+                </p>
+                <button class="toolbar-btn"
+                        data-testid="plugin-consent-confirm"
+                        disabled="@_installing"
+                        @onclick="() => InstallAsync(acknowledgeCarriedExtension: true)">
+                    Install anyway
+                </button>
+                <button class="toolbar-btn"
+                        data-testid="plugin-consent-cancel"
+                        disabled="@_installing"
+                        @onclick="CancelConsent">
+                    Cancel
+                </button>
+            </div>
+        }
+    </section>
+
+    @* Browse: the repositories the portal looks in, and what they offer. Adding a repository is
+       separate from installing from it - adding records a URL and reads it, and runs nothing. *@
+    <section class="cron-page-card" data-testid="plugin-sources">
+        <header class="cron-page-card-header">
+            <h3>Repositories to browse</h3>
+            <button class="toolbar-btn"
+                    data-testid="plugin-sources-refresh-all"
+                    disabled="@(_sourcesBusy || _sources.Count == 0)"
+                    title="Re-read every repository"
+                    @onclick="RefreshAllSourcesAsync">
+                <Icon Name="refresh" Size="14" Class="bn-icon-inherit" /> Refresh all
+            </button>
+        </header>
+
+        <p class="plugin-form-hint" data-testid="plugin-sources-hint">
+            A plugin repository, or a catalog listing several. Adding one reads it and lists what it
+            offers &mdash; it installs nothing.
+        </p>
+
+        <div class="plugin-install-form">
+            <input type="url"
+                   class="plugin-install-source"
+                   placeholder="https://github.com/owner/my-plugins.git"
+                   aria-label="URL of a repository or catalog to browse"
+                   data-testid="plugin-source-url"
+                   disabled="@_sourcesBusy"
+                   @bind="_sourceUrl" />
+            <input type="text"
+                   class="plugin-install-reference"
+                   placeholder="branch, tag or commit (optional)"
+                   aria-label="Repository reference"
+                   data-testid="plugin-source-reference"
+                   disabled="@_sourcesBusy"
+                   @bind="_sourceReference" />
+            <button class="toolbar-btn"
+                    data-testid="plugin-source-add"
+                    disabled="@(_sourcesBusy || string.IsNullOrWhiteSpace(_sourceUrl))"
+                    @onclick="AddSourceAsync">
+                @(_sourcesBusy ? "Reading…" : "Add repository")
+            </button>
+        </div>
+
+        @if (_sourcesError is not null)
+        {
+            <div class="agents-error" role="alert" data-testid="plugin-sources-error">
+                <Icon Name="warning" Size="15" /> @_sourcesError
+            </div>
+        }
+
+        @if (_sourcesLoading)
+        {
+            <div class="config-loading" aria-live="polite" data-testid="plugin-sources-loading">
+                <div class="loading-spinner small"></div>
+                <span>Loading repositories&hellip;</span>
+            </div>
+        }
+        else if (_sources.Count == 0)
+        {
+            <div class="agents-empty" data-testid="plugin-sources-empty">
+                <p>
+                    No repositories yet. Add one above and its plugins appear here, ready to install.
+                </p>
+            </div>
+        }
+        else
+        {
+            @foreach (var source in _sources)
+            {
+                <div class="plugin-source" data-testid="plugin-source" data-source-name="@source.Name">
+                    <div class="plugin-source-header">
+                        <strong data-testid="plugin-source-name">@source.Name</strong>
+                        <span class="badge" title="@source.Url" data-testid="plugin-source-kind">@KindLabel(source)</span>
+                        @if (source.Reference is { Length: > 0 } reference)
+                        {
+                            <span class="badge" title="Reading this branch, tag or commit">@reference</span>
+                        }
+                        <span class="plugin-source-actions">
+                            <button class="toolbar-btn"
+                                    data-testid="plugin-source-refresh"
+                                    disabled="@_sourcesBusy"
+                                    title="Re-read this repository"
+                                    @onclick="() => RefreshSourceAsync(source)">Refresh</button>
+                            <button class="toolbar-btn danger"
+                                    data-testid="plugin-source-remove"
+                                    disabled="@_sourcesBusy"
+                                    title="Stop listing this repository"
+                                    @onclick="() => RequestRemoveSource(source)">Remove</button>
+                        </span>
+                    </div>
+
+                    @* A source that could not be read keeps whatever it last offered, so the error
+                       sits ALONGSIDE the listing rather than replacing it: an unreachable
+                       repository can still be installed from. *@
+                    @if (source.LastError is { Length: > 0 } sourceError)
+                    {
+                        <p class="agents-status error" role="status" data-testid="plugin-source-error">
+                            <Icon Name="warning" Size="14" /> @sourceError
+                        </p>
+                    }
+
+                    @if (_removeSourceConfirm == source.Name)
+                    {
+                        <div class="agents-status warning" role="alert" data-testid="plugin-source-remove-confirm">
+                            <p>
+                                Stop listing '@source.Name'? Plugins already installed from it stay
+                                installed and keep working.
+                            </p>
+                            <button class="toolbar-btn danger"
+                                    data-testid="plugin-source-remove-confirm-btn"
+                                    disabled="@_sourcesBusy"
+                                    @onclick="() => RemoveSourceAsync(source)">Remove</button>
+                            <button class="toolbar-btn"
+                                    data-testid="plugin-source-remove-cancel"
+                                    disabled="@_sourcesBusy"
+                                    @onclick="() => _removeSourceConfirm = null">Cancel</button>
+                        </div>
+                    }
+
+                    @if (source.Offerings.Count == 0)
+                    {
+                        @if (source.LastError is null)
+                        {
+                            <p class="agents-empty" data-testid="plugin-source-no-offerings">
+                                This repository lists no plugins.
+                            </p>
+                        }
+                    }
+                    else
+                    {
+                        <ul class="plugin-offerings" data-testid="plugin-offerings">
+                            @foreach (var offering in source.Offerings)
+                            {
+                                <li class="plugin-offering" data-testid="plugin-offering"
+                                    data-offering-name="@offering.Name">
+                                    <div class="plugin-offering-main">
+                                        <strong data-testid="plugin-offering-name">@offering.Name</strong>
+                                        @if (offering.Version is { Length: > 0 } version)
+                                        {
+                                            <span class="badge" data-testid="plugin-offering-version">@version</span>
+                                        }
+                                        @* Said BEFORE installing, not at the consent prompt: whether
+                                           an install runs code in the gateway is the fact that most
+                                           changes the decision, and it is read from the plugin's own
+                                           manifest rather than from the catalog listing it. *@
+                                        @if (offering.CarriesExtension)
+                                        {
+                                            <span class="badge badge-extension"
+                                                  data-testid="plugin-offering-carries-extension"
+                                                  title="Installing this deploys a gateway extension: code loaded in-process at full trust.">
+                                                Carries an extension
+                                            </span>
+                                        }
+                                        @if (offering.Description is { Length: > 0 } description)
+                                        {
+                                            <span class="plugin-offering-description"
+                                                  data-testid="plugin-offering-description">@description</span>
+                                        }
+                                        @if (offering.Error is { Length: > 0 } offeringError)
+                                        {
+                                            <span class="agents-status error" role="status"
+                                                  data-testid="plugin-offering-error">@offeringError</span>
+                                        }
+                                        @* A stale or invalid pin. Distinct from an error: the entry
+                                           reads and installs fine, but a catalog version IS the ref
+                                           an install resolves, so pointing at the wrong one quietly
+                                           installs the wrong release. *@
+                                        @if (offering.VersionWarning is { Length: > 0 } pinWarning)
+                                        {
+                                            <span class="agents-status warning" role="status"
+                                                  data-testid="plugin-offering-pin-warning">
+                                                <Icon Name="warning" Size="14" /> @pinWarning
+                                            </span>
+                                        }
+                                    </div>
+                                    <div class="plugin-offering-actions">
+                                        @switch (StateOf(offering))
+                                        {
+                                            case MarketplaceOfferingState.Installed:
+                                                <span class="badge badge-enabled"
+                                                      data-testid="plugin-offering-installed">Installed</span>
+                                                break;
+
+                                            @* An update is only ever claimed when the two versions
+                                               can actually be ordered - see the three states below. *@
+                                            case MarketplaceOfferingState.UpdateAvailable:
+                                                <span class="badge badge-extension"
+                                                      data-testid="plugin-offering-update"
+                                                      title="@($"Installed {InstalledVersionOf(offering)}, this source offers {offering.Version}. Remove and reinstall to move to it.")">
+                                                    Update to @offering.Version
+                                                </span>
+                                                break;
+
+                                            @* The catalog is pinned behind what is running. Saying
+                                               "update" here would send someone to a downgrade. *@
+                                            case MarketplaceOfferingState.SourceIsBehind:
+                                                <span class="badge badge-disabled"
+                                                      data-testid="plugin-offering-behind"
+                                                      title="@($"Installed {InstalledVersionOf(offering)}, newer than the {offering.Version} this source pins. Update the source, not the plugin.")">
+                                                    Source pins @offering.Version
+                                                </span>
+                                                break;
+
+                                            case MarketplaceOfferingState.VersionDiffers:
+                                                <span class="badge badge-disabled"
+                                                      data-testid="plugin-offering-differs"
+                                                      title="@($"Installed {InstalledVersionOf(offering)}; this source offers {offering.Version}. The two cannot be ordered, so neither is presented as newer.")">
+                                                    Installed @InstalledVersionOf(offering), source has @offering.Version
+                                                </span>
+                                                break;
+
+                                            default:
+                                            <button class="toolbar-btn primary"
+                                                    data-testid="plugin-offering-install"
+                                                    disabled="@(_installing || offering.Error is not null)"
+                                                    title="@(offering.Error is null ? $"Install {offering.Name}" : "This plugin could not be read")"
+                                                    @onclick="() => InstallOfferingAsync(offering)">Install</button>
+                                                break;
+                                        }
+                                    </div>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            }
+        }
+    </section>
+
+    @* "Installed" and "installed and working" are different claims. Extension endpoints are mapped
+       once at startup, so a carried extension is on disk but doing nothing until a restart. *@
+    @if (_restartRequiredFor is not null)
+    {
+        <div class="agents-status warning" role="status" data-testid="plugin-restart-notice">
+            '@_restartRequiredFor' deployed a gateway extension. Restart the gateway to activate it.
+        </div>
+    }
+
     @* AC4 sad path. An id that is not installed is a non-fatal notice above the ordinary list,
        never an error page: a stale bookmark or a plugin removed since the link was shared is a
        normal thing to happen, and blanking the page would hide the very list that answers it. *@
@@ -44,7 +337,10 @@
     else if (_plugins.Count == 0)
     {
         <div class="agents-empty" data-testid="plugins-empty">
-            <p>No plugins installed. Plugins are installed from the CLI against a marketplace source.</p>
+            <p>
+                No plugins installed yet. Add a repository above to browse what is on offer, or
+                install a single plugin directly.
+            </p>
         </div>
     }
     else
@@ -57,6 +353,8 @@
                     <th>Update</th>
                     <th>Trust</th>
                     <th>Auto-update</th>
+                    <th>In menu</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -80,6 +378,56 @@
                                        @onchange="@(e => ToggleAutoUpdateAsync(plugin, e))" />
                                 <span>@(plugin.UpdatesEnabled ? "Enabled" : "Pinned")</span>
                             </label>
+                        </td>
+                        <td>
+                            @* Only a plugin that deployed an extension can contribute a menu entry,
+                               so the control is absent rather than disabled for a skills-only
+                               plugin - a dead toggle invites the question of what it would do. *@
+                            @if (plugin.DeployedExtensionId is { Length: > 0 })
+                            {
+                                <label class="plugin-autoupdate-toggle">
+                                    <input type="checkbox"
+                                           data-testid="plugin-nav-toggle"
+                                           aria-label="Show @plugin.Name in the menu"
+                                           checked="@(!plugin.NavHidden)"
+                                           disabled="@(_savingPlugin == plugin.Name)"
+                                           @onchange="@(e => ToggleNavVisibilityAsync(plugin, e))" />
+                                    <span>@(plugin.NavHidden ? "Hidden" : "Shown")</span>
+                                </label>
+                            }
+                            else
+                            {
+                                <span class="plugin-nav-na" data-testid="plugin-nav-na">&mdash;</span>
+                            }
+                        </td>
+                        <td class="plugin-row-actions">
+                            @if (plugin.UpdateState == PluginUpdateStateDto.UpdateAvailable)
+                            {
+                                <button class="toolbar-btn"
+                                        data-testid="plugin-update-btn"
+                                        disabled="@(_busyPlugin is not null)"
+                                        @onclick="() => UpdatePluginAsync(plugin)">Update</button>
+                            }
+                            @* Two-click confirm rather than a JS dialog: removal deletes recorded
+                               content and any extension the plugin deployed, and the second click
+                               is the only thing standing between a mis-click and that. *@
+                            @if (string.Equals(_confirmRemove, plugin.Name, StringComparison.Ordinal))
+                            {
+                                <button class="toolbar-btn danger"
+                                        data-testid="plugin-remove-confirm"
+                                        disabled="@(_busyPlugin is not null)"
+                                        @onclick="() => RemovePluginAsync(plugin)">Confirm remove</button>
+                                <button class="toolbar-btn"
+                                        data-testid="plugin-remove-cancel"
+                                        @onclick="() => _confirmRemove = null">Cancel</button>
+                            }
+                            else
+                            {
+                                <button class="toolbar-btn"
+                                        data-testid="plugin-remove-btn"
+                                        disabled="@(_busyPlugin is not null)"
+                                        @onclick="() => _confirmRemove = plugin.Name">Remove</button>
+                            }
                         </td>
                     </tr>
                 }
@@ -128,7 +476,19 @@
     private string? _statusMessage;
     private string _statusClass = "";
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    private string _installSource = string.Empty;
+    private string _installReference = string.Empty;
+    private bool _installing;
+    private string? _consentPrompt;
+    private string? _restartRequiredFor;
+    private string? _confirmRemove;
+    private string? _busyPlugin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        await LoadSourcesAsync();
+    }
 
     protected override void OnParametersSet() => ResolveSelection();
 
@@ -240,9 +600,410 @@
         }
     }
 
+    /// <summary>
+    /// Installs the entered source. Called twice for a code plugin: once unacknowledged, and again
+    /// with consent if the gateway refuses for want of it.
+    /// </summary>
+    private async Task InstallAsync(bool acknowledgeCarriedExtension)
+    {
+        if (string.IsNullOrWhiteSpace(_installSource))
+        {
+            return;
+        }
+
+        _installing = true;
+        _consentPrompt = null;
+        StateHasChanged();
+
+        try
+        {
+            var outcome = await PluginsApi.InstallAsync(
+                _installSource, _installReference, acknowledgeCarriedExtension);
+
+            if (outcome.ConsentRequired)
+            {
+                // Not an error state: the operator is being asked a question, and the form keeps
+                // its values so answering it does not mean retyping the URL.
+                _consentPrompt = outcome.Error;
+                return;
+            }
+
+            if (!outcome.Succeeded)
+            {
+                SetStatus(outcome.Error ?? "The install failed.", "error");
+                return;
+            }
+
+            var installed = outcome.Response?.Name ?? "the plugin";
+            _restartRequiredFor = outcome.RestartRequired ? installed : null;
+            SetStatus(
+                outcome.RestartRequired
+                    ? $"Installed '{installed}'. Restart the gateway to activate its extension."
+                    : $"Installed '{installed}'.",
+                "success");
+
+            _installSource = string.Empty;
+            _installReference = string.Empty;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"The install failed: {ex.Message}", "error");
+        }
+        finally
+        {
+            _installing = false;
+        }
+    }
+
+    private void CancelConsent()
+    {
+        _consentPrompt = null;
+        SetStatus("Install cancelled.", "");
+    }
+
+    private async Task UpdatePluginAsync(PluginRowDto plugin)
+    {
+        _busyPlugin = plugin.Name;
+        try
+        {
+            var outcome = await PluginsApi.UpdateAsync(plugin.Name);
+            if (!outcome.Succeeded)
+            {
+                SetStatus(outcome.Error ?? $"Could not update '{plugin.Name}'.", "error");
+                return;
+            }
+
+            SetStatus($"Updated '{plugin.Name}'.", "success");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not update '{plugin.Name}': {ex.Message}", "error");
+        }
+        finally
+        {
+            _busyPlugin = null;
+        }
+    }
+
+    private async Task RemovePluginAsync(PluginRowDto plugin)
+    {
+        _busyPlugin = plugin.Name;
+        try
+        {
+            var outcome = await PluginsApi.RemoveAsync(plugin.Name);
+            if (!outcome.Succeeded)
+            {
+                SetStatus(outcome.Error ?? $"Could not remove '{plugin.Name}'.", "error");
+                return;
+            }
+
+            SetStatus($"Removed '{plugin.Name}'.", "success");
+
+            // A removed plugin cannot stay selected, and a stale restart notice about it would
+            // outlive the thing it referred to.
+            if (string.Equals(_restartRequiredFor, plugin.Name, StringComparison.Ordinal))
+            {
+                _restartRequiredFor = null;
+            }
+
+            if (string.Equals(PluginId, plugin.Name, StringComparison.Ordinal))
+            {
+                Nav.NavigateTo("plugins");
+            }
+
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not remove '{plugin.Name}': {ex.Message}", "error");
+        }
+        finally
+        {
+            _busyPlugin = null;
+            _confirmRemove = null;
+        }
+    }
+
+    // Presentation only: hiding an entry does not disable the plugin or make its path
+    // unreachable, so the wording says "menu" rather than anything that implies disabling.
+    private async Task ToggleNavVisibilityAsync(PluginRowDto plugin, ChangeEventArgs args)
+    {
+        var shown = args.Value is bool value ? value : plugin.NavHidden;
+        _savingPlugin = plugin.Name;
+        try
+        {
+            var updated = await PluginsApi.SetNavVisibilityAsync(plugin.Name, navHidden: !shown);
+            if (updated is null)
+            {
+                SetStatus($"Could not change the menu setting for '{plugin.Name}'.", "error");
+                return;
+            }
+
+            _plugins = _plugins
+                .Select(p => string.Equals(p.Name, updated.Name, StringComparison.Ordinal) ? updated : p)
+                .ToList();
+            ResolveSelection();
+            SetStatus(
+                updated.NavHidden
+                    ? $"'{updated.Name}' is hidden from the menu."
+                    : $"'{updated.Name}' now appears in the menu.",
+                "success");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not change the menu setting: {ex.Message}", "error");
+        }
+        finally
+        {
+            _savingPlugin = null;
+        }
+    }
+
     private void SetStatus(string message, string cssClass)
     {
         _statusMessage = message;
         _statusClass = cssClass;
+    }
+
+    // ── Marketplace sources (browse) ─────────────────────────────────────────
+
+    private IReadOnlyList<MarketplaceSourceDto> _sources = [];
+    private string _sourceUrl = string.Empty;
+    private string _sourceReference = string.Empty;
+    private bool _sourcesLoading = true;
+    private bool _sourcesBusy;
+    private string? _sourcesError;
+    private string? _removeSourceConfirm;
+
+    private static string KindLabel(MarketplaceSourceDto source) => source.Kind switch
+    {
+        "catalog" => "Catalog",
+        "plugin" => "Single plugin",
+        _ => "Unread",
+    };
+
+    /// <summary>
+    /// Whether an offering is already installed, matched on the plugin name the manifest declares.
+    /// </summary>
+    /// <remarks>
+    /// Matched by name rather than by source URL because the same plugin can legitimately be
+    /// listed by more than one catalog, and offering to install a second copy of something already
+    /// present would fail at the gateway for a reason the operator could not have predicted.
+    /// </remarks>
+    private PluginRowDto? InstalledMatch(MarketplaceOfferingDto offering) =>
+        _plugins.FirstOrDefault(p => string.Equals(p.Name, offering.Name, StringComparison.Ordinal));
+
+    private bool IsInstalled(MarketplaceOfferingDto offering) => InstalledMatch(offering) is not null;
+
+    private string InstalledVersionOf(MarketplaceOfferingDto offering) =>
+        InstalledMatch(offering)?.ManifestVersion ?? "an unversioned build";
+
+    /// <summary>
+    /// How this offering relates to what is installed: the same version, a newer one, an older one,
+    /// or a version that cannot be ordered against it.
+    /// </summary>
+    /// <remarks>
+    /// Both versions are read from plugin manifests, so this compares like with like. A direction
+    /// is only claimed when the pair can genuinely be ordered - a catalog pinned behind the
+    /// installed version must not read as an update.
+    /// </remarks>
+    private MarketplaceOfferingState StateOf(MarketplaceOfferingDto offering)
+    {
+        var installed = InstalledMatch(offering);
+        return MarketplaceOfferingComparison.Resolve(
+            installed?.ManifestVersion, offering.Version, installed is not null);
+    }
+
+    private async Task LoadSourcesAsync()
+    {
+        _sourcesLoading = true;
+        _sourcesError = null;
+        StateHasChanged();
+
+        try
+        {
+            _sources = await PluginsApi.ListSourcesAsync();
+        }
+        catch (Exception ex)
+        {
+            // Reported inside the repositories card, not through SetStatus: the page-level status
+            // is where the operator's OWN actions answer, and a background list failing to load
+            // would sit there competing with install feedback it has nothing to do with.
+            // Sources failing must also not take the installed-plugins list with them - the two
+            // are independent, and the page's main job is still to show what is installed.
+            _sourcesError = $"Could not load repositories: {ex.Message}";
+            _sources = [];
+        }
+        finally
+        {
+            _sourcesLoading = false;
+        }
+    }
+
+    private async Task AddSourceAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_sourceUrl))
+        {
+            return;
+        }
+
+        _sourcesBusy = true;
+        StateHasChanged();
+
+        try
+        {
+            var outcome = await PluginsApi.AddSourceAsync(_sourceUrl, _sourceReference);
+
+            if (!outcome.Succeeded)
+            {
+                SetStatus(outcome.Error ?? "Could not add the repository.", "error");
+                return;
+            }
+
+            _sourceUrl = string.Empty;
+            _sourceReference = string.Empty;
+
+            // A source that was stored but could not be read is a success with an error on it:
+            // saying "added" alone would leave the operator wondering why nothing is listed, and
+            // calling it a failure would invite a re-add that then conflicts.
+            var added = outcome.Source;
+            if (added?.LastError is { Length: > 0 })
+            {
+                SetStatus($"Added '{added.Name}', but it could not be read: {added.LastError}", "error");
+            }
+            else
+            {
+                var count = added?.Offerings.Count ?? 0;
+                SetStatus(
+                    count == 1
+                        ? $"Added '{added!.Name}' - 1 plugin available."
+                        : $"Added '{added?.Name}' - {count} plugins available.",
+                    "success");
+            }
+
+            await LoadSourcesAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not add the repository: {ex.Message}", "error");
+        }
+        finally
+        {
+            _sourcesBusy = false;
+        }
+    }
+
+    private async Task RefreshSourceAsync(MarketplaceSourceDto source)
+    {
+        _sourcesBusy = true;
+        StateHasChanged();
+
+        try
+        {
+            var outcome = await PluginsApi.RefreshSourceAsync(source.Name);
+
+            if (!outcome.Succeeded)
+            {
+                SetStatus(outcome.Error ?? $"Could not refresh '{source.Name}'.", "error");
+                return;
+            }
+
+            // The refresh itself succeeded even when the repository could not be reached; the
+            // reason travels on the source and is rendered against its row.
+            var refreshed = outcome.Source;
+            SetStatus(
+                refreshed?.LastError is { Length: > 0 } error
+                    ? $"Could not read '{source.Name}': {error}"
+                    : $"Refreshed '{source.Name}'.",
+                refreshed?.LastError is { Length: > 0 } ? "error" : "success");
+
+            await LoadSourcesAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not refresh '{source.Name}': {ex.Message}", "error");
+        }
+        finally
+        {
+            _sourcesBusy = false;
+        }
+    }
+
+    private async Task RefreshAllSourcesAsync()
+    {
+        _sourcesBusy = true;
+        StateHasChanged();
+
+        try
+        {
+            var refreshed = await PluginsApi.RefreshAllSourcesAsync();
+            _sources = refreshed;
+
+            var failed = refreshed.Count(s => s.LastError is { Length: > 0 });
+            var noun = refreshed.Count == 1 ? "repository" : "repositories";
+            SetStatus(
+                failed == 0
+                    ? $"Refreshed {refreshed.Count} {noun}."
+                    : $"Refreshed {refreshed.Count} {noun}; {failed} could not be read.",
+                failed == 0 ? "success" : "error");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not refresh repositories: {ex.Message}", "error");
+        }
+        finally
+        {
+            _sourcesBusy = false;
+        }
+    }
+
+    private void RequestRemoveSource(MarketplaceSourceDto source) => _removeSourceConfirm = source.Name;
+
+    private async Task RemoveSourceAsync(MarketplaceSourceDto source)
+    {
+        _sourcesBusy = true;
+        StateHasChanged();
+
+        try
+        {
+            var outcome = await PluginsApi.RemoveSourceAsync(source.Name);
+
+            if (!outcome.Succeeded)
+            {
+                SetStatus(outcome.Error ?? $"Could not remove '{source.Name}'.", "error");
+                return;
+            }
+
+            SetStatus($"Stopped listing '{source.Name}'. Plugins installed from it are unaffected.", "success");
+            _removeSourceConfirm = null;
+            await LoadSourcesAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not remove '{source.Name}': {ex.Message}", "error");
+        }
+        finally
+        {
+            _sourcesBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Installs a browsed offering through the same path as the manual install form.
+    /// </summary>
+    /// <remarks>
+    /// The form fields are filled first, deliberately: the offering's URL becomes the visible
+    /// install source, so the consent prompt, the retry-with-consent button and the status
+    /// messages all operate on one install state rather than a second parallel one. It also shows
+    /// the operator exactly what is about to be fetched.
+    /// </remarks>
+    private async Task InstallOfferingAsync(MarketplaceOfferingDto offering)
+    {
+        _installSource = offering.Url;
+        _installReference = offering.Reference ?? string.Empty;
+        await InstallAsync(acknowledgeCarriedExtension: false);
+        await LoadSourcesAsync();
     }
 }
