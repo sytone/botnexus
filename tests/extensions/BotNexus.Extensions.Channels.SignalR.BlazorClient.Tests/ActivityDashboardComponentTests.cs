@@ -35,6 +35,19 @@ public sealed class ActivityDashboardComponentTests : IDisposable
 
     public void Dispose() => _ctx.Dispose();
 
+    /// <summary>
+    /// Renders with the demoted facets revealed. Recency, origin, pin state and live state moved
+    /// behind "More filters" so the search box could lead the bar; these tests exercise those
+    /// controls, so they open the panel first. The behaviour under test is unchanged - only the
+    /// number of clicks to reach the control.
+    /// </summary>
+    private IRenderedComponent<ActivityDashboard> RenderWithMoreFilters()
+    {
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-more']").Click();
+        return cut;
+    }
+
     private static ConversationSummaryDto Conv(
         string id,
         string agentId = "alpha",
@@ -67,7 +80,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     [Fact]
     public void Renders_header_and_filter_bar()
     {
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
 
         cut.Find("[data-testid='activity-dashboard']");
         cut.Find("[data-testid='activity-filter-bar']");
@@ -272,7 +285,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
             Conv("c2", agentId: "beta", title: "Active scheduled", source: "Cron"),
             Conv("c3", agentId: "beta", title: "Archived scheduled", status: "Archived", source: "Cron"));
 
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
 
         cut.Find("[data-testid='activity-filter-cron']").Click();
@@ -573,7 +586,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     [Fact]
     public void Origin_filter_control_is_rendered_and_defaults_to_all()
     {
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
 
         var select = cut.Find("[data-testid='activity-filter-origin']");
         Assert.Equal(nameof(ActivityOriginFilter.All), select.GetAttribute("value"));
@@ -583,7 +596,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     public void Selecting_an_origin_narrows_the_table_to_that_origin_only()
     {
         SetupOriginMix();
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
 
         cut.Find("[data-testid='activity-filter-origin']")
@@ -600,7 +613,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     public void Selecting_the_sub_agent_origin_excludes_the_peer_agent_row()
     {
         SetupOriginMix();
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
 
         cut.Find("[data-testid='activity-filter-origin']")
@@ -619,7 +632,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     public void Selecting_the_human_origin_keeps_only_the_unbadged_rows()
     {
         SetupOriginMix();
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
 
         cut.Find("[data-testid='activity-filter-origin']")
@@ -634,7 +647,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     public void Origin_filter_with_no_matches_shows_the_empty_state()
     {
         SetupConversations(Conv("c1", title: "Jon DM"));
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
 
         cut.Find("[data-testid='activity-filter-origin']")
@@ -654,7 +667,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         SetupConversations(
             Conv("c1", title: "Jon DM"),
             Conv("c2", title: "Nightly run", source: "Cron"));
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-row']")));
 
         cut.Find("[data-testid='activity-filter-origin']")
@@ -674,7 +687,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     public void Clearing_filters_resets_the_origin_facet_too()
     {
         SetupOriginMix();
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll("[data-testid='activity-row']").Count));
 
         cut.Find("[data-testid='activity-filter-origin']")
@@ -745,7 +758,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     [Fact]
     public void Renders_pin_filter_defaulted_to_all()
     {
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
 
         var select = cut.Find("[data-testid='activity-filter-pinned']");
         Assert.Equal(nameof(ActivityPinFilter.All), select.GetAttribute("value"));
@@ -766,7 +779,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
                 now.AddMinutes(-5), now, Kind: "HumanAgent", Source: "Cron",
                 IsPinned: true, PinnedAt: now, Participants: null));
 
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
 
         cut.Find("[data-testid='activity-filter-pinned']").Change(nameof(ActivityPinFilter.Pinned));
@@ -787,7 +800,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
             PinnedConv("pinned", isPinned: true, updatedAt: now),
             PinnedConv("loose", isPinned: false, updatedAt: now));
 
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
 
         cut.Find("[data-testid='activity-filter-pinned']").Change(nameof(ActivityPinFilter.Pinned));
@@ -942,7 +955,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
             Conv("c1", activeSessionId: "s1"),
             Conv("c2"));
 
-        var cut = _ctx.Render<ActivityDashboard>();
+        var cut = RenderWithMoreFilters();
         cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 2);
 
         var select = cut.Find("[data-testid='activity-filter-live']");
@@ -1166,5 +1179,67 @@ public sealed class ActivityDashboardComponentTests : IDisposable
 
         Assert.Empty(cut.FindAll("[data-testid='activity-cron-health']"));
         Assert.Equal("j1", cut.Find("[data-testid='activity-source-id']").TextContent);
+    }
+
+    // ── search box and the facet disclosure (Interface Review P3) ─────────────
+
+    [Fact]
+    public void The_search_box_is_the_first_control_on_the_bar()
+    {
+        // Ordering is the point of the change, not decoration: the facets were the only way in.
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        var bar = cut.Find("[data-testid='activity-filter-bar']");
+        var first = bar.Children.First();
+        Assert.Equal("search", first.GetAttribute("type"));
+        Assert.Equal("activity-filter-search", first.GetAttribute("data-testid"));
+    }
+
+    [Fact]
+    public void The_scoping_facets_stay_visible_and_the_rarely_changed_ones_are_demoted()
+    {
+        // Agent and status are how someone scopes the page in the first place; origin, pin state,
+        // live state and recency sit at "any" almost always. Hiding the first pair would trade one
+        // usability problem for another.
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        Assert.NotNull(cut.Find("[data-testid='activity-filter-agent']"));
+        Assert.NotNull(cut.Find("[data-testid='activity-filter-status']"));
+        Assert.Empty(cut.FindAll("[data-testid='activity-filter-origin']"));
+        Assert.Empty(cut.FindAll("[data-testid='activity-filter-live']"));
+    }
+
+    [Fact]
+    public void More_filters_reveals_the_demoted_facets()
+    {
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.Find("[data-testid='activity-filter-more']").Click();
+
+        Assert.NotNull(cut.Find("[data-testid='activity-filter-origin']"));
+        Assert.NotNull(cut.Find("[data-testid='activity-filter-pinned']"));
+        Assert.NotNull(cut.Find("[data-testid='activity-filter-live']"));
+        Assert.NotNull(cut.Find("[data-testid='activity-filter-recency']"));
+    }
+
+    [Fact]
+    public void A_set_facet_is_counted_on_the_button_so_it_is_never_an_invisible_reason_for_missing_rows()
+    {
+        // Collapsing the facets would otherwise hide WHY rows are absent, which is a worse problem
+        // than the one this change set out to fix.
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.Find("[data-testid='activity-filter-more']").Click();
+        cut.Find("[data-testid='activity-filter-pinned']").Change(nameof(ActivityPinFilter.Pinned));
+
+        Assert.Contains("(1)", cut.Find("[data-testid='activity-filter-more']").TextContent);
+    }
+
+    [Fact]
+    public void With_every_facet_at_its_default_the_button_carries_no_count()
+    {
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        Assert.DoesNotContain("(", cut.Find("[data-testid='activity-filter-more']").TextContent);
     }
 }

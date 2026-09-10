@@ -17,6 +17,18 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     // Timeout for WaitForExit after Kill(). Defaults to 5 seconds in production;
     // injectable for tests to simulate the timeout path without actually waiting.
     private readonly TimeSpan _waitForExitTimeout;
+
+    /// <summary>
+    /// How long the gateway gets to shut itself down after being asked, before it is killed.
+    ///
+    /// <remarks>
+    /// Longer than the post-kill wait on purpose: this budget covers real shutdown work — the
+    /// TRUNCATE WAL checkpoint among it — whereas the post-kill wait only covers the kernel
+    /// reaping a process that has already been shot. Generous enough that a busy gateway is not
+    /// killed for being slow, bounded so a redeploy cannot hang on one that is wedged.
+    /// </remarks>
+    /// </summary>
+    internal static readonly TimeSpan GracefulStopTimeout = TimeSpan.FromSeconds(10);
     // Allows tests to inject a custom WaitForExit implementation to simulate timeout scenarios
     // without relying on OS-level process termination timing.
     private readonly Func<Process, int, bool>? _waitForExitOverride;
@@ -342,20 +354,59 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
 
         if (handle is null)
         {
+            // Say which evidence was actually gathered. "no PID file" alone was reported even when
+            // the caller had supplied no binary path, so nothing had been searched for - and it
+            // read identically to a genuine, thorough "nothing is running".
             var reason = staleReason ?? "no PID file";
-            _logger.LogInformation("Gateway is not running ({Reason})", reason);
+            var searched = !string.IsNullOrWhiteSpace(gatewayBinaryPath);
+            var detail = searched
+                ? $"{reason}, and no process is running {Path.GetFileNameWithoutExtension(gatewayBinaryPath)}"
+                : $"{reason}, and no binary path was supplied to search by";
+
+            _logger.LogInformation("Gateway is not running ({Reason})", detail);
             return new GatewayStopResult(
                 Success: true,
-                Message: $"Gateway is not running ({reason})",
+                Message: $"Gateway is not running ({detail})",
                 Outcome: GatewayStopOutcome.NotRunning);
         }
 
         var pid = discoveredByPath ? handle.Id : record!.Pid;
+        var escalatedAfterTimeout = false;
         _logger.LogInformation(
-            "Killing gateway process {Pid} ({Source})", pid, discoveredByPath ? "discovered by binary path" : "from PID file");
+            "Stopping gateway process {Pid} ({Source})", pid, discoveredByPath ? "discovered by binary path" : "from PID file");
 
         try
         {
+            // Ask first, kill second.
+            //
+            // A SIGKILL gives the gateway no chance to run its shutdown path, which is where the
+            // TRUNCATE WAL checkpoint happens - so every subsequent start logged "previous gateway
+            // run terminated uncleanly" about a stop this CLI had performed on purpose.
+            //
+            // Escalation is not optional. A gateway wedged badly enough to ignore SIGTERM still has
+            // to stop, because the caller is usually a redeploy that is about to overwrite the
+            // extension assemblies this process holds mapped.
+            if (handle.RequestGracefulStop())
+            {
+                _logger.LogInformation(
+                    "Asked gateway {Pid} to shut down; waiting up to {Seconds}s", pid, GracefulStopTimeout.TotalSeconds);
+
+                if (handle.WaitForExit((int)GracefulStopTimeout.TotalMilliseconds))
+                {
+                    await CleanupPidFileAsync(pidFilePath);
+                    return new GatewayStopResult(
+                        Success: true,
+                        Message: $"Gateway stopped (PID {pid})",
+                        Outcome: GatewayStopOutcome.Stopped);
+                }
+
+                // Say the number. "Did not stop" invites a guess at how long anyone waited.
+                _logger.LogWarning(
+                    "Gateway {Pid} did not exit within {Seconds}s of being asked; killing it",
+                    pid, GracefulStopTimeout.TotalSeconds);
+                escalatedAfterTimeout = true;
+            }
+
             handle.Kill();
         }
         catch (InvalidOperationException ex)
@@ -397,9 +448,16 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
 
         await CleanupPidFileAsync(pidFilePath);
 
+        // An escalated stop is still a stop, but the operator should know the gateway ignored the
+        // request: it means shutdown work did not finish, and the next start may report an unclean
+        // previous run for a reason that is real rather than self-inflicted.
+        var message = escalatedAfterTimeout
+            ? $"Gateway killed (PID {pid}) after it ignored a shutdown request for {GracefulStopTimeout.TotalSeconds:0}s"
+            : $"Gateway stopped (PID {pid})";
+
         return new GatewayStopResult(
             Success: true,
-            Message: $"Gateway stopped (PID {pid})",
+            Message: message,
             Outcome: GatewayStopOutcome.Stopped);
     }
 

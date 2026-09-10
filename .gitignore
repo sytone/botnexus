@@ -58,6 +58,16 @@ config.local.json
 # must not be committable - this repository is public.
 *.env
 !*.env.example
+# Personal world data. Agent definitions, live config and credentials all live in
+# ~/.botnexus, outside this repository - nothing syncs them today. These rules are the
+# backstop for a copy pulled in here for convenience, since this repository is PUBLIC.
+# Verified against the index when added: no tracked file matches any of them.
+.botnexus/
+/agents/
+botnexus.env
+*.key
+*.pem
+sasl_passwd*
 *.log
 *.txt
 # Keep tracked .txt files despite the *.txt rule above
@@ -76,3 +86,30 @@ cognitive-coverage/
 
 # In-app user guide: copied from docs/user-guide at build time (see CopyUserGuide).
 src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/wwwroot/guide/
+
+# macOS filesystem metadata.
+#
+# "._name" AppleDouble sidecars are written by macOS on filesystems with no native
+# resource-fork support - exFAT, NTFS, most network shares - which includes the
+# external volume this repository is often cloned onto. There were 4737 of them in a
+# working tree at one point, one per file, and they cause real damage rather than just
+# noise: they are not valid UTF-8, so any tool that globs a directory and reads what it
+# finds dies on a decode error. scripts/generate-icons.py did exactly that, on
+# ._activity.svg, while regenerating the icon set.
+#
+# NOTE this rule cannot help inside .git itself - ignore rules do not apply there - and
+# that is where they do the most harm: 1152 of them once landed in .git/objects/pack and
+# made git report "non-monotonic index" on every fetch. Clear both with:
+#
+#   find . -name '._*' -delete
+#
+._*
+.DS_Store
+
+# The live gateway config. `~/.botnexus/config.json` holds channel tokens in plaintext -
+# channel adapters have no credentialRef support, unlike gateway.locations - so a copy landing
+# at the repo root, or a BOTNEXUS_HOME pointed inside the checkout, must not become a commit.
+# Root-anchored on purpose: docs/sample-config.json and the tests/ fixtures are deliberately
+# tracked and are not matched by these.
+/config.json
+/.botnexus/

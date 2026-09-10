@@ -1,7 +1,7 @@
 // bootDiagnostics.js -- renders an actionable panel when the Blazor WASM boot fails.
 //
 // Issue #2880: with default autostart, a failed `_framework/*.wasm` download rejects Blazor's
-// start promise with nothing attached. The static `.loading-screen` div in index.html is never
+// start promise with nothing attached. The static boot markup in index.html is never
 // torn down, so the user sees "Loading BotNexus..." indefinitely and the only diagnosis available
 // is the devtools console. `#blazor-error-ui` does NOT cover this: it is Blazor's *runtime* error
 // bar and is not shown for a pre-start platform failure.
@@ -163,7 +163,7 @@
             return;
         }
 
-        // Replacing #app wholesale is what removes the static .loading-screen. Leaving the spinner
+        // Replacing #app wholesale is what removes the static boot markup. Leaving it
         // beside an error panel would be a worse outcome than either alone.
         app.innerHTML = buildPanel(kind, message);
 

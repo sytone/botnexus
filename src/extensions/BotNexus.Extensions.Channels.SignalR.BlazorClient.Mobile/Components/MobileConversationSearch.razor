@@ -1,0 +1,229 @@
+@inject IClientStateStore Store
+@inject IAgentInteractionService Interaction
+@inject NavigationManager Nav
+@implements IDisposable
+
+@*
+    Type-to-filter conversation search for the mobile shell, spanning every agent.
+
+    This sits BESIDE the native <select> picker rather than replacing it. The OS wheel is genuinely
+    good at switching within the current agent on touch, and the grouping it renders is pinned by 44
+    existing facts across four test files (picker grouping, cron-map grouping, system-section parity,
+    list ordering). Replacing it would mean rewriting all of them to chase a UI change, with real
+    risk of losing coverage nuance, and would take away a control that works. What mobile actually
+    lacked is what this adds: a text filter, and reach beyond the active agent.
+
+    A full-screen overlay rather than a bottom sheet: the search field takes focus immediately, and
+    on a phone the soft keyboard covers the lower half of the viewport - exactly where a bottom
+    sheet puts its results.
+*@
+
+<button type="button"
+        class="conv-search-btn"
+        data-testid="mobile-conversation-search-btn"
+        @onclick="OpenAsync"
+        aria-label="Search conversations across all agents"
+        title="Search conversations">
+    <Icon Name="search" Size="14" Class="bn-icon-inherit" />
+</button>
+
+@if (_open)
+{
+    <div class="conv-search-overlay" data-testid="mobile-conversation-search-overlay">
+        <div class="conv-search-bar">
+            <Icon Name="search" Size="15" Class="bn-icon-inherit" />
+            <input class="conv-search-input"
+                   data-testid="mobile-conversation-search-input"
+                   @ref="_inputRef"
+                   value="@_query"
+                   @oninput="OnQueryInput"
+                   @onkeydown="OnKeyDownAsync"
+                   placeholder="Search all conversations…"
+                   aria-label="Search all conversations"
+                   autocomplete="off"
+                   enterkeyhint="go"
+                   maxlength="200" />
+            <button type="button"
+                    class="conv-search-cancel"
+                    data-testid="mobile-conversation-search-cancel"
+                    @onclick="Close">Cancel</button>
+        </div>
+
+        @{
+            var view = BuildView();
+        }
+
+        <div class="conv-search-results" role="listbox" aria-label="Conversations">
+            @if (string.IsNullOrWhiteSpace(_query))
+            {
+                <div class="conv-search-hint" data-testid="mobile-conversation-search-hint">
+                    Type to search this agent and every other agent.
+                </div>
+            }
+            else if (view.IsEmpty)
+            {
+                <div class="conv-search-empty" data-testid="mobile-conversation-search-empty">
+                    No conversations match &ldquo;@_query&rdquo; in any agent.
+                </div>
+            }
+            else
+            {
+                @foreach (var group in view.Groups)
+                {
+                    <div class="conv-search-group">@group.Label</div>
+                    @foreach (var row in group.Rows)
+                    {
+                        var conversation = row.Conversation;
+                        var isReadOnly = ConversationSwitcherModel.IsReadOnlyRow(conversation, group.Label);
+                        <button type="button"
+                                class="conv-search-row"
+                                data-testid="mobile-conversation-search-row"
+                                data-conversation-id="@conversation.ConversationId"
+                                data-agent-id="@row.AgentId"
+                                role="option"
+                                aria-selected="false"
+                                @onclick="() => SelectAsync(row)">
+                            <span class="conv-search-row-title">@PortalText.SingleLine(conversation.Title)</span>
+                            <span class="conv-search-row-meta">
+                                @if (row.IsOtherAgent)
+                                {
+                                    <span class="conv-search-agent"
+                                          data-testid="mobile-conversation-search-agent-label">@PortalText.SingleLine(row.AgentDisplayName)</span>
+                                }
+                                @if (isReadOnly)
+                                {
+                                    <span class="conv-search-badge">Read-only</span>
+                                }
+                            </span>
+                        </button>
+                    }
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>The agent whose chat is on screen. Its conversations lead the results.</summary>
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    /// <summary>
+    /// The authoritative cron-job to conversation-id map, supplied by the page rather than fetched
+    /// here. <c>Chat.razor</c> already holds it for the native picker, and a second
+    /// <c>GET /api/cron</c> on a phone is a request worth not making.
+    /// </summary>
+    [Parameter]
+    public IReadOnlySet<string>? CronConversationIds { get; set; }
+
+    /// <summary>
+    /// Raised after a conversation has been selected and routed to, so the page can do what it does
+    /// for its own picker - scroll the transcript to the latest message. Kept as a callback rather
+    /// than duplicated here because the scroll needs the page's JS module and element refs.
+    /// </summary>
+    [Parameter]
+    public EventCallback OnSelected { get; set; }
+
+    private bool _open;
+    private string _query = "";
+    private ElementReference _inputRef;
+
+    /// <summary>True once the open overlay has been given focus, reset on close so re-opening refocuses.</summary>
+    private bool _focused;
+
+    protected override void OnInitialized() => Store.OnChanged += HandleStoreChanged;
+
+    public void Dispose() => Store.OnChanged -= HandleStoreChanged;
+
+    private void HandleStoreChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private ConversationSwitcherView BuildView() => ConversationSwitcherModel.Build(
+        AgentId,
+        // Snapshot first: Store.Agents is the live dictionary the SignalR handlers mutate, and
+        // enumerating it mid-render raced an inbound event into "Collection was modified" (#2320).
+        Store.Agents.Values.ToArray(),
+        Store.ActiveSelectionSource,
+        CronConversationIds,
+        _query);
+
+    private async Task OpenAsync()
+    {
+        _open = true;
+        _query = "";
+        _focused = false;
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private void Close()
+    {
+        _open = false;
+        _query = "";
+        _focused = false;
+    }
+
+    private void OnQueryInput(ChangeEventArgs e) => _query = e.Value?.ToString() ?? "";
+
+    /// <summary>
+    /// Focus the field once per open, after the render that creates it.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_open)
+        {
+            _focused = false;
+            return;
+        }
+
+        if (_focused)
+            return;
+
+        _focused = true;
+        try { await _inputRef.FocusAsync(); }
+        catch { /* not attached yet - the overlay is still usable by touch */ }
+    }
+
+    /// <summary>
+    /// Enter opens the first result. There is no arrow-key highlight here: this is a touch surface,
+    /// and a soft keyboard's "go" key acting on the top match is the interaction a phone offers.
+    /// </summary>
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            Close();
+            return;
+        }
+
+        if (e.Key != "Enter")
+            return;
+
+        var view = BuildView();
+        if (!view.IsEmpty)
+            await SelectAsync(view.Flattened[0]);
+    }
+
+    /// <summary>
+    /// Open the conversation a row points at, switching agent first when it belongs to another.
+    /// Mirrors <c>Chat.razor</c>'s own OnAgentChanged/OnConvChanged pair rather than inventing a
+    /// second way to move the view.
+    /// </summary>
+    private async Task SelectAsync(ConversationSwitcherRow row)
+    {
+        Close();
+
+        if (row.IsOtherAgent)
+        {
+            Store.SelectView(row.AgentId, string.Empty, SelectionSource.UserClick);
+            if (Store.GetAgent(row.AgentId) is { UnreadCount: > 0 } target)
+                target.UnreadCount = 0;
+            Store.NotifyChanged();
+        }
+
+        await Interaction.SelectConversationAsync(row.AgentId, row.Conversation.ConversationId);
+        Nav.NavigateTo($"agent/{Uri.EscapeDataString(row.AgentId)}/conversation/{Uri.EscapeDataString(row.Conversation.ConversationId)}");
+
+        if (OnSelected.HasDelegate)
+            await OnSelected.InvokeAsync();
+    }
+}

@@ -81,6 +81,11 @@ public sealed class CssStructuralIntegrityTests
     [InlineData(".banner-settings-btn {")]
     [InlineData(".portal-settings-overlay")]
     [InlineData(".portal-settings-panel")]
+    // The persona drawer sits at the very end of app.css, so it is the first thing an earlier
+    // unclosed brace swallows - which would leave the panel unstyled and full-bleed rather than
+    // visibly broken.
+    [InlineData(".agent-persona-overlay")]
+    [InlineData(".agent-persona-panel")]
     public void CriticalSelector_IsTopLevelRule(string selector)
     {
         var css = StripComments(File.ReadAllText(s_cssPath));

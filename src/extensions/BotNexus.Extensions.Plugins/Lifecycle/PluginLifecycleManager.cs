@@ -26,11 +26,20 @@ namespace BotNexus.Extensions.Plugins.Lifecycle;
 /// </remarks>
 public sealed class PluginLifecycleManager : IPluginUpdateService
 {
+    /// <summary>
+    /// Catalog document name, recognised here only so installing a catalog by mistake explains
+    /// itself. Kept in step with <c>MarketplaceSourceProber.CatalogFileName</c>, which is the
+    /// component that actually reads catalogs.
+    /// </summary>
+    private const string MarketplaceCatalogFileName = "marketplace.json";
+
     private readonly PluginStateStore _store;
     private readonly IPluginSourceFetcher _fetcher;
     private readonly PluginManifestParser _parser;
     private readonly TimeProvider _timeProvider;
     private readonly IPluginInstallObserver? _installObserver;
+    private readonly PluginExtensionDeployer _extensionDeployer;
+    private readonly string? _extensionsRoot;
     private readonly ILogger<PluginLifecycleManager> _logger;
 
     /// <summary>Creates a manager over a plugin root.</summary>
@@ -44,19 +53,30 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
     /// no cron infrastructure at all - a consumer that only parses or removes plugins must not be
     /// forced to compose a scheduler.
     /// </param>
+    /// <param name="extensionsRoot">
+    /// Directory deployed gateway extensions live in, enabling plugins that carry code. When
+    /// <c>null</c> a plugin declaring an <c>extension</c> is REFUSED rather than installed as
+    /// skills-only: silently dropping the code half would install something materially different
+    /// from what the author published.
+    /// </param>
+    /// <param name="extensionDeployer">Deployer for carried extensions; optional.</param>
     public PluginLifecycleManager(
         PluginStateStore store,
         IPluginSourceFetcher fetcher,
         PluginManifestParser? parser = null,
         TimeProvider? timeProvider = null,
         ILogger<PluginLifecycleManager>? logger = null,
-        IPluginInstallObserver? installObserver = null)
+        IPluginInstallObserver? installObserver = null,
+        string? extensionsRoot = null,
+        PluginExtensionDeployer? extensionDeployer = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _fetcher = fetcher ?? throw new ArgumentNullException(nameof(fetcher));
         _parser = parser ?? new PluginManifestParser();
         _timeProvider = timeProvider ?? TimeProvider.System;
         _installObserver = installObserver;
+        _extensionsRoot = extensionsRoot;
+        _extensionDeployer = extensionDeployer ?? new PluginExtensionDeployer();
         _logger = logger ?? NullLogger<PluginLifecycleManager>.Instance;
     }
 
@@ -112,8 +132,64 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                     $"Plugin directory '{destination}' already exists but is not recorded as installed. It was not overwritten.");
             }
 
+            // Consent gate. Refused BEFORE promote so an unacknowledged code plugin never reaches
+            // disk at all, rather than being written and then rolled back.
+            if (manifest.Extension is not null && !request.AllowCarriedExtension)
+            {
+                // A DISTINCT field, not the general "extension" one: a caller must be able to tell
+                // "you have not consented yet" from "the extension is broken" without parsing
+                // prose, because only the first is worth re-offering to a human.
+                //
+                // Disclose what it contributes, read from the staged content. "Runs code at full
+                // trust" is the risk; naming the contracts and menu entries is what lets an
+                // operator judge whether THIS plugin is worth that risk.
+                var carried = PluginExtensionDeployer.Describe(staged.Directory!, manifest.Extension);
+                var contributes = PluginExtensionDeployer.SummariseContributions(carried);
+                var named = string.IsNullOrWhiteSpace(carried?.Name) ? string.Empty : $" '{carried!.Name}'";
+
+                return PluginOperationResult.Failure(
+                    manifest.Name,
+                    "extension.consent",
+                    $"Plugin '{manifest.Name}' carries a gateway extension{named}, which runs code in the gateway process at full trust, with no sandbox."
+                    + (contributes is null ? string.Empty : $" It contributes: {contributes}.")
+                    + " Re-issue the install acknowledging the carried extension to proceed.");
+            }
+
             var files = Promote(staged.Directory!, destination);
             files = WriteTrustCatalog(destination, manifest.Name, files);
+
+            // A carried extension is deployed only after the plugin itself is on disk, because the
+            // deployer reads the promoted content. If it fails, the plugin is rolled back rather
+            // than left installed in a half-shape the author never published: a code plugin whose
+            // code did not deploy is not the same artefact with a missing optional part.
+            string? deployedExtensionId = null;
+            IReadOnlyList<string> extensionFiles = [];
+            if (manifest.Extension is not null)
+            {
+                if (string.IsNullOrWhiteSpace(_extensionsRoot))
+                {
+                    TryDeleteDirectory(destination);
+                    return PluginOperationResult.Failure(
+                        manifest.Name,
+                        "extension",
+                        $"Plugin '{manifest.Name}' carries a gateway extension, but no extensions root is configured, so the extension cannot be deployed.");
+                }
+
+                var deployment = _extensionDeployer.Deploy(
+                    manifest.Name, destination, manifest.Extension, _extensionsRoot);
+
+                if (!deployment.Succeeded)
+                {
+                    TryDeleteDirectory(destination);
+                    return PluginOperationResult.Failure(
+                        manifest.Name,
+                        deployment.Field ?? "extension",
+                        deployment.Message ?? $"Plugin '{manifest.Name}' carries an extension that could not be deployed.");
+                }
+
+                deployedExtensionId = deployment.ExtensionId;
+                extensionFiles = deployment.Files;
+            }
 
             var record = new InstalledPlugin
             {
@@ -125,6 +201,8 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 UpdatesEnabled = request.UpdatesEnabled,
                 InstalledAtUtc = _timeProvider.GetUtcNow(),
                 Files = files,
+                DeployedExtensionId = deployedExtensionId,
+                ExtensionFiles = extensionFiles,
             };
             _store.Upsert(record);
 
@@ -196,6 +274,18 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 Plugin = existing,
                 PreviousVersion = existing.ResolvedVersion,
             };
+        }
+
+        // Updating a code plugin means replacing assemblies the running gateway has loaded, which
+        // fails in place. Refusing is the honest outcome until the staged-swap slice lands: a
+        // partial update that replaced the plugin but not its extension would leave the two
+        // disagreeing about which build is installed.
+        if (existing.DeployedExtensionId is not null)
+        {
+            return PluginOperationResult.Failure(
+                name,
+                "extension",
+                $"Plugin '{name}' carries deployed extension '{existing.DeployedExtensionId}', whose assemblies are loaded by the running gateway and cannot be replaced in place. Remove the plugin, restart the gateway, then install the new version.");
         }
 
         var staged = await StageAsync(existing.Source, existing.Reference, existing.Name, cancellationToken)
@@ -272,6 +362,19 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
         }
 
         DeleteRecordedFiles(existing);
+
+        // The extensions root holds a SEPARATE copy of the carried content, so removing the plugin
+        // directory alone would leave a deployed extension nothing claims to own - which is exactly
+        // the unrecorded-directory state install already refuses to write over.
+        if (existing.DeployedExtensionId is not null && !string.IsNullOrWhiteSpace(_extensionsRoot))
+        {
+            _extensionDeployer.TryRemove(_extensionsRoot, existing.DeployedExtensionId);
+            _logger.LogInformation(
+                "Removed deployed extension {ExtensionId} carried by plugin {Plugin}. Its code keeps running until the gateway restarts.",
+                existing.DeployedExtensionId,
+                name);
+        }
+
         _store.Delete(name);
 
         _logger.LogInformation("Removed plugin {Plugin} ({FileCount} files).", name, existing.Files.Count);
@@ -361,8 +464,23 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
             var parse = _parser.ParsePluginDirectory(staging);
             if (!parse.IsValid)
             {
+                // A marketplace catalog is a repository of POINTERS to plugins, so it has no plugin
+                // manifest and install is right to refuse it. Saying only "manifest not found"
+                // leaves someone re-reading their own repository for a file that was never meant to
+                // be there; the mistake is which box the URL went in, and the message should say so.
+                var isCatalog = File.Exists(Path.Combine(staging, MarketplaceCatalogFileName));
+
                 TryDeleteDirectory(staging);
-                return new StagedPlugin(null, null, null, PluginOperationResult.Failure(reportName, parse.Errors));
+
+                return new StagedPlugin(null, null, null, isCatalog
+                    ? PluginOperationResult.Failure(
+                        reportName,
+                        MarketplaceCatalogFileName,
+                        $"'{source}' is a marketplace catalog, not a plugin - it carries "
+                        + $"{MarketplaceCatalogFileName} and lists plugins that live in other "
+                        + "repositories. Add it under Repositories instead, then install the plugins "
+                        + "it offers from the listing.")
+                    : PluginOperationResult.Failure(reportName, parse.Errors));
             }
 
             var manifest = parse.Value!;

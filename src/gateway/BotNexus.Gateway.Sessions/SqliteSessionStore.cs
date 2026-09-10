@@ -1097,11 +1097,43 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 CREATE INDEX IF NOT EXISTS idx_sub_agent_sessions_child ON sub_agent_sessions(child_agent_id);
                 CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
                 CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at);
+
+                -- Content search (#P1). External-content FTS over session_history: the index
+                -- stores no copy of the text, so it cannot drift from the table it mirrors.
+                -- content_rowid is the AUTOINCREMENT id, which is the table's rowid alias.
+                --
+                -- Every row is indexed, including tool output and banners, and the FILTERING
+                -- happens at query time. Conditional triggers look tidier and are a trap: an
+                -- external-content FTS delete must be given the exact content that was inserted,
+                -- so a row that skipped the insert trigger but matched the delete trigger would
+                -- corrupt the index rather than simply miss.
+                CREATE TABLE IF NOT EXISTS search_index_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS session_history_fts
+                USING fts5(content, content='session_history', content_rowid='id');
+
+                CREATE TRIGGER IF NOT EXISTS session_history_ai AFTER INSERT ON session_history BEGIN
+                    INSERT INTO session_history_fts(rowid, content) VALUES (new.id, new.content);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS session_history_ad AFTER DELETE ON session_history BEGIN
+                    INSERT INTO session_history_fts(session_history_fts, rowid, content) VALUES('delete', old.id, old.content);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS session_history_au AFTER UPDATE ON session_history BEGIN
+                    INSERT INTO session_history_fts(session_history_fts, rowid, content) VALUES('delete', old.id, old.content);
+                    INSERT INTO session_history_fts(rowid, content) VALUES (new.id, new.content);
+                END;
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             // Migrate: add tool columns to existing databases
             await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+
+            await BackfillHistoryIndexAsync(connection, cancellationToken).ConfigureAwait(false);
 
             // P9-I (#674): the legacy idx_sessions_conversation_agent index referenced
             // the (now-dropped) agent_id column. Migration below drops the old shape
@@ -1292,6 +1324,150 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 "P9-I verification summary: {Mismatches} session(s) had a legacy agent_id that disagreed with the conversation, {Unresolvable} session(s) had no resolvable conversation. Authoritative AgentId is the conversation's.",
                 mismatches, unresolvable);
         }
+    }
+
+    /// <summary>
+    /// Populates the content index for history that predates it.
+    /// </summary>
+    /// <remarks>
+    /// The triggers only see rows written after they exist, so on any database that already holds
+    /// history a fresh index would be empty and search would confidently return nothing - the worst
+    /// kind of failure, because it looks like an answer. This runs once: it is skipped as soon as
+    /// the index holds anything, so normal startups pay a single COUNT.
+    /// <para>
+    /// `rebuild` is used rather than an INSERT..SELECT because it is the command FTS5 provides for
+    /// exactly this, and it repairs a partially-populated index rather than duplicating into one.
+    /// </para>
+    /// </remarks>
+    private async Task BackfillHistoryIndexAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        // The obvious probe does not work, and fails in the direction that hides the bug:
+        // COUNT(*) on an EXTERNAL-CONTENT fts5 table reads through to the content table, so it
+        // reports every history row as "indexed" even when the index is empty. Asking it whether
+        // it is built is therefore guaranteed to answer yes. A marker row is the honest question.
+        await using var probe = connection.CreateCommand();
+        probe.CommandText = """
+            SELECT (SELECT COUNT(*) FROM search_index_state WHERE key = 'history_fts_built') AS built,
+                   (SELECT COUNT(*) FROM session_history)                                    AS total;
+            """;
+
+        long built;
+        long total;
+        await using (var reader = await probe.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                return;
+
+            built = reader.GetInt64(0);
+            total = reader.GetInt64(1);
+        }
+
+        if (built > 0)
+            return;
+
+        if (total == 0)
+        {
+            // Nothing to backfill, but still mark it: an empty database is fully indexed, and
+            // leaving the marker unset would rebuild on every start until the first message.
+            await MarkHistoryIndexBuiltAsync(connection, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        _logger.LogInformation(
+            "Building the conversation content index for {Total} existing message(s); this happens once.", total);
+
+        await using var rebuild = connection.CreateCommand();
+        rebuild.CommandText = "INSERT INTO session_history_fts(session_history_fts) VALUES('rebuild');";
+        await rebuild.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+        await MarkHistoryIndexBuiltAsync(connection, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task MarkHistoryIndexBuiltAsync(
+        SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var mark = connection.CreateCommand();
+        mark.CommandText =
+            "INSERT OR REPLACE INTO search_index_state(key, value) VALUES('history_fts_built', '1');";
+        await mark.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Full-text search over message content, newest-relevant first.
+    /// </summary>
+    /// <remarks>
+    /// Tool output, replay banners and crash sentinels are excluded HERE rather than by keeping
+    /// them out of the index - see the trigger comment for why the index holds everything. What a
+    /// person means by "the conversation where we discussed X" is what was said, not what a tool
+    /// printed, and letting tool spew rank against prose buries the answer.
+    /// </remarks>
+    public override async Task<IReadOnlyList<ConversationSearchHit>> SearchHistoryAsync(
+        string query, int limit = 25, CancellationToken cancellationToken = default)
+    {
+        var match = BuildHistoryMatchExpression(query);
+        if (match is null)
+            return [];
+
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT s.conversation_id, h.session_id, h.role, h.content, h.timestamp
+            FROM session_history_fts
+            INNER JOIN session_history h ON h.id = session_history_fts.rowid
+            LEFT JOIN sessions s ON s.id = h.session_id
+            WHERE session_history_fts MATCH $match
+              AND h.role IN ('user', 'assistant')
+              AND h.is_replay_banner = 0
+              AND h.is_crash_sentinel = 0
+              AND h.content IS NOT NULL
+              AND TRIM(h.content) <> ''
+            ORDER BY bm25(session_history_fts) ASC
+            LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue("$match", match);
+        command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 200));
+
+        List<ConversationSearchHit> hits = [];
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            hits.Add(new ConversationSearchHit(
+                ConversationId: reader.IsDBNull(0) ? null : reader.GetString(0),
+                SessionId: reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                Role: reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                Snippet: reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                Timestamp: reader.IsDBNull(4) ? null : reader.GetString(4)));
+        }
+
+        return hits;
+    }
+
+    /// <summary>
+    /// Turns what a person typed into an FTS5 MATCH expression, or null when nothing is searchable.
+    /// </summary>
+    /// <remarks>
+    /// FTS5 has its own query grammar, so raw input is not merely imprecise - a stray quote or a
+    /// bare <c>*</c> throws. Punctuation that carries meaning to FTS5 is stripped (same set as the
+    /// memory store) and each surviving term is double-quoted, which makes it a literal. Terms are
+    /// ANDed: someone typing two words means both.
+    /// </remarks>
+    private static string? BuildHistoryMatchExpression(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return null;
+
+        var cleaned = query
+            .Replace('"', ' ').Replace('\'', ' ').Replace('(', ' ').Replace(')', ' ')
+            .Replace(':', ' ').Replace('*', ' ').Replace('+', ' ').Replace('-', ' ')
+            .Replace('^', ' ');
+
+        var terms = cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return terms.Length == 0
+            ? null
+            : string.Join(" AND ", terms.Select(t => $"\"{t}\""));
     }
 
     private static async Task MigrateAsync(SqliteConnection connection, CancellationToken cancellationToken)

@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Notifications;
 using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
@@ -20,6 +21,15 @@ public sealed class AskUserResponseRegistry : IAskUserResponseRegistry, IDisposa
 {
     private readonly ConcurrentDictionary<string, PendingAskUserResponse> _pendingByRequestId = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _requestIdByConversation = new(StringComparer.Ordinal);
+    private readonly INotificationPublisher _notificationPublisher;
+
+    /// <summary>Creates a registry.</summary>
+    /// <param name="notificationPublisher">
+    /// Optional publisher used to report that an agent is blocked. Defaults to the no-op, so every
+    /// existing construction site and test compiles unchanged.
+    /// </param>
+    public AskUserResponseRegistry(INotificationPublisher? notificationPublisher = null) =>
+        _notificationPublisher = notificationPublisher ?? NullNotificationPublisher.Instance;
 
     /// <inheritdoc />
     public (string RequestId, Task<AskUserResponse> Task) Register(ConversationId conversationId, TimeSpan? timeout)
@@ -54,6 +64,25 @@ public sealed class AskUserResponseRegistry : IAskUserResponseRegistry, IDisposa
                 pending.TimeoutCts = new CancellationTokenSource(timeoutValue);
                 pending.TimeoutRegistration = pending.TimeoutCts.Token.Register(() => HandleTimeout(pending));
             }
+
+            // An agent blocked on a person is the one notification where the work is genuinely
+            // stopped until someone acts - which is exactly the case worth reaching a phone for.
+            //
+            // Fire-and-forget because Register is synchronous and on the path that is about to
+            // block: awaiting a database write here would make asking a question slower than
+            // answering it. TryPublishAsync contains every failure, so the discarded task cannot
+            // surface as an unobserved exception.
+            _ = _notificationPublisher.TryPublishAsync(new Notification
+            {
+                Id = string.Empty,
+                Kind = NotificationKind.AgentWaitingForInput,
+                Severity = NotificationSeverity.Warning,
+                Title = "An agent is waiting for your answer",
+                Body = "A conversation is paused until the question is answered.",
+                ConversationId = conversationId.ToString(),
+                Link = $"conversation/{conversationId}",
+                CreatedAtUtc = default,
+            });
 
             return (requestId, pending.Completion.Task);
         }

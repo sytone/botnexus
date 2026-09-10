@@ -169,6 +169,15 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                 request.Headers.TryAddWithoutValidation(key, value);
         }
 
+        // xAI caches prefixes automatically but routes by conversation, so this header is the only
+        // lever on that path. Applied after the caller's own headers so an explicit override wins.
+        if (!request.Headers.Contains(PromptCacheRouting.GrokConversationHeader) &&
+            PromptCacheRouting.ResolveGrokConversationId(model, options) is { } grokConversationId)
+        {
+            request.Headers.TryAddWithoutValidation(
+                PromptCacheRouting.GrokConversationHeader, grokConversationId);
+        }
+
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
         using var response = await _httpClient.SendAsync(
