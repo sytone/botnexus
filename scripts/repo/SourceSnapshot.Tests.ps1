@@ -54,6 +54,14 @@ BeforeAll {
     }
 }
 Describe 'Production source transport regression' {
+    It 'does not re-read the captured tree before payload creation' {
+        $sender = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Invoke-AzureBuildTest.ps1'))
+        $capture = [regex]::Match($sender, '(?s)# BEGIN EXACT SOURCE CAPTURE(.*?)# END EXACT SOURCE CAPTURE').Groups[1].Value
+
+        $capture | Should -Not -Match 'Assert-SourceSnapshot\s+-Root\s+\$captureRoot'
+        $capture | Should -Match 'New-SourcePayloadArchive\s+-Root\s+\$tempRoot'
+        $capture | Should -Match '\$current\s*=\s*&\s*\$fingerprintScript'
+    }
 BeforeEach {
     $script:area = Join-Path $scratch ([guid]::NewGuid().ToString('N'))
     $script:repo = Join-Path $area 'repo'

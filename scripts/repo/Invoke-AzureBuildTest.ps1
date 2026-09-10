@@ -90,7 +90,10 @@ try {
     # ZIP is read entry-by-entry by the verifier: no tar list-file quoting/options or links.
     $workspaceArchive = Join-Path $tempRoot 'workspace.zip'
     [IO.Compression.ZipFile]::CreateFromDirectory($captureRoot, $workspaceArchive)
-    Assert-SourceSnapshot -Root $captureRoot -Manifest $manifest
+    # The capture routine already read, hashed, and wrote each exact byte. Re-reading every
+    # captured file here can consume an entire sender budget on Windows system TEMP. The runner
+    # independently verifies the ZIP against this manifest before building, and the second
+    # fingerprint below rejects source changes before upload.
     New-SourcePayloadArchive -Root $tempRoot -Destination $payloadArchive | Out-Null
     $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
     if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before upload.' }
