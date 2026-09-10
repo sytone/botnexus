@@ -1131,7 +1131,7 @@ internal class UpdateCommand
     /// skip decision and the start decision can never disagree about which file matters.
     /// </summary>
     internal static string ResolveGatewayBinaryPath(string repoRoot)
-        => Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+        => CliPaths.GatewayBinary(repoRoot);
 
     /// <summary>
     /// Set by the pull step: true only when <c>git pull</c> succeeded AND HEAD did not move.

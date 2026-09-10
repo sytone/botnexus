@@ -1,0 +1,512 @@
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@implements IDisposable
+@inject IServiceProvider Services
+@inject NavigationManager Nav
+
+@*
+    The notification centre: a bell, an unread count, and the list behind it.
+
+    Notifications arrive two ways and both are handled here. A push over SignalR updates the badge
+    live for a connected portal; a read on open covers everything that happened while this browser
+    was closed, on another device, or disconnected. The store is authoritative either way, which is
+    what lets the push be lossy without anything going missing.
+*@
+
+@* Absent when the notifications client is not registered. The banner is on EVERY page, so a
+   component that threw on a missing service would take the whole layout down rather than just
+   itself - which is how a portal ends up rendering nothing at all. *@
+@if (_api is not null)
+{
+<div class="notification-centre" data-testid="notification-centre">
+    <button class="banner-notifications-btn"
+            @ref="_bellRef"
+            data-testid="notification-bell"
+            title="@(_unread > 0 ? $"{_unread} unread notification(s)" : "Notifications")"
+            aria-label="@(_unread > 0 ? $"Notifications, {_unread} unread" : "Notifications")"
+            @onclick="ToggleAsync">
+        <Icon Name="notifications" Size="16" Class="bn-icon-inherit" />
+        @if (_unread > 0)
+        {
+            <span class="notification-badge" data-testid="notification-badge">@(_unread > 99 ? "99+" : _unread.ToString())</span>
+        }
+    </button>
+</div>
+}
+
+@* The panel lives OUTSIDE the bell, in a viewport-fixed overlay, because the top bar clips its own
+   overflow - a dropdown parented to the bell is cut off at the bar's edge. This is the same shape
+   the provider usage popover uses, and it buys click-anywhere-to-dismiss for free. The overlay is
+   transparent: this is a glanceable readout, not a decision that should dim the app behind it. *@
+@if (_api is not null && _open)
+{
+    <div class="notification-overlay" @ref="_overlayRef"
+         @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
+        <div class="notification-panel" role="dialog" aria-modal="true"
+             aria-labelledby="notification-panel-title"
+             data-testid="notification-panel" @onclick:stopPropagation="true">
+            <header class="notification-panel-header">
+                <span id="notification-panel-title" class="t-label">Notifications</span>
+                <div class="notification-panel-actions">
+                    @if (_unread > 0)
+                    {
+                        <button class="toolbar-btn"
+                                data-testid="notification-mark-all"
+                                @onclick="MarkAllReadAsync">Mark all read</button>
+                    }
+                    <button class="toolbar-btn"
+                            data-testid="notification-close"
+                            @onclick="Close">Close</button>
+                </div>
+            </header>
+
+            @if (_loading)
+            {
+                <div class="config-loading" aria-live="polite" data-testid="notification-loading">
+                    <div class="loading-spinner small"></div>
+                    <span>Loading.</span>
+                </div>
+            }
+            else if (_items.Count == 0)
+            {
+                @* An empty feed is the ordinary state of a healthy gateway, so it reads as
+                   reassurance rather than as an error or an empty-table shrug. *@
+                <div class="notification-empty" data-testid="notification-empty">
+                    <p>Nothing to report. Agent failures, blocked agents and failed scheduled runs appear here.</p>
+                </div>
+            }
+            else
+            {
+                <ul class="notification-list">
+                    @foreach (var item in _items)
+                    {
+                        <li class="notification-item @(item.IsUnread ? "unread" : null) severity-@item.Severity.ToLowerInvariant()"
+                            data-testid="notification-item"
+                            data-notification-id="@item.Id"
+                            data-unread="@(item.IsUnread ? "true" : "false")">
+                            <div class="notification-item-main" @onclick="() => OpenAsync(item)">
+                                <span class="notification-item-title t-label">@item.Title</span>
+                                @if (!string.IsNullOrWhiteSpace(item.Body))
+                                {
+                                    <span class="notification-item-body t-caption">@item.Body</span>
+                                }
+                                <span class="notification-item-time t-caption">@Relative(item.CreatedAtUtc)</span>
+                            </div>
+                            <button class="toolbar-btn notification-dismiss"
+                                    data-testid="notification-dismiss"
+                                    title="Dismiss"
+                                    aria-label="Dismiss @item.Title"
+                                    @onclick="() => DismissAsync(item)">&times;</button>
+                        </li>
+                    }
+                </ul>
+            }
+
+            @* Guidance is shown only while desktop alerts are NOT working. Once they are, the
+               help is noise to the one person who no longer needs it. *@
+            <footer class="notification-panel-footer">
+                @if (_desktop is { Supported: true, IsActive: false })
+                {
+                    <div class="notification-help">
+                        @if (_desktop.NeedsSecureContext)
+                        {
+                            @* The important case, and the one that used to be reported as a
+                               browser setting. A browser denies notifications outright on a plain
+                               http origin that is not localhost, and NO setting can override that
+                               - so sending someone to their site settings here wastes their time. *@
+                            <p class="t-caption" data-testid="desktop-alerts-insecure">
+                                Desktop alerts need a secure connection. This portal is served over
+                                <code>@(_desktop.Origin ?? "http")</code>, so your browser refuses
+                                them — this is not something a browser setting can turn on.
+                            </p>
+                            <details>
+                                <summary class="t-caption">How to get them working</summary>
+                                <ul class="t-caption">
+                                    <li>Serve the gateway over <strong>HTTPS</strong>, or</li>
+                                    <li>
+                                        reach it on <strong>localhost</strong>, which browsers treat as
+                                        secure even over plain http — for example
+                                        <code>@TunnelCommand()</code>, then open
+                                        <code>@TunnelUrl()</code>.
+                                    </li>
+                                </ul>
+                            </details>
+                        }
+                        else if (_desktop.IsBlocked)
+                        {
+                            <p class="t-caption" data-testid="desktop-alerts-blocked">
+                                Desktop alerts are blocked for this site. A browser never asks twice
+                                once refused, so this has to be cleared by hand.
+                            </p>
+                            <details>
+                                <summary class="t-caption">How to unblock them</summary>
+                                <p class="t-caption" data-testid="desktop-alerts-unblock-steps">@UnblockSteps()</p>
+                            </details>
+                        }
+                        else
+                        {
+                            <p class="t-caption" data-testid="desktop-alerts-pitch">
+                                Get told about failures and blocked agents when this tab is not in
+                                front of you.
+                            </p>
+                        }
+                    </div>
+                }
+
+                @if (_testError is not null)
+                {
+                    <p class="t-caption notification-help-error" data-testid="notification-test-error">@_testError</p>
+                }
+
+                <div class="notification-panel-footer-actions">
+                    @if (_desktop is { Supported: true } && !_desktop.NeedsSecureContext && !_desktop.IsBlocked)
+                    {
+                        <button class="toolbar-btn"
+                                data-testid="desktop-alerts-toggle"
+                                aria-pressed="@(_desktop.IsActive ? "true" : "false")"
+                                title="@(_desktop.IsActive
+                                    ? "Stop showing notifications outside the browser"
+                                    : "Show notifications outside the browser, even when this tab is in the background")"
+                                @onclick="ToggleDesktopAsync">
+                            @(_desktop.IsActive ? "Desktop alerts on" : "Enable desktop alerts")
+                        </button>
+                    }
+
+                    @* Which transport is running matters: one survives the portal being closed and
+                       the other does not, and a reader deciding whether to shut the tab needs to
+                       know which one they have. *@
+                    @if (_desktop is { IsActive: true })
+                    {
+                        <span class="t-caption notification-transport" data-testid="desktop-alerts-transport">
+                            @(_desktop.PushSubscribed
+                                ? "including when the portal is closed"
+                                : "only while the portal is open")
+                        </span>
+                    }
+
+                    @* Offered whatever the desktop-alert state, because it tests the bell and the
+                       live push too - not only the toast. *@
+                    <button class="toolbar-btn"
+                            data-testid="notification-send-test"
+                            disabled="@_sendingTest"
+                            title="Raise a real notification through the gateway, to check the whole chain works"
+                            @onclick="SendTestAsync">
+                        @(_sendingTest ? "Sending…" : "Send test")
+                    </button>
+                </div>
+            </footer>
+        </div>
+    </div>
+}
+
+@code {
+    private NotificationsApiClient? _api;
+    private GatewayHubConnection? _hub;
+    private DesktopNotifier? _notifier;
+    private DesktopNotificationStatus? _desktop;
+    private DotNetObjectReference<NotificationCentre>? _selfRef;
+    private ElementReference _overlayRef;
+    private ElementReference _bellRef;
+    private bool _focusOverlay;
+    private bool _restoreFocus;
+    private bool _sendingTest;
+    private string? _testError;
+    private IReadOnlyList<NotificationDto> _items = [];
+    private int _unread;
+    private bool _open;
+    private bool _loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _api = Services.GetService(typeof(NotificationsApiClient)) as NotificationsApiClient;
+        _hub = Services.GetService(typeof(GatewayHubConnection)) as GatewayHubConnection;
+
+        if (_api is null)
+            return;
+
+        _api.Changed += HandleChanged;
+
+        // The live push is a bonus, not a requirement: without it the badge is still correct on
+        // open, it just does not update between opens.
+        if (_hub is not null)
+            _hub.OnNotificationRaised += HandleRaised;
+
+        // The badge is correct before the panel is ever opened, and covers everything raised while
+        // this browser was closed or on another device.
+        _unread = await _api.UnreadCountAsync();
+
+        _notifier = Services.GetService(typeof(DesktopNotifier)) as DesktopNotifier;
+
+        if (_notifier is not null)
+        {
+            // Handing over the reference is what lets a clicked toast route inside the running app
+            // rather than reboot the WASM bundle.
+            _selfRef = DotNetObjectReference.Create(this);
+            await _notifier.RegisterAsync(_selfRef);
+            _desktop = await _notifier.GetStatusAsync();
+        }
+    }
+
+    /// <summary>Follows a clicked desktop toast, from JS, without reloading the app.</summary>
+    [JSInvokable]
+    public Task OpenFromDesktopNotification(string link) => InvokeAsync(() =>
+    {
+        if (!string.IsNullOrWhiteSpace(link))
+            Nav.NavigateTo(link);
+    });
+
+    // A keydown handler on a div only fires while that div holds focus, and clicking the bell
+    // leaves focus on the bell - so the overlay has to take it, or Escape does nothing. Focus goes
+    // back to the bell on close, which is what a keyboard user expects and what stops the page
+    // jumping to the top.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusOverlay && _open)
+        {
+            _focusOverlay = false;
+            await TryFocusAsync(_overlayRef);
+        }
+        else if (_restoreFocus && !_open)
+        {
+            _restoreFocus = false;
+            await TryFocusAsync(_bellRef);
+        }
+    }
+
+    private static async Task TryFocusAsync(ElementReference element)
+    {
+        try
+        {
+            await element.FocusAsync();
+        }
+        catch
+        {
+            // The element went away between render and focus, or JS is unavailable. Focus is a
+            // convenience here; losing it is not worth an exception out of the banner.
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_hub is not null)
+            _hub.OnNotificationRaised -= HandleRaised;
+
+        if (_api is not null)
+            _api.Changed -= HandleChanged;
+
+        // Fire and forget: Dispose cannot await, and a page that is going away has nothing to gain
+        // from the result. The reference is what actually has to be released.
+        if (_notifier is not null)
+            _ = _notifier.UnregisterAsync();
+
+        _selfRef?.Dispose();
+    }
+
+    // A push updates the badge without a round trip. The list itself is only refreshed when the
+    // panel is open, so a closed panel costs nothing.
+    private void HandleRaised(NotificationRaisedPayload payload) => _ = InvokeAsync(async () =>
+    {
+        _unread++;
+
+        if (_open)
+        {
+            _items = [payload.ToDto(), .. _items];
+        }
+
+        // The toast is raised from the push, not from the list: this is the one moment the portal
+        // knows something happened NOW. The JS side decides whether to actually show it - it
+        // suppresses a toast when the portal is in front of the user, because the badge that just
+        // moved has already said it.
+        if (_desktop is { IsActive: true } && _notifier is not null)
+            await _notifier.ShowAsync(payload.Id, payload.Title, payload.Body, payload.Link);
+
+        StateHasChanged();
+    });
+
+    private void HandleChanged() => _ = InvokeAsync(async () =>
+    {
+        _unread = await _api!.UnreadCountAsync();
+        StateHasChanged();
+    });
+
+    private void Close()
+    {
+        _open = false;
+        _restoreFocus = true;
+    }
+
+    // Escape closes it like any other transient surface; the overlay carries the handler because it
+    // is the element that holds focus while the panel is open.
+    private void HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            Close();
+    }
+
+    private async Task ToggleAsync()
+    {
+        _open = !_open;
+
+        if (!_open)
+        {
+            _restoreFocus = true;
+            return;
+        }
+
+        _focusOverlay = true;
+
+        _loading = true;
+        StateHasChanged();
+
+        _items = await _api!.ListAsync(includeRead: true, limit: 50);
+        _unread = await _api!.UnreadCountAsync();
+        _loading = false;
+
+        // Permission can be revoked in browser settings behind the portal's back, so the state is
+        // re-read on open rather than trusted from initialisation.
+        if (_notifier is not null)
+            _desktop = await _notifier.GetStatusAsync();
+    }
+
+    // Built from the origin actually in the address bar rather than from "localhost", because a
+    // gateway that binds only its LAN address has nothing listening on its own loopback - the
+    // textbook `ssh -L 5005:localhost:5005` form then forwards to a closed port and appears
+    // broken. Forwarding to the host's own address works whether it binds loopback, that address,
+    // or everything. Verified against a gateway bound to its LAN address only.
+    private string TunnelCommand()
+    {
+        if (!TryOrigin(out var host, out var port))
+            return "ssh -L 5005:localhost:5005 your-gateway-host";
+
+        return $"ssh -L {port}:{host}:{port} {host}";
+    }
+
+    private string TunnelUrl() =>
+        TryOrigin(out _, out var port) ? $"http://localhost:{port}" : "http://localhost:5005";
+
+    private bool TryOrigin(out string host, out int port)
+    {
+        host = string.Empty;
+        port = 5005;
+
+        if (!Uri.TryCreate(_desktop?.Origin, UriKind.Absolute, out var uri))
+            return false;
+
+        host = uri.Host;
+        port = uri.Port;
+        return true;
+    }
+
+    // Named per browser family, because "open your site settings" is not instructions - the menu
+    // is in a different place in each one, and a wrong menu name reads as a bug in the portal.
+    private string UnblockSteps() => _desktop?.Browser switch
+    {
+        "chrome" => "Click the icon at the left of the address bar, choose Site settings, set "
+            + "Notifications to Allow, then reload this page.",
+        "edge" => "Click the icon at the left of the address bar, choose Permissions for this site, "
+            + "set Notifications to Allow, then reload this page.",
+        "firefox" => "Click the padlock at the left of the address bar, clear the blocked "
+            + "Notifications permission, then reload this page.",
+        "safari" => "Open Safari → Settings → Websites → Notifications, find this site and set it "
+            + "to Allow, then reload this page.",
+        _ => "Open your browser's site settings for this address, allow notifications, then reload "
+            + "this page.",
+    };
+
+    // Raising one on purpose is the only way to check the chain without waiting for something to
+    // go wrong. It goes through the gateway rather than straight to the browser, so a success
+    // proves the store, the push and the badge - not just that this browser can draw a toast.
+    private async Task SendTestAsync()
+    {
+        if (_api is null || _sendingTest)
+            return;
+
+        _sendingTest = true;
+
+        try
+        {
+            if (!await _api.SendTestAsync())
+                _testError = "The gateway would not raise a test notification.";
+            else
+                _testError = null;
+        }
+        finally
+        {
+            _sendingTest = false;
+        }
+    }
+
+    // Enabling has two distinct paths: an unanswered permission needs the browser prompt, which
+    // only a user gesture may raise - this click is that gesture. An already-granted permission
+    // just needs the opt-in flipped, with no prompt at all.
+    private async Task ToggleDesktopAsync()
+    {
+        if (_notifier is null)
+            return;
+
+        if (_desktop is { IsActive: true })
+        {
+            await _notifier.DisablePushAsync();
+            _desktop = await _notifier.SetEnabledAsync(false);
+            return;
+        }
+
+        _desktop = _desktop is { CanAsk: true }
+            ? await _notifier.RequestAsync()
+            : await _notifier.SetEnabledAsync(true);
+
+        // Push is strictly better than the in-page alert - it survives the portal being closed -
+        // so it is taken whenever the browser will give it, without a second thing to turn on.
+        // Failing is ordinary: the in-page alert still works, and the panel says which is running.
+        if (_desktop is { IsActive: true, PushSupported: true })
+        {
+            if (await _notifier.EnablePushAsync())
+                _desktop = await _notifier.GetStatusAsync();
+        }
+    }
+
+    // Opening a notification is the act of having seen it, so it is marked read here rather than
+    // requiring a separate gesture nobody would make.
+    private async Task OpenAsync(NotificationDto item)
+    {
+        if (item.IsUnread)
+            await _api!.MarkReadAsync(item.Id);
+
+        if (!string.IsNullOrWhiteSpace(item.Link))
+        {
+            _open = false;
+            Nav.NavigateTo(item.Link!);
+        }
+        else
+        {
+            _items = await _api!.ListAsync(includeRead: true, limit: 50);
+        }
+    }
+
+    private async Task DismissAsync(NotificationDto item)
+    {
+        if (await _api!.DeleteAsync(item.Id))
+            _items = [.. _items.Where(i => !string.Equals(i.Id, item.Id, StringComparison.Ordinal))];
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        if (await _api!.MarkAllReadAsync())
+            _items = await _api!.ListAsync(includeRead: true, limit: 50);
+    }
+
+    // Relative time, because "what happened while I was away" is a question about recency, not
+    // about clock times.
+    private static string Relative(DateTimeOffset when)
+    {
+        var elapsed = DateTimeOffset.UtcNow - when;
+
+        return elapsed switch
+        {
+            { TotalSeconds: < 60 } => "just now",
+            { TotalMinutes: < 60 } => $"{(int)elapsed.TotalMinutes}m ago",
+            { TotalHours: < 24 } => $"{(int)elapsed.TotalHours}h ago",
+            { TotalDays: < 7 } => $"{(int)elapsed.TotalDays}d ago",
+            _ => when.UtcDateTime.ToString("d MMM"),
+        };
+    }
+}

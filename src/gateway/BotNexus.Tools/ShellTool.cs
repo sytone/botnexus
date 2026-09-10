@@ -69,8 +69,9 @@ public sealed class ShellTool : IAgentTool
     private readonly int _maxTimeoutSeconds;
     private readonly ShellPreference _shellPreference;
     private readonly string[]? _shellCommand;
+    private readonly IReadOnlyList<string>? _environmentPassThrough;
 
-    public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600, ShellPreference shellPreference = ShellPreference.Auto, string[]? shellCommand = null, int maxTimeoutSeconds = DefaultMaxTimeoutSeconds)
+    public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600, ShellPreference shellPreference = ShellPreference.Auto, string[]? shellCommand = null, int maxTimeoutSeconds = DefaultMaxTimeoutSeconds, IReadOnlyList<string>? environmentPassThrough = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? null
@@ -94,6 +95,7 @@ public sealed class ShellTool : IAgentTool
             : maxTimeoutSeconds;
         _shellPreference = shellPreference;
         _shellCommand = shellCommand is { Length: >= 2 } ? shellCommand : null;
+        _environmentPassThrough = environmentPassThrough is { Count: > 0 } ? environmentPassThrough : null;
     }
 
     /// <inheritdoc />
@@ -278,6 +280,14 @@ public sealed class ShellTool : IAgentTool
         }
 
         startInfo.ArgumentList.Add(invocation.Command);
+
+        // Build the child environment from an allow-list instead of inheriting the gateway's own.
+        // .NET seeds startInfo.Environment from the parent process, so without this a command an
+        // agent composed - from page text, a tool result, or a user message - could read every
+        // provider key and every `env:` credential this gateway resolves. See
+        // ToolProcessEnvironment; the browser worker has had the same control since
+        // GHSA-m4m8-xjp4-5rmm.
+        ToolProcessEnvironment.ApplyTo(startInfo.Environment, passThrough: _environmentPassThrough);
 
         using var process = new Process { StartInfo = startInfo };
         if (!process.Start())
