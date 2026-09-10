@@ -76,7 +76,13 @@ internal static class AgentDescriptorFingerprint
         builder.Append(d.DisplayName).Append('\u001f');
         builder.Append(d.Kind).Append('\u001f');
         builder.Append(d.Emoji).Append('\u001f');
+        // The avatar hue participates like every other persisted field: a member the fingerprint
+        // ignores is judged unchanged on hot-reload, so an operator recolouring an agent would save
+        // the value and see nothing happen until the gateway restarted.
+        builder.Append(d.AvatarHue).Append('\u001f');
         builder.Append(d.Description).Append('\u001f');
+        builder.Append(d.Responsibility).Append('\u001f');
+        builder.Append(d.Boundaries).Append('\u001f');
         // #3596: the agent-owned summary participates in the fingerprint like every other persisted
         // field. A member the fingerprint ignores is judged 'unchanged' on config hot-reload and
         // silently never applies - the #2383 fileAccess defect.

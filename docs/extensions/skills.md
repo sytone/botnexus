@@ -89,6 +89,22 @@ Loads a skill's content into the current conversation context.
 }
 ```
 
+A skill that declares parameters (see [Parameterised skills](#parameterised-skills)) needs values
+for them, supplied as a flat object:
+
+```json
+{
+  "action": "load",
+  "skillName": "add-film",
+  "parameters": { "title": "Dune" }
+}
+```
+
+Every declared parameter is **required**. Loading without one is refused rather than substituted
+blank -- a skill whose instructions silently lose a value replays wrongly and looks like it worked.
+The `list` action names the parameters each skill requires, so they do not have to be discovered by
+being refused.
+
 #### `view_file` — Load a single linked support file
 
 Loads one linked support file (under `references/`, `templates/`, `scripts/`, or `assets/`) from a skill **without** injecting the whole skill into context. Use this for progressive disclosure when only a specific reference is needed.
@@ -137,6 +153,100 @@ skill (or removing a supporting file from one) additionally requires `AllowSkill
 Symlink, path-traversal, size, and security scans apply to shared skills exactly as they do
 to agent and workspace skills.
 
+### `skill_record`
+
+Turns a run that worked into a reusable skill, through a **propose-and-confirm** cycle. Only
+contributed when `AllowSkillCreation` and `AllowSkillRecording` are both enabled.
+
+| Action | Description |
+|--------|-------------|
+| `steps` | Read back the tool calls this session actually made, from persisted session history |
+| `propose` | Stage a draft skill from those steps, with `{{placeholders}}` and declared parameters |
+| `review` | Render the pending draft exactly as it would be installed, and issue a confirmation token |
+| `confirm` | Install the reviewed draft (requires that token) |
+| `discard` | Drop a pending draft |
+| `list` | Show pending drafts |
+
+#### Why it works this way
+
+Measurement on a live instance ruled out the simpler designs. Across 1,702 recorded tool calls only
+**27% ever repeat verbatim**, so a literal recording replays exactly once. Generalising by diffing
+repeated runs needs several runs of "the same task", and deciding which runs are the same task is
+the problem the traces cannot answer. And with arguments stripped there is nothing left to abstract
+over: the commonest three-step sequence was `bash -> bash -> bash`, 501 times.
+
+So no step here asks a trace to identify parameters. The division of labour is:
+
+- the **trace** supplies the literal values, because it is the only witness to what actually ran;
+- the **agent** supplies the semantics, because it is the only party that knows why the steps were
+  what they were;
+- the **operator** rules on the result, because "does this vary between runs" is a question about
+  intent that neither of the other two can answer.
+
+#### Record on the turn *after* the work
+
+The recorder reads **persisted session history**, not the agent's own context. A tool call is not
+written there until its turn completes, so an agent that finishes a task and asks for `steps` in the
+same turn sees none of them — verified live: a turn that ran `bash` then asked for `steps` got zero,
+and asking again on the very next turn returned that same call with its arguments.
+
+That is a constraint of reading history rather than a defect, and reading history is the point: it
+is what makes a recording survive compaction, and what stops a proposal being checked against the
+agent's account of itself. It also fails safely — `propose` validates against the same empty trace
+and refuses, so nothing can be recorded from a run that is not on record. Both messages say so.
+
+#### What keeps a proposal honest
+
+Every declared parameter must record the literal value this run used, and that value is checked
+against the recorded tool calls. A value that appears in no call is **rejected** rather than written
+into a skill -- the same instinct as the post-turn claim auditor, applied to recordings.
+
+The mirror check runs too: values that appear in both the run and the proposed instructions but were
+left hard-coded are listed at review as **values kept fixed**. That is the other half of the question
+an operator is being asked -- the agent has said what it thinks varies, and this says what it has
+decided is constant.
+
+#### Drafts
+
+A proposal is staged as a draft under `~/.botnexus/agents/<agent>/skill-drafts/<name>/draft.json`.
+Drafts are **not** skills: the directory sits outside every root skill discovery scans, and the file
+is not named `SKILL.md`, so an unreviewed proposal cannot load for two independent reasons. Argument
+*values* never reach a draft file -- only argument key names -- because tool arguments routinely
+carry credentials.
+
+`confirm` requires the token `review` issued. The token is a digest of everything that would be
+written, so if the draft changes between review and confirm the old token no longer matches and the
+write is refused. Be precise about what that proves: the installed skill is byte-identical to the one
+displayed. It does **not** prove a person was present -- the agent holds both ends of that exchange.
+The human gate is the operator reading the review output, which is why review prints the body in full
+and lists the fixed literals rather than counting them.
+
+`confirm` installs through `skill_manage`'s own create path, so a recorded skill passes exactly the
+same scope gate, size limit, frontmatter validation and post-write security scan as a hand-written
+one.
+
+### Parameterised skills
+
+A skill declares the values that vary between runs in a `parameters:` frontmatter map, and marks
+where they go with `{{slot}}`:
+
+```markdown
+---
+name: add-film
+description: Adds a film to Radarr and reports when it lands.
+parameters:
+  title: "The film to add; different every run."
+---
+1. POST {{title}} to Radarr at http://nas:7878.
+2. Poll the queue until it clears.
+```
+
+`skill_record` writes this block from the parameters that were confirmed, so the installed skill
+always declares exactly what the operator agreed to; hand-authored skills may declare parameters the
+same way. Slot names are matched **case-insensitively**, because the frontmatter parser folds case
+and two declarations differing only in case cannot survive being written out. Skills that declare no
+parameters load exactly as they always have.
+
 ## Prompt Integration
 
 Skills integrate with the prompt pipeline through the `SkillPromptHookHandler`:
@@ -172,6 +282,7 @@ These flags live in the agent extension config under `botnexus-skills`:
 | `AllowSkillCreation` | `true` | Enables `skill_manage` (create/edit/patch/write_file). |
 | `AllowSkillDeletion` | `true` | Allows `delete` and `remove_file`. |
 | `AllowSharedSkillManagement` | `false` | Allows writing to the global all-agent skills dir via `scope: shared`. Wide blast radius -- opt-in. |
+| `AllowSkillRecording` | `true` | Enables `skill_record`. Subordinate to `AllowSkillCreation`, since recording ends in a skill being written. |
 
 Key names bind **case-insensitively**, so `allowSharedSkillManagement` and `AllowSharedSkillManagement`
 are equivalent — write whichever matches the rest of your config file's style. Before #3495 the
@@ -252,6 +363,17 @@ skills/
     ├── templates/         # Reusable templates
     ├── scripts/           # Executable scripts (tool wrappers)
     └── assets/            # Static assets
+```
+
+Recorded proposals awaiting confirmation are deliberately **not** here. They live in a sibling
+directory that skill discovery never scans:
+
+```text
+~/.botnexus/agents/<agent>/
+├── skills/                # Discovered and loadable
+└── skill-drafts/          # Staged proposals — never discovered
+    └── my-skill/
+        └── draft.json
 ```
 
 ## Usage Telemetry

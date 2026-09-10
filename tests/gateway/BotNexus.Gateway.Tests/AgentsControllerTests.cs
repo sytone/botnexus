@@ -719,4 +719,160 @@ public sealed class AgentsControllerTests
         writer.Verify(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()), Times.Never,
             "Rejected descriptor must NOT have been persisted to config.");
     }
+
+    // ── Persona route (PUT /api/agents/{id}/persona) ──────────────────────────
+    // The reason this route exists at all is the first test below. Update() is a whole-descriptor
+    // REPLACE: anything the caller does not model binds as a default and is then deleted from
+    // config.json by the writer. A quick-edit surface must not be able to do that, so the persona
+    // route applies `with { }` against the LIVE descriptor and can reach exactly six fields.
+
+    [Fact]
+    public async Task UpdatePersona_LeavesEverySettingOutsideThePersonaUntouched()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var original = CreateDescriptor("agent-a") with
+        {
+            ToolIds = ["shell", "memory"],
+            Summary = "a summary the persona panel never models",
+            Metadata = new Dictionary<string, object?> { ["team"] = "platform" }
+        };
+        registry.Register(original);
+        var controller = CreateController(registry);
+
+        var result = await controller.UpdatePersona(
+            "agent-a",
+            new AgentPersonaUpdate { DisplayName = "Renamed", Responsibility = "Owns billing" },
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        var saved = registry.Get(AgentId.From("agent-a"))!;
+        saved.DisplayName.ShouldBe("Renamed");
+        saved.Responsibility.ShouldBe("Owns billing");
+        // The fields a persona body cannot name must survive it.
+        saved.ToolIds.ShouldBe(["shell", "memory"]);
+        saved.Summary.ShouldBe("a summary the persona panel never models");
+        saved.ModelId.ShouldBe("test-model");
+        saved.ApiProvider.ShouldBe("test-provider");
+        saved.Metadata!["team"].ShouldBe("platform");
+    }
+
+    [Fact]
+    public async Task UpdatePersona_PersistsThroughTheConfigurationWriter()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new AgentsController(
+            registry, Mock.Of<IAgentSupervisor>(), writer.Object, [CreateNotifier().Object]);
+
+        _ = await controller.UpdatePersona(
+            "agent-a",
+            new AgentPersonaUpdate { DisplayName = "Renamed", AvatarHue = 210 },
+            CancellationToken.None);
+
+        writer.Verify(w => w.SaveAsync(
+            It.Is<AgentDescriptor>(d => d.DisplayName == "Renamed" && d.AvatarHue == 210),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdatePersona_ForAnUnknownAgent_ReturnsNotFound()
+    {
+        var controller = CreateController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
+
+        var result = await controller.UpdatePersona(
+            "no-such-agent", new AgentPersonaUpdate { DisplayName = "X" }, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<NotFoundResult>();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task UpdatePersona_WithoutADisplayName_ReturnsBadRequest(string? displayName)
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var controller = CreateController(registry);
+
+        var result = await controller.UpdatePersona(
+            "agent-a", new AgentPersonaUpdate { DisplayName = displayName }, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        // The rejected write must not have reached the registry.
+        registry.Get(AgentId.From("agent-a"))!.DisplayName.ShouldBe("agent-a-display");
+    }
+
+    [Fact]
+    public async Task UpdatePersona_TreatsBlankOptionalFieldsAsCleared()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a") with
+        {
+            Responsibility = "Owns billing",
+            Boundaries = "No config writes",
+            Description = "Tracks spend"
+        });
+        var controller = CreateController(registry);
+
+        _ = await controller.UpdatePersona(
+            "agent-a",
+            new AgentPersonaUpdate { DisplayName = "Kept", Responsibility = "   ", Boundaries = null },
+            CancellationToken.None);
+
+        var saved = registry.Get(AgentId.From("agent-a"))!;
+        saved.Responsibility.ShouldBeNull();
+        saved.Boundaries.ShouldBeNull();
+        saved.Description.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task UpdatePersona_TrimsTheFieldsItStores()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var controller = CreateController(registry);
+
+        _ = await controller.UpdatePersona(
+            "agent-a",
+            new AgentPersonaUpdate { DisplayName = "  Renamed  ", Responsibility = "  Owns billing  " },
+            CancellationToken.None);
+
+        var saved = registry.Get(AgentId.From("agent-a"))!;
+        saved.DisplayName.ShouldBe("Renamed");
+        saved.Responsibility.ShouldBe("Owns billing");
+    }
+
+    [Fact]
+    public async Task UpdatePersona_WithANullHue_StoresAutoRatherThanASentinel()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a") with { AvatarHue = 210 });
+        var controller = CreateController(registry);
+
+        _ = await controller.UpdatePersona(
+            "agent-a",
+            new AgentPersonaUpdate { DisplayName = "Kept", AvatarHue = null },
+            CancellationToken.None);
+
+        // Null is "generate a hue from the agent id", which is a real choice - not an absence,
+        // and never 0 (which is a real hue, red).
+        registry.Get(AgentId.From("agent-a"))!.AvatarHue.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task UpdatePersona_KeepsHueZeroWhichIsARealColour()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var controller = CreateController(registry);
+
+        _ = await controller.UpdatePersona(
+            "agent-a",
+            new AgentPersonaUpdate { DisplayName = "Kept", AvatarHue = 0 },
+            CancellationToken.None);
+
+        registry.Get(AgentId.From("agent-a"))!.AvatarHue.ShouldBe(0);
+    }
 }

@@ -277,6 +277,14 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         var prompt = SystemPromptBuilder.Build(new SystemPromptParams
         {
+            // The persona comes straight off the descriptor. Before this, DisplayName and
+            // Description were portal decoration - two agents with different descriptions produced
+            // identical prompts.
+            Persona = new AgentPersona(
+                descriptor.DisplayName,
+                descriptor.Responsibility,
+                descriptor.Description,
+                descriptor.Boundaries),
             WorkspaceDir = workspacePath,
             ExtraSystemPrompt = descriptor.SystemPrompt,
             ContextFiles = contextFiles,

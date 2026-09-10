@@ -36,6 +36,27 @@ public sealed record MemoryEntry
     public string? OriginSessionId { get; init; }
 
     /// <summary>
+    /// The person this memory came from, when one is identifiable. Nullable and additive.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Recorded now, not yet enforced.</b> No retrieval path filters on this column. Memory is
+    /// still scoped per agent, which is the correct model for a single-operator deployment; on a
+    /// shared portal it means one person's context is context for the next. Capturing the identity
+    /// from today onward is what makes the eventual filter a small change against a corpus that
+    /// already carries the data, instead of a migration against a corpus where the answer is
+    /// unrecoverable — the rows that exist before this column cannot be attributed after the fact.
+    /// </para>
+    /// <para>
+    /// <b>Null is expected and is not a defect.</b> Rows predating the column have none, and the
+    /// cron, compaction and dreaming write paths have no human in the loop to attribute at all.
+    /// Anything that later filters on this must therefore decide deliberately what an unattributed
+    /// row means — shared, or invisible — rather than assuming every row has an owner.
+    /// </para>
+    /// </remarks>
+    public string? UserId { get; init; }
+
+    /// <summary>
     /// The provenance coerced into the closed vocabulary, defaulting to
     /// <see cref="MemoryProvenance.Unknown"/>. Read paths should use this rather than the raw
     /// column so an absent, stale or malformed value can never present as first-party.

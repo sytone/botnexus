@@ -205,7 +205,8 @@ public sealed record ActivityDashboardFilter(
     ActivityRecencyWindow Recency = ActivityRecencyWindow.Any,
     ActivityOriginFilter Origin = ActivityOriginFilter.All,
     ActivityPinFilter Pinned = ActivityPinFilter.All,
-    ActivityLiveFilter Live = ActivityLiveFilter.All);
+    ActivityLiveFilter Live = ActivityLiveFilter.All,
+    string? Query = null);
 
 /// <summary>
 /// One agent involved in a conversation, together with the role the gateway stamped for it (#2857).
@@ -815,6 +816,10 @@ public static class ActivityDashboardProjection
             .Where(x => MatchesLive(
                 IsRowLive(x.Dto.ActiveSessionId, x.Liveness),
                 filter.Live))
+            // Last in the chain, and that is the point: seven facets narrow by CATEGORY, and this
+            // narrows by NAME. Someone who half-remembers a conversation should not first have to
+            // work out which of the seven excludes the other thirty rows.
+            .Where(x => MatchesQuery(x.Dto, x.Agents, filter.Query))
             // Pinned-first is a GROUPING key applied ahead of the existing ordering keys, mirroring
             // ConversationsController's pinned-first list ordering rather than inventing a second
             // rule. The UpdatedAt-descending / ConversationId-ordinal contract is untouched and
@@ -1134,6 +1139,41 @@ public static class ActivityDashboardProjection
 
     // All short-circuits rather than comparing, so the default filter costs nothing per row on the
     // common unfiltered landing view - the same shape as MatchesOrigin/MatchesPinned.
+    /// <summary>
+    /// Whether a row matches the typed text, by title or by the agents involved.
+    /// </summary>
+    /// <remarks>
+    /// Agent ids are searched as well as titles because "the deploy run that failed" is how people
+    /// actually describe a row, and on this page the agent is a column they can see. It is a
+    /// plain case-insensitive substring test over data already in the browser: the row set is
+    /// already fetched and filtered client-side, so a round trip would add latency to answer a
+    /// question the page can answer instantly.
+    /// <para>
+    /// An empty or whitespace query matches everything, so clearing the box restores the facets'
+    /// result rather than emptying the table.
+    /// </para>
+    /// </remarks>
+    private static bool MatchesQuery(
+        ConversationSummaryDto dto,
+        IReadOnlyList<ActivityAgentRef> agents,
+        string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return true;
+
+        var needle = query.Trim();
+
+        if (dto.Title?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+
+        if (dto.AgentId?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+
+        // Only the agent ID: ActivityAgentRef carries an id and a role, not a display name, and
+        // inventing a name lookup here would put a second source of truth beside the agents column.
+        return agents.Any(a => a.AgentId.Contains(needle, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static bool MatchesLive(bool isLive, ActivityLiveFilter filter) => filter switch
     {
         ActivityLiveFilter.Live => isLive,

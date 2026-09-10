@@ -60,8 +60,43 @@ public sealed record AgentDescriptor : ICitizen
     /// <summary>Optional emoji that visually identifies this agent in user interfaces.</summary>
     public string? Emoji { get; init; }
 
+    /// <summary>
+    /// Optional avatar hue in degrees (0-359), chosen by the operator.
+    /// </summary>
+    /// <remarks>
+    /// A HUE, not a colour: saturation and lightness are the client stylesheet's business because
+    /// they differ between light and dark, and fixing them is what keeps every agent's avatar at the
+    /// same contrast. Null means "generate one from the agent id", which is the default and is what
+    /// every agent that nobody configures will keep using.
+    /// </remarks>
+    public int? AvatarHue { get; init; }
+
     /// <summary>Optional description of the agent's purpose.</summary>
+    /// <remarks>
+    /// Until #P1 this was display-only - it appeared on cards and changed nothing about behaviour.
+    /// It now reaches the system prompt as part of the agent's persona, so what an operator writes
+    /// here is what the agent is told it does.
+    /// </remarks>
     public string? Description { get; init; }
+
+    /// <summary>
+    /// One short line naming what this agent owns, e.g. "keeps the Plex library healthy".
+    /// </summary>
+    /// <remarks>
+    /// Deliberately separate from <see cref="Description"/>: this is the line a roster shows under
+    /// an agent's name, so it has to stay short enough to scan. Description is the prose behind it.
+    /// </remarks>
+    public string? Responsibility { get; init; }
+
+    /// <summary>
+    /// What this agent must NOT do - the limits of its remit.
+    /// </summary>
+    /// <remarks>
+    /// Its own field rather than a paragraph inside <see cref="Description"/>, because "what it does"
+    /// and "what it must not do" are read at different moments and one should never be buried in the
+    /// other. Rendered as its own block in the prompt for the same reason.
+    /// </remarks>
+    public string? Boundaries { get; init; }
 
     /// <summary>
     /// Optional agent-maintained account of what this agent is currently doing (#3596).
@@ -133,6 +168,43 @@ public sealed record AgentDescriptor : ICitizen
     /// Resolved through the tool registry at agent creation time.
     /// </summary>
     public IReadOnlyList<string> ToolIds { get; init; } = [];
+
+    /// <summary>
+    /// Whether this agent's own tool policy lets it hand work to another agent - that is, whether
+    /// it is allowed to be a parent. Surfaced on the portal roster so the board can tell an agent
+    /// that may delegate apart from one that can only act alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two tools count, because there are two ways to hand work to another agent and an operator
+    /// reading the board does not care which mechanism is configured. <c>spawn_subagent</c> creates
+    /// an ephemeral child; <c>agent_converse</c> calls an agent that already exists. An agent with
+    /// either one can delegate, and an agent with neither cannot.
+    /// </para>
+    /// <para>
+    /// This reproduces the tool-level half of the gates in <c>SubAgentToolProvider</c> and
+    /// <c>AgentConverseToolProvider</c>: <c>ToolProviderContext.ToolAllowed</c> admits a tool when
+    /// the effective tool list is empty (an unrestricted agent receives everything the registry
+    /// offers) or names it explicitly, and <c>["*"]</c> is normalised to empty upstream by
+    /// <c>InProcessIsolationStrategy</c>. Both branches are repeated here so a roster badge cannot
+    /// claim a capability the agent will not actually be handed.
+    /// </para>
+    /// <para>
+    /// It reflects THIS AGENT'S CONFIGURATION ONLY, and it says nothing about WHOM the agent may
+    /// call - <see cref="SubAgentIds"/> carries that, and is enforced only when the gateway's
+    /// agent-exchange policy is <c>whitelist</c> (and not at all on the spawn path). Runtime
+    /// conditions are excluded too, none of them being a property of the agent: the spawn tool also
+    /// needs a sub-agent manager, <c>SubAgentOptions.MaxDepth</c> above zero and a session that is
+    /// not itself a sub-agent session; the converse tool needs an exchange service and a session
+    /// store. A caller rendering this as "can delegate" is responsible for suppressing the
+    /// affordance when delegation is disabled platform-wide.
+    /// </para>
+    /// </remarks>
+    public bool CanDelegate =>
+        ToolIds.Count == 0
+        || (ToolIds.Count == 1 && ToolIds[0] == "*")
+        || ToolIds.Contains("spawn_subagent", StringComparer.OrdinalIgnoreCase)
+        || ToolIds.Contains("agent_converse", StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Model IDs this agent is allowed to use. Empty means unrestricted within provider allowlist.

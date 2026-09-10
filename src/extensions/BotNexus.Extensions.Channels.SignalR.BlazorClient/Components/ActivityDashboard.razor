@@ -58,6 +58,28 @@
     }
 
     <div class="activity-filter-bar" role="group" aria-label="Filter activity" data-testid="activity-filter-bar">
+        @* First control, and deliberately so. Seven facets narrow by CATEGORY; this narrows by
+           NAME, and someone who half-remembers a row should not have to work out which facet
+           excludes the other thirty before they can look for it. *@
+        <input type="search"
+               class="activity-filter-search"
+               data-testid="activity-filter-search"
+               placeholder="Search titles and agents"
+               aria-label="Search activity by title or agent"
+               value="@_filter.Query"
+               @oninput="OnQueryChanged" />
+
+        @* The facets stay reachable but stop being the first thing in the way. The count is not
+           decoration: a facet left set while this is collapsed would otherwise be an invisible
+           reason for missing rows. *@
+        <button type="button"
+                class="activity-filter-btn @(_showMoreFilters ? "active" : "")"
+                data-testid="activity-filter-more"
+                aria-expanded="@_showMoreFilters"
+                @onclick="() => _showMoreFilters = !_showMoreFilters">
+            More filters@(ActiveFacetCount > 0 ? $" ({ActiveFacetCount})" : "")
+        </button>
+
         <button type="button"
                 class="activity-filter-btn @(_filter.IncludeCron ? "active" : "")"
                 data-testid="activity-filter-cron"
@@ -86,6 +108,11 @@
             <option value="@ActivityStatusFilter.All">All statuses</option>
         </select>
 
+        @* Demoted, not removed: these four sit at "any" almost always, so they were seven-eighths
+           of the bar's width for one-eighth of its use. Agent and status stay out here because they
+           are how someone scopes the page in the first place. *@
+        @if (_showMoreFilters)
+        {
         <select class="activity-filter-select" data-testid="activity-filter-recency"
                 aria-label="Filter by recency"
                 value="@_filter.Recency"
@@ -123,6 +150,7 @@
             <option value="@ActivityLiveFilter.Live">Live now</option>
             <option value="@ActivityLiveFilter.Idle">Idle only</option>
         </select>
+        }
     </div>
 
     @if (_isLoading && _rows is null)
@@ -269,6 +297,43 @@
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
     private ActivityDashboardFilter _filter = new();
+
+    /// <summary>
+    /// Whether the facet selects are shown. Collapsed by default so the search box is the first
+    /// thing on the bar, which is the whole point of the change.
+    /// </summary>
+    private bool _showMoreFilters;
+
+    /// <summary>
+    /// How many facets are set to something other than their default.
+    /// </summary>
+    /// <remarks>
+    /// Counts only the HIDDEN facets, and that is the point: a facet left set behind a collapsed
+    /// panel would otherwise be an invisible explanation for missing rows, which is a worse problem
+    /// than the one this change set out to fix. The visible ones need no badge - they show their
+    /// own state.
+    /// </remarks>
+    private int ActiveFacetCount
+    {
+        get
+        {
+            var count = 0;
+            if (_filter.Recency != ActivityRecencyWindow.Any) count++;
+            if (_filter.Origin != ActivityOriginFilter.All) count++;
+            if (_filter.Pinned != ActivityPinFilter.All) count++;
+            if (_filter.Live != ActivityLiveFilter.All) count++;
+            return count;
+        }
+    }
+
+    private void OnQueryChanged(ChangeEventArgs e)
+    {
+        // No debounce and no round trip: the rows are already in the browser, so this is a
+        // substring test over a list the page has in hand. Anything slower than instant here would
+        // be latency invented rather than incurred.
+        _filter = _filter with { Query = e.Value?.ToString() };
+    }
+
 
     // #3421: resolved optionally rather than @inject'ed so a host that has not registered the cron
     // client (and every existing bUnit fixture) renders the dashboard exactly as before instead of

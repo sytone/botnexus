@@ -31,6 +31,13 @@ public interface IGatewayHubClient
     Task MessageEnd(AgentStreamEvent evt);
     Task Error(AgentStreamEvent evt);
     Task UserInputRequired(AgentStreamEvent evt);
+
+    /// <summary>
+    /// A notification was raised. Carries the whole notification so the client can render it
+    /// without a follow-up fetch, while the store remains the source of truth for anything missed.
+    /// </summary>
+    /// <param name="payload">The raised notification.</param>
+    Task NotificationRaised(NotificationPayload payload);
     Task SubAgentSpawned(SubAgentEventPayload payload);
     Task SubAgentCompleted(SubAgentEventPayload payload);
     Task SubAgentFailed(SubAgentEventPayload payload);

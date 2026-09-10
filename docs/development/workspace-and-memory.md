@@ -698,24 +698,50 @@ memory_get(file="2026-04-01", lines="1-5")
 
 Memory consolidation is the process of distilling daily notes into long-term memory (MEMORY.md).
 
+Consolidation **ships** as the `memory-dreaming` cron action
+(`BotNexus.Cron/Actions/MemoryDreamingCronAction.cs`).
+
+> Until this page was corrected, it described consolidation as a future "Wave 5" capability and
+> pointed at a `consolidate-memory` action and a `MemoryConsolidationIntervalHours` setting.
+> **Neither of those identifiers exists anywhere in the source.** An operator following the old text
+> would have configured a cron job that could never run. The details below are taken from the
+> action itself.
+
 ### Consolidation Trigger
 
-- **Interval**: Configurable via `MemoryConsolidationIntervalHours` (default: 24)
-- **Mechanism**: Cron service — runs as a `maintenance` job with `consolidate-memory` action (see [Cron and Scheduling Guide](../cron-and-scheduling.md))
-- **Manual**: Not yet available — Wave 5 consolidation will provide a dedicated mechanism
+- **Mechanism**: a cron job whose action type is `memory-dreaming`, run by the cron service (see
+  [Cron and Scheduling Guide](../cron-and-scheduling.md)).
+- **Interval**: whatever schedule you give that cron job. There is no separate interval setting.
+- **Provisioning**: **none — you must create the job yourself.** `MemoryDreamingCronAction` is
+  registered as an available action in `CronServiceCollectionExtensions`, but unlike the heartbeat
+  and skill-review actions it has no provisioner, so no job is created for you. An agent with
+  memory enabled and no `memory-dreaming` job never consolidates.
+
+Configuration is per-job, through `CronJob.Metadata`:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `lookbackDays` | 14 | How many days of daily notes to read |
+| `maxContentChars` | 50000 | Cap on the source material handed to the model |
 
 ### Consolidation Process
 
-Consolidation is a **future capability** (Wave 5). During normal turns, `MEMORY.md` is read-only — only daily notes under `memory/` are writable via `memory_save`.
+1. Reads the agent's daily notes under `memory/` for the last `lookbackDays`, capped at
+   `maxContentChars`. If there are none, the run is a no-op.
+2. Reads the existing `MEMORY.md` so the model can see what it has already concluded.
+3. Builds a consolidation prompt and dispatches a **sub-agent session** to run it.
+4. That sub-agent appends a new `## Consolidated — YYYY-MM-DD` section to `MEMORY.md` using the
+   ordinary `memory_save` tool.
+5. Separately, durable knowledge is promoted to any shared stores the agent may write to, via
+   `SharedMemoryPromoter`, which skips near-duplicates at a 0.85 similarity threshold.
 
-When consolidation is implemented, the planned flow is:
+**Note on `MEMORY.md` writability.** This page previously claimed `MEMORY.md` was read-only during
+normal turns and reachable only through a privileged consolidation path. It is not: `memory_save`
+accepts a `file_path`, `MarkdownAgentMemory.SaveToFileAsync` passes it through unguarded, and the
+consolidation prompt relies on exactly that to write `MEMORY.md`. The daily-note default is a
+convention the scaffolded `AGENTS.md` encourages, not an enforced boundary.
 
-1. A dedicated consolidation agent reviews daily notes via `memory_get(file="{yesterday}")` or `memory_search()`
-2. The consolidation agent identifies patterns and durable learnings
-3. The consolidation agent writes updated content to `MEMORY.md` (using a privileged write path not available during normal turns)
-4. The scaffolded `AGENTS.md` template reminds agents to use `MEMORY.md` for stable facts and `memory/YYYY-MM-DD.md` for active work context
-
-**Example of what consolidation will produce**:
+**Example**:
 ```text
 Daily Notes (memory/2026-04-02.md):
 User prioritizes concise summaries, max 100 words
@@ -723,19 +749,19 @@ Architecture has 17 projects with clean inversion
 Build command: dotnet build dirs.proj
 Confirmed user timezone is Pacific Time
 
-Consolidation → MEMORY.md updated by consolidation agent:
+memory-dreaming → MEMORY.md gains:
+## Consolidated — 2026-04-03
 - Pattern: User prefers concise summaries (max 100 words) before detail
 - User timezone is Pacific Time
 ```
 
-### Future Consolidation (Planned)
+### Still not built
 
-Phase 3 of the workspace/memory initiative includes:
-
-- **IMemoryConsolidator** interface for pluggable consolidation strategies
-- **LLM-based consolidation**: Call a model to distill daily notes
-- **Cron-based trigger**: Consolidation runs on schedule via the centralized cron service (`consolidate-memory` maintenance action)
-- **Configurable model**: `ConsolidationModel` config for consolidation LLM (can differ from agent's primary model)
+- **`IMemoryConsolidator`** — there is no pluggable consolidation-strategy interface; the dreaming
+  action is the only implementation and is not behind a seam.
+- **A dedicated consolidation model setting** — the sub-agent runs on the agent's own model. There
+  is no `ConsolidationModel` equivalent to compaction's `SummarizationModel`.
+- **Automatic provisioning** — see above; the job is operator-created.
 
 ---
 
@@ -781,6 +807,59 @@ Agent workspaces are configured via `AgentConfig` in the BotNexus configuration:
 > `~/.botnexus/agents/{id}/workspace/`. There is likewise no `maxContextFileChars`,
 > `autoLoadMemory`, `consolidationModel` or `memoryConsolidationIntervalHours` key; none of these bind
 > to anything.
+
+### Shared memory stores
+
+Every key above is per-agent, and an agent's memory is private to it. Stores that more than one
+agent can reach are configured at the **gateway** level instead, because they belong to no single
+agent:
+
+```json
+{
+  "gateway": {
+    "memory": {
+      "sharedStores": [
+        {
+          "name": "platform-knowledge",
+          "description": "Facts about this deployment that every agent should share.",
+          "readers": ["*"],
+          "writers": ["curator"],
+          "retentionDays": 365
+        }
+      ]
+    }
+  }
+}
+```
+
+Bound from `gateway:memory` to `GatewayMemoryConfig`, and rendered on the Configuration page from
+the same attributes — so that page is the editor; there is no separate shared-memory screen.
+
+| Property | Type | Default | Purpose |
+|----------|------|---------|---------|
+| `name` | string | — | Unique store name. An entry without one is dropped rather than half-created |
+| `description` | string | none | What the store is for. Shown wherever the store is listed |
+| `readers` | string[] | empty | Agent ids that may read it. `"*"` means every agent; **empty means nobody** |
+| `writers` | string[] | empty | Agent ids that may write to it. Same `"*"` rule, and normally much shorter than `readers` |
+| `retentionDays` | int | none | Days entries are kept. Absent keeps them indefinitely |
+
+**Absent or empty means every agent's memory stays private**, which is the default and does not
+change until a store is configured. An empty registry answers "no" to every read and write check,
+which is the behaviour that shipped before shared stores were wired up at all.
+
+**`readers` and `writers` are separate on purpose, and the asymmetry is the point.** Wide
+readership is ordinary — that is what a shared store is for. Wide *write* access is a different
+object: a store every agent can write is a channel through which one agent's note becomes a fact
+the others read. Prefer many readers and a single curating writer.
+
+Promotion into a shared store is an authority transfer rather than a copy, so `SharedMemoryPromoter`
+refuses to promote anything that is not first-party — see [Memory trust tiers](#memory-trust-tiers).
+
+To check the resulting access without reading `config.json`, use
+[`GET /api/memory/shared`](../api-reference.md#shared-memory-stores), or the Shared stores section
+of the portal's Memory page. Both resolve `"*"` against the live roster and report the number of
+agents that can actually reach each store, which is the form in which a too-wide access list is
+noticeable.
 
 ### Environment Variables
 

@@ -39,6 +39,8 @@ using BotNexus.Gateway.Telemetry;
 using Serilog;
 using System.Reflection;
 using BotNexus.Gateway.Nav;
+using BotNexus.Gateway.Notifications;
+using BotNexus.Gateway.Notifications.Push;
 using BotNexus.Gateway.Tools;
 using BotNexus.Gateway.Webhooks;
 
@@ -276,6 +278,27 @@ builder.Services.AddBotNexusTools(toolsDbPath);
 // ordering overrides survive gateway restarts and roam with the user (#2236, slice 5 of #2231).
 var navOrderDbPath = System.IO.Path.Combine(webhookDataDir, "nav-order.sqlite");
 builder.Services.AddBotNexusNavOrder(navOrderDbPath);
+
+// Notifications - SQLite alongside the other stores. Server-side rather than in the browser
+// because the point is to report what happened while nobody was watching, and "not watching"
+// includes being on another device.
+var notificationsDbPath = System.IO.Path.Combine(webhookDataDir, "notifications.sqlite");
+builder.Services.AddBotNexusNotifications(notificationsDbPath);
+
+// Web push - the delivery layer that reaches a device with the portal closed, and the one a phone
+// or desktop client subscribes to in exactly the same way. The VAPID pair is the gateway's
+// identity to every push service and is generated once on first use; regenerating it would
+// silently invalidate every subscription, which is why it lives in a file rather than in memory.
+// APNs - the only way to wake a NATIVE iOS app, which web push cannot do. Inert unless
+// gateway:apns is configured with an Apple Developer team, key and bundle id.
+builder.Services.AddBotNexusApns(
+    System.IO.Path.Combine(webhookDataDir, "apns-devices.sqlite"),
+    ApnsOptions.FromConfiguration(key => builder.Configuration[key]));
+
+builder.Services.AddBotNexusWebPush(
+    System.IO.Path.Combine(webhookDataDir, "push-subscriptions.sqlite"),
+    System.IO.Path.Combine(webhookDataDir, "vapid.json"),
+    builder.Configuration["gateway:push:subject"] ?? "https://github.com/sytone/botnexus");
 
 static string? ResolveCronModel(CronJobConfig config)
 {
@@ -659,6 +682,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+// Extensions that asked to run behind authentication map here, after the auth and rate-limiting
+// middleware above, so their routes are subject to the same checks as any other API route. The
+// pre-auth pass ran before UseCors, because the portal shell has to be reachable to authenticate.
+AssemblyLoadContextExtensionLoader.MapExtensionEndpointsAfterAuthentication(app);
 
 app.MapControllers();
 app.MapGet("/health", async (IServiceProvider sp) =>

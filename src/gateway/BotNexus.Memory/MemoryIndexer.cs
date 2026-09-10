@@ -2,6 +2,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Domain.Primitives;
+using BotNexus.Memory.Learning;
 using BotNexus.Memory.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -95,6 +96,50 @@ public sealed class MemoryIndexer(
             await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
             await IndexSessionCoreAsync(session, AgentId.From(agentId), SessionId.From(sessionId), store, cancellationToken).ConfigureAwait(false);
         }
+
+        await ExtractSessionLearningAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Distils the session's newly indexed turns into <c>learning</c> rows.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Runs after indexing rather than inside it, and reads the turns back from the store, so the
+    /// same distillation happens whichever branch above did the indexing. Putting it in only one
+    /// branch would mean an agent's knowledge quietly depended on whether an
+    /// <see cref="IAgentMemory"/> provider happened to be registered.
+    /// </para>
+    /// <para>
+    /// Best-effort by construction. The transcript is already indexed and durable by this point, so
+    /// a failure here loses a derived convenience, not the conversation — and the nightly dreaming
+    /// pass still sees the same rows. Letting it throw would turn a classifier edge case into a
+    /// failed session close.
+    /// </para>
+    /// </remarks>
+    private async Task ExtractSessionLearningAsync(AgentId agentId, SessionId sessionId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var store = _storeFactory.Create(agentId);
+            await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            await SessionLearningExtractor
+                .ExtractAsync(store, agentId, sessionId, _logger, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Session learning extraction failed for agent '{AgentId}' session '{SessionId}'; indexed turns are unaffected.",
+                agentId,
+                sessionId);
+        }
     }
 
     /// <summary>
@@ -173,6 +218,11 @@ public sealed class MemoryIndexer(
                     // The user half is first-party owner input, so the pair is stamped `user`
                     // rather than `agent` - the more conservative of the two halves wins.
                     Provenance = MemoryProvenance.User,
+                    // Per-person attribution, recorded but not yet filtered on (see
+                    // MemoryEntry.UserId). CallerId is the channel's identifier for the human on
+                    // the other end; null for cron, heartbeat and sub-agent sessions, which is the
+                    // honest answer rather than a placeholder.
+                    UserId = session.CallerId,
                     OriginSessionId = sessionId.Value,
                                         // Strip LLM control / role-injection markup before persisting raw transcript
                     // text to the searchable store - defends against memory-poisoning (#1560).

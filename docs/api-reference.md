@@ -2724,10 +2724,19 @@ X-Api-Key: your-api-key
   {
     "agentId": "assistant",
     "entryCount": 42,
-    "totalSizeBytes": 128000
+    "databaseSizeBytes": 128000,
+    "lastIndexedAt": "2026-06-10T14:30:00Z",
+    "embeddedEntryCount": 42,
+    "vectorScanCeiling": 500,
+    "exceedsVectorScanCeiling": false
   }
 ]
 ```
+
+`exceedsVectorScanCeiling` is projected server-side rather than derived by the caller: the store
+holds more embedded rows than one vector search scans, so entries past the ceiling are reachable
+lexically but never semantically. It is a store property an operator needs before concluding that
+memory search is broken.
 
 ---
 
@@ -2745,9 +2754,16 @@ X-Api-Key: your-api-key
 {
   "agentId": "assistant",
   "entryCount": 42,
-  "totalSizeBytes": 128000
+  "databaseSizeBytes": 128000,
+  "lastIndexedAt": "2026-06-10T14:30:00Z",
+  "embeddedEntryCount": 42,
+  "vectorScanCeiling": 500,
+  "exceedsVectorScanCeiling": false
 }
 ```
+
+Returns `404` when the agent is unknown, and `404` with a distinct message when it exists but has
+memory disabled.
 
 ---
 
@@ -2762,6 +2778,53 @@ X-Api-Key: your-api-key
 - `query` (string, query) — Search text
 
 **Response:** 200 OK — Returns matching memory entries.
+
+---
+
+### Shared Memory Stores
+
+**Endpoint:** `GET /api/memory/shared`
+
+**Description:** Lists the memory stores shared between agents, and who may read or write each one.
+
+Reports **access, not contents**. What a store holds is already reachable through the per-agent
+search above; what is otherwise visible only in `config.json` is the access relationship — and a
+store several agents can write to is a channel through which one agent's note becomes a fact the
+others read.
+
+**Request:**
+```http
+GET /api/memory/shared
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "name": "platform-knowledge",
+    "description": "Facts about this deployment that every agent should share.",
+    "readers": ["*"],
+    "writers": ["curator"],
+    "retentionDays": 365,
+    "readerCount": 16,
+    "writerCount": 1
+  }
+]
+```
+
+| Field | Meaning |
+|---|---|
+| `readers` / `writers` | The configured access lists **verbatim**, so `"*"` appears as written |
+| `readerCount` / `writerCount` | The same lists resolved against the **current** agent roster |
+
+The counts exist because `"*"` reads as harmless until you notice the roster has sixteen agents on
+it. `writerCount` is the number worth checking: a store every agent can write is a very different
+object from one a single curator maintains.
+
+Returns `200` with an empty array — never `404` or `500` — on a gateway with no shared stores
+configured, which is the default. Configure them under `gateway.memory.sharedStores`; see
+[Shared memory stores](development/workspace-and-memory.md#shared-memory-stores).
 
 ---
 

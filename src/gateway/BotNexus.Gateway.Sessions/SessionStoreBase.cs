@@ -62,6 +62,30 @@ public abstract class SessionStoreBase : ISessionStore
         return SessionSaveOutcome.Persisted;
     }
 
+    /// <summary>
+    /// Full-text search over transcript content. Stores without a text index find nothing.
+    /// </summary>
+    /// <remarks>
+    /// Declared HERE, virtual, rather than relying on the interface's default implementation - and
+    /// that distinction is the whole reason this member exists on the base class.
+    /// <para>
+    /// A class's interface map is fixed where the interface is added to the hierarchy, which is
+    /// this class. When only the default interface method existed, ISessionStore.SearchHistoryAsync
+    /// bound to that default HERE, and a derived class declaring a matching public method did not
+    /// re-map it: the method was simply new. Calls on the concrete type reached the override, calls
+    /// through ISessionStore reached the empty default, and since the controller holds the
+    /// interface the feature returned nothing in production while its tests - which used the
+    /// concrete type - stayed green.
+    /// </para>
+    /// </remarks>
+    /// <param name="query">Free text; implementations sanitise it.</param>
+    /// <param name="limit">Maximum matching messages to return.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Matching messages, best match first, or empty for stores with no index.</returns>
+    public virtual Task<IReadOnlyList<ConversationSearchHit>> SearchHistoryAsync(
+        string query, int limit = 25, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<ConversationSearchHit>>([]);
+
     public abstract Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>

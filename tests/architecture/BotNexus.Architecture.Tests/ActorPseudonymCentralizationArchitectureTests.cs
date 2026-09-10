@@ -40,6 +40,10 @@ public sealed class ActorPseudonymCentralizationArchitectureTests : Architecture
                 "Hashes FILE CONTENT (6 bytes) for read/write staleness detection, not an identity.",
             ["src/agent/BotNexus.Agent.Providers.Core/Streaming/ResponsesMessageConverter.cs"] =
                 "Provider wire-parity message-id hash; pinned to the provider's payload format.",
+            ["src/gateway/BotNexus.Gateway/Tools/ToolCatalogFingerprint.cs"] =
+                "Hashes TOOL DEFINITIONS AND THEIR ORDER to detect a catalogue that reshuffles " +
+                "between requests and silently invalidates the provider prompt cache. Content, " +
+                "not an identity, and never surfaced to a user.",
         };
 
     /// <summary>

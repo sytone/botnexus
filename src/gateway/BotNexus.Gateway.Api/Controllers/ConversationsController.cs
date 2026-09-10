@@ -1185,4 +1185,70 @@ public sealed class ConversationsController : ControllerBase
     private static string? Truncate(string? value, int maxLength)
         => TextTruncation.SafeTruncate(value, maxLength);
 
+
+    /// <summary>
+    /// Searches what was actually said, not just conversation titles.
+    /// </summary>
+    /// <remarks>
+    /// Returns one row per CONVERSATION, ranked by how well it matched, each carrying a snippet as
+    /// the evidence. The store returns message-level hits; grouping happens here because a caller
+    /// asking "which conversation was that in?" wants conversations, while a store that collapsed
+    /// them would have thrown away the snippet that answers "why this one?".
+    /// <para>
+    /// Deliberately returns ids and snippets rather than whole conversations: the portal already
+    /// holds the roster with titles, so joining client-side keeps this endpoint cheap and stops it
+    /// becoming a second, divergent conversation projection.
+    /// </para>
+    /// </remarks>
+    /// <param name="q">What the person typed. Sanitised before it reaches FTS5.</param>
+    /// <param name="limit">Maximum conversations to return.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>One row per matching conversation, best match first.</returns>
+    [HttpGet("search")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult> Search(
+        [FromQuery] string? q,
+        [FromQuery] int limit = 20,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(q))
+            return BadRequest(new { error = "A query is required." });
+
+        // Over-fetch messages so that grouping to conversations still fills the requested page:
+        // one conversation can easily own several of the top hits.
+        var perConversation = Math.Clamp(limit, 1, 50);
+        var hits = await _sessions.SearchHistoryAsync(q, perConversation * 5, cancellationToken)
+            .ConfigureAwait(false);
+
+        var grouped = hits
+            .Where(h => !string.IsNullOrWhiteSpace(h.ConversationId))
+            .GroupBy(h => h.ConversationId!, StringComparer.Ordinal)
+            .Select(g => new
+            {
+                conversationId = g.Key,
+                matchCount = g.Count(),
+                // The first hit is the best-ranked one, because the store returns bm25 order and
+                // GroupBy preserves it.
+                snippet = TextTruncation.SafeTruncate(PortalTextSingleLine(g.First().Snippet), 240, "..."),
+                role = g.First().Role,
+                sessionId = g.First().SessionId,
+                timestamp = g.First().Timestamp
+            })
+            .Take(perConversation)
+            .ToList();
+
+        return Ok(new { query = q, results = grouped, count = grouped.Count });
+    }
+
+    /// <summary>
+    /// Collapses a snippet to one line. A transcript carries newlines and tabs, and a match found
+    /// in the middle of a long assistant turn would otherwise render as a wall of text in a picker
+    /// row sized for one line.
+    /// </summary>
+    private static string PortalTextSingleLine(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
 }
