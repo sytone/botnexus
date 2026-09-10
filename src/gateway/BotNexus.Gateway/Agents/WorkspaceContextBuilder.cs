@@ -511,6 +511,9 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             return promptFile;
 
         var searchDirectory = Path.GetFullPath(Path.Combine(workspacePath, directoryPart));
+        if (!IsPathUnderWorkspace(workspacePath, searchDirectory))
+            return promptFile;
+
         var resolvedName = ResolveVariantFileName(fileSystem, searchDirectory, fileName, modelId, providerId);
 
         return string.IsNullOrEmpty(directoryPart)
@@ -887,8 +890,9 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         var workspaceFullPath = fileSystem.Path.GetFullPath(workspacePath);
         var workspacePrefix = workspaceFullPath.TrimEnd(fileSystem.Path.DirectorySeparatorChar, fileSystem.Path.AltDirectorySeparatorChar)
             + fileSystem.Path.DirectorySeparatorChar;
-        if (!memoryRoot.StartsWith(workspacePrefix, StringComparison.OrdinalIgnoreCase) &&
-            !memoryRoot.Equals(workspaceFullPath, StringComparison.OrdinalIgnoreCase))
+        var comparison = GetPathComparison();
+        if (!memoryRoot.StartsWith(workspacePrefix, comparison) &&
+            !memoryRoot.Equals(workspaceFullPath, comparison))
             return fileSystem.Path.Combine(workspacePath, "memory");
 
         return memoryRoot;
@@ -900,9 +904,13 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         var workspacePrefix = workspaceFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             + Path.DirectorySeparatorChar;
 
-        return filePath.StartsWith(workspacePrefix, StringComparison.OrdinalIgnoreCase) ||
-            filePath.Equals(workspaceFullPath, StringComparison.OrdinalIgnoreCase);
+        var comparison = GetPathComparison();
+        return filePath.StartsWith(workspacePrefix, comparison) ||
+            filePath.Equals(workspaceFullPath, comparison);
     }
+
+    private static StringComparison GetPathComparison()
+        => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     private static string MergeHookResults(string prompt, IReadOnlyList<BeforePromptBuildResult> results)
     {
