@@ -75,7 +75,7 @@ internal sealed class ServeCommand
         if (buildResult != 0)
             return buildResult;
 
-        var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+        var gatewayDll = CliPaths.GatewayBinary(repoRoot);
 
         if (!File.Exists(gatewayDll))
         {

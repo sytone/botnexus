@@ -29,6 +29,7 @@ public sealed class ExecTool : IAgentTool
 
     private readonly string? _workingDirectory;
     private readonly IFileSystem _fileSystem;
+    private readonly IReadOnlyList<string>? _environmentPassThrough;
     private readonly string _processOwner;
 
     /// <summary>
@@ -42,16 +43,29 @@ public sealed class ExecTool : IAgentTool
     /// </summary>
     /// <param name="workingDirectory">The agent workspace, or null for process-relative resolution.</param>
     /// <param name="fileSystem">File system used for Windows .cmd/.bat resolution.</param>
-    public ExecTool(string? workingDirectory, IFileSystem? fileSystem = null)
-        : this(workingDirectory, fileSystem, string.Empty) { }
+    /// <param name="environmentPassThrough">
+    /// Extra environment variable names the operator has opted to expose to child processes, on
+    /// top of <see cref="ToolProcessEnvironment.AllowedVariables"/>. Null or empty keeps the
+    /// default, which carries no authentication material.
+    /// </param>
+    public ExecTool(
+        string? workingDirectory,
+        IFileSystem? fileSystem = null,
+        IReadOnlyList<string>? environmentPassThrough = null)
+        : this(workingDirectory, fileSystem, string.Empty, environmentPassThrough) { }
 
-    internal ExecTool(string? workingDirectory, IFileSystem? fileSystem, string processOwner)
+    internal ExecTool(
+        string? workingDirectory,
+        IFileSystem? fileSystem,
+        string processOwner,
+        IReadOnlyList<string>? environmentPassThrough = null)
     {
         _processOwner = processOwner;
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? null
             : Path.GetFullPath(workingDirectory);
         _fileSystem = fileSystem ?? new FileSystem();
+        _environmentPassThrough = environmentPassThrough is { Count: > 0 } ? environmentPassThrough : null;
     }
 
     /// <inheritdoc />
@@ -278,6 +292,14 @@ public sealed class ExecTool : IAgentTool
         // looping over Args by hand here is precisely how a raw cmd payload gets re-escaped.
         launch.ApplyArgumentsTo(startInfo);
 
+
+        // Replace the inherited block with an allow-listed one BEFORE any caller override is
+        // merged on top. .NET seeds startInfo.Environment from the gateway process, which carries
+        // provider keys and every `env:` credential an operator has exported for their
+        // CredentialRefs; merging onto that block would hand the child the whole keyring plus the
+        // overrides. See ToolProcessEnvironment (GHSA-m4m8-xjp4-5rmm for the same control on the
+        // browser worker).
+        ToolProcessEnvironment.ApplyTo(startInfo.Environment, passThrough: _environmentPassThrough);
 
         if (env is not null)
         {

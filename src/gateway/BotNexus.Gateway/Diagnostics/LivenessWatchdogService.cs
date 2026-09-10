@@ -1,5 +1,7 @@
+using BotNexus.Gateway.Abstractions.Notifications;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using BotNexus.Gateway.Notifications;
 using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Diagnostics;
@@ -90,13 +92,25 @@ public sealed class LivenessWatchdogService : BackgroundService
         IActivityTracker activityTracker,
         IThreadPoolProbe threadPoolProbe,
         IOptions<LivenessWatchdogOptions> options,
-        ILogger<LivenessWatchdogService> logger)
+        ILogger<LivenessWatchdogService> logger,
+        INotificationPublisher? notificationPublisher = null)
     {
         _activityTracker = activityTracker;
         _threadPoolProbe = threadPoolProbe;
         _options = options.Value;
         _logger = logger;
+        // Optional so the many direct-construction call sites keep working unchanged, and so a
+        // watchdog can never fail to start because notifications are unavailable.
+        _notificationPublisher = notificationPublisher ?? NullNotificationPublisher.Instance;
     }
+
+    private readonly INotificationPublisher _notificationPublisher;
+
+    // Notify on the TRANSITION, not on the state. The watchdog re-checks on every interval, so
+    // raising from the condition would file the same alarm every few minutes for as long as the
+    // gateway stayed unwell - which trains an operator to ignore the one notification that means
+    // something is actually broken.
+    private bool _criticalNotified;
 
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -158,6 +172,26 @@ public sealed class LivenessWatchdogService : BackgroundService
                 _options.CriticalProbeTimeout,
                 elapsed,
                 _activityTracker.LastActivityUtc);
+
+            if (!_criticalNotified)
+            {
+                _criticalNotified = true;
+                await _notificationPublisher.TryPublishAsync(
+                    new Notification
+                    {
+                        Id = string.Empty,
+                        Kind = NotificationKind.GatewayHealth,
+                        Severity = NotificationSeverity.Error,
+                        Title = "Gateway is not responding",
+                        Body = $"The scheduler probe timed out after {_options.CriticalProbeTimeout} "
+                            + $"with {elapsed:hh\\:mm\\:ss} of inactivity. A deadlock or thread pool "
+                            + "exhaustion may be preventing work from being scheduled.",
+                        CreatedAtUtc = default,
+                    },
+                    _logger,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
 
@@ -180,6 +214,25 @@ public sealed class LivenessWatchdogService : BackgroundService
             _logger.LogInformation(
                 "Gateway liveness recovered. Activity resumed after {Elapsed} of inactivity.",
                 elapsed);
+
+            // Only after an episode that was actually reported. Recovery from something nobody was
+            // told about is not news.
+            if (_criticalNotified)
+            {
+                _criticalNotified = false;
+                await _notificationPublisher.TryPublishAsync(
+                    new Notification
+                    {
+                        Id = string.Empty,
+                        Kind = NotificationKind.GatewayHealth,
+                        Severity = NotificationSeverity.Info,
+                        Title = "Gateway recovered",
+                        Body = $"Activity resumed after {elapsed:hh\\:mm\\:ss} of inactivity.",
+                        CreatedAtUtc = default,
+                    },
+                    _logger,
+                    cancellationToken).ConfigureAwait(false);
+            }
         }
 
         _warningEmitted = false;

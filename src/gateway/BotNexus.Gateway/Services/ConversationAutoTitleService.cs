@@ -632,15 +632,31 @@ public sealed class ConversationAutoTitleService
                 preferredModelId);
         }
 
-        // Fall back to first available model.
-        var fallback = _llmClient.Models
+        var available = _llmClient.Models
             .GetProviders()
             .OrderBy(p => p, StringComparer.Ordinal)
             .SelectMany(p => _llmClient.Models.GetModels(p))
-            .FirstOrDefault();
+            .ToList();
+
+        // Prefer a model that is cheap enough for background work. Without this the fallback below
+        // took whatever the registry happened to yield first, which is an arbitrary choice twice
+        // over: providers sort alphabetically, putting Anthropic first, and the registry itself is
+        // a concurrent dictionary with no stable enumeration order. In practice that meant titling
+        // every conversation on a frontier model to produce five words.
+        var background = BackgroundModelPreferences.FirstAvailable(available);
+        if (background is not null)
+            return background;
+
+        // Nothing cheap is registered. Fall back to first available rather than refusing to title.
+        var fallback = available.FirstOrDefault();
 
         if (fallback is null)
             throw new InvalidOperationException("No models are registered for auto-title generation.");
+
+        _logger.LogDebug(
+            "Auto-title: no preferred background model is registered; falling back to '{ModelId}'. " +
+            "Set gateway.conversations.titleModel to pin a cheap one.",
+            fallback.Id);
 
         // #1639: the fallback model is correct by construction (endpoint resolved at registration),
         // so it is returned as-is with no BaseUrl patch.
