@@ -277,8 +277,8 @@ Created ──► Active ──► Archived
 
 Archiving is manual. Archived conversations do not appear in fan-out and cannot receive new messages.
 
-- **Desktop portal** — hover a conversation in the sidebar and click the archive button
-  (its tooltip reads **Archive conversation**).
+- **Desktop portal** — hover a conversation in the sidebar; three actions appear on its
+  timestamp line. The rightmost is **Archive conversation** (its tooltip names it).
 - **Mobile portal** — open the overflow menu (the **⋯** button in the top bar) and choose **Archive conversation**, then confirm.
 
 For a virtual cron conversation the action is labelled **Close conversation** instead — closing hides the row from the list, and it reopens automatically when the cron job next fires.
@@ -309,10 +309,10 @@ differ by *when* your message takes effect relative to the running loop:
 
 | Control | When it takes effect | Use it to… |
 |---|---|---|
-| **🔀 Steer** | At the **next turn boundary** — after the current message stream or tool batch finishes. Does not interrupt the in-flight step. | Add guidance the agent should pick up on its next LLM call without throwing away current work. |
+| **Steer** | At the **next turn boundary** — after the current message stream or tool batch finishes. Does not interrupt the in-flight step. | Add guidance the agent should pick up on its next LLM call without throwing away current work. |
 | **Redirect** | **Immediately** — aborts the current step and steers with your message right away. | Change course now when the agent is heading the wrong way and you don't want it to finish the current step. |
-| **➕ Follow Up** | **After the whole loop completes** — queued and delivered once the agent has finished all its turns, tool calls, and any continuations. | Line up the next task as a follow-up without interrupting the current one. |
-| **⏹ Stop** | **Immediately** — aborts the entire loop. | Halt the agent completely. |
+| **Follow Up** | **After the whole loop completes** — queued and delivered once the agent has finished all its turns, tool calls, and any continuations. | Line up the next task as a follow-up without interrupting the current one. |
+| **Stop** | **Immediately** — aborts the entire loop. | Halt the agent completely. |
 
 Steer and Follow Up messages you queue appear in the conversation's queue panel
 with a **Steer** or **Follow Up** badge until they are consumed.

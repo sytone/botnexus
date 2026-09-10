@@ -30,7 +30,7 @@
     <div class="portal-loading">
         @if (PortalLoad.LoadError is not null)
         {
-            <div class="portal-load-error">&#x26A0; @PortalLoad.LoadError</div>
+            <div class="portal-load-error"><Icon Name="warning" Size="15" /> @PortalLoad.LoadError</div>
         }
         else
         {
@@ -69,7 +69,7 @@ else
                           data-testid="home-message-input"
                           aria-label="Message"
                           rows="4"
-                          placeholder="Type your message, then press Enter to start a conversation&#x2026;"
+                          placeholder="Type your message, then press Enter to start a conversation…"
                           @bind="_draft"
                           @bind:event="oninput"
                           @onkeydown="HandleKeyDownAsync"></textarea>

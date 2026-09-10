@@ -13,6 +13,7 @@ public sealed class WebToolsContributor : IAgentToolContributor
 {
     private readonly ILoggerFactory? _loggerFactory;
     private readonly ISecretRedactor? _secretRedactor;
+    private readonly Func<WebFetchConfig, PublicNetworkHttpTransport> _transportFactory;
 
     /// <summary>
     /// Creates the contributor.
@@ -35,6 +36,15 @@ public sealed class WebToolsContributor : IAgentToolContributor
     {
         _loggerFactory = loggerFactory;
         _secretRedactor = secretRedactor;
+        _transportFactory = config => new PublicNetworkHttpTransport(config);
+    }
+
+    // Preserve the public DI constructor; tests replace only DNS/socket dependencies inside
+    // the real transport, never the contributor's owned-client construction path.
+    internal WebToolsContributor(Func<WebFetchConfig, PublicNetworkHttpTransport> transportFactory)
+        : this()
+    {
+        _transportFactory = transportFactory;
     }
 
     /// <inheritdoc />
@@ -50,7 +60,7 @@ public sealed class WebToolsContributor : IAgentToolContributor
 
         var tools = new List<IAgentTool>();
         var fetchConfig = config.Fetch ?? new WebFetchConfig();
-        tools.Add(new WebFetchTool(fetchConfig, secretRedactor: _secretRedactor));
+        tools.Add(new WebFetchTool(fetchConfig, _transportFactory(fetchConfig), _secretRedactor));
 
         if (config.Search is { } searchConfig)
         {

@@ -634,7 +634,7 @@ public sealed class ChatPanelTests : IDisposable
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        Assert.Contains("⏳", cut.Markup);
+        Assert.Contains("bn-icon-running", cut.Markup);
     }
 
     [Fact]
@@ -653,7 +653,7 @@ public sealed class ChatPanelTests : IDisposable
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        Assert.Contains("✅", cut.Markup);
+        Assert.Contains("bn-icon-check", cut.Markup);
     }
 
     [Fact]
@@ -672,7 +672,7 @@ public sealed class ChatPanelTests : IDisposable
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        Assert.Contains("❌", cut.Markup);
+        Assert.Contains("bn-icon-error", cut.Markup);
         Assert.Contains("tool-error", cut.Markup);
     }
 

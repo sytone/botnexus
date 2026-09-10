@@ -149,6 +149,31 @@ public sealed class PromptVariantConformanceTests
         FindDuplicateTuples(declarations).ShouldNotBeEmpty();
     }
 
+    [Fact]
+    public void MajorAndExactZero_AreDistinctConformanceKeys()
+    {
+        var declarations = PromptVariantRegistry.FreezeTypes([
+            typeof(PromptVariantMajorVersionTests.BaseProbe),
+            typeof(PromptVariantMajorVersionTests.MajorProbe),
+            typeof(PromptVariantMajorVersionTests.ExactProbe)]).Declarations;
+        FindDuplicateTuples(declarations).ShouldBeEmpty();
+        FindDanglingOverlayRules(declarations).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ExactRewordCheck_SeesMajorInheritedTextAndReplaceBoundary()
+    {
+        var declarations = new List<PromptVariantDeclaration>
+        {
+            new("s", null, null, false, [new("base", "base")], "Probe.Default"),
+            new("s", "gpt", null, false, [new("family", "family")], "Probe.Family"),
+            new("s", "gpt", new ModelVersion(6, 0), true, [new("major", "identical")], "Probe.Major") { MatchMajorVersion = true },
+            new("s", "gpt", new ModelVersion(6, 1), false, [new("major", "identical"), PromptRule.Remove("base")], "Probe.Exact")
+        };
+        FindNoOpRewords(declarations).ShouldHaveSingleItem().ShouldContain("Probe.Exact");
+        FindDanglingOverlayRules(declarations).ShouldHaveSingleItem().ShouldContain("base");
+    }
+
     // ---- rule 5: overlay rule ids referenced by a variant exist beneath them ----
 
     [Fact]
@@ -314,7 +339,7 @@ public sealed class PromptVariantConformanceTests
     private static IReadOnlyList<string> FindDuplicateTuples(IEnumerable<PromptVariantDeclaration> declarations) =>
     [
         .. declarations
-            .GroupBy(static d => $"{d.SectionId}|{d.Family ?? "<default>"}|{d.Version?.ToString() ?? "<none>"}", StringComparer.OrdinalIgnoreCase)
+            .GroupBy(static d => $"{d.SectionId}|{d.Family ?? "<default>"}|{d.Version?.ToString() ?? "<none>"}|{d.MatchMajorVersion}", StringComparer.OrdinalIgnoreCase)
             .Where(static group => group.Count() > 1)
             .Select(static group => $"tuple '{group.Key}' is declared {group.Count()} times: {string.Join(", ", group.Select(static d => d.Site))}")
     ];
@@ -362,7 +387,8 @@ public sealed class PromptVariantConformanceTests
 
     /// <summary>
     /// The rules visible to <paramref name="declaration"/> from the rungs beneath it: the section
-    /// default always, plus the bare family rung when the declaration carries a version.
+    /// default always, plus the bare family rung when the declaration carries a version, and
+    /// the matching major overlay beneath an exact-version rung.
     /// </summary>
     private static Dictionary<string, string> InheritedRules(
         IReadOnlyList<PromptVariantDeclaration> declarations,
@@ -401,6 +427,23 @@ public sealed class PromptVariantConformanceTests
                     inherited.Clear();
 
                 Absorb(familyRung);
+
+                if (!declaration.MatchMajorVersion)
+                {
+                    var majorRung = declarations.FirstOrDefault(d =>
+                        d.MatchMajorVersion &&
+                        d.Version?.Major == declaration.Version.Value.Major &&
+                        string.Equals(d.SectionId, declaration.SectionId, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(d.Family, declaration.Family, StringComparison.OrdinalIgnoreCase));
+
+                    if (majorRung is not null)
+                    {
+                        if (majorRung.Replace)
+                            inherited.Clear();
+
+                        Absorb(majorRung);
+                    }
+                }
             }
         }
 

@@ -48,6 +48,12 @@ if ($joined -match 'issues/\d+/comments') {
             exit 0
         }
         'patch-fail'         { Emit-Existing; exit 0 }
+        'create-body-file' {
+            $flag = Join-Path $env:CI_PR_COMMENT_STUB_DIR 'created.flag'
+            if (Test-Path $flag) { Emit-Existing } else { '[]' }
+            exit 0
+        }
+        'create-body-file-fail' { '[]'; exit 0 }
         default              { '[]'; exit 0 }
     }
 }
@@ -71,6 +77,36 @@ if ($ghArgs[0] -eq 'pr' -and $ghArgs[1] -eq 'comment') {
     if ($mode -eq 'create-ok') {
         New-Item -ItemType File -Path (Join-Path $env:CI_PR_COMMENT_STUB_DIR 'created.flag') -Force | Out-Null
     }
+    if ($mode -in @('create-body-file', 'create-body-file-fail')) {
+        # Issue #3850. This branch stands in for the real gh.exe argument parser.
+        # An inline multi-line --body does not survive the native boundary, so
+        # under the old implementation the body's own lines arrive here as extra
+        # arguments and no --body-file pair exists at all. Rather than guess at
+        # the exact split, assert the contract directly: the body must arrive as
+        # a FILE whose content round-trips byte-for-byte, and no --body may be
+        # present. Anything else is recorded as a positional-parse failure in the
+        # shape real gh emits.
+        $bodyIdx     = [Array]::IndexOf($ghArgs, '--body')
+        $bodyFileIdx = [Array]::IndexOf($ghArgs, '--body-file')
+        if ($bodyIdx -ge 0 -or $bodyFileIdx -lt 0) {
+            $stray = if ($bodyIdx -ge 0) { $ghArgs[$bodyIdx + 1] } else { $ghArgs[-1] }
+            [Console]::Error.WriteLine("GraphQL: Could not resolve to a Repository with the name '$stray'. (repository)")
+            exit 1
+        }
+        $path = $ghArgs[$bodyFileIdx + 1]
+        if (-not (Test-Path -LiteralPath $path)) {
+            [Console]::Error.WriteLine("gh: could not open body file '$path'")
+            exit 1
+        }
+        $content = Get-Content -LiteralPath $path -Raw
+        Set-Content -LiteralPath (Join-Path $env:CI_PR_COMMENT_STUB_DIR 'body.txt') -Value $content -NoNewline
+        Set-Content -LiteralPath (Join-Path $env:CI_PR_COMMENT_STUB_DIR 'bodypath.txt') -Value $path -NoNewline
+        if ($mode -eq 'create-body-file-fail') {
+            [Console]::Error.WriteLine('gh: simulated create failure after reading body file')
+            exit 1
+        }
+        New-Item -ItemType File -Path (Join-Path $env:CI_PR_COMMENT_STUB_DIR 'created.flag') -Force | Out-Null
+    }
     'https://github.com/Sytone/botnexus/pull/1#issuecomment-4242'
     exit 0
 }
@@ -91,7 +127,9 @@ exit 0
         param(
             [Parameter(Mandatory)][string]$Mode,
             [int]$PR = 9001,
-            [string]$ScriptPath = $script:ScriptPath
+            [string]$ScriptPath = $script:ScriptPath,
+            [string]$ActionsLiteral = "@('none')",
+            [switch]$KeepStubDir
         )
         $stub    = New-GhStubDir -Mode $Mode
         $outPath = [IO.Path]::GetTempFileName()
@@ -103,7 +141,7 @@ exit 0
             # script through -Command instead. `& script` sets $LASTEXITCODE
             # from the script's `exit`, so re-exiting with it reproduces the
             # exit-code propagation a real `pwsh -File` caller sees.
-            $psi.Arguments = "-NoProfile -Command `"& { `$rows = @([pscustomobject]@{name='core-tests';status='pass'}); & '$ScriptPath' -PR $PR -CheckRows `$rows -BehindBy 0 -Mergeable MERGEABLE -Actions @('none') -Blockers @('None') }; exit `$LASTEXITCODE`""
+            $psi.Arguments = "-NoProfile -Command `"& { `$rows = @([pscustomobject]@{name='core-tests';status='pass'}); & '$ScriptPath' -PR $PR -CheckRows `$rows -BehindBy 0 -Mergeable MERGEABLE -Actions $ActionsLiteral -Blockers @('None') }; exit `$LASTEXITCODE`""
             $psi.RedirectStandardOutput = $true
             $psi.RedirectStandardError  = $true
             $psi.UseShellExecute        = $false
@@ -116,10 +154,12 @@ exit 0
             $stdout = $p.StandardOutput.ReadToEnd()
             $stderr = $p.StandardError.ReadToEnd()
             $p.WaitForExit()
-            [pscustomobject]@{ ExitCode = $p.ExitCode; StdOut = $stdout; StdErr = $stderr }
+            [pscustomobject]@{ ExitCode = $p.ExitCode; StdOut = $stdout; StdErr = $stderr; StubDir = $stub.Dir }
         } finally {
             Remove-Item -LiteralPath $outPath, $errPath -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath $stub.Dir -Recurse -Force -ErrorAction SilentlyContinue
+            if (-not $KeepStubDir) {
+                Remove-Item -LiteralPath $stub.Dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
@@ -180,6 +220,78 @@ Describe 'ci-pr-comment.ps1 success path still works (non-vacuity)' {
         $script:Ok.StdOut | Should -Match '"action"\s*:\s*"created"'
         $envelope = $script:Ok.StdOut.Trim() | ConvertFrom-Json
         $envelope.commentId | Should -Not -BeNullOrEmpty
+    }
+}
+
+Describe 'create path passes a multi-line body as a file, not an inline argument (#3850)' {
+    BeforeAll {
+        # Every one of these action entries is a line that gh would parse as a
+        # positional if the body were split at the native boundary. The first is
+        # verbatim the string from the live #3830 failure.
+        $script:Actions = "@('Merged origin/main (was behindBy=6) and pushed 9295ed7bd to re-trigger CI.','- leading dash line','| pipe | row |','<html-ish line>','*starred line*')"
+        $script:BodyFile = Invoke-CiPrComment -Mode 'create-body-file' -ActionsLiteral $script:Actions -KeepStubDir
+    }
+    AfterAll {
+        if ($script:BodyFile) {
+            Remove-Item -LiteralPath $script:BodyFile.StubDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # MUTATION PROOF: revert the create call to
+    #   @('pr','comment',"$PR",'--repo',$Repo,'--body',$newBody)
+    # and this Describe fails -- the stub sees no --body-file pair and emits the
+    # real-world `Could not resolve to a Repository with the name '<body line>'`,
+    # so the script exits 1 with error='create-failed'.
+    It 'creates the comment successfully with a body full of positional-looking lines' {
+        $script:BodyFile.ExitCode | Should -Be 0
+        $script:BodyFile.StdOut | Should -Match '"action"\s*:\s*"created"'
+    }
+    It 'does not report the repository-resolution failure the inline form produces' {
+        $script:BodyFile.StdErr | Should -Not -Match 'Could not resolve to a Repository'
+        $script:BodyFile.StdOut | Should -Not -Match 'create-failed'
+    }
+    It 'delivers the body through --body-file with its content intact' {
+        $captured = Get-Content -LiteralPath (Join-Path $script:BodyFile.StubDir 'body.txt') -Raw
+        $captured | Should -Match '<!-- farnsworth:ci-monitor-9001 -->'
+        $captured | Should -Match 'was behindBy=6'
+        $captured | Should -Match '\|\s*core-tests\s*\|'
+    }
+    It 'removes the temporary body file after the call' {
+        $recorded = Join-Path $script:BodyFile.StubDir 'bodypath.txt'
+        # Fail closed: no recorded path means the create never reached --body-file.
+        Test-Path -LiteralPath $recorded | Should -BeTrue
+        $path = Get-Content -LiteralPath $recorded -Raw
+        $path | Should -Not -BeNullOrEmpty
+        Test-Path -LiteralPath $path | Should -BeFalse
+    }
+    It 'never passes the body as an inline --body argument on the create path' {
+        $text = Get-Content $script:ScriptPath -Raw
+        $text | Should -Not -Match "'--body',\s*\`$newBody"
+        $text | Should -Match "'--body-file'"
+    }
+}
+
+Describe 'create path removes its body file when gh fails (#3850 AC5)' {
+    BeforeAll {
+        $script:BodyFileFailure = Invoke-CiPrComment -Mode 'create-body-file-fail' -KeepStubDir
+    }
+    AfterAll {
+        if ($script:BodyFileFailure) {
+            Remove-Item -LiteralPath $script:BodyFileFailure.StubDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'reports the create failure' {
+        $script:BodyFileFailure.ExitCode | Should -Not -Be 0
+        $script:BodyFileFailure.StdOut | Should -Match 'create-failed'
+        $script:BodyFileFailure.StdErr | Should -Match 'simulated create failure'
+    }
+    It 'removes the temporary body file after gh returns failure' {
+        $recorded = Join-Path $script:BodyFileFailure.StubDir 'bodypath.txt'
+        Test-Path -LiteralPath $recorded | Should -BeTrue
+        $path = Get-Content -LiteralPath $recorded -Raw
+        $path | Should -Not -BeNullOrEmpty
+        Test-Path -LiteralPath $path | Should -BeFalse
     }
 }
 

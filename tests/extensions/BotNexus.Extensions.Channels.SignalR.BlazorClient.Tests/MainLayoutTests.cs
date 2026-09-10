@@ -246,7 +246,8 @@ public sealed class MainLayoutTests : IDisposable
 
         Assert.Contains("Cron", cut.Markup);
         var archiveBtn = cut.Find(".conversation-archive-btn");
-        Assert.Contains("✕", archiveBtn.TextContent);
+        // An unattended conversation reopens on its next trigger, so it pauses rather than deletes.
+        Assert.Contains("bn-icon-pause", archiveBtn.InnerHtml);
         Assert.Contains("Close conversation", archiveBtn.GetAttribute("title"));
     }
 
@@ -391,7 +392,7 @@ public sealed class MainLayoutTests : IDisposable
         var cut = RenderLayout();
 
         var archiveBtn = cut.Find(".conversation-archive-btn");
-        Assert.Contains("🗑️", archiveBtn.TextContent);
+        Assert.Contains("bn-icon-delete", archiveBtn.InnerHtml);
         Assert.Contains("Archive conversation", archiveBtn.GetAttribute("title"));
     }
 
@@ -1313,11 +1314,14 @@ public sealed class MainLayoutTests : IDisposable
     {
         var cut = RenderLayout();
 
-        var home = cut.Find("[data-testid='nav-home']").TextContent;
-        var agents = cut.Find("a[href='agents']").TextContent;
-        Assert.Contains("\U0001F3E0", home);
-        Assert.DoesNotContain("\U0001F916", home);
-        Assert.Contains("\U0001F916", agents);
+        // Nav glyphs are inline SVG from the generated icon set, so the marker is the icon's
+        // class rather than a codepoint. The point of the test is unchanged: two nav rows must
+        // not end up wearing the same icon.
+        var home = cut.Find("[data-testid='nav-home']").InnerHtml;
+        var agents = cut.Find("a[href='agents']").InnerHtml;
+        Assert.Contains("bn-icon-home", home);
+        Assert.DoesNotContain("bn-icon-agents", home);
+        Assert.Contains("bn-icon-agents", agents);
     }
 
     /// <summary>

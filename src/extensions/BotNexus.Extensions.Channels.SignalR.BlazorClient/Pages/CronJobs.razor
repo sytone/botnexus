@@ -9,13 +9,13 @@
 
 <div class="agents-page" data-testid="cron-jobs-page">
     <header class="agents-toolbar">
-        <h2>&#x23F0; Cron Jobs</h2>
+        <h2 class="page-heading"><Icon Name="cron-jobs" Size="24" /><span>Cron Jobs</span></h2>
         <div class="agents-toolbar-actions">
             @if (!string.IsNullOrEmpty(_statusMessage))
             {
                 <span class="agents-status @_statusClass" role="status">@_statusMessage</span>
             }
-            <button class="toolbar-btn" @onclick="LoadJobsAsync" disabled="@_loading" title="Refresh cron job list">&#x21BB; Reload</button>
+            <button class="toolbar-btn" @onclick="LoadJobsAsync" disabled="@_loading" title="Refresh cron job list"><Icon Name="refresh" Size="14" Class="bn-icon-inherit" /> Reload</button>
         </div>
     </header>
 
@@ -28,7 +28,7 @@
     }
     else if (_error is not null)
     {
-        <div class="agents-error" role="alert">&#x26A0;&#xFE0F; @_error</div>
+        <div class="agents-error" role="alert"><Icon Name="warning" Size="15" /> @_error</div>
     }
     else if (_jobs.Count == 0)
     {

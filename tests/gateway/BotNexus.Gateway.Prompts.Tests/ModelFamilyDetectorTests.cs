@@ -18,6 +18,9 @@ public sealed class ModelFamilyDetectorTests
     [InlineData("gpt-4o", ModelFamilyDetector.Gpt)]
     [InlineData("gpt-4o-mini", ModelFamilyDetector.Gpt)]
     [InlineData("gpt-4.1", ModelFamilyDetector.Gpt)]
+    [InlineData("COPILOT/GPT-6.1-ASTRA", ModelFamilyDetector.Gpt)]
+    [InlineData("openai/gpt-6.1-astra:latest", ModelFamilyDetector.Gpt)]
+    [InlineData("openai/gpt-5.6-sol", ModelFamilyDetector.Gpt)]
     [InlineData("o1-preview", ModelFamilyDetector.Gpt)]
     [InlineData("o3-mini", ModelFamilyDetector.Gpt)]
     [InlineData("o4-mini", ModelFamilyDetector.Gpt)]
@@ -77,6 +80,9 @@ public sealed class ModelFamilyDetectorTests
 
     [Theory]
     [InlineData("some-custom-model")]
+    [InlineData("vendor/notgpt-6")]
+    [InlineData("vendor/gptish-6")]
+    [InlineData("vendor/gpt-broker/vanity-model")]
     [InlineData("phi-4")]
     [InlineData("mistral-small")]
     public void GetModelFamily_ReturnsUnknownForUnrecognized(string modelId)

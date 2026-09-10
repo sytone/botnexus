@@ -1,7 +1,12 @@
 # Documentation grooming
 
-Grooming keeps the docset true. Half of it is mechanical and runs in CI; half of it is a person
-reading prose. This page says which is which, so neither half assumes the other covered it.
+Grooming keeps documentation accurate and understandable. Automated checks run in continuous
+integration (CI). A human or independent agent also reviews whether a reader can understand the page.
+Neither part replaces the other.
+
+Use the [Documentation standards](documentation-standards.md) for audiences, plain language, task
+structure, evidence, and review authority. Apply them to changed sections and improve older pages
+incrementally; a grooming pass does not certify the whole documentation set.
 
 ## Why this exists
 
@@ -38,9 +43,13 @@ silently disarm the gate, so it is gated too.
 | `legacy-marker` | A "legacy" / "deprecated" / "non-functional" / "do not copy" disclosure inside a how-to section must appear **above** the code sample, not below it. | Historical: the `LlmProviderBase` sample in `extension-development.md`, disclosed as non-functional only after the fence (removed in #2862). |
 | docs-vs-source trigger | A PR touching an extension manifest, a provider interface or a controller route must change a `docs/` page or state `no-docs-impact` in the body. | Extension layout drift; `IApiProvider` vs `LlmProviderBase`; `/api/exchanges/budget`. |
 
-The first three are content rules in the lint script. The fourth is not a content rule and lives
-where it belongs: the `docs-impact` job in the same workflow, plus the **Documentation impact**
-checklist item in `.github/pull_request_template.md`.
+The first three rules check page content. The fourth is implemented by the `docs-impact` job
+in the same workflow and the **Documentation impact** item in `.github/pull_request_template.md`.
+
+**Current limit:** the workflow starts for documentation and lint-file changes, not for source-only
+changes. A PR that changes only a controller, provider interface, or extension manifest will not
+start this check. Reviewers must check documentation impact themselves until the workflow trigger
+covers those source paths. The table describes the intended requirement, not complete enforcement.
 
 ### Tuning the rules
 
@@ -66,18 +75,24 @@ everything. If you change a detector, re-prove it by mutation: inject the known-
 the known contradiction, confirm the gate goes red naming that rule, then restore and confirm the
 baseline is green again.
 
-## What stays human
+<a id="what-stays-human"></a>
 
-The lint has no opinion about whether a page is any good. Grooming still owns:
+## What needs understanding review
 
-- prose quality, tone, and voice
-- structure — is the reader told things in an order that works
-- readability, and whether an explanation actually explains
-- whether a page should exist at all, and whether something is missing
-- accuracy of anything not reducible to a literal
+The lint does not decide whether a page is useful. A human or independent agent must read the
+changed page as its intended audience, using the [author and reviewer checklist](documentation-standards.md#author-and-reviewer-checklist).
+Check whether the reader can identify the goal, understand the prerequisites, follow the steps,
+recognize the result, and find safe help when something fails. Also check whether the page belongs
+in the chosen guide and whether it contradicts its linked references.
 
-Link checking is not in scope here either: `npm run docs:build` (VitePress) already fails on a dead
-link, and that is the gate `deploy-docs.yml` runs.
+Trace factual claims to source and record that evidence separately from steps actually executed.
+Use the existing PR Validation section and identify the reviewed revision, reviewer, findings,
+and remaining gaps. Follow the standard's [review and authority boundaries](documentation-standards.md#review-is-not-merge-authority)
+for higher-risk instructions, protected pages, and decisions that require a human.
+
+Link checking is separate: `npm run docs:build` (VitePress) already fails on a dead link, and that
+is the gate `deploy-docs.yml` runs. Neither a build pass nor source inspection proves an end-to-end
+installation works.
 
 ## The release walk
 
@@ -91,4 +106,5 @@ up to a working install".
 ## Related
 
 - Issue #2865 — the gate itself
-- `docs/development/pr-and-commit-conventions.md` — the documentation check before opening a PR
+- [Documentation standards](documentation-standards.md) — shared writing and review guidance
+- [PR and commit conventions](pr-and-commit-conventions.md) — the documentation check before opening a PR

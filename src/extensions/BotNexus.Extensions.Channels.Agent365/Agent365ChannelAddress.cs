@@ -26,11 +26,13 @@ public static class Agent365ChannelAddress
     private const string ServiceUrlSeparator = "|svc:";
 
     /// <summary>
-    /// Encodes an Agents SDK conversation id and optional service URL into a
-    /// <see cref="ChannelAddress"/>. When <paramref name="serviceUrl"/> is null or empty the address
-    /// is just the bare conversation id.
+    /// Creates a reply address from an Agents SDK conversation id and optional service URL.
+    /// When <paramref name="serviceUrl"/> is null, empty, or whitespace, the address is just the
+    /// bare conversation id. Nonblank inputs are preserved verbatim; no URL validation is performed.
     /// </summary>
-    public static ChannelAddress Encode(string conversationId, string? serviceUrl)
+    /// <exception cref="ArgumentNullException"><paramref name="conversationId"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="conversationId"/> is empty or whitespace.</exception>
+    public static ChannelAddress Create(string conversationId, string? serviceUrl)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
         if (string.IsNullOrWhiteSpace(serviceUrl))
@@ -40,12 +42,14 @@ public static class Agent365ChannelAddress
     }
 
     /// <summary>
-    /// Attempts to decode an Agent 365-encoded <see cref="ChannelAddress"/> back to its
-    /// <c>(conversationId, serviceUrl?)</c> pair. Returns <see langword="false"/> only when the
-    /// address is empty; a missing service-url segment decodes to a null <paramref name="serviceUrl"/>
-    /// rather than failing, because polling-style bindings may carry a bare conversation id.
+    /// Attempts to parse an Agent 365-encoded <see cref="ChannelAddress"/> back to its
+    /// <c>(conversationId, serviceUrl?)</c> pair. Returns <see langword="false"/> when the address
+    /// is empty or the conversation prefix before the separator is empty. A missing or empty
+    /// service-url segment produces a null <paramref name="serviceUrl"/> rather than failing,
+    /// because polling-style bindings may carry a bare conversation id. An empty conversation
+    /// prefix still leaves any nonempty service-url suffix in <paramref name="serviceUrl"/>.
     /// </summary>
-    public static bool TryDecode(ChannelAddress address, out string conversationId, out string? serviceUrl)
+    public static bool TryParse(ChannelAddress address, out string conversationId, out string? serviceUrl)
     {
         conversationId = string.Empty;
         serviceUrl = null;

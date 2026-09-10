@@ -542,6 +542,26 @@ curl http://localhost:5005/api/diagnostics/log-patterns?hours=1
 - A hard refresh (Ctrl+Shift+R) clears a stale cached build that can cause these
   errors after an update.
 
+**If a page loads an old build after an update**, check whether the root URL and a deep
+link disagree:
+
+```bash
+curl -s http://localhost:5005/ | grep -o 'dotnet\.[a-z0-9]*\.js'
+curl -s http://localhost:5005/configuration | grep -o 'dotnet\.[a-z0-9]*\.js'
+```
+
+Both should name the same runtime. If they differ, the browser is not at fault - the
+two URLs are genuinely being served different documents, and a hard refresh will only
+appear to fix it until the next deep link.
+
+That used to happen: the SPA fallback served an `index.html` read once at startup while
+`/` and `/index.html` read from disk, so every deep link booted whatever build was on
+disk when the gateway last started. Because the framework assets are content-hashed and
+served `immutable`, the browser then held the stale assemblies against URLs that no
+longer exist. The fallback now reads from disk and carries `no-cache` with an ETag like
+any other non-fingerprinted asset, so restarting the gateway is no longer part of
+deploying a UI change.
+
 ---
 
 ## Tool Execution Failures
@@ -788,7 +808,7 @@ tail -f ~/.botnexus/logs/gateway.log | grep -i mcp
 **Use faster model:**
 ```json
 {
-  "model": "gpt-4o-mini"  // or "claude-haiku-4.5"
+  "model": "gpt-4o-mini"  // or "claude-haiku-4-5-20251001"
 }
 ```
 

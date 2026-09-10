@@ -8,7 +8,7 @@
     <div class="session-debug-panel" role="dialog" aria-modal="true" aria-labelledby="session-debug-title" data-testid="session-debug-panel" @onclick:stopPropagation="true">
         <div class="session-debug-header">
             <h3 id="session-debug-title" class="session-debug-title">Session Debug</h3>
-            <button class="session-debug-close" @onclick="OnClose" title="Close" data-testid="session-debug-close">&#x2715;</button>
+            <button class="session-debug-close" @onclick="OnClose" title="Close" data-testid="session-debug-close"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
         </div>
 
         @if (_isLoading)
@@ -94,7 +94,7 @@
                             <button class="session-debug-copy-btn"
                                     title="Copy to clipboard"
                                     data-testid="system-prompt-copy"
-                                    @onclick="CopySystemPromptAsync">&#x1F4CB;</button>
+                                    @onclick="CopySystemPromptAsync"><Icon Name="copy" Size="14" Class="bn-icon-inherit" /></button>
                         </div>
                     }
                     <pre class="session-debug-system-prompt" data-testid="session-debug-system-prompt-content">@_snapshot.SystemPrompt</pre>

@@ -128,6 +128,29 @@ public sealed class FileAgentWorkspaceManagerTests : IDisposable
         _fileSystem.Directory.Exists(Path.GetDirectoryName(workspacePath)!).ShouldBeFalse();
     }
 
+    [Fact]
+    public void TryCleanupWorkspace_WhenAlreadyAbsent_ReportsNoRemovalWithoutCreatingDirectory()
+    {
+        const string child = "farnsworth--subagent--general--absent";
+        var path = _workspaceManager.GetWorkspacePath(child);
+        _fileSystem.Directory.Exists(path).ShouldBeFalse();
+
+        _workspaceManager.TryCleanupWorkspace(child).ShouldBeFalse();
+        _fileSystem.Directory.Exists(Path.GetDirectoryName(path)!).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryCleanupWorkspace_WhenCalledTwice_ReportsOnlyFirstRemoval()
+    {
+        const string child = "farnsworth--subagent--general--twice";
+        var path = _workspaceManager.GetWorkspacePath(child);
+        _fileSystem.Directory.CreateDirectory(path);
+        _workspaceManager.TryCleanupWorkspace(child).ShouldBeTrue();
+        _workspaceManager.TryCleanupWorkspace(child).ShouldBeFalse();
+        _workspaceManager.GetWorkspacePath(child).ShouldBe(path);
+        _fileSystem.Directory.Exists(path).ShouldBeFalse();
+    }
+
     public void Dispose()
     {
         // No SQLite pool cleanup: this class uses MockFileSystem exclusively and never opens a

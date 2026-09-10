@@ -38,6 +38,11 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
+    /// <summary>
+    /// Creates an outbound fetch tool. Without an injected client, owns a destination-validated
+    /// transport. A supplied client remains caller-owned and must enforce equivalent DNS and
+    /// connection policy; the production contributor uses the owned path.
+    /// </summary>
     public WebFetchTool(
         WebFetchConfig config,
         HttpClient? httpClient = null,
@@ -56,7 +61,7 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
             // Disable automatic redirect following: the tool follows redirects itself so it
             // can re-validate every hop against the SSRF policy. Auto-redirect would let a
             // safe public URL bounce to a private/IMDS address with no further checks.
-            var handler = new HttpClientHandler { AllowAutoRedirect = false };
+            var handler = new PublicNetworkHttpTransport(_config);
             _httpClient = new HttpClient(handler)
             {
                 Timeout = TimeSpan.FromSeconds(_config.TimeoutSeconds)
@@ -64,6 +69,18 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
             _httpClient.DefaultRequestHeaders.Add("User-Agent", _config.UserAgent);
             _ownsHttpClient = true;
         }
+    }
+
+    // Tests supply DNS/socket seams, not a replacement HTTP handler. The tool still owns the
+    // same production pipeline used by default construction and WebToolsContributor.
+    internal WebFetchTool(
+        WebFetchConfig config,
+        PublicNetworkHttpTransport transport,
+        ISecretRedactor? secretRedactor = null)
+        : this(config, new HttpClient(transport) { Timeout = TimeSpan.FromSeconds(config.TimeoutSeconds) }, secretRedactor)
+    {
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", config.UserAgent);
+        _ownsHttpClient = true;
     }
 
     /// <inheritdoc />
@@ -147,9 +164,10 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
     }
 
     /// <summary>
-    /// Throws <see cref="ArgumentException"/> when <paramref name="uri"/> resolves to a
-    /// private, loopback, link-local, IMDS, or otherwise reserved address.
-    /// Delegates to <see cref="SsrfValidator"/> for the actual validation logic.
+    /// Throws <see cref="ArgumentException"/> when <paramref name="uri"/> text identifies a
+    /// private, loopback, link-local, IMDS, or otherwise blocked literal address/hostname.
+    /// Delegates lexical policy to <see cref="SsrfValidator"/>; the owned transport separately
+    /// validates resolved destinations at connection establishment.
     /// </summary>
     internal static void AssertNotPrivateOrImds(Uri uri)
     {
