@@ -91,12 +91,7 @@ try {
     $workspaceArchive = Join-Path $tempRoot 'workspace.zip'
     [IO.Compression.ZipFile]::CreateFromDirectory($captureRoot, $workspaceArchive)
     Assert-SourceSnapshot -Root $captureRoot -Manifest $manifest
-    Push-Location $tempRoot
-    try {
-        tar -czf $payloadArchive 'repository.bundle' 'workspace.zip' 'source-manifest.json' 'SourceSnapshot.psm1'
-        if ($LASTEXITCODE -ne 0) { throw 'Failed to create source payload.' }
-    }
-    finally { Pop-Location }
+    New-SourcePayloadArchive -Root $tempRoot -Destination $payloadArchive | Out-Null
     $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
     if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before upload.' }
     # END EXACT SOURCE CAPTURE

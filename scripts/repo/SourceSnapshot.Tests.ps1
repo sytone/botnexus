@@ -69,6 +69,28 @@ AfterAll {
     foreach ($entry in $savedEnvironment.GetEnumerator()) { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value) }
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }
+    It 'creates a runner-compatible payload without recompressing compressed inputs' {
+        $payloadArea = Join-Path $area 'payload-archive'
+        [IO.Directory]::CreateDirectory($payloadArea) | Out-Null
+        $random = [byte[]]::new(2MB)
+        [Security.Cryptography.RandomNumberGenerator]::Fill($random)
+        foreach ($name in @('repository.bundle', 'workspace.zip')) {
+            [IO.File]::WriteAllBytes((Join-Path $payloadArea $name), $random)
+        }
+        [IO.File]::WriteAllText((Join-Path $payloadArea 'source-manifest.json'), '{}')
+        [IO.File]::WriteAllText((Join-Path $payloadArea 'SourceSnapshot.psm1'), '# fixture')
+        $payload = Join-Path $payloadArea 'payload.tar.gz'
+
+        $proof = New-SourcePayloadArchive -Root $payloadArea -Destination $payload
+
+        $proof.compression | Should -Be 'gzip-no-compression'
+        $proof.inputBytes | Should -BeGreaterThan 4MB
+        $proof.outputBytes | Should -BeGreaterThan 4MB
+        $proof.outputBytes | Should -BeLessThan ($proof.inputBytes + 1MB)
+        $listed = @(& tar -tzf $payload)
+        $LASTEXITCODE | Should -Be 0
+        $listed | Should -Be @('repository.bundle', 'workspace.zip', 'source-manifest.json', 'SourceSnapshot.psm1')
+    }
     It 'captures deletions, renames, additions, modifications and literal portable names' {
         Remove-Item -LiteralPath (Join-Path $repo 'deleted-staged.md')
         Git-Fixture @('-C', $repo, 'mv', 'keep.md', 'renamed.md') | Out-Null

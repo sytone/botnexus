@@ -98,6 +98,54 @@ function Get-SnapshotDiskFiles {
     }
 }
 
+function New-SourcePayloadArchive {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Destination
+    )
+    $names = @('repository.bundle', 'workspace.zip', 'source-manifest.json', 'SourceSnapshot.psm1')
+    $inputBytes = 0L
+    foreach ($name in $names) {
+        $path = Join-Path $Root $name
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing source payload input: $name" }
+        $inputBytes += (Get-Item -LiteralPath $path).Length
+    }
+    $destinationDirectory = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Destination))
+    [IO.Directory]::CreateDirectory($destinationDirectory) | Out-Null
+    $output = [IO.File]::Create($Destination)
+    try {
+        # repository.bundle and workspace.zip are already compressed. Recompressing both with
+        # tar -czf made packaging CPU-bound for minutes and could stall indefinitely on Windows
+        # system TEMP. NoCompression still emits a standard gzip stream accepted by tar -xzf.
+        $gzip = [IO.Compression.GZipStream]::new($output, [IO.Compression.CompressionLevel]::NoCompression, $true)
+        try {
+            $tar = [System.Formats.Tar.TarWriter]::new($gzip, $false)
+            try {
+                foreach ($name in $names) {
+                    $entry = [System.Formats.Tar.PaxTarEntry]::new([System.Formats.Tar.TarEntryType]::RegularFile, $name)
+                    $input = [IO.File]::OpenRead((Join-Path $Root $name))
+                    try {
+                        $entry.DataStream = $input
+                        $tar.WriteEntry($entry)
+                    }
+                    finally {
+                        $entry.DataStream = $null
+                        $input.Dispose()
+                    }
+                }
+            }
+            finally { $tar.Dispose() }
+        }
+        finally { $gzip.Dispose() }
+    }
+    finally { $output.Dispose() }
+    [pscustomobject][ordered]@{
+        compression = 'gzip-no-compression'
+        inputBytes = $inputBytes
+        outputBytes = (Get-Item -LiteralPath $Destination).Length
+    }
+}
+
 function Assert-SourceSnapshot {
     param([string]$Root, $Manifest)
     if ($Manifest.version -ne 1 -or $Manifest.digest -cne (Get-SnapshotDigest @($Manifest.files))) { throw 'Invalid source manifest version/digest.' }
@@ -167,4 +215,4 @@ function Assert-SourceSnapshotResult {
     if ($Mode -in @('core','full') -and $tests.total -lt 12000) { throw 'Test result below minimum total.' }
 }
 
-Export-ModuleMember -Function Invoke-SnapshotGit, Assert-SourceSnapshotPath, Get-SourceSnapshotManifest, Assert-SourceSnapshot, Restore-SourceSnapshot, Assert-SourceSnapshotResult
+Export-ModuleMember -Function Invoke-SnapshotGit, Assert-SourceSnapshotPath, Get-SourceSnapshotManifest, New-SourcePayloadArchive, Assert-SourceSnapshot, Restore-SourceSnapshot, Assert-SourceSnapshotResult
