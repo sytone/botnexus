@@ -19,6 +19,46 @@ public sealed class SqliteMemoryStore(
     ILogger<SqliteMemoryStore>? logger = null) : IMemoryStore
 {
     private const double DefaultHalfLifeDays = 30d;
+
+    /// <summary>
+    /// SQL predicate (over the <c>m</c> alias) selecting rows that are currently retrievable:
+    /// not archived, and not past their <c>expires_at</c> instant.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the two conditions are one constant.</b> <c>expires_at</c> was persisted, round-tripped
+    /// and rendered from the day the column was added, but appeared in no <c>WHERE</c> clause, so a
+    /// row written with a TTL stayed searchable forever - the column advertised a retention
+    /// guarantee the store did not keep. Archival and expiry are the same kind of fact (this row is
+    /// no longer live), and the way the first one stayed enforced while the second silently did not
+    /// is by living in separate places. Binding them into a single named predicate makes a search
+    /// path that filters one but not the other unwritable rather than merely unlikely.
+    /// </para>
+    /// <para>
+    /// <b>Why <c>julianday</c> and not a string comparison.</b> Timestamps are stored in round-trip
+    /// ("O") format, which carries an offset; comparing two such strings orders them by wall-clock
+    /// text rather than by instant, so <c>+02:00</c> would sort against <c>+00:00</c> incorrectly.
+    /// <c>julianday</c> normalises both sides to an absolute instant, and is already the idiom this
+    /// file uses for the <c>age_days</c> decay input.
+    /// </para>
+    /// <para>
+    /// <b>An unparseable expiry hides the row.</b> <c>julianday</c> returns NULL on a malformed
+    /// value, and <c>NULL &gt; x</c> is NULL, so the row fails the predicate and is not returned.
+    /// That is the fail-closed direction: a row whose expiry cannot be evaluated is withheld rather
+    /// than served. It is deliberately not symmetric with archival - see the note on the absence of
+    /// a purge sweep in <see cref="InitializeAsync"/>.
+    /// </para>
+    /// <para>
+    /// Direct addressing (<see cref="GetByIdAsync"/>, <see cref="GetBySessionAsync"/>) deliberately
+    /// does <b>not</b> apply this predicate, exactly as it has never applied the archived filter:
+    /// an entry named by id must stay inspectable and deletable after it expires, and the indexer's
+    /// session reconciliation must see every row it previously wrote or it will re-insert duplicates
+    /// of expired ones.
+    /// </para>
+    /// </remarks>
+    private const string LiveRowPredicate =
+        "m.is_archived = 0 AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday('now'))";
+
     private readonly string _dbPath = dbPath;
     private readonly SqliteWalMaintenance _walMaintenance = new(fileSystem);
     private readonly string _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
@@ -80,7 +120,8 @@ public sealed class SqliteMemoryStore(
                     is_archived INTEGER NOT NULL DEFAULT 0,
                     provenance TEXT NULL,
                     origin_conversation_id TEXT NULL,
-                    origin_session_id TEXT NULL
+                    origin_session_id TEXT NULL,
+                    user_id TEXT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON memories(agent_id);
@@ -136,7 +177,7 @@ public sealed class SqliteMemoryStore(
     }
 
     private static readonly string[] ProvenanceColumns =
-        ["provenance", "origin_conversation_id", "origin_session_id"];
+        ["provenance", "origin_conversation_id", "origin_session_id", "user_id"];
 
     /// <summary>
     /// Counts live embedded rows at store open and warns once if they exceed the vector scan
@@ -176,11 +217,17 @@ public sealed class SqliteMemoryStore(
         }
     }
 
-    /// <summary>Live (non-archived) rows carrying an embedding vector.</summary>
+    /// <summary>Live (neither archived nor expired) rows carrying an embedding vector.</summary>
+    /// <remarks>
+    /// This count exists to predict vector-scan cost, so it has to apply the same liveness
+    /// predicate the scan itself applies. Counting expired rows here would over-report the corpus
+    /// the scan will actually walk and could raise the ceiling warning for rows no search can reach.
+    /// </remarks>
     private static async Task<int> CountEmbeddedRowsAsync(SqliteConnection connection, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM memories WHERE is_archived = 0 AND embedding IS NOT NULL";
+        command.CommandText =
+            $"SELECT COUNT(*) FROM memories m WHERE {LiveRowPredicate} AND m.embedding IS NOT NULL";
         var scalar = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
         return scalar is null or DBNull ? 0 : Convert.ToInt32(scalar, CultureInfo.InvariantCulture);
     }
@@ -250,11 +297,11 @@ public sealed class SqliteMemoryStore(
                 INSERT INTO memories (
                     id, agent_id, session_id, turn_index, source_type, content, metadata_json,
                     embedding, created_at, updated_at, expires_at, is_archived,
-                    provenance, origin_conversation_id, origin_session_id)
+                    provenance, origin_conversation_id, origin_session_id, user_id)
                 VALUES (
                     $id, $agentId, $sessionId, $turnIndex, $sourceType, $content, $metadataJson,
                     $embedding, $createdAt, $updatedAt, $expiresAt, $isArchived,
-                    $provenance, $originConversationId, $originSessionId)
+                    $provenance, $originConversationId, $originSessionId, $userId)
                 """;
             BindParameters(command, toInsert);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -279,7 +326,7 @@ public sealed class SqliteMemoryStore(
             command.CommandText = """
                 SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
                        embedding, created_at, updated_at, expires_at, is_archived,
-                       provenance, origin_conversation_id, origin_session_id
+                       provenance, origin_conversation_id, origin_session_id, user_id
                 FROM memories
                 WHERE id = $id
                 """;
@@ -306,13 +353,44 @@ public sealed class SqliteMemoryStore(
             command.CommandText = """
                 SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
                        embedding, created_at, updated_at, expires_at, is_archived,
-                       provenance, origin_conversation_id, origin_session_id
+                       provenance, origin_conversation_id, origin_session_id, user_id
                 FROM memories
                 WHERE session_id = $sessionId
                 ORDER BY created_at DESC
                 LIMIT $limit
                 """;
             command.Parameters.AddWithValue("$sessionId", sessionId);
+            command.Parameters.AddWithValue("$limit", cappedLimit);
+
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            List<MemoryEntry> results = [];
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+                results.Add(ReadMemory(reader));
+
+            return results as IReadOnlyList<MemoryEntry>;
+        }, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<MemoryEntry>> ListRecentAsync(int limit = 50, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        var cappedLimit = Math.Clamp(limit, 1, 500);
+        return await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(token).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
+                       embedding, created_at, updated_at, expires_at, is_archived,
+                       provenance, origin_conversation_id, origin_session_id
+                FROM memories
+                WHERE is_archived = 0
+                ORDER BY created_at DESC
+                LIMIT $limit
+                """;
             command.Parameters.AddWithValue("$limit", cappedLimit);
 
             await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
@@ -550,16 +628,16 @@ public sealed class SqliteMemoryStore(
 
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
-                   m.provenance, m.origin_conversation_id, m.origin_session_id,
+                   m.provenance, m.origin_conversation_id, m.origin_session_id, m.user_id,
                    -bm25(memories_fts) AS bm25_rank,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories_fts
             INNER JOIN memories m ON m.rowid = memories_fts.rowid
             WHERE memories_fts MATCH $query
-              AND m.is_archived = 0
+              AND {LiveRowPredicate}
             """);
 
         command.Parameters.AddWithValue("$query", matchExpression);
@@ -577,13 +655,19 @@ public sealed class SqliteMemoryStore(
         command.CommandText = sql.ToString();
 
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        // Computed columns are located by NAME, not by position. ReadMemory consumes the fixed
+        // row projection by ordinal, so every column added to that projection shifts anything
+        // appended after it - which is exactly how a stray column would silently turn a rank or an
+        // age into whichever value now sits at that index.
+        var bm25Ordinal = reader.GetOrdinal("bm25_rank");
+        var ageOrdinal = reader.GetOrdinal("age_days");
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var entry = ReadMemory(reader);
             // bm25() is negative-is-better, so the query already negates it; clamp because
             // the ranker normalises by magnitude and a negative lexical score is meaningless.
-            var bm25Rank = reader.IsDBNull(15) ? 0d : Math.Max(0d, reader.GetDouble(15));
-            var ageDays = reader.IsDBNull(16) ? 0d : Math.Max(0d, reader.GetDouble(16));
+            var bm25Rank = reader.IsDBNull(bm25Ordinal) ? 0d : Math.Max(0d, reader.GetDouble(bm25Ordinal));
+            var ageDays = reader.IsDBNull(ageOrdinal) ? 0d : Math.Max(0d, reader.GetDouble(ageOrdinal));
             if (!candidates.ContainsKey(entry.Id))
                 candidates[entry.Id] = new MemoryRankingCandidate(entry, bm25Rank, Similarity: null, ageDays);
         }
@@ -670,10 +754,10 @@ public sealed class SqliteMemoryStore(
     {
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT COUNT(*)
             FROM memories m
-            WHERE m.is_archived = 0
+            WHERE {LiveRowPredicate}
             """);
         sql.AppendLine();
         AppendFilters(sql, command, filter);
@@ -690,12 +774,12 @@ public sealed class SqliteMemoryStore(
 
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT COUNT(*)
             FROM memories_fts
             INNER JOIN memories m ON m.rowid = memories_fts.rowid
             WHERE memories_fts MATCH $query
-              AND m.is_archived = 0
+              AND {LiveRowPredicate}
             """);
         sql.AppendLine();
         command.Parameters.AddWithValue("$query", matchExpression);
@@ -801,13 +885,13 @@ public sealed class SqliteMemoryStore(
         await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
-                   m.provenance, m.origin_conversation_id, m.origin_session_id,
+                   m.provenance, m.origin_conversation_id, m.origin_session_id, m.user_id,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
-            WHERE m.is_archived = 0
+            WHERE {LiveRowPredicate}
             """);
 
         // See the note on the FTS path: the raw string literal has no trailing newline.
@@ -844,10 +928,12 @@ public sealed class SqliteMemoryStore(
         Dictionary<string, MemoryRankingCandidate> candidates = new(StringComparer.Ordinal);
         await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
         {
+            // Located by name; see the note on the FTS path.
+            var ageOrdinal = reader.GetOrdinal("age_days");
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 var entry = ReadMemory(reader);
-                var ageDays = reader.IsDBNull(15) ? 0d : Math.Max(0d, reader.GetDouble(15));
+                var ageDays = reader.IsDBNull(ageOrdinal) ? 0d : Math.Max(0d, reader.GetDouble(ageOrdinal));
                 var textScore = terms.Count(term => entry.Content.Contains(term, StringComparison.OrdinalIgnoreCase));
                 candidates[entry.Id] = new MemoryRankingCandidate(entry, textScore, Similarity: null, ageDays);
             }
@@ -970,13 +1056,13 @@ public sealed class SqliteMemoryStore(
     {
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
-                   m.provenance, m.origin_conversation_id, m.origin_session_id,
+                   m.provenance, m.origin_conversation_id, m.origin_session_id, m.user_id,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
-            WHERE m.is_archived = 0
+            WHERE {LiveRowPredicate}
               AND m.embedding IS NOT NULL
             """);
 
@@ -1010,6 +1096,8 @@ public sealed class SqliteMemoryStore(
 
         var rowsRead = 0;
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        // Located by name; see the note on the FTS path.
+        var ageOrdinal = reader.GetOrdinal("age_days");
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var entry = ReadMemory(reader);
@@ -1024,7 +1112,7 @@ public sealed class SqliteMemoryStore(
             if (similarity is null)
                 continue;
 
-            var ageDays = reader.IsDBNull(15) ? 0d : Math.Max(0d, reader.GetDouble(15));
+            var ageDays = reader.IsDBNull(ageOrdinal) ? 0d : Math.Max(0d, reader.GetDouble(ageOrdinal));
             candidates[entry.Id] = candidates.TryGetValue(entry.Id, out var existing)
                 ? existing with { Similarity = similarity }
                 : new MemoryRankingCandidate(entry, LexicalScore: 0d, similarity, ageDays);
@@ -1099,6 +1187,7 @@ public sealed class SqliteMemoryStore(
         command.Parameters.AddWithValue("$provenance", MemoryProvenance.Normalize(entry.Provenance));
         command.Parameters.AddWithValue("$originConversationId", (object?)entry.OriginConversationId ?? DBNull.Value);
         command.Parameters.AddWithValue("$originSessionId", (object?)entry.OriginSessionId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$userId", (object?)entry.UserId ?? DBNull.Value);
     }
 
     private static MemoryEntry ReadMemory(SqliteDataReader reader)
@@ -1122,7 +1211,11 @@ public sealed class SqliteMemoryStore(
             // fail-safe, non-first-party default.
             Provenance = reader.IsDBNull(12) ? null : reader.GetString(12),
             OriginConversationId = reader.IsDBNull(13) ? null : reader.GetString(13),
-            OriginSessionId = reader.IsDBNull(14) ? null : reader.GetString(14)
+            OriginSessionId = reader.IsDBNull(14) ? null : reader.GetString(14),
+            // Column 15 is the additive per-person attribution. NULL on every row written before
+            // it existed, and on every write path with no human in the loop (cron, compaction,
+            // dreaming). Nothing filters on it yet - see MemoryEntry.UserId.
+            UserId = reader.IsDBNull(15) ? null : reader.GetString(15)
         };
     }
 }

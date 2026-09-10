@@ -1,0 +1,117 @@
+@* The portal's first eleven seconds.
+
+   The chrome paints almost immediately - top bar, nav, sidebar - and then the page body sat empty
+   with a small centred "Connecting…" until the hub connected and the first load finished. Measured
+   on a live instance: still empty 11.3s after a reload, with every framework asset already cached
+   and every REST call answered inside 500ms. The wait is the hub, not the download, and there is
+   no reason for it to be spent looking at nothing.
+
+   A skeleton is not decoration here. It says three things a spinner cannot: that something IS
+   coming, roughly how much of it, and where it will be - so the arrival re-uses the shape the eye
+   has already settled on instead of replacing a void with a full page.
+
+   Deliberately NOT announced as shapes. The blocks are aria-hidden and a single sr-only live
+   region carries the status, because a screen reader given a dozen empty divs learns less than one
+   that is told "Loading". *@
+
+@if (Error is not null)
+{
+    @* Unchanged from what each page rendered before: a real error is information, and replacing it
+       with a skeleton would promise content that is not coming. *@
+    <div class="portal-loading">
+        <div class="portal-load-error" data-testid="portal-load-error"><Icon Name="warning" Size="15" /> @Error</div>
+    </div>
+}
+else
+{
+    <div class="portal-skeleton" data-testid="portal-skeleton" data-variant="@Variant">
+        <span class="sr-only" role="status" aria-live="polite">Loading @VariantLabel…</span>
+
+        @switch (Variant)
+        {
+            case SkeletonVariant.Activity:
+                <div class="portal-skeleton-toolbar" aria-hidden="true">
+                    <span class="sk-block sk-w-lg sk-h-control"></span>
+                    <span class="sk-block sk-w-sm sk-h-control"></span>
+                </div>
+                <div class="portal-skeleton-table" aria-hidden="true">
+                    @for (var i = 0; i < RowCount; i++)
+                    {
+                        <div class="portal-skeleton-row">
+                            <span class="sk-block sk-w-xs"></span>
+                            <span class="sk-block sk-w-md"></span>
+                            <span class="sk-block sk-w-sm"></span>
+                            <span class="sk-block sk-w-xs"></span>
+                        </div>
+                    }
+                </div>
+                break;
+
+            case SkeletonVariant.Chat:
+                <div class="portal-skeleton-transcript" aria-hidden="true">
+                    @for (var i = 0; i < RowCount; i++)
+                    {
+                        <div class="portal-skeleton-message @(i % 2 == 1 ? "is-own" : "")">
+                            <span class="sk-block sk-h-line sk-w-lg"></span>
+                            <span class="sk-block sk-h-line sk-w-md"></span>
+                        </div>
+                    }
+                </div>
+                <div class="portal-skeleton-composer" aria-hidden="true">
+                    <span class="sk-block sk-h-composer"></span>
+                </div>
+                break;
+
+            default:
+                <div class="portal-skeleton-summary" aria-hidden="true">
+                    <span class="sk-block sk-h-tile"></span>
+                    <span class="sk-block sk-h-tile"></span>
+                    <span class="sk-block sk-h-tile"></span>
+                </div>
+                <div class="portal-skeleton-starter" aria-hidden="true">
+                    <span class="sk-block sk-w-md sk-h-line"></span>
+                    <span class="sk-block sk-h-composer"></span>
+                </div>
+                break;
+        }
+    </div>
+}
+
+@code {
+    /// <summary>Which page's shape to approximate while it loads.</summary>
+    public enum SkeletonVariant
+    {
+        /// <summary>The landing page: a summary strip above a conversation starter.</summary>
+        Home,
+
+        /// <summary>The chat transcript and its composer.</summary>
+        Chat,
+
+        /// <summary>The activity table and its toolbar.</summary>
+        Activity,
+    }
+
+    /// <summary>The page shape to draw. Defaults to the landing page.</summary>
+    [Parameter]
+    public SkeletonVariant Variant { get; set; } = SkeletonVariant.Home;
+
+    /// <summary>
+    /// The load error, when there is one. Present means the skeleton is replaced by the error:
+    /// a skeleton promises content that is arriving, and a failed load has none.
+    /// </summary>
+    [Parameter]
+    public string? Error { get; set; }
+
+    /// <summary>
+    /// How many placeholder rows to draw. Enough to fill the eye without pretending to know how
+    /// much data there is - a skeleton that guesses a count is lying about something it cannot see.
+    /// </summary>
+    private int RowCount => Variant == SkeletonVariant.Chat ? 4 : 6;
+
+    private string VariantLabel => Variant switch
+    {
+        SkeletonVariant.Chat => "conversation",
+        SkeletonVariant.Activity => "activity",
+        _ => "workspace",
+    };
+}

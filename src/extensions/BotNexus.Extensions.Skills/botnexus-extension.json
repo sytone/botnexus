@@ -4,7 +4,10 @@
   "description": "Dynamic skill loading and command contributions for agents",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.Skills.dll",
-  "extensionTypes": ["tool", "command"],
+  "extensionTypes": [
+    "tool",
+    "command"
+  ],
   "enabled": true,
   "configSchema": [
     {
@@ -51,6 +54,38 @@
       "default": "100000",
       "sensitive": false,
       "description": "Maximum total characters of skill content included in the prompt."
+    },
+    {
+      "id": "allowSkillCreation",
+      "type": "bool",
+      "required": false,
+      "default": "true",
+      "sensitive": false,
+      "description": "Allow the agent to create and edit skills via the skill_manage tool."
+    },
+    {
+      "id": "allowSkillDeletion",
+      "type": "bool",
+      "required": false,
+      "default": "true",
+      "sensitive": false,
+      "description": "Allow the agent to delete skills and remove supporting files. Requires allowSkillCreation."
+    },
+    {
+      "id": "allowSharedSkillManagement",
+      "type": "bool",
+      "required": false,
+      "default": "false",
+      "sensitive": false,
+      "description": "Allow the agent to manage SHARED (all-agent) skills under the global skills directory. Opt-in: a change there is visible to every agent."
+    },
+    {
+      "id": "allowSkillRecording",
+      "type": "bool",
+      "required": false,
+      "default": "true",
+      "sensitive": false,
+      "description": "Allow the agent to record a completed run as a skill via skill_record, through the propose-and-confirm cycle. Requires allowSkillCreation, since recording ends in a skill being written."
     }
   ]
 }

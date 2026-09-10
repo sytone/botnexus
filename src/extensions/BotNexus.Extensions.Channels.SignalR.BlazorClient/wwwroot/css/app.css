@@ -66,6 +66,10 @@
    ──────────────────────────────────────────────────────────────────────── */
 
 :root {
+    /* Tells the browser which palette to draw its OWN chrome in - select popups,
+       scrollbars, checkboxes, date pickers, spinners. Without it those render in light
+       chrome against the dark surface, and no amount of CSS on our side reaches them. */
+    color-scheme: dark;
     /* ── 1. Colour ─────────────────────────────────────────────────────── */
 
     /* Surface ladder. Each step is a lightness increment on a near-neutral
@@ -337,6 +341,7 @@
    rather than inverted — the accent darkens so it still passes against white,
    and --color-on-accent flips to suit it. */
 [data-theme="light"] {
+    color-scheme: light;
     --color-canvas: #f6f8fa;
     --color-surface: #ffffff;
     --color-surface-2: #eef2f6;
@@ -527,6 +532,476 @@ html, body, #app {
     font-family: var(--font-sans);
     background: var(--bg-primary);
     color: var(--text-primary);
+}
+
+/* ── Shared memory stores ───────────────────────────────── */
+
+.memory-shared-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.memory-shared-store {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+}
+
+.memory-shared-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.memory-shared-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.memory-shared-description {
+    margin: 0;
+    max-width: 70ch;
+    font-size: var(--text-label);
+    color: var(--text-muted);
+}
+
+.memory-shared-access {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-top: 0.15rem;
+}
+
+/* ── Run timeline (Interface Review P2) ─────────────────────────── */
+
+/* A run's steps, derived from the transcript. The layout is a three-column row - marker, body,
+   duration - so the durations form a right-aligned column you can scan without reading labels. */
+.run-timeline {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow-y: auto;
+    padding: 0.75rem 1rem;
+    gap: 0.75rem;
+}
+
+.run-timeline-empty {
+    max-width: 46ch;
+    color: var(--text-muted);
+    font-size: var(--text-label);
+    line-height: 1.5;
+}
+
+.run-timeline-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+    font-size: var(--text-label);
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.run-timeline-stat b {
+    color: var(--text-primary);
+}
+
+/* Failure and never-finished are separate counters and separately coloured: an error a tool
+   reported is a different problem from a run that stopped underneath one. */
+.run-timeline-stat--failed {
+    color: var(--color-danger);
+}
+
+.run-timeline-stat--unfinished {
+    color: var(--color-warning);
+}
+
+/* Sits in the summary row rather than above it: it is a reading of those counts, not a separate
+   toolbar, and a run with nothing wrong never shows it at all. */
+.run-timeline-filter {
+    margin-left: auto;
+    padding: 0.1rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--text-caption);
+    cursor: pointer;
+}
+
+.run-timeline-filter:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.run-timeline-filter.active {
+    color: var(--color-on-accent);
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.run-timeline-list {
+    display: flex;
+    flex-direction: column;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* Four aligned columns - marker, label, bar, duration - rather than stacking the bar under the
+   label. Stacked, each bar was measured against the full row width and a one-second step became
+   an invisible nub against a prominent full-width track, which read as "every step is empty".
+   In its own fixed column the bars line up as a chart you compare down, which is the whole
+   reason for drawing them. */
+.run-timeline-step {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) 96px auto;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.22rem 0;
+}
+
+/* The connecting rail. Drawn on the marker column rather than as a border on the row so it does
+   not extend past the first and last steps. */
+.run-timeline-step + .run-timeline-step .run-timeline-marker::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 100%;
+    width: 1px;
+    height: 0.6rem;
+    transform: translateX(-50%);
+    background: var(--border);
+}
+
+.run-timeline-marker {
+    position: relative;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    justify-self: center;
+    background: var(--text-muted);
+}
+
+.run-timeline-step--ok .run-timeline-marker {
+    background: var(--color-success);
+}
+
+.run-timeline-step--failed .run-timeline-marker {
+    background: var(--color-danger);
+}
+
+/* Hollow, not filled: nothing reported an outcome, so a solid dot would assert one. */
+.run-timeline-step--unfinished .run-timeline-marker {
+    background: transparent;
+    border: 1.5px dashed var(--color-warning);
+}
+
+.run-timeline-step--running .run-timeline-marker {
+    background: var(--accent);
+    animation: run-timeline-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes run-timeline-pulse {
+    50% { opacity: 0.35; }
+}
+
+.run-timeline-body {
+    min-width: 0;
+}
+
+.run-timeline-label {
+    font-size: var(--text-label);
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.run-timeline-step--unfinished .run-timeline-label {
+    color: var(--text-muted);
+}
+
+/* The track is a scale, not content: barely-there, so the bar is the thing being read. */
+.run-timeline-bar-track {
+    height: 4px;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+    opacity: 0.4;
+    overflow: hidden;
+}
+
+.run-timeline-bar {
+    display: block;
+    height: 100%;
+    min-width: 2px;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+}
+
+.run-timeline-step--failed .run-timeline-bar {
+    background: var(--color-danger);
+}
+
+.run-timeline-step--unfinished .run-timeline-bar {
+    background: var(--color-warning);
+}
+
+/* Tabular figures so the durations line up as a column - the thing being compared down the
+   right-hand edge is magnitude, and proportional digits break that comparison. */
+.run-timeline-duration {
+    font-size: var(--text-caption);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .run-timeline-step--running .run-timeline-marker {
+        animation: none;
+    }
+}
+
+/* ── Boot skeleton ─────────────────────────────────── */
+
+/* Paints the shell's real geometry while WASM boots: same banner height, same 240px sidebar,
+   same composer at the bottom. It is rendered from static markup in index.html, so it is on
+   screen before the framework is fetched - which is the entire point, since the wait being
+   covered IS the framework fetch.
+
+   Dimensions are taken from the live rules, not eyeballed: --density-bar-h for the banner and
+   240px for the sidebar are the same values .banner-header and .main-sidebar use, so the real
+   UI lands on top of the placeholder rather than shifting it. */
+.boot-skeleton {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+.boot-skeleton-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--density-gap);
+    flex-shrink: 0;
+    padding: var(--density-row-pad-y) var(--density-row-pad-x);
+    min-height: var(--density-bar-h);
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-surface) 100%);
+    overflow: hidden;
+}
+
+.boot-skeleton-spacer {
+    flex: 1 1 auto;
+}
+
+/* The nav row, which the real shell has on EVERY route. Leaving it out made the skeleton's
+   content area start where the toolbar would be, so first render pushed everything down by a
+   row - a jump introduced by the loading state itself. */
+.boot-skeleton-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    flex-shrink: 0;
+    padding: 0 var(--density-row-pad-x);
+    min-height: var(--density-control-h);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.boot-skeleton-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* Hidden unless the pre-paint script decided a sidebar actually belongs on THIS boot - it is a
+   persisted preference that defaults to closed, and it only appears on conversation routes.
+   Promising a 240px pane that then evaporates is a worse jump than never drawing one. */
+.boot-skeleton-sidebar {
+    display: none;
+    flex: 0 0 240px;
+    width: 240px;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+}
+
+[data-boot-sidebar="true"] .boot-skeleton-sidebar {
+    display: flex;
+}
+
+.boot-skeleton-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Transcript shape - only on chat/* and agent/*, chosen before first paint. Bottom-aligned,
+   because a transcript is: the newest message sits above the composer, and placeholders that
+   started at the top would slide down the moment real messages arrived. */
+.boot-skeleton-transcript {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem;
+}
+
+[data-boot-transcript="true"] .boot-skeleton-transcript {
+    display: flex;
+}
+
+/* Page shape - everything else, root included. Top-aligned with a heading and a card grid,
+   which is what Home actually renders and where a cold start most often lands. */
+/* Geometry copied from .home-page, not approximated: same max-width, same auto margins, same
+   padding. That is what puts the placeholder cards where the real cards are about to be. */
+.boot-skeleton-page {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1.5rem;
+    max-width: 60rem;
+    margin: 0 auto;
+    width: 100%;
+}
+
+[data-boot-transcript="true"] .boot-skeleton-page {
+    display: none;
+}
+
+/* And the same track rule as .agent-card-grid, so the placeholder columns cannot drift from
+   the real ones. Note the skeleton page keeps its own 60rem cap, so on a wide display the
+   placeholders still occupy a 960px band and the cards widen out when Blazor takes over;
+   reconciling that is a separate change to .boot-skeleton-page's geometry. */
+.boot-skeleton-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 20rem));
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 0.9rem;
+    overflow: hidden;
+}
+
+.boot-skeleton-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* The placeholder itself. One shimmer keyframe drives every shape; widths are set inline per
+   element so the rows read as text of differing length rather than a stack of identical bars. */
+.boot-sk {
+    display: block;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(
+        90deg,
+        var(--bg-surface) 0%,
+        var(--bg-hover) 50%,
+        var(--bg-surface) 100%);
+    background-size: 200% 100%;
+    animation: boot-sk-shimmer 1.4s ease-in-out infinite;
+}
+
+.boot-sk-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.boot-sk-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.boot-sk-line {
+    height: 10px;
+}
+
+.boot-sk-tab {
+    height: 12px;
+    margin: 0 0.7rem;
+    flex-shrink: 0;
+}
+
+.boot-sk-heading {
+    height: 18px;
+    border-radius: var(--radius-sm);
+}
+
+.boot-sk-card {
+    height: 104px;
+    border-radius: var(--radius-lg);
+}
+
+.boot-sk-field {
+    height: 28px;
+    border-radius: var(--radius-lg);
+}
+
+.boot-sk-row {
+    height: 16px;
+}
+
+.boot-sk-msg {
+    height: 44px;
+    border-radius: var(--radius-lg);
+}
+
+.boot-sk-msg--own {
+    align-self: flex-end;
+}
+
+.boot-sk-composer {
+    height: 56px;
+    border-radius: var(--radius-lg);
+    flex-shrink: 0;
+}
+
+@keyframes boot-sk-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* The sidebar is off-canvas on narrow screens, so a placeholder for it would promise a pane
+   that never appears. Matches the breakpoint .main-sidebar already uses. */
+@media (max-width: 768px) {
+    [data-boot-sidebar="true"] .boot-skeleton-sidebar {
+        display: none;
+    }
+}
+
+/* A shimmer is a decorative loop with no end state, which is exactly what this setting is for.
+   The shapes stay - they are the useful part - they just stop moving. */
+@media (prefers-reduced-motion: reduce) {
+    .boot-sk {
+        animation: none;
+    }
 }
 
 /* ── Loading screen ─────────────────────────────────────────────────── */
@@ -1893,6 +2368,17 @@ html, body, #app {
 
 /* ── Messages ───────────────────────────────────────────────────────── */
 
+/* One column width for the transcript and the composer below it, declared on the panel
+   that owns both so they cannot drift apart. Wide enough to HOLD a code block or a table;
+   the per-message caps below decide what actually uses the room. */
+.chat-panel {
+    --chat-column: 96rem;
+    /* The reading measure for prose in the transcript. `ch` is font-relative and a custom
+       property resolves on the element that USES it, so each transcript-flow element gets
+       ~68 characters of its own type size rather than one fixed pixel width. */
+    --chat-measure: 68ch;
+}
+
 .messages-container {
     flex: 1;
     overflow-y: auto;
@@ -1900,12 +2386,32 @@ html, body, #app {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    max-width: var(--chat-column);
+    margin-inline: auto;
+    width: 100%;
 }
 
 .message {
     padding: 0.75rem 1rem;
     border-radius: var(--radius);
-    max-width: 85%;
+    /* Was a bare 85% - a proportion of the container, so line length grew with the display.
+       Measured on a real transcript: 101 characters at a 1024px viewport, 128 at 1280 and
+       170 at 2000, against a comfortable 65-75. The ch term is what stops it; the
+       percentage still governs narrow screens, where 68ch is never the binding constraint
+       (and a media query further down widens these to 95% there). */
+    max-width: min(85%, var(--chat-measure));
+}
+
+/* Reference material is scanned rather than read, so it may use the column that prose
+   deliberately does not. .message.tool already carries its own 95% and gets the same
+   benefit from the wider container, so it needs no rule here.
+
+   Degrades gracefully without :has(): the rule is dropped and a code block scrolls inside
+   the measure instead, because .msg-content pre already sets overflow-x: auto. :has() is
+   used in five other places in this stylesheet, so it is not a new dependency. */
+.message:has(pre),
+.message:has(table) {
+    max-width: 95%;
 }
 
 .message.user {
@@ -2032,6 +2538,13 @@ html, body, #app {
     display: flex;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
+    /* The band stays full width so its border and fill still read as a page-level divider,
+       but its CONTENTS line up with the transcript column above - a centred transcript over
+       a full-width composer reads as a bug. The + 1rem matters: .messages-container's own
+       1rem padding sits INSIDE its capped box, so centring on the column alone left the
+       composer 16px out at every width past the cap. max() keeps the original 1rem gutter
+       once the viewport is narrower than the column, where the calc goes negative. */
+    padding-inline: max(1rem, calc((100% - var(--chat-column)) / 2 + 1rem));
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
 }
@@ -3063,7 +3576,11 @@ html, body, #app {
 
 .thinking-block {
     align-self: flex-start;
-    max-width: 85%;
+    /* Same reading measure as .message. It is a sibling in the transcript flow rendering the
+       same kind of prose, and a bare 85% left it running ~163 characters inside the capped
+       column - the one place the #118 cap missed. Plain text (@msg.ThinkingContent), never
+       markdown, so it needs no :has() break-out. */
+    max-width: min(85%, var(--chat-measure));
     background: var(--color-wash);
     border: 1px solid var(--color-hairline);
     border-radius: var(--radius);
@@ -3104,6 +3621,12 @@ details[open] > .thinking-summary::before {
 
 .thinking-content {
     margin-top: 0.4rem;
+    /* The measure belongs HERE, not only on .thinking-block. `ch` resolves against the
+       element that uses it, and the block inherits 16px while this text renders at 13px -
+       so the same token on the block gave 101 characters against 81 for body prose. Applied
+       at the smaller size it lands on the same measure. The block keeps its own cap as an
+       outer bound; being align-self: flex-start it shrink-wraps to this anyway. */
+    max-width: var(--chat-measure);
     font-size: var(--text-label);
     color: var(--text-muted);
     font-style: italic;
@@ -3125,7 +3648,9 @@ details[open] > .thinking-summary::before {
     padding: 0.3rem 0.75rem;
     background: var(--color-wash);
     border-radius: var(--radius);
-    max-width: 80%;
+    /* Also plain text in the transcript flow. These notices are usually short enough that the
+       measure never binds, but 80% of the column is ~154 characters when one is not. */
+    max-width: min(80%, var(--chat-measure));
 }
 
 /* ── Chat header actions (toggles, config, new chat) ────────────────── */
@@ -3334,6 +3859,20 @@ details[open] > .thinking-summary::before {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+}
+
+/* Reassurance, not an error: shown while the conversation rows are empty, which is the
+   ordinary state of an agent nobody has messaged yet. Styled as a quiet note rather than a
+   warning, because nothing is wrong. */
+.config-note {
+    margin: 0 0 0.75rem;
+    padding: 0.5rem 0.6rem;
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.4;
 }
 
 .config-field {
@@ -4607,56 +5146,14 @@ details[open] > .thinking-summary::before {
     color: var(--error);
 }
 
-/* Dim the pushpin and folder glyphs so they read as inactive actions until they are used. */
-.conversation-pin-btn,
-.conversation-section-btn {
+/* Dim the pushpin glyph so it reads as an inactive action until it is used. */
+.conversation-pin-btn {
     filter: grayscale(1) opacity(0.6);
 }
 
 .conversation-pin-btn:hover,
-.conversation-section-btn:hover,
 .conversation-pin-btn.pinned {
     filter: none;
-}
-
-.conversation-section-menu {
-    position: absolute;
-    right: 0.25rem;
-    top: 100%;
-    z-index: 20;
-    min-width: 10rem;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-elevated, var(--bg-secondary));
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 0.2rem;
-    box-shadow: var(--shadow-raised);
-}
-
-.conversation-section-menu-item {
-    background: none;
-    border: none;
-    cursor: pointer;
-    text-align: left;
-    color: var(--text);
-    font-size: var(--text-caption);
-    padding: 0.25rem 0.4rem;
-    border-radius: var(--radius-sm);
-}
-
-.conversation-section-menu-item:hover {
-    background: var(--bg-hover, var(--color-wash));
-}
-
-.conversation-section-menu-item.active {
-    color: var(--accent);
-}
-
-.conversation-section-menu-empty {
-    color: var(--text-muted);
-    font-size: var(--text-caption);
-    padding: 0.25rem 0.4rem;
 }
 
 /* ── Conversation Group Headers ───────────────────────────────────────────────────────── */
@@ -4990,6 +5487,111 @@ h3.conversation-title.editable:hover {
 }
 
 /* ── Portal loading gate ─────────────────────────────────────────────── */
+/* ── cold-start skeleton ─────────────────────────────────────────────────────
+   The chrome paints in well under a second; the body then waited on the hub with
+   nothing in it (measured: still empty 11.3s after reload). These blocks stand in
+   for the shape that is coming, so the arrival settles into a layout the eye has
+   already accepted rather than replacing a void.
+
+   One colour, one radius, no borders: a skeleton that looks like real UI competes
+   with the real UI a moment later. It should read as absence, not as content. */
+.portal-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+    width: 100%;
+    min-height: 200px;
+}
+
+.sk-block {
+    display: block;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    /* Sized by the modifiers below; a bare block is a full-width line. */
+    height: 0.75rem;
+    width: 100%;
+    animation: portal-skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+.sk-w-xs { width: 12%; }
+.sk-w-sm { width: 22%; }
+.sk-w-md { width: 45%; }
+.sk-w-lg { width: 70%; }
+
+.sk-h-line { height: 0.75rem; }
+.sk-h-control { height: 2rem; }
+.sk-h-tile { height: 4.5rem; flex: 1; }
+.sk-h-composer { height: 3.25rem; }
+
+.portal-skeleton-summary {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.portal-skeleton-starter,
+.portal-skeleton-composer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.portal-skeleton-toolbar {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.portal-skeleton-table,
+.portal-skeleton-transcript {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.portal-skeleton-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.portal-skeleton-message {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    /* An explicit width, not max-width. `align-self: flex-end` below opts the own-side rows out of
+       the column's default stretch, and a shrink-to-fit box whose only children are sized in % OF
+       IT resolves to zero width - visible as nothing at all. */
+    width: 70%;
+}
+
+/* The alternation is what makes it read as a conversation rather than a list. */
+.portal-skeleton-message.is-own {
+    align-self: flex-end;
+    align-items: flex-end;
+}
+
+/* Staggered so the surface reads as one loading thing rather than a row of
+   synchronised lights. */
+.portal-skeleton-row:nth-child(even) .sk-block,
+.portal-skeleton-message:nth-child(even) .sk-block {
+    animation-delay: 0.2s;
+}
+
+@keyframes portal-skeleton-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+
+/* A pulsing placeholder is motion the user did not ask for, and this one covers the
+   whole viewport. Honour the preference: the shapes still communicate the layout. */
+@media (prefers-reduced-motion: reduce) {
+    .sk-block {
+        animation: none;
+        opacity: 0.7;
+    }
+}
+
 .portal-loading {
     display: flex;
     align-items: center;
@@ -5093,10 +5695,15 @@ h3.conversation-title.editable:hover {
 /* ── Home agent roster / Agent Dashboard ───────────────────────────── */
 
 .home-agent-roster {
-    width: min(100%, 72rem);
-    margin: 1rem auto 3rem;
-    padding-top: 1.5rem;
+    /* Was min(100%, 72rem), which never did anything: 72rem cannot apply inside the page's
+       60rem cap. Now a sibling of .home-page, so 100% is the whole canvas. The 1.5rem inline
+       padding replaces the page padding this section used to sit inside, which keeps the grid's
+       gutters identical: at 375px the grid measures 279px either way. */
+    width: 100%;
+    margin: 1rem 0 3rem;
+    padding: 1.5rem 1.5rem 0;
     border-top: 1px solid var(--border);
+    box-sizing: border-box;
 }
 
 .home-agent-roster-heading {
@@ -5135,22 +5742,30 @@ h3.conversation-title.editable:hover {
     font-size: var(--text-body);
 }
 
+/* Cards grow in NUMBER, not in size. The track tops out at 21rem, so extra width becomes
+   another column rather than stretched cards, and justify-content centres the result at any
+   width - which is why this needs no breakpoints at all and the three @media overrides that
+   used to cap it at three columns are gone.
+
+   The cap is 20rem, not 21rem, and the difference is load-bearing. auto-fit counts repetitions
+   using the track's MAX size, not its min, so a 21rem (336px) cap fits only ONE track into the
+   672px grid at a 768px viewport - a regression from the two columns the old 600px breakpoint
+   gave. 20rem (320px) fits two there (2x320 + 16 gap = 656) and changes nothing above it:
+   measured 1 / 2 / 3 / 4 / 5 columns at 375 / 768 / 1280 / 1600 / 2000px, against 1 / 2 / 3 / 3 / 3
+   before.
+
+   min(17rem, 100%) is the floor guard: a bare 17rem minimum overflows any container narrower
+   than 17rem, which is a real 320px phone. The explicit minimum also fixes a pre-existing
+   overflow - `1fr` means minmax(auto, 1fr), so a long unbreakable agent name could push a
+   track past its share, measured as columns of 286/260/335px inside an 864px grid.
+
+   Both consumers gain: the Home roster, and the chat page's agent picker (Home.razor renders
+   AgentDashboard with no width cap at all, so its three columns spanned the whole canvas). */
 .agent-card-grid {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 20rem));
+    justify-content: center;
     gap: 1rem;
-}
-
-@media (min-width: 600px) {
-    .agent-card-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-}
-
-@media (min-width: 900px) {
-    .agent-card-grid {
-        grid-template-columns: repeat(3, 1fr);
-    }
 }
 
 .agent-card {
@@ -5224,6 +5839,23 @@ h3.conversation-title.editable:hover {
     flex-shrink: 0;
 }
 
+/* The role line: one line naming what this agent owns, sitting between the name and the prose.
+   Deliberately NOT clamped to two lines like the description below it - a role that needs two
+   lines is not a role line, and letting it wrap would blur the distinction the two fields exist
+   to draw. It truncates instead, and the full text is one click away in the persona drawer.
+
+   Weightier and less muted than the description, because on a roster it is the line being
+   scanned; the description is the line read once you have stopped scanning. */
+.agent-card-responsibility {
+    font-size: var(--text-label);
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0 0 0.25rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .agent-card-description {
     font-size: var(--text-label);
     color: var(--text-muted);
@@ -5232,6 +5864,41 @@ h3.conversation-title.editable:hover {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
+}
+
+/* Capability marker on a roster card. Only agents whose tool policy admits spawn_subagent get
+   one, so on a typical install this appears on a minority of cards - which is the point: it is a
+   distinction, not decoration. Colour comes from the accent wash rather than a status hue, because
+   being able to delegate is a capability, not a state and certainly not a warning. */
+.agent-card-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0.55rem 0 0;
+}
+
+.agent-card-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: var(--radius-pill);
+    font-size: var(--text-caption);
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.agent-card-chip-icon {
+    width: 10px;
+    height: 10px;
+    flex: none;
+}
+
+.agent-card-chip--delegate {
+    color: var(--accent);
+    background: var(--color-accent-wash);
+    border: 1px solid var(--color-accent-ring);
 }
 
 .agent-card-stats {
@@ -6429,46 +7096,6 @@ h3.conversation-title.editable:hover {
 /* ── User-defined conversation sections (#2124) ─────────────────────────── */
 /* #2441: "My sections" is nested under the agent chat section behind a collapsible
    header, so it needs no separator of its own and only a small indent to read as a
-   child of Chat. */
-.chat-nav-child {
-    padding-left: var(--density-nav-pad-x);
-    border-left: 2px solid var(--border);
-    margin-left: var(--density-nav-pad-x);
-}
-
-.chat-nav-child-header {
-    padding-left: 0;
-}
-
-/* Collapsed children stay in the DOM (their @ref is a live dependency) but cost no space. */
-.chat-nav-child-body.collapsed {
-    display: none;
-}
-
-.conversation-sections {
-    margin-top: 0;
-    padding-top: 0;
-    padding-left: var(--density-nav-pad-x);
-}
-
-/* The panel's own title duplicates the collapsible header above it. */
-.chat-nav-child .conversation-sections-header .conversation-sections-title {
-    display: none;
-}
-
-.conversation-sections-header {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    padding: var(--density-group-pad-y) var(--density-nav-pad-x);
-}
-
-.conversation-sections-title {
-    font-size: var(--density-font-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    opacity: 0.7;
-}
 
 .section-add-btn {
     background: none;
@@ -6482,63 +7109,6 @@ h3.conversation-title.editable:hover {
 
 .section-add-btn:hover {
     background: var(--color-wash);
-}
-
-.conversation-section-header {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: var(--density-group-pad-y) 0.35rem;
-}
-
-.conversation-section-name {
-    flex: 1 1 auto;
-    font-weight: 600;
-    font-size: var(--density-font-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.conversation-section-actions {
-    display: flex;
-    gap: 0.1rem;
-    opacity: 0;
-    transition: opacity 0.12s ease-in-out;
-}
-
-.conversation-section-header:hover .conversation-section-actions {
-    opacity: 1;
-}
-
-.conversation-section-actions button,
-.section-collapse-toggle {
-    background: none;
-    border: none;
-    color: inherit;
-    cursor: pointer;
-    font-size: var(--text-caption);
-    padding: 0.05rem 0.2rem;
-    opacity: 0.75;
-}
-
-.conversation-section-actions button:disabled {
-    opacity: 0.25;
-    cursor: default;
-}
-
-.conversation-section-actions button:hover:not(:disabled) {
-    opacity: 1;
-}
-
-.section-name-input {
-    flex: 1 1 auto;
-    background: var(--color-scrim-soft);
-    border: 1px solid var(--sidebar-border);
-    border-radius: var(--radius-sm);
-    color: inherit;
-    font-size: var(--text-label);
-    padding: 0.1rem 0.3rem;
 }
 
 .section-create-row {
@@ -6556,47 +7126,6 @@ h3.conversation-title.editable:hover {
     cursor: pointer;
     font-size: var(--text-caption);
     padding: 0.1rem 0.35rem;
-}
-
-.conversation-section-body {
-    padding-left: 0.6rem;
-}
-
-.conversation-section-empty {
-    font-size: var(--text-caption);
-    opacity: 0.5;
-    padding: 0.15rem 0.5rem;
-}
-
-.conversation-section-item {
-    /* The move-to-section menu positions against its row. This row was never a containing
-       block, so on a section member the menu resolved against whichever ancestor happened
-       to be positioned and landed away from the button that opened it. */
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.1rem 0.5rem;
-    font-size: var(--text-label);
-}
-
-.conversation-section-item-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.section-remove-conversation-btn {
-    background: none;
-    border: none;
-    color: inherit;
-    cursor: pointer;
-    opacity: 0;
-    font-size: var(--text-caption);
-}
-
-.conversation-section-item:hover .section-remove-conversation-btn {
-    opacity: 0.7;
 }
 
 /* Tools iframe host route /tools/{id} (#2234) */
@@ -6780,7 +7309,259 @@ h3.conversation-title.editable:hover {
         flex-wrap: wrap;
     }
 }
+/* ── Platform stats strip (#1692) ────────────────────────────────
+   PlatformStatsPanel shipped with class names and NO rules in this stylesheet, so
+   the browser laid its spans out as blocks: four counters stacked down the page,
+   the disclosure rendered as a native bordered button, and the whole thing ate
+   five lines above the Home page's conversation starter. These rules make it what
+   it was always meant to be - a one-line status strip.
+
+   The strip renders on two surfaces: inside .home-summary on Home (#2037), where
+   it shares a bar with the agent roster count, and alone in the /platform config
+   canvas. It therefore carries no bar chrome of its own - .home-summary owns the
+   border there - and stays a flex COLUMN so the expanded loop list drops below
+   the counter row instead of alongside it. */
+.platform-stats-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+/* One row of counters. The min-height is shared with .home-agent-summary so the
+   two halves of the Home bar sit on the same line even though the disclosure
+   button is padded and the roster count is not. */
+.platform-stats-grid {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    min-height: 1.75rem;
+    min-width: 0;
+}
+
+.platform-stat {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    white-space: nowrap;
+}
+
+/* The active-loops cell exists only to carry its data-testid; the button inside
+   is the real control, so the wrapper steps out of the row rather than nesting a
+   second box in it. */
+.platform-stat-interactive {
+    display: contents;
+}
+
+.platform-stat-value {
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    /* The counters repoll every 5s; fixed-width digits stop the labels beside
+       them from twitching sideways when a value gains or loses a digit. */
+    font-variant-numeric: tabular-nums;
+}
+
+.platform-stat-label {
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    color: var(--text-secondary);
+}
+
+/* Peak and completed are history, not live state. Same row, lower contrast, and
+   fenced off by a hairline so the eye lands on the two live counters first. */
+.platform-stats-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.125rem 0 0.125rem 1rem;
+    border-left: 1px solid var(--border-color);
+}
+
+.platform-stats-secondary .platform-stat-value {
+    font-weight: var(--weight-medium);
+    color: var(--text-secondary);
+}
+
+.platform-stats-secondary .platform-stat-label {
+    color: var(--text-muted);
+}
+
+.platform-stat-disclosure {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
+    background: none;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--motion-fast) var(--ease-standard),
+                border-color var(--motion-fast) var(--ease-standard);
+}
+
+.platform-stat-disclosure:hover,
+.platform-stat-disclosure[aria-expanded="true"] {
+    background: var(--color-wash);
+    border-color: var(--border-color);
+}
+
+.platform-stat-chevron {
+    font-size: var(--text-caption);
+    line-height: 1;
+    color: var(--text-muted);
+}
+
+.platform-stats-error {
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+    color: var(--color-danger-text);
+}
+
+/* Expanded loop list. Off the strip's single line and onto its own rows - this is
+   opt-in detail, so it may cost vertical space; the collapsed strip may not. */
+.platform-loop-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.platform-loop-loading,
+.platform-loop-empty,
+.platform-loop-stale {
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    color: var(--text-muted);
+}
+
+.platform-loop-stale {
+    color: var(--color-warning-text);
+}
+
+.platform-loop-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.platform-loop-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+    padding: 0.125rem 0;
+}
+
+/* The link wraps agent + conversation, so it is the part that has to shrink when
+   a conversation id is long; the age column keeps its width. */
+.platform-loop-link {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0.125rem 0.375rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-standard);
+}
+
+.platform-loop-link:hover {
+    background: var(--color-wash);
+}
+
+.platform-loop-agent {
+    font-size: var(--text-label);
+    line-height: var(--text-label-lh);
+    font-weight: var(--weight-medium);
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.platform-loop-conversation {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono);
+    line-height: var(--text-mono-lh);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.platform-loop-age {
+    flex: 0 0 auto;
+    margin-left: auto;
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Below roughly the width where the counter row stops fitting on one line (its
+   max-content is ~500px), the secondary group can land on a wrapped row, where a
+   left border would float mid-strip with nothing to its left. It becomes a plain
+   gap instead. */
+@media (max-width: 600px) {
+    .platform-stats-secondary {
+        padding-left: 0;
+        border-left: 0;
+    }
+}
+
+/* Chrome for the status bar that hosts the strip. Shared, because the strip renders
+   on two surfaces and the panel deliberately carries no chrome of its own: Home
+   composes this onto .home-summary (which also holds the agent roster count) and
+   /platform wraps the bare panel in it. One definition so the two cannot drift.
+   Kept chrome-only - no display/gap - so each surface keeps its own layout. */
+.stats-bar {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-sizing: border-box;
+}
+
+/* No width rule for the standalone case on purpose: .platform-stats-panel is a
+   block-level flex container, so it already fills the bar. A `.stats-bar >` rule
+   would also match on Home, where the panel must stay flex-sized. */
+
 /* ── Home landing page (#2037) ─────────────────────────────────────────────── */
+/* Two bands, not one column. .home-canvas holds the page's 60rem reading column and, below
+   it, the agent roster at full canvas width. The roster used to live INSIDE .home-page, so
+   it inherited that 60rem cap: measured on a 2000px viewport it got 912px and 1088px - 54%
+   of the screen - was idle margin, with the column count stuck at three however wide the
+   display got.
+
+   The cap stays on .home-page rather than moving to its sections, deliberately.
+   .boot-skeleton-page copies this block's geometry and BootSkeletonTests pins the copy
+   property by property, so that placeholder cards land where the real ones will. Removing
+   the cap here breaks that guarantee; making the roster a SIBLING keeps it intact. */
+.home-canvas {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
 .home-page {
     display: flex;
     flex-direction: column;
@@ -6792,34 +7573,77 @@ h3.conversation-title.editable:hover {
     box-sizing: border-box;
 }
 
+/* One status bar, not two floating blocks. The platform stats strip and the agent
+   roster count share a single bordered row: live counters read from the left, the
+   roster from the right. align-items is flex-start rather than center so that
+   expanding the loop list grows the bar downward and leaves the roster count on
+   the top line, instead of drifting it to the middle of a tall box. */
 .home-summary {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 1rem;
+    align-items: flex-start;
+    gap: 0.5rem 1rem;
+}
+
+/* Takes the slack so the roster count sits at the right edge. The basis is 0, not
+   auto: on auto the strip asks for its max-content width, and once the loop list
+   is expanded a long conversation id makes that wider than the bar - which wraps
+   the roster count onto a second line and drops it to the bottom of the box. */
+.home-summary .platform-stats-panel {
+    flex: 1 1 0;
+    min-width: 0;
 }
 
 .home-agent-summary {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.4rem;
+    /* Matches .platform-stats-grid so both halves of the bar share a baseline. */
+    min-height: 1.75rem;
+    margin-left: auto;
+    white-space: nowrap;
 }
 
+/* Deliberately the same scale as the strip's counters. At --text-title this was
+   the largest thing on the page, outweighing the "What would you like to do?"
+   heading below it - the roster count is context, not the headline. */
 .home-agent-count {
-    font-size: var(--text-title);
-    font-weight: 600;
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+    font-weight: var(--weight-semibold);
+    font-variant-numeric: tabular-nums;
 }
 
 .home-agent-count-label,
 .home-agent-connected {
-    opacity: 0.75;
-    font-size: var(--text-body);
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    color: var(--text-secondary);
+}
+
+.home-agent-connected {
+    color: var(--text-muted);
 }
 
 .home-starter {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+}
+
+/* One line fits until about here: the counter row needs ~500px and the roster
+   count ~200px, so with the bar's own padding and the page's 1.5rem gutters the
+   pair stops fitting somewhere below 800px. Past that the roster takes its own
+   row rather than shrinking the strip below its min-content, which would slide
+   the (nowrap) counter labels out under it. */
+@media (max-width: 820px) {
+    .home-summary .platform-stats-panel {
+        flex: 1 1 100%;
+    }
+
+    .home-agent-summary {
+        margin-left: 0;
+    }
 }
 
 .home-starter-title {
@@ -6833,7 +7657,18 @@ h3.conversation-title.editable:hover {
     resize: vertical;
     min-height: 6rem;
     padding: 0.75rem;
-    font: inherit;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    transition: border-color 0.15s;
+}
+
+.home-message-input:focus {
+    border-color: var(--accent);
+    outline: none;
 }
 
 .home-starter-controls {
@@ -7114,7 +7949,6 @@ h3.conversation-title.editable:hover {
 .banner-settings-btn,
 .conversation-pin-btn,
 .conversation-archive-btn,
-.conversation-section-btn,
 .msg-copy-btn,
 .tool-copy-btn,
 .tool-popout-btn,
@@ -7687,6 +8521,7 @@ h3.conversation-title.editable:hover {
 .bn-icon-guide { color: #3B82F6; }
 .bn-icon-help { color: #3B82F6; }
 .bn-icon-light-mode { color: #F59E0B; }
+.bn-icon-notifications { color: #22C55E; }
 .bn-icon-pause { color: #F59E0B; }
 .bn-icon-pin { color: #F59E0B; }
 .bn-icon-plugins { color: #14B8A6; }
@@ -7709,3 +8544,1399 @@ h3.conversation-title.editable:hover {
 /* Where an icon must read as part of its label rather than as its own object. */
 .bn-icon-inherit { color: inherit; stroke: currentColor; }
 /* END generated icon tones */
+
+/* ── Plugins: install form and row actions ──────────────────────────────────
+   The install form is a single row on desktop and stacks below the agents
+   breakpoint, because the URL field is the long one and squeezing it beside a
+   reference field makes the thing you actually paste the hardest to read. */
+
+.plugin-install-form {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+.plugin-install-form input[type="url"],
+.plugin-install-form input[type="text"] {
+    box-sizing: border-box;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    padding: 0.35rem 0.6rem;
+    font-size: var(--text-body);
+    font-family: var(--font-sans);
+    transition: border-color 0.15s;
+}
+
+.plugin-install-form input[type="url"]:focus,
+.plugin-install-form input[type="text"]:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+/* The URL grows, the reference stays a fixed hint-sized field. */
+.plugin-install-form .plugin-install-source {
+    flex: 1 1 22rem;
+    min-width: 0;
+    font-family: var(--font-mono, monospace);
+}
+
+.plugin-install-form .plugin-install-reference {
+    flex: 0 1 16rem;
+    min-width: 0;
+}
+
+.plugin-row-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    white-space: nowrap;
+}
+
+/* Destructive actions read as destructive before they are clicked, not after. */
+.toolbar-btn.danger {
+    border-color: var(--error);
+    color: var(--error);
+}
+
+.toolbar-btn.danger:hover:not(:disabled) {
+    background: var(--error);
+    border-color: var(--error);
+    color: var(--bg-base, #fff);
+}
+
+/* The consent prompt is a decision, not a toast: its buttons need room to sit
+   under the explanation rather than inline with it. */
+[data-testid="plugin-consent-prompt"] {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+[data-testid="plugin-consent-prompt"] p {
+    margin: 0;
+}
+
+@media (max-width: 720px) {
+    .plugin-install-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .plugin-install-form .plugin-install-source,
+    .plugin-install-form .plugin-install-reference {
+        flex: 1 1 auto;
+    }
+}
+
+/* ── Marketplace browse ─────────────────────────────────────────────────────
+   Repositories the portal looks in, and the plugins they offer. Each source is
+   a bounded block so a catalog listing twenty plugins still reads as one
+   repository rather than as twenty loose rows. */
+
+.cron-page-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* The two URL boxes look alike and do different things - one installs, one only
+   lists - so each carries a line saying which. Muted: it explains the control
+   above it rather than competing with it. */
+.plugin-form-hint {
+    margin: 0.35rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.88em;
+    line-height: 1.45;
+    max-width: 62ch;
+}
+
+.plugin-source {
+    border: 1px solid var(--border, #333);
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    margin-top: 0.65rem;
+}
+
+.plugin-source-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+/* Per-source actions sit at the far end so Remove is never adjacent to the
+   Install buttons below it. */
+.plugin-source-actions {
+    display: flex;
+    gap: 0.35rem;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.plugin-offerings {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.plugin-offering {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.4rem 0.5rem;
+    border-radius: 4px;
+    background: var(--bg-elevated, rgba(255, 255, 255, 0.03));
+}
+
+.plugin-offering-main {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.plugin-offering-description {
+    color: var(--text-muted, #999);
+    font-size: 0.85em;
+    /* Basis of 100% pushes the description onto its own line, so a long summary
+       never squeezes the name and badges it belongs to. */
+    flex: 1 1 100%;
+    min-width: 0;
+}
+
+/* "Carries an extension" is the fact on this row that most changes the decision,
+   so it is not styled as neutral metadata. It is a warning, not an error: the
+   plugin is working as intended and the operator may well want it - they just
+   need to know before pressing Install, not after. */
+.badge-extension {
+    background: var(--color-warning-wash);
+    color: var(--color-warning-text);
+}
+
+.plugin-offering-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+    .plugin-offering {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .plugin-source-actions {
+        margin-left: 0;
+    }
+}
+
+/* ── Extension-hosted views ─────────────────────────────────────────────────
+   The frame fills the main canvas so a hosted view looks like a page of the
+   portal rather than a panel floating inside one. */
+
+.extension-view {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+.extension-view-frame {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    border: 0;
+    background: var(--bg-base);
+}
+
+/* ── Notification centre ────────────────────────────────────────────────────
+   The bell sits in the banner beside the other header actions; the panel hangs
+   under the bar rather than opening a modal, because glancing at what happened
+   should not take the page away from you.
+
+   The panel cannot be parented to the bell: .banner-header clips its own
+   overflow, so an absolutely-positioned dropdown is cut off at the bar's edge.
+   It hangs from a viewport-fixed overlay instead - the same shape the provider
+   usage popover uses, anchored to the same edge so the two line up. */
+
+.notification-centre {
+    position: relative;
+    display: inline-flex;
+}
+
+.banner-notifications-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.4rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.banner-notifications-btn:hover {
+    background: var(--bg-surface);
+    border-color: var(--border);
+}
+
+/* The badge is the whole point of the bell: it has to read at a glance without
+   being loud enough to nag when it is empty - so it only exists when non-zero. */
+.notification-badge {
+    position: absolute;
+    top: -0.15rem;
+    right: -0.15rem;
+    min-width: 1rem;
+    padding: 0 0.2rem;
+    border-radius: 999px;
+    background: var(--error);
+    color: #fff;
+    font-size: 0.625rem;
+    line-height: 1rem;
+    text-align: center;
+    font-weight: var(--weight-medium, 600);
+}
+
+/* Transparent, not dimmed: a click anywhere closes the panel, but the app behind
+   it is still readable while the list is open. */
+.notification-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: transparent;
+}
+
+.notification-panel {
+    position: absolute;
+    top: calc(var(--density-bar-h) + 8px);
+    right: 12px;
+    width: min(24rem, calc(100vw - 24px));
+    max-height: min(28rem, calc(100vh - var(--density-bar-h) - 24px));
+    overflow-y: auto;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-overlay);
+}
+
+.notification-panel-header {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.5rem 0.6rem;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.notification-panel-actions {
+    display: flex;
+    gap: 0.35rem;
+}
+
+.notification-empty {
+    padding: 1rem 0.75rem;
+    color: var(--text-muted);
+}
+
+.notification-empty p {
+    margin: 0;
+}
+
+.notification-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.notification-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.55rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.notification-item:last-child {
+    border-bottom: 0;
+}
+
+/* Unread is carried by a leading accent bar rather than a background wash: the
+   list stays legible in both themes and an unread item does not look disabled. */
+.notification-item.unread {
+    box-shadow: inset 3px 0 0 0 var(--accent);
+}
+
+.notification-item.severity-error {
+    box-shadow: inset 3px 0 0 0 var(--error);
+}
+
+.notification-item-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.notification-item-title {
+    color: var(--text-primary);
+}
+
+.notification-item-body,
+.notification-item-time {
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+
+.notification-dismiss {
+    flex: 0 0 auto;
+    line-height: 1;
+}
+
+/* Sticky to the bottom of the panel: the desktop-alerts opt-in must stay reachable
+   without scrolling past a long list to find it. */
+.notification-panel-footer {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.4rem;
+    padding: 0.45rem 0.6rem;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+}
+
+.notification-panel-footer-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.notification-panel-footer .t-caption {
+    color: var(--text-muted);
+}
+
+/* Guidance only appears while desktop alerts are not working, so it is allowed to take a
+   few lines - it is the difference between a dead end and something the reader can act on. */
+.notification-help {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.notification-help p {
+    margin: 0;
+}
+
+.notification-help ul {
+    margin: 0.3rem 0 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.notification-help code {
+    /* Commands must stay copyable: wrapping beats a horizontal scrollbar in a 24rem panel. */
+    overflow-wrap: anywhere;
+    font-size: 0.72rem;
+    padding: 0 0.15rem;
+    border-radius: 3px;
+    background: var(--bg-secondary);
+}
+
+.notification-help summary {
+    cursor: pointer;
+    color: var(--accent);
+}
+
+/* Reads as a caption on the toggle rather than another control. */
+/* The skills page note sits above a full-height panel, so it needs its own spacing
+   rather than the config panel's. Same quiet treatment: it is context, not a warning. */
+.platform-config-page > .config-note {
+    margin: 0 0 0.75rem;
+}
+
+.platform-config-page > .config-note code {
+    padding: 0 0.2rem;
+    border-radius: 3px;
+    background: var(--bg-secondary);
+    font-size: 0.78rem;
+}
+
+.notification-transport {
+    margin-right: auto;
+    color: var(--text-muted);
+}
+
+.notification-help-error {
+    margin: 0;
+    color: var(--error);
+}
+
+/* Pressed state carries "on" on its own, so the label can stay a plain statement of
+   fact rather than shouting the action back at the user. */
+.notification-panel-footer .toolbar-btn[aria-pressed="true"] {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* ==========================================================================
+   Conversation switcher
+   Type-to-filter conversation picker anchored to the chat header title.
+   ========================================================================== */
+
+.conversation-switcher {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+}
+
+.conversation-switcher-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.conversation-switcher-trigger:hover,
+.conversation-switcher-trigger[aria-expanded="true"] {
+    background: var(--bg-hover);
+    border-color: var(--border);
+    color: var(--text-primary);
+}
+
+.conversation-switcher-caret {
+    font-size: 0.7rem;
+}
+
+/* Transparent dismiss surface. Sits under the panel but over everything else, so the first click
+   anywhere outside closes the switcher instead of activating what was clicked. */
+.conversation-switcher-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: transparent;
+}
+
+/* Fixed, NOT absolute. Three ancestors of this panel - .chat-title-heading-row, .chat-title-stack
+   and .chat-header - set `overflow: hidden` so a long conversation title truncates rather than
+   painting beneath the header actions (#2141, #2441). Those rules are load-bearing, and an
+   absolutely positioned descendant is clipped by all three, which shaved the panel to nothing
+   inside a ~28px header. `position: fixed` escapes the clipping because none of those ancestors
+   establishes a containing block. Offsets are then viewport-relative and are set by
+   js/conversationSwitcher.js on open; with no JS the auto offsets leave the panel at its
+   hypothetical static position, i.e. still beside the trigger and still unclipped. */
+.conversation-switcher-panel {
+    position: fixed;
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+    width: 22rem;
+    /* The panel is anchored to a header near the left edge of the canvas, so on a narrow window a
+       fixed 22rem would overflow the viewport. */
+    max-width: calc(100vw - 2rem);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-raised);
+    overflow: hidden;
+}
+
+.conversation-switcher-search {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.625rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-muted);
+}
+
+.conversation-switcher-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+}
+
+.conversation-switcher-input::placeholder {
+    color: var(--text-muted);
+}
+
+.conversation-switcher-list {
+    /* Bounded so a long list scrolls inside the panel rather than running off the viewport. */
+    max-height: 24rem;
+    overflow-y: auto;
+    padding: 0.25rem 0;
+}
+
+.conversation-switcher-group-label {
+    padding: 0.35rem 0.75rem 0.2rem;
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.conversation-switcher-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.4rem 0.75rem;
+    background: transparent;
+    border: none;
+    border-left: 3px solid transparent;
+    color: var(--text-primary);
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+    text-align: left;
+    cursor: pointer;
+}
+
+/* Keyboard highlight and mouse hover are the SAME visual state, driven by the same _highlight
+   index, so arrowing and pointing cannot disagree about which row Enter would take. */
+.conversation-switcher-row.highlighted {
+    background: var(--bg-hover);
+}
+
+.conversation-switcher-row.active {
+    border-left-color: var(--accent);
+    background: var(--color-accent-wash-soft);
+}
+
+/* The owning agent on a cross-agent row. Rendered before the title and allowed to shrink only
+   after the title has, so "which agent" stays readable when both are long. */
+.conversation-switcher-agent {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 40%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    padding: 0.05rem 0.35rem;
+    border-radius: var(--radius);
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+}
+
+.conversation-switcher-row-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.conversation-switcher-badge {
+    flex-shrink: 0;
+    padding: 0.05rem 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    color: var(--text-muted);
+}
+
+.conversation-switcher-badge.readonly {
+    border-color: transparent;
+    background: var(--bg-tertiary);
+}
+
+.conversation-switcher-unread {
+    flex-shrink: 0;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: var(--accent);
+}
+
+.conversation-switcher-empty {
+    padding: 0.75rem;
+    color: var(--text-muted);
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+    text-align: center;
+}
+
+/* Sidebar entry point for the conversation switcher. A button dressed as a search field: it looks
+   like where you type, and opens the switcher whose box you actually type in. */
+.conversation-search-launcher {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: calc(100% - 1.5rem);
+    margin: 0.4rem 0.75rem 0.1rem;
+    padding: 0.35rem 0.5rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: var(--text-caption);
+    line-height: var(--text-caption-lh);
+    cursor: text;
+    text-align: left;
+}
+
+.conversation-search-launcher:hover {
+    border-color: var(--border-focus);
+    color: var(--text-primary);
+}
+
+.conversation-search-launcher-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.conversation-search-launcher-kbd {
+    flex: 0 0 auto;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: var(--text-caption);
+}
+
+/* ==========================================================================
+   Primary navigation toolbar
+   Nav moved out of the sidebar and under the banner; the sidebar is the
+   conversation list. Items that do not fit move into an overflow menu, sized
+   by js/navToolbar.js against the off-layout ghost row below.
+   ========================================================================== */
+
+.app-toolbar {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: stretch;
+    gap: 0.15rem;
+    padding: 0 var(--density-row-pad-x);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+.toolbar-items {
+    display: flex;
+    align-items: stretch;
+    gap: 0.15rem;
+    /* min-width:0 lets the row shrink below its content instead of pushing the
+       overflow button off the end - the same trap the sidebar selects hit. */
+    min-width: 0;
+    /* Wrapping is the no-JS fallback: without the measurer every item stays in
+       the bar, and wrapping keeps them all reachable rather than clipped. */
+    flex-wrap: wrap;
+}
+
+.toolbar-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0 0.7rem;
+    min-height: var(--density-control-h);
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: var(--density-font-sm);
+    line-height: 1.25;
+    white-space: nowrap;
+    text-decoration: none;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.toolbar-item:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+/* The active item is marked by an underline rather than a filled pill: in a
+   horizontal bar a fill reads as a button, and the row would look like a set of
+   buttons with one pressed. */
+.toolbar-item.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+}
+
+.toolbar-overflow {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    margin-left: auto;
+}
+
+.toolbar-more-btn {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.toolbar-more-btn.open {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+/* Same dismiss surface as the conversation switcher: one element, disposed with
+   the menu, reachable in a component test. */
+.toolbar-overflow-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: transparent;
+}
+
+.toolbar-overflow-menu {
+    position: absolute;
+    top: calc(100% + 2px);
+    right: 0;
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+    min-width: 12rem;
+    padding: 0.25rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-raised);
+}
+
+.toolbar-overflow-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    font-size: var(--density-font-sm);
+    line-height: 1.25;
+    white-space: nowrap;
+    text-decoration: none;
+}
+
+.toolbar-overflow-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.toolbar-overflow-item.active {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* Laid out so widths are real, but never painted and never hit-testable. Not
+   display:none, which would measure zero, and not visibility:hidden alone,
+   which would still occupy a row in the flex line. */
+.toolbar-ghost {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    gap: 0.15rem;
+    visibility: hidden;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+/* Second toolbar row - the active section's sub-navigation. Horizontal now, so the sub-nav item
+   loses the sidebar's indent and gains the same underline-active treatment as the row above. */
+.app-subtoolbar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 0.25rem var(--density-row-pad-x);
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+}
+
+.app-subtoolbar .sidebar-subnav-item {
+    padding: 0.25rem 0.6rem;
+    border-radius: var(--radius);
+    white-space: nowrap;
+}
+
+/* ==========================================================================
+   Agent avatars
+   Every agent gets a distinguishable mark without configuring one. The hue
+   arrives as --agent-hue from AgentAvatarModel; only lightness and saturation
+   are decided here, because they differ per theme.
+   ========================================================================== */
+
+.agent-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 1.65rem;
+    height: 1.65rem;
+    border-radius: 7px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    user-select: none;
+}
+
+/* An emoji is the agent's own mark; it gets a neutral plate so two emoji agents
+   sit on the same ground and the emoji itself carries the colour. */
+.agent-avatar.is-emoji {
+    background: var(--bg-tertiary);
+    font-size: 0.95rem;
+}
+
+/* Light theme: a pale tint with saturated ink. Both are derived from the one hue,
+   so every agent lands at the same contrast rather than at the mercy of its colour. */
+.agent-avatar.is-monogram {
+    background: hsl(var(--agent-hue) 58% 91%);
+    color: hsl(var(--agent-hue) 62% 27%);
+    box-shadow: inset 0 0 0 1px hsl(var(--agent-hue) 40% 78%);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .agent-avatar.is-monogram {
+        background: hsl(var(--agent-hue) 38% 20%);
+        color: hsl(var(--agent-hue) 72% 76%);
+        box-shadow: inset 0 0 0 1px hsl(var(--agent-hue) 34% 32%);
+    }
+}
+
+[data-theme="dark"] .agent-avatar.is-monogram {
+    background: hsl(var(--agent-hue) 38% 20%);
+    color: hsl(var(--agent-hue) 72% 76%);
+    box-shadow: inset 0 0 0 1px hsl(var(--agent-hue) 34% 32%);
+}
+
+/* Size modifiers for the surfaces that show an agent larger than a chip. */
+.agent-avatar.avatar-lg { width: 2.1rem; height: 2.1rem; border-radius: 9px; font-size: 0.85rem; }
+.agent-avatar.avatar-lg.is-emoji { font-size: 1.2rem; }
+
+/* Agent colour picker. The swatches use the same hue -> colour derivation as the avatars they
+   set, so what you pick is literally what you get rather than an approximation of it. */
+.agent-hue-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.agent-hue-swatch {
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    background: hsl(var(--agent-hue) 58% 91%);
+    box-shadow: inset 0 0 0 1px hsl(var(--agent-hue) 40% 78%);
+}
+
+.agent-hue-swatch.auto {
+    width: auto;
+    padding: 0 0.5rem;
+    background: var(--bg-tertiary);
+    box-shadow: none;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: var(--text-caption);
+}
+
+/* Selection is a ring outside the swatch, not a change to its fill - the fill IS the value being
+   chosen, so altering it to show selection would misreport the choice. */
+.agent-hue-swatch.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), inset 0 0 0 1px hsl(var(--agent-hue) 40% 78%);
+}
+
+.agent-hue-swatch.auto.selected {
+    color: var(--text-primary);
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .agent-hue-swatch {
+        background: hsl(var(--agent-hue) 38% 20%);
+        box-shadow: inset 0 0 0 1px hsl(var(--agent-hue) 34% 32%);
+    }
+
+    :root:not([data-theme="light"]) .agent-hue-swatch.selected {
+        box-shadow: 0 0 0 1px var(--accent), inset 0 0 0 1px hsl(var(--agent-hue) 34% 32%);
+    }
+}
+
+[data-theme="dark"] .agent-hue-swatch {
+    background: hsl(var(--agent-hue) 38% 20%);
+    box-shadow: inset 0 0 0 1px hsl(var(--agent-hue) 34% 32%);
+}
+
+[data-theme="dark"] .agent-hue-swatch.selected {
+    box-shadow: 0 0 0 1px var(--accent), inset 0 0 0 1px hsl(var(--agent-hue) 34% 32%);
+}
+
+/* ── Agent Persona Slide-out ───────────────────────────────────── */
+/* Pinned to the viewport's right edge, not anchored to the identity chip. Six ancestors of that
+   chip set overflow:hidden, so an absolutely positioned panel there is clipped to nothing - the
+   same defect that already forced the conversation switcher onto fixed positioning. An edge-pinned
+   drawer also needs no JS measuring, so it cannot inherit the switcher's stale-coordinates bug.
+   The global reduced-motion rule (app.css line ~453) disables the slide for anyone who asks. */
+/* The trigger is the WHOLE chip, so it takes over the chip's own flex row: avatar, meta and
+   chevron are its children. The chip keeps its box - padding and border stay on
+   .banner-agent-identity - so the top bar's measured geometry is unchanged. */
+.agent-identity-trigger {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--density-gap);
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+}
+.agent-identity-trigger:hover .agent-panel-title { text-decoration: underline; }
+.agent-identity-trigger:hover .agent-identity-chevron { color: inherit; }
+.agent-identity-trigger:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* Always visible, never hover-only. An affordance that appears only once the pointer is already
+   on the control cannot tell anyone the control exists - which is how the first cut of this
+   shipped, and why nobody found it. */
+.agent-identity-chevron {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    color: var(--color-ink-faint);
+}
+
+.agent-persona-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--color-scrim);
+    z-index: 2000;
+    display: flex;
+    justify-content: flex-end;
+}
+.agent-persona-panel {
+    background: var(--panel-bg);
+    border-left: 1px solid var(--border);
+    /* 430px left the twelve-swatch colour row 7px short of fitting, stranding one swatch on a
+       second line: the row needs 404px (Auto 44 + 12x24 + 12x6 gaps) and had 397. At 460 it fits
+       with room to spare, and the text fields get the width back too. The row keeps flex-wrap, so
+       a viewport narrower than the drawer still wraps rather than overflowing. */
+    width: min(460px, 100vw);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: agent-persona-slide-in var(--motion-slow) var(--ease-enter);
+}
+@keyframes agent-persona-slide-in {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+}
+.agent-persona-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+.agent-persona-heading { flex: 1 1 auto; min-width: 0; }
+.agent-persona-heading h3 { margin: 0; font-size: 1rem; }
+.agent-persona-id {
+    display: block;
+    color: var(--color-ink-faint);
+    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.agent-persona-close {
+    flex: 0 0 auto;
+    background: none;
+    border: 0;
+    color: var(--color-ink-faint);
+    cursor: pointer;
+    padding: 0.25rem;
+}
+.agent-persona-close:hover { color: inherit; }
+.agent-persona-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 1rem;
+}
+.agent-persona-body label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin: 0.9rem 0 0.25rem;
+}
+.agent-persona-body label:first-child { margin-top: 0; }
+.agent-persona-hint {
+    margin: 0 0 0.35rem;
+    font-size: 0.75rem;
+    color: var(--color-ink-faint);
+}
+.agent-persona-input,
+.agent-persona-textarea {
+    width: 100%;
+    background: var(--input-bg, var(--panel-bg));
+    color: inherit;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.45rem 0.6rem;
+    font: inherit;
+    font-size: 0.85rem;
+}
+.agent-persona-textarea { resize: vertical; min-height: 3.5rem; }
+.agent-persona-emoji-input { width: 5rem; }
+.agent-persona-error {
+    margin: 0.9rem 0 0;
+    font-size: 0.8rem;
+    color: var(--color-danger);
+}
+.agent-persona-footer {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+.agent-persona-footer-spacer { flex: 1 1 auto; }
+.agent-persona-deep-link {
+    font-size: 0.8rem;
+    color: var(--accent);
+}
+
+/* The agent card's identity row is a button (persona panel), while the card itself stays clickable
+   for its primary action (open the agent). It must look exactly like the row it replaced - the
+   affordance is the chevron and the hover, not a button chrome. */
+.agent-card-persona-trigger {
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.agent-card-persona-trigger:hover .agent-card-name { text-decoration: underline; }
+.agent-card-persona-trigger:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-lg);
+}
+.agent-card-persona-chevron {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    color: var(--color-ink-faint);
+    margin-left: auto;
+}
+
+/* ── Persona drawer: tabs and memory list ──────────────────────── */
+.agent-persona-tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+.agent-persona-tab {
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--color-ink-faint);
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.6rem;
+    cursor: pointer;
+}
+.agent-persona-tab.selected {
+    color: inherit;
+    border-bottom-color: var(--accent);
+}
+.agent-persona-empty {
+    color: var(--color-ink-faint);
+    font-size: 0.85rem;
+    margin: 0.9rem 0;
+}
+.agent-persona-add {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+}
+.agent-persona-add .agent-persona-textarea { flex: 1 1 auto; }
+.agent-persona-memory-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.agent-persona-memory-item {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.6rem 0.7rem;
+}
+.agent-persona-memory-text {
+    margin: 0 0 0.4rem;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.agent-persona-memory-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    color: var(--color-ink-faint);
+}
+.agent-persona-memory-spacer { flex: 1 1 auto; }
+.agent-persona-memory-trust {
+    color: var(--color-danger);
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    padding: 0 0.3rem;
+}
+.agent-persona-memory-btn {
+    background: none;
+    border: 0;
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.72rem;
+    cursor: pointer;
+    padding: 0.1rem 0.2rem;
+}
+.agent-persona-memory-btn.danger { color: var(--color-danger); }
+.agent-persona-memory-actions {
+    display: flex;
+    gap: 0.4rem;
+    justify-content: flex-end;
+    margin-top: 0.4rem;
+}
+
+/* Content-match snippet in the conversation switcher: the evidence for why a row whose title does
+   not contain the query is nevertheless in the list. */
+.conversation-switcher-snippet {
+    display: block;
+    width: 100%;
+    font-size: 0.72rem;
+    color: var(--color-ink-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 0.1rem;
+}
+
+/* Agent activity on the avatar: identity and state in one piece of real estate, so the working
+   agent stands out among sixteen instead of being found by reading sixteen labels. Idle draws
+   nothing on purpose - a dot on every agent distinguishes none of them. */
+.agent-avatar { position: relative; }
+.agent-avatar-activity {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    /* Rings it against whatever sits behind, so the dot stays legible on both themes and on the
+       avatar's own generated hue. */
+    box-shadow: 0 0 0 2px var(--panel-bg);
+}
+.agent-avatar-activity.activity-working { background: var(--accent); }
+.agent-avatar-activity.activity-tools { background: var(--accent); animation: agent-activity-pulse 1.6s ease-in-out infinite; }
+.agent-avatar-activity.activity-offline { background: var(--color-ink-faint); }
+
+@keyframes agent-activity-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+.agent-card-status.status-working,
+.agent-card-status.status-tools { color: var(--accent); }
+.agent-card-status.status-offline { color: var(--color-ink-faint); }
+/* Activity search box: the first control on the filter bar, sized so it reads as the primary way
+   in rather than one more facet. */
+.activity-filter-search {
+    flex: 1 1 14rem;
+    min-width: 10rem;
+    max-width: 22rem;
+    background: var(--input-bg, var(--panel-bg));
+    color: inherit;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.3rem 0.55rem;
+    font: inherit;
+    font-size: 0.82rem;
+}
+
+/* ── Memory overview page ──────────────────────────────────────────────────
+   Cross-agent store list and search. Per-agent note curation lives in the
+   persona drawer; these styles cover only what that surface does not.
+   Colours come from the existing token set so the page follows the theme. */
+
+.linklike {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+}
+
+.linklike:hover { text-decoration: underline; }
+
+/* Wide content scrolls inside its own container so the page body never does. */
+.memory-store-scroller {
+    overflow-x: auto;
+}
+
+.memory-store-table {
+    width: 100%;
+    /* Below this the columns collapse into unreadable slivers; the scroller takes over instead. */
+    min-width: 26rem;
+    border-collapse: collapse;
+}
+
+.memory-store-table th,
+.memory-store-table td {
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.memory-store-table th {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+/* Digits line up so two stores' counts can be compared down the column. */
+.memory-store-table td.num {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.memory-store-table tr.is-selected { background: var(--surface-2); }
+
+.memory-entry-list {
+    list-style: none;
+    margin: 0.75rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.memory-entry {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.75rem;
+}
+
+/* A row the platform will not push into always-on prompt context is marked at
+   the edge, so it reads as different before any badge is parsed. */
+.memory-entry.is-untrusted { border-left-color: var(--warning, #b8860b); }
+
+.memory-entry-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.memory-entry-date {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.memory-entry-preview {
+    margin: 0.4rem 0 0;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+
+.memory-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    padding: 0.1rem 0.4rem;
+    border-radius: 2px;
+    white-space: nowrap;
+}
+
+.memory-badge-source  { background: var(--surface-2); color: var(--text-muted); }
+.memory-badge-trusted { background: var(--surface-2); color: var(--success, #2e7d5b); }
+.memory-badge-warn    { background: var(--surface-2); color: var(--warning, #b8860b); }
+.memory-badge-danger  { background: var(--surface-2); color: var(--error, #a33a34); }
+.memory-badge-user    { background: var(--surface-2); color: var(--accent); }
+
+.memory-forget { margin-left: 0.25rem; }
+
+.memory-scan-note {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    color: var(--warning, #b8860b);
+}

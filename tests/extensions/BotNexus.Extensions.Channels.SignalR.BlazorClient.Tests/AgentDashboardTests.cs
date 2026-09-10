@@ -241,6 +241,103 @@ public sealed class AgentDashboardTests : IDisposable
         Assert.DoesNotContain("SubAgent", cut.Markup);
     }
 
+    // ── The role line (Personalisation Plan 1.1) ───────────────────────────
+    //
+    // Responsibility reached the descriptor, the API, the hub contract and the system prompt, and
+    // then rendered on exactly one surface: the form that edits it. The plan's stated goal was a
+    // roster somebody could scan by role, so the field existing was never the deliverable.
+
+    [Fact]
+    public void Shows_what_an_agent_owns_on_its_card()
+    {
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha", Responsibility = "Owns the billing pipeline" }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        Assert.Equal(
+            "Owns the billing pipeline",
+            cut.Find("[data-testid=agent-card-responsibility]").TextContent.Trim());
+    }
+
+    [Fact]
+    public void The_role_line_is_readable_rather_than_swallowed_by_the_identity_buttons_label()
+    {
+        // The identity button carries an explicit aria-label, and an aria-label REPLACES an
+        // element's inner text for assistive technology. A role line nested inside that button
+        // would render, pass a "the text is in the markup" assertion, and be announced to nobody.
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha", Responsibility = "Owns the billing pipeline" }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        var trigger = cut.Find("[data-testid=agent-card-persona-trigger]");
+        Assert.Empty(trigger.QuerySelectorAll("[data-testid=agent-card-responsibility]"));
+    }
+
+    [Fact]
+    public void An_agent_can_carry_both_a_role_and_a_description()
+    {
+        // They answer different questions, so one must not quietly replace the other.
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["a1"] = new()
+            {
+                AgentId = "a1",
+                DisplayName = "Alpha",
+                Responsibility = "Owns the billing pipeline",
+                Description = "Reconciles invoices nightly and escalates mismatches."
+            }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        Assert.Contains("Owns the billing pipeline", cut.Find("[data-testid=agent-card-responsibility]").TextContent);
+        Assert.Contains("Reconciles invoices nightly", cut.Find(".agent-card-description").TextContent);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void The_role_line_is_absent_rather_than_empty_when_no_role_is_set(string? responsibility)
+    {
+        // An empty <p> is still a box with margin - a whitespace-only value would leave a gap on
+        // the card that looks like a rendering fault.
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha", Responsibility = responsibility }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        Assert.Empty(cut.FindAll("[data-testid=agent-card-responsibility]"));
+    }
+
+    [Fact]
+    public void A_role_line_cannot_grow_the_card_with_embedded_newlines()
+    {
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha", Responsibility = "Owns\nthe\tbilling" }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        var text = cut.Find("[data-testid=agent-card-responsibility]").TextContent;
+        Assert.DoesNotContain("\n", text);
+        Assert.DoesNotContain("\t", text);
+    }
+
     [Fact]
     public void Description_hidden_when_null_or_empty()
     {
@@ -288,5 +385,133 @@ public sealed class AgentDashboardTests : IDisposable
 
         cut.WaitForState(() => cut.FindAll(".agent-card").Count == 1);
         Assert.Single(cut.FindAll(".agent-card"));
+    }
+
+    // ── Delegation capability chip ─────────────────────────────────────────
+
+    [Fact]
+    public void Marks_an_agent_that_can_spawn_sub_agents()
+    {
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha", CanDelegate = true }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        var chip = cut.Find("[data-testid=agent-card-delegate-chip]");
+        Assert.Contains("Can delegate", chip.TextContent);
+    }
+
+    [Fact]
+    public void Leaves_an_agent_that_cannot_spawn_unmarked()
+    {
+        // The common case, and the reason the chip is worth anything: most agents carry an explicit
+        // toolIds list without the spawn tool, so an unmarked card must stay completely unmarked.
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha", CanDelegate = false }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        Assert.Empty(cut.FindAll("[data-testid=agent-card-delegate-chip]"));
+        Assert.DoesNotContain("Can delegate", cut.Markup);
+    }
+
+    [Fact]
+    public void Marks_only_the_agents_that_can_delegate()
+    {
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha", CanDelegate = true },
+            ["a2"] = new() { AgentId = "a2", DisplayName = "Beta" },
+            ["a3"] = new() { AgentId = "a3", DisplayName = "Gamma" }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        Assert.Equal(3, cut.FindAll(".agent-card").Count);
+        Assert.Single(cut.FindAll("[data-testid=agent-card-delegate-chip]"));
+    }
+
+    // ── Persona trigger on the card ───────────────────────────────────────
+    // The card's own click opens the agent (its primary action). The IDENTITY area opens the
+    // persona panel instead, matching the top-bar chip - so the two must not fire together.
+
+    [Fact]
+    public void Card_identity_is_a_button_that_requests_the_persona_panel()
+    {
+        var launcher = new RecordingPersonaLauncher();
+        _ctx.Services.AddSingleton<IAgentPersonaLauncher>(launcher);
+        _store.Agents.Returns(new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha" }
+        }.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+        var trigger = cut.Find("[data-testid='agent-card-persona-trigger']");
+        Assert.Equal("BUTTON", trigger.TagName);
+        trigger.Click();
+
+        Assert.Equal(["a1"], launcher.RequestedAgentIds);
+    }
+
+    [Fact]
+    public void Card_identity_click_does_not_also_navigate_to_the_agent()
+    {
+        // Without stopPropagation the card's own @onclick fires too, so the panel would open and
+        // the app would navigate away from it in the same gesture.
+        var launcher = new RecordingPersonaLauncher();
+        _ctx.Services.AddSingleton<IAgentPersonaLauncher>(launcher);
+        var nav = _ctx.Services.GetRequiredService<BunitNavigationManager>();
+        var before = nav.Uri;
+        _store.Agents.Returns(new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha" }
+        }.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+        cut.Find("[data-testid='agent-card-persona-trigger']").Click();
+
+        Assert.Equal(before, nav.Uri);
+        Assert.Single(launcher.RequestedAgentIds);
+    }
+
+    [Fact]
+    public void Card_without_a_registered_launcher_is_inert_rather_than_a_DI_failure()
+    {
+        // The launcher is resolved, not injected, so existing fixtures that never registered it
+        // keep rendering. Clicking is simply a no-op.
+        _store.Agents.Returns(new Dictionary<string, AgentState>
+        {
+            ["a1"] = new() { AgentId = "a1", DisplayName = "Alpha" }
+        }.AsReadOnly());
+
+        var cut = _ctx.Render<AgentDashboard>();
+
+        cut.Find("[data-testid='agent-card-persona-trigger']").Click();
+        Assert.NotNull(cut.Find("[data-testid='agent-card']"));
+    }
+
+    /// <summary>
+    /// Records what the dashboard asked for. The real launcher just raises its event; here the
+    /// event is left unsubscribed because no panel is rendered in these fixtures - what is under
+    /// test is that the CARD asks, not that the panel answers.
+    /// </summary>
+    private sealed class RecordingPersonaLauncher : IAgentPersonaLauncher
+    {
+        public List<string> RequestedAgentIds { get; } = [];
+
+        public event Action<string>? Requested;
+
+        public void Request(string agentId)
+        {
+            RequestedAgentIds.Add(agentId);
+            Requested?.Invoke(agentId);
+        }
     }
 }

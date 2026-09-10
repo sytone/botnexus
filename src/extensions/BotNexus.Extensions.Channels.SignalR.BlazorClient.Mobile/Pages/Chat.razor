@@ -91,6 +91,11 @@ else
                     </optgroup>
                 }
             </select>
+            @* Cross-agent, type-to-filter search. Additive beside the native picker above, which
+               keeps handling same-agent switching - see MobileConversationSearch for why. *@
+            <MobileConversationSearch AgentId="@(Store.ActiveAgentId ?? string.Empty)"
+                                      CronConversationIds="@_cronConversationIds"
+                                      OnSelected="ForceScrollToBottomAsync" />
             <button class="refresh-btn" @onclick="ManualRefreshAsync" disabled="@_isRefreshing" aria-label="Refresh conversations and this transcript" data-testid="refresh-btn" title="Refresh conversations and this transcript">
                 <Icon Name="refresh" Size="14"
                       Class="@(_isRefreshing ? "bn-icon-inherit bn-icon-spin" : "bn-icon-inherit")" />

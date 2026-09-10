@@ -20,16 +20,8 @@
 
 @if (!PortalLoad.IsReady)
 {
-    <div class="portal-loading">
-        @if (PortalLoad.LoadError is not null)
-        {
-            <div class="portal-load-error"><Icon Name="warning" Size="15" /> @PortalLoad.LoadError</div>
-        }
-        else
-        {
-            <div class="portal-load-spinner">Connecting…</div>
-        }
-    </div>
+    <PortalLoadingSkeleton Variant="PortalLoadingSkeleton.SkeletonVariant.Chat"
+                           Error="@PortalLoad.LoadError" />
 }
 else
 {

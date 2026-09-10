@@ -121,10 +121,39 @@ write. The row is stored without an embedding and remains fully retrievable thro
 ## Scope, filters and decay
 
 The vector scan applies the *same* filter predicates as the lexical path — source type,
-session, date range, tags, and the archived-row exclusion — from a single shared
+session, date range, tags, and the liveness exclusion — from a single shared
 code path, so the two halves of hybrid retrieval cannot silently diverge. Agent scoping is
 unchanged: each agent has its own store, and shared-store access still goes through the
 shared memory registry.
+
+### Liveness: archived and expired rows
+
+A row is retrievable only while it is neither archived nor past its `expires_at` instant. The two
+conditions live in one named SQL predicate rather than side by side at each query site, because
+that is exactly how they came apart: `expires_at` was persisted, round-tripped and rendered from
+the day the column was added but appeared in no `WHERE` clause, so a row written with a TTL stayed
+searchable forever while the archived filter went on working.
+
+Two details are deliberate:
+
+- **Comparison is by instant, not by text.** Timestamps are stored in round-trip (`O`) format,
+  which carries an offset, so comparing two of them as strings orders them by wall-clock text
+  rather than chronologically. The predicate uses `julianday` on both sides — already the idiom
+  used for the decay input — so `+05:30` and `+00:00` compare correctly.
+- **An unparseable expiry hides the row.** `julianday` yields NULL on a malformed value and the
+  comparison then fails, so the row is withheld. A row whose expiry cannot be evaluated is not
+  served on the assumption that it is still live.
+
+Direct addressing — `memory_get` by id, and the session listing the indexer reconciles against —
+deliberately sits outside this predicate, exactly as it has always sat outside the archived filter.
+An expired entry stays inspectable and **deletable** rather than being stranded beyond reach, and
+session reconciliation still sees every row it previously wrote instead of re-inserting duplicates
+of expired ones.
+
+There is deliberately **no purge sweep**. Enforcement is a read-boundary predicate, which is
+reversible and cannot destroy a row that a misjudged comparison classified wrongly; a sweep that
+archived rows at store-open would make that same misjudgement permanent, and buys nothing —
+expired rows are excluded before the vector scan's `LIMIT`, so they never consume scan budget.
 
 ## Performance
 

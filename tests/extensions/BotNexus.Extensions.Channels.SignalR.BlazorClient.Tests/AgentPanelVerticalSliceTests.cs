@@ -63,7 +63,7 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         var cut = RenderHomeForAgentConversation();
 
         var tabLabels = cut.FindAll(".agent-panel-tab .agent-tab-label").Select(label => label.TextContent.Trim()).ToArray();
-        Assert.Equal(["Conversation", "Workspace", "Reports", "Canvas", "Todo"], tabLabels);
+        Assert.Equal(["Conversation", "Workspace", "Reports", "Canvas", "Todo", "Steps"], tabLabels);
 
         Assert.Contains("data-testid=\"workspace-panel\"", cut.Markup);
         Assert.Contains("data-testid=\"reports-panel\"", cut.Markup);

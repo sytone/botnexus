@@ -4,6 +4,11 @@
     Standalone portal page hosting the platform stats section (issue #1692). Kept as its own route
     so the stats panel is fully additive - it does not alter the agent dashboard or chat surface -
     while still being reachable in the portal at /platform.
+
+    The panel carries no chrome of its own (Home's .home-summary supplies the bar there), so this
+    page wraps it in the shared .stats-bar. And it opens the loop list by default: this route exists
+    to answer "what is running right now", and it was spending a whole viewport to say "0" four
+    times while the only substantive content sat behind a disclosure click.
 *@
 
 <PageTitle>BotNexus &mdash; Platform</PageTitle>
@@ -15,7 +20,9 @@
 
     <div class="config-page">
         <div class="config-panel-canvas">
-            <PlatformStatsPanel />
+            <div class="stats-bar" data-testid="platform-stats-bar">
+                <PlatformStatsPanel LoopsInitiallyExpanded="true" />
+            </div>
         </div>
     </div>
 </div>

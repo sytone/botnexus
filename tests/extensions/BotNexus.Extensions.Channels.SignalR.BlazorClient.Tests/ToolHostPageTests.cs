@@ -105,6 +105,53 @@ public sealed class ToolHostPageTests : IDisposable
         Assert.Contains("Tool not found", cut.Markup);
     }
 
+    // The client cannot detect a refusal: a blocked frame raises the same load event a working
+    // one does, and reading into it throws SecurityError either way. A probe was written to try,
+    // and could not tell them apart - SABnzbd showed a blank white panel while the page believed
+    // it had loaded. So the gateway reads the headers and the host asks BEFORE framing.
+    [Fact]
+    public void A_server_side_refusal_shows_the_fallback_without_ever_framing()
+    {
+        SetupTool(id: "sab", url: "http://sab.example/", sandboxEnabled: true);
+        SetupEmbeddable("sab", embeddable: false, reason: "X-Frame-Options: SameOrigin", isChecked: true);
+
+        var cut = _ctx.Render<ToolHost>(p => p.Add(c => c.Id, "sab"));
+        cut.WaitForState(() => cut.Markup.Contains("tool-host-refused"));
+
+        // No frame is ever created, so there is no blank panel to sit in front of.
+        Assert.Empty(cut.FindAll("[data-testid='tool-host-iframe']"));
+        Assert.Equal("http://sab.example/", cut.Find("[data-testid='tool-host-open-external']").GetAttribute("href"));
+    }
+
+    [Fact]
+    public void The_refusal_names_the_header_responsible()
+    {
+        SetupTool(id: "unraid", url: "http://unraid.example/", sandboxEnabled: true);
+        SetupEmbeddable("unraid", embeddable: false,
+            reason: "Content-Security-Policy: frame-ancestors 'self'", isChecked: true);
+
+        var cut = _ctx.Render<ToolHost>(p => p.Add(c => c.Id, "unraid"));
+        cut.WaitForState(() => cut.Markup.Contains("tool-host-refused"));
+
+        Assert.Contains("frame-ancestors",
+            cut.Find("[data-testid='tool-host-refused-reason']").TextContent);
+    }
+
+    // Unreachable from the gateway does not mean unreachable from the browser - they may be on
+    // different networks, and a self-signed certificate fails the gateway's check while the
+    // browser is perfectly happy. An unknown verdict must not become a refusal.
+    [Fact]
+    public void An_unchecked_verdict_still_attempts_the_frame()
+    {
+        SetupTool(id: "proxmox", url: "https://proxmox.example:8006/", sandboxEnabled: true);
+        SetupEmbeddable("proxmox", embeddable: true, reason: null, isChecked: false);
+
+        var cut = _ctx.Render<ToolHost>(p => p.Add(c => c.Id, "proxmox"));
+        cut.WaitForState(() => cut.Markup.Contains("tool-host-iframe"));
+
+        Assert.DoesNotContain("tool-host-refused", cut.Markup);
+    }
+
     private void SetupTool(string id, string url, bool sandboxEnabled)
     {
         _handler.SetupResponse("GET", $"/api/tools/{id}", JsonSerializer.Serialize(new
@@ -112,39 +159,56 @@ public sealed class ToolHostPageTests : IDisposable
             id,
             name = $"Tool {id}",
             url,
-            icon = "🔧",
+            icon = "\U0001F527",
             order = 0,
             sandboxEnabled
         }));
+
+        // The host asks the gateway whether the site permits framing before it tries. Default to
+        // yes so the existing cases still reach the frame.
+        SetupEmbeddable(id, embeddable: true, reason: null, isChecked: true);
     }
+
+    private void SetupEmbeddable(string id, bool embeddable, string? reason, bool isChecked)
+        => _handler.SetupResponse("GET", $"/api/tools/{id}/embeddable", JsonSerializer.Serialize(new
+        {
+            embeddable,
+            reason,
+            @checked = isChecked,
+        }));
 
     private sealed class ToolHostMockHandler : HttpMessageHandler
     {
-        private readonly Dictionary<string, HttpResponseMessage> _responses = new(StringComparer.OrdinalIgnoreCase);
+        // Bodies, not responses. Handing out the same HttpResponseMessage twice fails the second
+        // caller with ObjectDisposedException, because the first disposes the content it read -
+        // which is exactly what happened when the host began asking about embeddability as well
+        // as fetching the tool.
+        private readonly Dictionary<string, string> _bodies = new(StringComparer.OrdinalIgnoreCase);
 
         public void SetupResponse(string method, string pathSuffix, string jsonContent)
-        {
-            _responses[$"{method}:{pathSuffix}"] = new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json")
-            };
-        }
+            => _bodies[$"{method}:{pathSuffix}"] = jsonContent;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.PathAndQuery ?? "";
             var methodKey = $"{request.Method.Method}:{path}";
 
-            foreach (var (key, response) in _responses.OrderByDescending(kv => kv.Key.Length))
+            // Longest key first, so /api/tools/x/embeddable is not swallowed by /api/tools/x.
+            foreach (var (key, body) in _bodies.OrderByDescending(kv => kv.Key.Length))
             {
                 if (methodKey.Contains(key, StringComparison.OrdinalIgnoreCase))
-                    return Task.FromResult(response);
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+                    });
+                }
             }
 
             // Default: 404 so unknown ids exercise the not-found path.
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
             {
-                Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+                Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
             });
         }
     }

@@ -1,0 +1,207 @@
+@inject IClientStateStore Store
+@implements IDisposable
+
+@*
+    The step timeline (Interface Review P2).
+
+    A multi-step run was legible only by scrolling its transcript, which is the wrong shape for
+    what BotNexus mostly does: unattended cron and webhook work that nobody watches, reviewed
+    afterwards. This answers the questions a reviewer actually has - what did it do, in what
+    order, what took the time, and what broke - without reading a word of output.
+
+    Everything here is DERIVED from the transcript (see RunTimeline). Nothing new is persisted,
+    which is what lets it work for runs that finished days ago.
+*@
+<div class="run-timeline" data-testid="run-timeline">
+    @if (Steps.Count == 0)
+    {
+        <p class="run-timeline-empty" data-testid="run-timeline-empty">
+            No tool calls in this conversation yet. Steps appear here as the agent works, and stay
+            afterwards so a finished run can be reviewed.
+        </p>
+    }
+    else
+    {
+        <div class="run-timeline-summary" data-testid="run-timeline-summary">
+            <span class="run-timeline-stat"><b>@Steps.Count</b> @(Steps.Count == 1 ? "step" : "steps")</span>
+            <span class="run-timeline-stat">@FormatDuration(TotalDuration) of tool time</span>
+            @if (FailedCount > 0)
+            {
+                <span class="run-timeline-stat run-timeline-stat--failed"
+                      data-testid="run-timeline-failed-count">@FailedCount failed</span>
+            }
+            @if (UnfinishedCount > 0)
+            {
+                @* Worth its own counter rather than folding into "failed": nothing reported an
+                   error, the run stopped underneath the call. That distinction is the difference
+                   between a bug in a tool and a gateway that died mid-run. *@
+                <span class="run-timeline-stat run-timeline-stat--unfinished"
+                      data-testid="run-timeline-unfinished-count">@UnfinishedCount never finished</span>
+            }
+
+            @* Real runs get long - the busiest conversation on this instance has 194 steps, 12 of
+               them failures. Scrolling 194 rows to find 12 is the problem the timeline was
+               supposed to solve, so the one control it gets is the one that cuts that. Only
+               offered when there is something to cut to. *@
+            @if (ProblemCount > 0)
+            {
+                <button type="button"
+                        class="run-timeline-filter @(_problemsOnly ? "active" : "")"
+                        data-testid="run-timeline-filter"
+                        aria-pressed="@(_problemsOnly ? "true" : "false")"
+                        @onclick="() => _problemsOnly = !_problemsOnly">
+                    @(_problemsOnly ? "Show all steps" : "Problems only")
+                </button>
+            }
+        </div>
+
+        <ol class="run-timeline-list">
+            @foreach (var step in VisibleSteps)
+            {
+                <li class="run-timeline-step run-timeline-step--@CssFor(step.Status)"
+                    data-testid="run-timeline-step"
+                    data-status="@step.Status.ToString().ToLowerInvariant()"
+                    data-tool="@step.ToolName">
+                    <span class="run-timeline-marker" aria-hidden="true"></span>
+                    <span class="run-timeline-body">
+                        <span class="run-timeline-label" title="@($"Started {step.StartedAt.ToLocalTime():HH:mm:ss}")">
+                            @ToolDescriptionFormatter.FormatDescription(step.ToolName, step.ToolArgs)
+                        </span>
+                    </span>
+                    @* The bar is the reason this is a timeline and not a list: it is what makes
+                       "one step ate the whole run" visible without reading any number. Scaled to
+                       the slowest step in the conversation rather than to a fixed ceiling, because
+                       run lengths here span three orders of magnitude - on the busiest real
+                       conversation, four bash calls hold 13 of the run's 14 minutes. *@
+                    <span class="run-timeline-bar-track">
+                        <span class="run-timeline-bar" style="width:@BarWidth(step)"></span>
+                    </span>
+                    <span class="run-timeline-duration" data-testid="run-timeline-duration">
+                        @(step.Duration is { } d ? FormatDuration(d) : "—")
+                    </span>
+                    <span class="sr-only">@StatusText(step.Status)</span>
+                </li>
+            }
+        </ol>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    [Parameter]
+    public string? ConversationId { get; set; }
+
+    /// <summary>
+    /// Injected clock, so a running step's elapsed time is deterministic under test. Defaults to
+    /// the real one.
+    /// </summary>
+    [Parameter]
+    public Func<DateTimeOffset>? Now { get; set; }
+
+    private IReadOnlyList<RunStep> Steps { get; set; } = [];
+
+    protected override void OnInitialized() => Store.OnChanged += HandleStoreChanged;
+
+    protected override void OnParametersSet() => Rebuild();
+
+    private void HandleStoreChanged() => InvokeAsync(() =>
+    {
+        Rebuild();
+        StateHasChanged();
+    });
+
+    private void Rebuild()
+    {
+        var conversation = Conversation;
+        Steps = RunTimeline.Build(
+            conversation?.Messages,
+            conversation?.StreamState.ActiveToolCalls,
+            (Now ?? (() => DateTimeOffset.UtcNow))());
+    }
+
+    private ConversationState? Conversation
+    {
+        get
+        {
+            var agent = Store.GetAgent(AgentId);
+            if (agent is null)
+                return null;
+
+            var id = ConversationId ?? agent.ActiveConversationId;
+            return id is not null ? agent.Conversations.GetValueOrDefault(id) : null;
+        }
+    }
+
+    private bool _problemsOnly;
+
+    /// <summary>
+    /// What the list renders. The SUMMARY always counts every step - a filtered view that also
+    /// changed the totals would make the numbers disagree with themselves.
+    /// </summary>
+    private IEnumerable<RunStep> VisibleSteps =>
+        _problemsOnly ? Steps.Where(IsProblem) : Steps;
+
+    private static bool IsProblem(RunStep step) =>
+        step.Status is RunStepStatus.Failed or RunStepStatus.Unfinished;
+
+    private int ProblemCount => Steps.Count(IsProblem);
+
+    private int FailedCount => Steps.Count(s => s.Status == RunStepStatus.Failed);
+
+    private int UnfinishedCount => Steps.Count(s => s.Status == RunStepStatus.Unfinished);
+
+    private TimeSpan TotalDuration =>
+        Steps.Aggregate(TimeSpan.Zero, (sum, s) => sum + (s.Duration ?? TimeSpan.Zero));
+
+    private TimeSpan SlowestDuration =>
+        Steps.Select(s => s.Duration ?? TimeSpan.Zero).DefaultIfEmpty(TimeSpan.Zero).Max();
+
+    /// <summary>
+    /// Bar width as a percentage of the slowest step, with a floor so a sub-second step is still
+    /// a visible mark rather than nothing at all.
+    /// </summary>
+    private string BarWidth(RunStep step)
+    {
+        var slowest = SlowestDuration;
+        if (slowest <= TimeSpan.Zero || step.Duration is not { } duration)
+            return "2%";
+
+        var share = duration.TotalMilliseconds / slowest.TotalMilliseconds * 100;
+        return $"{Math.Clamp(share, 2, 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)}%";
+    }
+
+    private static string CssFor(RunStepStatus status) => status switch
+    {
+        RunStepStatus.Running => "running",
+        RunStepStatus.Failed => "failed",
+        RunStepStatus.Unfinished => "unfinished",
+        _ => "ok"
+    };
+
+    private static string StatusText(RunStepStatus status) => status switch
+    {
+        RunStepStatus.Running => "running",
+        RunStepStatus.Failed => "failed",
+        RunStepStatus.Unfinished => "never finished",
+        _ => "completed"
+    };
+
+    /// <summary>
+    /// Units chosen per magnitude: milliseconds read as noise on a five-minute step, and "0.0m"
+    /// hides a fast one entirely.
+    /// </summary>
+    private static string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalSeconds < 1)
+            return $"{duration.TotalMilliseconds:0}ms";
+        if (duration.TotalSeconds < 60)
+            return $"{duration.TotalSeconds:0.#}s";
+        if (duration.TotalMinutes < 60)
+            return $"{(int)duration.TotalMinutes}m {duration.Seconds}s";
+        return $"{(int)duration.TotalHours}h {duration.Minutes}m";
+    }
+
+    public void Dispose() => Store.OnChanged -= HandleStoreChanged;
+}

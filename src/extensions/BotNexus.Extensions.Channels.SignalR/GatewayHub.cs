@@ -971,7 +971,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         await Clients.Caller.Connected(new ConnectedPayload(
             Context.ConnectionId,
-            SelectableAgents().Select(a => new AgentSummary(a.AgentId.Value, a.DisplayName, a.Emoji, a.Description, a.Summary)),
+            SelectableAgents().Select(a => new AgentSummary(
+                a.AgentId.Value, a.DisplayName, a.Emoji, a.Description, a.Summary, a.CanDelegate,
+                a.AvatarHue, a.Responsibility, a.Boundaries)),
             typeof(GatewayHub).Assembly.GetName().Version?.ToString() ?? "dev",
             new HubCapabilities(MultiSession: true)));
 

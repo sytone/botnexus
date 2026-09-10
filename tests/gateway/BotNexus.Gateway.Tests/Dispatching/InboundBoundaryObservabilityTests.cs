@@ -109,11 +109,11 @@ public sealed class InboundBoundaryObservabilityTests
         // at its deadline with BotNexus.Gateway.Tests outstanding.
         try
         {
-            await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await TestAwait.SignaledAsync(firstStarted.Task, "the first turn to wedge the queue");
 
-            var second = await orchestrator
-                .AcceptAsync(CreateMessage("addr-feedback"))
-                .WaitAsync(TimeSpan.FromSeconds(15));
+            var second = await TestAwait.SignaledAsync(
+                orchestrator.AcceptAsync(CreateMessage("addr-feedback")),
+                "the orchestrator to return a terminal status for this accept");
 
             second.Status.ShouldBe(InboundDispatchStatus.Stalled);
             lock (sent)
@@ -126,8 +126,8 @@ public sealed class InboundBoundaryObservabilityTests
         finally
         {
             wedged.TrySetResult(true);
-            try { await head.WaitAsync(TimeSpan.FromSeconds(5)); } catch { /* not under test */ }
-            try { await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)); }
+            try { await TestAwait.SignaledAsync(head, "the wedged head turn to drain"); } catch { /* not under test */ }
+            try { await TestAwait.SignaledAsync(orchestrator.DisposeAsync().AsTask(), "the orchestrator to dispose"); }
             catch { /* best effort */ }
         }
     }
@@ -183,12 +183,12 @@ public sealed class InboundBoundaryObservabilityTests
         {
             for (var i = 0; i < 5; i++)
             {
-                // The WaitAsync here is a deadlock fuse, not the assertion: it can only turn a hang
-                // into a failure, never a pass into a failure. Task.Delay is banned by
-                // TestDelayFlakeFenceTests; WaitAsync is the sanctioned form.
-                var result = await orchestrator
-                    .AcceptAsync(CreateMessage("addr-fast"))
-                    .WaitAsync(TimeSpan.FromSeconds(30));
+                // No deadline here: TestAwait.SignaledAsync waits on the signal itself. A fixed
+                // fuse would be the same wall-clock bet TestDelayFlakeFenceTests exists to retire,
+                // and this test is the example its own doc-comment cites.
+                var result = await TestAwait.SignaledAsync(
+                    orchestrator.AcceptAsync(CreateMessage("addr-fast")),
+                    "the orchestrator to return a terminal status for this accept");
                 result.Status.ShouldBe(
                     InboundDispatchStatus.NoRoute,
                     $"accept {i}: a healthy turn must never be reported as stalled");
@@ -239,11 +239,11 @@ public sealed class InboundBoundaryObservabilityTests
         // Release before disposal on every path - a still-wedged worker hangs DisposeAsync.
         try
         {
-            await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await TestAwait.SignaledAsync(started.Task, "the orchestrator to reach a terminal state");
 
-            var behind = await orchestrator
-                .AcceptAsync(CreateMessage("addr-healthy-long"))
-                .WaitAsync(TimeSpan.FromSeconds(30));
+            var behind = await TestAwait.SignaledAsync(
+                orchestrator.AcceptAsync(CreateMessage("addr-healthy-long")),
+                "the orchestrator to return a terminal status for this accept");
 
             behind.Status.ShouldBe(
                 InboundDispatchStatus.Stalled,
@@ -255,7 +255,7 @@ public sealed class InboundBoundaryObservabilityTests
 
             release.SetResult(true);
 
-            var result = await head.WaitAsync(TimeSpan.FromSeconds(30));
+            var result = await TestAwait.SignaledAsync(head, "the orchestrator to reach a terminal state");
             result.Status.ShouldBe(
                 InboundDispatchStatus.NoRoute,
                 "a healthy turn that outlasts the queue-wait bound must still report its real outcome, " +
@@ -264,8 +264,8 @@ public sealed class InboundBoundaryObservabilityTests
         finally
         {
             release.TrySetResult(true);
-            try { await head.WaitAsync(TimeSpan.FromSeconds(30)); } catch { /* not under test */ }
-            try { await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30)); }
+            try { await TestAwait.SignaledAsync(head, "the orchestrator to reach a terminal state"); } catch { /* not under test */ }
+            try { await TestAwait.SignaledAsync(orchestrator.DisposeAsync().AsTask(), "the orchestrator to reach a terminal state"); }
             catch { /* best effort */ }
         }
     }
@@ -337,10 +337,17 @@ public sealed class InboundBoundaryObservabilityTests
                 return new InboundProcessingOutcome(new[] { CreateDispatchResult() }, false);
             });
 
+        // 2s, matching HealthyProcessor_NeverReportsStalled_EvenWithShortBound and for the same
+        // reason. At 100ms this test failed on main at cf8abb96: the bound races the worker being
+        // SCHEDULED, not the processor's work, so on a loaded runner the delay won, AcceptAsync
+        // correctly returned Stalled, and `accept` had already completed by the time the assertion
+        // below ran. That is the production code behaving as designed - the fixture's bound was the
+        // wall-clock assumption. The turn is still held open indefinitely by `release`, so any bound
+        // that timed the PROCESSOR would still fire and still be caught.
         var orchestrator = new DefaultInboundMessageOrchestrator(
             processor,
             new CapturingLogger<DefaultInboundMessageOrchestrator>(),
-            queueWaitTimeout: TimeSpan.FromMilliseconds(100));
+            queueWaitTimeout: QueueWaitBound);
 
         // Both messages carry the same address and therefore the same isolation key, so the second is
         // genuinely queued behind the first.
@@ -349,22 +356,26 @@ public sealed class InboundBoundaryObservabilityTests
         // Release before disposal in all paths - see the note in StalledQueue_SendsUserVisibleChannelFeedback.
         try
         {
-            await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await TestAwait.SignaledAsync(started.Task, "the orchestrator to reach a terminal state");
 
-            // The orchestrator's own bound, observed rather than timed. Stalled is returned ONLY after
-            // _queueWaitTimeout has elapsed inside WaitForProcessingStartAsync, so receiving it is
-            // proof - on the orchestrator's clock, not the test's - that the #3600 bound has fired
-            // while the head turn was still running. The generous WaitAsync here is a deadlock fuse,
-            // not the assertion: it can only ever turn a hang into a failure, never a pass into a
-            // failure. Task.Delay is banned in tests by TestDelayFlakeFenceTests.
-            var behind = await orchestrator
-                .AcceptAsync(CreateMessage("addr-long"))
-                .WaitAsync(TimeSpan.FromSeconds(30));
-
-            behind.Status.ShouldBe(
-                InboundDispatchStatus.Stalled,
-                $"iteration {iteration}: the message queued behind a running turn must hit the #3600 " +
-                "queue-wait bound, which is what makes this a proof that the bound has elapsed");
+            // "Wait past the bound and confirm nothing resolved": if the fix timed the PROCESSOR
+            // rather than the queue wait, `accept` would complete as Stalled on its own, because the
+            // turn stays held until `release`. Racing it against a window several times the bound
+            // therefore proves the turn is not truncated, and a TimeoutException is the PASSING
+            // outcome.
+            //
+            // This is the ONE shape in this file where a short deadline is correct: expiry is the
+            // passing outcome, so it is reached on every healthy run, and no amount of load can turn
+            // THIS wait red. What load CAN do - and did, at cf8abb96 - is make the other side of the
+            // race resolve early: with a 100ms bound the orchestrator reported Stalled before the
+            // worker was even scheduled, so `accept` completed and there was nothing left to time
+            // out. The deadline was never the fragile part; what it was racing against was. A wait
+            // whose expiry means FAILURE is the opposite case and must be generous - use
+            // TestAwait.SignaledAsync, as the other waits here now do.
+            await Should.ThrowAsync<TimeoutException>(
+                // deadline-is-the-assertion: expiry is the passing outcome, at 3x the queue-wait bound.
+                async () => await accept.WaitAsync(NotTruncatedWindow),
+                "the #3600 bound must not truncate a turn that is genuinely running");
 
             accept.IsCompleted.ShouldBeFalse(
                 $"iteration {iteration}: the #3600 bound has demonstrably elapsed (the message behind " +
@@ -375,7 +386,7 @@ public sealed class InboundBoundaryObservabilityTests
             accept.IsCanceled.ShouldBeFalse($"iteration {iteration}: a running turn must not be cancelled by the bound");
 
             release.SetResult(true);
-            var result = await accept.WaitAsync(TimeSpan.FromSeconds(30));
+            var result = await TestAwait.SignaledAsync(accept, "the orchestrator to reach a terminal state");
             result.Status.ShouldBe(
                 InboundDispatchStatus.Accepted,
                 $"iteration {iteration}: the long-running turn must still return its real outcome");
@@ -386,11 +397,26 @@ public sealed class InboundBoundaryObservabilityTests
         finally
         {
             release.TrySetResult(true);
-            try { await accept.WaitAsync(TimeSpan.FromSeconds(30)); } catch { /* not under test */ }
-            try { await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30)); }
+            try { await TestAwait.SignaledAsync(accept, "the orchestrator to reach a terminal state"); } catch { /* not under test */ }
+            try { await TestAwait.SignaledAsync(orchestrator.DisposeAsync().AsTask(), "the orchestrator to reach a terminal state"); }
             catch { /* best effort */ }
         }
     }
+
+    /// <summary>
+    /// The queue-wait bound for <see cref="LongRunningTurn_IsNotTruncatedByTheBound"/>. It must be
+    /// long enough that a loaded runner reliably schedules the worker inside it, because the bound
+    /// races worker SCHEDULING, not the processor's work.
+    /// </summary>
+    private static readonly TimeSpan QueueWaitBound = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// How long <see cref="LongRunningTurn_IsNotTruncatedByTheBound"/> waits to prove the turn was
+    /// not truncated. Comfortably larger than <see cref="QueueWaitBound"/> so an implementation that
+    /// timed the processor completes well inside it, and spent on every passing run - which is what
+    /// makes it the one deadline here that is allowed to be short.
+    /// </summary>
+    private static readonly TimeSpan NotTruncatedWindow = TimeSpan.FromSeconds(6);
 
     private static GatewayHubApplicationService CreateService(
         IInboundMessageOrchestrator orchestrator,

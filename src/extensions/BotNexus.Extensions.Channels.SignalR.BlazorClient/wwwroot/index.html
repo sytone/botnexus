@@ -19,19 +19,55 @@
          only after app.css parses would guarantee a visible swap. latin-ext is deliberately
          NOT preloaded - it is fetched on demand via unicode-range. -->
     <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="stylesheet" href="css/app.css?v=ds13" />
+    <link rel="stylesheet" href="css/app.css?v=ds42" />
     <script>
         // Applied BEFORE first paint and before Blazor boots. The WASM runtime takes seconds to
         // start; without this a light-theme user would stare at a fully dark portal until it did,
         // then watch it flip. Reads the same localStorage blob PortalPreferencesService writes.
+        //
+        // Density is stamped here for the same reason, and it matters more now that the boot
+        // skeleton below mirrors the real shell: the :root defaults are the COMPACT ones, so a
+        // comfortable-density user would get a 32px skeleton bar that jumped to 46px the moment
+        // Blazor rendered. MainLayout stamps data-density on .app-shell itself, so the two never
+        // fight - custom properties inherit from the nearest ancestor that defines them, and for
+        // the real shell that is .app-shell, not <html>.
         (function () {
             try {
-                var raw = localStorage.getItem('botnexus.portal.prefs');
-                if (raw && JSON.parse(raw).Theme === 'light') {
+                var prefs = JSON.parse(localStorage.getItem('botnexus.portal.prefs') || '{}');
+                if (prefs.Theme === 'light') {
                     document.documentElement.setAttribute('data-theme', 'light');
                 }
+                if (prefs.Density === 'comfortable') {
+                    document.documentElement.setAttribute('data-density', 'comfortable');
+                }
+
+                // Whether the boot skeleton draws a sidebar placeholder. Getting this wrong is
+                // worse than drawing nothing: a 240px pane that evaporates on first render is a
+                // layout jump caused by the very thing meant to prevent one.
+                //
+                // Two conditions, both mirroring what MainLayout will decide a moment later:
+                //   - the sidebar is a persisted preference and it defaults to CLOSED, so an
+                //     absent key means no sidebar (MainLayout: stored === 'true');
+                //   - it only belongs on conversation routes (MainLayout.IsConversationRoute:
+                //     root, chat, chat/*, agent, agent/*).
+                var open = localStorage.getItem('botnexus-sidebar-open') === 'true';
+                var path = location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+                var conversational = path === '' || path === 'chat' || path === 'agent'
+                    || path.indexOf('chat/') === 0 || path.indexOf('agent/') === 0;
+                if (open && conversational && window.innerWidth > 768) {
+                    document.documentElement.setAttribute('data-boot-sidebar', 'true');
+                }
+
+                // Which SHAPE the content area takes. Not the same question as the sidebar one:
+                // root counts as a conversation route (the sidebar belongs there) but it renders
+                // the Home dashboard, not a transcript. A bottom-aligned skeleton on Home would
+                // put every placeholder where no content is about to arrive.
+                if (path.indexOf('chat/') === 0 || path.indexOf('agent/') === 0) {
+                    document.documentElement.setAttribute('data-boot-transcript', 'true');
+                }
             } catch (e) {
-                // Unparseable or unavailable storage - dark is the default, so do nothing.
+                // Unparseable or unavailable storage - dark, compact and no sidebar are the
+                // defaults, so do nothing and let :root answer.
             }
         })();
     </script>
@@ -39,10 +75,78 @@
 </head>
 
 <body>
+    <!-- Boot skeleton (Interface Review P3).
+
+         WASM takes roughly seven seconds to start on a cold load, and what filled that was a
+         spinner centred on an empty page: no indication of what was arriving or how much of it.
+         The layout is fully known before any data is - a banner bar, a 240px sidebar, a
+         conversation column - so it is painted immediately and the real UI replaces it in place.
+
+         Static markup in index.html on purpose. A skeleton that needs the WASM runtime to render
+         cannot cover the wait for the WASM runtime; this one is on screen with the first HTML
+         response, before a single byte of the framework is fetched.
+
+         aria-hidden + role="status": the shape is decoration, and a screen reader announcing a
+         dozen empty placeholder rows would be worse than silence. The one thing worth announcing
+         is that something is loading, so exactly one live region says so. -->
     <div id="app">
-        <div class="loading-screen">
-            <div class="loading-spinner"></div>
-            <p>Loading BotNexus...</p>
+        <div class="boot-skeleton" role="status" aria-live="polite">
+            <span class="sr-only">Loading BotNexus…</span>
+            <div class="boot-skeleton-banner" aria-hidden="true">
+                <span class="boot-sk boot-sk-avatar"></span>
+                <span class="boot-sk boot-sk-line" style="width:130px"></span>
+                <span class="boot-skeleton-spacer"></span>
+                <span class="boot-sk boot-sk-dot"></span>
+                <span class="boot-sk boot-sk-dot"></span>
+            </div>
+            <div class="boot-skeleton-toolbar" aria-hidden="true">
+                <span class="boot-sk boot-sk-tab" style="width:58px"></span>
+                <span class="boot-sk boot-sk-tab" style="width:66px"></span>
+                <span class="boot-sk boot-sk-tab" style="width:54px"></span>
+                <span class="boot-sk boot-sk-tab" style="width:50px"></span>
+                <span class="boot-sk boot-sk-tab" style="width:88px"></span>
+                <span class="boot-sk boot-sk-tab" style="width:52px"></span>
+                <span class="boot-sk boot-sk-tab" style="width:62px"></span>
+            </div>
+            <div class="boot-skeleton-body" aria-hidden="true">
+                <div class="boot-skeleton-sidebar">
+                    <span class="boot-sk boot-sk-field"></span>
+                    <span class="boot-sk boot-sk-line" style="width:60%"></span>
+                    <span class="boot-sk boot-sk-row"></span>
+                    <span class="boot-sk boot-sk-row"></span>
+                    <span class="boot-sk boot-sk-row"></span>
+                    <span class="boot-sk boot-sk-row"></span>
+                    <span class="boot-sk boot-sk-row"></span>
+                    <span class="boot-sk boot-sk-row"></span>
+                </div>
+                <!-- Two shapes, one of which is hidden. Both ship in the markup rather than
+                    being built by script, so the skeleton stays static HTML that needs nothing
+                    to run before it paints - which is the whole reason it can cover the boot. -->
+                <div class="boot-skeleton-main">
+                    <div class="boot-skeleton-transcript">
+                        <div class="boot-skeleton-messages">
+                            <span class="boot-sk boot-sk-msg" style="width:52%"></span>
+                            <span class="boot-sk boot-sk-msg boot-sk-msg--own" style="width:38%"></span>
+                            <span class="boot-sk boot-sk-msg" style="width:64%"></span>
+                            <span class="boot-sk boot-sk-msg boot-sk-msg--own" style="width:44%"></span>
+                            <span class="boot-sk boot-sk-msg" style="width:58%"></span>
+                        </div>
+                        <span class="boot-sk boot-sk-composer"></span>
+                    </div>
+                    <div class="boot-skeleton-page">
+                        <span class="boot-sk boot-sk-heading" style="width:160px"></span>
+                        <span class="boot-sk boot-sk-line" style="width:260px"></span>
+                        <div class="boot-skeleton-cards">
+                            <span class="boot-sk boot-sk-card"></span>
+                            <span class="boot-sk boot-sk-card"></span>
+                            <span class="boot-sk boot-sk-card"></span>
+                            <span class="boot-sk boot-sk-card"></span>
+                            <span class="boot-sk boot-sk-card"></span>
+                            <span class="boot-sk boot-sk-card"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -51,15 +155,18 @@
         <a href="." class="reload">Reload</a>
         <span class="dismiss">X</span>
     </div>
-    <script src="js/errorReporting.js"></script>
-    <script src="js/marked.min.js"></script>
-    <script src="js/purify.min.js"></script>
-    <script src="js/markdown.js"></script>
-    <script src="js/chat.js"></script>
-    <script src="js/audio.js"></script>
-    <script src="js/splitter.js"></script>
-    <script src="js/canvasBridge.js"></script>
-    <script src="js/toolFrame.js"></script>
+    <script src="js/errorReporting.js?v=ds42"></script>
+    <script src="js/marked.min.js?v=ds42"></script>
+    <script src="js/purify.min.js?v=ds42"></script>
+    <script src="js/markdown.js?v=ds42"></script>
+    <script src="js/chat.js?v=ds42"></script>
+    <script src="js/audio.js?v=ds42"></script>
+    <script src="js/splitter.js?v=ds42"></script>
+    <script src="js/canvasBridge.js?v=ds42"></script>
+    <script src="js/toolFrame.js?v=ds42"></script>
+    <script src="js/desktopNotifications.js?v=ds42"></script>
+    <script src="js/conversationSwitcher.js?v=ds42"></script>
+    <script src="js/navToolbar.js?v=ds42"></script>
     <script>
         // Clipboard helper for copy-to-clipboard via JS interop
         window.BotNexus = window.BotNexus || {};
@@ -70,16 +177,16 @@
             return Promise.resolve(false);
         };
     </script>
-    <script src="js/bootDiagnostics.js"></script>
+    <script src="js/bootDiagnostics.js?v=ds42"></script>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js" autostart="false"></script>
     <script>
         // #2880: default autostart leaves a failed boot as an unhandled rejection, so the static
-        // .loading-screen above is never torn down and the user sees the spinner forever. Starting
+        // boot skeleton above is never torn down and the user stares at placeholders forever. Starting
         // explicitly through BotNexusBoot attaches a rejection handler that replaces #app with an
         // actionable panel, and distinguishes an auth-proxy login interstitial from a real fault.
         window.BotNexusBoot.startBlazor();
     </script>
-    <script src="js/swUpdate.js"></script>
+    <script src="js/swUpdate.js?v=ds42"></script>
     <script>
         // Register the PWA service worker so Edge/Chromium treats the portal as installable.
         // #2591: registration alone let a cached worker pin a stale bundle forever, so this goes

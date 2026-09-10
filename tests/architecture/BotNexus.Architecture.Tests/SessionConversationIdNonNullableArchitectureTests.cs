@@ -240,6 +240,11 @@ public sealed class SessionConversationIdNonNullableArchitectureTests : Architec
             // IsInitialized() is the sanctioned sentinel check — must NOT be banned.
             "if (session.ConversationId.IsInitialized()) return;",
             "if (!session.ConversationId.IsInitialized()) StampLegacy(session);",
+            // A nullable ConversationId on a type that is NOT a session — AgentStreamEvent
+            // declares `ConversationId?` by design, and reading it with `?.` is correct. The
+            // fence over-fired on this exact shape in GatewayHost.cs.
+            "ConversationId = evt.ConversationId?.ToString(),",
+            "Link = evt.ConversationId is { } cid ? $\"c/{cid}\" : null,",
         };
 
         foreach (var shape in cleanShapes)
@@ -297,8 +302,16 @@ public sealed class SessionConversationIdNonNullableArchitectureTests : Architec
         foreach (Match m in Regex.Matches(source, @"\bConversationId\.HasValue\b"))
             matches.Add(m.Value.Trim());
 
-        // `ConversationId?.Value` — null-conditional access on a nullable shape.
-        foreach (Match m in Regex.Matches(source, @"\bConversationId\?\."))
+        // `ConversationId?.Value` — null-conditional unwrap of a nullable shape.
+        //
+        // Scoped to `.Value` deliberately. A bare `ConversationId?.` arm cannot detect a
+        // revert that the reflection pins above do not already catch outright: while the
+        // contract holds, `ConversationId` is a non-nullable Vogen struct and `?.` on it is
+        // a compile error, so the broad form could only ever fire on a DIFFERENT type whose
+        // ConversationId is nullable by design. It did exactly that — GatewayHost.cs reads
+        // `AgentStreamEvent.ConversationId?.ToString()`, where the property is declared
+        // `ConversationId?` (AgentExecution.cs) and the null-conditional is correct code.
+        foreach (Match m in Regex.Matches(source, @"\bConversationId\?\.Value\b"))
             matches.Add(m.Value.Trim());
 
         return matches;

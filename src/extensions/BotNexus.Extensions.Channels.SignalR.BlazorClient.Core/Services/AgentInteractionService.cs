@@ -789,8 +789,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
                         AgentId = agent.AgentId,
                         DisplayName = agent.DisplayName,
                         Emoji = agent.Emoji,
+                        AvatarHue = agent.AvatarHue,
+                        Responsibility = agent.Responsibility,
+                        Boundaries = agent.Boundaries,
                         Description = agent.Description,
                         IsBuiltIn = agent.IsBuiltIn,
+                        CanDelegate = agent.CanDelegate,
                         IsConnected = true
                     });
                 }
@@ -798,6 +802,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 {
                     existing.DisplayName = agent.DisplayName;
                     existing.Emoji = agent.Emoji;
+                    existing.AvatarHue = agent.AvatarHue;
+                    existing.Responsibility = agent.Responsibility;
+                    existing.Boundaries = agent.Boundaries;
+                    existing.CanDelegate = agent.CanDelegate;
                 }
             }
 

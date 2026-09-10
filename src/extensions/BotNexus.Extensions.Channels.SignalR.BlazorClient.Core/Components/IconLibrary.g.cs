@@ -122,6 +122,10 @@ public static class IconLibrary
                 """
                 <path d="M12 2v20M2 12h20M12 2 9 5M12 2l3 3M22 12l-3-3M22 12l-3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3"/>
                 """),
+            ["notifications"] = new("currentColor",
+                """
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/>
+                """),
             ["pause"] = new("currentColor",
                 """
                 <circle cx="12" cy="12" r="9"/><path d="M9.5 8.5v7M14.5 8.5v7"/>
@@ -222,6 +226,7 @@ public static class IconLibrary
         "home",
         "light-mode",
         "move",
+        "notifications",
         "pause",
         "pin",
         "plugins",

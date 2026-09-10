@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
+using BotNexus.Gateway.Streaming;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -210,6 +211,9 @@ public sealed class CrossWorldFederationController(
                 Role = MessageRole.Assistant,
                 Content = response.Content ?? string.Empty
             });
+            // Blocking boundary: stamp the usage onto the session that is about to be saved,
+            // not the reloaded copy below, which exists only to read the completion gate.
+            ProviderTokenUsageRecorder.Record(session, response.Usage);
 
             // Reload the session — the FinishAgentExchangeTool (if invoked by the target agent
             // during the turn) writes its payload through its own ISessionStore handle, so the

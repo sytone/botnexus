@@ -111,6 +111,7 @@ public static class GatewayServiceCollectionExtensions
                     SqliteWalCheckpointOptions.DefaultIntervalMinutes));
             services.Configure<TranscriptExportOptions>(config.GetSection("gateway:" + TranscriptExportOptions.SectionName));
             services.Configure<MemoryEmbeddingsConfig>(config.GetSection("gateway:memoryEmbeddings"));
+            services.Configure<GatewayMemoryConfig>(config.GetSection("gateway:memory"));
 
             var compactionSection = config.GetSection("gateway:compaction");
             if (compactionSection.Exists())
@@ -170,6 +171,28 @@ public static class GatewayServiceCollectionExtensions
                 var agentDirectory = home.GetAgentDirectory(agentId);
                 return Path.Combine(agentDirectory, "data", "memory.sqlite");
             }, embeddings, fileSystem);
+        });
+        // #3232: SHARED memory stores, registered here because until now they were registered
+        // nowhere. The registry, its per-store reader/writer ACLs, the promoter and the trust
+        // tiering were all built and unit-tested, and every consumer resolves the interface as
+        // OPTIONAL - MemorySaveTool, MemorySearchTool, QmdToolContributor and the dreaming cron
+        // action each take `ISharedMemoryStoreRegistry?` and quietly do nothing when it is null.
+        // Nothing ever registered it, so "quietly do nothing" was the only behaviour the feature
+        // had ever exhibited in production. GatewaySharedMemoryRegistrationTests pins it.
+        //
+        // Registered unconditionally, with whatever stores the operator configured (usually
+        // none). An empty registry answers "no" to every CanRead/CanWrite, which is exactly the
+        // private-memory-only behaviour that shipped before - so turning this on changes nothing
+        // until a store is actually configured.
+        services.TryAddSingleton<ISharedMemoryStoreRegistry>(serviceProvider =>
+        {
+            var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
+            var configured = serviceProvider.GetService<IOptions<GatewayMemoryConfig>>()?.Value;
+            return new SharedMemoryStoreRegistry(
+                SharedMemoryStoreConfigMapping.FromConfig(configured?.SharedStores),
+                home.DataPath,
+                fileSystem);
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();

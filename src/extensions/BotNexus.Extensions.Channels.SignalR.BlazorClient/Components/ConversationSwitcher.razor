@@ -1,0 +1,605 @@
+@using System.Net.Http.Json
+@inject IClientStateStore Store
+@inject IAgentInteractionService Interaction
+@inject NavigationManager Nav
+@inject IServiceProvider Services
+@inject IJSRuntime JS
+@implements IDisposable
+
+@*
+    Type-to-filter conversation switcher in the chat header.
+
+    Why this exists beside the sidebar rather than instead of it: the sidebar list is a filing
+    system - four groups plus user-defined sections, three of them independently collapsible, and a
+    recent-activity filter that can hide a row outright. That is good for organising and bad for
+    finding, because reaching a conversation means first remembering where it was filed. This is the
+    finding path: one query over every conversation the user can reach, no matter which group or
+    section it lives in.
+
+    A native <select> was the cheaper option and is what the mobile shell renders (Chat.razor). It
+    is not enough here: it reproduces the same long list in a smaller box, and desktop is exactly
+    where the list gets long. Hence a combobox with a text filter.
+*@
+
+<div class="conversation-switcher" data-testid="conversation-switcher">
+    <button type="button"
+            class="conversation-switcher-trigger"
+            data-testid="conversation-switcher-trigger"
+            @ref="_triggerRef"
+            @onclick="ToggleAsync"
+            aria-haspopup="listbox"
+            aria-expanded="@(_open ? "true" : "false")"
+            aria-label="@($"Switch conversation. Current: {TriggerLabel}")"
+            title="Switch conversation">
+        @* Caret only. The trigger sits immediately after the conversation title in the chat
+           header, so the title IS its label - repeating it inside the button would render the
+           same text twice side by side. The current conversation is still announced, via
+           aria-label, for anyone who reaches the button without seeing the heading beside it. *@
+        <span class="conversation-switcher-caret" aria-hidden="true">&#x25BE;</span>
+    </button>
+
+    @if (_open)
+    {
+        @* A transparent full-viewport backdrop is the dismiss surface. Blazor has no ambient
+           click-outside, and doing it with a document-level JS listener means an interop
+           subscription to unwind on dispose and a listener that outlives a prerender. A backdrop
+           element is one div, disposes with the panel, and is reachable in a component test. *@
+        <div class="conversation-switcher-backdrop"
+             data-testid="conversation-switcher-backdrop"
+             @onclick="Close"></div>
+
+        <div class="conversation-switcher-panel" data-testid="conversation-switcher-panel" @ref="_panelRef">
+            <div class="conversation-switcher-search">
+                <Icon Name="search" Size="14" Class="bn-icon-inherit" />
+                <input class="conversation-switcher-input"
+                       data-testid="conversation-switcher-input"
+                       @ref="_inputRef"
+                       value="@_query"
+                       @oninput="OnQueryInput"
+                       @onkeydown="OnKeyDownAsync"
+                       placeholder="Search all conversations…"
+                       aria-label="Search conversations"
+                       aria-controls="conversation-switcher-list"
+                       autocomplete="off"
+                       maxlength="200" />
+            </div>
+
+            @{
+                var view = BuildView();
+            }
+
+            <div class="conversation-switcher-list"
+                 id="conversation-switcher-list"
+                 role="listbox"
+                 aria-label="Conversations">
+                @if (view.IsEmpty)
+                {
+                    <div class="conversation-switcher-empty" data-testid="conversation-switcher-empty">
+                        @if (_contentSearching)
+                        {
+                            @* Saying "nothing matches" while still looking is a lie with a short
+                               shelf life, and the reader acts on it before it corrects itself. *@
+                            <text>Searching messages for &ldquo;@_query&rdquo;&hellip;</text>
+                        }
+                        else
+                        {
+                            <text>No conversations match &ldquo;@_query&rdquo; in any agent.</text>
+                        }
+                    </div>
+                }
+                else
+                {
+                    @* The flat index is walked in lockstep with the render so the highlighted row
+                       and view.Flattened[_highlight] are the same row by construction. *@
+                    var flatIndex = 0;
+                    @foreach (var group in view.Groups)
+                    {
+                        <div class="conversation-switcher-group-label">@group.Label</div>
+                        @foreach (var row in group.Rows)
+                        {
+                            var conversation = row.Conversation;
+                            var index = flatIndex++;
+                            @* A row is "active" only when it is the conversation on screen AND belongs
+                               to this agent: two agents can hold conversations with the same id only
+                               by coincidence, but the owning agent is what makes the match meaningful. *@
+                            var isActive = !row.IsOtherAgent
+                                && string.Equals(conversation.ConversationId, ActiveConversationId, StringComparison.Ordinal);
+                            var isReadOnly = ConversationSwitcherModel.IsReadOnlyRow(conversation, group.Label);
+                            <button type="button"
+                                    class="conversation-switcher-row @(index == _highlight ? "highlighted" : "") @(isActive ? "active" : "")"
+                                    data-testid="conversation-switcher-row"
+                                    data-conversation-id="@conversation.ConversationId"
+                                    data-agent-id="@row.AgentId"
+                                    role="option"
+                                    aria-selected="@(isActive ? "true" : "false")"
+                                    @onclick="() => SelectAsync(row)"
+                                    @onmouseover="() => _highlight = index">
+                                @if (row.IsOtherAgent)
+                                {
+                                    <span class="conversation-switcher-agent"
+                                          data-testid="conversation-switcher-agent-label">@PortalText.SingleLine(row.AgentDisplayName)</span>
+                                }
+                                <span class="conversation-switcher-row-title"
+                                      title="@PortalText.SingleLine(conversation.Title)">@PortalText.SingleLine(conversation.Title)</span>
+                                @if (conversation.IsDefault)
+                                {
+                                    <span class="conversation-switcher-badge">Default</span>
+                                }
+                                @if (isReadOnly)
+                                {
+                                    <span class="conversation-switcher-badge readonly"
+                                          data-testid="conversation-switcher-readonly-badge">Read-only</span>
+                                }
+                                @if (conversation.UnreadCount > 0)
+                                {
+                                    <span class="conversation-switcher-unread" aria-label="Unread messages"></span>
+                                }
+                                @* The snippet IS the reason this row is here. A content match whose
+                                   title does not contain the query looks arbitrary without it. *@
+                                @if (row.Snippet is { Length: > 0 } snippet)
+                                {
+                                    <span class="conversation-switcher-snippet"
+                                          data-testid="conversation-switcher-snippet"
+                                          title="@PortalText.SingleLine(snippet)">@PortalText.SingleLine(snippet)</span>
+                                }
+                            </button>
+                        }
+                    }
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>The agent whose conversations this switcher lists. Required.</summary>
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    /// <summary>
+    /// The conversation currently on screen, supplied by the owning pane rather than re-derived
+    /// here. Same reason <c>ChatPanel.ConversationId</c> is a parameter (#3062): the route owns the
+    /// active conversation, and a component that re-derives it from ambient agent state can label
+    /// its trigger with a different conversation than the one the transcript is showing.
+    /// </summary>
+    [Parameter]
+    public string? ActiveConversationId { get; set; }
+
+    private bool _open;
+    private string _query = "";
+
+    /// <summary>
+    /// Conversations matched by CONTENT, keyed by conversation id, with the matching snippet.
+    /// Filled asynchronously; the title filter never waits on it, so the list stays responsive on
+    /// every keystroke and content rows arrive underneath when the server answers.
+    /// </summary>
+    private IReadOnlyList<ConversationContentMatch> _contentMatches = [];
+
+    private CancellationTokenSource? _contentSearchCts;
+    private bool _contentSearching;
+    private int _highlight;
+    private ElementReference _inputRef;
+    private ElementReference _triggerRef;
+    private ElementReference _panelRef;
+
+    /// <summary>
+    /// True once the open panel has been anchored to its trigger and given focus. Reset on close so
+    /// the next open re-anchors - the trigger moves whenever the window is resized or the header
+    /// re-flows.
+    /// </summary>
+    private bool _panelReady;
+
+    /// <summary>
+    /// The authoritative cron-job to conversation-id map, fetched once on init exactly as
+    /// MainLayout and the mobile picker do, and handed to the shared grouping helper.
+    /// </summary>
+    /// <remarks>
+    /// Its only effect is on conversations a cron job ADOPTED: <c>Source</c> is write-once (#2304),
+    /// so a channel-created conversation later driven by cron keeps <c>Source = Channel</c> forever
+    /// and the render projection alone can never group it under Scheduled. Every conversation the
+    /// server itself stamped <c>Source = Cron</c> groups correctly without this map.
+    /// <para>
+    /// That is why the map is allowed to be missing: an empty set degrades to projection-only
+    /// grouping, which is precisely the documented degradation for a failed fetch, and never an
+    /// exception or an empty switcher.
+    /// </para>
+    /// </remarks>
+    private IReadOnlySet<string> _cronConversationIds = PortalConversationGrouping.CronConversationIds(null);
+
+    private AgentState? Agent => Store.GetAgent(AgentId);
+
+    private string TriggerLabel
+    {
+        get
+        {
+            var title = ActiveConversationId is string id
+                ? Agent?.Conversations.GetValueOrDefault(id)?.Title
+                : null;
+            return string.IsNullOrWhiteSpace(title) ? "Conversations" : PortalText.SingleLine(title);
+        }
+    }
+
+    /// <summary>
+    /// True once the cron id map has been fetched (or definitively could not be), so opening the
+    /// panel repeatedly does not re-fetch it.
+    /// </summary>
+    private bool _cronIdsLoaded;
+
+    /// <summary>
+    /// The shared launcher, resolved optionally so the sixteen existing ChatPanel test fixtures
+    /// keep working - the same reason CronApiClient is resolved this way below. A null launcher
+    /// costs the sidebar box and the shortcut; the header caret is unaffected.
+    /// </summary>
+    private IConversationSwitcherLauncher? _launcher;
+
+    protected override void OnInitialized()
+    {
+        Store.OnChanged += HandleStoreChanged;
+
+        _launcher = Services.GetService(typeof(IConversationSwitcherLauncher)) as IConversationSwitcherLauncher;
+        if (_launcher is not null)
+            _launcher.Requested += HandleLaunchRequested;
+    }
+
+    /// <summary>
+    /// Open in response to the sidebar search box or the keyboard shortcut.
+    /// </summary>
+    /// <remarks>
+    /// Every agent panel mounts one of these and they all hear the request, so the guard is what
+    /// makes exactly one respond: only the switcher belonging to the ACTIVE agent opens. Without it
+    /// sixteen hidden panels would each open a switcher the user cannot see, and the visible one
+    /// would be indistinguishable from the rest.
+    /// </remarks>
+    private void HandleLaunchRequested()
+    {
+        if (!string.Equals(AgentId, Store.ActiveAgentId, StringComparison.Ordinal))
+            return;
+
+        if (_open)
+            return;
+
+        _ = InvokeAsync(OpenAsync);
+    }
+
+    public void Dispose()
+    {
+        _contentSearchCts?.Cancel();
+        _contentSearchCts?.Dispose();
+        Store.OnChanged -= HandleStoreChanged;
+
+        // The launcher is scoped and outlives this component; a leaked subscription would raise
+        // into a disposed switcher on every later shortcut press.
+        if (_launcher is not null)
+            _launcher.Requested -= HandleLaunchRequested;
+    }
+
+    private void HandleStoreChanged() => _ = InvokeAsync(StateHasChanged);
+
+    /// <summary>
+    /// Load the cron id map once, on first open, tolerating both a failing call and an absent client.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Deliberately not in <c>OnInitializedAsync</c>.</b> <c>Home</c> renders one
+    /// <c>AgentPanel</c> - and therefore one <c>ChatPanel</c>, and therefore one of these - for
+    /// EVERY agent in the store, hiding the inactive ones with CSS rather than unmounting them. An
+    /// init-time fetch would issue one <c>GET /api/cron</c> per agent on every page load, for a
+    /// signal that only matters once someone actually opens the panel. Fetching on first open costs
+    /// nothing at load and, in practice, one request for the one switcher a user opens.
+    /// </para>
+    /// <para>
+    /// <c>GetService</c> rather than <c>@inject</c>, also deliberately: <c>ChatPanel</c> is rendered
+    /// by sixteen existing component-test fixtures that register only the services the chat pane
+    /// itself needs, and a constructor-level dependency here would turn every one of them into a DI
+    /// resolution failure over a signal that merely refines grouping. The portal registers
+    /// <c>CronApiClient</c> in <c>Program.cs</c>, so the real app always resolves it; a null client
+    /// means a test host, and takes the same empty-set path a failed fetch takes.
+    /// </para>
+    /// </remarks>
+    private async Task EnsureCronConversationIdsAsync()
+    {
+        if (_cronIdsLoaded)
+            return;
+
+        // Set before the await, not after: two opens in quick succession would otherwise both pass
+        // the guard and fetch.
+        _cronIdsLoaded = true;
+
+        try
+        {
+            if (Services.GetService(typeof(CronApiClient)) is not CronApiClient cronApi)
+                return;
+
+            var (jobs, _) = await cronApi.ListAsync();
+            _cronConversationIds = PortalConversationGrouping.CronConversationIds(jobs);
+        }
+        catch
+        {
+            _cronConversationIds = PortalConversationGrouping.CronConversationIds(null);
+        }
+    }
+
+    private ConversationSwitcherView BuildView() => ConversationSwitcherModel.Build(
+        AgentId,
+        // Materialised before the model walks it: Store.Agents is the LIVE dictionary the SignalR
+        // handlers mutate, and enumerating it during a render raced an inbound event into
+        // "Collection was modified" (#2320). The model snapshots each agent's conversations for the
+        // same reason.
+        Store.Agents.Values.ToArray(),
+        Store.ActiveSelectionSource,
+        _cronConversationIds,
+        _query,
+        _contentMatches);
+
+    private async Task ToggleAsync()
+    {
+        if (_open)
+        {
+            Close();
+            return;
+        }
+
+        await OpenAsync();
+    }
+
+    private async Task OpenAsync()
+    {
+        _open = true;
+        _query = "";
+        _contentMatches = [];
+        // Open on the conversation the user is already in, so Enter is a no-op rather than a
+        // surprise jump, and arrowing starts from where they are.
+        _highlight = IndexOfActive(BuildView());
+        StateHasChanged();
+
+        // Anchoring and focus happen in OnAfterRenderAsync, not here: both need the panel element to
+        // exist, and it is rendered by the update this method only queues.
+
+        // After the panel is on screen, never before it: the cron map only moves cron-ADOPTED rows
+        // between groups, and holding the panel closed on a network call to get that detail right
+        // would trade the thing the user asked for against a refinement they cannot see yet.
+        await EnsureCronConversationIdsAsync();
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Positions and focuses the panel once per open, after the render that actually creates it.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_open)
+        {
+            _panelReady = false;
+            return;
+        }
+
+        if (_panelReady)
+            return;
+
+        _panelReady = true;
+        await AnchorPanelAsync();
+        await FocusInputAsync();
+    }
+
+    /// <summary>
+    /// Ask the browser to place the fixed-position panel under its trigger. Best-effort: a test host
+    /// has no such script, and a switcher that opens unanchored is still usable.
+    /// </summary>
+    private async Task AnchorPanelAsync()
+    {
+        try { await JS.InvokeVoidAsync("botnexusConversationSwitcher.anchor", _triggerRef, _panelRef); }
+        catch { /* no script (test host) - CSS leaves the panel at its static position */ }
+    }
+
+    private void Close()
+    {
+        _open = false;
+        _query = "";
+        _contentMatches = [];
+        _highlight = 0;
+        _panelReady = false;
+    }
+
+    private int IndexOfActive(ConversationSwitcherView view)
+    {
+        if (ActiveConversationId is null)
+            return 0;
+
+        for (var i = 0; i < view.Flattened.Count; i++)
+        {
+            var row = view.Flattened[i];
+            if (!row.IsOtherAgent
+                && string.Equals(row.Conversation.ConversationId, ActiveConversationId, StringComparison.Ordinal))
+                return i;
+        }
+
+        return 0;
+    }
+
+    private void OnQueryInput(ChangeEventArgs e)
+    {
+        _query = e.Value?.ToString() ?? "";
+        // Every keystroke changes which rows exist, so a retained index would point at a different
+        // conversation than the one under the highlight. Reset to the top - the best match after
+        // typing is the first surviving row, not whatever sat at the old offset.
+        _highlight = 0;
+
+        // Stale content rows are worse than none: they would claim a message match for a query the
+        // user has already moved on from. Cleared synchronously, refilled when the server answers.
+        _contentMatches = [];
+        _ = SearchContentAsync(_query);
+    }
+
+    /// <summary>
+    /// Asks the gateway which conversations contain the typed text, after a short pause.
+    /// </summary>
+    /// <remarks>
+    /// Debounced and cancellable because this is a keystroke-driven remote call over a table of
+    /// transcripts: firing per character would put a full-text query behind every letter of a word,
+    /// and let an early request answer after a later one and repopulate the list with results for a
+    /// prefix the user has already replaced.
+    /// <para>
+    /// Failure is silent by design. The title filter has already produced a usable list; degrading
+    /// that into an error banner because a supplementary search did not answer would make the
+    /// control worse than before content search existed.
+    /// </para>
+    /// </remarks>
+    private async Task SearchContentAsync(string query)
+    {
+        _contentSearchCts?.Cancel();
+        _contentSearchCts?.Dispose();
+        _contentSearchCts = null;
+
+        // One character matches most transcripts and tells the reader nothing; the round trip is
+        // pure cost until the query is specific enough to exclude something.
+        if (query.Trim().Length < 3)
+            return;
+
+        var cts = new CancellationTokenSource();
+        _contentSearchCts = cts;
+
+        try
+        {
+            await Task.Delay(250, cts.Token);
+
+            if (Services.GetService(typeof(HttpClient)) is not HttpClient http)
+                return;
+
+            var url = $"{Nav.BaseUri.TrimEnd('/')}/api/conversations/search?q={Uri.EscapeDataString(query.Trim())}&limit=20";
+            _contentSearching = true;
+
+            var response = await http.GetAsync(url, cts.Token);
+            if (!response.IsSuccessStatusCode)
+                return;
+
+            var payload = await response.Content.ReadFromJsonAsync<ContentSearchResponse>(cts.Token);
+            if (cts.Token.IsCancellationRequested)
+                return;
+
+            // Kept as an ordered list. The endpoint returns hits in bm25 relevance order, and
+            // collapsing them into a dictionary here was what discarded that ranking before the
+            // model ever saw it.
+            var matches = new List<ConversationContentMatch>();
+            foreach (var result in payload?.Results ?? [])
+            {
+                if (!string.IsNullOrWhiteSpace(result.ConversationId))
+                    matches.Add(new ConversationContentMatch(result.ConversationId, result.Snippet ?? ""));
+            }
+
+            _contentMatches = matches;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a later keystroke, or the panel closed. Not a failure.
+        }
+        catch (Exception)
+        {
+            // See remarks: the title list still stands on its own.
+        }
+        finally
+        {
+            // Re-render on EVERY exit, not just the successful one. _contentSearching drives the
+            // "Searching messages..." text, so clearing the flag without a render left the panel
+            // claiming it was still looking after a failed or empty search - permanently.
+            _contentSearching = false;
+            if (!cts.IsCancellationRequested)
+                await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private sealed record ContentSearchResponse(IReadOnlyList<ContentSearchResult>? Results);
+
+    private sealed record ContentSearchResult(string? ConversationId, string? Snippet);
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        var view = BuildView();
+
+        switch (e.Key)
+        {
+            case "ArrowDown":
+                if (view.Count > 0)
+                    _highlight = (_highlight + 1) % view.Count;
+                break;
+
+            case "ArrowUp":
+                if (view.Count > 0)
+                    _highlight = (_highlight - 1 + view.Count) % view.Count;
+                break;
+
+            case "Home":
+                _highlight = 0;
+                break;
+
+            case "End":
+                _highlight = Math.Max(0, view.Count - 1);
+                break;
+
+            case "Enter":
+                // Clamped rather than trusted: the list is rebuilt from live store state on every
+                // keystroke, so an inbound archive event between the last render and this keypress
+                // can shrink it under a highlight that was in range when it was set.
+                if (_highlight >= 0 && _highlight < view.Count)
+                    await SelectAsync(view.Flattened[_highlight]);
+                break;
+
+            case "Escape":
+                Close();
+                await FocusTriggerAsync();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Open the conversation a row points at, switching agent first when the row belongs to another.
+    /// </summary>
+    /// <remarks>
+    /// The agent switch mirrors what <c>MainLayout.OnAgentSelected</c> does for the sidebar dropdown:
+    /// promote the view with <see cref="SelectionSource.UserClick"/>, clear the agent's unread count,
+    /// then select the conversation so its history loads. It deliberately does NOT re-fetch the
+    /// agent's conversation list first - the portal seeded every agent's conversations at bootstrap,
+    /// and this row was built from that same store, so the conversation is known to exist.
+    /// </remarks>
+    private async Task SelectAsync(ConversationSwitcherRow row)
+    {
+        Close();
+
+        if (row.IsOtherAgent)
+        {
+            Store.SelectView(row.AgentId, string.Empty, SelectionSource.UserClick);
+            if (Store.GetAgent(row.AgentId) is { UnreadCount: > 0 } target)
+                target.UnreadCount = 0;
+        }
+
+        await Interaction.SelectConversationAsync(row.AgentId, row.Conversation.ConversationId);
+        NavigateToChat(row.AgentId, row.Conversation.ConversationId);
+    }
+
+    /// <summary>
+    /// #2247: the route is the single source of truth for the active view, so a switch navigates
+    /// rather than only mutating store state. Desktop-only path shape - the mobile shell has its own
+    /// picker and its own /mobile/ prefix, and this component is never mounted there.
+    /// </summary>
+    private void NavigateToChat(string agentId, string conversationId)
+    {
+        var relPath = $"agent/{Uri.EscapeDataString(agentId)}/conversation/{Uri.EscapeDataString(conversationId)}";
+        var current = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+        if (!string.Equals(current, relPath, StringComparison.OrdinalIgnoreCase))
+            Nav.NavigateTo(relPath);
+    }
+
+    // Focus moves are best-effort: a prerendered or disposed element reference throws, and failing
+    // to focus a search box is never worth tearing down the render.
+    private async Task FocusInputAsync()
+    {
+        try { await _inputRef.FocusAsync(); }
+        catch { /* element not attached yet - the panel is still usable by mouse */ }
+    }
+
+    private async Task FocusTriggerAsync()
+    {
+        try { await _triggerRef.FocusAsync(); }
+        catch { /* see FocusInputAsync */ }
+    }
+}

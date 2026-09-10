@@ -75,6 +75,8 @@ public sealed class PluginPortalProjector
             FileCount = plugin.Files.Count,
             TrustState = trust,
             TrustDetail = detail,
+            DeployedExtensionId = plugin.DeployedExtensionId,
+            NavHidden = plugin.NavHidden,
             // A pinned plugin's source is never probed, so "pinned" is the complete and final
             // answer to the update question for it - not a placeholder for an unmade check.
             UpdateState = plugin.UpdatesEnabled ? PluginUpdateState.Unknown : PluginUpdateState.Pinned,

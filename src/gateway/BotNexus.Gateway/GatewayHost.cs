@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Notifications;
 using System.Diagnostics;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Channels;
@@ -70,6 +71,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly IActiveLoopTracker? _activeLoopTracker;
     private readonly GatewayAuthManager? _authManager;
     private readonly IOutboundResponseDeliverer _deliverer;
+
+    // Optional and defaulting to the no-op, so every existing construction site is unaffected, and
+    // so the host can never fail to serve a message because notifications are unavailable.
+    private readonly INotificationPublisher _notificationPublisher;
     private readonly Sessions.ISessionTurnTracker _turnTracker;
     private readonly ChannelStartupReport _startupReport;
 
@@ -110,6 +115,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         ChannelStartupReport? startupReport = null,
         ISessionContextWindowResolver? contextWindowResolver = null,
         Audit.IToolAuditSink? toolAudit = null,
+        INotificationPublisher? notificationPublisher = null,
         Sessions.IContextExhaustionNotifier? contextExhaustionNotifier = null)
     {
         _toolAudit = toolAudit ?? Audit.DefaultToolAuditSink.Instance;
@@ -158,6 +164,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     channelManager,
                     Microsoft.Extensions.Logging.Abstractions.NullLogger<OutboundResponseDeliverer>.Instance)
                 : NullOutboundResponseDeliverer.Instance);
+        _notificationPublisher = notificationPublisher ?? NullNotificationPublisher.Instance;
         // Wire up the auto-title service when the required dependencies are present. The auth
         // manager is threaded through so the titling call applies the same per-provider
         // API-endpoint override the live agent path uses (#1636).
@@ -702,6 +709,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     var maxPersistedToolResultBytes = toolResultCfg is { Enabled: true, MaxBytes: > 0 }
                         ? toolResultCfg.MaxBytes
                         : 0;
+                    // Scoped to this run so the once-per-run guard resets for the next message.
+                    var runFailureNotified = false;
                     await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(userMessage, cancellationToken),
                         session,
@@ -730,6 +739,40 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                     SessionId = evt.SessionId ?? typedSessionId,
                                     ConversationId = evt.ConversationId ?? session.ConversationId
                                 };
+
+                                // A run that ends in an error is worth telling someone about even
+                                // when they are watching, because a failure is rare and a record of
+                                // it is useful later. SUCCESS is deliberately not raised here: in an
+                                // interactive conversation every message is a run, so notifying on
+                                // completion would file a notification for a reply already on
+                                // screen. Unattended completions are cron's, and cron reports its
+                                // own outcomes.
+                                if (enriched.Type == AgentStreamEventType.Error
+                                    && !string.IsNullOrWhiteSpace(enriched.ErrorMessage)
+                                    && !runFailureNotified)
+                                {
+                                    // Once per run: a failing run can emit several error events and
+                                    // an operator needs one report of the failure, not a stream of
+                                    // them.
+                                    runFailureNotified = true;
+                                    await _notificationPublisher.TryPublishAsync(
+                                        new Notification
+                                        {
+                                            Id = string.Empty,
+                                            Kind = NotificationKind.AgentRunFailed,
+                                            Severity = NotificationSeverity.Error,
+                                            Title = $"Agent '{enriched.AgentId?.ToString() ?? "unknown"}' run failed",
+                                            Body = enriched.ErrorMessage,
+                                            AgentId = enriched.AgentId?.ToString(),
+                                            ConversationId = enriched.ConversationId?.ToString(),
+                                            Link = enriched.ConversationId is { } cid
+                                                ? $"agent/{enriched.AgentId?.ToString()}/conversation/{cid}"
+                                                : null,
+                                            CreatedAtUtc = default,
+                                        },
+                                        _logger,
+                                        ct).ConfigureAwait(false);
+                                }
 
                                 // Build the typed stream target the channel adapter uses to
                                 // route this delta or event. Each adapter consumes the field

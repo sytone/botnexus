@@ -49,13 +49,23 @@ internal sealed class GatewayCommand
         });
 
         // Stop command
-        var stopCommand = new Command("stop", "Stop the gateway process");
+        //
+        // `--source` is here because stop has to be able to IDENTIFY the gateway, not only signal
+        // it. Without a repo root there is no binary path, without a binary path the manager's
+        // discovery fallback is unreachable, and a gateway started by anything other than this CLI
+        // - a service unit, a deploy script, a hand-run binary - has no PID file to be found by.
+        var stopCommand = new Command("stop", "Stop the gateway process")
+        {
+            sourceOption
+        };
         stopCommand.SetHandler(async context =>
         {
             var target = context.ParseResult.GetValueForOption(targetOption);
+            var source = context.ParseResult.GetValueForOption(sourceOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var home = CliPaths.ResolveTarget(target);
-            context.ExitCode = await StopAsync(home, verbose, context.GetCancellationToken());
+            var repoRoot = CliPaths.ResolveSource(source);
+            context.ExitCode = await StopAsync(home, repoRoot, verbose, context.GetCancellationToken());
         });
 
         // Status command
@@ -134,7 +144,7 @@ internal sealed class GatewayCommand
                 return buildResult;
         }
 
-        var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+        var gatewayDll = CliPaths.GatewayBinary(repoRoot);
 
         if (!File.Exists(gatewayDll))
         {
@@ -234,7 +244,7 @@ internal sealed class GatewayCommand
                 return buildResult;
         }
 
-        var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+        var gatewayDll = CliPaths.GatewayBinary(repoRoot);
 
         if (!File.Exists(gatewayDll))
         {
@@ -306,9 +316,10 @@ internal sealed class GatewayCommand
         return lastExitCode;
     }
 
-    private async Task<int> StopAsync(string home, bool verbose, CancellationToken cancellationToken)
+    private async Task<int> StopAsync(string home, string repoRoot, bool verbose, CancellationToken cancellationToken)
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
+        var gatewayBinary = CliPaths.GatewayBinary(repoRoot);
         GatewayStopResult result;
 
         if (interactive)
@@ -319,25 +330,28 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedResult = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
+                    capturedResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
                 });
             result = capturedResult;
         }
         else
         {
-            result = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
+            result = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
         }
 
-        if (result.Success)
-        {
-            AnsiConsole.MarkupLine($"[green]✓[/] {CliText.SafeDisplay(result.Message ?? "Gateway stopped")}");
-            return 0;
-        }
-        else
+        if (!result.Success)
         {
             AnsiConsole.MarkupLine($"[red]✗[/] {CliText.SafeDisplay(result.Message ?? "Failed to stop gateway")}");
             return 1;
         }
+
+        // A tick for "stopped" and a tick for "there was nothing to stop" are not the same claim.
+        // Reporting both as ✓ is what let a redeploy proceed against a gateway still holding
+        // extension assemblies mapped. Exit code stays 0 either way: stop is idempotent by design,
+        // and "already stopped" is a success for every caller that just wants it not running.
+        var marker = result.Outcome == GatewayStopOutcome.NotRunning ? "[yellow]○[/]" : "[green]✓[/]";
+        AnsiConsole.MarkupLine($"{marker} {CliText.SafeDisplay(result.Message ?? "Gateway stopped")}");
+        return 0;
     }
 
     private async Task<int> StatusAsync(string home, bool verbose, CancellationToken cancellationToken)
@@ -448,6 +462,12 @@ internal sealed class GatewayCommand
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
         // Stop
+        //
+        // The binary path matters more here than in `stop`: a restart that believes nothing was
+        // running goes straight on to redeploy extensions, and a live gateway still has them
+        // memory-mapped. That is the `IOException: ... <ext>.pdb ... used by another process`
+        // failure, and it leaves a half-updated deployment behind.
+        var gatewayBinary = CliPaths.GatewayBinary(repoRoot);
         GatewayStopResult stopResult;
         if (interactive)
         {
@@ -457,17 +477,19 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedStop = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
+                    capturedStop = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
                 });
             stopResult = capturedStop;
         }
         else
         {
             AnsiConsole.MarkupLine("[blue][[gateway]][/] Stopping gateway...");
-            stopResult = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
+            stopResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
         }
 
-        if (stopResult.Success)
+        if (stopResult.Success && stopResult.Outcome == GatewayStopOutcome.NotRunning)
+            AnsiConsole.MarkupLine($"[yellow]○[/] {CliText.SafeDisplay(stopResult.Message ?? "No gateway was running")}");
+        else if (stopResult.Success)
             AnsiConsole.MarkupLine("[green]✓[/] Gateway stopped");
         else
             AnsiConsole.MarkupLine($"[yellow]⚠[/] Stop result: {CliText.SafeDisplay(stopResult.Message ?? "unknown")}");
@@ -500,7 +522,7 @@ internal sealed class GatewayCommand
 
         AnsiConsole.MarkupLine($"[blue][[gateway]][/] Installing as {manager.ServiceManagerName}...");
 
-        var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+        var gatewayDll = CliPaths.GatewayBinary(repoRoot);
         if (!File.Exists(gatewayDll))
         {
             AnsiConsole.MarkupLine($"[red]\u2717[/] Release build not found at: [dim]{CliText.SafeDisplay(gatewayDll)}[/]");

@@ -7,16 +7,8 @@
 
 @if (!PortalLoad.IsReady)
 {
-    <div class="portal-loading">
-        @if (PortalLoad.LoadError is not null)
-        {
-            <div class="portal-load-error"><Icon Name="warning" Size="15" /> @PortalLoad.LoadError</div>
-        }
-        else
-        {
-            <div class="portal-load-spinner">Connecting&#x2026;</div>
-        }
-    </div>
+    <PortalLoadingSkeleton Variant="PortalLoadingSkeleton.SkeletonVariant.Activity"
+                           Error="@PortalLoad.LoadError" />
 }
 else
 {

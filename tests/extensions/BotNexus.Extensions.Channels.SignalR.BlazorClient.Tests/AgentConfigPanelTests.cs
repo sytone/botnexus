@@ -256,4 +256,46 @@ public sealed class AgentConfigPanelTests : IDisposable
             });
         }
     }
+
+    // Twice an operator read the three empty rows as "the agent failed to start" and asked why it
+    // was broken. It was not: an agent nobody has messaged has no conversation, so those rows are
+    // empty by design. The note is what rules that reading out.
+    [Fact]
+    public async Task Says_the_agent_is_fine_when_no_conversation_is_open()
+    {
+        _http.Setup("/api/agents/farnsworth", DescriptorJson);
+        _store.SeedAgents([new AgentSummary(AgentId, "Farnsworth")]);
+
+        var cut = await OpenAsync();
+
+        var note = cut.Find("[data-testid='agent-config-no-conversation']").TextContent;
+        Assert.Contains("loaded and ready", note);
+        Assert.Contains("once you send it a message", note);
+    }
+
+    // And gets out of the way once there IS one - otherwise it becomes furniture nobody reads.
+    [Fact]
+    public async Task The_note_is_absent_once_a_conversation_is_open()
+    {
+        _http.Setup("/api/agents/farnsworth", DescriptorJson);
+        _http.Setup("/sessions/sess-1/context", ContextJson);
+        SeedAgentWithConversation();
+
+        var cut = await OpenAsync();
+
+        Assert.Empty(cut.FindAll("[data-testid='agent-config-no-conversation']"));
+    }
+
+    // The wording must not describe the AGENT as inactive - that is the misreading itself.
+    [Fact]
+    public void The_placeholders_describe_the_view_not_the_agent()
+    {
+        var snapshot = AgentConfigSnapshotBuilder.Build(
+            "agent-1", "Agent One", conversationId: null, sessionId: null,
+            channelType: "signalr", descriptor: null, context: null);
+
+        var conversation = snapshot.Field(AgentConfigSnapshotBuilder.ConversationIdKey)!.Display;
+        Assert.DoesNotContain("no active", conversation, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("view", conversation);
+    }
 }

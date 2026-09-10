@@ -10,6 +10,7 @@
 // Blazor component swaps in the "open in new tab" fallback. The component's @onload handler wins
 // the race for embeddable sites and simply leaves this timer to expire harmlessly.
 window.toolFrame = window.toolFrame || {
+
     watch: function (dotNetRef, timeoutMs) {
         setTimeout(function () {
             try {
