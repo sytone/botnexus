@@ -2268,6 +2268,7 @@ Current checks are:
 | Compaction model | `compaction-model` | `gateway.compaction.summarizationModel` names an expensive reasoning model, which may fail or waste tokens on a summarization call. |
 | Compaction model missing | `compaction-model-missing` | `gateway.compaction.summarizationModel` is not configured, so the compactor falls back to the default model waterfall. |
 | Dev-mode origin enforcement | `devmode-origin-enforcement` | The gateway runs keyless (dev mode) with the browser-Origin guard disabled, leaving the `gateway-dev` admin identity reachable from any web origin. |
+| Tool output budget vs compaction | `tool-output-budget-vs-compaction` | `gateway.toolOutputBudget.maxBytes` sits above `gateway.compaction.largestEntryBytesThreshold`, so a tool result between the two is billed in full and then makes the session eligible for compaction on its own — paying for the tokens, a summarisation call, and a reset prompt cache to carry something the next step discards. The fix lowers the backstop, because truncation stays recoverable through `tool_output_continue` while a bloat trigger raised past the backstop can no longer fire on a single entry. |
 | Feature flag seeding | `feature-flags-explicit` | One or more declared feature flags are absent from config, so their state is an unstated decision that cannot be read back from the file. Seeding writes the documented default, so applying it changes no behaviour. |
 
 ### Advisories

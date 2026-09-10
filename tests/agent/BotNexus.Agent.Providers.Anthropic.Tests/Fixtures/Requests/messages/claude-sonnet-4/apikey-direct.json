@@ -49,6 +49,9 @@
           "required": [
             "count"
           ]
+        },
+        "cache_control": {
+          "type": "ephemeral"
         }
       }
     ]

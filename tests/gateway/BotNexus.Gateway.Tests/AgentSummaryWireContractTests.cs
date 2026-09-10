@@ -60,6 +60,19 @@ public sealed class AgentSummaryWireContractTests
     {
         // A field inserted anywhere but last would silently re-bind existing positional call sites
         // to the wrong argument. Pin the order rather than trusting review to catch it.
+        //
+        // The pin is deliberately EXACT, and updating it is the point rather than a chore. The
+        // compiler already rejects the two obvious mistakes - an insertion that shifts a bool into
+        // a string slot is CS1503, and appending without a default is CS1737 - so a test that only
+        // restated those would add nothing. What the compiler cannot see is an insertion whose
+        // types happen to line up: it compiles, and the wire order changes underneath every client
+        // that binds positionally. Freezing the whole list means ANY change to this record fails
+        // here and a person has to decide whether it is safe, which is the only check that covers
+        // that case.
+        //
+        // So: if this fails, do not simply paste in the new list. Confirm the new field is LAST and
+        // OPTIONAL - additive, so an old client still binds and an old payload still deserialises -
+        // and only then update the expectation. canDelegate (2026-08-30) was appended that way.
         var parameters = typeof(AgentSummary)
             .GetConstructors()
             .Single(c => c.GetParameters().Length > 1)
@@ -67,6 +80,13 @@ public sealed class AgentSummaryWireContractTests
             .Select(p => p.Name)
             .ToArray();
 
-        parameters.ShouldBe(["AgentId", "DisplayName", "Emoji", "Description", "Summary"]);
+        // avatarHue / responsibility / boundaries (2026-09-08) were appended the same way as
+        // canDelegate before them: last, optional, null-defaulted. An older client binding this
+        // payload is unaffected, and an older payload still deserialises with the persona unset,
+        // which is exactly what an agent nobody has personalised looks like.
+        parameters.ShouldBe([
+            "AgentId", "DisplayName", "Emoji", "Description", "Summary", "CanDelegate",
+            "AvatarHue", "Responsibility", "Boundaries",
+        ]);
     }
 }

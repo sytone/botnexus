@@ -102,8 +102,12 @@ public sealed class PortalLoadService : IPortalLoadService
                     AgentId = agent.AgentId,
                     DisplayName = agent.DisplayName,
                     Emoji = agent.Emoji,
+                    AvatarHue = agent.AvatarHue,
+                    Responsibility = agent.Responsibility,
+                    Boundaries = agent.Boundaries,
                     Description = agent.Description,
                     IsBuiltIn = agent.IsBuiltIn,
+                    CanDelegate = agent.CanDelegate,
                     IsConnected = true
                 });
             }
@@ -354,8 +358,12 @@ public sealed class PortalLoadService : IPortalLoadService
                     AgentId = agent.AgentId,
                     DisplayName = agent.DisplayName,
                     Emoji = agent.Emoji,
+                    AvatarHue = agent.AvatarHue,
+                    Responsibility = agent.Responsibility,
+                    Boundaries = agent.Boundaries,
                     Description = agent.Description,
                     IsBuiltIn = agent.IsBuiltIn,
+                    CanDelegate = agent.CanDelegate,
                     IsConnected = true
                 });
             }

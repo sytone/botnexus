@@ -42,6 +42,32 @@ public sealed record RuntimeInfo
 /// </param>
 public sealed record ConversationContext(string ConversationId, string Title, string? Purpose, string? Instructions = null, string? Todo = null, DateTimeOffset? RunStartedAt = null);
 
+/// <summary>
+/// Who this agent is, as the prompt should state it.
+/// </summary>
+/// <remarks>
+/// Carried as a record rather than four loose strings so a caller cannot populate half a persona,
+/// and so the section has one thing to test against. Every member is optional: an agent with none
+/// of them renders no persona block at all, which is what every agent did before this existed.
+/// </remarks>
+/// <param name="Name">The agent's display name.</param>
+/// <param name="Responsibility">One short line naming what it owns.</param>
+/// <param name="Description">Prose describing the work it does.</param>
+/// <param name="Boundaries">What it must not do.</param>
+public sealed record AgentPersona(
+    string? Name = null,
+    string? Responsibility = null,
+    string? Description = null,
+    string? Boundaries = null)
+{
+    /// <summary>True when at least one member carries text worth rendering.</summary>
+    public bool HasAny =>
+        !string.IsNullOrWhiteSpace(Name)
+        || !string.IsNullOrWhiteSpace(Responsibility)
+        || !string.IsNullOrWhiteSpace(Description)
+        || !string.IsNullOrWhiteSpace(Boundaries);
+}
+
 public sealed record SystemPromptParams
 {
     public required string WorkspaceDir { get; init; }
@@ -60,6 +86,9 @@ public sealed record SystemPromptParams
     public bool ReasoningTagHint { get; init; }
     public string? ReasoningLevel { get; init; }
     public string? MemoryPromptInjection { get; init; }
+
+    /// <summary>Who this agent is. Null renders no persona block.</summary>
+    public AgentPersona? Persona { get; init; }
 
     /// <summary>
     /// Whether the conversation this prompt serves is owner-private or shared with non-owner
@@ -103,6 +132,29 @@ public static class SystemPromptBuilder
     /// </summary>
     private static class PromptOrder
     {
+        // First. Everything after it - tools, safety, workspace - is guidance about HOW to work;
+        // this is the statement of what this agent is for, and it should frame the rest rather
+        // than arrive after it.
+        /// <summary>
+        /// The operator-authored persona, first in the prompt.
+        /// </summary>
+        /// <remarks>
+        /// PRECEDENCE, stated explicitly because the plan that introduced the persona asked for it
+        /// to be decided rather than left to fall out of ordering.
+        /// <para>
+        /// The persona is FIRST and the agent's own authored prompt is LAST — workspace prompt
+        /// files land at <see cref="StableProjectContext"/> (180) and
+        /// <see cref="ExtraSystemPrompt"/> (220). So where the two disagree, the hand-written
+        /// prompt file is the later and more specific instruction and it wins.
+        /// </para>
+        /// <para>
+        /// That is the right way round. The persona is three fields an operator can change in
+        /// seconds from a drawer; a prompt file is something someone sat down and wrote. A quick
+        /// edit must not silently override it. The persona states who the agent is; the prompt file
+        /// refines how it works, and may contradict the persona deliberately.
+        /// </para>
+        /// </remarks>
+        public const int Persona = 5;
         public const int Tooling = 10;
         public const int Safety = 40;
         public const int Cli = 42;
@@ -188,6 +240,7 @@ public static class SystemPromptBuilder
         };
 
         var pipeline = new PromptPipeline()
+            .Add(new LambdaPromptSection(PromptOrder.Persona, BuildPersonaSection, HasPersona, xmlTag: "persona"))
             .Add(new LambdaPromptSection(PromptOrder.Tooling, BuildToolingSection, xmlTag: "tooling"))
             .Add(ToolEnforcementSection.Create())
             .Add(ShellEfficiencySection.Create())
@@ -618,6 +671,55 @@ public static class SystemPromptBuilder
             data.DynamicContextFiles,
             data.StableContextFiles.Count > 0 ? "# Dynamic Project Context" : "# Project Context",
             dynamic: true);
+    }
+
+    private static bool HasPersona(PromptContext context) =>
+        GetGatewayData(context).Parameters.Persona?.HasAny == true;
+
+    /// <summary>
+    /// States what this agent is for, from its configured persona.
+    /// </summary>
+    /// <remarks>
+    /// Each member renders only when it carries text, so a half-filled persona produces a shorter
+    /// block rather than empty headings. Boundaries get their own labelled line rather than being
+    /// appended to the description: "what it must not do" is the part most likely to be skimmed
+    /// past when buried in prose, and it is the part where skimming costs most.
+    /// </remarks>
+    private static IReadOnlyList<string> BuildPersonaSection(PromptContext context)
+    {
+        var persona = GetGatewayData(context).Parameters.Persona;
+        if (persona is null)
+        {
+            return [];
+        }
+
+        var lines = new List<string> { "## Who you are" };
+
+        if (!string.IsNullOrWhiteSpace(persona.Name))
+        {
+            lines.Add($"You are {persona.Name.Trim()}.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(persona.Responsibility))
+        {
+            lines.Add($"You own: {persona.Responsibility.Trim()}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(persona.Description))
+        {
+            lines.Add(string.Empty);
+            lines.Add(persona.Description.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(persona.Boundaries))
+        {
+            lines.Add(string.Empty);
+            lines.Add("Stay inside these limits:");
+            lines.Add(persona.Boundaries.Trim());
+        }
+
+        lines.Add(string.Empty);
+        return lines;
     }
 
     private static IReadOnlyList<string> BuildToolingSection(PromptContext context)

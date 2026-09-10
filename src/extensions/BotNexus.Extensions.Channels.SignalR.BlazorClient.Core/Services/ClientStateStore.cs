@@ -143,8 +143,12 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
                     AgentId = a.AgentId,
                     DisplayName = a.DisplayName,
                     Emoji = a.Emoji,
+                    AvatarHue = a.AvatarHue,
+                    Responsibility = a.Responsibility,
+                    Boundaries = a.Boundaries,
                     Description = a.Description,
                     IsBuiltIn = a.IsBuiltIn,
+                    CanDelegate = a.CanDelegate,
                     IsConnected = true
                 };
             }
@@ -152,8 +156,12 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
             {
                 existing.DisplayName = a.DisplayName;
                 existing.Emoji = a.Emoji;
+                existing.AvatarHue = a.AvatarHue;
+                existing.Responsibility = a.Responsibility;
+                existing.Boundaries = a.Boundaries;
                 existing.Description = a.Description;
                 existing.IsBuiltIn = a.IsBuiltIn;
+                existing.CanDelegate = a.CanDelegate;
             }
         }
 
@@ -173,6 +181,9 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
             // ActiveConversationId, SessionId, Messages, StreamState, etc.).
             existing.DisplayName = agent.DisplayName;
             existing.Emoji = agent.Emoji;
+            existing.AvatarHue = agent.AvatarHue;
+            existing.Responsibility = agent.Responsibility;
+            existing.Boundaries = agent.Boundaries;
             existing.Description = agent.Description;
             existing.IsConnected = agent.IsConnected;
         }

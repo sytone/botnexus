@@ -63,7 +63,10 @@ public sealed class ConfigSecretAnnotationFitnessArchitectureTests
     private static readonly HashSet<string> Exemptions = new(StringComparer.Ordinal)
     {
         // Numeric compaction tuning knobs that merely contain the substring "token" - a ratio and a
-        // window size, not credentials. Nothing sensitive to redact.
+        // window size, not credentials. Nothing sensitive to redact. Both DID carry
+        // [ConfigField(Secret = true)] anyway, contradicting their presence here for as long as this
+        // list has existed; NoValueTypedProperty_InPlatformConfigGraph_IsAnnotatedSecret is the
+        // companion fence that now keeps the annotation off them.
         "CompactionOptions.TokenThresholdRatio",
         "CompactionOptions.ContextWindowTokens",
 
@@ -126,6 +129,57 @@ public sealed class ConfigSecretAnnotationFitnessArchitectureTests
             "Positive pin: annotated secret-shaped properties (Secret = true or " +
             "Widget = ConfigFieldWidget.Secret) must be accepted. If this fails, the detector is " +
             "over-tight. Offenders:\n  " + string.Join("\n  ", violations));
+    }
+
+    [Fact]
+    public void NoValueTypedProperty_InPlatformConfigGraph_IsAnnotatedSecret()
+    {
+        // The companion invariant to the one above, and the one that was missing (#3232 follow-up).
+        // The first fence asks "is every secret annotated?"; nothing asked "is every annotation a
+        // secret?", so a tuning knob could carry [Secret] indefinitely without complaint.
+        //
+        // This is a type-level fact rather than a naming opinion: ConfigSecretMerge.ApplyRedact
+        // replaces the terminal node with the STRING placeholder "***". A property typed double,
+        // int, bool, enum, Guid or DateTime therefore serialises as a string in the GET /config
+        // document and no longer round-trips into its own POCO - the annotation does not merely
+        // over-mask, it emits a type-invalid document. Genuine secrets are strings (API keys,
+        // passwords, connection strings) or containers of them, so a value-typed secret is
+        // meaningless by construction.
+        //
+        // CompactionOptions.TokenThresholdRatio and ContextWindowTokens were exactly this: both
+        // were already listed in Exemptions as reviewed NON-secrets while still carrying
+        // [ConfigField(Secret = true)], and the two statements contradicted each other unchecked.
+        var violations = FindValueTypedSecretProperties(typeof(PlatformConfig));
+
+        violations.ShouldBeEmpty(
+            "A value-typed property must not be annotated [ConfigField(Secret = true)] (or " +
+            "Widget = ConfigFieldWidget.Secret). Redaction substitutes the string \"" +
+            ConfigSecretMerge.Placeholder + "\" for the value, so GET /config would return a " +
+            "string where a number, bool or enum belongs and the document would no longer bind " +
+            "back to its own config type. If the field really is sensitive, it must be typed as a " +
+            "string. Offenders:\n  " + string.Join("\n  ", violations));
+    }
+
+    [Fact]
+    public void ValueTypedSecretFence_IsNotVacuous_DetectsANumericSecret()
+    {
+        // Same walker, a synthetic graph carrying the defect, so the fence cannot pass by looking
+        // nowhere. Both spellings of the annotation must be caught.
+        var violations = FindValueTypedSecretProperties(typeof(NumericSecretFixture));
+
+        violations.ShouldContain(
+            v => v.Contains(nameof(NumericSecretFixture.RatioMarkedSecret), StringComparison.Ordinal),
+            "Vacuity guard: a double annotated Secret = true must be flagged.");
+
+        violations.ShouldContain(
+            v => v.Contains(nameof(NumericSecretFixture.CountWithSecretWidget), StringComparison.Ordinal),
+            "Vacuity guard: an int annotated Widget = ConfigFieldWidget.Secret must be flagged.");
+
+        // ...and the string secret alongside them must NOT be, or the fence would forbid the very
+        // annotation it exists to keep meaningful.
+        violations.ShouldNotContain(
+            v => v.Contains(nameof(NumericSecretFixture.ApiKey), StringComparison.Ordinal),
+            "A string-typed secret is the correct shape and must never be reported.");
     }
 
     [Fact]
@@ -194,6 +248,51 @@ public sealed class ConfigSecretAnnotationFitnessArchitectureTests
             else if (IsConfigPoco(propertyType))
             {
                 Walk(propertyType, ancestry, violations, exemptions);
+            }
+        }
+
+        ancestry.Remove(type);
+    }
+
+    private static IReadOnlyList<string> FindValueTypedSecretProperties(Type root)
+    {
+        var violations = new List<string>();
+        WalkForValueTypedSecrets(root, new HashSet<Type>(), violations);
+        return violations;
+    }
+
+    private static void WalkForValueTypedSecrets(Type type, HashSet<Type> ancestry, List<string> violations)
+    {
+        if (!ancestry.Add(type))
+            return;
+
+        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.GetIndexParameters().Length > 0)
+                continue;
+
+            if (property.GetCustomAttribute<JsonIgnoreAttribute>() is not null)
+                continue;
+
+            var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+
+            // string is a reference type, so IsValueType alone separates "can hold the placeholder"
+            // from "cannot". Containers (POCOs, dictionaries) are reference types too and are
+            // redacted through their own terminal branch rather than by scalar substitution.
+            if (propertyType.IsValueType && IsAnnotatedSecret(property))
+            {
+                violations.Add(
+                    $"{type.Name}.{property.Name} (type {propertyType.Name}) is annotated secret but " +
+                    "is value-typed, so redaction would write a string into it");
+            }
+
+            if (TryGetDictionaryValueType(propertyType, out var valueType) && IsConfigPoco(valueType))
+            {
+                WalkForValueTypedSecrets(valueType, ancestry, violations);
+            }
+            else if (IsConfigPoco(propertyType))
+            {
+                WalkForValueTypedSecrets(propertyType, ancestry, violations);
             }
         }
 
@@ -289,5 +388,21 @@ public sealed class ConfigSecretAnnotationFitnessArchitectureTests
     private sealed class NonSecretTokenFixture
     {
         public int TokenCount { get; set; }
+    }
+
+    /// <summary>
+    /// Value-typed properties wrongly annotated secret, in both spellings, alongside a correctly
+    /// string-typed secret that must not be reported.
+    /// </summary>
+    private sealed class NumericSecretFixture
+    {
+        [ConfigField(Secret = true)]
+        public double RatioMarkedSecret { get; set; }
+
+        [ConfigField(Widget = ConfigFieldWidget.Secret)]
+        public int CountWithSecretWidget { get; set; }
+
+        [ConfigField(Secret = true)]
+        public string? ApiKey { get; set; }
     }
 }
