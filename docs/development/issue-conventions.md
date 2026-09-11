@@ -71,10 +71,18 @@ had their stated premise disproven during implementation.
 
 **Humans** — use the issue forms. Blank issues are disabled; pick a type so the right questions get asked.
 
-**Agents** — never hand-roll `gh issue create`. Use the script, which lints before filing:
+**Agents** — never hand-roll `gh issue create`. Use the `botnexus-maintenance` skill's
+`New-BotNexusIssue.ps1`, which lints before filing.
+
+That skill does **not** live in this repo: it is a workspace skill under farnsworth's agent
+workspace. Resolve its directory from the **Path:** line that `skills` `load` reports and build
+every path from there — hard-coding a root fails for an agent-local skill with a "not recognized
+as the name of a script file" error that names the wrong problem. See
+[Skills](../extensions/skills.md).
 
 ```powershell
-$s = 'skills/botnexus-maintenance/scripts/New-BotNexusIssue.ps1'
+# $skillDir = the Path: reported by `skills load botnexus-maintenance`
+$s = Join-Path $skillDir 'scripts/New-BotNexusIssue.ps1'
 & $s -Action template -Type type:bug > tmp/issue.md
 & $s -Action lint -Type type:bug -BodyFile tmp/issue.md
 & $s -Action file -Type type:bug -Title '[Gateway] ...' -BodyFile tmp/issue.md `
@@ -82,7 +90,7 @@ $s = 'skills/botnexus-maintenance/scripts/New-BotNexusIssue.ps1'
 ```
 
 The forms and the agent templates are generated from one schema
-(`skills/botnexus-maintenance/reference/issue-schema.json`), so they cannot drift apart.
+(`reference/issue-schema.json` inside that same skill directory), so they cannot drift apart.
 
 ## Labels
 
