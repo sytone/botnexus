@@ -6,7 +6,8 @@ namespace BotNexus.Gateway.Abstractions.Security;
 /// <summary>
 /// Shared SSRF (Server-Side Request Forgery) validation utility.
 /// Validates URLs against private network ranges, cloud metadata endpoints,
-/// and configurable blocked hosts before opening outbound connections.
+/// and configurable blocked hosts before opening outbound connections. URI validation is
+/// lexical only; transports must enforce resolved destinations at connection establishment.
 /// <para>
 /// Use this for ANY URL that will be used to open a new connection —
 /// not just user-provided URLs but also dynamically-discovered URLs from
@@ -68,11 +69,27 @@ public static class SsrfValidator
 
         if (!IPAddress.TryParse(hostToParse, out var ip))
         {
-            // Hostname — DNS resolution not performed at validation time.
-            // Safe to proceed (DNS rebinding attacks require additional mitigations).
+            // Lexical admission only. The transport must resolve, validate ALL candidates with
+            // ValidateAddress, and bind each connection to an approved numerical address.
             return SsrfValidationResult.Allowed;
         }
 
+        return ValidateAddress(ip, host);
+    }
+
+    /// <summary>
+    /// Applies the same address policy used for URL literals to a resolved destination. A
+    /// successful result is not DNS pinning: callers must connect to this numerical address,
+    /// without resolving the hostname again, and reject mixed safe/blocked DNS answer sets.
+    /// </summary>
+    public static SsrfValidationResult ValidateAddress(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        return ValidateAddress(address, address.ToString());
+    }
+
+    private static SsrfValidationResult ValidateAddress(IPAddress ip, string host)
+    {
         // IPv6 handling (#3809). An IPv4-mapped address such as [::ffff:169.254.169.254] is a
         // purely syntactic re-spelling of the IPv4 address it embeds, so it MUST be normalised
         // back to IPv4 and run through the same table below - never short-circuited as "some
@@ -198,7 +215,7 @@ public static class SsrfValidator
 /// </summary>
 public readonly struct SsrfValidationResult
 {
-    /// <summary>Whether the URL is safe to connect to.</summary>
+    /// <summary>Whether the supplied URI text or numerical address passed policy; not proof of DNS pinning.</summary>
     public bool IsSafe { get; }
 
     /// <summary>Human-readable reason the URL was blocked (null when safe).</summary>

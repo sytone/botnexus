@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Extensions.ProcessTool;
@@ -15,7 +16,10 @@ public sealed class ProcessTool : IAgentTool
     private readonly ProcessManager _manager;
     private readonly ProcessToolOptions _options;
 
-    public ProcessTool() : this(ProcessManager.Instance, ProcessToolOptions.Default) { }
+    internal ProcessTool() : this(ProcessManager.Instance, ProcessToolOptions.Default) { }
+
+    /// <summary>Requires a contributor-supplied owner, preventing an unscoped DI singleton.</summary>
+    public ProcessTool(string owner) : this(new ProcessManager(BackgroundProcessRegistry.Instance, owner)) { }
 
     internal ProcessTool(ProcessManager manager) : this(manager, ProcessToolOptions.Default) { }
 
@@ -33,7 +37,7 @@ public sealed class ProcessTool : IAgentTool
 
     public Tool Definition => new(
         Name,
-        "Manage background processes by PID. List, inspect, send input, read output, or kill processes.",
+        "Manage background processes launched by this agent through exec. List, inspect, send input, read output, or kill registered children. Unknown PIDs are never attached. No automatic completion wake is provided.",
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -57,7 +61,7 @@ public sealed class ProcessTool : IAgentTool
                 },
                 "timeoutMs": {
                   "type": "integer",
-                  "description": "For status action: wait up to N milliseconds for process to produce output before returning. Default: 0 (no wait)."
+                  "description": "For status action: wait up to N milliseconds for process exit and output drain. Cancelling this wait does not kill the child. Default: 0 (no wait)."
                 },
                 "timeout": {
                   "type": "integer",
@@ -86,13 +90,27 @@ public sealed class ProcessTool : IAgentTool
         return Task.FromResult(arguments);
     }
 
-    public Task<AgentToolResult> ExecuteAsync(
+    public async Task<AgentToolResult> ExecuteAsync(
         string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken = default,
         AgentToolUpdateCallback? onUpdate = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var action = ReadString(arguments, "action") ?? string.Empty;
+        if (action.Equals("status", StringComparison.OrdinalIgnoreCase))
+        {
+            var pid = ReadInt(arguments, "pid");
+            var child = pid.HasValue ? _manager.Get(pid.Value) : null;
+            var waitMs = ReadInt(arguments, "timeoutMs") ?? ReadInt(arguments, "timeout") ?? 0;
+            if (child is not null && waitMs > 0)
+            {
+                using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                wait.CancelAfter(waitMs);
+                try { await child.WaitForCompletionAsync(wait.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+            }
+        }
 
         var result = action.ToLowerInvariant() switch
         {
@@ -104,7 +122,7 @@ public sealed class ProcessTool : IAgentTool
             _ => TextResult($"Unknown action: {action}. Valid actions: list, status, output, input, kill.")
         };
 
-        return Task.FromResult(result);
+        return result;
     }
 
     private AgentToolResult HandleList()
@@ -138,9 +156,7 @@ public sealed class ProcessTool : IAgentTool
 
         // timeoutMs is canonical; the bare `timeout` spelling remains accepted as a deprecated
         // alias with identical millisecond semantics (issue #2955).
-        var timeout = ReadInt(arguments, "timeoutMs") ?? ReadInt(arguments, "timeout") ?? 0;
-        if (timeout > 0 && process.IsRunning)
-            process.WaitForExit(timeout);
+        // The cancellable async wait occurs before dispatch; status formatting never blocks.
 
         var status = process.IsRunning ? "running" : "exited";
         var exitCode = process.ExitCode;
@@ -213,7 +229,7 @@ public sealed class ProcessTool : IAgentTool
             return TextResult($"No tracked process with PID {pid}.");
 
         // Already exited — report as no-op.
-        if (!process.IsRunning)
+        if (!process.IsRunning && !process.KillUnconfirmed)
         {
             var code = process.ExitCode;
             return TextResult($"Process {pid} already exited (code {code}).");
@@ -273,4 +289,19 @@ public sealed class ProcessTool : IAgentTool
 
     private static AgentToolResult TextResult(string text)
         => new([new AgentToolContent(AgentToolContentType.Text, text)]);
+}
+
+/// <summary>Builds an owner-bound process tool; a global singleton would leak other agents' children.</summary>
+public sealed class ProcessToolContributor : IAgentToolContributor
+{
+    /// <inheritdoc />
+    public Task<AgentToolContribution> ContributeAsync(AgentToolContributionContext context, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var ids = context.Descriptor.ToolIds;
+        var allowed = ids.Count == 0 || (ids.Count == 1 && ids[0] == "*")
+            || ids.Contains("process", StringComparer.OrdinalIgnoreCase);
+        IReadOnlyList<IAgentTool> tools = allowed ? [new ProcessTool(context.Descriptor.AgentId.Value)] : [];
+        return Task.FromResult(new AgentToolContribution(tools));
+    }
 }

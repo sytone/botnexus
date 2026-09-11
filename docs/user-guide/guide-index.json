@@ -1,0 +1,88 @@
+{
+  "$comment": "Curated running order for the in-app guide. Hand-ordered rather than generated, because alphabetical is not a reading order: concepts belong before configuration, and troubleshooting last. Adding a page means dropping the .md into docs/user-guide and adding an entry here; the build copies the folder wholesale. 'file' is relative to wwwroot/guide/.",
+  "version": 1,
+  "sections": [
+    {
+      "id": "getting-started",
+      "file": "getting-started.md",
+      "title": "Getting started",
+      "blurb": "Install, first run, and checking the gateway is healthy."
+    },
+    {
+      "id": "conversations",
+      "file": "conversations.md",
+      "title": "Conversations & sessions",
+      "blurb": "The distinction that trips everyone up, and how a message finds its conversation."
+    },
+    {
+      "id": "agents",
+      "file": "agents.md",
+      "title": "Agents",
+      "blurb": "What an agent is, how to define one, and every configuration option."
+    },
+    {
+      "id": "secrets-and-locations",
+      "file": "secrets-and-locations.md",
+      "title": "Servers & credentials",
+      "blurb": "Registering a server, where its credential lives, and what an agent can do with it."
+    },
+    {
+      "id": "skills",
+      "file": "skills.md",
+      "title": "Skills",
+      "blurb": "Markdown that teaches an agent domain knowledge, loaded on demand."
+    },
+    {
+      "id": "automation",
+      "file": "automation.md",
+      "title": "Automation & scheduling",
+      "blurb": "Cron, headless runs, exit codes and approval posture."
+    },
+    {
+      "id": "channels",
+      "file": "channels/signalr.md",
+      "title": "Channels",
+      "blurb": "Reaching agents from the portal, Telegram or Service Bus.",
+      "children": [
+        {
+          "id": "channels-signalr",
+          "file": "channels/signalr.md",
+          "title": "SignalR (the portal)"
+        },
+        {
+          "id": "channels-telegram",
+          "file": "channels/telegram.md",
+          "title": "Telegram"
+        },
+        {
+          "id": "channels-service-bus",
+          "file": "channels/service-bus.md",
+          "title": "Azure Service Bus"
+        },
+        {
+          "id": "channels-envelope",
+          "file": "channels/service-bus-envelope.md",
+          "title": "Service Bus envelope"
+        }
+      ]
+    },
+    {
+      "id": "extensions",
+      "file": "extensions.md",
+      "title": "Extensions",
+      "blurb": "Custom tools, MCP servers, and how extensions are loaded."
+    },
+    {
+      "id": "configuration",
+      "file": "configuration.md",
+      "title": "Configuration reference",
+      "blurb": "Every setting in config.json, and where the file lives."
+    },
+    {
+      "id": "troubleshooting",
+      "file": "troubleshooting.md",
+      "title": "Troubleshooting",
+      "blurb": "Build failures, provider errors, and things that look broken but are not."
+    }
+  ]
+}

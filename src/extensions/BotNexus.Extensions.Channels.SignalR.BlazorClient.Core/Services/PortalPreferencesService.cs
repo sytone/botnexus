@@ -35,6 +35,7 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
                     // A hand-edited or stale localStorage entry must never leak an unknown density
                     // token into the DOM, so normalise on the way in as well as on the way out.
                     loaded.Density = PortalDensity.Normalize(loaded.Density);
+                    loaded.Theme = PortalTheme.Normalize(loaded.Theme);
                     _current = loaded;
                 }
             }
@@ -81,6 +82,18 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
     public async Task SetDensityAsync(string density)
     {
         _current.Density = PortalDensity.Normalize(density);
+        await SaveAsync();
+        OnChanged.Invoke();
+    }
+
+    /// <inheritdoc/>
+    public async Task SetThemeAsync(string theme)
+    {
+        _current.Theme = PortalTheme.Normalize(theme);
+        // Applied to the DOM before the preference is persisted so the swap is instant even if
+        // localStorage is unavailable (private browsing, quota) - the theme still changes for the
+        // session rather than appearing to do nothing.
+        await _js.InvokeVoidAsync("portalPrefs.applyTheme", _current.Theme);
         await SaveAsync();
         OnChanged.Invoke();
     }

@@ -1,28 +1,30 @@
 # GitHub Models Provider
 
-The GitHub Models provider gives BotNexus access to the free-tier models hosted on [GitHub Models](https://github.com/marketplace/models). It is a thin configuration layer over the [OpenAI-Compatible provider](openai-compatible.md): GitHub Models exposes an OpenAI Chat Completions endpoint, so requests are handled by the existing `openai-compat` wire contract with no separate provider registration.
+The GitHub Models catalog connects BotNexus to [GitHub Models](https://github.com/marketplace/models). It is a thin configuration layer over the [OpenAI-Compatible provider](openai-compatible.md): GitHub Models exposes an OpenAI Chat Completions endpoint, so requests are handled by the existing `openai-compat` wire contract with no separate provider registration.
 
-A curated catalog of GitHub Models is registered into the model registry automatically at gateway startup, so the models are available out of the box once you supply a token.
+A curated catalog is registered into the model registry automatically at gateway startup. A registry entry makes a model selectable in BotNexus; successful inference still requires valid credentials and endpoint access.
 
 ## Prerequisites
 
 - A GitHub account with [GitHub Models](https://github.com/marketplace/models) access
-- A GitHub personal access token (classic or fine-grained) exposed as the `GITHUB_TOKEN` environment variable
+- A credential accepted by your GitHub Models endpoint, configured on the `github-models` provider instance
 
-> GitHub Models is a free, rate-limited inference service intended for experimentation and prototyping. It is not designed for production traffic.
+> This guide describes BotNexus's source-defined catalog and configuration, not current service pricing, quotas or production suitability. Check the service terms for your account before relying on it.
 
 ## Configuration
 
-Because GitHub Models speaks the OpenAI-compatible protocol, you configure it as an `openai-compat` provider entry that points at the GitHub Models inference endpoint:
+The built-in models are registered under the provider instance `github-models` with the `openai-compat` API and the endpoint shown below. Supply credentials on that provider instance, not on an agent:
 
 ```json
 {
   "providers": {
     "github-models": {
       "enabled": true,
-      "api": "openai-compat",
       "baseUrl": "https://models.inference.ai.azure.com",
-      "apiKeyEnvVar": "GITHUB_TOKEN"
+      "apiKey": "your-github-models-token",
+      "chat": {
+        "api": "openai-compat"
+      }
     }
   }
 }
@@ -30,9 +32,9 @@ Because GitHub Models speaks the OpenAI-compatible protocol, you configure it as
 
 | Field | Value | Description |
 |-------|-------|-------------|
-| `api` | `"openai-compat"` | GitHub Models uses the OpenAI Chat Completions wire contract |
-| `baseUrl` | `https://models.inference.ai.azure.com` | The fixed GitHub Models inference base URL |
-| `apiKeyEnvVar` | `GITHUB_TOKEN` | Environment variable holding the GitHub token used for authentication |
+| `chat.api` | `"openai-compat"` | API contract used for explicitly configured chat model registrations |
+| `baseUrl` | `https://models.inference.ai.azure.com` | Endpoint recorded by the built-in GitHub Models catalog |
+| `apiKey` | Your token, or `auth:github-models` | Provider credential, or reference to a configured `auth.json` entry |
 
 Then point an agent at a registered GitHub Models model:
 
@@ -40,8 +42,8 @@ Then point an agent at a registered GitHub Models model:
 {
   "agents": {
     "my-agent": {
-      "apiProvider": "github-models",
-      "modelId": "gpt-4o-mini"
+      "provider": "github-models",
+      "model": "gpt-4o-mini"
     }
   }
 }
@@ -49,7 +51,7 @@ Then point an agent at a registered GitHub Models model:
 
 ## Supported Models
 
-The following free-tier models are registered automatically. All have a `text` input modality and zero cost, and route through the `openai-compat` API.
+`GitHubModelsProvider.RegisterModels` registers the following seven built-in entries automatically. All declare `text` input, zero cost metadata and the `openai-compat` API. These are source-defined defaults, not verified service pricing, entitlement or current upstream availability.
 
 | Model | Identifier | Context Window | Max Output Tokens |
 |-------|-----------|---------------:|------------------:|
@@ -61,19 +63,19 @@ The following free-tier models are registered automatically. All have a `text` i
 | Mistral Small | `Mistral-small` | 32,000 | 4,096 |
 | AI21 Jamba 1.5 Mini | `AI21-Jamba-1.5-Mini` | 256,000 | 4,096 |
 
-Use the exact identifier in your `modelId` field. Other models published on GitHub Models can be used by adding them with the same `openai-compat` configuration and the GitHub Models `baseUrl`.
+Use the exact identifier in the agent's `model` field. For additional models, explicitly register the endpoint's accepted IDs under `providers.github-models.chat.models` with `chat.api` set to `openai-compat`; set `chat.contextWindow` from the model's actual limits. These are custom registrations, not additions to the built-in table. Listing an existing built-in ID there replaces its metadata with config-derived values, so omit `chat.models` when using the built-in limits above.
 
 ## Authentication
 
-The provider resolves its credential from the `GITHUB_TOKEN` environment variable at request time. The same token can be reused for the [GitHub Copilot provider](github-copilot.md), which also accepts `GITHUB_TOKEN` (among other variables) — but the two are distinct services: Copilot uses the Copilot API and OAuth device flow, while GitHub Models uses the OpenAI-compatible inference endpoint.
+Use `providers.github-models.apiKey` or a configured `auth.json` entry (referenced with `apiKey: "auth:github-models"`). Keep real tokens out of committed examples. `ProviderConfig` has no `apiKeyEnvVar` field, and `EnvironmentApiKeys` does not map `github-models` to `GITHUB_TOKEN`; setting that variable alone is not this provider's credential configuration. The [GitHub Copilot provider](github-copilot.md) has a separate credential path and service contract.
 
 ## Known Limitations
 
-- **Free tier only** — GitHub Models enforces rate and usage limits per token. Expect throttling under sustained load.
+- **Static catalog** — built-in entries are fallback configuration, not a live availability or entitlement check.
 - **No reasoning effort** — the registered models do not support reasoning/thinking effort levels (`SupportsReasoningEffort = false`).
-- **No `store` or `developer` role** — GitHub Models does not support the OpenAI `store` parameter or the `developer` message role, so those compatibility features are disabled.
+- **No `store` or `developer` role in built-in metadata** — the registered compatibility flags disable these features.
 - **Feature support varies** — as with any OpenAI-compatible endpoint, function calling and structured output support depend on the specific model.
-- **Not for production** — use a first-party provider (Anthropic, OpenAI, GitHub Copilot) for production workloads.
+- **Cost metadata** — zero-cost registrations are not evidence of free usage under your account's service terms.
 
 ## Related
 

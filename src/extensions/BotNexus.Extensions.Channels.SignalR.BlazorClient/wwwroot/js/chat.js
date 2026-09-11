@@ -169,7 +169,18 @@ function measureCaretEdge(element) {
 
 window.portalPrefs = {
     load: function (key) { return localStorage.getItem(key); },
-    save: function (key, value) { localStorage.setItem(key, value); }
+    save: function (key, value) { localStorage.setItem(key, value); },
+
+    // Dark is the default and lives on :root, so it is expressed by the ABSENCE of the attribute
+    // rather than by data-theme="dark". That keeps the default path free of any attribute the
+    // pre-first-paint script would also have to write.
+    applyTheme: function (theme) {
+        if (theme === 'light') {
+            document.documentElement.setAttribute('data-theme', 'light');
+        } else {
+            document.documentElement.removeAttribute('data-theme');
+        }
+    }
 };
 
 window.chatAttachments = {

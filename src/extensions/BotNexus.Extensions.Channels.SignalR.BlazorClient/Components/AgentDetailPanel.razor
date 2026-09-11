@@ -22,7 +22,7 @@
             <button class="toolbar-btn primary" @onclick="SaveAsync" disabled="@(_saving || !CanSave)">
                 @(_saving ? "Saving..." : SaveLabel)
             </button>
-            <button class="toolbar-btn" @onclick="GoBack">&#x2190; Back to list</button>
+            <button class="toolbar-btn" @onclick="GoBack"><Icon Name="back" Size="14" Class="bn-icon-inherit" /> Back to list</button>
         </div>
     </div>
 
@@ -37,7 +37,7 @@
     }
     else if (_loadError is not null)
     {
-        <div class="agents-error" role="alert">&#x26A0;&#xFE0F; @_loadError</div>
+        <div class="agents-error" role="alert"><Icon Name="warning" Size="15" /> @_loadError</div>
     }
     else if (_model is not null)
     {
@@ -134,7 +134,7 @@
                                 @foreach (var am in _model.AllowedModelIds.ToList())
                                 {
                                     var a = am;
-                                    <span class="agent-tag">@a <button @onclick="@(() => RemoveAllowedModel(a))">&#x2715;</button></span>
+                                    <span class="agent-tag">@a <button @onclick="@(() => RemoveAllowedModel(a))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                                 }
                             </div>
                             <div class="agent-tag-add-row">
@@ -200,7 +200,7 @@
                                        @oninput="@(e => OnSpfInput(idx, e))" />
                                 <button class="toolbar-btn" @onclick="@(() => MoveSpfUp(idx))">&#x2191;</button>
                                 <button class="toolbar-btn" @onclick="@(() => MoveSpfDown(idx))">&#x2193;</button>
-                                <button class="toolbar-btn danger" @onclick="@(() => RemoveSpf(idx))">&#x2715;</button>
+                                <button class="toolbar-btn danger" @onclick="@(() => RemoveSpf(idx))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
                             </div>
                         }
                         <button class="toolbar-btn" @onclick="AddSpf">+ Add File</button>
@@ -220,7 +220,7 @@
                             @foreach (var tool in _model.ToolIds.ToList())
                             {
                                 var t = tool;
-                                <span class="agent-tag">@t <button @onclick="@(() => RemoveTool(t))">&#x2715;</button></span>
+                                <span class="agent-tag">@t <button @onclick="@(() => RemoveTool(t))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                             }
                         </div>
                         <div class="agent-tag-add-row">
@@ -238,7 +238,7 @@
                             @foreach (var sub in _model.SubAgentIds.ToList())
                             {
                                 var s = sub;
-                                <span class="agent-tag">@s <button @onclick="@(() => RemoveSubAgent(s))">&#x2715;</button></span>
+                                <span class="agent-tag">@s <button @onclick="@(() => RemoveSubAgent(s))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                             }
                         </div>
                         <div class="agent-tag-add-row">
@@ -355,7 +355,7 @@
                             @foreach (var path in GetReadPaths())
                             {
                                 var p = path;
-                                <span class="agent-tag">@p <button @onclick="@(() => RemoveReadPath(p))">&#x2715;</button></span>
+                                <span class="agent-tag">@p <button @onclick="@(() => RemoveReadPath(p))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                             }
                         </div>
                         <div class="agent-tag-add-row">
@@ -370,7 +370,7 @@
                             @foreach (var path in GetWritePaths())
                             {
                                 var p = path;
-                                <span class="agent-tag">@p <button @onclick="@(() => RemoveWritePath(p))">&#x2715;</button></span>
+                                <span class="agent-tag">@p <button @onclick="@(() => RemoveWritePath(p))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                             }
                         </div>
                         <div class="agent-tag-add-row">
@@ -385,7 +385,7 @@
                             @foreach (var path in GetDenyPaths())
                             {
                                 var p = path;
-                                <span class="agent-tag">@p <button @onclick="@(() => RemoveDenyPath(p))">&#x2715;</button></span>
+                                <span class="agent-tag">@p <button @onclick="@(() => RemoveDenyPath(p))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                             }
                         </div>
                         <div class="agent-tag-add-row">
@@ -417,7 +417,7 @@
                                 @foreach (var a in (_model.SessionAccess?.AllowedAgents ?? []).ToList())
                                 {
                                     var ag = a;
-                                    <span class="agent-tag">@ag <button @onclick="@(() => RemoveSessionAgent(ag))">&#x2715;</button></span>
+                                    <span class="agent-tag">@ag <button @onclick="@(() => RemoveSessionAgent(ag))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                                 }
                             </div>
                             <select class="cfg-input" @onchange="OnSessionAgentAdd">
@@ -445,7 +445,7 @@
                                 @foreach (var a in (_model.ConversationAccess?.AllowedAgents ?? []).ToList())
                                 {
                                     var ag = a;
-                                    <span class="agent-tag">@ag <button @onclick="@(() => RemoveConversationAgent(ag))">&#x2715;</button></span>
+                                    <span class="agent-tag">@ag <button @onclick="@(() => RemoveConversationAgent(ag))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                                 }
                             </div>
                             <select class="cfg-input" @onchange="OnConversationAgentAdd">
@@ -488,7 +488,7 @@
                             @foreach (var t in GetAlwaysApprove())
                             {
                                 var tool = t;
-                                <span class="agent-tag">@tool <button @onclick="@(() => RemoveAlwaysApprove(tool))">&#x2715;</button></span>
+                                <span class="agent-tag">@tool <button @onclick="@(() => RemoveAlwaysApprove(tool))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                             }
                         </div>
                         <div class="agent-tag-add-row">
@@ -503,7 +503,7 @@
                             @foreach (var t in GetNeverApprove())
                             {
                                 var tool = t;
-                                <span class="agent-tag">@tool <button @onclick="@(() => RemoveNeverApprove(tool))">&#x2715;</button></span>
+                                <span class="agent-tag">@tool <button @onclick="@(() => RemoveNeverApprove(tool))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                             }
                         </div>
                         <div class="agent-tag-add-row">
@@ -518,7 +518,7 @@
                             @foreach (var t in GetDeniedTools())
                             {
                                 var tool = t;
-                                <span class="agent-tag">@tool <button @onclick="@(() => RemoveDeniedTool(tool))">&#x2715;</button></span>
+                                <span class="agent-tag">@tool <button @onclick="@(() => RemoveDeniedTool(tool))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button></span>
                             }
                         </div>
                         <div class="agent-tag-add-row">

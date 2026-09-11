@@ -132,7 +132,12 @@ public sealed class PluginsNavEntryTests : IDisposable
     public void Plugins_entry_moves_with_a_user_order_override()
     {
         var defaultOrder = NavTestIdsInRenderOrder();
-        Assert.Equal("nav-plugins", defaultOrder[^1]);
+
+        // Guide is appended after Plugins in DefaultOrder, so Plugins is the last *work* entry
+        // rather than the last entry outright. Both are asserted: the pair is what shows Plugins
+        // still sits where DefaultOrder puts it, which is the precondition for the override below.
+        Assert.Equal("nav-guide", defaultOrder[^1]);
+        Assert.Equal("nav-plugins", defaultOrder[^2]);
 
         // Same component, overridden order: plugins hoisted above home.
         _navOrderJson = """

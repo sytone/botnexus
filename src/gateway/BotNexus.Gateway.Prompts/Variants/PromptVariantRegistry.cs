@@ -23,7 +23,8 @@ namespace BotNexus.Gateway.Prompts;
 /// per-turn cost is not a type scan.
 /// </para>
 /// <para>
-/// <b>Resolution ladder.</b> <c>family+version</c> then <c>family</c> then <c>default</c>, applied
+/// <b>Resolution ladder.</b> <c>default</c>, <c>family</c>, opted-in <c>family+major</c>, then
+/// <c>family+exact version</c>, applied
 /// least-specific first so each rung OVERLAYS the one below it by stable rule id: a variant may add
 /// a rule, reword one, or drop one with <see cref="PromptRule.Remove"/>, without restating the rest.
 /// A rung declared with <see cref="PromptVariantAttribute.Replace"/> discards everything accumulated
@@ -114,7 +115,7 @@ public sealed class PromptVariantRegistry
     {
         ArgumentNullException.ThrowIfNull(types);
 
-        var declarations = new List<Declaration>();
+        var declarations = new List<PromptVariantDeclaration>();
 
         foreach (var type in types)
         {
@@ -131,10 +132,7 @@ public sealed class PromptVariantRegistry
 
         var sections = BuildSections(declarations);
 
-        return new PromptVariantRegistry(
-            sections,
-            [.. declarations.Select(static d => new PromptVariantDeclaration(
-                d.SectionId, d.Family, d.Version, d.Replace, d.Rules, d.Site))]);
+        return new PromptVariantRegistry(sections, [.. declarations]);
     }
 
     /// <summary>True when <paramref name="sectionId"/> declares any variant.</summary>
@@ -165,32 +163,49 @@ public sealed class PromptVariantRegistry
     /// </returns>
     public IReadOnlyList<string> Resolve(string sectionId, string? family, string? modelId = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sectionId);
-
-        if (!_sections.TryGetValue(sectionId, out var section))
-            return [];
-
-        // Rung 1: the default. It is guaranteed to exist for any section present in the lookup, so
-        // an unknown family degrades to conservative guidance rather than to silence.
-        var accumulated = new List<PromptRule>(section.Default);
-
-        var normalizedFamily = NormalizeFamily(family);
-        if (normalizedFamily is not null && section.Families.TryGetValue(normalizedFamily, out var familyRung))
-        {
-            accumulated = Apply(accumulated, familyRung);
-
-            // Rung 3: family+version, only reachable when the id actually carries a version.
-            if (ModelFamilyVersion.TryParse(modelId, normalizedFamily, out var version) &&
-                section.FamilyVersions.TryGetValue(VersionKey(normalizedFamily, version), out var versionRung))
-            {
-                accumulated = Apply(accumulated, versionRung);
-            }
-        }
+        var accumulated = new List<PromptRule>();
+        foreach (var rung in ResolveDeclarations(sectionId, family, modelId))
+            accumulated = Apply(accumulated, rung);
 
         return accumulated
             .Where(static rule => rule.Text is not null)
             .Select(static rule => rule.Text!)
             .ToList();
+    }
+
+    /// <summary>
+    /// Returns the rungs actually applied, in least-specific-first order: default, family,
+    /// opted-in major, exact version. Prompt rendering and diagnostics share this selection so
+    /// discovery order cannot change the reported ladder. Replace rungs remain in the list;
+    /// they discard accumulated rules, not the history of which rungs were applied.
+    /// </summary>
+    /// <param name="sectionId">The stable section id.</param>
+    /// <param name="family">The detected family; null or unknown resolves only the default.</param>
+    /// <param name="modelId">The raw id parsed by <see cref="ModelFamilyVersion"/>.</param>
+    /// <returns>The ordered declarations, or an empty list for an undeclared section.</returns>
+    public IReadOnlyList<PromptVariantDeclaration> ResolveDeclarations(string sectionId, string? family, string? modelId = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sectionId);
+        if (!_sections.TryGetValue(sectionId, out var section))
+            return [];
+
+        var resolved = new List<PromptVariantDeclaration> { section.Default };
+        var normalizedFamily = NormalizeFamily(family);
+        // Preserve the existing prerequisite: version rungs are reachable only through a
+        // declared family rung. A missing family must not gain new behavior through this API.
+        if (normalizedFamily is null || !section.Families.TryGetValue(normalizedFamily, out var familyRung))
+            return resolved;
+
+        resolved.Add(familyRung);
+        if (ModelFamilyVersion.TryParse(modelId, normalizedFamily, out var version))
+        {
+            if (section.FamilyMajors.TryGetValue(MajorKey(normalizedFamily, version), out var majorRung))
+                resolved.Add(majorRung);
+            if (section.FamilyVersions.TryGetValue(VersionKey(normalizedFamily, version), out var exactRung))
+                resolved.Add(exactRung);
+        }
+
+        return resolved;
     }
 
     // ---- freezing ----
@@ -206,7 +221,7 @@ public sealed class PromptVariantRegistry
             yield return property;
     }
 
-    private static Declaration BuildDeclaration(PromptVariantAttribute attribute, MemberInfo member)
+    private static PromptVariantDeclaration BuildDeclaration(PromptVariantAttribute attribute, MemberInfo member)
     {
         var site = $"{member.DeclaringType?.FullName}.{member.Name}";
 
@@ -219,6 +234,14 @@ public sealed class PromptVariantRegistry
                     "grammar (lowercase alphanumerics, '-' between tokens). The grammar is shared with the " +
                     "prompt-override file suffixes so one spelling cannot mean two things.");
         }
+
+        // Validate only the opt-in spelling here; numeric interpretation stays with the
+        // existing ModelFamilyVersion parser below (including its component-size limits).
+        if (attribute.MatchMajorVersion &&
+            (family is null || string.IsNullOrEmpty(attribute.Version) || !attribute.Version.All(char.IsAsciiDigit)))
+            throw new InvalidOperationException(
+                $"[PromptVariant] on {site} sets MatchMajorVersion, which requires Family and a major-only " +
+                "Version (digits only, e.g. '6', not '6-0' or '6-astra').");
 
         ModelVersion? version = null;
         if (attribute.Version is not null)
@@ -244,7 +267,10 @@ public sealed class PromptVariantRegistry
             version = parsed;
         }
 
-        return new Declaration(attribute.SectionId, family, version, attribute.Replace, InvokeRules(member, site), site);
+        return new PromptVariantDeclaration(attribute.SectionId, family, version, attribute.Replace, InvokeRules(member, site), site)
+        {
+            MatchMajorVersion = attribute.MatchMajorVersion
+        };
     }
 
     private static IReadOnlyList<PromptRule> InvokeRules(MemberInfo member, string site)
@@ -286,11 +312,12 @@ public sealed class PromptVariantRegistry
         return rules;
     }
 
-    private static FrozenDictionary<string, SectionVariants> BuildSections(List<Declaration> declarations)
+    private static FrozenDictionary<string, SectionVariants> BuildSections(List<PromptVariantDeclaration> declarations)
     {
-        var defaults = new Dictionary<string, Declaration>(StringComparer.OrdinalIgnoreCase);
-        var families = new Dictionary<string, Dictionary<string, Rung>>(StringComparer.OrdinalIgnoreCase);
-        var familyVersions = new Dictionary<string, Dictionary<string, Rung>>(StringComparer.OrdinalIgnoreCase);
+        var defaults = new Dictionary<string, PromptVariantDeclaration>(StringComparer.OrdinalIgnoreCase);
+        var families = new Dictionary<string, Dictionary<string, PromptVariantDeclaration>>(StringComparer.OrdinalIgnoreCase);
+        var familyMajors = new Dictionary<string, Dictionary<string, PromptVariantDeclaration>>(StringComparer.OrdinalIgnoreCase);
+        var familyVersions = new Dictionary<string, Dictionary<string, PromptVariantDeclaration>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var declaration in declarations)
         {
@@ -315,26 +342,28 @@ public sealed class PromptVariantRegistry
                 continue;
             }
 
-            var bucket = declaration.Version is null ? families : familyVersions;
+            var bucket = declaration.Version is null ? families : declaration.MatchMajorVersion ? familyMajors : familyVersions;
             var key = declaration.Version is null
                 ? declaration.Family
-                : VersionKey(declaration.Family, declaration.Version.Value);
+                : declaration.MatchMajorVersion
+                    ? MajorKey(declaration.Family, declaration.Version.Value)
+                    : VersionKey(declaration.Family, declaration.Version.Value);
 
             if (!bucket.TryGetValue(declaration.SectionId, out var rungs))
-                bucket[declaration.SectionId] = rungs = new Dictionary<string, Rung>(StringComparer.OrdinalIgnoreCase);
+                bucket[declaration.SectionId] = rungs = new Dictionary<string, PromptVariantDeclaration>(StringComparer.OrdinalIgnoreCase);
 
             if (rungs.TryGetValue(key, out var duplicate))
                 throw new InvalidOperationException(
                     $"Duplicate [PromptVariant] rung '{key}' for section '{declaration.SectionId}': declared at " +
                     $"{duplicate.Site} and {declaration.Site}. Each (section, family, version) key must be declared once.");
 
-            rungs[key] = new Rung(declaration.Rules, declaration.Replace, declaration.Site);
+            rungs[key] = declaration;
         }
 
         // Every section that declares ANY variant must carry a default rung. This is the clause that
         // structurally removes the old Unknown fail-open: there is no reachable state in which a
         // section resolves to nothing because the model was unrecognised.
-        foreach (var sectionId in families.Keys.Concat(familyVersions.Keys).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var sectionId in families.Keys.Concat(familyMajors.Keys).Concat(familyVersions.Keys).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!defaults.ContainsKey(sectionId))
                 throw new InvalidOperationException(
@@ -346,15 +375,16 @@ public sealed class PromptVariantRegistry
         return defaults.ToFrozenDictionary(
             static entry => entry.Key,
             entry => new SectionVariants(
-                entry.Value.Rules,
+                entry.Value,
                 (families.TryGetValue(entry.Key, out var f) ? f : []).ToFrozenDictionary(StringComparer.OrdinalIgnoreCase),
+                (familyMajors.TryGetValue(entry.Key, out var m) ? m : []).ToFrozenDictionary(StringComparer.OrdinalIgnoreCase),
                 (familyVersions.TryGetValue(entry.Key, out var v) ? v : []).ToFrozenDictionary(StringComparer.OrdinalIgnoreCase)),
             StringComparer.OrdinalIgnoreCase);
     }
 
     // ---- resolution helpers ----
 
-    private static List<PromptRule> Apply(List<PromptRule> accumulated, Rung rung)
+    private static List<PromptRule> Apply(List<PromptRule> accumulated, PromptVariantDeclaration rung)
     {
         // Replace is the declared escape hatch: the rung stands alone, nothing beneath it survives.
         if (rung.Replace)
@@ -391,18 +421,11 @@ public sealed class PromptVariantRegistry
 
     private static string VersionKey(string family, ModelVersion version) => $"{family}@{version}";
 
-    private sealed record Declaration(
-        string SectionId,
-        string? Family,
-        ModelVersion? Version,
-        bool Replace,
-        IReadOnlyList<PromptRule> Rules,
-        string Site);
-
-    private sealed record Rung(IReadOnlyList<PromptRule> Rules, bool Replace, string Site);
+    private static string MajorKey(string family, ModelVersion version) => $"{family}@{version.Major}.*";
 
     private sealed record SectionVariants(
-        IReadOnlyList<PromptRule> Default,
-        FrozenDictionary<string, Rung> Families,
-        FrozenDictionary<string, Rung> FamilyVersions);
+        PromptVariantDeclaration Default,
+        FrozenDictionary<string, PromptVariantDeclaration> Families,
+        FrozenDictionary<string, PromptVariantDeclaration> FamilyMajors,
+        FrozenDictionary<string, PromptVariantDeclaration> FamilyVersions);
 }

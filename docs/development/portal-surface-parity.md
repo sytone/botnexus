@@ -7,11 +7,18 @@ shared `BlazorClient.Core` library.
 Produced for issue [#2452](https://github.com/Sytone/botnexus/issues/2452).
 
 ::: info Measurement provenance
-Every count and line reference in this document was re-measured against `main` at commit
+The original counts and line references in this document were measured against `main` at commit
 `4ce9ad37` by scanning 1,441 `src` `.cs`/`.razor` files (128 of them in the three portal projects),
 excluding `bin`, `obj` and `node_modules`. The originating issue's evidence dated from 2026-07 and
 several of its numbers had moved; where a claim no longer held it is marked
 **superseded** below rather than repeated.
+
+**Targeted reconciliation — 2026-09-06:** §2.2 and F-2 were verified against current source at
+`6daab17a80850ebae3ba87bbd02ee16cad4dd452` for
+[#3995](https://github.com/Sytone/botnexus/issues/3995). The todo-status projection is implemented;
+its historical absence is resolved. This is not a new inventory measurement or a declaration of
+complete portal parity. All other measurements and unresolved sibling findings retain their
+original baseline and are not revalidated by this correction.
 :::
 
 ## The rule this document exists to enforce
@@ -111,27 +118,36 @@ is cosmetic.
 
 → [#3454](https://github.com/Sytone/botnexus/issues/3454)
 
-### 2.2 Todo item status — **drift, extract**
+### 2.2 Todo item status — **resolved: shared projection implemented**
 
-Desktop-only, in `Components/TodoPanel.razor`: the literals `"done"`, `"in_progress"`, `"cancelled"`
-and `"pending"` appear in four separate blocks — a normalisation switch (126-129, with a
+**Historical finding at `4ce9ad37`.** Desktop-only, in `Components/TodoPanel.razor`, the literals `"done"`, `"in_progress"`, `"cancelled"`
+and `"pending"` appeared in four separate blocks — a normalisation switch (126-129, with a
 `_ => "pending"` fallback), two direct comparisons (137, 148), a glyph switch (164-166), a label
 switch (172-175), and a property default (205).
 
-These are wire values. The server declares them in
-`src/gateway/BotNexus.Gateway/Tools/TodoTool.cs` as a JSON schema enum at lines 58 and 73, normalises
-them at line 374 and maps them to prompt glyphs at line 389;
-`src/gateway/BotNexus.Gateway.Prompts/TodoPromptFormatter.cs` carries a third copy of the glyph
+These were wire values. At that baseline, the server declared them in
+`src/gateway/BotNexus.Gateway/Tools/TodoTool.cs` as a JSON schema enum at lines 58 and 73, normalised
+them at line 374 and mapped them to prompt glyphs at line 389;
+`src/gateway/BotNexus.Gateway.Prompts/TodoPromptFormatter.cs` carried a third copy of the glyph
 mapping.
 
-A scan of all 1,441 `src` files finds **zero** occurrences of `TodoStatus` or `TodoItemStatus`. There
-is no shared type anywhere — server-side or client-side.
+The original scan of all 1,441 `src` files found **zero** occurrences of `TodoStatus` or
+`TodoItemStatus`, and therefore reported no shared type server-side or client-side. The portal's
+case-sensitive comparisons relied on `TodoTool.cs:374` normalising case before storing.
+**That absence claim is historical, not current.**
 
-The portal comparisons are case-sensitive while `TodoTool.cs:374` normalises case before storing, so
-the portal relies on a server invariant it does not state.
+**Resolved against source at `6daab17a80850ebae3ba87bbd02ee16cad4dd452` (2026-09-06).** The proposed
+`.Core` home now exists:
 
-**Proposed `.Core` home** — `Services/TodoItemStatusProjection.cs` owning the enum, a total
-case-insensitive parser defaulting to `Pending`, and the glyph and label tables.
+| Existing implementation / caller | Verified responsibility |
+|---|---|
+| [`TodoItemStatusProjection.cs:18-31`](https://github.com/Sytone/botnexus/blob/6daab17a80850ebae3ba87bbd02ee16cad4dd452/src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/Services/TodoItemStatusProjection.cs#L18-L31) | Declares `TodoItemStatus` with `Pending`, `InProgress`, `Done` and `Cancelled`; `Pending` is the enum default. |
+| [`TodoItemStatusProjection.cs:54-101`](https://github.com/Sytone/botnexus/blob/6daab17a80850ebae3ba87bbd02ee16cad4dd452/src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/Services/TodoItemStatusProjection.cs#L54-L101) | Owns total, trimmed, case-insensitive `Parse` with a `Pending` fallback for null, empty, whitespace and unknown values, plus shared `Wire`, `Glyph` and `Label` projections. |
+| [`TodoPanel.razor:41-44`](https://github.com/Sytone/botnexus/blob/6daab17a80850ebae3ba87bbd02ee16cad4dd452/src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/TodoPanel.razor#L41-L44) | Renders CSS/data-status values, glyphs and labels through `Wire`, `Glyph` and `Label`. |
+| [`TodoPanel.razor:103-140`](https://github.com/Sytone/botnexus/blob/6daab17a80850ebae3ba87bbd02ee16cad4dd452/src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/TodoPanel.razor#L103-L140) | Parses incoming item status through the shared `Parse` at line 111; done/in-progress counts compare enum values instead of wire literals. |
+
+This resolves F-2's missing client-side projection and caller adoption. It does not establish a
+single server/client declaration, mobile todo rendering, or completion of the sibling parity work.
 
 → [#3455](https://github.com/Sytone/botnexus/issues/3455)
 
@@ -209,33 +225,35 @@ with a filed issue.
 | I-3 | Mobile has a manual refresh button | `Chat.razor:63, 87` (`ManualRefreshAsync`) | A backgrounded mobile circuit may have missed events. Desktop's circuit is continuous and needs no user-invoked resync. |
 | I-4 | Composer geometry preferences are desktop-only | `PortalPreferences.ExpandingInput` / `ExpandingInputMaxLines` consumed by desktop only | An 8-line expanding textarea is a large-viewport affordance. **Conditional**: this entry is provisional until #3459 either honours these on mobile or confirms the decision — see §3.4 F-6. |
 
-### 3.4 Drift — not yet implemented
+### 3.4 Drift register — historical findings and current resolution
 
-Every row here is a defect with a filed issue.
+F-2 is resolved by the source verification in §2.2. The other rows remain unresolved in this audit;
+their historical evidence is preserved, not newly verified or cleared by the F-2 correction.
 
 | # | Drift | Evidence | Issue |
 |---|---|---|---|
 | F-1 | Conversation status compared against a literal on both surfaces | 4 sites, §2.1 | [#3454](https://github.com/Sytone/botnexus/issues/3454) |
-| F-2 | Todo status vocabulary declared nowhere shared | `TodoPanel.razor` × 4 blocks, §2.2 | [#3455](https://github.com/Sytone/botnexus/issues/3455) |
+| F-2 | **Resolved:** shared todo status projection implemented and consumed | `TodoItemStatusProjection` owns enum/Parse/Wire/Glyph/Label; `TodoPanel.razor` uses them, §2.2 (verified 2026-09-06) | [#3455](https://github.com/Sytone/botnexus/issues/3455) |
 | F-3 | Four duplicate message-role mappers, one self-declared mirror | §2.3 | [#3456](https://github.com/Sytone/botnexus/issues/3456) |
 | F-4 | Timestamp format implemented 3–4 times, byte-identical across surfaces | `ChatPanel.razor:1003-1004` ≡ mobile `Chat.razor:1029-1030`; partial copy `MainLayout.razor:1311`; variant `CronJobs.razor:461` | [#3457](https://github.com/Sytone/botnexus/issues/3457) |
 | F-5 | Mobile ignores `ConversationRenderProjection`'s `IsReadOnly` / `ShowComposer` / `Badge` / `Group` | Mobile uses only `IsUnattended` (`Chat.razor:940`); its composer gates on `_isSending` alone (lines 221, 223). Desktop uses `IsReadOnly` at 19 sites in `ChatPanel.razor`. A read-only conversation renders a live composer on mobile. | [#3458](https://github.com/Sytone/botnexus/issues/3458) |
 | F-6 | Config-form orchestration mirrored by comment; mobile ignores `IPortalPreferencesService` entirely | Mobile `Settings.razor.cs` says "mirrors the desktop `Configuration` code-behind"; 4 desktop `IPortalPreferencesService` hits, 0 mobile | [#3459](https://github.com/Sytone/botnexus/issues/3459) |
 | F-7 | Mobile `Chat.razor` is an undecomposed 1,126-line monolith, growing | +149 lines since the #2452 measurement; 3 mobile components total vs 25 desktop | [#3460](https://github.com/Sytone/botnexus/issues/3460) |
 
-F-5 is the only entry with a **user-visible correctness** consequence: mobile offers a send
+At the original measurement, F-5 was the only entry with a **user-visible correctness** consequence: mobile offers a send
 affordance on a conversation the server will reject.
 
 ## 4. Alignment plan and merge order
 
-Sequenced so shared-core extraction lands before the surfaces consume it, and so the file-boundary
-change lands last where it cannot conflict with everything else.
+The original sequence placed shared-core extraction before surface consumption, and the file-boundary
+change last where it could not conflict with everything else. Slice 3 is now source-verified as
+implemented; the remaining slices retain their original plan and unresolved status in this audit.
 
 | Order | Issue | Slice | Why here |
 |---|---|---|---|
 | 1 | [#3457](https://github.com/Sytone/botnexus/issues/3457) | Timestamp formatting → `.Core` | Smallest, self-contained, touches both surfaces. Establishes the pattern and the deterministic-`now` seam cheaply. |
 | 2 | [#3454](https://github.com/Sytone/botnexus/issues/3454) | Conversation status parsing → `.Core` | The headline finding. No new type to design — the enum already exists in `Domain.Wire`. |
-| 3 | [#3455](https://github.com/Sytone/botnexus/issues/3455) | Todo status vocabulary → `.Core` | Independent of 1–2, desktop-only edit surface, so it can run in parallel with 2 if worktrees are disjoint. |
+| 3 | [#3455](https://github.com/Sytone/botnexus/issues/3455) | **Implemented:** todo status projection → `.Core` | Source and desktop caller verified 2026-09-06 in §2.2. Historically independent of 1–2; no new extraction is proposed. |
 | 4 | [#3456](https://github.com/Sytone/botnexus/issues/3456) | Message-role mappers → one owner | Larger blast radius: 4 `.Core` files plus both surfaces. Wants 1–2 merged first so the extraction pattern is settled. |
 | 5 | [#3458](https://github.com/Sytone/botnexus/issues/3458) | Mobile consumes the render projection | The first *consumption* slice. Depends on nothing above strictly, but edits mobile `Chat.razor` heavily, so it must precede the decomposition. |
 | 6 | [#3459](https://github.com/Sytone/botnexus/issues/3459) | Config orchestration + preferences → `.Core` | Independent file set (`Settings.razor.cs` / `Configuration.razor.cs`), so it may run in parallel with 5. |
@@ -305,7 +323,9 @@ The general rule this yields, and the one future portal work should apply:
 
 - A new deliberate difference is added to §3 in the same PR that creates it, with its category and
   reason. A difference introduced without a register entry is drift by default.
-- A drift row is deleted from §3.4 when its issue closes, not when its PR opens.
-- The measured counts in §1 are re-taken whenever this document is materially revised. They are
+- Retain historical drift rows and mark them resolved only with verified implementation and caller
+  evidence; an open PR alone is not implementation evidence. Record the verification date and commit.
+- A targeted status reconciliation preserves the original counts and explicitly identifies which
+  findings were rechecked. A new inventory measurement re-takes the counts in §1. They are
   provenance, not decoration — the growth of mobile `Chat.razor` between the #2452 measurement and
   this one is precisely the signal that made F-7 worth filing.

@@ -1,5 +1,18 @@
 # BotNexus Architecture (arc42-lite)
 
+## Architecture guide: start here
+
+Use this guide to understand how BotNexus components work together and why the system is designed this way. It is deeper reading, not a prerequisite for installing or using BotNexus. If you are new to the code, start with the [Developer guide](../development/README.md). For everyday tasks, use the [User guide](../user-guide/README.md).
+
+- **Get an overview:** read the [Architecture overview](overview.md), then the introduction below.
+- **Follow the components and messages:** see [C4 diagrams](c4-diagrams.md), [Runtime view](runtime-view.md), and [System flows](system-flows.md). C4 diagrams show a system at different levels of detail.
+- **Learn the shared concepts:** read the [Domain model](domain-model.md).
+- **Understand a design choice:** use the [Architecture Decision Record (ADR) index](adr/README.md). Each record explains a decision and its reasons.
+
+The Architecture sidebar also groups the existing runtime, prompt, session and memory explanations under **Runtime and data flows**. Some keep a `development/` URL to preserve old links. To configure or use those capabilities, follow the [user feature guide](../user-guide/capabilities.md) instead. The [documentation map](../development/documentation-map.md) records the full audience split.
+
+The existing overview below uses a shortened form of arc42, a template for describing software architecture. Its status and deferred sections describe that overview's scope, not a promise that planned work is available. Existing architecture pages are being reviewed incrementally against the [documentation standards](../development/documentation-standards.md).
+
 **Status:** First slice — architecture-docs foundation (partially addresses #220)
 **Scope:** A pragmatic, arc42-inspired overview of the BotNexus platform, grounded in
 the real `src/` layout. This document is intentionally concise. Deeper, per-component

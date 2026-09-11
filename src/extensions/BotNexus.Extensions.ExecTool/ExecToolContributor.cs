@@ -49,7 +49,8 @@ public sealed class ExecToolContributor : IAgentToolContributor
         if (!IsToolAllowed(context.Descriptor.ToolIds, ExecToolName))
             return Task.FromResult(new AgentToolContribution([]));
 
-        IReadOnlyList<IAgentTool> tools = [new ExecTool(context.WorkspacePath, _fileSystem)];
+        var exec = new ExecTool(context.WorkspacePath, _fileSystem, context.Descriptor.AgentId.Value);
+        IReadOnlyList<IAgentTool> tools = [exec];
         return Task.FromResult(new AgentToolContribution(tools));
     }
 

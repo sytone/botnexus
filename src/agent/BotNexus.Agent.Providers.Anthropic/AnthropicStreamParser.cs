@@ -286,6 +286,8 @@ internal static class AnthropicStreamParser
         {
             case "text_delta":
                 var text = delta.GetProperty("text").GetString() ?? "";
+                // Empty fragments carry no content; whitespace (including a lone LF) does (#3301).
+                if (text.Length == 0) break;
                 textAccumulators[index].Append(text);
                 textDeltaCounts[index] = textDeltaCounts.GetValueOrDefault(index) + 1;
                 stream.Push(new TextDeltaEvent(index, text, partial));

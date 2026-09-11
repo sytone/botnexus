@@ -7,7 +7,7 @@
     {
         <span class="session-id clickable" title="Click to copy session ID: @Agent.ActiveConversationSessionId"
               @onclick="CopySessionId">
-            📋 @Agent.ActiveConversationSessionId[..Math.Min(8, Agent.ActiveConversationSessionId.Length)]…
+            <Icon Name="copy" Size="13" Class="bn-icon-inherit" /> @Agent.ActiveConversationSessionId[..Math.Min(8, Agent.ActiveConversationSessionId.Length)]…
         </span>
     }
 </div>

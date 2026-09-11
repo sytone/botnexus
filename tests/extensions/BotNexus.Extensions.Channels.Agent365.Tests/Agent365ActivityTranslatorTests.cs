@@ -35,7 +35,7 @@ public sealed class Agent365ActivityTranslatorTests
         Assert.Equal("hello from m365", inbound.Content);
 
         // Conversation id + serviceUrl are folded into the channel address for the reply path.
-        Assert.True(Agent365ChannelAddress.TryDecode(inbound.ChannelAddress, out var conv, out var svc));
+        Assert.True(Agent365ChannelAddress.TryParse(inbound.ChannelAddress, out var conv, out var svc));
         Assert.Equal("conv-99", conv);
         Assert.Equal("https://smba.example.com/amer/", svc);
 
@@ -103,7 +103,7 @@ public sealed class Agent365ActivityTranslatorTests
         var message = new OutboundMessage
         {
             ChannelType = ChannelKey.From("agent365"),
-            ChannelAddress = Agent365ChannelAddress.Encode("conv-77", "https://smba.example.com/emea/"),
+            ChannelAddress = Agent365ChannelAddress.Create("conv-77", "https://smba.example.com/emea/"),
             Content = "the answer is 42",
         };
 
@@ -123,7 +123,7 @@ public sealed class Agent365ActivityTranslatorTests
         var message = new OutboundMessage
         {
             ChannelType = ChannelKey.From("agent365"),
-            ChannelAddress = Agent365ChannelAddress.Encode("conv-1", null),
+            ChannelAddress = Agent365ChannelAddress.Create("conv-1", null),
             Content = "body",
             DisplayPrefix = "[farnsworth]",
         };
@@ -140,9 +140,9 @@ public sealed class Agent365ActivityTranslatorTests
     [InlineData("conv-2", null)]
     public void ChannelAddress_RoundTrips(string conversationId, string? serviceUrl)
     {
-        var address = Agent365ChannelAddress.Encode(conversationId, serviceUrl);
+        var address = Agent365ChannelAddress.Create(conversationId, serviceUrl);
 
-        Assert.True(Agent365ChannelAddress.TryDecode(address, out var conv, out var svc));
+        Assert.True(Agent365ChannelAddress.TryParse(address, out var conv, out var svc));
         Assert.Equal(conversationId, conv);
         Assert.Equal(serviceUrl, svc);
     }

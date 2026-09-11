@@ -45,6 +45,36 @@ public abstract class StreamingProviderConformanceTests
         ((TextContent)result.Content[0]).Text.ShouldBe(expectedText);
     }
 
+    /// <summary>
+    /// A newline is model content, not an empty delta. Inspect the emitted payload rather than
+    /// final text, which could be repaired during assembly and hide a streaming regression (#3301).
+    /// </summary>
+    [Fact]
+    public async Task Stream_NewlineOnlyText_EmitsExactTextDelta()
+    {
+        var (result, events) = await ExecuteAsync(BuildTextPayload("\n", MapCanonicalStopReason("stop")));
+
+        events.OfType<TextDeltaEvent>().ShouldHaveSingleItem().Delta.ShouldBe("\n");
+        events.OfType<ErrorEvent>().ShouldBeEmpty();
+        events.Last().ShouldBeOfType<DoneEvent>().Reason.ShouldBe(StopReason.Stop);
+        result.StopReason.ShouldBe(StopReason.Stop);
+    }
+
+    /// <summary>
+    /// An explicit empty text fragment must not become a normalized delta. Require successful
+    /// completion so a failed stream cannot satisfy the absence assertion vacuously (#3301).
+    /// </summary>
+    [Fact]
+    public async Task Stream_EmptyText_EmitsNoTextDelta()
+    {
+        var (result, events) = await ExecuteAsync(BuildTextPayload("", MapCanonicalStopReason("stop")));
+
+        events.OfType<TextDeltaEvent>().ShouldBeEmpty();
+        events.OfType<ErrorEvent>().ShouldBeEmpty();
+        events.Last().ShouldBeOfType<DoneEvent>().Reason.ShouldBe(StopReason.Stop);
+        result.StopReason.ShouldBe(StopReason.Stop);
+    }
+
     [Theory]
     [MemberData(nameof(ToolCallCases))]
     public async Task Stream_NormalizesToolCallParsing(string toolCallId, string toolName, string argumentsJson)

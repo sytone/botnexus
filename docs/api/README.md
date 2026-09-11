@@ -22,9 +22,12 @@ By default the gateway listens on:
 http://localhost:5005
 ```
 
-All REST endpoints are served under the `/api` path prefix (for example
-`http://localhost:5005/api/conversations`). The listen address and port are
-configurable via `config.json` (`gateway.listenUrl`).
+The management API generally uses the `/api` prefix (for example
+`http://localhost:5005/api/conversations`). Channel extensions also register HTTP
+routes outside it, including `/telegram/webhook/{botName}`, `/agent365/messages`
+(the configurable default) and `/test-channel`. See the owning channel pages for
+those contracts. The listen address and port are configurable through
+`gateway.listenUrl`.
 
 The `GET /health` endpoint is served at the root (`http://localhost:5005/health`)
 and is unauthenticated.
@@ -39,8 +42,9 @@ request and delegates credential validation to `ApiKeyGatewayAuthHandler`.
 ### API key
 
 When one or more API keys are configured (under `gateway.apiKeys`, or the legacy
-top-level `apiKey`), every `/api/*` request must present the key using **either**
-header:
+top-level `apiKey`), requests that reach this middleware's credential check must
+present the key using either header below. The bypasses listed later have separate
+contracts; this is not a universal API-key requirement for every `/api/*` route:
 
 ```http
 X-Api-Key: <key>
@@ -50,18 +54,22 @@ X-Api-Key: <key>
 Authorization: Bearer <key>
 ```
 
+A nonblank `X-Api-Key` takes precedence over a Bearer value. Query-string API keys
+are not read by this handler. See [Authentication](../api-reference.md#authentication)
+for the detailed contract.
+
 A request with a missing or unrecognised key is rejected with `401 Unauthorized`
 and a JSON body of the form `{ "error": "...", "message": "..." }`. A caller whose
 identity is not authorized for the requested agent is rejected with `403 Forbidden`.
 
 ### Development mode (no key configured)
 
-When **no** API key is configured, the handler runs in development mode and grants
-a full admin identity to every caller — no `X-Api-Key` or `Authorization` header is
-required. (An optional, off-by-default feature flag,
-`GatewayDevOriginEnforcement`, can additionally require browser requests to carry an
-allow-listed `Origin` header; non-browser callers such as `curl` and the CLI are
-unaffected.)
+When no API key is configured, the handler can grant a full admin identity without
+an `X-Api-Key` or `Authorization` header. If the optional, off-by-default
+`GatewayDevOriginEnforcement` flag is enabled, a supplied `Origin` must be on the
+allow-list; a rejected origin causes authentication failure before admin identity
+creation. A missing or blank Origin is allowed. This is a header-based check, not
+browser detection: a CLI request that supplies a rejected Origin is rejected too.
 
 ### Paths that bypass the API-key check
 
@@ -69,11 +77,11 @@ unaffected.)
 
 | Path | Reason |
 |------|--------|
-| `GET /health` | Liveness probe, intentionally unauthenticated. |
-| `/swagger/*` | Swagger UI. |
-| `/api/federation/cross-world/*` | Cross-world federation (own auth). |
-| `POST /api/webhooks/{agentId}/{webhookId}` | **HMAC webhook exception** — see below. |
-| Static WebUI files under the web root | Served directly. |
+| Exact `/health` path | Middleware bypass; the actual endpoint determines accepted verbs. |
+| `/swagger` path segment and descendants | Swagger UI middleware bypass. |
+| `/api/federation/cross-world` path segment and descendants | Cross-world federation retains its own authorization. |
+| POST under `/api/webhooks`, except `/registrations` and `/runs` path segments | Inbound delivery uses the HMAC contract below; bypass alone does not establish that a route exists. |
+| Existing non-directory web-root files outside `/api` | Only GET/HEAD requests bypass this API-key check. |
 
 ### The HMAC webhook exception
 
@@ -103,9 +111,12 @@ this exception — they go through the normal API-key check.
   body `{ "error": "<resource> '<id>' not found." }`.
 - **Validation errors.** Invalid input returns `400 Bad Request` with a JSON body
   `{ "error": "<message>" }`.
-- **Sparse fieldsets.** Many `GET` endpoints accept an optional `?fields=` query
-  parameter that projects each returned object down to the requested top-level fields
-  (comma-separated, case-insensitive). Omitting it returns the full object.
+- **Sparse fieldsets.** Eligible MVC controller `GET` responses accept `?fields=`
+  for top-level projection (comma-separated, case-insensitive). The registered result
+  filter requires a successful, non-null `ObjectResult` that is not `ProblemDetails`;
+  unsupported shapes pass through. Minimal-API endpoints and other result kinds do
+  not acquire this behavior merely by returning JSON. See
+  [sparse fieldsets](../api-reference.md#sparse-fieldsets-fields).
 
 ---
 
@@ -122,12 +133,13 @@ this exception — they go through the normal API-key check.
 | Webhooks (management + inbound delivery) | `api/webhooks` | [webhooks.md](webhooks.md) |
 | Tools | `api/tools` | [tools.md](tools.md) |
 
-A machine-readable OpenAPI 3.0 description of the full surface is also available at
-[openapi.json](openapi.json).
+A checked-in [OpenAPI 3.0 snapshot](openapi.json) is available, but it is **partial**:
+its selected operations do not enumerate the current controller and extension route
+sets. Do not use absence from that file as evidence that a route does not exist.
 
-> The gateway hosts additional controllers (channels, models, providers, memory,
-> stats, and more) that are not yet documented as hand-written pages; they do
-> appear in `openapi.json`.
+> For additional channels, models, providers, memory and diagnostic surfaces, consult
+> the [broader API reference](../api-reference.md) and the owning feature/channel pages.
+> Verify current contracts against source; the snapshot is not a completeness gate.
 
 ---
 
@@ -141,8 +153,9 @@ reference an extension project (enforced by `GatewayProjectDependencyBoundaryTes
 that needs extension types cannot live in a controller.
 
 The practical consequence is that every controller-derived audit - including the table above - is
-structurally blind to these routes. They are nonetheless real, authenticated `/api/*` routes subject
-to the same API-key rules as everything else.
+structurally blind to these routes. The groups below still pass through the gateway
+API-key middleware; minimal-API registration is not an authentication exemption.
+Apply the no-key Origin qualification and endpoint-specific rules above.
 
 | Route group | Contributor | Reference |
 |-------------|-------------|-----------|

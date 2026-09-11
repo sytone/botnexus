@@ -114,9 +114,12 @@ public sealed class MobileRefreshReconnectTests : IDisposable
     {
         var cut = _ctx.Render<Chat>();
         var btn = cut.Find("[data-testid='refresh-btn']");
-        // Should render the actual Unicode character ↺ not the entity string
+        // The glyph is an inline SVG from the icon set now. The failure this guards against
+        // is unchanged: an escaped entity leaking into the markup as visible text instead of
+        // being rendered.
         Assert.DoesNotContain("&#x21BA;", btn.InnerHtml);
-        Assert.Contains("\u21ba", btn.TextContent);
+        Assert.DoesNotContain("&amp;#x", btn.InnerHtml);
+        Assert.Contains("bn-icon-refresh", btn.InnerHtml);
     }
 
     // ── OnAppResumed drives the liveness-verified hub reset (#1838) ───────────

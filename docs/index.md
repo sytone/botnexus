@@ -3,70 +3,43 @@ layout: home
 
 hero:
   name: BotNexus
-  text: Run AI agents at scale.
-  tagline: A modular, extensible platform for multi-agent AI orchestration built in C#/.NET. Deploy agents across Discord, Slack, REST APIs, and more — powered by Copilot, OpenAI, Anthropic, or any LLM provider.
+  text: Run and use AI assistants.
+  tagline: BotNexus runs artificial intelligence (AI) assistants called agents. Choose a guide to use BotNexus, contribute changes, or understand its design.
   actions:
     - theme: brand
-      text: Get Started
-      link: /getting-started
+      text: User guide
+      link: /user-guide/README
     - theme: alt
-      text: View on GitHub
-      link: https://github.com/sytone/botnexus
-
-features:
-  - icon: 🤖
-    title: Multi-Agent Orchestration
-    details: Run multiple independent agents with separate configs and personalities.
-  - icon: 🔌
-    title: Multi-Provider LLM Support
-    details: Copilot (26 models), OpenAI, Anthropic, Azure OpenAI, and custom endpoints.
-  - icon: 🗺️
-    title: Model-Aware Routing
-    details: Automatic API format detection and request routing per model.
-  - icon: 📡
-    title: Multi-Channel Integration
-    details: Discord, Slack, Telegram, REST API, and SignalR streaming.
-  - icon: 🧩
-    title: Extensible Architecture
-    details: Dynamic assembly loading with folder-based plugin system.
-  - icon: 💾
-    title: Session Persistence
-    details: Durable conversation history in JSONL format with hot reload.
-  - icon: 🪝
-    title: Inbound Webhooks
-    details: Trigger agents over signed HTTP with async, sync, or callback responses.
+      text: Developer guide
+      link: /development/README
+    - theme: alt
+      text: Architecture guide
+      link: /architecture/README
 ---
 
-## Quick Start
+## Choose a guide
 
-```bash
-git clone https://github.com/sytone/botnexus.git
-cd botnexus
-dotnet build dirs.proj
-dotnet run --project src/gateway/BotNexus.Gateway.Api
-# Open http://localhost:5005
-```
+| Your goal | Start here |
+| --- | --- |
+| Install BotNexus, chat with agents, or change settings. No programming knowledge needed. | [User guide](user-guide/README.md) |
+| Build from source or contribute. Basic programming knowledge is enough to start; no .NET experience is assumed. | [Developer guide](development/README.md) |
+| Understand components, message flow, and design decisions. | [Architecture guide](architecture/README.md) |
 
-## Choose Your Path
+## Find a specific answer
 
-| Goal | Where to go |
-|------|-------------|
-| 🚀 New to BotNexus? | **[Getting Started Guide](getting-started)** |
-| ⚙️ Setting Up & Configuring? | **[Configuration Reference](configuration)** |
-| 🔧 Building Extensions? | **[Extension Development](extension-development)** |
-| 👨‍💻 Contributing? | **[Developer Guide](getting-started-dev)** |
+- [Install BotNexus](getting-started-release.md): follow the setup steps and send your first message.
+- [Providers and models](user-guide/providers.md): choose a model service and connect your account.
+- [Use extensions](user-guide/using-extensions.md): configure existing tools and connections without writing code.
+- [Use BotNexus features](user-guide/capabilities.md): work with memory, schedules, Canvas and checklists.
+- [Usage ideas](user-guide/usage-ideas.md): try a useful task and check the result.
+- [Configuration reference](configuration.md): look up settings and their meaning.
+- [Command-line interface (CLI) reference](cli-reference.md): look up commands you enter in a terminal.
+- [Application programming interface (API) reference](api-reference.md): connect another program to BotNexus.
+- [Extension development](extension-development.md): write and test code for a new capability.
+- [Observability](observability.md): inspect logs and other diagnostic information.
+- [Releases](releases/): read version history and release notes.
+- [GitHub repository](https://github.com/sytone/botnexus): browse source code, report issues, and contribute.
 
-## Explore the Docs
+## About these guides
 
-| Section | Purpose |
-|---------|---------|
-| [User Guide](user-guide/getting-started) | Installation, setup, and basic usage |
-| [API Reference](api-reference) | REST and SignalR endpoint documentation |
-| [Architecture](architecture/overview) | System design, components, and extension points |
-| [CLI Reference](cli-reference) | Command-line tool for configuration and management |
-| [Observability](observability) | Tracing, logging, and monitoring |
-| [Releases](releases/) | Version history and release notes |
-
----
-
-*BotNexus is a .NET 10 project. For source builds, see the [Developer Guide](getting-started-dev).*
+Start with the task you need. You do not need to read the architecture guide before using BotNexus. Existing pages are being improved in small updates using the [documentation standards](development/documentation-standards.md).

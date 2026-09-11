@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
@@ -28,18 +27,9 @@ public sealed class ExecTool : IAgentTool
     /// </summary>
     internal static int MaxOutputBytesForTest => MaxOutputBytes;
 
-    /// <summary>
-    /// Upper bound on the number of background-process entries retained in <see cref="BackgroundProcesses"/>.
-    /// When a new background process is registered, dead entries are pruned first; if the map is still
-    /// over this cap, the oldest entries (by start time) are evicted. This keeps the static registry
-    /// bounded so a long-running gateway does not accumulate stale PIDs indefinitely.
-    /// </summary>
-    internal const int MaxBackgroundProcesses = 256;
-
-    private static readonly ConcurrentDictionary<int, ProcessInfo> BackgroundProcesses = new();
-
     private readonly string? _workingDirectory;
     private readonly IFileSystem _fileSystem;
+    private readonly string _processOwner;
 
     /// <summary>
     /// Creates the tool bound to an agent workspace. <paramref name="workingDirectory"/> deliberately
@@ -53,7 +43,11 @@ public sealed class ExecTool : IAgentTool
     /// <param name="workingDirectory">The agent workspace, or null for process-relative resolution.</param>
     /// <param name="fileSystem">File system used for Windows .cmd/.bat resolution.</param>
     public ExecTool(string? workingDirectory, IFileSystem? fileSystem = null)
+        : this(workingDirectory, fileSystem, string.Empty) { }
+
+    internal ExecTool(string? workingDirectory, IFileSystem? fileSystem, string processOwner)
     {
+        _processOwner = processOwner;
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? null
             : Path.GetFullPath(workingDirectory);
@@ -83,6 +77,8 @@ public sealed class ExecTool : IAgentTool
     public Tool Definition => new(
         Name,
         "Execute a command with advanced process management: timeouts, background mode, stdin piping, and environment variable merging. " +
+        "Background PIDs are manageable by this agent's process tool; no automatic completion wake is provided. " +
+        "timeoutMs and noOutputTimeoutMs apply only to foreground execution; background work requires child-native limits or process kill. " +
         "Commands run in the agent workspace by default - the same directory the shell tool uses - so workspace-relative " +
         "paths such as 'tmp/q.py' resolve correctly; pass workingDir to run elsewhere. " +
         "On Windows PowerShell: foreach/if/switch/while are STATEMENTS and cannot be piped from directly - wrap them in a " +
@@ -271,7 +267,7 @@ public sealed class ExecTool : IAgentTool
             FileName = fileName,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = input is not null,
+            RedirectStandardInput = background || input is not null,
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = workingDir ?? _workingDirectory ?? string.Empty,
@@ -295,7 +291,10 @@ public sealed class ExecTool : IAgentTool
         // time, so a token cancelled during that window must not be allowed to spawn a child at all.
         cancellationToken.ThrowIfCancellationRequested();
 
-        using var process = new Process { StartInfo = startInfo };
+        var process = new Process { StartInfo = startInfo };
+        var transferred = false;
+        try
+        {
 
         // #2726: a start failure is the one case where we KNOW nothing ran. Report it as a
         // not-dispatched result carrying explicit retry-safe guidance rather than letting the raw
@@ -320,10 +319,9 @@ public sealed class ExecTool : IAgentTool
 
         StartedTestHook?.Invoke(process);
 
-        // Cancellation observed after Start() - the child is live. Kill the entire process tree via the
-        // existing TryKill path and propagate; the process is never registered in BackgroundProcesses, so
-        // it cannot outlive its turn or count against MaxBackgroundProcesses.
-        if (cancellationToken.IsCancellationRequested)
+        // Foreground cancellation retains its existing disposition. Background startup cancellation
+        // is handled by the lifecycle owner below, which pins any unconfirmed termination.
+        if (!background && cancellationToken.IsCancellationRequested)
         {
             TryKill(process);
             throw new OperationCanceledException(cancellationToken);
@@ -332,16 +330,26 @@ public sealed class ExecTool : IAgentTool
         if (background)
         {
             var pid = process.Id;
-            BackgroundProcesses[pid] = new ProcessInfo(pid, command[0], DateTime.UtcNow);
-
-            // Keep the static registry bounded: drop dead PIDs and cap the retained count.
-            PruneBackgroundProcesses();
-
-            // Write stdin if provided, then detach
-            if (input is not null)
+            var managed = new BackgroundProcess(process, command[0], DateTimeOffset.UtcNow);
+            try
             {
-                await process.StandardInput.WriteAsync(input).ConfigureAwait(false);
-                process.StandardInput.Close();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (input is not null)
+                    await managed.WriteInitialInputAsync(input, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                BackgroundProcessRegistry.Instance.Register(_processOwner, managed);
+                transferred = true;
+            }
+            catch
+            {
+                managed.Kill();
+                if (managed.KillUnconfirmed)
+                {
+                    BackgroundProcessRegistry.Instance.Register(_processOwner, managed);
+                    transferred = true;
+                }
+                else managed.Dispose();
+                throw;
             }
 
             var result = JsonSerializer.Serialize(new { pid, status = "running" });
@@ -463,6 +471,11 @@ public sealed class ExecTool : IAgentTool
                 [new AgentToolContent(AgentToolContentType.Text, message)],
                 new ExecToolDetails(exitCode, termination, Disposition: disposition));
         }
+        }
+        finally
+        {
+            if (!transferred) process.Dispose();
+        }
     }
 
     /// <summary>
@@ -490,97 +503,13 @@ public sealed class ExecTool : IAgentTool
     /// <summary>
     /// Gets information about tracked background processes.
     /// </summary>
-    internal static IReadOnlyDictionary<int, ProcessInfo> GetBackgroundProcesses() => BackgroundProcesses;
+    internal static IReadOnlyDictionary<int, ProcessInfo> GetBackgroundProcesses() => BackgroundProcessRegistry.Instance.List(string.Empty)
+        .ToDictionary(p => p.Pid, p => new ProcessInfo(p.Pid, p.Command, p.StartedAt.UtcDateTime));
 
     /// <summary>
     /// Clears the background process tracking dictionary. For testing only.
     /// </summary>
-    internal static void ClearBackgroundProcesses() => BackgroundProcesses.Clear();
-
-    /// <summary>
-    /// Bounds the background-process registry using the default <see cref="MaxBackgroundProcesses"/> cap.
-    /// Drops dead PIDs and evicts the oldest entries when over the cap. Called after each background launch.
-    /// </summary>
-    internal static void PruneBackgroundProcesses()
-    {
-        PruneBackgroundProcesses(MaxBackgroundProcesses);
-    }
-
-    /// <summary>
-    /// Bounds the background-process registry against an explicit cap. First removes entries whose
-    /// underlying OS process is no longer alive (PID not found, or found but already exited). If the
-    /// map is still larger than <paramref name="maxRetained"/>, evicts the oldest remaining entries
-    /// (by start time) until it is within the cap. Safe to call concurrently. Exposed internally for tests.
-    /// </summary>
-    /// <param name="maxRetained">Maximum number of entries to retain after pruning dead PIDs.</param>
-    internal static void PruneBackgroundProcesses(int maxRetained)
-    {
-        // Phase 1: remove dead PIDs.
-        foreach (var kvp in BackgroundProcesses)
-        {
-            if (!IsPidAlive(kvp.Key))
-            {
-                BackgroundProcesses.TryRemove(kvp.Key, out _);
-            }
-        }
-
-        // Phase 2: enforce the size cap, oldest-first.
-        EvictOldestBackgroundProcesses(maxRetained);
-    }
-
-    /// <summary>
-    /// Evicts the oldest background-process entries (by start time) until the registry holds at most
-    /// <paramref name="maxRetained"/> entries. Does not perform liveness checks. Exposed internally so
-    /// the cap behaviour can be tested deterministically with seeded entries.
-    /// </summary>
-    internal static void EvictOldestBackgroundProcesses(int maxRetained)
-    {
-        var overflow = BackgroundProcesses.Count - maxRetained;
-        if (overflow <= 0)
-        {
-            return;
-        }
-
-        var oldest = BackgroundProcesses.Values
-            .OrderBy(p => p.StartedUtc)
-            .Take(overflow)
-            .ToList();
-
-        foreach (var info in oldest)
-        {
-            BackgroundProcesses.TryRemove(info.Pid, out _);
-        }
-    }
-
-    /// <summary>
-    /// Seeds a background-process entry directly. For testing only — lets tests populate the registry
-    /// (e.g. with synthetic or already-dead PIDs) without spawning real processes.
-    /// </summary>
-    internal static void RegisterBackgroundForTest(int pid, string command, DateTime startedUtc)
-        => BackgroundProcesses[pid] = new ProcessInfo(pid, command, startedUtc);
-
-    /// <summary>
-    /// Returns true when a process with the given PID is currently running. A PID that cannot be found,
-    /// or that is found but has already exited, is treated as not alive.
-    /// </summary>
-    private static bool IsPidAlive(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            // No process with that PID is running.
-            return false;
-        }
-        catch (InvalidOperationException)
-        {
-            // Process has already exited / terminated.
-            return false;
-        }
-    }
+    internal static void ClearBackgroundProcesses() => BackgroundProcessRegistry.Instance.Clear(string.Empty);
 
     private static string FormatOutput(string output)
     {

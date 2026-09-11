@@ -99,7 +99,7 @@ public record AgentLoopConfig(
     bool SkipInitialSteeringPoll = false,
     TimeSpan? ToolTimeout = null,
     ClaimAuditOptions? ClaimAudit = null,
-    Func<CancellationToken, Task>? MaybeCompactAsync = null,
+    Func<CancellationToken, Task<AgentContext?>>? MaybeCompactAsync = null,
     TimeSpan? BeforeToolCallTimeout = null,
     Action<string>? OnDiagnostic = null,
     BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,

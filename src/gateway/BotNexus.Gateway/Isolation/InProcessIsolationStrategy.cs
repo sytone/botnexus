@@ -455,14 +455,12 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 initialMessages.Count, summaries.Count, context.History.Count, context.SessionId);
         }
 
-        // #1710: best-effort mid-loop auto-compaction hook. ShouldCompact ran ONLY pre-turn at the
-        // gateway, so a single long dispatch (cron / autonomous follow-up loop) grew the transcript
-        // past the token threshold unchecked until provider overflow. The loop now re-checks between
-        // outer iterations: when over threshold, compact and resync history via the coordinator (the
-        // existing TryReplaceHistoryFromSnapshot apply + handle eviction). Mirrors PrepareTurnAsync.
-        // CompactionOptions and the compactor are consumed read-only (#1687). Null when the supporting
-        // services are unavailable, preserving prior behaviour.
-        Func<CancellationToken, Task>? maybeCompactAsync = null;
+        // #1710/#4121: best-effort mid-loop auto-compaction hook. A long dispatch re-checks
+        // between outer iterations, but it must not evict the handle that is executing this callback:
+        // DisposeAsync would call Agent.AbortAsync and await the same active run. Instead the
+        // coordinator persists without eviction and this callback returns a replacement context for
+        // the loop's next provider turn. Null preserves prior behaviour when services are unavailable.
+        Func<CancellationToken, Task<AgentContext?>>? maybeCompactAsync = null;
         var compactor = _serviceProvider.GetService<ISessionCompactor>();
         var compactionCoordinator = _serviceProvider.GetService<ISessionCompactionCoordinator>();
         var compactionOptions = _serviceProvider.GetService<IOptionsMonitor<CompactionOptions>>();
@@ -484,10 +482,36 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 var scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
                 if (liveSession is null || !compactor.ShouldCompact(liveSession.Session, scopedOptions))
                 {
-                    return;
+                    return null;
                 }
 
-                await compactionCoordinator.CompactAsync(compactAgentId, liveSession, cancellationToken).ConfigureAwait(false);
+                var outcome = await compactionCoordinator.CompactAsync(
+                    compactAgentId,
+                    liveSession,
+                    cancellationToken,
+                    handlePolicy: CompactionHandlePolicy.KeepCurrent).ConfigureAwait(false);
+                if (!outcome.Applied)
+                {
+                    return null;
+                }
+
+                var compactedEntries = SessionContextProjector.ProjectForResume(liveSession.History);
+                var compactedSummaries = compactedEntries
+                    .Where(entry => entry.Role.Equals(MessageRole.System) && entry.IsCompactionSummary)
+                    .Select(entry => entry.Content)
+                    .Where(content => !string.IsNullOrWhiteSpace(content))
+                    .ToList();
+                var compactedSystemPrompt = compactedSummaries.Count == 0
+                    ? enrichedSystemPrompt
+                    : string.IsNullOrWhiteSpace(enrichedSystemPrompt)
+                        ? string.Join("\n\n", compactedSummaries)
+                        : $"{enrichedSystemPrompt}\n\n## Prior conversation (compacted summary)\n{string.Join("\n\n", compactedSummaries)}";
+                var compactedMessages = compactedEntries
+                    .Select(ConvertSessionEntryToAgentMessage)
+                    .OfType<AgentMessage>()
+                    .ToList();
+
+                return new AgentContext(compactedSystemPrompt, compactedMessages, tools);
             };
         }
 

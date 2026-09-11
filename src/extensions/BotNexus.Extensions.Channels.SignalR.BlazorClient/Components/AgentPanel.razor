@@ -15,8 +15,9 @@
                     role="tab"
                     aria-selected="@IsActiveTab(tab.Key)"
                     aria-controls="@GetPanelId(tab.Key)"
+                    title="@tab.Hint"
                     @onclick="() => SelectTab(tab.Key)">
-                <span class="agent-tab-icon" aria-hidden="true">@tab.Icon</span>
+                <span class="agent-tab-icon"><Icon Name="@tab.Icon" Size="16" /></span>
                 <span class="agent-tab-label">@tab.Label</span>
             </button>
         }
@@ -117,13 +118,13 @@
     private string StatusLabel => Agent?.IsConnected != true ? "Offline" : Agent?.IsStreaming == true ? "Running" : "Idle";
     private string StatusCssClass => Agent?.IsConnected != true ? "offline" : Agent?.IsStreaming == true ? "running" : "idle";
 
-    private static readonly (AgentPanelTab Key, string Label, string Icon)[] s_tabs =
+    private static readonly (AgentPanelTab Key, string Label, string Icon, string Hint)[] s_tabs =
     [
-        (AgentPanelTab.Conversation, "Conversation", "💬"),
-        (AgentPanelTab.Workspace, "Workspace", "📁"),
-        (AgentPanelTab.Reports, "Reports", "📊"),
-        (AgentPanelTab.Canvas, "Canvas", "🎨"),
-        (AgentPanelTab.Todo, "Todo", "✅")
+        (AgentPanelTab.Conversation, "Conversation", "conversation", "Chat with this agent"),
+        (AgentPanelTab.Workspace, "Workspace", "folder", "Files this agent can read and write"),
+        (AgentPanelTab.Reports, "Reports", "reports", "Reports this agent has produced"),
+        (AgentPanelTab.Canvas, "Canvas", "canvas", "Shared canvas for this conversation"),
+        (AgentPanelTab.Todo, "Todo", "todo", "This agent's task list")
     ];
 
     private AgentState? CurrentAgent => Store.GetAgent(AgentId);
@@ -132,7 +133,7 @@
     // session event must NOT have its Workspace/Reports tabs suppressed — only genuine sub-agent
     // observer entries are.
     private bool IsSubAgent => CurrentAgent?.IsObserverAgent == true;
-    private IEnumerable<(AgentPanelTab Key, string Label, string Icon)> VisibleTabs =>
+    private IEnumerable<(AgentPanelTab Key, string Label, string Icon, string Hint)> VisibleTabs =>
         IsSubAgent ? s_tabs.Where(t => t.Key != AgentPanelTab.Workspace && t.Key != AgentPanelTab.Reports) : s_tabs;
 
     protected override void OnInitialized()

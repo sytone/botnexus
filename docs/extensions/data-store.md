@@ -42,7 +42,8 @@ Enable the data store in your agent's extension config:
   "extensions": {
     "botnexus-data-store": {
       "enabled": true,
-      "maxSizeBytes": 52428800
+      "maxSizeBytes": 52428800,
+      "maxQueryRows": 1000
     }
   }
 }
@@ -52,6 +53,7 @@ Enable the data store in your agent's extension config:
 |-----|------|---------|-------------|
 | `enabled` | boolean | false | Whether the data store tool is available to this agent. |
 | `maxSizeBytes` | integer | 52428800 (50 MB) | Maximum size for the per-agent SQLite database. |
+| `maxQueryRows` | integer | 1000 | Maximum rows returned by one `query` action. Zero or negative values fall back to 1000; they do not remove the limit. |
 
 ## Actions
 
@@ -69,7 +71,21 @@ Bulk load a JSON array into a table. If the table doesn't exist, it is created w
 
 ### `query`
 
-Run a SELECT statement and return results as JSON.
+Run a SELECT statement and return rows as a JSON array. If another row exists after
+`maxQueryRows` rows have been collected, the result is truncated and the tool appends
+a plain-text warning after the array:
+
+```text
+(results truncated to 1000 rows; use LIMIT/OFFSET for pagination)
+```
+
+The number in the warning is the effective row cap. A truncated result is therefore
+not a standalone JSON document. Use SQL `LIMIT` and `OFFSET` to retrieve pages; do
+not treat the capped rows as the complete query result. This cap limits returned
+rows, not query execution time.
+
+The setting is passed from `DataStoreConfig` through `DataStoreToolContributor` to
+`SqliteDataStoreBackend`, which applies the nonpositive-value fallback.
 
 ```json
 {

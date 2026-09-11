@@ -1,6 +1,7 @@
 using BotNexus.Domain.AgentExchange;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -179,11 +180,11 @@ public sealed class AgentExchangeTurnEngine
             // sealing here would poison the session for any caller retry.
             throw;
         }
-        catch (OperationCanceledException) when (deadlineCts is { IsCancellationRequested: true })
+        catch (OperationCanceledException ex) when (deadlineCts is { IsCancellationRequested: true })
         {
-            // #3515: engine deadline expired, caller did not cancel. See SealOnDeadlineAsync.
+            // Preserve #3515 lifecycle before carrying the engine-owned cause across the service.
             await SealOnDeadlineAsync(conversation, sessionId, session, beforeSeal).ConfigureAwait(false);
-            throw;
+            throw new AgentExchangeDeadlineExceededException(ex);
         }
         catch (Exception ex)
         {
