@@ -116,6 +116,111 @@ Rules that matter more than the headings:
    fresh `origin/main` rather than pushing.
 5. **Edit agent output before requesting review.** Agents are verbose. Cut anything the diff says better.
 
+## Stacked pull requests
+
+Use an ordinary `main`-based PR by default. A native GitHub stack is appropriate only when a plan
+contains at least two changes that are both:
+
+1. **dependent** — the upper change cannot be implemented or validated sensibly without the lower one; and
+2. **independently reviewable** — each layer has one coherent purpose, its own acceptance evidence, and can
+   merge without requiring the upper layers.
+
+Do not stack unrelated fixes, parallel alternatives, or changes that merely happen to share a delivery
+window. They remain independent worktrees and `main`-based PRs.
+
+### Client preflight
+
+BotNexus supports GitHub CLI **2.90.0 or later** with the official `github/gh-stack` extension for
+this workflow; this is the BotNexus supported floor, not the upstream extension's minimum. The
+[upstream installation README](https://github.com/github/gh-stack/blob/e07a4aa06d72c3929da022547bf6108eb6691330/README.md#installation)
+states `gh` v2.0+. Compatibility across every older CLI version has not been tested here; do not lower
+the BotNexus helper's 2.90.0 gate on the strength of that upstream requirement.
+
+Check versions and, if needed, install the official extension:
+
+```powershell
+gh --version
+gh extension install github/gh-stack   # once
+gh stack --version
+```
+
+If `gh` is missing or below 2.90.0, stop and request an upgrade to the BotNexus supported floor. If the
+official extension is missing or its version check fails, stop and report the install command above and
+the observed error. Do not emulate cascading rebases and PR retargeting with ad-hoc scripts.
+
+### Layer contract
+
+- Design the stack bottom-up: foundational contracts first, then their consumers.
+- The bottom PR targets `main`; every upper PR targets the branch immediately below it.
+- Every layer has its own issue, or uses the sanctioned partial-work form so no umbrella issue closes early.
+- Run the normal compile, remote-validation, PR-title/body, issue-link, UI-evidence, and scope gates for
+  **each layer**. The helper evaluates layer scope against its immediate parent and enforces ancestry:
+  the parent must be an ancestor of the layer, and current `origin/main` must be an ancestor of the parent.
+- **Manual whole-stack review is required:** review the complete diff against `origin/main` for
+  contamination and protected-path changes under the applicable ownership and authorization rules.
+  The helper's `wholeStackStat` is printed for inspection; it does not enforce a separate whole-stack
+  contamination or protected-path rejection policy. Automatic enforcement remains an explicit gap in
+  [#3909 AC3](https://github.com/Sytone/botnexus/issues/3909); a passing helper invocation is not proof
+  that this manual review occurred.
+- Prepare and validate each layer with the sanctioned PR helper before linking/submitting the stack. The
+  stack client manages topology; it does not replace BotNexus policy checks.
+- Use `gh stack init` / `add` to establish topology, `gh stack rebase` for cascading rebases, and
+  `gh stack push` or `submit` only after every affected layer has current validation evidence.
+- Merge bottom-up. If a lower layer changes, rebase and revalidate every affected upper layer; prior review
+  and validation evidence may no longer describe the displayed diff.
+- A whole-stack merge carries the same authorization requirement as merging its individual PRs. Do not use
+  `gh stack merge` to bypass a human merge gate.
+- Keep worktrees and branches until GitHub confirms every included PR merged or the stack was deliberately
+  dissolved. Clean them through the hardened worktree-removal helper.
+
+GitHub's stack map, branch-protection propagation, CI coverage, and automatic retargeting remove manual
+branch choreography. They do not make a dependent layer independent, nor do they turn one issue into
+several honestly closable units by themselves.
+
+### Inspect and navigate a stack
+
+Use `gh stack view` to inspect branch ordering and PR links before acting. The
+[upstream navigation reference](https://github.com/github/gh-stack/blob/e07a4aa06d72c3929da022547bf6108eb6691330/README.md#navigation)
+provides these checkout-changing commands:
+
+```powershell
+gh stack view        # inspect the current stack
+gh stack up          # move up one layer; optionally supply a count
+gh stack down        # move down one layer; optionally supply a count
+gh stack top         # switch to the top branch
+gh stack bottom      # switch to the bottom branch
+gh stack trunk       # switch to the trunk branch
+gh stack switch      # interactively select a stack branch
+```
+
+Navigation changes the checkout, not worktree ownership. Never run checkout-changing navigation in
+canonical `main`, a shared worktree, or another owner's worktree, and never bypass the dedicated
+issue/branch/worktree identity. For this repository's one-worktree-per-layer workflow, move to the
+already assigned layer worktree instead of switching its branch. Do not use `trunk` to repurpose a
+layer worktree as `main` or force a branch out of another worktree.
+
+### Link existing policy-checked PRs
+
+Create or update each layer's PR through `New-BotNexusPr.ps1` first, including its dry run and current
+validation evidence. Verify the existing PR numbers, repository, head branches, and expected base chain
+before linking. Prefer **existing verified helper-created PR numbers**, passed **bottom-to-top**:
+
+```powershell
+# Illustrative numbers only: replace with verified PRs in the admitted stack.
+gh stack link 10 20 30
+```
+
+The [upstream link reference](https://github.com/github/gh-stack/blob/e07a4aa06d72c3929da022547bf6108eb6691330/README.md#gh-stack-link)
+states that `link` creates or updates the GitHub stack without local tracking and can correct existing
+PR bases to match the chain. Verify the resulting topology and base branches afterward. It adds to an
+existing stack rather than removing existing members.
+
+**Branch-name arguments are not a harmless substitute:** `link` automatically pushes those branches
+and can create PRs when none exist. Do not use that path to bypass the sanctioned helper. No topology
+command (`init`, `add`, `link`, `push`, or `submit`) substitutes for per-layer title/body/trailer,
+identity, issue, scope, and validation gates. Linking is not merge authorization; the bottom-up merge,
+revalidation, and cleanup boundaries above still apply.
+
 ## Closing an issue: the clause-by-clause rule
 
 `Closes #N` is a claim that **every** clause of issue N is satisfied. It is not a claim that a PR
