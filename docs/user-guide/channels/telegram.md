@@ -61,6 +61,7 @@ DM your bot and it will respond via the configured agent.
       "processEditedMessages": false,
       "maxMediaBytes": 20971520,
       "mediaDownloadTimeoutSeconds": 30,
+      "errorCooldownMs": 60000,
       "webhookUrl": "string (optional)",
       "webhookSecretToken": "string (optional)"
     }
@@ -83,6 +84,7 @@ DM your bot and it will respond via the configured agent.
 | `processEditedMessages` | bool | `false` | When `true`, edited messages are processed as new messages. |
 | `maxMediaBytes` | long | `20971520` (20 MB) | Hard ceiling, in bytes, on any single inbound media attachment. The default matches the Telegram Bot API download limit. Oversize media is skipped and the message is still dispatched with its caption text. |
 | `mediaDownloadTimeoutSeconds` | int | `30` | Wall-clock budget, in seconds, for downloading a single inbound media attachment. A timeout skips the media only; the caption is still delivered. |
+| `errorCooldownMs` | int | `60000` (60 seconds) | Cooldown between streamed error replies for one chat within one bot runtime, while its tracking entry is retained. Values below 1 are treated as 1 ms, not as disabling the cooldown. |
 | `webhookUrl` | string | `null` | Set to enable webhook mode instead of polling (requires a public HTTPS URL). |
 | `webhookSecretToken` | string | `null` | Secret used to authenticate inbound webhook requests. When omitted in webhook mode, a strong token is generated automatically. Only used when `webhookUrl` is set. |
 
@@ -114,6 +116,16 @@ Each key under `bots` is a logical bot name. Each bot maps to its own token and 
 ```
 
 When `bots` is populated it takes precedence over the top-level single-bot fields.
+Set `errorCooldownMs` inside each `channels.telegram.bots.<name>` entry in that mode;
+for a single bot, set `channels.telegram.errorCooldownMs`.
+
+The error cooldown suppresses repeated `AgentStreamEventType.Error` replies. It is
+not a delay for ordinary messages or tool-activity status lines. The timestamp map
+is in memory and keyed by chat ID within each bot runtime, so forum topics in the
+same chat share the cooldown. Recreating the runtime resets it. The timestamp is
+reserved before the error is sent; it is not a delivery receipt or retry guarantee.
+In polling mode, periodic cleanup removes entries older than 30 minutes. A larger
+configured cooldown is therefore not a guaranteed long-term suppression period.
 
 ---
 

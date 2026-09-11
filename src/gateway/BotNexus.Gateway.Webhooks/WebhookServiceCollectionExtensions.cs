@@ -19,6 +19,11 @@ public static class WebhookServiceCollectionExtensions
     public const string ConversationRetentionSection = "gateway:webhooks:conversationRetention";
 
     /// <summary>
+    /// Configuration section that binds <see cref="WebhookInboundQueueOptions"/> (#3851).
+    /// </summary>
+    public const string InboundQueueSection = "gateway:webhooks:inboundQueue";
+
+    /// <summary>
     /// Registers <see cref="IWebhookRegistrationStore"/> and <see cref="IWebhookRunStore"/>
     /// backed by SQLite at <paramref name="dbPath"/>. Also registers the
     /// <see cref="WebhookRunRetentionHostedService"/> for periodic purge of old runs and the
@@ -54,6 +59,15 @@ public static class WebhookServiceCollectionExtensions
         // HMAC, so the pre-auth read needs its own byte ceiling and in-flight cap. Singleton
         // because the concurrency cap is only meaningful when every request shares one semaphore.
         services.TryAddSingleton(_ => new WebhookInboundBodyGuard());
+
+        // #3851: per-agent admission control for inbound deliveries. Singleton because a bound is
+        // only a bound when every request shares one set of slots - a scoped queue would give each
+        // request its own empty mailbox and enforce nothing.
+        services.AddOptions<WebhookInboundQueueOptions>();
+        if (configuration is not null)
+            services.Configure<WebhookInboundQueueOptions>(
+                configuration.GetSection(InboundQueueSection).Bind);
+        services.TryAddSingleton<WebhookInboundQueue>();
 
         services.AddHostedService<WebhookRunRetentionHostedService>();
 

@@ -203,30 +203,98 @@ public sealed class CompactionAbortReasonTests
         outcome.SkipReason.ShouldBeNull();
     }
 
+    [Fact]
+    public async Task CoordinatorCompactAsync_AppliedMidLoopCompaction_DoesNotStopExecutingHandle()
+    {
+        var logger = new ListLogger<SessionCompactionCoordinator>();
+        var session = CreateSession(("user", "hello"));
+        var snap = session.SnapshotHistoryForCompaction();
+        var supervisor = new Mock<IAgentSupervisor>();
+        var coordinator = CreateCoordinator(
+            logger,
+            CompactionResult.ForSuccess(
+                summary: "s",
+                compactedHistory: [new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }],
+                entriesSummarized: 1,
+                entriesPreserved: 0,
+                tokensBefore: 100,
+                tokensAfter: 10,
+                snapshotDestructiveVersion: snap.DestructiveVersion,
+                snapshotHistoryCount: snap.Count),
+            supervisor);
+
+        var outcome = await coordinator.CompactAsync(
+            TestAgent,
+            session,
+            CancellationToken.None,
+            handlePolicy: CompactionHandlePolicy.KeepCurrent);
+
+        outcome.Applied.ShouldBeTrue();
+        supervisor.Verify(
+            value => value.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "the old self-stop path waits for the active run that is currently awaiting compaction");
+    }
+
+    [Fact]
+    public async Task CoordinatorCompactAsync_AppliedExternalCompaction_StillEvictsByDefault()
+    {
+        var logger = new ListLogger<SessionCompactionCoordinator>();
+        var session = CreateSession(("user", "hello"));
+        var snap = session.SnapshotHistoryForCompaction();
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var coordinator = CreateCoordinator(
+            logger,
+            CompactionResult.ForSuccess(
+                summary: "s",
+                compactedHistory: [new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }],
+                entriesSummarized: 1,
+                entriesPreserved: 0,
+                tokensBefore: 100,
+                tokensAfter: 10,
+                snapshotDestructiveVersion: snap.DestructiveVersion,
+                snapshotHistoryCount: snap.Count),
+            supervisor);
+
+        var outcome = await coordinator.CompactAsync(TestAgent, session, CancellationToken.None);
+
+        outcome.Applied.ShouldBeTrue();
+        supervisor.Verify(
+            value => value.StopAsync(TestAgent, session.SessionId, CancellationToken.None),
+            Times.Once);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static SessionCompactionCoordinator CreateCoordinator(
         ListLogger<SessionCompactionCoordinator> logger,
-        CompactionResult result)
+        CompactionResult result,
+        Mock<IAgentSupervisor>? supervisor = null)
     {
         var compactor = new Mock<ISessionCompactor>();
         compactor
             .Setup(c => c.CompactAsync(It.IsAny<GatewaySession>(), It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(result);
-        return CreateCoordinator(logger, compactor);
+        return CreateCoordinator(logger, compactor, supervisor);
     }
 
     private static SessionCompactionCoordinator CreateCoordinator(
         ListLogger<SessionCompactionCoordinator> logger,
-        Mock<ISessionCompactor> compactor)
+        Mock<ISessionCompactor> compactor,
+        Mock<IAgentSupervisor>? supervisorOverride = null)
     {
         var sessions = new Mock<ISessionStore>();
         sessions.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var supervisor = new Mock<IAgentSupervisor>();
-        supervisor.Setup(s => s.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        var supervisor = supervisorOverride ?? new Mock<IAgentSupervisor>();
+        if (supervisorOverride is null)
+        {
+            supervisor.Setup(s => s.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+        }
 
         var channelManager = new Mock<IChannelManager>();
         var optionsMonitor = new Mock<IOptionsMonitor<CompactionOptions>>();

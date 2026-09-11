@@ -153,7 +153,12 @@ public static class AgentLoopRunner
             // pre-turn ShouldCompact at the gateway never sees it, so the transcript grew unbounded
             // until provider overflow. The hook compacts off-loop and resyncs history; best-effort so
             // a compactor failure never aborts the run.
-            await MaybeCompactAsync(config, cancellationToken).ConfigureAwait(false);
+            var refreshedContext = await MaybeCompactAsync(config, cancellationToken).ConfigureAwait(false);
+            if (refreshedContext is not null)
+            {
+                currentContext = refreshedContext;
+                messages = refreshedContext.Messages.ToList();
+            }
 
             var pendingMessages = followUpSeed.Count > 0
                 ? followUpSeed.ToList()
@@ -469,20 +474,20 @@ public static class AgentLoopRunner
     }
 
     /// <summary>
-    /// Best-effort mid-loop auto-compaction (#1710). Awaits <see cref="AgentLoopConfig.MaybeCompactAsync"/>
-    /// when configured so a long dispatch re-checks the compaction threshold between outer iterations.
-    /// A failure is swallowed so the loop continues; cancellation propagates.
+    /// Best-effort mid-loop auto-compaction (#1710/#4121). Awaits
+    /// <see cref="AgentLoopConfig.MaybeCompactAsync"/> and returns a replacement context when the
+    /// persisted session changed. A failure is swallowed so the loop continues; cancellation propagates.
     /// </summary>
-    private static async Task MaybeCompactAsync(AgentLoopConfig config, CancellationToken cancellationToken)
+    private static async Task<AgentContext?> MaybeCompactAsync(AgentLoopConfig config, CancellationToken cancellationToken)
     {
         if (config.MaybeCompactAsync is null)
         {
-            return;
+            return null;
         }
 
         try
         {
-            await config.MaybeCompactAsync(cancellationToken).ConfigureAwait(false);
+            return await config.MaybeCompactAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -491,6 +496,7 @@ public static class AgentLoopRunner
         catch
         {
             // Compaction is best-effort: a failure must never abort the run.
+            return null;
         }
     }
 

@@ -55,7 +55,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
 $repoRoot = $repoRoot.Trim()
 Import-Module (Join-Path $PSScriptRoot 'AzureBuildTestArtifacts.psm1') -Force
 $fingerprintScript = Join-Path $PSScriptRoot 'Get-WorktreeValidationFingerprint.ps1'
-$fingerprint = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+Import-Module (Join-Path $PSScriptRoot 'SourceSnapshot.psm1') -Force
 $runId = "{0}-{1}" -f ([DateTime]::UtcNow.ToString('yyyyMMddHHmmss')), ([Guid]::NewGuid().ToString('N').Substring(0, 8))
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $repoRoot "artifacts/azure-buildtest/$runId"
@@ -68,7 +68,7 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "botnexus-buildtest-$runId"
 # case is the one that used to delete the only copy of the diagnosis.
 $downloadStaging = Join-Path $tempRoot 'artifacts'
 $artifactsPlaced = $false
-$workspaceArchive = Join-Path $tempRoot 'workspace.tar.gz'
+$workspaceArchive = Join-Path $tempRoot 'workspace.zip'
 $bundlePath = Join-Path $tempRoot 'repository.bundle'
 $payloadArchive = Join-Path $tempRoot 'payload.tar.gz'
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -77,38 +77,29 @@ try {
     $account = Invoke-AzJson @('account', 'show', '--subscription', $SubscriptionId, '-o', 'json')
     Write-Host "Using Azure identity $($account.user.name) in subscription $($account.name)." -ForegroundColor Cyan
 
-    & git -C $repoRoot bundle create $bundlePath --all
+    # BEGIN EXACT SOURCE CAPTURE
+    $fingerprint = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+    $captureRoot = Join-Path $tempRoot 'captured-workspace'
+    [IO.Directory]::CreateDirectory($captureRoot) | Out-Null
+    $manifest = Get-SourceSnapshotManifest -RepoRoot $repoRoot -CaptureRoot $captureRoot
+    if ($manifest.digest -cne $fingerprint.sourceSnapshot.digest) { throw 'Source changed during capture.' }
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $tempRoot 'source-manifest.json') -Encoding utf8NoBOM
+    Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $fingerprintScript) 'SourceSnapshot.psm1') -Destination (Join-Path $tempRoot 'SourceSnapshot.psm1')
+    & git -C $repoRoot bundle create $bundlePath --all HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Failed to create repository bundle.' }
-
-    $archiveFileList = Join-Path $tempRoot 'workspace-files.txt'
-    $trackedFiles = @(& git -C $repoRoot ls-files --cached --others --exclude-standard | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to enumerate worktree files.' }
-    if ($trackedFiles.Count -eq 0) { throw 'Worktree overlay contains no files.' }
-    # Use LF explicitly: Windows PowerShell's Set-Content emits CRLF, which GNU tar treats as
-    # part of each pathname when this script runs under Git's Unix toolchain.
-    [IO.File]::WriteAllText($archiveFileList, (($trackedFiles -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
-
-    Push-Location $repoRoot
-    try {
-        # Resolve tar.exe explicitly. Git's /usr/bin/tar interprets a Windows drive-letter
-        # archive path as a remote host specification ("C:"), while bsdtar handles it.
-        $tarCommand = if ($IsWindows) {
-            Join-Path $env:SystemRoot 'System32/tar.exe'
-        }
-        else {
-            (Get-Command tar -CommandType Application | Select-Object -First 1).Source
-        }
-        & $tarCommand -T $archiveFileList -czf $workspaceArchive
-        if ($LASTEXITCODE -ne 0) { throw 'Failed to create worktree overlay archive.' }
-    }
-    finally { Pop-Location }
-
+    # ZIP is read entry-by-entry by the verifier: no tar list-file quoting/options or links.
+    $workspaceArchive = Join-Path $tempRoot 'workspace.zip'
+    [IO.Compression.ZipFile]::CreateFromDirectory($captureRoot, $workspaceArchive)
+    Assert-SourceSnapshot -Root $captureRoot -Manifest $manifest
     Push-Location $tempRoot
     try {
-        tar -czf $payloadArchive 'repository.bundle' 'workspace.tar.gz'
+        tar -czf $payloadArchive 'repository.bundle' 'workspace.zip' 'source-manifest.json' 'SourceSnapshot.psm1'
         if ($LASTEXITCODE -ne 0) { throw 'Failed to create source payload.' }
     }
     finally { Pop-Location }
+    $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+    if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before upload.' }
+    # END EXACT SOURCE CAPTURE
 
     $sourceBlob = "$runId/source.tar.gz"
     & az storage blob upload --subscription $SubscriptionId --account-name $StorageAccount --container-name sources --name $sourceBlob --file $payloadArchive --auth-mode login --overwrite true --only-show-errors
@@ -250,6 +241,13 @@ try {
     $playwrightArtifact = Get-ChildItem -Path $OutputPath -Filter playwright.log -Recurse | Select-Object -First 1
     $requiredArtifactsPresent = $Mode -ne 'strict' -or $null -ne $playwrightArtifact
 
+    # BEGIN EXACT SOURCE RECEIPT GUARD
+    Assert-SourceSnapshotResult -Result $result -Digest $fingerprint.sourceSnapshot.digest -RunId $runId -Mode $Mode
+    if ($status.properties.status -ne 'Succeeded' -or -not $requiredArtifactsPresent) { throw 'Validation execution/artifacts do not prove success.' }
+    $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+    if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before receipt; validation cannot certify this worktree.' }
+    # END EXACT SOURCE RECEIPT GUARD
+
     if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
         $gitDirectory = (& git -C $repoRoot rev-parse --git-dir).Trim()
         if (-not [IO.Path]::IsPathRooted($gitDirectory)) { $gitDirectory = Join-Path $repoRoot $gitDirectory }
@@ -257,6 +255,7 @@ try {
         New-Item -ItemType Directory -Path $receiptDirectory -Force | Out-Null
         @{
             version = 1
+            sourceSnapshot = $result.sourceSnapshot
             fingerprint = $fingerprint.fingerprint
             head = $fingerprint.head
             baseRef = $fingerprint.baseRef

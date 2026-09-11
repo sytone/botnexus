@@ -806,9 +806,11 @@ public sealed class PlatformConfigWriter
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The file is the source when it exists. When it does not, an authoritative store is consulted
-    /// before falling back to an empty document, because "no file" and "no configuration" are not
-    /// the same statement once <c>config.db</c> holds the configuration.
+    /// The authoritative store is the source when configured and populated. The file is the fallback
+    /// when no store document exists, matching the runtime configuration pipeline's store-last,
+    /// store-wins precedence. A JSON mirror may exist beside an enabled store; reading that lower-
+    /// precedence mirror first would make a mutation derive from configuration the runtime does not
+    /// actually use.
     /// </para>
     /// <para>
     /// <b>Why this is not merely a tidy-up.</b> This document is the <em>before</em> side of
@@ -822,17 +824,17 @@ public sealed class PlatformConfigWriter
     /// </remarks>
     private async Task<JsonObject> ReadRootAsync(CancellationToken ct)
     {
-        if (_fileSystem.File.Exists(_configPath))
-        {
-            var json = await _fileSystem.File.ReadAllTextAsync(_configPath, ct);
-            return JsonNode.Parse(json)?.AsObject() ?? new JsonObject();
-        }
-
         if (_pristineStore is not null)
         {
             var entries = await _pristineStore.ReadEntriesAsync(ct);
             if (entries.Count > 0)
                 return ConfigDocumentRehydrator.Rehydrate(entries);
+        }
+
+        if (_fileSystem.File.Exists(_configPath))
+        {
+            var json = await _fileSystem.File.ReadAllTextAsync(_configPath, ct);
+            return JsonNode.Parse(json)?.AsObject() ?? new JsonObject();
         }
 
         return new JsonObject();

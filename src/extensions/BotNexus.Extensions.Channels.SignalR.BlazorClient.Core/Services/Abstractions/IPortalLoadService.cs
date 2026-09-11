@@ -57,8 +57,10 @@ public interface IPortalLoadService
     Task InitializeAsync(string hubUrl, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Re-fetches agent and conversation data and reconnects SignalR if disconnected.
-    /// Intended for mobile app-resume and manual refresh flows.
+    /// Re-fetches agent and conversation data, reconciles the ACTIVE conversation's transcript from
+    /// REST (#3846), and reconnects SignalR if disconnected. Intended for mobile app-resume and
+    /// manual refresh flows. Each half is independently guarded: a failure of one does not abort
+    /// the others (#2541).
     /// </summary>
     Task RefreshAsync(CancellationToken cancellationToken = default);
 

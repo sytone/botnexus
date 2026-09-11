@@ -26,8 +26,19 @@ controllers:
 
 ### Run status
 
-`WebhookRunStatus` is one of: `Pending`, `Running`, `Completed`, `Failed`,
-`Timeout`.
+`WebhookRunStatus` is one of: `Pending`, `Queued`, `Running`, `Completed`,
+`Failed`, `Timeout`, `Rejected`.
+
+`Queued` and `Running` are deliberately distinct. An agent runs one turn at a
+time, so a delivery arriving while that agent is busy has to wait. Before this
+distinction existed such a run reported `Running` throughout, and a caller had
+no way to tell "waiting for the agent" from "the agent is working". A run
+reaches `Queued` only when it could not start immediately; an uncontended
+delivery goes straight to `Running`.
+
+`Rejected` means the delivery was refused because the agent's bounded inbound
+queue was full. No agent run was started and the message was not delivered, so
+a retry is safe.
 
 ---
 
@@ -202,6 +213,30 @@ poll URL; the run status becomes `Timeout`.
 | `413 Payload Too Large` | `{ "error": "Request body exceeds the {limit} byte limit." }` |
 | `429 Too Many Requests` | `{ "error": "Too many concurrent webhook requests." }` |
 | `503 Service Unavailable` | `{ "error": "Agent run did not complete." }` (sync mode) |
+| `503 Service Unavailable` | `{ "error": "Agent '{agentId}' is busy and its inbound webhook queue is full...", "queueDepth": 16, "runId": "..." }` (queue saturated) |
+
+### Inbound queue, backpressure and run timeout
+
+Deliveries to one agent are admitted through a bounded per-agent queue. Mutual
+exclusion is keyed on the **conversation** — deliveries to distinct
+conversations still run concurrently, which is the sanctioned route to
+parallelism — while the depth **bound** is per **agent**, because saturation is
+an agent-level phenomenon: what overloads is the agent being addressed faster
+than it can answer, across all of its conversations at once.
+
+| Bound | Default | Config key | Exceeded → |
+|-------|---------|-----------|-----------|
+| Deliveries waiting per agent | 16 | `gateway:webhooks:inboundQueue:maxQueueDepth` | `503` with `queueDepth`, run recorded `Rejected` |
+| Background run ceiling (async/callback) | 10 minutes | `gateway:webhooks:inboundQueue:runTimeout` | run recorded `Timeout` |
+
+The in-flight delivery does not count against the depth, so an uncontended
+delivery never consumes queue capacity. Admission is decided on the request
+thread, before the `202` is written, so a refusal is an explicit `503` rather
+than a success receipt for work that may never be serviced. Background runs also
+honour host shutdown.
+
+Queue depth transitions are logged as each delivery is admitted, so a growing
+backlog is diagnosable without reading run rows.
 
 ### Pre-authentication body limits
 
@@ -314,7 +349,7 @@ array of [`WebhookRunResponse`](#webhookrunresponse).
 |-------|------|-------|
 | `runId` | string | Run identifier. |
 | `webhookId` | string | Registration that triggered the run. |
-| `status` | string | `Pending` \| `Running` \| `Completed` \| `Failed` \| `Timeout`. |
+| `status` | string | `Pending` \| `Queued` \| `Running` \| `Completed` \| `Failed` \| `Timeout` \| `Rejected`. |
 | `acceptedAt` | string (ISO-8601) | When the inbound POST was accepted. |
 | `startedAt` | string \| null | When agent execution started. |
 | `completedAt` | string \| null | When agent execution completed. |

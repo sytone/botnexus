@@ -119,6 +119,8 @@ public sealed class SessionRowMapperTests
         using var connection = OpenMemory();
         using var reader = Read(connection, """
             SELECT
+                42 AS id,
+                'key-42' AS persistence_key,
                 'assistant' AS role,
                 'hello' AS content,
                 '2026-01-02T03:04:05.0000000+00:00' AS timestamp,
@@ -138,6 +140,8 @@ public sealed class SessionRowMapperTests
 
         var entry = SessionRowMapper.MapHistoryEntry(reader);
 
+        entry.PersistenceId.ShouldBe(42);
+        entry.PersistenceKey.ShouldBe("key-42");
         entry.Role.ShouldBe(MessageRole.Assistant);
         entry.Content.ShouldBe("hello");
         entry.Timestamp.ShouldBe(DateTimeOffset.Parse("2026-01-02T03:04:05.0000000+00:00"));
@@ -165,6 +169,8 @@ public sealed class SessionRowMapperTests
         using var connection = OpenMemory();
         using var reader = Read(connection, """
             SELECT
+                43 AS id,
+                NULL AS persistence_key,
                 NULL AS role, NULL AS content, NULL AS timestamp, NULL AS tool_name,
                 NULL AS tool_call_id, 0 AS is_compaction_summary, NULL AS tool_args,
                 0 AS tool_is_error, 0 AS is_crash_sentinel, 0 AS is_history,
@@ -174,6 +180,8 @@ public sealed class SessionRowMapperTests
 
         var entry = SessionRowMapper.MapHistoryEntry(reader);
 
+        entry.PersistenceId.ShouldBe(43);
+        entry.PersistenceKey.ShouldBeNull();
         entry.Role.ShouldBe(MessageRole.User);
         entry.Content.ShouldBe(string.Empty);
         entry.ToolName.ShouldBeNull();
@@ -201,7 +209,7 @@ public sealed class SessionRowMapperTests
         // expected history column must throw rather than silently drop the field.
         using var connection = OpenMemory();
         using var reader = Read(connection, """
-            SELECT 'user' AS role, 'hi' AS content, NULL AS timestamp
+            SELECT 44 AS id, NULL AS persistence_key, 'user' AS role, 'hi' AS content, NULL AS timestamp
             """);
 
         Should.Throw<Exception>(() => SessionRowMapper.MapHistoryEntry(reader));

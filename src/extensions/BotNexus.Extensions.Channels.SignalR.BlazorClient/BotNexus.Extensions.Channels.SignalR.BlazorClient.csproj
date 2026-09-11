@@ -20,4 +20,37 @@
                    PublishedContent="wwwroot\service-worker.published.js" />
   </ItemGroup>
 
+  <!--
+    In-app user guide.
+
+    The guide is NOT a second copy of the documentation. docs/user-guide stays the single source
+    and is copied into wwwroot at build time, because a hand-maintained in-app copy is exactly the
+    kind of thing that drifts: this repository has already shipped config examples using the wrong
+    field names and a model catalogue full of ids that no longer resolve, and both cost real
+    debugging time. One source cannot disagree with itself.
+
+    Copied rather than <Content Include> with a Link, because Blazor's static web asset pipeline
+    only publishes files that physically live under wwwroot. The destination is gitignored; it is
+    build output, not source.
+
+    Runs before ResolveStaticWebAssetsInputs so the files exist by the time that pipeline enumerates
+    wwwroot; BeforeBuild alone is too late for a WASM project.
+  -->
+  <Target Name="CopyUserGuide" BeforeTargets="ResolveStaticWebAssetsInputs;BeforeBuild">
+    <ItemGroup>
+      <UserGuideDoc Include="$(MSBuildThisFileDirectory)..\..\..\docs\user-guide\**\*.md" />
+      <UserGuideExtra Include="$(MSBuildThisFileDirectory)..\..\..\docs\skills.md" />
+      <UserGuideIndex Include="$(MSBuildThisFileDirectory)..\..\..\docs\user-guide\guide-index.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(UserGuideDoc)"
+          DestinationFiles="@(UserGuideDoc->'$(MSBuildThisFileDirectory)wwwroot\guide\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(UserGuideExtra)"
+          DestinationFolder="$(MSBuildThisFileDirectory)wwwroot\guide"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(UserGuideIndex)"
+          DestinationFolder="$(MSBuildThisFileDirectory)wwwroot\guide"
+          SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

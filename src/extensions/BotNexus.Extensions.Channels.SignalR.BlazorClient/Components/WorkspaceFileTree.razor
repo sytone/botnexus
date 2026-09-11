@@ -1,6 +1,6 @@
 ﻿@if (Entries.Count == 0)
 {
-    <div class="workspace-state">Workspace is empty.</div>
+    <div class="workspace-state">@EmptyMessage</div>
 }
 else
 {
@@ -26,12 +26,12 @@ else
                         @if (isDirectory)
                         {
                             <span class="workspace-tree-chevron" aria-hidden="true">@(isExpanded ? "▾" : "▸")</span>
-                            <span class="workspace-tree-icon" aria-hidden="true">📁</span>
+                            <span class="workspace-tree-icon" aria-hidden="true"><Icon Name="folder" Size="15" /></span>
                         }
                         else
                         {
                             <span class="workspace-tree-chevron spacer" aria-hidden="true"></span>
-                            <span class="workspace-tree-icon" aria-hidden="true">📄</span>
+                            <span class="workspace-tree-icon" aria-hidden="true"><Icon Name="file" Size="14" Class="bn-icon-inherit" /></span>
                         }
                         <span class="workspace-tree-name">@entry.Name</span>
                     </button>
@@ -47,7 +47,7 @@ else
                             disabled="@isProtected"
                             @onclick:stopPropagation="true"
                             @onclick="() => { if (!isProtected) OnDeleteRequested.InvokeAsync(fullPath); }">
-                        🗑
+                        <Icon Name="delete" Size="14" Class="bn-icon-inherit" />
                     </button>
                 </div>
 
@@ -86,6 +86,14 @@ else
 @code {
     [Parameter, EditorRequired]
     public IReadOnlyList<WorkspaceEntryDto> Entries { get; set; } = [];
+
+    /// <summary>
+    /// Shown when the tree has no entries. Parameterised because this component is shared: the
+    /// Skills explorer reuses it, and told the user "Workspace is empty" on a page with no
+    /// workspace on it. A wrong noun in an empty state reads as a bug in the feature it names.
+    /// </summary>
+    [Parameter]
+    public string EmptyMessage { get; set; } = "Workspace is empty.";
 
     [Parameter]
     public string ParentPath { get; set; } = string.Empty;

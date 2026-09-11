@@ -140,7 +140,7 @@ public sealed class Agent365ChannelAdapter : ChannelAdapterBase
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (!Agent365ChannelAddress.TryDecode(message.ChannelAddress, out var conversationId, out var serviceUrl))
+        if (!Agent365ChannelAddress.TryParse(message.ChannelAddress, out var conversationId, out var serviceUrl))
         {
             Logger.LogWarning(
                 "{DisplayName} send requested with invalid channel address '{ChannelAddress}'",

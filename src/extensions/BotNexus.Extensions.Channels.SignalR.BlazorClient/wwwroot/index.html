@@ -15,7 +15,26 @@
     <title>BotNexus</title>
     <base href="/" />
     <link rel="preload" id="webassembly" />
-    <link rel="stylesheet" href="css/app.css" />
+    <!-- Preload the latin subset: it is needed for the very first paint, and discovering it
+         only after app.css parses would guarantee a visible swap. latin-ext is deliberately
+         NOT preloaded - it is fetched on demand via unicode-range. -->
+    <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="css/app.css?v=ds13" />
+    <script>
+        // Applied BEFORE first paint and before Blazor boots. The WASM runtime takes seconds to
+        // start; without this a light-theme user would stare at a fully dark portal until it did,
+        // then watch it flip. Reads the same localStorage blob PortalPreferencesService writes.
+        (function () {
+            try {
+                var raw = localStorage.getItem('botnexus.portal.prefs');
+                if (raw && JSON.parse(raw).Theme === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch (e) {
+                // Unparseable or unavailable storage - dark is the default, so do nothing.
+            }
+        })();
+    </script>
     <script type="importmap"></script>
 </head>
 

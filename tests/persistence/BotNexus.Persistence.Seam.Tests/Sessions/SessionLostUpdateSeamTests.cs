@@ -23,12 +23,12 @@ namespace BotNexus.Persistence.Seam.Tests.Sessions;
 /// completion. Nothing here sleeps.
 /// </para>
 /// <para>
-/// The sessions aggregate is unusual in that its full-replace write (<c>SaveAsync</c>) is
-/// deliberately unguarded — the pre-run write-ahead saves rely on it to create the row. The
-/// protection is therefore structural: the narrow entry points added by #2132 and the write fence
-/// added by #1518. These tests characterise both halves: that the narrow writes genuinely cannot
-/// clobber each other, and that the fence genuinely suppresses a finalizer write whose session was
-/// deleted, sealed or rebound mid-run.
+/// The sessions aggregate is unusual in that its session-row upsert (<c>SaveAsync</c>) is
+/// deliberately unguarded — the pre-run write-ahead saves rely on it to create the row. History is
+/// independently append-oriented and identity-reconciled (#3907). The protection is therefore
+/// structural: narrow entry points added by #2132, history deltas, and the write fence added by
+/// #1518. These tests characterise those seams and prove the fence suppresses a finalizer write
+/// whose session was deleted, sealed or rebound mid-run.
 /// </para>
 /// </remarks>
 public sealed class SessionLostUpdateSeamTests
@@ -39,7 +39,7 @@ public sealed class SessionLostUpdateSeamTests
         // The named non-vacuity target for #3327's sessions clause. A run captures its fence, a
         // competing reset seals the row, and the finalizer then tries to persist its completed
         // turn from an in-memory session that still believes it is Active. The unconditional
-        // upsert behind SaveAsync would revert Sealed -> Active AND rewrite the whole history, so
+        // upsert behind SaveAsync would revert Sealed -> Active, so
         // the fence is the only thing standing between a reset session and its own resurrection.
         using var fixture = new SessionSeamStoreFixture();
         var seeded = await fixture.SeedAsync("s-fenced-vs-unfenced");
@@ -146,9 +146,8 @@ public sealed class SessionLostUpdateSeamTests
         // Two runs are in flight on the SAME session. Run A captures its fence and is then held at
         // a gate. Run B resets the session (seals it) and opens the gate, so A's finalizer provably
         // runs AFTER the reset committed rather than merely probably. A's fenced save must be
-        // suppressed, and - critically - A's history rewrite must not land either: SaveAsync
-        // deletes and re-inserts the WHOLE session_history table, so an unfenced A would not only
-        // un-seal the row but replace B's transcript with its own.
+        // suppressed so A cannot un-seal the row. History is independently append-oriented, but
+        // lifecycle resurrection remains forbidden and is what the fence protects here.
         using var fixture = new SessionSeamStoreFixture();
         var seeded = await fixture.SeedAsync("s-parallel-finalizers");
         var sessionId = seeded.Session.SessionId;
@@ -359,16 +358,13 @@ public sealed class SessionLostUpdateSeamTests
     }
 
     [Fact]
-    public async Task StaleUnfencedSave_ErasesAConcurrentAppend_WhichIsWhyTheNarrowPathExists()
+    public async Task StaleUnfencedSave_PreservesAConcurrentAppend()
     {
-        // Characterisation, not an aspiration: SaveAsync replaces the ENTIRE session_history table
-        // from the caller's snapshot, so a turn appended after that snapshot was taken is silently
-        // erased. This is the exact hazard #2132 introduced AppendEntriesAsync to avoid and #1518
-        // fenced for finalizers; it is pinned here so that if the unfenced save ever gains a guard,
-        // this test fails and the inventory's "NOTHING, by design" guard note gets revisited rather
-        // than quietly going stale.
+        // #3907: the session-row upsert remains unconditional for write-ahead creation, but history
+        // is no longer replaced from the stale snapshot. A concurrent narrow append is outside this
+        // aggregate's deletion authority and must survive the later save.
         using var fixture = new SessionSeamStoreFixture();
-        var seeded = await fixture.SeedAsync("s-save-erases-append");
+        var seeded = await fixture.SeedAsync("s-save-preserves-append");
         var sessionId = seeded.Session.SessionId;
 
         var result = await new LostUpdateScenario<GatewaySession>()
@@ -386,10 +382,8 @@ public sealed class SessionLostUpdateSeamTests
 
         var committed = result.Committed.ShouldNotBeNull();
         committed.GetHistorySnapshot()
-            .ShouldNotContain(
+            .ShouldContain(
                 e => e.Content == "concurrent-turn",
-                "documented behaviour: the whole-history rewrite drops turns appended after the "
-                + "snapshot. Callers that only add turns must use AppendEntriesAsync (#2132), and "
-                + "post-run finalizers must use the fenced overload (#1518).");
+                "append-oriented persistence must not erase a row committed after this aggregate snapshot");
     }
 }

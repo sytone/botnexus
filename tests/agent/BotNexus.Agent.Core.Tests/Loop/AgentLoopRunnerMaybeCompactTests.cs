@@ -31,7 +31,7 @@ public class AgentLoopRunnerMaybeCompactTests
         var config = CreateConfig("maybe-compact-once", _ =>
         {
             Interlocked.Increment(ref compactCalls);
-            return Task.CompletedTask;
+            return Task.FromResult<AgentContext?>(null);
         });
         var context = new AgentContext(null, [], []);
 
@@ -59,7 +59,7 @@ public class AgentLoopRunnerMaybeCompactTests
             _ =>
             {
                 Interlocked.Increment(ref compactCalls);
-                return Task.CompletedTask;
+                return Task.FromResult<AgentContext?>(null);
             },
             getFollowUpMessages: _ =>
             {
@@ -88,13 +88,43 @@ public class AgentLoopRunnerMaybeCompactTests
     }
 
     [Fact]
+    public async Task RunAsync_WhenMaybeCompactReturnsContext_UsesRefreshedSnapshotForNextProviderTurn()
+    {
+        Context? observed = null;
+        using var provider = RegisterProvider("maybe-compact-refresh", (_, context, _) =>
+        {
+            observed = context;
+            return TestStreamFactory.CreateTextResponse("done");
+        });
+
+        var refreshed = new AgentContext(
+            "compacted system prompt",
+            [new AgentUserMessage("compacted visible tail")],
+            []);
+        var config = CreateConfig("maybe-compact-refresh", _ => Task.FromResult<AgentContext?>(refreshed));
+
+        _ = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("stale prompt")],
+            new AgentContext("stale system prompt", [new AgentUserMessage("stale history")], []),
+            config,
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        observed.ShouldNotBeNull();
+        observed.SystemPrompt.ShouldBe("compacted system prompt");
+        observed.Messages.OfType<BotNexus.Agent.Providers.Core.Models.UserMessage>()
+            .Select(message => message.Content.Text)
+            .ShouldBe(["compacted visible tail"]);
+    }
+
+    [Fact]
     public async Task RunAsync_WhenMaybeCompactThrows_SwallowsAndContinues()
     {
         using var provider = RegisterProvider("maybe-compact-throws", (_, _, _) =>
             TestStreamFactory.CreateTextResponse("survived"));
 
         var config = CreateConfig("maybe-compact-throws",
-            _ => throw new InvalidOperationException("compactor boom"));
+            _ => Task.FromException<AgentContext?>(new InvalidOperationException("compactor boom")));
         var context = new AgentContext(null, [], []);
 
         var result = await AgentLoopRunner.RunAsync(
@@ -109,11 +139,32 @@ public class AgentLoopRunnerMaybeCompactTests
                 "a compactor failure must be best-effort: the loop continues to a normal turn");
     }
 
+    [Fact]
+    public async Task RunAsync_WhenMaybeCompactIsCancelled_PropagatesCancellation()
+    {
+        using var provider = RegisterProvider("maybe-compact-cancelled", (_, _, _) =>
+            TestStreamFactory.CreateTextResponse("must not run"));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var config = CreateConfig(
+            "maybe-compact-cancelled",
+            cancellationToken => Task.FromCanceled<AgentContext?>(cancellationToken));
+
+        Func<Task> act = () => AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("test")],
+            new AgentContext(null, [], []),
+            config,
+            _ => Task.CompletedTask,
+            cts.Token);
+
+        await Should.ThrowAsync<OperationCanceledException>(act);
+    }
+
     #region Helpers
 
     private static AgentLoopConfig CreateConfig(
         string apiId,
-        Func<CancellationToken, Task> maybeCompact,
+        Func<CancellationToken, Task<AgentContext?>> maybeCompact,
         GetMessagesDelegate? getFollowUpMessages = null)
     {
         return new AgentLoopConfig(

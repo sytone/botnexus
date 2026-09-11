@@ -29,13 +29,13 @@ public sealed class SessionWriteInventoryTests
 
         new("sessions", nameof(ISessionStore.SaveAsync), WriteClassification.FullReplace,
             "every caller-owned column of the sessions row (status, metadata, conversation binding, "
-            + "updated_at) AND the ENTIRE session_history table for the session, which is deleted "
-            + "and re-inserted from the caller's snapshot",
-            "NOTHING, by design: this is the unconditional INSERT … ON CONFLICT DO UPDATE that the "
-            + "pre-run write-ahead saves rely on to create the row. It is the lost-update hazard "
-            + "the sessions seam tests exist to characterise, and the reason #2132 added the narrow "
-            + "entry points and #1518 added the fenced overload. Post-run finalizers must use the "
-            + "fenced overload instead."),
+            + "updated_at), plus only the unpersisted history tail during ordinary saves; explicit "
+            + "destructive history mutations reconcile known rows by identity",
+            "The session row remains an unconditional INSERT … ON CONFLICT DO UPDATE because pre-run "
+            + "write-ahead saves must create it. History is independently guarded: ordinary saves "
+            + "append only the captured delta, acknowledgements leave concurrent additions pending, "
+            + "and destructive reconciliation may delete only row ids this aggregate previously "
+            + "observed. Post-run finalizers still use the fenced overload to protect lifecycle fields."),
 
         new("sessions", nameof(ISessionStore.AppendEntriesAsync), WriteClassification.NarrowPatch,
             "new session_history rows plus updated_at",
@@ -63,12 +63,12 @@ public sealed class SessionWriteInventoryTests
             + "delete would resurrect the row via the unconditional upsert — which is precisely "
             + "what the #1518 fence overload exists to suppress."),
 
-        new("sessions", nameof(ISessionStore.ArchiveAsync), WriteClassification.FullReplace,
-            "status (sealed), updated_at, and a full history rewrite from the row it just loaded",
-            "Drains the active run for the exact session BEFORE taking the lock (#2903), so no turn "
-            + "can land between the load and the destructive ReplaceHistoryAsync. A drain timeout "
+        new("sessions", nameof(ISessionStore.ArchiveAsync), WriteClassification.NarrowPatch,
+            "status (sealed) and updated_at; history rows are left untouched",
+            "Drains the active run for the exact session BEFORE taking the lock (#2903), so its "
+            + "final append reaches durable storage before the status transition. A drain timeout "
             + "throws and nothing is written at all. The re-load happens inside the lock, so the "
-            + "snapshot it replaces history from is its own, never a caller's stale one."),
+            + "sealed aggregate is authoritative rather than a caller's stale snapshot."),
 
         new("sessions", nameof(ISessionStore.SaveSubAgentSessionAsync), WriteClassification.Create,
             "one sub_agent_sessions row at spawn time",
@@ -83,13 +83,13 @@ public sealed class SessionWriteInventoryTests
 
     /// <summary>
     /// The fenced <see cref="ISessionStore.SaveAsync(GatewaySession, SessionWriteFence, CancellationToken)"/>
-    /// overload. It shares a name with the unfenced full replace, so it cannot be a distinct
+    /// overload. It shares a name with the unfenced aggregate save, so it cannot be a distinct
     /// <see cref="Inventory"/> row keyed by method name — but it is a genuinely different write
     /// shape and is classified here so the distinction is executable rather than implied.
     /// </summary>
     public static readonly AggregateWriteEntry FencedSave =
         new("sessions", nameof(ISessionStore.SaveAsync), WriteClassification.Fenced,
-            "the same columns and history as the unfenced full replace",
+            "the same session columns and append/targeted history delta as the unfenced save",
             "SessionFenceEvaluator.Passes over a lock-scoped re-read of (status, conversation_id) "
             + "straight from SQLite: the write is skipped as Rebound when the row was deleted, "
             + "sealed/expired by a competing reset, or rebound to another conversation while the "
@@ -153,19 +153,19 @@ public sealed class SessionWriteInventoryTests
     }
 
     [Fact]
-    public void TheFullReplaceWrites_AreExactlyTheTwoWholeAggregateRewrites()
+    public void TheFullReplaceWrite_IsOnlyTheUnfencedSessionRowUpsert()
     {
-        // The whole point of the classification: full-aggregate writes are the lost-update hazard.
-        // Sessions has exactly two - the unfenced save and the archive seal, both of which rewrite
-        // the complete history. A third appearing needs its own seam tests, and this is where that
-        // gets noticed rather than in production.
+        // History is no longer part of a full replacement: ordinary saves append their delta and
+        // explicit destructive mutations reconcile known row identities. The remaining full-replace
+        // classification is the caller-owned sessions row, whose unconditional upsert is required
+        // for pre-run creation and remains the reason post-run callers use the fenced overload.
         var fullReplaces = Inventory
             .Where(e => e.Classification == WriteClassification.FullReplace)
             .Select(e => e.EntryPoint)
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
 
-        fullReplaces.ShouldBe([nameof(ISessionStore.ArchiveAsync), nameof(ISessionStore.SaveAsync)]);
+        fullReplaces.ShouldBe([nameof(ISessionStore.SaveAsync)]);
     }
 
     [Fact]

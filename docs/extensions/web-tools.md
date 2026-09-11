@@ -6,7 +6,7 @@ The Web Tools extension provides agents with web search and URL fetching capabil
 
 | Property | Value |
 |----------|-------|
-| Extension ID | `botnexus-web-tools` |
+| Extension ID | `botnexus-web` |
 | Tool names | `web_search`, `web_fetch` |
 | Source | `BotNexus.Extensions.WebTools` |
 
@@ -39,7 +39,7 @@ Configure in your agent's extension config block:
 ```json
 {
   "extensions": {
-    "botnexus-web-tools": {
+    "botnexus-web": {
       "search": {
         "provider": "brave",
         "apiKey": "${env:BRAVE_API_KEY}",

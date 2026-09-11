@@ -1,0 +1,107 @@
+name: "CI: Docs impact"
+
+# The docs-vs-source trigger, split out of "CI: Docs lint" (issue #4123).
+#
+# It lived in that workflow, whose trigger is `paths: ['docs/**', ...]`. So it only RAN on a PR
+# that had already changed documentation - and when it ran, its own first satisfying branch is
+# "this PR also changes documentation", which exits 0. The gate was unreachable in its failing
+# state on exactly the source PRs it exists for, and a permanently-green check is
+# indistinguishable from a working one.
+#
+# The two jobs wanted opposite triggers from one file. Docs lint wants `paths: docs/**`,
+# deliberately, so a docs-only PR that fires no test workflow is still gated. This one wants the
+# complement of that.
+#
+# NOTE ON TRIGGER SCOPE: no `paths` filter, on purpose. Filtering to the sensitive globs would
+# leave the check un-run - and, if it is ever made required, permanently pending - on every other
+# PR. The script already exits 0 in its first branch when nothing documentation-sensitive was
+# touched, so running it everywhere costs a checkout and a few seconds and cannot fail a PR that
+# has nothing to answer for.
+
+on:
+  pull_request:
+    branches: [main]
+    # `edited` is here because the remedy this gate prints is "state `no-docs-impact` in the PR
+    # body". Without it, editing the body changes nothing until an unrelated commit is pushed, so
+    # the instruction in the error message does not work when followed.
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # Rule 4 of issue #2865: the docs-vs-source trigger.
+  #
+  # A PR that changes an extension manifest, a provider interface or a controller route has
+  # almost certainly invalidated a documentation page, and the docs drift precisely because
+  # nobody is asked at the time. This job asks. It is advisory by design - a genuine no-docs-
+  # impact change is real, so `no-docs-impact` in the PR body satisfies it - but the
+  # justification has to be written down rather than assumed.
+  docs-impact:
+    name: docs-vs-source trigger
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for a docs change or an explicit justification
+        shell: pwsh
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Three dots, not two. `git diff A B` compares the two TIPS, so every file that landed
+          # on main after this branch was cut counts as a file this PR changed. Demonstrated on a
+          # scratch PR: its only change was a controller, and it was told it "also changes
+          # documentation (2 file(s))" and passed, because two unrelated docs pages had merged to
+          # main while it sat open. The gate fails OPEN whenever the base has drifted past any
+          # docs commit. `git diff A...B` diffs from the merge base, which is what the PR changed.
+          # This is why the job needs fetch-depth: 0 - the merge base has to be reachable.
+          $changed = @(git diff --name-only "$env:BASE_SHA...$env:HEAD_SHA")
+          if ($LASTEXITCODE -ne 0) {
+            # A missing merge base would otherwise leave $changed empty, and an empty change set
+            # is indistinguishable here from "nothing sensitive was touched" - the gate would go
+            # green for the one reason it must never go green.
+            Write-Host "::error::Could not diff $env:BASE_SHA...$env:HEAD_SHA; refusing to report a pass on an unknown change set."
+            exit 1
+          }
+          Write-Host "Changed files: $($changed.Count)"
+
+          # Surfaces whose shape a docs page describes verbatim.
+          $sensitive = @($changed | Where-Object {
+              $_ -like '*botnexus-extension.json' -or
+              $_ -like '*IApiProvider*' -or
+              $_ -match 'Controller\.cs$'
+          })
+
+          if ($sensitive.Count -eq 0) {
+            Write-Host 'No documentation-sensitive surface touched; nothing to justify.'
+            exit 0
+          }
+
+          Write-Host "Documentation-sensitive files touched:`n  $($sensitive -join "`n  ")"
+
+          $touchedDocs = @($changed | Where-Object { $_ -like 'docs/*' })
+          if ($touchedDocs.Count -gt 0) {
+            Write-Host "PR also changes documentation ($($touchedDocs.Count) file(s)); satisfied."
+            exit 0
+          }
+
+          if ("$env:PR_BODY" -match 'no-docs-impact') {
+            Write-Host 'PR body carries an explicit no-docs-impact justification; satisfied.'
+            exit 0
+          }
+
+          Write-Host '::error::This PR changes an extension manifest, a provider interface or a controller route but changes no docs/ page and gives no justification. Update the affected documentation, or state `no-docs-impact` in the PR body with a reason (issue #2865, rule 4).'
+          exit 1

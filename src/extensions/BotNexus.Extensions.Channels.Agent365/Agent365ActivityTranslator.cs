@@ -74,7 +74,7 @@ public static class Agent365ActivityTranslator
             ChannelType = ChannelKey,
             SenderId = senderId,
             Sender = CitizenId.Of(UserId.From(senderId)),
-            ChannelAddress = Agent365ChannelAddress.Encode(conversationId, activity.ServiceUrl),
+            ChannelAddress = Agent365ChannelAddress.Create(conversationId, activity.ServiceUrl),
             Content = text,
             ContentParts = contentParts,
             RoutingHints = InboundMessageRoutingHints.LiftFromStrings(
@@ -99,7 +99,7 @@ public static class Agent365ActivityTranslator
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        Agent365ChannelAddress.TryDecode(message.ChannelAddress, out var conversationId, out var serviceUrl);
+        Agent365ChannelAddress.TryParse(message.ChannelAddress, out var conversationId, out var serviceUrl);
 
         var content = message.Content ?? string.Empty;
         var text = string.IsNullOrWhiteSpace(message.DisplayPrefix)

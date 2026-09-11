@@ -45,8 +45,10 @@ Retrieve a specific document by ID from a store.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string | Yes | Document identifier. |
-| `store` | string | Yes | Store name containing the document. |
+| `id` | string | Yes | Document ID or path returned by search. For a memory result, use the full `memory:<store>/<entryId>` ID. |
+
+`knowledge_get` has no separate `store` argument. It checks the returned document's
+store against `allowedStores` before returning its content.
 
 ## Configuration
 
@@ -60,6 +62,7 @@ Configure in your agent's extension config block:
       "qmdPath": null,
       "defaultSearchMode": "hybrid",
       "maxResults": 10,
+      "includeMemoryStores": false,
       "stores": [
         {
           "name": "docs",
@@ -84,7 +87,8 @@ Configure in your agent's extension config block:
 | `defaultSearchMode` | string | `"hybrid"` | Default search mode: `keyword`, `semantic`, or `hybrid`. |
 | `maxResults` | integer | 10 | Default maximum number of search results. |
 | `stores` | array | `[]` | Knowledge stores to index and search. |
-| `allowedStores` | string[] | *(all)* | Store names this agent can access. Omit to allow all configured stores. |
+| `allowedStores` | string[] | *(all)* | Store-name allowlist used by the tools, matched case-insensitively. Null or empty means unrestricted by this list. See the search limitation below. |
+| `includeMemoryStores` | boolean | false | Add readable shared memory stores alongside the CLI backend when a shared-memory registry is available. |
 
 ### Store Configuration
 
@@ -100,15 +104,48 @@ Configure in your agent's extension config block:
 
 When `autoUpdate` is enabled on a store, BotNexus runs a background service (`QmdIndexHostedService`) that periodically re-indexes each store. Health tracking reports consecutive failures and marks stores as unhealthy after repeated errors. The index process has a 5-minute timeout per store.
 
+## Shared Memory Collections
+
+With `includeMemoryStores: true` and an available shared-memory registry, the
+contributor combines the QMD CLI backend with `MemoryQmdBackend`. Without the
+registry, it keeps the CLI backend alone. This setting does not turn off the CLI
+backend or remove its prerequisites.
+
+A shared store named `team-notes` appears as the virtual collection
+`memory:team-notes`. Search results use IDs such as
+`memory:team-notes/<entryId>` and paths such as `memory://team-notes/<entryId>`.
+Use the complete ID from a result with `knowledge_get`. If `allowedStores` is
+nonempty, include the prefixed collection name for explicit searches and reads.
+
+The memory backend lists only stores the registry allows this agent to read.
+Explicit search targets and document reads also check the registry's read policy;
+setting `includeMemoryStores` does not grant access to other agents' stores. Memory
+indexing and embedding remain owned by the memory pipeline, not the QMD CLI.
+The memory backend uses its store's text search for all QMD mode values and supplies
+a fixed score of `0.8`; selecting `semantic` does not make that backend perform
+semantic search.
+
+The composite backend calls the CLI first. A CLI failure can prevent it from
+reaching the memory backend; this is not a memory-only fallback mode.
+
 ## Per-Agent Store Scoping
 
-Use `allowedStores` to restrict which stores an agent can search. When set:
+The tools use `allowedStores` as follows:
 
-- `knowledge_search` rejects queries to non-allowed stores
-- `knowledge_stores` only lists allowed stores
-- `knowledge_get` validates the document's store against the allowlist
+- `knowledge_search` checks an explicitly supplied `store` against the allowlist.
+- `knowledge_stores` filters the returned collection list.
+- `knowledge_get` checks the retrieved document's store before returning content.
 
-This enables multi-tenant deployments where different agents have access to different knowledge bases.
+::: warning Unscoped searches are not filtered by allowedStores
+The current `knowledge_search` implementation does not apply the allowlist when
+`store` is omitted, and does not filter the returned results by store. Do not rely
+on `allowedStores` alone as a multi-tenant search boundary. The memory backend's
+separate registry read checks still apply.
+:::
+
+Sources: [QmdToolContributor](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Qmd/QmdToolContributor.cs),
+[MemoryQmdBackend](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Qmd/MemoryQmdBackend.cs),
+and [KnowledgeSearchTool](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Qmd/KnowledgeSearchTool.cs).
 
 ## Prerequisites
 

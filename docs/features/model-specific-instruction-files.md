@@ -90,7 +90,11 @@ not be. Before adding a file variant:
 
 1. **Fix the base file.** Most instructions that seem model-specific are just imprecise.
 2. **Use an attribute-level overlay.** `[PromptVariant]` can reword or drop a *single* rule by id
-   while everything else stays anchored to one source of truth.
+   while everything else stays anchored to one source of truth. Built-in GPT-6 guidance uses
+   `Family = "gpt", Version = "6", MatchMajorVersion = true` to cover all parsed 6.x variants;
+   exact-version overlays can refine it. See the [internal prompt-variant ladder](../development/prompt-pipeline.md#attribute-declared-instruction-variants).
+   This is separate from workspace filename selection: the attribute opt-in preserves existing
+   exact-version semantics, while a filename such as `AGENTS.gpt-6.md` already matches a major version.
 3. **Only then** add a file variant — when a whole document genuinely cannot be shared.
 
 A variant that has drifted far from its base is a maintenance hazard: it looks current and is not.

@@ -185,7 +185,7 @@ public sealed class FileSessionStore : SessionStoreBase
         try
         {
             _cache[session.SessionId] = session;
-            await WriteToFileAsync(session, cancellationToken).ConfigureAwait(false);
+            await PersistSessionAsync(session, cancellationToken).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -705,7 +705,11 @@ public sealed class FileSessionStore : SessionStoreBase
             // Phase 3a (#531): preserve every entry; collapse pre-Phase-3a multi-summary
             // state forward via SessionCompaction.ApplyLegacyHistoryProjection. The LLM-visible
             // filter (IsHistory + IsCrashSentinel) is applied downstream by the projector.
-            session.AddEntries(SessionCompaction.ApplyLegacyHistoryProjection(entries));
+            var projectedEntries = SessionCompaction.ApplyLegacyHistoryProjection(entries);
+            session.AddEntries(entries);
+            session.MarkCurrentHistoryPersisted();
+            if (!entries.SequenceEqual(projectedEntries))
+                session.ReplaceHistory(projectedEntries);
             session.UpdatedAt = meta.UpdatedAt;
         }
 
@@ -776,6 +780,44 @@ public sealed class FileSessionStore : SessionStoreBase
             session.SessionId, session.AgentId, legacy.ConversationId);
     }
 
+    private async Task PersistSessionAsync(GatewaySession session, CancellationToken cancellationToken)
+    {
+        var historyPath = GetHistoryPath(session.SessionId);
+        var history = session.CaptureHistoryForPersistence();
+        if (history.RequiresReplacement)
+        {
+            await SessionJsonl.WriteAllAsync(
+                _fileSystem,
+                historyPath,
+                history.Entries,
+                JsonOptions,
+                cancellationToken).ConfigureAwait(false);
+        }
+        else if (history.Entries.Count > 0)
+        {
+            await SessionJsonl.AppendAsync(
+                _fileSystem,
+                historyPath,
+                history.Entries,
+                JsonOptions,
+                cancellationToken).ConfigureAwait(false);
+        }
+        else if (!_fileSystem.File.Exists(historyPath))
+        {
+            // Preserve the store contract that the first metadata-only save materializes both files,
+            // without serializing an already-persisted transcript merely to create an empty JSONL.
+            await SessionJsonl.AppendAsync(
+                _fileSystem,
+                historyPath,
+                Array.Empty<SessionEntry>(),
+                JsonOptions,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        session.AcknowledgeHistoryPersistence(history, new Dictionary<long, long>());
+        await WriteMetadataAsync(session, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task WriteToFileAsync(GatewaySession session, CancellationToken cancellationToken)
     {
         var historyPath = GetHistoryPath(session.SessionId);
@@ -785,7 +827,11 @@ public sealed class FileSessionStore : SessionStoreBase
             session.GetHistorySnapshot(),
             JsonOptions,
             cancellationToken).ConfigureAwait(false);
+        await WriteMetadataAsync(session, cancellationToken).ConfigureAwait(false);
+    }
 
+    private async Task WriteMetadataAsync(GatewaySession session, CancellationToken cancellationToken)
+    {
         var metaPath = GetMetaPath(session.SessionId);
         var meta = new SessionMeta(
             // P9-I (#674): never write AgentId on new sidecars. Agent ownership is hydrated

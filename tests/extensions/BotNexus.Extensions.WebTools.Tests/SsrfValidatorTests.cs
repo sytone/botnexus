@@ -167,6 +167,34 @@ public sealed class SsrfValidatorTests
         result.IsSafe.ShouldBeTrue();
     }
 
+    [Theory]
+    [MemberData(nameof(WebFetchDnsPolicyTests.PrivateAnswers), MemberType = typeof(WebFetchDnsPolicyTests))]
+    public void Validate_DnsDestinationPolicyBlockedTable_MatchesLiteralPolicy(string address)
+    {
+        // The connection-time DNS guard must not drift from the shared literal-address policy.
+        // This pure validation performs no DNS lookup and opens no socket.
+        var host = address.Contains(':') ? $"[{address}]" : address;
+        var result = SsrfValidator.Validate(new Uri($"http://{host}/"));
+
+        result.IsSafe.ShouldBeFalse($"DNS policy table contains blocked address {address}");
+        result.Reason.ShouldNotBeNull();
+        result.Reason.ShouldContain("SSRF prevention");
+    }
+
+    [Theory]
+    [InlineData("203.0.113.7")]
+    [InlineData("2001:db8::7")]
+    [InlineData("::ffff:203.0.113.7")]
+    [InlineData("2002:cb00:7107::1")]
+    public void Validate_DnsDestinationPolicyPublicControls_RemainAllowed(string address)
+    {
+        var host = address.Contains(':') ? $"[{address}]" : address;
+        var result = SsrfValidator.Validate(new Uri($"http://{host}/"));
+
+        result.IsSafe.ShouldBeTrue();
+        result.Reason.ShouldBeNull();
+    }
+
     [Fact]
     public void Validate_HostnameNotResolved_ReturnsAllowed()
     {

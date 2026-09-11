@@ -32,4 +32,10 @@ public interface IPortalPreferencesService
     /// </summary>
     /// <param name="density">Requested preset; see <see cref="PortalDensity"/>.</param>
     Task SetDensityAsync(string density);
+
+    /// <summary>
+    /// Sets the colour theme, applies it to the document element immediately, and persists it.
+    /// </summary>
+    /// <param name="theme">A <see cref="PortalTheme"/> value; coerced if unrecognised.</param>
+    Task SetThemeAsync(string theme);
 }

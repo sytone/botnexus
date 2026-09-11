@@ -1,8 +1,8 @@
 namespace BotNexus.Agent.Core.Tools;
 
 /// <summary>
-/// Turns a vanished sub-agent working directory into a self-describing diagnostic instead of a raw
-/// OS path error (issue #3569 AC5).
+/// Describes an unavailable sub-agent working directory without inferring its history from absence
+/// (issues #3569 AC5 and #3928).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,8 +17,8 @@ namespace BotNexus.Agent.Core.Tools;
 /// mistakes, so the affected sub-agent concluded it had passed a bad path and retried - variant
 /// after variant - until its turn budget was gone, then reported a confident-sounding but wrong
 /// completion to its parent. An agent cannot recover from a condition it cannot name. Telling it
-/// plainly that the platform removed its workspace and that retrying cannot help converts an entire
-/// wasted run into one honest early failure.
+/// plainly that the working directory is absent avoids repeated cwd-dependent failures. Absence
+/// alone does not prove that the platform removed it; provisioning may never have occurred.
 /// </para>
 /// <para>
 /// <b>Scope is deliberately narrow.</b> Only paths carrying the <c>--subagent--</c> marker are
@@ -42,8 +42,8 @@ public static class ReclaimedWorkspacePreflight
     public const string SubAgentMarker = "--subagent--";
 
     /// <summary>
-    /// Produces the workspace-reclaimed diagnostic for <paramref name="workingDirectory"/>, or
-    /// <c>null</c> when the situation is not a reclaimed sub-agent workspace.
+    /// Produces a factual missing-workspace diagnostic for <paramref name="workingDirectory"/>, or
+    /// <c>null</c> when the probe does not establish an absent sub-agent directory.
     /// </summary>
     /// <param name="workingDirectory">The working directory the tool was about to use.</param>
     /// <param name="directoryExists">Existence probe for a directory path.</param>
@@ -81,24 +81,23 @@ public static class ReclaimedWorkspacePreflight
 
         var subAgentId = ExtractSubAgentId(workingDirectory);
 
-        return $"Your workspace was reclaimed while this run was still in progress. The working "
-            + $"directory for sub-agent '{subAgentId}' no longer exists on disk:{Environment.NewLine}"
+        return $"The working directory for sub-agent '{subAgentId}' does not exist on disk:{Environment.NewLine}"
             + $"  {workingDirectory}{Environment.NewLine}"
-            + "This is a platform-side reclamation (issue #3569), not a mistake in the arguments you "
-            + "passed - the directory was created and used successfully earlier in this run. No path "
-            + "you supply can succeed, so retrying this or any other file operation will fail the "
-            + "same way. Stop file work now and report this condition to your parent so the run is "
-            + "not recorded as a normal completion.";
+            + "This check cannot determine whether the workspace was never provisioned, was reclaimed, "
+            + "or became unavailable for another reason (issues #3928 and #3569). It does not establish "
+            + "prior creation, use, or deletion. Stop operations that require this working directory "
+            + "and report the unavailable workspace to your parent. Retrying with the same missing cwd "
+            + "will not help; this finding does not establish that separately granted paths are unavailable.";
     }
 
     /// <summary>
     /// Enforcement seam used by the shell / exec / glob tools: raises the diagnostic from
     /// <see cref="Describe"/> as an exception so it reaches the agent as the tool's error text.
-    /// Silent when the workspace is intact or the situation is not a reclaimed sub-agent workspace.
+    /// Silent when the workspace is intact or the situation is outside the sub-agent path scope.
     /// </summary>
     /// <param name="workingDirectory">The working directory the tool was about to use.</param>
     /// <param name="directoryExists">Existence probe for a directory path.</param>
-    /// <exception cref="DirectoryNotFoundException">The sub-agent's workspace was reclaimed.</exception>
+    /// <exception cref="DirectoryNotFoundException">The sub-agent's working directory is absent; its history is unknown.</exception>
     public static void ThrowIfReclaimed(string? workingDirectory, Func<string, bool> directoryExists)
     {
         var message = Describe(workingDirectory, directoryExists);

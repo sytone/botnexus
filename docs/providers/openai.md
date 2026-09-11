@@ -14,8 +14,8 @@ Set the provider on your agent in `config.json`:
 {
   "agents": {
     "my-agent": {
-      "apiProvider": "openai",
-      "modelId": "gpt-4o"
+      "provider": "openai",
+      "model": "gpt-4o"
     }
   }
 }
@@ -31,8 +31,8 @@ Alternatively, set it directly in agent configuration:
 {
   "agents": {
     "my-agent": {
-      "apiProvider": "openai",
-      "modelId": "gpt-4o",
+      "provider": "openai",
+      "model": "gpt-4o",
       "apiKey": "sk-..."
     }
   }

@@ -45,6 +45,15 @@ if ($null -eq $budgets -or $null -eq $remote) {
     throw 'Maintenance state must define budgets and remoteValidation ceilings.'
 }
 
+# Missing ceilings are malformed input, not an explicit budget of zero. Validate
+# before evaluating candidates so even an idle cycle cannot conceal a bad state.
+foreach ($key in @('implementation', 'repair', 'recovery', 'maxImplementationStartsPerCycle', 'openPrSoftCap')) {
+    $property = $budgets.PSObject.Properties[$key]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        throw "Maintenance state is missing required gating key: budgets.$key"
+    }
+}
+
 $workers = @(Get-PropertyValue $state 'workers' @())
 $candidates = @(Get-PropertyValue $state 'candidates' @())
 $dispatch = [Collections.Generic.List[object]]::new()
@@ -88,6 +97,10 @@ foreach ($candidate in $candidates) {
     $files = @((Get-PropertyValue $candidate 'files' @()) | ForEach-Object { [string]$_ })
     $cost = [double](Get-PropertyValue $candidate 'estimatedValidationCost' 0)
     $reason = $null
+    # Inspect raw properties: the defaulting accessor unwraps singleton arrays,
+    # which would turn JSON [true] into evidence indistinguishable from true.
+    $trustedProperty = $candidate.PSObject.Properties['trusted']
+    $decisionProperty = $candidate.PSObject.Properties['decisionFree']
 
     if ([string]::IsNullOrWhiteSpace($id) -or $lane -notin @('implementation', 'repair', 'recovery')) {
         $reason = 'invalid-candidate'
@@ -95,10 +108,10 @@ foreach ($candidate in $candidates) {
     elseif ($assignedIds.Contains($id)) {
         $reason = 'already-active'
     }
-    elseif (-not [bool](Get-PropertyValue $candidate 'trusted' $false)) {
+    elseif ($null -eq $trustedProperty -or $trustedProperty.Value -isnot [bool] -or -not $trustedProperty.Value) {
         $reason = 'trust-gate'
     }
-    elseif (-not [bool](Get-PropertyValue $candidate 'decisionFree' $false)) {
+    elseif ($null -eq $decisionProperty -or $decisionProperty.Value -isnot [bool] -or -not $decisionProperty.Value) {
         $reason = 'decision-gate'
     }
     elseif ($files.Count -eq 0) {

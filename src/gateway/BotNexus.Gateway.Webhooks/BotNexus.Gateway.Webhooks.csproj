@@ -9,6 +9,8 @@
     <Compile Include="WebhookResponseMode.cs" />
     <Compile Include="WebhookRun.cs" />
     <Compile Include="WebhookRunStatus.cs" />
+    <Compile Include="WebhookInboundQueue.cs" />
+    <Compile Include="WebhookInboundQueueOptions.cs" />
     <Compile Include="IWebhookRegistrationStore.cs" />
     <Compile Include="IWebhookRunStore.cs" />
     <Compile Include="WebhookSecretHelper.cs" />

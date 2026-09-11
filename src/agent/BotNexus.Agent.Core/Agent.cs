@@ -636,13 +636,39 @@ public sealed class Agent
             skipInitialSteeringPoll,
             _options.ToolTimeout ?? TimeSpan.FromSeconds(120),
             _options.ClaimAudit,
-            _options.MaybeCompactAsync,
+            BuildMaybeCompactDelegate(),
             _options.BeforeToolCallTimeout,
             _options.OnDiagnostic,
             _options.SuspensionRegistry,
             _options.AuthProfile,
             RetryRandomSource: null,
             MaxToolOutputBytes: _options.MaxToolOutputBytes);
+    }
+
+    private Func<CancellationToken, Task<AgentContext?>>? BuildMaybeCompactDelegate()
+    {
+        if (_options.MaybeCompactAsync is null)
+        {
+            return null;
+        }
+
+        return async cancellationToken =>
+        {
+            var refreshed = await _options.MaybeCompactAsync(cancellationToken).ConfigureAwait(false);
+            if (refreshed is null)
+            {
+                return null;
+            }
+
+            lock (_stateLock)
+            {
+                _state.SystemPrompt = refreshed.SystemPrompt;
+                _state.Messages = refreshed.Messages;
+                _state.Tools = refreshed.Tools;
+            }
+
+            return refreshed;
+        };
     }
 
     private static SimpleStreamOptions CloneGenerationSettings(SimpleStreamOptions source)

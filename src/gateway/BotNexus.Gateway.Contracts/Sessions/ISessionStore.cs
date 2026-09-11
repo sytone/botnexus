@@ -36,8 +36,19 @@ public interface ISessionStore
     Task<GatewaySession> GetOrCreateAsync(SessionId sessionId, AgentId agentId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Persists the session state. Creates or updates as needed.
+    /// Persists the session state. Creates or updates as needed. Ordinary history mutation is
+    /// append-only: stores should persist only entries added since the last successful save and
+    /// must not replace unchanged transcript rows. Explicit destructive mutations made through
+    /// <see cref="GatewaySession.ReplaceHistory"/>, compaction, reset/prune, or crash-sentinel
+    /// removal require targeted reconciliation of the complete history shape while preserving
+    /// every unchanged persisted row identity.
     /// </summary>
+    /// <remarks>
+    /// Callers changing only transcript, metadata, or lifecycle state should prefer
+    /// <see cref="AppendEntriesAsync"/>, <see cref="PatchMetadataAsync"/>, or
+    /// <see cref="TransitionStatusAsync"/> respectively. Aggregate save remains the coordinated
+    /// path when multiple fields change together or history was explicitly replaced.
+    /// </remarks>
     Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -87,9 +98,8 @@ public interface ISessionStore
     /// <summary>
     /// Appends transcript entries to an existing session <b>without</b> rewriting the rest of the
     /// aggregate (issue #2132). Use this instead of read-mutate-<see cref="SaveAsync(GatewaySession, CancellationToken)"/>
-    /// whenever the caller only needs to add turns: the whole-aggregate save replaces the complete
-    /// history plus the persisted metadata and status from the caller's snapshot, so a metadata
-    /// patch or lifecycle transition that landed in the read-write gap is silently lost.
+    /// whenever the caller only needs to add turns: this narrow operation leaves metadata and status
+    /// untouched and composes safely with independent mutations.
     /// </summary>
     /// <remarks>
     /// Conflict contract: appends are refused (<see cref="SessionMutationOutcome.Conflict"/>) when

@@ -63,7 +63,7 @@ Closes #
 <!-- Issue #2865, rule 4. Documentation drifts because nobody is asked at the time the code
      changes. This is that question. Tick exactly one.
 
-     The docs-lint workflow enforces the same rule mechanically for changes to an extension
+     The docs-impact workflow enforces the same rule mechanically for changes to an extension
      manifest, a provider interface, or a controller route: with no `docs/` change in the PR
      it fails unless the body contains `no-docs-impact`. -->
 

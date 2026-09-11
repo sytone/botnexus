@@ -157,7 +157,7 @@ public sealed class AgentConverseTool(
                     new AgentToolContent(AgentToolContentType.Text, JsonSerializer.Serialize(result, JsonOptions))
                 ]);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
             // #3577: a cancellation must never reach ToolExecutor's generic
             // `catch (Exception ex) => ex.Message` handler, because the .NET default text there is
@@ -176,11 +176,12 @@ public sealed class AgentConverseTool(
             //
             // The ambient token is tested FIRST because timeoutCts is linked to it: once the caller
             // aborts, the linked source also reports cancellation, and testing it first would
-            // misattribute an abandoned turn as an exhausted budget.
+            // misattribute an abandoned turn as an exhausted budget. The typed engine deadline
+            // also proves timeout before the later backstop fires; elapsed time is not evidence.
             var elapsed = Stopwatch.GetElapsedTime(startedAt);
             var report = cancellationToken.IsCancellationRequested
                 ? BuildCallerAbortedReport(targetAgentId, timeoutSeconds, elapsed)
-                : timeoutCts.IsCancellationRequested
+                : ex is AgentExchangeDeadlineExceededException || timeoutCts.IsCancellationRequested
                     ? BuildTimeoutReport(targetAgentId, timeoutSeconds, elapsed)
                     : BuildTargetUnavailableReport(targetAgentId, timeoutSeconds, elapsed);
 
@@ -267,8 +268,8 @@ public sealed class AgentConverseTool(
                 $"agent '{targetAgentId}' is unregistered, so this call is a deterministic failure and " +
                 "will not succeed on retry"),
             "busy" => (true,
-                $"agent '{targetAgentId}' is busy processing another turn and could not accept the " +
-                "exchange; retrying once it is idle is likely to succeed"),
+                $"agent '{targetAgentId}' is currently busy; this catch-time observation does not " +
+                "establish whether it accepted the exchange; retrying once it is idle may succeed"),
             "idle" => (true,
                 $"agent '{targetAgentId}' is registered and idle, so the exchange was cancelled by the " +
                 "target side or the runtime rather than by this call's budget; a retry may succeed"),

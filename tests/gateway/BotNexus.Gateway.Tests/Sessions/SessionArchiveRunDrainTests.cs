@@ -11,8 +11,8 @@ namespace BotNexus.Gateway.Tests;
 
 /// <summary>
 /// Issue #2903: <c>ArchiveAsync</c> used to seal a session while a run could still be writing to
-/// it, and the SQLite implementation's destructive <c>ReplaceHistoryAsync</c> turned that race into
-/// silent turn loss. These tests pin the fence: the drain runs before the seal, it is scoped to the
+/// it, and the former whole-history rewrite turned that race into silent turn loss. These tests pin
+/// the fence: the drain runs before the seal, it is scoped to the
 /// exact session, a drain that times out fails cleanly with nothing written, and <c>DeleteAsync</c>
 /// is left alone.
 /// </summary>
