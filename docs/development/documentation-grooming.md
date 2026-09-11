@@ -43,13 +43,20 @@ silently disarm the gate, so it is gated too.
 | `legacy-marker` | A "legacy" / "deprecated" / "non-functional" / "do not copy" disclosure inside a how-to section must appear **above** the code sample, not below it. | Historical: the `LlmProviderBase` sample in `extension-development.md`, disclosed as non-functional only after the fence (removed in #2862). |
 | docs-vs-source trigger | A PR touching an extension manifest, a provider interface or a controller route must change a `docs/` page or state `no-docs-impact` in the body. | Extension layout drift; `IApiProvider` vs `LlmProviderBase`; `/api/exchanges/budget`. |
 
-The first three rules check page content. The fourth is implemented by the `docs-impact` job
-in the same workflow and the **Documentation impact** item in `.github/pull_request_template.md`.
+The first three rules check page content. The fourth is implemented by the `docs-impact` job in
+its own workflow, `.github/workflows/docs-impact.yml`, and the **Documentation impact** item in
+`.github/pull_request_template.md`.
 
-**Current limit:** the workflow starts for documentation and lint-file changes, not for source-only
-changes. A PR that changes only a controller, provider interface, or extension manifest will not
-start this check. Reviewers must check documentation impact themselves until the workflow trigger
-covers those source paths. The table describes the intended requirement, not complete enforcement.
+It is a separate workflow because the two want opposite triggers. Docs lint runs on
+`paths: docs/**`, deliberately, so a docs-only PR that starts no test workflow is still gated. The
+docs-vs-source trigger needs the complement of that — the source PRs that change no documentation
+at all — so it carries no `paths` filter and exits early when nothing documentation-sensitive was
+touched.
+
+While the two shared a file the fourth rule could only run on PRs that had already changed
+documentation, where its first satisfying branch is "this PR also changes documentation". It was
+green from the day it landed without once being able to fail, which is indistinguishable from a
+working gate.
 
 ### Tuning the rules
 
