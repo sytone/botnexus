@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Agent.Core.Tools;
+using BotNexus.Domain.Primitives;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Gateway.Configuration;
@@ -41,8 +42,16 @@ namespace BotNexus.Gateway.Tools;
 /// The world descriptor also carries derived entries for agent workspaces and internal directories,
 /// which are an implementation detail rather than something to go looking at.
 /// </para>
+/// <para>
+/// <b>Scoped per agent</b> since #3232, via <see cref="LocationAccessPolicy"/>. A location whose
+/// <c>agents</c> list does not admit the caller is filtered out before projection, so it does not
+/// appear and nothing in the result reveals that it was withheld. An absent list means every
+/// agent, which is the default and why this changed nothing on upgrade.
+/// </para>
 /// </remarks>
-public sealed class ListLocationsTool(IOptionsMonitor<PlatformConfig> platformConfig) : IAgentTool
+public sealed class ListLocationsTool(
+    IOptionsMonitor<PlatformConfig> platformConfig,
+    AgentId? agentId = null) : IAgentTool
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -113,6 +122,10 @@ public sealed class ListLocationsTool(IOptionsMonitor<PlatformConfig> platformCo
 
         var entries = (configured ?? [])
             .Where(pair => pair.Value is not null)
+            // #3232: scope BEFORE projecting. A location this agent may not see must not become a
+            // LocationEntry at all, so no later filter can accidentally let one through and no
+            // count of the result reveals that something was withheld.
+            .Where(pair => LocationAccessPolicy.IsVisibleTo(pair.Value, agentId))
             .Select(pair => Project(pair.Key, pair.Value))
             .Where(entry => MatchesType(entry, type))
             .Where(entry => MatchesFilter(entry, filter))

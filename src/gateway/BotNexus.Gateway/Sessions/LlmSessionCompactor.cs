@@ -11,17 +11,18 @@ using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using BotNexus.Gateway.Services;
+
 namespace BotNexus.Gateway.Sessions;
 
 public sealed class LlmSessionCompactor : ISessionCompactor
 {
-    private static readonly string[] DefaultSummaryModelIds =
-    [
-        "gpt-4.1-mini",
-        "gpt-5-mini",
-        "claude-haiku-4.5",
-        "gpt-4.1"
-    ];
+    /// <summary>
+    /// Cheap models to fall back through when no summarisation model is configured. Shared with
+    /// conversation titling via <see cref="BackgroundModelPreferences"/> so the two background
+    /// callers cannot drift into disagreeing about what counts as cheap enough.
+    /// </summary>
+    private static IReadOnlyList<string> DefaultSummaryModelIds => BackgroundModelPreferences.PreferredIds;
 
     private readonly LlmClient _llmClient;
     private readonly ILogger<LlmSessionCompactor> _logger;

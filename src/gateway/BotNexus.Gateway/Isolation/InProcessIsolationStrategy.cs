@@ -336,6 +336,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             descriptor.AgentId,
             cancellationToken).ConfigureAwait(false);
 
+        // The catalogue is final here, and its ORDER is a documented cache invalidator on both
+        // Anthropic and OpenAI: a catalogue that reshuffles between runs re-bills the whole cached
+        // prefix behind it, silently. Logged rather than sorted, because several sources (notably
+        // MCP servers) own their own ordering and the honest first step is evidence, not a guess.
+        _logger.LogInformation(
+            "Tool catalogue for '{AgentId}': count={ToolCount} fingerprint={ToolFingerprint}",
+            descriptor.AgentId,
+            tools.Count,
+            ToolCatalogFingerprint.Compute(tools));
+
         var hookDispatcher = _serviceProvider.GetService<IHookDispatcher>();
         BeforeToolCallDelegate? beforeToolCall = null;
         AfterToolCallDelegate? afterToolCall = null;
@@ -1262,13 +1272,19 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// such as the cron trigger can persist a tool timeline with parity to the interactive streaming path
     /// (issue #2118). Tool calls are surfaced in execution order.
     /// </summary>
-    private static AgentResponse BuildResponse(IReadOnlyList<AgentMessage> messages)
+    internal static AgentResponse BuildResponse(IReadOnlyList<AgentMessage> messages)
     {
         var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
         return new AgentResponse
         {
             Content = lastAssistant?.Content ?? string.Empty,
-            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            Usage = lastAssistant?.Usage is { } u
+                ? new AgentResponseUsage(
+                    InputTokens: u.InputTokens,
+                    OutputTokens: u.OutputTokens,
+                    CacheRead: u.CacheRead,
+                    CacheWrite: u.CacheWrite)
+                : null,
             RunUsage = AggregateRunUsage(messages),
             TurnCount = messages.OfType<AssistantAgentMessage>().Count(),
             ToolCalls = BuildToolCalls(messages, pendingToolCallIds: null),
@@ -1359,7 +1375,13 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         var partial = new AgentResponse
         {
             Content = lastAssistant?.Content ?? string.Empty,
-            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            Usage = lastAssistant?.Usage is { } u
+                ? new AgentResponseUsage(
+                    InputTokens: u.InputTokens,
+                    OutputTokens: u.OutputTokens,
+                    CacheRead: u.CacheRead,
+                    CacheWrite: u.CacheWrite)
+                : null,
             // #2641 AC1: an interrupted run still cost what it cost. Carrying the aggregate out on
             // the partial response is what lets the timeout/abort paths record a real figure
             // instead of leaving the most expensive runs on the platform unmeasured.
