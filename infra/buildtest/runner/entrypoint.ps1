@@ -370,8 +370,12 @@ try {
         # never going to execute; a confident wrong attribution is worse than none.
         $partialTrx = @(Get-ChildItem -Path $resultsRoot -Filter '*.trx' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
         $completedAssemblies = @(Get-CompletedTestAssemblies -TrxPaths $partialTrx)
-        $excluded = if ($mode -eq 'core') { @('BotNexus.Integration.E2E', 'BotNexus.E2E') } else { @() }
-        $unfinished = @(Get-UnfinishedTestProjects -ExpectedProjects (Get-ExpectedTestProjects -TestsRoot (Join-Path $sourceRoot 'tests')) -CompletedAssemblies $completedAssemblies -ExcludedProjects $excluded)
+        $allExpected = @(Get-ExpectedTestProjects -TestsRoot (Join-Path $sourceRoot 'tests'))
+        $expectedForMode = @(Get-ExpectedProjectsForMode `
+            -Mode $mode `
+            -ExpectedProjects $allExpected `
+            -E2EProject ([IO.Path]::GetFileNameWithoutExtension($e2eProject)))
+        $unfinished = @(Get-UnfinishedTestProjects -ExpectedProjects $expectedForMode -CompletedAssemblies $completedAssemblies)
         $timeoutRecord = New-RunnerTimeoutRecord -Phase 'test' -ElapsedSeconds $testStopwatch.Elapsed.TotalSeconds -DeadlineSeconds $testBudgetSeconds -CompletedAssemblies $completedAssemblies -UnfinishedProjects $unfinished
         $exitCode = 1
         throw "Test phase exceeded the runner deadline of $testBudgetSeconds s. $($timeoutRecord.attribution)"

@@ -127,9 +127,29 @@ try {
     # matters is that a gate result can no longer be silently unattributable to a commit.
     try {
         . (Join-Path $PSScriptRoot '..' '..' 'infra' 'buildtest' 'RunnerImageProvenance.ps1')
+        $deployedIdentity = if ($container.image -match '@(?<digest>sha256:[0-9a-f]{64})$') {
+            $Matches.digest
+        }
+        else {
+            ($container.image -split ':')[-1]
+        }
+        $deployedAliases = @()
+        if ($deployedIdentity -like 'sha256:*') {
+            $registryName = ($container.image -split '[./]')[0]
+            $repositoryAndDigest = ($container.image -split '/', 2)[1]
+            $manifest = Invoke-AzJson @(
+                'acr', 'manifest', 'show-metadata',
+                '--registry', $registryName,
+                '--name', $repositoryAndDigest,
+                '--only-show-errors',
+                '-o', 'json')
+            $deployedAliases = @($manifest.tags)
+        }
+
         $provenance = Test-RunnerImageMatchesSources `
             -RunnerPath (Join-Path $PSScriptRoot '..' '..' 'infra' 'buildtest' 'runner') `
-            -DeployedTag ($container.image -split ':')[-1]
+            -DeployedTag $deployedIdentity `
+            -DeployedAliases $deployedAliases
 
         if ($provenance.Verdict -eq 'mismatch') {
             Write-Warning (

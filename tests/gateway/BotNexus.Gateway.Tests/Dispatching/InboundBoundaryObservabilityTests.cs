@@ -326,6 +326,23 @@ public sealed class InboundBoundaryObservabilityTests
     {
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queueDelays = new Queue<TaskCompletionSource<bool>>();
+        var runningCompletionWaits = 0;
+        Task ControlledQueueDelay(TimeSpan _, CancellationToken cancellationToken)
+        {
+            var delay = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            cancellationToken.Register(static state => ((TaskCompletionSource<bool>)state!).TrySetCanceled(), delay);
+            queueDelays.Enqueue(delay);
+            return delay.Task;
+        }
+
+        Task<InboundDispatchResult> ObserveRunningCompletion(
+            Task<InboundDispatchResult> completion,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref runningCompletionWaits);
+            return completion.WaitAsync(cancellationToken);
+        }
 
         var processor = Substitute.For<IInboundMessageProcessor>();
         processor
@@ -340,7 +357,9 @@ public sealed class InboundBoundaryObservabilityTests
         var orchestrator = new DefaultInboundMessageOrchestrator(
             processor,
             new CapturingLogger<DefaultInboundMessageOrchestrator>(),
-            queueWaitTimeout: TimeSpan.FromMilliseconds(100));
+            queueWaitTimeout: TimeSpan.FromMilliseconds(100),
+            queueDelay: ControlledQueueDelay,
+            waitForRunningCompletion: ObserveRunningCompletion);
 
         // Both messages carry the same address and therefore the same isolation key, so the second is
         // genuinely queued behind the first.
@@ -351,21 +370,35 @@ public sealed class InboundBoundaryObservabilityTests
         {
             await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-            // The orchestrator's own bound, observed rather than timed. Stalled is returned ONLY after
+            // The worker is now inside ProcessAsync, so the head's pre-start wait must have observed
+            // Started rather than its timer. Advance the queued-behind message's timer explicitly;
+            // no scheduler delay can cause the head caller to time out before this precondition.
+            var behindTask = orchestrator.AcceptAsync(CreateMessage("addr-long"));
+            queueDelays.Count.ShouldBe(
+                2,
+                $"iteration {iteration}: head and queued-behind accepts must each register one queue delay");
+            var headDelay = queueDelays.Dequeue();
+            await Should.ThrowAsync<TaskCanceledException>(
+                async () => await headDelay.Task.WaitAsync(TimeSpan.FromSeconds(30)),
+                $"iteration {iteration}: observing Started must cancel the head's pre-start delay");
+            queueDelays.Dequeue().TrySetResult(true);
+
+            // The orchestrator's own bound, advanced rather than timed. Stalled is returned ONLY after
             // _queueWaitTimeout has elapsed inside WaitForProcessingStartAsync, so receiving it is
             // proof - on the orchestrator's clock, not the test's - that the #3600 bound has fired
             // while the head turn was still running. The generous WaitAsync here is a deadlock fuse,
             // not the assertion: it can only ever turn a hang into a failure, never a pass into a
             // failure. Task.Delay is banned in tests by TestDelayFlakeFenceTests.
-            var behind = await orchestrator
-                .AcceptAsync(CreateMessage("addr-long"))
-                .WaitAsync(TimeSpan.FromSeconds(30));
+            var behind = await behindTask.WaitAsync(TimeSpan.FromSeconds(30));
 
             behind.Status.ShouldBe(
                 InboundDispatchStatus.Stalled,
                 $"iteration {iteration}: the message queued behind a running turn must hit the #3600 " +
                 "queue-wait bound, which is what makes this a proof that the bound has elapsed");
 
+            Volatile.Read(ref runningCompletionWaits).ShouldBe(
+                1,
+                $"iteration {iteration}: the head must reach the unbounded post-Started completion wait exactly once");
             accept.IsCompleted.ShouldBeFalse(
                 $"iteration {iteration}: the #3600 bound has demonstrably elapsed (the message behind " +
                 "this one was just reported Stalled) and yet it must not truncate a turn that is " +

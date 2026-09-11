@@ -100,10 +100,15 @@ function Get-DeployedRunnerTag {
 function Test-RunnerImageMatchesSources {
     <#
     .SYNOPSIS
-        Compares the deployed tag with the tag current sources derive to.
+        Compares the deployed image identity with the tag current sources derive to.
     .OUTPUTS
-        A record carrying both tags and a verdict: 'match', 'mismatch', or 'unknown'.
+        A record carrying the expected tag, deployed identity, and a verdict: 'match', 'mismatch',
+        or 'unknown'.
     .DESCRIPTION
+        Azure Container Apps may normalise a tag-based image reference to its immutable digest. In
+        that case callers resolve the digest's ACR tags and supply them as DeployedAliases; matching
+        the source tag there is the same image, not drift.
+
         'unknown' is a distinct outcome from 'mismatch' and is NOT a failure. A developer with no
         Azure credentials cannot read the job, and turning that into a red check would make the guard
         unusable for everyone who is not an operator - which is how guards get bypassed.
@@ -111,7 +116,8 @@ function Test-RunnerImageMatchesSources {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $RunnerPath,
-        [string] $DeployedTag
+        [string] $DeployedTag,
+        [AllowEmptyCollection()][string[]] $DeployedAliases = @()
     )
 
     $expected = Get-RunnerContentTag -RunnerPath $RunnerPath
@@ -120,9 +126,10 @@ function Test-RunnerImageMatchesSources {
         return [pscustomobject]@{ Expected = $expected; Deployed = $null; Verdict = 'unknown' }
     }
 
+    $identities = @($DeployedTag) + @($DeployedAliases | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     return [pscustomobject]@{
         Expected = $expected
         Deployed = $DeployedTag
-        Verdict  = $(if ($DeployedTag -eq $expected) { 'match' } else { 'mismatch' })
+        Verdict  = $(if ($identities -contains $expected) { 'match' } else { 'mismatch' })
     }
 }
