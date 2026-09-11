@@ -135,6 +135,20 @@ public sealed record AgentDescriptor : ICitizen
     public IReadOnlyList<string> ToolIds { get; init; } = [];
 
     /// <summary>
+    /// Whether this agent's tool policy permits either delegation mechanism.
+    /// </summary>
+    /// <remarks>
+    /// An empty list is unrestricted and a lone <c>*</c> is its configured alias. Restricted
+    /// agents delegate only when granted <c>spawn_subagent</c> or <c>agent_converse</c>.
+    /// Runtime availability and target authorization remain separate gates.
+    /// </remarks>
+    public bool CanDelegate =>
+        ToolIds.Count == 0
+        || (ToolIds.Count == 1 && ToolIds[0] == "*")
+        || ToolIds.Contains("spawn_subagent", StringComparer.OrdinalIgnoreCase)
+        || ToolIds.Contains("agent_converse", StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Model IDs this agent is allowed to use. Empty means unrestricted within provider allowlist.
     /// </summary>
     public IReadOnlyList<string> AllowedModelIds { get; init; } = [];

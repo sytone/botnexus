@@ -15,6 +15,7 @@
 @inject ConversationSectionsState SectionsState
 @inject ToolsApiClient ToolsApi
 @inject NavOrderApiClient NavOrderApi
+@inject IServiceProvider Services
 @implements IDisposable
 @implements IAsyncDisposable
 
@@ -92,9 +93,9 @@
                by a single ordering model: every built-in item has a default order number and the
                user can override any of them; overrides persist server-side and roam with the user. *@
             <nav class="sidebar-nav">
-                @foreach (var key in OrderedNavKeys())
+                @foreach (var entry in OrderedNavEntries())
                 {
-                    @RenderNavSection(key)
+                    @RenderNavEntry(entry)
                 }
             </nav>
 
@@ -219,6 +220,12 @@
     // Populated from GET /api/nav-order; on any failure it falls back to the built-in defaults so
     // the nav always renders in a sensible, consistent order.
     private IReadOnlyList<string> _navOrder = NavOrderKeys.DefaultOrder;
+    private IReadOnlyDictionary<string, int> _navOrderNumbers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<NavContributionDto> _navContributions = [];
+
+    // Resolved once rather than per load: the sidebar subscribes to it, and resolving a different
+    // instance later would leave the subscription attached to an object nothing raises.
+    private PluginsApiClient? _pluginsApi;
 
     private record Announcement(string Id, string Text, string Type = "info");
     private record SidebarAgentItem(string AgentId, string DisplayLabel);
@@ -772,6 +779,12 @@
         Store.OnChanged += HandleStateChanged;
         Nav.LocationChanged += OnLocationChanged;
         ToolsApi.Changed += HandleToolsChanged;
+
+        // Optional, for the same reason it is resolved rather than injected: the sidebar must
+        // render where the plugins client is absent.
+        _pluginsApi = Services.GetService(typeof(PluginsApiClient)) as PluginsApiClient;
+        if (_pluginsApi is not null)
+            _pluginsApi.Changed += HandlePluginsChanged;
         PortalLoad.OnReadyChanged += HandleReadyChanged;
         // #2624: the terminal-close re-dial loop raises this so the indicator can show
         // "Reconnecting" during a gateway restart instead of a terminal "Disconnected".
@@ -1486,6 +1499,8 @@
         Store.OnChanged -= HandleStateChanged;
         Nav.LocationChanged -= OnLocationChanged;
         ToolsApi.Changed -= HandleToolsChanged;
+        if (_pluginsApi is not null)
+            _pluginsApi.Changed -= HandlePluginsChanged;
         PortalLoad.OnReadyChanged -= HandleReadyChanged;
         PortalLoad.OnConnectionStateChanged -= HandleStateChanged;
         UpdateStatus.StatusChanged -= HandleStateChanged;
@@ -1552,7 +1567,134 @@
                 .OrderBy(i => i.Order)
                 .Select(i => i.Key)
                 .ToList();
+
+            // The NUMBERS are kept, not just the resulting sequence: a contributed entry declares
+            // an order on the same scale, and slotting it between two built-ins is impossible from
+            // a bare list of keys.
+            _navOrderNumbers = items.ToDictionary(i => i.Key, i => i.Order, StringComparer.OrdinalIgnoreCase);
         }
+
+        var contributions = await NavOrderApi.ListContributionsAsync();
+
+        // A plugin can hide its own contributed entries. The gateway does not filter them, because
+        // the nav endpoint reads loaded EXTENSIONS and knows nothing about which plugin installed
+        // which - the ownership link lives on the plugin record, so the join happens here.
+        _navContributions = FilterHidden(contributions, await HiddenExtensionIdsAsync());
+    }
+
+    /// <summary>
+    /// Re-reads contributed nav entries and the hidden set, without touching the built-in order.
+    /// </summary>
+    private async Task LoadNavContributionsAsync()
+    {
+        var contributions = await NavOrderApi.ListContributionsAsync();
+        _navContributions = FilterHidden(contributions, await HiddenExtensionIdsAsync());
+    }
+
+    // The gateway's nav endpoint reads loaded EXTENSIONS and knows nothing about which plugin
+    // installed which, so the ownership join happens here.
+    private async Task<HashSet<string>> HiddenExtensionIdsAsync()
+    {
+        if (_pluginsApi is null)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return (await _pluginsApi.ListAsync())
+            .Where(p => p.NavHidden && !string.IsNullOrWhiteSpace(p.DeployedExtensionId))
+            .Select(p => p.DeployedExtensionId!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyList<NavContributionDto> FilterHidden(
+        IReadOnlyList<NavContributionDto> contributions,
+        HashSet<string> hidden) =>
+        hidden.Count == 0
+            ? contributions
+            : contributions.Where(c => !hidden.Contains(c.ExtensionId)).ToList();
+
+    /// <summary>
+    /// The sidebar's render list: built-in sections merged with extension-contributed entries by
+    /// effective order.
+    /// </summary>
+    /// <remarks>
+    /// Built-ins fall back to their position scaled by ten when the server did not supply numbers,
+    /// which matches the gap-of-ten scale the nav-order defaults use, so a contribution declaring
+    /// 65 lands between Agents and Cron either way. A contribution tying with a built-in renders
+    /// after it: a built-in the user can reorder should not be displaced by a third party.
+    /// </remarks>
+    private IReadOnlyList<NavRenderEntry> OrderedNavEntries()
+    {
+        var builtIns = OrderedNavKeys().ToList();
+        if (_navContributions.Count == 0)
+        {
+            return builtIns.Select(k => new NavRenderEntry(k, null)).ToList();
+        }
+
+        var ranked = new List<(int Order, int Tie, NavRenderEntry Entry)>(builtIns.Count + _navContributions.Count);
+        for (var i = 0; i < builtIns.Count; i++)
+        {
+            var order = _navOrderNumbers.TryGetValue(builtIns[i], out var known) ? known : (i + 1) * 10;
+            ranked.Add((order, 0, new NavRenderEntry(builtIns[i], null)));
+        }
+
+        foreach (var contribution in _navContributions)
+        {
+            ranked.Add((contribution.Order, 1, new NavRenderEntry(contribution.Id, contribution)));
+        }
+
+        return ranked
+            .OrderBy(r => r.Order)
+            .ThenBy(r => r.Tie)
+            .Select(r => r.Entry)
+            .ToList();
+    }
+
+    /// <summary>One sidebar row: either a built-in section or a contributed entry.</summary>
+    private sealed record NavRenderEntry(string Key, NavContributionDto? Contribution);
+
+    private RenderFragment RenderNavEntry(NavRenderEntry entry) =>
+        entry.Contribution is { } contribution
+            ? RenderContributedNav(contribution)
+            : RenderNavSection(entry.Key);
+
+    // A contributed path is served by an extension, not by the Blazor router, so an external entry
+    // forces a full navigation rather than letting the client router turn it into a 404. The icon
+    // is a NAME resolved against the portal's own set, never markup: an unknown name falls back
+    // instead of leaving a gap, and an extension can never inject SVG into the portal DOM.
+    private RenderFragment RenderContributedNav(NavContributionDto contribution) => __builder =>
+    {
+        <a href="@ContributionHref(contribution)"
+           class="sidebar-nav-item"
+           data-testid="@("nav-" + contribution.Id)"
+           data-nav-contributed-by="@contribution.ExtensionId"
+           data-nav-embedded="@((!contribution.FullPage).ToString().ToLowerInvariant())"
+           @onclick:preventDefault="true"
+           @onclick="() => NavigateToContribution(contribution)">
+            <Icon Name="@ResolveContributedIcon(contribution.Icon)" /><span class="sidebar-nav-label">@contribution.Label</span>
+        </a>
+    };
+
+    // An embedded view is reached through a PORTAL route that frames it, so the sidebar, header
+    // and theme stay put. Navigating straight at the extension's own path replaces the window and
+    // reads as leaving the app; that is now opt-in via fullPage.
+    private static string ContributionHref(NavContributionDto contribution) =>
+        contribution.FullPage ? contribution.Path : $"extension/{contribution.Id}";
+
+    private static string ResolveContributedIcon(string? icon) =>
+        !string.IsNullOrWhiteSpace(icon) && IconLibrary.Icons.ContainsKey(icon)
+            ? icon
+            : "plugins";
+
+    private void NavigateToContribution(NavContributionDto contribution)
+    {
+        if (_isMobile)
+            _sidebarOpen = false;
+
+        // forceLoad ONLY for a full-page view. The embedded route is an ordinary Blazor route, so
+        // a client-side navigation keeps the portal loaded rather than reloading the whole app.
+        if (contribution.FullPage)
+            Nav.NavigateTo(contribution.Path, forceLoad: true);
+        else
+            Nav.NavigateTo($"extension/{contribution.Id}");
     }
 
     // The management UI (#2235) mutates tools through the same ToolsApiClient the nav reads from,
@@ -1561,6 +1703,15 @@
     private void HandleToolsChanged() => _ = InvokeAsync(async () =>
     {
         await LoadToolsAsync();
+        StateHasChanged();
+    });
+
+    // Hiding or showing a plugin's menu entry repaints the sidebar immediately. Only the
+    // contributions are re-read; the built-in order has not moved and refetching it would make a
+    // menu toggle cost two requests to answer a question about one.
+    private void HandlePluginsChanged() => _ = InvokeAsync(async () =>
+    {
+        await LoadNavContributionsAsync();
         StateHasChanged();
     });
 

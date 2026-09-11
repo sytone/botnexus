@@ -11,6 +11,58 @@ internal static class TestAwait
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromMilliseconds(50);
 
     /// <summary>
+    /// Waits for a fixture or production callback to raise a signal under the shared generous
+    /// deadline. Only a deadline expiry is rewritten; exceptions produced by the signal itself
+    /// retain their original type and diagnostic.
+    /// </summary>
+    public static async Task SignaledAsync(
+        Task signal,
+        string description,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(signal);
+        ArgumentException.ThrowIfNullOrWhiteSpace(description);
+
+        var window = timeout ?? DefaultTimeout;
+        try
+        {
+            await signal.WaitAsync(window, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException) when (!signal.IsCompleted)
+        {
+            throw new TimeoutException(
+                $"Timed out after {window.TotalSeconds:0.###}s waiting for {description}. The signal was " +
+                "never raised, so the code under test did not reach the point that raises it.");
+        }
+    }
+
+    /// <summary>
+    /// Waits for a value-carrying signal under the shared generous deadline.
+    /// </summary>
+    public static async Task<T> SignaledAsync<T>(
+        Task<T> signal,
+        string description,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(signal);
+        ArgumentException.ThrowIfNullOrWhiteSpace(description);
+
+        var window = timeout ?? DefaultTimeout;
+        try
+        {
+            return await signal.WaitAsync(window, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException) when (!signal.IsCompleted)
+        {
+            throw new TimeoutException(
+                $"Timed out after {window.TotalSeconds:0.###}s waiting for {description}. The signal was " +
+                "never raised, so the code under test did not reach the point that raises it.");
+        }
+    }
+
+    /// <summary>
     /// Waits until a synchronous observable condition becomes true, preserving caller cancellation
     /// and reporting the unmet condition when the observation window expires.
     /// </summary>

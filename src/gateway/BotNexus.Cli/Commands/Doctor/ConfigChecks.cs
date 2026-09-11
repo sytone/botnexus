@@ -244,3 +244,82 @@ public sealed class MemoryAgentDefaultCheck : IConfigCheck
             .Set("indexing", "auto"));
     }
 }
+
+/// <summary>
+/// Reports a tool-output backstop set far enough above the compaction bloat threshold that a
+/// single tool result can pass the backstop and then, on its own, force a compaction.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Two settings, chosen independently, that only make sense read together.
+/// <c>gateway.toolOutputBudget.maxBytes</c> bounds one tool result (256 KiB by default, chosen to
+/// sit above every first-party per-tool cap so the backstop never retunes one).
+/// <c>gateway.compaction.largestEntryBytesThreshold</c> declares a single entry to be dead weight
+/// worth compacting (64 KiB by default).
+/// </para>
+/// <para>
+/// A result landing between the two is billed in full at the uncached rate, then immediately makes
+/// the session eligible for compaction -- which costs a summarisation call and resets the prompt
+/// cache for everything behind it. Paying three times to carry something the next step throws away.
+/// </para>
+/// <para>
+/// The fix aligns the backstop down rather than raising the bloat threshold, because truncation is
+/// recoverable -- the model pages the rest back through <c>tool_output_continue</c> -- whereas a
+/// bloat trigger raised past the backstop can no longer fire on a single entry at all. It is a
+/// recommendation, applied only by <c>doctor config --fix</c>: an agent that leans on large shell
+/// output may legitimately want the opposite direction, and that is an operator's call.
+/// </para>
+/// </remarks>
+[DoctorCheck(Id = "tool-output-budget-vs-compaction", Suite = DoctorSuite.Config, Order = 7)]
+public sealed class ToolOutputBudgetCompactionCoherenceCheck : IConfigCheck
+{
+    internal const string BackstopEnabledPath = "gateway.toolOutputBudget.enabled";
+    internal const string BackstopMaxBytesPath = "gateway.toolOutputBudget.maxBytes";
+    internal const string BloatThresholdPath = "gateway.compaction.largestEntryBytesThreshold";
+
+    /// <summary>Platform default for the central tool-output backstop (256 KiB).</summary>
+    internal const int DefaultBackstopBytes = 256 * 1024;
+
+    /// <summary>Platform default for the per-entry compaction bloat trigger (64 KiB).</summary>
+    internal const int DefaultBloatThresholdBytes = 64 * 1024;
+
+    public string Id => "tool-output-budget-vs-compaction";
+
+    public string Description =>
+        "gateway.toolOutputBudget.maxBytes sits above gateway.compaction.largestEntryBytesThreshold — " +
+        "a tool result between the two is paid for in full and then forces a compaction on its own.";
+
+    public string FixDescription =>
+        "Lower gateway.toolOutputBudget.maxBytes to gateway.compaction.largestEntryBytesThreshold " +
+        "(truncation stays recoverable through tool_output_continue)";
+
+    public bool IsApplicable(ConfigDocument config)
+    {
+        // A disabled backstop is a deliberate opt-out of bounding tool output at all. Reporting a
+        // band inside a bound the operator has switched off would be noise.
+        if (config.GetBool(BackstopEnabledPath) is false)
+            return false;
+
+        var backstop = config.GetInt(BackstopMaxBytesPath) ?? DefaultBackstopBytes;
+
+        // Zero or less disables the backstop even when Enabled is true, matching
+        // ToolOutputBudgetConfig's documented convention.
+        if (backstop <= 0)
+            return false;
+
+        var bloatThreshold = config.GetInt(BloatThresholdPath) ?? DefaultBloatThresholdBytes;
+
+        // A non-positive threshold means the byte-based compaction trigger is switched off, so
+        // there is no band and nothing to report.
+        if (bloatThreshold <= 0)
+            return false;
+
+        return backstop > bloatThreshold;
+    }
+
+    public void Apply(ConfigDocument config)
+    {
+        var bloatThreshold = config.GetInt(BloatThresholdPath) ?? DefaultBloatThresholdBytes;
+        config.Set(BackstopMaxBytesPath, bloatThreshold);
+    }
+}

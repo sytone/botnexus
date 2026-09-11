@@ -5,7 +5,8 @@
 
 @if (_show)
 {
-    <div class="usage-overlay" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
+    <div class="usage-overlay" @ref="_overlayRef"
+         @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
         <div class="usage-panel material-overlay" role="dialog" aria-modal="true"
              aria-labelledby="usage-title" data-testid="provider-usage-panel" @onclick:stopPropagation="true">
 
@@ -136,11 +137,14 @@
     private List<ProviderUsage> _providers = [];
     private ProviderUsage? _current;
     private Timer? _poll;
+    private ElementReference _overlayRef;
+    private bool _focusOverlay;
 
     /// <summary>Opens the panel and starts polling.</summary>
     public async Task OpenAsync()
     {
         _show = true;
+        _focusOverlay = true;
         StateHasChanged();
         await RefreshAsync();
         // Only while open. Polling a closed panel would burn a request every few seconds for a
@@ -162,6 +166,23 @@
     private void HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
     {
         if (e.Key == "Escape") Close();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusOverlay || !_show)
+            return;
+
+        _focusOverlay = false;
+        try
+        {
+            await _overlayRef.FocusAsync();
+        }
+        catch
+        {
+            // Focus is an accessibility convenience; a disappearing element or unavailable JS
+            // must not turn opening the usage panel into an application error.
+        }
     }
 
     private async Task RefreshAsync()

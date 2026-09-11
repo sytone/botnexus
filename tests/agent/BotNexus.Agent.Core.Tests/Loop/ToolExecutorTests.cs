@@ -413,7 +413,7 @@ public class ToolExecutorTests
         var starts = events.OfType<ToolExecutionStartEvent>().ToDictionary(evt => evt.ToolCallId, evt => events.IndexOf(evt));
         var ends = events.OfType<ToolExecutionEndEvent>().ToDictionary(evt => evt.ToolCallId, evt => events.IndexOf(evt));
 
-        starts.Keys.ShouldBe(ends.Keys);
+        starts.Keys.OrderBy(static key => key).ShouldBe(ends.Keys.OrderBy(static key => key));
         foreach (var toolCallId in starts.Keys)
         {
             starts[toolCallId].ShouldBeLessThan(ends[toolCallId]);

@@ -48,6 +48,12 @@ public static class ProviderTokenUsageRecorder
     {
         ArgumentNullException.ThrowIfNull(session);
 
+        // Cache accounting runs on the same choke point and for the same reason this type exists:
+        // it is the one place a completed turn's usage and a writable session are both in hand.
+        // Accumulated before the prompt-token guard below so a turn is counted even in the case
+        // that guard rejects, which keeps the session totals a true record of what was billed.
+        PromptCacheEfficiency.Accumulate(session, usage);
+
         var promptTokens = ResolvePromptTokens(usage);
         if (promptTokens is not > 0)
         {

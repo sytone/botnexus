@@ -357,3 +357,11 @@ If the catalog cannot be written, the install does **not** fail: the content is 
 reporting a failed install the caller could act on destructively is worse than an unverifiable
 plugin. Failing open here hands out no trust, because a missing catalog is itself a refusal under
 `Enforce`.
+
+---
+
+## The HTTP surface
+
+The routes these components sit behind — `/api/plugins` and `/api/plugins/sources`, their request
+bodies, status codes and the wire form of `trustState` and `updateState` — are documented in the
+[Plugins API reference](../api/plugins.md).

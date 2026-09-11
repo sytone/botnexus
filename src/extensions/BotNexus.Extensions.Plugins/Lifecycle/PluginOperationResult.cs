@@ -92,4 +92,17 @@ public sealed record PluginInstallRequest
     /// is opt-in, per the settled decision in #2623.
     /// </summary>
     public bool UpdatesEnabled { get; init; } = true;
+
+    /// <summary>
+    /// Whether the caller has accepted that this plugin may carry a gateway extension - code that
+    /// runs in-process, at full trust, with no sandbox.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <c>false</c>, so carrying code is opt-in at the call site. A skill is prompt
+    /// content; a carried extension is an assembly the gateway loads. Whether a source carries one
+    /// is only knowable AFTER it is fetched and its manifest parsed, so consent cannot be resolved
+    /// from the URL alone: install refuses a carried extension it was not told to expect, and the
+    /// caller re-issues having been told what it would be agreeing to.
+    /// </remarks>
+    public bool AllowCarriedExtension { get; init; }
 }

@@ -16,6 +16,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when the hub sends the initial <c>Connected</c> payload.</summary>
     public event Action<ConnectedPayload>? OnConnected;
 
+    /// <summary>Raised when the gateway pushes a new notification.</summary>
+    public event Action<NotificationRaisedPayload>? OnNotificationRaised;
+
     /// <summary>Raised when a session is reset server-side.</summary>
     public event Action<SessionResetPayload>? OnSessionReset;
 
@@ -105,6 +108,14 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// </summary>
     internal void RaiseOnDisconnectedForTest() => OnDisconnected?.Invoke();
 
+    /// <summary>
+    /// Test seam: raises <see cref="OnNotificationRaised"/> without a live transport, so what the
+    /// portal does with a push - badge, list, desktop toast - can be asserted without a gateway
+    /// pushing one. Internal -- not part of the client surface.
+    /// </summary>
+    internal void RaiseNotificationForTest(NotificationRaisedPayload payload) =>
+        OnNotificationRaised?.Invoke(payload);
+
     // ── State ───────────────────────────────────────────────────────────
 
     /// <summary>Whether the hub connection is currently in the <c>Connected</c> state.</summary>
@@ -160,6 +171,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
 
         // Register server → client event handlers matching IGatewayHubClient
         _connection.On<ConnectedPayload>("Connected", p => OnConnected?.Invoke(p));
+        // The payload carries the whole notification, so a client can render it without a fetch.
+        // The store stays authoritative for anything a disconnected client missed.
+        _connection.On<NotificationRaisedPayload>("NotificationRaised", p => OnNotificationRaised?.Invoke(p));
         _connection.On<SessionResetPayload>("SessionReset", p => OnSessionReset?.Invoke(p));
         _connection.On<AgentStreamEvent>("RunStarted", e => OnRunStarted?.Invoke(e));
         _connection.On<AgentStreamEvent>("MessageStart", e => OnMessageStart?.Invoke(e));
