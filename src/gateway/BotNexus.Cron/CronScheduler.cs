@@ -1835,10 +1835,10 @@ public sealed class CronScheduler(
     ///   <item>An active conversation titled <c>cron:&lt;jobId&gt;</c>.</item>
     ///   <item>An active conversation whose title matches the job's display name.</item>
     /// </list>
-    /// Any chosen conversation is pinned onto the job via CAS. Sessions whose
-    /// <see cref="SessionId"/> begins with <c>cron:</c> for this agent are rebound onto the
-    /// canonical conversation (skipping the canonical itself), and duplicate cron
-    /// conversations are archived.
+    /// Any chosen conversation is pinned onto the job via CAS. Sessions owned by this agent whose
+    /// <see cref="SessionId"/> begins with the exact <c>cron:{sanitizedJobId}:</c> prefix are
+    /// rebound onto the canonical conversation through the store's narrow metadata operation,
+    /// and duplicate cron conversations are archived.
     /// </summary>
     /// <remarks>
     /// Guarded by <see cref="_migrationRan"/> so it runs at most once per process. Idempotent.
@@ -1865,7 +1865,7 @@ public sealed class CronScheduler(
 
         foreach (var job in jobs)
         {
-            if (ct.IsCancellationRequested) break;
+            ct.ThrowIfCancellationRequested();
             if (job.AgentId is not { } agentId) continue;
 
             try
@@ -1945,29 +1945,13 @@ public sealed class CronScheduler(
         if (!job.ConversationId.HasValue || job.ConversationId.Value != canonical.ConversationId)
             await _cronStore.TrySetConversationIdAsync(job.Id, canonical.ConversationId, ct).ConfigureAwait(false);
 
-        // Rebind every cron:* session of this agent that points at any conversation other than canonical.
-        // Per blocker B4: scan by SessionId.StartsWith("cron:") regardless of current ConversationId,
-        // so we handle sessions that P9-B-2 backfill already bound to a per-agent legacy:* conversation.
-        var allSessions = await sessions.ListAsync(agentId, ct).ConfigureAwait(false);
+        // Match this job only. Sessions without the job slug (legacy `cron:{ts}:{guid}`) cannot
+        // be safely attributed. The store filters agent ownership and exact prefix before SQLite
+        // materializes any aggregate or transcript history.
         var jobIdSlug = Sanitize(job.Id.Value);
-        var reboundCount = 0;
-        foreach (var session in allSessions)
-        {
-            if (!session.SessionId.Value.StartsWith("cron:", StringComparison.Ordinal))
-                continue;
-
-            // Match this job only — sessions encode jobId as `cron:{jobIdSlug}:...`. Sessions without
-            // a jobId slug (legacy `cron:{ts}:{guid}`) cannot be safely attributed, so we skip them.
-            if (!session.SessionId.Value.StartsWith($"cron:{jobIdSlug}:", StringComparison.Ordinal))
-                continue;
-
-            if (session.ConversationId.IsInitialized() && session.ConversationId == canonical.ConversationId)
-                continue;
-
-            session.ConversationId = canonical.ConversationId;
-            await sessions.SaveAsync(session, ct).ConfigureAwait(false);
-            reboundCount++;
-        }
+        var sessionIdPrefix = $"cron:{jobIdSlug}:";
+        var reboundCount = await sessions.RebindSessionsAsync(
+            agentId, sessionIdPrefix, canonical.ConversationId, ct).ConfigureAwait(false);
 
         // Archive duplicate cron conversations for this agent that share the canonical title.
         var archivedCount = 0;
