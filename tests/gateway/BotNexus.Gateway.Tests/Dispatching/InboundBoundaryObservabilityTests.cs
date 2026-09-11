@@ -396,6 +396,16 @@ public sealed class InboundBoundaryObservabilityTests
                 $"iteration {iteration}: the message queued behind a running turn must hit the #3600 " +
                 "queue-wait bound, which is what makes this a proof that the bound has elapsed");
 
+            await Should.NotThrowAsync(
+                async () => await Task.Run(
+                    async () =>
+                    {
+                        while (Volatile.Read(ref runningCompletionWaits) == 0)
+                        {
+                            await Task.Yield();
+                        }
+                    }).WaitAsync(TimeSpan.FromSeconds(30)),
+                $"iteration {iteration}: the head must reach the unbounded post-Started completion wait");
             Volatile.Read(ref runningCompletionWaits).ShouldBe(
                 1,
                 $"iteration {iteration}: the head must reach the unbounded post-Started completion wait exactly once");
