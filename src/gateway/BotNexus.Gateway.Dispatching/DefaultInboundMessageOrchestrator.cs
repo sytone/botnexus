@@ -100,6 +100,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     private readonly IInboundSteerDeliverer? _steerDeliverer;
     private readonly int _queueCapacity;
     private readonly TimeSpan _queueWaitTimeout;
+    private readonly Func<TimeSpan, CancellationToken, Task> _queueDelay;
+    private readonly Func<Task<InboundDispatchResult>, CancellationToken, Task<InboundDispatchResult>> _waitForRunningCompletion;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -125,7 +127,9 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         int queueCapacity = DefaultQueueCapacity,
         IInboundDeliveryResolver? deliveryResolver = null,
         IInboundSteerDeliverer? steerDeliverer = null,
-        TimeSpan? queueWaitTimeout = null)
+        TimeSpan? queueWaitTimeout = null,
+        Func<TimeSpan, CancellationToken, Task>? queueDelay = null,
+        Func<Task<InboundDispatchResult>, CancellationToken, Task<InboundDispatchResult>>? waitForRunningCompletion = null)
     {
         ArgumentNullException.ThrowIfNull(processor);
         ArgumentNullException.ThrowIfNull(logger);
@@ -146,6 +150,9 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 "Queue wait timeout must be positive.");
         }
         _queueWaitTimeout = queueWaitTimeout ?? DefaultQueueWaitTimeout;
+        _queueDelay = queueDelay ?? Task.Delay;
+        _waitForRunningCompletion = waitForRunningCompletion ??
+            ((completion, cancellationToken) => completion.WaitAsync(cancellationToken));
     }
 
     /// <summary>
@@ -353,7 +360,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
 
         try
         {
-            return await queueItem.Completion.Task.WaitAsync(cancellationToken);
+            return await _waitForRunningCompletion(queueItem.Completion.Task, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -389,7 +396,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         }
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var delay = Task.Delay(_queueWaitTimeout, timeoutCts.Token);
+        var delay = _queueDelay(_queueWaitTimeout, timeoutCts.Token);
         var winner = await Task.WhenAny(started, completed, delay);
         if (winner != delay)
         {

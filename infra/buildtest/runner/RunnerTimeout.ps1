@@ -144,6 +144,33 @@ function Get-ExpectedTestProjects {
     are not reported as unfinished. Reporting a project the run never intended to execute
     would be a false accusation, and a wrong attribution is worse than none.
 #>
+function Get-ExpectedProjectsForMode {
+    <#
+    .SYNOPSIS
+        Narrows the repository-wide test-project inventory to the projects a runner mode starts.
+    .DESCRIPTION
+        Timeout attribution must use the selected command's candidate set. A single-project
+        playwright run that has not closed its TRX otherwise appears to leave every repository test
+        project unfinished, which is confident but false attribution.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Mode,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]] $ExpectedProjects,
+        [Parameter(Mandatory)][string] $E2EProject
+    )
+
+    switch ($Mode) {
+        'playwright' { return @($ExpectedProjects | Where-Object { $_ -eq $E2EProject }) }
+        'core' {
+            return @($ExpectedProjects | Where-Object {
+                $_ -notlike '*BotNexus.Integration.E2E*' -and $_ -notlike '*BotNexus.E2E*'
+            })
+        }
+        default { return @($ExpectedProjects) }
+    }
+}
+
 function Get-UnfinishedTestProjects {
     [CmdletBinding()]
     param(

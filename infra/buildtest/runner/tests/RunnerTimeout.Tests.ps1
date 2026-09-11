@@ -158,6 +158,27 @@ Assert-Equal 0 @(Get-UnfinishedTestProjects -ExpectedProjects $expected -Complet
 #     not manufacture a phantom unfinished project.
 Assert-Equal 0 @(Get-UnfinishedTestProjects -ExpectedProjects @('BotNexus.Gateway.Tests') -CompletedAssemblies @('botnexus.gateway.tests')).Count '13: casing produced a phantom unfinished project.'
 
+# 13b. A single-project mode must name only that project when it has not emitted a TRX. The
+#      playwright lane used the repository-wide expected set and falsely accused every test project
+#      when its one E2E process timed out before closing the TRX.
+$playwrightExpected = @(Get-ExpectedProjectsForMode `
+    -Mode 'playwright' `
+    -ExpectedProjects $expected `
+    -E2EProject 'BotNexus.Integration.E2E.Tests')
+Assert-Equal 1 $playwrightExpected.Count `
+    "13b: playwright expected set is not singular: $($playwrightExpected -join ',')"
+Assert-Equal 'BotNexus.Integration.E2E.Tests' $playwrightExpected[0] `
+    '13b: playwright mode selected the wrong expected project.'
+
+# 13c. Core still expects the non-E2E set. This negative control stops the mode helper from making
+#      every timeout look like playwright merely to satisfy 13b.
+$coreExpected = @(Get-ExpectedProjectsForMode `
+    -Mode 'core' `
+    -ExpectedProjects $expected `
+    -E2EProject 'BotNexus.Integration.E2E.Tests')
+Assert-Equal 1 $coreExpected.Count "13c: core expected set is wrong: $($coreExpected -join ',')"
+Assert-Equal 'BotNexus.Gateway.Tests' $coreExpected[0] '13c: core retained an excluded E2E project.'
+
 # --- New-RunnerTimeoutRecord ---------------------------------------------------------------
 
 $record = New-RunnerTimeoutRecord -Phase 'test' -ElapsedSeconds 1110.4 -DeadlineSeconds 1110 -UnfinishedProjects @('BotNexus.Integration.E2E.Tests') -CompletedAssemblies @('BotNexus.Gateway.Tests')
