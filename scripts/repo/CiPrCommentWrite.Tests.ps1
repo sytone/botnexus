@@ -128,7 +128,7 @@ exit 0
             [Parameter(Mandatory)][string]$Mode,
             [int]$PR = 9001,
             [string]$ScriptPath = $script:ScriptPath,
-            [string]$ActionsLiteral = "@('none')",
+            [string[]]$Actions = @('none'),
             [switch]$KeepStubDir
         )
         $stub    = New-GhStubDir -Mode $Mode
@@ -141,7 +141,7 @@ exit 0
             # script through -Command instead. `& script` sets $LASTEXITCODE
             # from the script's `exit`, so re-exiting with it reproduces the
             # exit-code propagation a real `pwsh -File` caller sees.
-            $psi.Arguments = "-NoProfile -Command `"& { `$rows = @([pscustomobject]@{name='core-tests';status='pass'}); & '$ScriptPath' -PR $PR -CheckRows `$rows -BehindBy 0 -Mergeable MERGEABLE -Actions $ActionsLiteral -Blockers @('None') }; exit `$LASTEXITCODE`""
+            $psi.Arguments = "-NoProfile -Command `"& { `$rows = @([pscustomobject]@{name='core-tests';status='pass'}); `$actions = @(ConvertFrom-Json `$env:CI_PR_COMMENT_STUB_ACTIONS); & '$ScriptPath' -PR $PR -CheckRows `$rows -BehindBy 0 -Mergeable MERGEABLE -Actions `$actions -Blockers @('None') }; exit `$LASTEXITCODE`""
             $psi.RedirectStandardOutput = $true
             $psi.RedirectStandardError  = $true
             $psi.UseShellExecute        = $false
@@ -149,6 +149,7 @@ exit 0
             $psi.Environment['CI_PR_COMMENT_STUB_MODE']  = $Mode
             $psi.Environment['CI_PR_COMMENT_STUB_PR']    = "$PR"
             $psi.Environment['CI_PR_COMMENT_STUB_DIR']   = $stub.Dir
+            $psi.Environment['CI_PR_COMMENT_STUB_ACTIONS'] = ConvertTo-Json -Compress -InputObject @($Actions)
 
             $p = [Diagnostics.Process]::Start($psi)
             $stdout = $p.StandardOutput.ReadToEnd()
@@ -228,8 +229,12 @@ Describe 'create path passes a multi-line body as a file, not an inline argument
         # Every one of these action entries is a line that gh would parse as a
         # positional if the body were split at the native boundary. The first is
         # verbatim the string from the live #3830 failure.
-        $script:Actions = "@('Merged origin/main (was behindBy=6) and pushed 9295ed7bd to re-trigger CI.','- leading dash line','| pipe | row |','<html-ish line>','*starred line*')"
-        $script:BodyFile = Invoke-CiPrComment -Mode 'create-body-file' -ActionsLiteral $script:Actions -KeepStubDir
+        $script:Actions = @(
+            'Merged origin/main (was behindBy=6) and pushed 9295ed7bd to re-trigger CI.'
+            '- leading dash line'
+            "multiline fixture lead`n| pipe | row |`n<html-ish line>`n*starred line*"
+        )
+        $script:BodyFile = Invoke-CiPrComment -Mode 'create-body-file' -Actions $script:Actions -KeepStubDir
     }
     AfterAll {
         if ($script:BodyFile) {
@@ -250,11 +255,31 @@ Describe 'create path passes a multi-line body as a file, not an inline argument
         $script:BodyFile.StdErr | Should -Not -Match 'Could not resolve to a Repository'
         $script:BodyFile.StdOut | Should -Not -Match 'create-failed'
     }
-    It 'delivers the body through --body-file with its content intact' {
+    It 'delivers the exact complete rendered body through --body-file' {
         $captured = Get-Content -LiteralPath (Join-Path $script:BodyFile.StubDir 'body.txt') -Raw
-        $captured | Should -Match '<!-- farnsworth:ci-monitor-9001 -->'
-        $captured | Should -Match 'was behindBy=6'
-        $captured | Should -Match '\|\s*core-tests\s*\|'
+        $nowUtc = [regex]::Match($captured, 'Last updated: (?<value>[^*]+)\*').Groups['value'].Value
+        $history = [regex]::Match($captured, '(?s)---\n(?<value>- .+?)\n---').Groups['value'].Value
+
+        . (Join-Path $script:RepoRoot 'scripts/repo/CiCommentRendering.ps1')
+        $expected = New-CiHealthCheckBody `
+            -PR 9001 `
+            -CheckRows @([pscustomobject]@{ name = 'core-tests'; status = 'pass' }) `
+            -BehindBy 0 `
+            -Mergeable 'MERGEABLE' `
+            -Actions $script:Actions `
+            -Blockers @('None') `
+            -HistoryBlock $history `
+            -NowUtc $nowUtc
+
+        $captured | Should -BeExactly $expected
+    }
+    It 'preserves every supplied positional-looking line exactly' {
+        $captured = Get-Content -LiteralPath (Join-Path $script:BodyFile.StubDir 'body.txt') -Raw
+        $lines = $captured -split "`r?`n"
+        $lines | Should -Contain '- - leading dash line'
+        $lines | Should -Contain '| pipe | row |'
+        $lines | Should -Contain '<html-ish line>'
+        $lines | Should -Contain '*starred line*'
     }
     It 'removes the temporary body file after the call' {
         $recorded = Join-Path $script:BodyFile.StubDir 'bodypath.txt'
