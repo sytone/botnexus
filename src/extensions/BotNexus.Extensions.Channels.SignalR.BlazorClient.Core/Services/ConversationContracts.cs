@@ -96,6 +96,9 @@ public sealed class ConversationHistoryEntryDto
     [JsonPropertyName("kind")]
     public required string Kind { get; init; }
 
+    [JsonPropertyName("entryId")]
+    public string? EntryId { get; init; }
+
     [JsonPropertyName("sessionId")]
     public required string SessionId { get; init; }
 
