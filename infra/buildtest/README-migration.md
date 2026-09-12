@@ -151,6 +151,29 @@ it from the pre-change template, which restores the gate and reinstates the orig
 
 This is the strongest argument for running step 1 properly: once started, the change is one-way.
 
+## Dedicated validation capacity
+
+The runner uses the `BuildTestD8` dedicated workload profile rather than the default Consumption
+profile. West US 2 reports D8 as 8 vCPU / 32 GiB; the job requests 8 vCPU / 24 GiB, leaving 8 GiB
+for Container Apps runtime overhead. The profile is bounded to zero or one node, so it can scale to
+zero while no manually triggered validation is running. Billing follows the number of running
+profile instances.
+
+The 20-minute replica timeout is unchanged. More compute is intended to increase headroom and
+reduce variance, not to convert a hung test into a slower failure.
+
+Before deploying to another region, verify that D8 is offered there rather than assuming profile
+names are global:
+
+```powershell
+az containerapp env workload-profile list-supported -l <region> `
+  --query "[?name=='D8'].{name:name,cores:properties.cores,memoryGiB:properties.memoryGiB}" -o table
+```
+
+Rollback is ordered: first move `bnx-buildtest-runner` to Consumption at 4 vCPU / 8 GiB, verify no
+app or job references `BuildTestD8`, and only then remove the dedicated profile. Removing a profile
+while a workload still selects it must fail rather than strand the job.
+
 ## BCDR — rebuilding from scratch
 
 **A from-scratch deploy of `main.bicep` produces a compliant environment with no extra steps.**
