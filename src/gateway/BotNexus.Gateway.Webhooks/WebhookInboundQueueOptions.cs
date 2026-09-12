@@ -28,13 +28,17 @@ public sealed class WebhookInboundQueueOptions
     /// Wall-clock ceiling applied to a background (async/callback mode) webhook run, covering both
     /// the queued wait and the agent turn. Values at or below zero are treated as the default:
     /// "no timeout at all" is the defect this option exists to close, so it must not be reachable
-    /// through misconfiguration.
+    /// through misconfiguration. Values beyond <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>
+    /// are also treated as invalid so setup cannot fail after admission.
     /// </summary>
     public TimeSpan RunTimeout { get; set; } = DefaultRunTimeout;
 
     /// <summary>The effective bound, guaranteed to be at least 1.</summary>
     public int EffectiveMaxQueueDepth => Math.Max(1, MaxQueueDepth);
 
-    /// <summary>The effective run ceiling, guaranteed to be positive.</summary>
-    public TimeSpan EffectiveRunTimeout => RunTimeout > TimeSpan.Zero ? RunTimeout : DefaultRunTimeout;
+    /// <summary>The effective run ceiling, guaranteed to be accepted by <c>CancelAfter</c>.</summary>
+    public TimeSpan EffectiveRunTimeout =>
+        RunTimeout > TimeSpan.Zero && RunTimeout.TotalMilliseconds <= uint.MaxValue - 1
+            ? RunTimeout
+            : DefaultRunTimeout;
 }
