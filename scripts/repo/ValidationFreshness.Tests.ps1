@@ -32,18 +32,19 @@ BeforeAll {
     function New-FakeTestProject {
         param(
             [Parameter(Mandatory)][string]$Name,
+            [string]$AssemblyName = $Name,
             [string]$Configuration = 'Debug',
             [Nullable[DateTime]]$AssemblyTimeUtc = $null
         )
         $dir = Join-Path $script:Scratch ("proj-" + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
         $csproj = Join-Path $dir "$Name.csproj"
-        Set-Content -LiteralPath $csproj -Value '<Project />' -Encoding utf8
+        Set-Content -LiteralPath $csproj -Value "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>$AssemblyName</AssemblyName></PropertyGroup></Project>" -Encoding utf8
 
         if ($null -ne $AssemblyTimeUtc) {
             $binDir = Join-Path $dir (Join-Path 'bin' (Join-Path $Configuration 'net10.0'))
             New-Item -ItemType Directory -Path $binDir -Force | Out-Null
-            $dll = Join-Path $binDir "$Name.dll"
+            $dll = Join-Path $binDir "$AssemblyName.dll"
             Set-Content -LiteralPath $dll -Value 'not-a-real-assembly' -Encoding utf8
             (Get-Item -LiteralPath $dll).LastWriteTimeUtc = $AssemblyTimeUtc
         }
@@ -117,6 +118,16 @@ Describe 'Get-BotNexusTestAssemblyState (#2785 stale test assemblies)' {
         $state = Get-BotNexusTestAssemblyState -ProjectPath @($proj) -Configuration 'Debug' -ReferenceTimeUtc $commit
 
         $state[0].State | Should -Be 'fresh'
+    }
+
+    It 'resolves AssemblyName instead of guessing the project filename' {
+        $commit = [DateTime]::UtcNow
+        $proj = New-FakeTestProject -Name 'Project.Name.Tests' -AssemblyName 'Actual.Assembly.Tests' -AssemblyTimeUtc $commit.AddMinutes(5)
+
+        $state = Get-BotNexusTestAssemblyState -ProjectPath @($proj) -Configuration 'Debug' -ReferenceTimeUtc $commit
+
+        $state[0].State | Should -Be 'fresh'
+        $state[0].AssemblyPath | Should -BeLike '*Actual.Assembly.Tests.dll'
     }
 
     It 'classifies an ABSENT assembly as missing, never fresh - absence fails closed' {

@@ -40,15 +40,12 @@ function Get-BotNexusTestAssemblyState {
         Classifies each test project's compiled assembly as fresh, stale or missing.
 
     .DESCRIPTION
-        WHY A DIRECTORY SEARCH RATHER THAN AN MSBUILD QUERY: resolving `TargetPath`
-        per project costs an MSBuild evaluation each, which is a large fraction of
-        the build this guard is meant to protect. The output layout
-        `bin/<Configuration>/<tfm>/<name>.dll` is stable across this repository, and
-        an unfound assembly is reported as `missing` - which fails closed - so a
-        layout surprise cannot silently pass.
+        Resolves each project's actual `TargetPath` through MSBuild.
+        Project names are not assembly names: projects may set `AssemblyName`, and
+        guessing `<project>.dll` falsely reports a successful build as missing.
 
-        A project whose assembly is ABSENT is `missing`, not `fresh`. Absence is the
-        strongest possible evidence that the build step did not cover it.
+        A project whose resolved assembly is ABSENT is `missing`, not `fresh`.
+        Absence is the strongest possible evidence that the build step did not cover it.
 
     .PARAMETER ProjectPath
         Full paths of the `.csproj` files about to be run with `--no-build`.
@@ -71,17 +68,19 @@ function Get-BotNexusTestAssemblyState {
 
     $reference = $ReferenceTimeUtc.ToUniversalTime()
     $results = [Collections.Generic.List[object]]::new()
+    if ($ProjectPath.Count -eq 0) { return $results.ToArray() }
 
-    foreach ($project in $ProjectPath) {
+    for ($index = 0; $index -lt $ProjectPath.Count; $index++) {
+        $project = $ProjectPath[$index]
         $name = [IO.Path]::GetFileNameWithoutExtension($project)
-        $binRoot = Join-Path (Split-Path -Parent $project) (Join-Path 'bin' $Configuration)
-
-        $assembly = $null
-        if (Test-Path -LiteralPath $binRoot -PathType Container) {
-            $assembly = Get-ChildItem -LiteralPath $binRoot -Filter "$name.dll" -Recurse -File -ErrorAction SilentlyContinue |
-                Sort-Object LastWriteTimeUtc -Descending |
-                Select-Object -First 1
+        $targetPath = (& dotnet msbuild $project -getProperty:TargetPath -property:Configuration=$Configuration -verbosity:quiet | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($targetPath)) {
+            throw "Could not resolve test assembly TargetPath for $project."
         }
+        if (-not [IO.Path]::IsPathRooted($targetPath)) {
+            $targetPath = Join-Path (Split-Path -Parent $project) $targetPath
+        }
+        $assembly = Get-Item -LiteralPath $targetPath -ErrorAction SilentlyContinue
 
         if ($null -eq $assembly) {
             $results.Add([pscustomobject]@{

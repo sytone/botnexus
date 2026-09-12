@@ -52,6 +52,48 @@ public interface ISessionStore
     Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Rebinds sessions owned by an agent whose IDs begin with an exact prefix to a target
+    /// conversation, without rewriting sessions already bound to that conversation. This narrow
+    /// operation lets migrations avoid loading transcript history for an ID-and-metadata change.
+    /// </summary>
+    /// <remarks>
+    /// The portable default uses aggregate enumeration and save so non-database stores remain
+    /// correct. Stores capable of filtering and updating metadata before aggregate materialization
+    /// should override it; SQLite does so without reading transcript history.
+    /// </remarks>
+    /// <param name="agentId">The agent that owns the sessions through their conversations.</param>
+    /// <param name="sessionIdPrefix">The exact ordinal session-ID prefix to match.</param>
+    /// <param name="targetConversationId">The canonical conversation to bind matching sessions to.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The number of noncanonical session rows rebound.</returns>
+    async Task<int> RebindSessionsAsync(
+        AgentId agentId,
+        string sessionIdPrefix,
+        ConversationId targetConversationId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionIdPrefix);
+
+        var sessions = await ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+        var rebound = 0;
+        foreach (var session in sessions)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!session.SessionId.Value.StartsWith(sessionIdPrefix, StringComparison.Ordinal)
+                || (session.ConversationId.IsInitialized() && session.ConversationId == targetConversationId))
+            {
+                continue;
+            }
+
+            session.ConversationId = targetConversationId;
+            await SaveAsync(session, cancellationToken).ConfigureAwait(false);
+            rebound++;
+        }
+
+        return rebound;
+    }
+
+    /// <summary>
     /// Persists the session state <b>only if</b> the on-disk row still matches the run identity
     /// captured in <paramref name="fence"/>. When the row was deleted, sealed by a competing
     /// reset, or rebound to a different conversation while the run was in flight, the write is

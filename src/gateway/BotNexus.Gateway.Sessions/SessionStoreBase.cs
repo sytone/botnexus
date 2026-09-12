@@ -39,6 +39,38 @@ public abstract class SessionStoreBase : ISessionStore
     public abstract Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Portable prefix rebind fallback (issue #4124). It filters the aggregates returned for the
+    /// requested agent and saves only noncanonical matches. Persistence implementations that can
+    /// update conversation metadata without loading transcripts should override this operation.
+    /// </summary>
+    public virtual async Task<int> RebindSessionsAsync(
+        AgentId agentId,
+        string sessionIdPrefix,
+        ConversationId targetConversationId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionIdPrefix);
+
+        var sessions = await ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+        var rebound = 0;
+        foreach (var session in sessions)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!session.SessionId.Value.StartsWith(sessionIdPrefix, StringComparison.Ordinal)
+                || (session.ConversationId.IsInitialized() && session.ConversationId == targetConversationId))
+            {
+                continue;
+            }
+
+            session.ConversationId = targetConversationId;
+            await SaveAsync(session, cancellationToken).ConfigureAwait(false);
+            rebound++;
+        }
+
+        return rebound;
+    }
+
+    /// <summary>
     /// Fenced post-run finalizer save (issue #1518). Default implementation re-reads the session
     /// via <see cref="GetAsync"/> and evaluates the fence through
     /// <see cref="SessionFenceEvaluator.Passes"/> before delegating to the unfenced

@@ -85,8 +85,13 @@ cd ../botnexus-wt/<issue-number>-<slug>
 ```
 
 Branch naming: `<type>/<issue-number>-<short-slug>` — for example
-`fix/64-history-first-load` or `feat/128-gateway-plugins`. PRs always target
-`main`; never branch off another feature branch.
+`fix/64-history-first-load` or `feat/128-gateway-plugins`.
+
+Ordinary PRs target `main`. For a planned change with at least two dependent,
+independently reviewable layers, GitHub native stacked PRs are permitted: the
+bottom branch targets `main` and each upper branch targets the branch below it.
+Do not stack unrelated work merely because it was developed at the same time.
+See [PR and Commit Conventions](docs/development/pr-and-commit-conventions.md#stacked-pull-requests).
 
 Planning lives in **GitHub Issues** on `sytone/botnexus` (not in `docs/planning/`).
 Use `gh issue list` / `gh issue view <number>` to find work.

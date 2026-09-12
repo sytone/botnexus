@@ -113,6 +113,13 @@ Describe 'Invoke-AzureBuildTest.ps1 artifact wiring' {
         $source = Get-Content -LiteralPath $script:ScriptPath -Raw
         $source | Should -Not -Match 'Filter result\.json -Recurse'
     }
+
+    It 'resolves an ACA digest through ACR tags before reporting runner provenance (#4155)' {
+        $source = Get-Content -LiteralPath $script:ScriptPath -Raw
+        $source | Should -Match "@\(\?<digest>sha256:\[0-9a-f\]\{64\}\)"
+        $source | Should -Match "'acr', 'manifest', 'show-metadata'"
+        $source | Should -Match '-DeployedAliases \$deployedAliases'
+    }
 }
 
 # ---------------------------------------------------------------------------------------------

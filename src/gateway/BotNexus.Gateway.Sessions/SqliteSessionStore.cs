@@ -10,6 +10,7 @@ using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using TriggerType = BotNexus.Domain.Primitives.TriggerType;
 using MessageKind = BotNexus.Domain.Primitives.MessageKind;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -177,6 +178,61 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             _cache.Set(sessionId, loaded);
 
         return loaded;
+    }
+
+    /// <inheritdoc />
+    public override async Task<int> RebindSessionsAsync(
+        AgentId agentId,
+        string sessionIdPrefix,
+        ConversationId targetConversationId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionIdPrefix);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Post-P9-I ownership is authoritative on Conversation.AgentId. Resolve that bounded ID
+        // projection first, then push it into SQLite so neither unrelated sessions nor transcript
+        // rows are materialized by this metadata-only migration.
+        var conversations = await _conversationStore
+            .ListForCitizenAsync(CitizenId.Of(agentId), cancellationToken)
+            .ConfigureAwait(false);
+        var ownedConversationIds = conversations
+            .Where(conversation => conversation.AgentId == agentId)
+            .Select(conversation => conversation.ConversationId.Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (ownedConversationIds.Length == 0)
+            return 0;
+
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        var changedIds = await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE sessions
+                SET conversation_id = $targetConversationId
+                WHERE substr(id, 1, length($sessionIdPrefix)) = $sessionIdPrefix
+                  AND conversation_id IN (SELECT value FROM json_each($ownedConversationIds))
+                  AND conversation_id <> $targetConversationId
+                RETURNING id
+                """;
+            command.Parameters.AddWithValue("$sessionIdPrefix", sessionIdPrefix);
+            command.Parameters.AddWithValue("$targetConversationId", targetConversationId.Value);
+            command.Parameters.AddWithValue("$ownedConversationIds", JsonSerializer.Serialize(ownedConversationIds));
+
+            var changed = new List<SessionId>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                changed.Add(SessionId.From(reader.GetString(0)));
+            return changed;
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        foreach (var changedId in changedIds)
+            _cache.Remove(changedId);
+
+        return changedIds.Count;
     }
 
     /// <inheritdoc />

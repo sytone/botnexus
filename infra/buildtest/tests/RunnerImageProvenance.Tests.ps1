@@ -91,6 +91,28 @@ try {
         '9: the real 2026-08-21 branch tag is reported as a mismatch'
     Assert-Equal 'unknown' (Test-RunnerImageMatchesSources -RunnerPath $lf -DeployedTag $null).Verdict `
         '10: an unreadable job is unknown, NOT a mismatch - a developer without Azure credentials must not see a red check'
+
+    # 11. ACA normalises a tag-based deployment to an immutable digest in the job template. The
+    #     digest is not a runner version and must be resolved through its ACR tags before comparison.
+    #     The live job currently reports sha256:bb1b... while that manifest carries the exact
+    #     source-derived tag; comparing the digest text directly manufactured a mismatch warning.
+    $digest = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    $digestMatch = Test-RunnerImageMatchesSources `
+        -RunnerPath $lf `
+        -DeployedTag $digest `
+        -DeployedAliases @('latest', $expected)
+    Assert-Equal 'match' $digestMatch.Verdict `
+        '11: a digest whose manifest carries the expected source tag is a match'
+    Assert-Equal $digest $digestMatch.Deployed `
+        '11: the immutable deployed digest remains visible in the result'
+
+    # 12. A digest without the source tag is still a genuine mismatch. Accepting every digest would
+    #     silence the guard entirely now that ACA reports digest-pinned image references.
+    Assert-Equal 'mismatch' (Test-RunnerImageMatchesSources `
+        -RunnerPath $lf `
+        -DeployedTag $digest `
+        -DeployedAliases @('latest', 'src-000000000000')).Verdict `
+        '12: an unrelated digest manifest remains a mismatch'
 }
 finally {
     Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
