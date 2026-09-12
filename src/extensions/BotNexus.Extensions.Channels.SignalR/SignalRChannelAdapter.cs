@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.SignalR;
@@ -13,7 +14,7 @@ namespace BotNexus.Extensions.Channels.SignalR;
 /// SignalR-based channel adapter. Sends agent output to session groups via IHubContext.
 /// </summary>
 public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger, IHubContext<GatewayHub, IGatewayHubClient> hubContext)
-    : ChannelAdapterBase(logger), IStreamEventChannelAdapter
+    : ChannelAdapterBase(logger), IStreamEventChannelAdapter, IConversationEventSink
 {
     /// <summary>Sentinel value agents use to suppress user-visible replies.</summary>
     private const string NoReplySentinel = "NO_REPLY";
@@ -182,4 +183,23 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
 
         return SessionId.From(sessionId).Value;
     }
+    /// <inheritdoc />
+    public async Task OnConversationEventAsync(
+        ConversationEvent conversationEvent,
+        CancellationToken cancellationToken = default)
+    {
+        if (conversationEvent is not ConversationAgentEvent agentEvent)
+            return;
+
+        foreach (var target in ConversationEventStreamRouting.GetTargets(
+                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        {
+            if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+            {
+                await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
 }

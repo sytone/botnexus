@@ -2,6 +2,7 @@ using BotNexus.Extensions.Channels.SignalR;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Dispatching;
 using Microsoft.AspNetCore.SignalR;
@@ -20,6 +21,7 @@ public static class SignalRTestServiceExtensions
     {
         services.AddSingleton<SignalRChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(sp => sp.GetRequiredService<SignalRChannelAdapter>());
+        services.AddSingleton<IConversationEventSink>(sp => sp.GetRequiredService<SignalRChannelAdapter>());
         services.AddSingleton<IEndpointContributor, SignalREndpointContributor>();
         services.AddSingleton<IUserIdProvider, ClaimsUserIdProvider>();
         services.AddSignalRAuthPolicy();

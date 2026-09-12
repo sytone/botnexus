@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
 using Microsoft.Extensions.Logging;
@@ -41,7 +42,7 @@ namespace BotNexus.Scenarios.Harness;
 /// will fail loudly if the two surfaces drift.
 /// </para>
 /// </remarks>
-public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter, IStreamEventChannelAdapter
+public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter, IStreamEventChannelAdapter, IConversationEventSink
 {
     /// <summary>The canonical channel type identifier used by all virtual adapters.</summary>
     public const string VirtualChannelType = "virtual";
@@ -212,5 +213,24 @@ public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter,
         _streamTargets.Enqueue(target);
         _streamEvents.GetOrAdd(target.ChannelAddress.Value, _ => new ConcurrentQueue<AgentStreamEvent>()).Enqueue(streamEvent);
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public async Task OnConversationEventAsync(
+        ConversationEvent conversationEvent,
+        CancellationToken cancellationToken = default)
+    {
+        if (conversationEvent is not ConversationAgentEvent agentEvent)
+            return;
+
+        foreach (var target in ConversationEventStreamRouting.GetTargets(
+                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        {
+            if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+            {
+                await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
     }
 }

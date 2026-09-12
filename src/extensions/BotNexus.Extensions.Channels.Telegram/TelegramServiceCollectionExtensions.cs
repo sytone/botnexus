@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Extensions.Channels.Telegram;
@@ -24,7 +25,9 @@ public static class TelegramServiceCollectionExtensions
             services.Configure(configure);
 
         services.AddHttpClient();
-        services.AddSingleton<IChannelAdapter, TelegramChannelAdapter>();
+        services.AddSingleton<TelegramChannelAdapter>();
+        services.AddSingleton<IChannelAdapter>(sp => sp.GetRequiredService<TelegramChannelAdapter>());
+        services.AddSingleton<IConversationEventSink>(sp => sp.GetRequiredService<TelegramChannelAdapter>());
         return services;
     }
 }
