@@ -206,12 +206,16 @@ const goodFeatBody = `
 Adds a thing. Closes #10
 ## Changes
 - did it
+## Anti-reinvention
+- reused the existing seam
 ## Tests
 - covered it
 ## Validation
 - Gateway.Tests 100/0
 ## Risk & rollback
 - low
+## Merge notes
+- no migration
 `;
 
 test("evaluate passes a well-formed non-UI feat PR", () => {
@@ -267,6 +271,44 @@ test("evaluate flags a missing root cause on a fix PR", () => {
     violations.some((v) => v.rule === "sections" && /root cause/.test(v.message)),
     true
   );
+});
+
+
+
+test("evaluate blocks the exact malformed PR #4144 body shape", () => {
+  const body = `## Summary
+- changed behavior
+
+Closes #4066
+
+## Validation
+- Gateway.Tests 100/0
+
+## Risk
+Low.`;
+  const { violations } = evaluate({
+    title: "fix(gateway): respect host path case semantics",
+    body,
+    changedPaths: ["src/gateway/Thing.cs"],
+  });
+  const blocking = violations.filter((v) => !v.advisory);
+  assert.equal(blocking.some((v) => /root cause/.test(v.message)), true);
+  assert.equal(blocking.some((v) => /risk & rollback/.test(v.message)), true);
+  assert.equal(blocking.some((v) => /anti-reinvention/.test(v.message)), true);
+  assert.equal(blocking.some((v) => /merge notes/.test(v.message)), true);
+});
+
+test("evaluate rejects empty and placeholder sections", () => {
+  const body = `${goodFeatBody.replace("- reused the existing seam", "<Name the existing seams>")}
+## Root cause
+`;
+  const { violations } = evaluate({
+    title: "fix(gateway): stop the defect",
+    body,
+    changedPaths: ["src/gateway/Thing.cs"],
+  });
+  assert.equal(violations.some((v) => /Placeholder section/.test(v.message)), true);
+  assert.equal(violations.some((v) => /Empty section/.test(v.message)), true);
 });
 
 test("evaluate marks weak validation evidence advisory, not blocking", () => {
@@ -371,12 +413,11 @@ test("run does NOT exempt agent-farnsworth[bot]", async () => {
     }),
     core,
   });
-  // Warning-first mode: surfaced but not failed.
-  assert.equal(state.failed, null);
-  assert.match(state.warnings.join(" "), /convention/i);
+  // Blocking mode: non-advisory violations fail; bot-authored PRs are not exempt.
+  assert.match(String(state.failed), /convention/i);
 });
 
-test("run in warning-first mode never fails the check", async () => {
+test("run in blocking mode fails non-advisory violations", async () => {
   const { state, core } = makeCore();
   await run({
     github: makeGithub({ files: [{ filename: "src/gateway/Thing.cs" }] }),
@@ -389,8 +430,7 @@ test("run in warning-first mode never fails the check", async () => {
     }),
     core,
   });
-  assert.equal(state.failed, null);
-  assert.equal(state.warnings.length > 0, true);
+  assert.match(String(state.failed), /convention/i);
 });
 
 test("run reports a clean pass with no warnings", async () => {

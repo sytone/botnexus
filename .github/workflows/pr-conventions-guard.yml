@@ -3,9 +3,9 @@ name: "PR Conventions Guard"
 # Conventional-Commits title, issue link, required body sections, root cause on
 # fixes, and screenshot/recording evidence for any change to rendered UI.
 #
-# ROLLOUT (#2317): warning-first. The guard annotates and writes a job summary
-# but does not fail, so the in-flight PR queue can drain. Flip
-# ENFORCEMENT_MODE in the script to "block" once the queue is clear.
+# ENFORCEMENT (#4153): non-advisory violations fail this check. Configure
+# "PR Conventions Guard" as a required main-branch check so direct publication
+# paths cannot merge malformed metadata.
 #
 # SAFETY: this runs on `pull_request_target` (so it can read PR context and
 # comments), but it checks out ONLY the TRUSTED BASE copy of the guard script

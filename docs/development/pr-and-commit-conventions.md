@@ -354,11 +354,11 @@ model of the sensitive-file guard: it runs on `pull_request_target` but checks o
 base copy** of its own script, reads changed files from the API rather than a working tree, and treats
 the PR title and body as inert text that is regex-matched and never executed.
 
-**The guard is currently warning-first (#2317).** It annotates the run and writes a job summary but does
-not fail the check, so the in-flight PR queue can drain before the format becomes mandatory. Enforcement
-flips by changing `ENFORCEMENT_MODE` to `"block"` in `.github/scripts/pr-conventions-guard.mjs`.
+**The guard blocks non-advisory violations (#4153).** It reads the machine-readable contract from
+`.github/pr-contract.json`, annotates the run, writes a job summary, and fails malformed PR metadata.
+The head-SHA-bound maintainer waiver remains available for reviewed exceptions.
 
-| Check | On flip to blocking |
+| Check | Enforcement |
 |---|---|
 | Conventional-Commits title, lowercase, no trailing period, ≤ 72 chars | blocks |
 | Body contains `Closes #N` / `Refs #N` | blocks |
