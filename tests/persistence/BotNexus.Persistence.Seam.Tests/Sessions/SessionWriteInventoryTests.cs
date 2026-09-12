@@ -57,6 +57,13 @@ public sealed class SessionWriteInventoryTests
             + "re-read and reported as Conflict with the authoritative status rather than claimed "
             + "as a write."),
 
+        new("sessions", nameof(ISessionStore.RebindSessionsAsync), WriteClassification.NarrowPatch,
+            "the conversation_id column of sessions owned by one agent whose ids match an exact prefix",
+            "SQLite resolves the agent's authoritative conversation ids first, then applies one "
+            + "metadata-only conditional UPDATE that excludes rows already bound to the target. "
+            + "It never reads session_history or rewrites status/metadata; changed cache entries "
+            + "are evicted so later aggregate reads cannot serve the previous binding."),
+
         new("sessions", nameof(ISessionStore.DeleteAsync), WriteClassification.NarrowPatch,
             "removal of the sessions row and its session_history rows",
             "Deletes under the striped lock and evicts the cache. A finalizer save racing the "

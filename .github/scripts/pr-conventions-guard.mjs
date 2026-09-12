@@ -1,4 +1,7 @@
 // @ts-check
+import { readFileSync } from "node:fs";
+
+const CONTRACT = JSON.parse(readFileSync(new URL("../pr-contract.json", import.meta.url), "utf8"));
 /**
  * PR conventions guard.
  *
@@ -9,10 +12,8 @@
  * — for any PR touching the UI surface — screenshot/recording evidence that the
  * new capability actually works with real generating agents and conversations.
  *
- * ROLLOUT MODE (#2317): the guard currently runs in WARNING-FIRST mode. It
- * annotates and writes a job summary but does not fail the check, so the
- * in-flight PR queue can drain before the format is mandatory. Flip
- * `ENFORCEMENT_MODE` to "block" once the queue is clear.
+ * ENFORCEMENT (#4153): non-advisory contract violations block the PR. The
+ * trusted-base workflow and head-SHA-bound maintainer waiver remain unchanged.
  *
  * SAFETY MODEL (why this is safe to run on `pull_request_target`):
  *   - The workflow checks out ONLY the trusted base-branch copy of this script
@@ -36,7 +37,7 @@
  * "block" fails the check on any non-advisory violation.
  * @type {"warn" | "block"}
  */
-export const ENFORCEMENT_MODE = "warn";
+export const ENFORCEMENT_MODE = "block";
 
 /** The comment command an authorized maintainer posts to waive a violation. */
 export const APPROVE_COMMAND = "/allow-pr-convention-exception";
@@ -64,21 +65,10 @@ export const EXEMPT_AUTHORS = Object.freeze([
 ]);
 
 /** Conventional Commits types permitted in a PR title. */
-export const ALLOWED_TYPES = Object.freeze([
-  "feat",
-  "fix",
-  "chore",
-  "docs",
-  "refactor",
-  "test",
-  "perf",
-  "style",
-  "ci",
-  "build",
-]);
+export const ALLOWED_TYPES = Object.freeze([...CONTRACT.allowedTypes]);
 
 /** Maximum PR title length; the title becomes the squash-commit subject. */
-export const MAX_TITLE_LENGTH = 72;
+export const MAX_TITLE_LENGTH = Number(CONTRACT.maximumTitleLength);
 
 /**
  * Path globs that mean "this PR changes rendered UI". A PR touching any of
@@ -285,14 +275,14 @@ export function hasNumericEvidence(body) {
  * @returns {string[]}
  */
 export function requiredSections(type) {
-  const base = ["summary", "changes", "validation", "risk & rollback"];
+  const sections = [...CONTRACT.requiredSections.base];
+  if (!CONTRACT.typesWithoutTests.includes(String(type))) {
+    sections.push(...CONTRACT.requiredSections.tested);
+  }
   if (type === "fix") {
-    return [...base, "root cause", "tests"];
+    sections.push(...CONTRACT.requiredSections.fix);
   }
-  if (["docs", "chore", "style", "ci", "build"].includes(String(type))) {
-    return base;
-  }
-  return [...base, "tests"];
+  return [...new Set(sections)];
 }
 
 /**
@@ -323,6 +313,7 @@ export function evaluate({ title, body, changedPaths, openCriteriaIssues }) {
     );
   }
 
+  const visibleBody = stripComments(body);
   const headings = extractHeadings(body);
   for (const section of requiredSections(parsed.type)) {
     if (!headings.has(section)) {
@@ -330,6 +321,17 @@ export function evaluate({ title, body, changedPaths, openCriteriaIssues }) {
         "sections",
         `**Missing section** — \`${section}\` is required for a \`${parsed.type ?? "?"}\` PR.`
       );
+      continue;
+    }
+    const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = new RegExp(`^#{1,4}\\s+${escaped}\\s*\\r?\\n([\\s\\S]*?)(?=^#{1,4}\\s+|(?![\\s\\S]))`, "im").exec(visibleBody);
+    const content = match?.[1]?.trim() ?? "";
+    if (!content) {
+      add("sections", `**Empty section** — \`${section}\` must contain verified content.`);
+      continue;
+    }
+    if (CONTRACT.placeholderPatterns.some((pattern) => new RegExp(pattern, "i").test(content))) {
+      add("sections", `**Placeholder section** — \`${section}\` still contains template guidance.`);
     }
   }
 
