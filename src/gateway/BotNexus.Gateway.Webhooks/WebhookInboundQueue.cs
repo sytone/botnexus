@@ -190,13 +190,14 @@ public sealed class WebhookInboundQueue
 /// The outcome of <see cref="WebhookInboundQueue.Admit"/>: an accepted delivery that either holds
 /// the target agent's execution slot already or has a reserved place in the bounded queue.
 /// </summary>
-public sealed class WebhookQueueTicket
+public sealed class WebhookQueueTicket : IDisposable
 {
     private readonly WebhookInboundQueue _owner;
     private readonly WebhookInboundQueue.Slot _slot;
     private readonly WebhookInboundQueue.AgentDepth _depth;
     private readonly AgentId _targetId;
-    private int _consumed;
+    // 0 = owned by the caller, 1 = consumed by WaitAsync, 2 = abandoned.
+    private int _state;
 
     internal WebhookQueueTicket(
         WebhookInboundQueue owner,
@@ -232,8 +233,8 @@ public sealed class WebhookQueueTicket
     /// </exception>
     public async Task<IDisposable> WaitAsync(CancellationToken cancellationToken)
     {
-        if (Interlocked.Exchange(ref _consumed, 1) == 1)
-            throw new InvalidOperationException("This webhook queue ticket has already been consumed.");
+        if (Interlocked.CompareExchange(ref _state, 1, 0) != 0)
+            throw new InvalidOperationException("This webhook queue ticket has already been consumed or abandoned.");
 
         if (IsImmediate)
             return new WebhookInboundQueue.Lease(_slot, _owner, _targetId);
@@ -250,15 +251,39 @@ public sealed class WebhookQueueTicket
         {
             // Decrement on EVERY exit, including the cancelled one: a waiter that abandons without
             // returning its depth would permanently shrink the bound until the queue wedged shut.
-            int waitingAfterExit;
-            lock (_slot.SyncRoot)
-                _slot.Waiting--;
-            lock (_depth.SyncRoot)
-                waitingAfterExit = --_depth.Waiting;
-            _owner.RaiseWaitingCountChanged(_targetId, waitingAfterExit);
+            ReleaseWaitingReservation();
         }
 
         return new WebhookInboundQueue.Lease(_slot, _owner, _targetId);
+    }
+
+    /// <summary>
+    /// Abandons an admission that will not be consumed. This is idempotent and cannot release a
+    /// lease already transferred by <see cref="WaitAsync"/>.
+    /// </summary>
+    public void Dispose()
+    {
+        if (Interlocked.CompareExchange(ref _state, 2, 0) != 0)
+            return;
+
+        if (IsImmediate)
+        {
+            _slot.Gate.Release();
+            _owner.RaiseWaitingCountChanged(_targetId, _owner.WaitingCount(_targetId));
+            return;
+        }
+
+        ReleaseWaitingReservation();
+    }
+
+    private void ReleaseWaitingReservation()
+    {
+        int waitingAfterExit;
+        lock (_slot.SyncRoot)
+            _slot.Waiting--;
+        lock (_depth.SyncRoot)
+            waitingAfterExit = --_depth.Waiting;
+        _owner.RaiseWaitingCountChanged(_targetId, waitingAfterExit);
     }
 }
 

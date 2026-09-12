@@ -130,6 +130,31 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
         await Task.WhenAll(holder, waiter).WaitAsync(TestTimeout);
     }
 
+    [Theory]
+    [InlineData(WebhookResponseMode.Async)]
+    [InlineData(WebhookResponseMode.Sync)]
+    [InlineData(WebhookResponseMode.Callback)]
+    public async Task QueuedPersistenceFailure_ReturnsReservedCapacity_WithoutDispatch(
+        WebhookResponseMode responseMode)
+    {
+        var registration = await _registrations.CreateAsync(CreateRegistration(responseMode));
+        _webhookId = registration.Id;
+        var queue = CreateQueue(depth: 1);
+        using var holder = await queue.Admit(registration.AgentId, registration.PinnedConversationId!.Value)
+            .WaitAsync(CancellationToken.None);
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
+        var failingRuns = new FailingQueuedRunStore(_runs);
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => InvokeOnceAsync(registration, orchestrator, queue, failingRuns));
+
+        queue.WaitingCount(registration.AgentId).ShouldBe(0);
+        var replacement = queue.Admit(registration.AgentId, registration.PinnedConversationId.Value);
+        replacement.IsImmediate.ShouldBeFalse();
+        replacement.Dispose();
+        await orchestrator.DidNotReceiveWithAnyArgs().AcceptAsync(default!, default);
+    }
+
     [Fact]
     public async Task UncontendedDelivery_NeverPassesThroughQueued()
     {
@@ -211,11 +236,12 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
     private async Task<IActionResult> InvokeOnceAsync(
         WebhookRegistration registration,
         IInboundMessageOrchestrator orchestrator,
-        WebhookInboundQueue queue)
+        WebhookInboundQueue queue,
+        IWebhookRunStore? runStore = null)
     {
         var rawBody = Encoding.UTF8.GetBytes("{\"message\":\"payload\",\"agentAction\":true}");
         var controller = new WebhookInboundController(
-            _registrations, _runs, orchestrator,
+            _registrations, runStore ?? _runs, orchestrator,
             Substitute.For<IConversationDispatcher>(),
             _conversations, _sessions,
             _httpClientFactory, NullLogger<WebhookInboundController>.Instance,
@@ -236,13 +262,14 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
 
     // Sync mode so the controller awaits the turn inline: every assertion then observes a run row
     // the request itself wrote, never one a background task might still be racing to write.
-    private static WebhookRegistration CreateRegistration() => new()
+    private static WebhookRegistration CreateRegistration(
+        WebhookResponseMode responseMode = WebhookResponseMode.Sync) => new()
     {
         Id = WebhookId.Create(),
         Label = "backpressure",
         AgentId = AgentId.From("tinker"),
         Secret = WebhookSecretHelper.GenerateSecret(),
-        DefaultResponseMode = WebhookResponseMode.Sync,
+        DefaultResponseMode = responseMode,
         Enabled = true,
         CreatedAt = DateTimeOffset.UtcNow,
         PinnedConversationId = ConversationId.Create()
@@ -282,6 +309,24 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
         }
 
         public bool Post(InboundMessage message) => true;
+    }
+
+    private sealed class FailingQueuedRunStore(IWebhookRunStore inner) : IWebhookRunStore
+    {
+        public Task InitializeAsync(CancellationToken ct = default) => inner.InitializeAsync(ct);
+        public Task<WebhookRun> CreateAsync(WebhookRun run, CancellationToken ct = default)
+            => inner.CreateAsync(run, ct);
+        public Task<WebhookRun?> GetAsync(WebhookRunId runId, CancellationToken ct = default)
+            => inner.GetAsync(runId, ct);
+        public Task<WebhookRun> UpdateAsync(WebhookRun run, CancellationToken ct = default)
+            => run.Status == WebhookRunStatus.Queued
+                ? Task.FromException<WebhookRun>(new InvalidOperationException("queued persistence failed"))
+                : inner.UpdateAsync(run, ct);
+        public Task<IReadOnlyList<WebhookRun>> ListByWebhookAsync(
+            WebhookId webhookId, int limit = 20, CancellationToken ct = default)
+            => inner.ListByWebhookAsync(webhookId, limit, ct);
+        public Task<int> PurgeOlderThanAsync(DateTimeOffset cutoff, CancellationToken ct = default)
+            => inner.PurgeOlderThanAsync(cutoff, ct);
     }
 
     private static InboundDispatchResult Resolve(InboundMessage message)
