@@ -72,11 +72,11 @@ public sealed class ConversationMessagesControllerTests
         // fixture in the constructor with a message that names none of the real cause.
         _knownAgents.Add(AgentSlug);
 
-        _orchestrator.AcceptAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+        _orchestrator.PostAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
             .Returns(call =>
             {
                 _accepted.TrySetResult(call.Arg<InboundMessage>());
-                return Task.FromResult(InboundDispatchResult.NoRoute());
+                return Task.FromResult(InboundDispatchStatus.Accepted);
             });
     }
 
@@ -84,7 +84,7 @@ public sealed class ConversationMessagesControllerTests
 
     /// <summary>
     /// Acceptance clause 1: with <c>wake:true</c> the message must reach
-    /// <see cref="IInboundMessageOrchestrator.AcceptAsync"/> carrying
+    /// <see cref="IInboundMessageOrchestrator.PostAsync"/> carrying
     /// <c>RoutingHints.RequestedConversationId</c> = the route conversation and
     /// <c>RoutingHints.RequestedAgentId</c> = the route agent.
     /// </summary>
@@ -106,6 +106,26 @@ public sealed class ConversationMessagesControllerTests
         inbound.RoutingHints!.RequestedConversationId.ShouldBe(conversation.ConversationId);
         inbound.RoutingHints.RequestedAgentId.ShouldBe(BotNexus.Domain.Primitives.AgentId.From(AgentSlug));
         inbound.Content.ShouldBe("PR #123 has a failing check.");
+    }
+
+    [Theory]
+    [InlineData(InboundDispatchStatus.Busy)]
+    [InlineData(InboundDispatchStatus.NoRoute)]
+    [InlineData(InboundDispatchStatus.Stalled)]
+    [InlineData(InboundDispatchStatus.Rejected)]
+    public async Task Post_WithWake_WhenDispatchIsNotAccepted_DoesNotReturn202(InboundDispatchStatus status)
+    {
+        var conversation = await CreateConversationAsync();
+        _orchestrator.PostAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(status);
+        var controller = CreateController();
+
+        var result = await controller.PostMessage(
+            AgentSlug, conversation.ConversationId.Value,
+            new PostConversationMessageRequest("Do not lose this"),
+            CancellationToken.None);
+
+        result.ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(StatusCodes.Status503ServiceUnavailable);
     }
 
     // ── clause 2: lands in the EXISTING conversation's session, not a fresh one ────────────────
@@ -199,7 +219,7 @@ public sealed class ConversationMessagesControllerTests
         await PostAcceptedAsync(controller, conversation.ConversationId.Value, "audit note", wake: false);
 
         await _orchestrator.DidNotReceive()
-            .AcceptAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>());
+            .PostAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>());
         _orchestrator.DidNotReceive().Post(Arg.Any<InboundMessage>());
         _accepted.Task.IsCompleted.ShouldBeFalse();
     }
@@ -369,17 +389,10 @@ public sealed class ConversationMessagesControllerTests
     /// Awaits the orchestrator hand-off signal.
     /// </summary>
     /// <remarks>
-    /// #3816: the controller detaches the <see cref="IInboundMessageOrchestrator.AcceptAsync"/> call onto
-    /// <c>Task.Run</c> so the 202 does not wait for the turn, so this hand-off is genuinely asynchronous
-    /// and a signal is the only correct way to observe it. What changed is the <em>role</em> of the
-    /// timeout: at 5 s it was a scheduling budget the test could lose under a saturated CI runner - the
-    /// failure mode reported in #3816, where the test died at exactly <c>[5 s]</c> on diffs that cannot
-    /// reach this code. <see cref="HandOffLiveness"/> is a deadlock backstop rather than a budget, sized
-    /// so that only a genuine "the orchestrator was never called" regression can reach it, and it reports
-    /// that regression by name instead of as a bare <see cref="TimeoutException"/>. This matches the
-    /// generous-liveness idiom already used by <c>AgentExchangeInboundQueueTests</c> and the #3186
-    /// conversion. Assertions that can be made without waiting at all are made against
-    /// <see cref="RecordingDispatcher"/> instead - see
+    /// #3600: the controller awaits bounded <see cref="IInboundMessageOrchestrator.PostAsync"/>
+    /// admission but does not await the agent turn. The substitute completes the capture signal inside
+    /// that admission call, so this deadline is only a diagnostic backstop for a broken production seam.
+    /// Assertions available at the dispatch boundary remain synchronous; see
     /// <see cref="Post_WithoutDeliveryMode_RequestsAutoWhichAlwaysQueues"/>.
     /// </remarks>
     private async Task<InboundMessage> AwaitAcceptedAsync()
@@ -391,7 +404,7 @@ public sealed class ConversationMessagesControllerTests
         catch (TimeoutException)
         {
             throw new InvalidOperationException(
-                $"The controller never handed a message to IInboundMessageOrchestrator.AcceptAsync within " +
+                $"The controller never handed a message to IInboundMessageOrchestrator.PostAsync within " +
                 $"{HandOffLiveness.TotalSeconds:0}s. The dispatch seam saw " +
                 $"{_dispatched.Messages.Count} message(s), so this is a broken wake path, not a slow one.");
         }

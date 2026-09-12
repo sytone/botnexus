@@ -130,10 +130,11 @@ public sealed class ConversationMessagesController(
     /// detached token so the 202 does not wait for the turn.
     /// </summary>
     /// <remarks>
-    /// Resolution runs BEFORE the hand-off because the response contract (clause 7) promises the
-    /// resolved session id, and <see cref="IInboundMessageOrchestrator.Post"/> is fire-and-forget and
-    /// reports nothing back. Resolving through <see cref="IConversationDispatcher"/> - the same seam the
-    /// orchestrator uses internally - means the id reported here is the id the turn will run on.
+    /// Resolution runs before admission because the response contract (clause 7) promises the
+    /// resolved session id. <see cref="IInboundMessageOrchestrator.PostAsync"/> then confirms bounded
+    /// queue admission without awaiting the agent turn. Resolving through
+    /// <see cref="IConversationDispatcher"/> - the same seam the orchestrator uses internally - means
+    /// the id reported here is the id the turn will run on.
     /// </remarks>
     private async Task<IActionResult> WakeAsync(
         InboundMessage inbound,
@@ -143,26 +144,25 @@ public sealed class ConversationMessagesController(
     {
         var resolution = await ResolveAsync(inbound, agentId, cancellationToken);
 
-        // AcceptAsync awaits the whole turn; this endpoint must not. Detached from the request's token
-        // so a client disconnect after the 202 cannot kill an agent run that has already been promised.
-        _ = Task.Run(async () =>
+        // Confirm bounded queue admission before returning 202. PostAsync does not await the agent
+        // turn and admitted processing remains detached from the request token, so a client disconnect
+        // cannot cancel work the endpoint has promised (#3600).
+        var admission = await orchestrator.PostAsync(inbound, cancellationToken).ConfigureAwait(false);
+        if (admission is not (InboundDispatchStatus.Accepted or InboundDispatchStatus.Steered))
         {
-            try
+            logger.LogWarning(
+                "Conversation message admission refused for agent '{AgentId}' conversation '{ConversationId}': {Status}.",
+                agentId.Value, conversationId.Value, admission);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {
-                await orchestrator.AcceptAsync(inbound, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(
-                    ex,
-                    "Conversation message delivery failed for agent '{AgentId}' conversation '{ConversationId}'.",
-                    agentId.Value, conversationId.Value);
-            }
-        }, CancellationToken.None);
+                error = "The conversation cannot accept the message right now. Retry shortly.",
+                status = admission.ToString()
+            });
+        }
 
         logger.LogInformation(
-            "Accepted conversation message for agent '{AgentId}' conversation '{ConversationId}' from '{SenderId}' (wake).",
-            agentId.Value, conversationId.Value, inbound.SenderId);
+            "Accepted conversation message for agent '{AgentId}' conversation '{ConversationId}' from '{SenderId}' (wake, {Status}).",
+            agentId.Value, conversationId.Value, inbound.SenderId, admission);
 
         return Accepted(new PostConversationMessageResponse(
             conversationId.Value, resolution.SessionId.Value, Wake: true));

@@ -254,10 +254,15 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _logger.LogInformation("Hub SendMessage: agent={AgentId} channel={ChannelType} session={SessionId} connection={ConnectionId} content={Content}",
             typedAgentId, typedChannelType, resolution.SessionId, connectionId, GraphemeSafeTruncation.Truncate(content, 50, "..."));
 
-        _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, resolution.SessionId, content, "message", connectionId, normalizedConversationId, kind),
+        var admission = await DispatchMessageAsync(
             typedAgentId,
-            resolution.SessionId);
+            resolution.SessionId,
+            content,
+            "message",
+            connectionId,
+            normalizedConversationId,
+            kind).ConfigureAwait(false);
+        EnsureMessageAccepted(admission);
 
         return new SendMessageResult(
             resolution.SessionId.Value,
@@ -389,18 +394,16 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var connectionId = Context.ConnectionId;
         var parts = contentParts.Select(ConvertToDomainContentPart).ToList();
 
-        _ = SafeDispatchAsync(
-            () => _app.AcceptAsync(
-                BuildInboundMessage(
-                    typedAgentId, connectionId, normalizedContent, "message-with-media",
-                    new InboundMessageRoutingHints(
-                        RequestedAgentId: typedAgentId,
-                        RequestedSessionId: resolution.SessionId,
-                        RequestedConversationId: normalizedConversationId is null ? null : ConversationId.From(normalizedConversationId)),
-                    parts),
-                CancellationToken.None),
-            typedAgentId,
-            resolution.SessionId);
+        var admission = await _app.PostAsync(
+            BuildInboundMessage(
+                typedAgentId, connectionId, normalizedContent, "message-with-media",
+                new InboundMessageRoutingHints(
+                    RequestedAgentId: typedAgentId,
+                    RequestedSessionId: resolution.SessionId,
+                    RequestedConversationId: normalizedConversationId is null ? null : ConversationId.From(normalizedConversationId)),
+                parts),
+            Context.ConnectionAborted).ConfigureAwait(false);
+        EnsureMessageAccepted(admission);
 
         return new SendMessageResult(
             resolution.SessionId.Value,
@@ -408,9 +411,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             resolution.ChannelType.Value);
     }
 
-    private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
+    private Task<InboundDispatchStatus> DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
         string messageType, string senderId, string? conversationId = null, MessageKind? kind = null)
-        => _app.AcceptAsync(
+        => _app.PostAsync(
             BuildInboundMessage(
                 typedAgentId, senderId, content, messageType,
                 new InboundMessageRoutingHints(
@@ -418,7 +421,15 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                     RequestedSessionId: typedSessionId,
                     RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId)),
                 kind: kind),
-            CancellationToken.None);
+            Context.ConnectionAborted);
+
+    private static void EnsureMessageAccepted(InboundDispatchStatus status)
+    {
+        if (status is InboundDispatchStatus.Accepted or InboundDispatchStatus.Steered)
+            return;
+
+        throw new HubException($"Message was not accepted by the inbound queue ({status}). Retry shortly.");
+    }
 
     // Centralizes the channel-invariant InboundMessage fields shared by the SignalR hub dispatch
     // paths: signalr type, authenticated sender, stable per-agent address, and clientKind metadata.
