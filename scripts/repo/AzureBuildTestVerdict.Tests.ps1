@@ -76,6 +76,9 @@ param_placeholder
             }
             $ps = [powershell]::Create()
             try {
+                $ps.AddCommand('Import-Module').AddParameter('Name', (Join-Path $PSScriptRoot 'AzureBuildTestArtifacts.psm1')) | Out-Null
+                $ps.Invoke() | Out-Null
+                $ps.Commands.Clear()
                 $ps.AddScript($tail.ToString()) | Out-Null
                 foreach ($k in $vars.Keys) { $ps.Runspace.SessionStateProxy.SetVariable($k, $vars[$k]) }
                 # The tail is EXPECTED to terminate via its own throw on a failing contract, so the

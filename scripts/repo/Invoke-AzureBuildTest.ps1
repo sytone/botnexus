@@ -90,13 +90,11 @@ try {
     # ZIP is read entry-by-entry by the verifier: no tar list-file quoting/options or links.
     $workspaceArchive = Join-Path $tempRoot 'workspace.zip'
     [IO.Compression.ZipFile]::CreateFromDirectory($captureRoot, $workspaceArchive)
-    Assert-SourceSnapshot -Root $captureRoot -Manifest $manifest
-    Push-Location $tempRoot
-    try {
-        tar -czf $payloadArchive 'repository.bundle' 'workspace.zip' 'source-manifest.json' 'SourceSnapshot.psm1'
-        if ($LASTEXITCODE -ne 0) { throw 'Failed to create source payload.' }
-    }
-    finally { Pop-Location }
+    # The capture routine already read, hashed, and wrote each exact byte. Re-reading every
+    # captured file here can consume an entire sender budget on Windows system TEMP. The runner
+    # independently verifies the ZIP against this manifest before building, and the second
+    # fingerprint below rejects source changes before upload.
+    New-SourcePayloadArchive -Root $tempRoot -Destination $payloadArchive | Out-Null
     $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
     if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before upload.' }
     # END EXACT SOURCE CAPTURE
@@ -262,10 +260,13 @@ try {
     $requiredArtifactsPresent = $Mode -ne 'strict' -or $null -ne $playwrightArtifact
 
     # BEGIN EXACT SOURCE RECEIPT GUARD
-    Assert-SourceSnapshotResult -Result $result -Digest $fingerprint.sourceSnapshot.digest -RunId $runId -Mode $Mode
-    if ($status.properties.status -ne 'Succeeded' -or -not $requiredArtifactsPresent) { throw 'Validation execution/artifacts do not prove success.' }
-    $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
-    if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before receipt; validation cannot certify this worktree.' }
+    # Failed executions retain the established diagnostic/cleanup path below. Only a
+    # prospective success may reach the proof check and receipt writer.
+    if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
+        Assert-SourceSnapshotResult -Result $result -Digest $fingerprint.sourceSnapshot.digest -RunId $runId -Mode $Mode
+        $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
+        if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before receipt; validation cannot certify this worktree.' }
+    }
     # END EXACT SOURCE RECEIPT GUARD
 
     if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
