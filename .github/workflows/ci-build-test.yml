@@ -170,62 +170,7 @@ jobs:
         with:
           fail_ci_if_error: false
 
-  # e2e portal Playwright suites (issue #1962).
-  #
-  # The existing Playwright tests never ran in CI: the full-tests job excludes the
-  # BotNexus.Integration. filter and installs no browser. This job installs chromium
-  # and runs the new tests/e2e/ portal suites so that coverage stops being decorative.
-  #
-  # NON-BLOCKING BY DESIGN: continue-on-error is true so a failure here can NEVER break
-  # the required checks for other PRs. Without a live portal (E2E_PORTAL_*_URL unset)
-  # the SkippableFact tests skip cleanly rather than fail. Promote to a required check
-  # only once a portal harness is stood up here and the suite is proven stable.
-  e2e-portal-playwright:
-    name: e2e portal (Playwright, non-blocking)
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # Run inside the official Playwright image, which ships every browser system
-    # library preinstalled (#3401). The previous approach installed them with
-    # apt-get at job time; azure.archive.ubuntu.com answers `Ign:` for every
-    # index, apt falls through to archive.ubuntu.com and stalls with no output,
-    # and #3377's `timeout 5m` bound turned that indefinite hang into a reliable
-    # exit-code-124 failure on every PR instead of a green job. Bounding a stall
-    # is not fixing it. Using the image removes the apt step -- and therefore the
-    # whole mirror-availability failure class -- rather than time-boxing it again.
-    # The tag is pinned to the Microsoft.Playwright package version in
-    # Directory.Packages.props (1.44.0); bump both together. 1.44 has no `noble`
-    # variant published on mcr, so `jammy` is the current floor.
-    container:
-      image: mcr.microsoft.com/playwright:v1.44.0-jammy
-    env:
-      # The image stores its preinstalled browser builds here; without this the
-      # driver looks under ~/.cache/ms-playwright and finds nothing.
-      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-      - name: Restore
-        run: dotnet restore dirs.proj
-      - name: Build e2e portal projects
-        run: |
-          dotnet build tests/e2e/BotNexus.E2E.PortalDesktop.Tests/BotNexus.E2E.PortalDesktop.Tests.csproj --no-restore
-          dotnet build tests/e2e/BotNexus.E2E.PortalMobile.Tests/BotNexus.E2E.PortalMobile.Tests.csproj --no-restore
-      # No apt-get step and no browser-download step: the container image already
-      # carries both the browser system libraries and the chromium build matching
-      # Microsoft.Playwright 1.44.0, located via PLAYWRIGHT_BROWSERS_PATH above.
-      # The historical hazard the apt step existed for -- Playwright's
-      # `--with-deps` apt list still naming `libasound2`, renamed to
-      # `libasound2t64` by noble's 64-bit time_t transition -- is likewise moot
-      # here, because we never ask apt for anything.
-      - name: Run e2e portal Playwright suites
-        # Target the two e2e project files explicitly. A bare `dotnet test --filter`
-        # resolves the whole solution and attempts to run every test DLL in the repo;
-        # the non-e2e assemblies reject the filter with "argument ... is invalid" and
-        # the aggregate run exits 1 even though the e2e suites themselves skip cleanly.
-        run: |
-          dotnet test tests/e2e/BotNexus.E2E.PortalDesktop.Tests/BotNexus.E2E.PortalDesktop.Tests.csproj --no-build
-          dotnet test tests/e2e/BotNexus.E2E.PortalMobile.Tests/BotNexus.E2E.PortalMobile.Tests.csproj --no-build
+  # Browser-emulated E2E is quarantined from automatic CI while #3601 is reviewed.
+  # The projects and explicit `Invoke-AzureBuildTest.ps1 -Mode playwright|full` diagnostic paths
+  # remain intact. Re-entry requires repeatable complete runs and a deliberate scope decision;
+  # excluded browser coverage must never be represented as passing.
