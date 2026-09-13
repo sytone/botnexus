@@ -89,7 +89,8 @@ public sealed class BackgroundAuthRetryCredentialTests
         observed[1]!.ApiKey.ShouldBe(string.IsNullOrWhiteSpace(replacementKey) ? null : replacementKey);
         observed.ShouldAllBe(options => options!.SessionId == session.SessionId.Value);
         observed.ShouldAllBe(options => options!.StreamSetupTimeoutMs == setupTimeoutMs);
-        observed.ShouldAllBe(options => options!.CancellationToken.CanBeCanceled == false);
+        observed.ShouldAllBe(options => options!.CancellationToken.CanBeCanceled);
+        observed[1]!.CancellationToken.ShouldBe(observed[0]!.CancellationToken);
     }
 
     private static LlmClient CreateRetryingClient(
