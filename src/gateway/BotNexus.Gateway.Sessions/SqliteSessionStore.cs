@@ -1922,15 +1922,45 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
         var entries = snapshot.Entries;
         var currentPersistedIds = new HashSet<long>();
+        var persistedIdsByKey = new Dictionary<string, long>(StringComparer.Ordinal);
         await using (var selectCommand = connection.CreateCommand())
         {
             selectCommand.Transaction = transaction;
-            selectCommand.CommandText = "SELECT id FROM session_history WHERE session_id = $sessionId";
+            selectCommand.CommandText = "SELECT id, persistence_key FROM session_history WHERE session_id = $sessionId";
             selectCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
             await using var reader = await selectCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                currentPersistedIds.Add(reader.GetInt64(0));
+            {
+                var id = reader.GetInt64(0);
+                currentPersistedIds.Add(id);
+                if (!reader.IsDBNull(1))
+                    persistedIdsByKey.Add(reader.GetString(1), id);
+            }
         }
+
+        // A committed insert can lose its acknowledgement after SQLite has made the row durable.
+        // Recover that row's numeric identity from the aggregate-owned persistence key before
+        // applying a later destructive snapshot. Unknown keys remain outside this aggregate's
+        // authority and are deliberately preserved.
+        var recoveredRowIds = new Dictionary<long, long>();
+        foreach (var entry in entries)
+        {
+            if (entry.PersistenceId is not { } transientId
+                || transientId >= 0
+                || entry.PersistenceKey is not { } persistenceKey
+                || !persistedIdsByKey.TryGetValue(persistenceKey, out var durableId))
+            {
+                continue;
+            }
+
+            recoveredRowIds.Add(transientId, durableId);
+        }
+        var entriesWithRecoveredIds = entries
+            .Select(entry => entry.PersistenceId is { } transientId
+                             && recoveredRowIds.TryGetValue(transientId, out var durableId)
+                ? entry with { PersistenceId = durableId }
+                : entry)
+            .ToArray();
 
         var deletedCount = 0;
         foreach (var removedId in snapshot.RemovedPersistedIds.Where(currentPersistedIds.Contains))
@@ -1942,9 +1972,18 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             deleteCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
             deletedCount += await deleteCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
+        foreach (var removedKey in snapshot.RemovedPersistenceKeys.Where(persistedIdsByKey.ContainsKey))
+        {
+            await using var deleteCommand = connection.CreateCommand();
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM session_history WHERE persistence_key = $persistenceKey AND session_id = $sessionId";
+            deleteCommand.Parameters.AddWithValue("$persistenceKey", removedKey);
+            deleteCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
+            deletedCount += await deleteCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         var updatedCount = 0;
-        foreach (var entry in entries.Where(entry => entry.PersistenceId is { } id && currentPersistedIds.Contains(id)))
+        foreach (var entry in entriesWithRecoveredIds.Where(entry => entry.PersistenceId is { } id && currentPersistedIds.Contains(id)))
             updatedCount += await UpdateHistoryRowAsync(connection, transaction, sessionId, entry, cancellationToken).ConfigureAwait(false);
 
         // A positive id may have been deleted by an earlier destructive snapshot whose
@@ -1954,11 +1993,14 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             connection,
             transaction,
             sessionId,
-            entries.Where(entry => entry.PersistenceId is { } id && !currentPersistedIds.Contains(id)).ToArray(),
+            entriesWithRecoveredIds.Where(entry => entry.PersistenceId is { } id && !currentPersistedIds.Contains(id)).ToArray(),
             cancellationToken).ConfigureAwait(false);
+        var acknowledgedRowIds = new Dictionary<long, long>(insertedRowIds);
+        foreach (var recoveredRowId in recoveredRowIds)
+            acknowledgedRowIds.Add(recoveredRowId.Key, recoveredRowId.Value);
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new HistoryPersistenceResult(insertedRowIds, updatedCount, deletedCount);
+        return new HistoryPersistenceResult(acknowledgedRowIds, updatedCount, deletedCount);
     }
 
     private static async Task<int> UpdateHistoryRowAsync(

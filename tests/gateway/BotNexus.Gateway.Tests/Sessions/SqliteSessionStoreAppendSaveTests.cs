@@ -254,6 +254,51 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_AfterCommittedInsertLosesAcknowledgement_RemovesOwnedRow()
+    {
+        var store = CreateStore();
+        var session = await CreateSavedSessionAsync(store, "lost-ack-remove");
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "pending" });
+        var unacknowledged = session.CaptureHistoryForPersistence().Entries.ShouldHaveSingleItem();
+        unacknowledged.PersistenceKey.ShouldNotBeNullOrWhiteSpace();
+        await InsertHistoryRowAsync(session.SessionId, unacknowledged);
+
+        session.ReplaceHistory(session.GetHistorySnapshot()
+            .Where(entry => entry.Content != "pending")
+            .ToArray());
+        await store.SaveAsync(session);
+
+        var reloaded = await CreateStore().GetAsync(session.SessionId);
+        reloaded.ShouldNotBeNull();
+        reloaded.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(["entry-0"]);
+    }
+
+    [Fact]
+    public async Task SaveAsync_AfterCommittedInsertLosesAcknowledgement_UpdatesOwnedRowExactlyOnce()
+    {
+        var store = CreateStore();
+        var session = await CreateSavedSessionAsync(store, "lost-ack-update");
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "stale" });
+        var unacknowledged = session.CaptureHistoryForPersistence().Entries.ShouldHaveSingleItem();
+        unacknowledged.PersistenceKey.ShouldNotBeNullOrWhiteSpace();
+        await InsertHistoryRowAsync(session.SessionId, unacknowledged);
+
+        session.ReplaceHistory(session.GetHistorySnapshot()
+            .Select(entry => entry.Content == "stale"
+                ? entry with { Content = "current", IsHistory = true }
+                : entry)
+            .ToArray());
+        await store.SaveAsync(session);
+
+        var reloaded = await CreateStore().GetAsync(session.SessionId);
+        reloaded.ShouldNotBeNull();
+        var rows = reloaded.GetHistorySnapshot();
+        rows.Select(entry => entry.Content).ShouldBe(["entry-0", "current"]);
+        rows.Count(entry => entry.PersistenceKey == unacknowledged.PersistenceKey).ShouldBe(1);
+        rows.Single(entry => entry.Content == "current").IsHistory.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task SaveAsync_DestructiveReconciliation_PreservesUnknownConcurrentDatabaseRows()
     {
         var store = CreateStore();
@@ -264,7 +309,7 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
             .ToArray();
         session.ReplaceHistory(replacement);
 
-        await InsertExternalHistoryRowAsync(session.SessionId, "external");
+        await InsertExternalHistoryRowAsync(session.SessionId, "external", "foreign-owned-key");
         await store.SaveAsync(session);
 
         var rows = await ReadHistoryRowsAsync(session.SessionId);
@@ -328,18 +373,31 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
         return allocated;
     }
 
-    private async Task InsertExternalHistoryRowAsync(SessionId sessionId, string content)
+    private async Task InsertExternalHistoryRowAsync(SessionId sessionId, string content, string? persistenceKey = null)
+    {
+        await InsertHistoryRowAsync(sessionId, new SessionEntry
+        {
+            Role = MessageRole.Assistant,
+            Content = content,
+            PersistenceKey = persistenceKey
+        });
+    }
+
+    private async Task InsertHistoryRowAsync(SessionId sessionId, SessionEntry entry)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO session_history (session_id, role, content, timestamp)
-            VALUES ($sessionId, 'assistant', $content, $timestamp)
+            INSERT INTO session_history (session_id, role, content, timestamp, is_history, persistence_key)
+            VALUES ($sessionId, $role, $content, $timestamp, $isHistory, $persistenceKey)
             """;
         command.Parameters.AddWithValue("$sessionId", sessionId.Value);
-        command.Parameters.AddWithValue("$content", content);
-        command.Parameters.AddWithValue("$timestamp", DateTimeOffset.UtcNow.ToString("O"));
+        command.Parameters.AddWithValue("$role", entry.Role.Value);
+        command.Parameters.AddWithValue("$content", entry.Content);
+        command.Parameters.AddWithValue("$timestamp", entry.Timestamp.ToString("O"));
+        command.Parameters.AddWithValue("$isHistory", entry.IsHistory ? 1 : 0);
+        command.Parameters.AddWithValue("$persistenceKey", (object?)entry.PersistenceKey ?? DBNull.Value);
         await command.ExecuteNonQueryAsync();
     }
 
