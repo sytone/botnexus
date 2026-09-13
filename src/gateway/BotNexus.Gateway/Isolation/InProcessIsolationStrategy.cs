@@ -368,11 +368,18 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 if (hookDispatcher is null)
                     return null;
 
+                var hookOrigin = DiagnosticExecutionOrigin.ForToolInvocation(
+                    agentId,
+                    context.SessionId,
+                    await GetConversationIdForOriginAsync().ConfigureAwait(false),
+                    ctx.ToolCallRequest.Id,
+                    ResolveExecutionChannel(context));
                 var hookEvent = new BeforeToolCallEvent(
                     agentId,
                     ctx.ToolCallRequest.Name,
                     ctx.ToolCallRequest.Id,
-                    ctx.ValidatedArgs);
+                    ctx.ValidatedArgs,
+                    hookOrigin);
 
                 var results = await hookDispatcher
                     .DispatchAsync<BeforeToolCallEvent, GatewayBeforeToolCallResult>(hookEvent, ct)
@@ -399,12 +406,19 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     return null;
 
                 var resultText = AgentToolResultText.Extract(ctx.Result);
+                var hookOrigin = DiagnosticExecutionOrigin.ForToolInvocation(
+                    agentId,
+                    context.SessionId,
+                    await GetConversationIdForOriginAsync().ConfigureAwait(false),
+                    ctx.ToolCallRequest.Id,
+                    ResolveExecutionChannel(context));
                 var hookEvent = new AfterToolCallEvent(
                     agentId,
                     ctx.ToolCallRequest.Name,
                     ctx.ToolCallRequest.Id,
                     resultText,
-                    ctx.IsError);
+                    ctx.IsError,
+                    hookOrigin);
 
                 await hookDispatcher
                     .DispatchAsync<AfterToolCallEvent, GatewayAfterToolCallResult>(hookEvent, ct)
@@ -412,6 +426,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
                 return null;
             };
+        }
+
+        async Task<ConversationId?> GetConversationIdForOriginAsync()
+        {
+            var conversationStore = _serviceProvider.GetService<IConversationStore>();
+            return conversationStore is null
+                ? null
+                : await GetConversationIdAsync(
+                    conversationStore,
+                    _serviceProvider.GetService<ISessionStore>()).ConfigureAwait(false);
         }
 
         List<AgentMessage>? initialMessages = null;
@@ -659,6 +683,13 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     /// </summary>
     private static bool IsWildcardToolIds(IReadOnlyList<string> toolIds)
         => toolIds.Count == 0 || (toolIds.Count == 1 && toolIds[0] == "*");
+
+    private static string? ResolveExecutionChannel(AgentExecutionContext context)
+        => context.Parameters.TryGetValue("channel", out var raw)
+            && raw is string channel
+            && !string.IsNullOrWhiteSpace(channel)
+                ? channel.Trim()
+                : null;
 
     // Parse the descriptor's wire-form thinking string ("minimal".."max", plus "xhigh") into the
     // ThinkingLevel enum for the resolver's agent layer. Unset / unrecognised => null (fall through
