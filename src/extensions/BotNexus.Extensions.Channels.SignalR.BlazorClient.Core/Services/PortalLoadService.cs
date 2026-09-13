@@ -306,6 +306,7 @@ public sealed class PortalLoadService : IPortalLoadService
             var conversation = _store.GetConversation(conversationId);
             if (conversation is null || conversation.IsLocallySynthesised || !conversation.HistoryLoaded)
                 return;
+            var snapshot = conversation.Messages;
 
             var history = await _restClient.GetHistoryAsync(
                 conversationId,
@@ -317,15 +318,9 @@ public sealed class PortalLoadService : IPortalLoadService
                 return;
 
             var serverPage = ToChatMessages(entries);
-            var local = conversation.Messages;
-            var inserted = TranscriptReconciler.CountMissing(local, serverPage);
+            var inserted = conversation.ReconcileMessages(snapshot, serverPage);
             if (inserted == 0)
                 return;
-
-            var reconciled = TranscriptReconciler.Reconcile(local, serverPage);
-            conversation.ClearMessages();
-            foreach (var message in reconciled)
-                conversation.AppendMessage(message);
 
             // Repaired rows are real history rows, so the backwards-paging offset must advance by
             // exactly the number inserted or the next scroll-up would re-fetch a page it already has.
