@@ -145,4 +145,53 @@ public sealed class TranscriptReconcilerTests
         result.Count.ShouldBe(1);
         result[0].Content.ShouldBe("live text");
     }
+
+    [Fact]
+    public void Reconcile_LiveAndPersistedMessageWithDifferentTimestamps_DoesNotDuplicate()
+    {
+        var live = new ChatMessage("Assistant", "same response", DateTimeOffset.Parse("2026-09-04T10:08:09Z"));
+        var persisted = new ChatMessage("Assistant", "same response", DateTimeOffset.Parse("2026-09-04T10:08:00Z"))
+        {
+            ServerEntryId = "sess-1#1"
+        };
+
+        var result = TranscriptReconciler.Reconcile([live], [persisted]);
+
+        result.ShouldBe([live]);
+        TranscriptReconciler.CountMissing([live], [persisted]).ShouldBe(0);
+    }
+
+    [Fact]
+    public void Reconcile_RepeatedSameContent_PreservesServerMultiplicityAndIsIdempotent()
+    {
+        var live = new ChatMessage("Assistant", "repeat", DateTimeOffset.Parse("2026-09-04T10:09:09Z"));
+        var first = new ChatMessage("Assistant", "repeat", DateTimeOffset.Parse("2026-09-04T10:09:00Z"))
+        {
+            ServerEntryId = "sess-1#1"
+        };
+        var second = new ChatMessage("Assistant", "repeat", DateTimeOffset.Parse("2026-09-04T10:10:00Z"))
+        {
+            ServerEntryId = "sess-1#2"
+        };
+
+        var result = TranscriptReconciler.Reconcile([live], [first, second]);
+
+        result.Count.ShouldBe(2);
+        result[0].ShouldBeSameAs(live);
+        result[1].ShouldBeSameAs(second);
+        TranscriptReconciler.CountMissing([live], [first, second]).ShouldBe(1);
+        TranscriptReconciler.Reconcile(result, [first, second]).ShouldBe(result);
+    }
+
+    [Fact]
+    public void CountMissing_DuplicateServerIdentity_CountsOnlyOneInsert()
+    {
+        var serverRow = new ChatMessage("Assistant", "restored", DateTimeOffset.Parse("2026-09-04T10:11:00Z"))
+        {
+            ServerEntryId = "sess-1#3"
+        };
+
+        TranscriptReconciler.CountMissing([], [serverRow, serverRow]).ShouldBe(1);
+        TranscriptReconciler.Reconcile([], [serverRow, serverRow]).ShouldBe([serverRow]);
+    }
 }

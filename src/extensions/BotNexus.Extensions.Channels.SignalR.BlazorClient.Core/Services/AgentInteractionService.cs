@@ -1066,13 +1066,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// entries through <see cref="ToChatMessage(ConversationHistoryEntryDto)"/>. Shared by the
     /// initial load and the scroll-up load-more path so both build identical timelines (#1691).
     /// </summary>
-    private static ChatMessage ProjectConversationEntry(ConversationHistoryEntryDto entry)
+    internal static ChatMessage ProjectConversationEntry(ConversationHistoryEntryDto entry)
     {
         if (entry.Kind == "boundary")
         {
             var label = $"Session \u00b7 {entry.Timestamp.ToLocalTime():MMM d HH:mm} \u00b7 {entry.SessionId}";
             return new ChatMessage("System", string.Empty, entry.Timestamp)
             {
+                ServerEntryId = entry.EntryId,
                 Kind = "boundary",
                 BoundaryLabel = label,
                 BoundarySessionId = entry.SessionId
@@ -1084,6 +1085,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             var label = "Context compacted \u00b7 " + entry.Timestamp.ToLocalTime().ToString("MMM d HH:mm");
             return new ChatMessage("System", entry.Content ?? string.Empty, entry.Timestamp)
             {
+                ServerEntryId = entry.EntryId,
                 Kind = "compaction",
                 BoundaryLabel = label,
                 BoundarySessionId = entry.SessionId,
@@ -1093,7 +1095,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         // #2936: carry the server's folded flag onto the displayable row so the panel can render
         // pre-compaction history collapsed instead of as ordinary live turns.
-        return ToChatMessage(entry) with { IsFolded = entry.IsFolded };
+        return ToChatMessage(entry) with
+        {
+            ServerEntryId = entry.EntryId,
+            IsFolded = entry.IsFolded
+        };
     }
 
     /// <summary>
