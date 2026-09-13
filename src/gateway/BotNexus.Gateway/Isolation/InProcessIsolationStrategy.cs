@@ -139,6 +139,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         // conversation-id lookup reuses the memoised GetConversationIdAsync so this adds no second
         // DB round-trip.
         var conversationOverrideLayer = await ResolveConversationOverrideLayerAsync(
+            descriptor,
             conversationStore => GetConversationIdAsync(conversationStore, _serviceProvider.GetService<ISessionStore>()),
             cancellationToken).ConfigureAwait(false);
 
@@ -826,6 +827,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     // treated as unset rather than throwing, because the API boundary validates tokens before they
     // are stored.
     private async Task<ModelOverrideLayer> ResolveConversationOverrideLayerAsync(
+        AgentDescriptor descriptor,
         Func<IConversationStore, Task<ConversationId?>> resolveConversationId,
         CancellationToken cancellationToken)
     {
@@ -846,8 +848,21 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             && TryParseThinkingToken(conversation.ThinkingOverride, out var parsed))
             thinking = parsed;
 
+        var modelOverride = string.IsNullOrWhiteSpace(conversation.ModelOverride)
+            ? null
+            : conversation.ModelOverride.Trim();
+        if (modelOverride is not null && !AgentModelPermission.IsPermitted(descriptor, modelOverride))
+        {
+            _logger.LogWarning(
+                "Ignoring forbidden conversation model override for agent '{AgentId}' conversation '{ConversationId}': {RequestedModel}",
+                descriptor.AgentId,
+                conversation.ConversationId,
+                modelOverride);
+            modelOverride = null;
+        }
+
         return new ModelOverrideLayer(
-            Model: string.IsNullOrWhiteSpace(conversation.ModelOverride) ? null : conversation.ModelOverride,
+            Model: modelOverride,
             Thinking: thinking,
             ContextWindow: conversation.ContextWindowOverride);
     }
