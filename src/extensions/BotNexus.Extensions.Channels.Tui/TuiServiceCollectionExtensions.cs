@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Extensions.Channels.Tui;
@@ -18,7 +19,9 @@ public static class TuiServiceCollectionExtensions
     /// </remarks>
     public static IServiceCollection AddBotNexusTuiChannel(this IServiceCollection services)
     {
-        services.AddSingleton<IChannelAdapter, TuiChannelAdapter>();
+        services.AddSingleton<TuiChannelAdapter>();
+        services.AddSingleton<IChannelAdapter>(sp => sp.GetRequiredService<TuiChannelAdapter>());
+        services.AddSingleton<IConversationEventSink>(sp => sp.GetRequiredService<TuiChannelAdapter>());
         return services;
     }
 }
