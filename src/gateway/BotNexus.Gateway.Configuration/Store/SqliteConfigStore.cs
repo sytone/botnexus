@@ -71,6 +71,13 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
     private bool _initialised;
 
     /// <summary>
+    /// The schema version this build of the configuration store writes and understands (#2835).
+    /// </summary>
+    public const int CurrentSchemaVersion = 1;
+
+    private static readonly SqliteSchemaMigration[] Migrations = [];
+
+    /// <summary>
     /// The database file plus the two WAL-mode sidecars, all of which carry configuration data and so
     /// all of which must be owner-only (#3414). A sidecar that does not exist yet is skipped by the
     /// helper rather than being an error.
@@ -361,6 +368,8 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
             {
                 await EnsureColumnAsync(connection, column, ddl, cancellationToken).ConfigureAwait(false);
             }
+
+            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
 
             _initialised = true;
         }

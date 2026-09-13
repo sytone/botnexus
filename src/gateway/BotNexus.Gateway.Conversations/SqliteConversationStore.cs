@@ -57,6 +57,13 @@ public sealed class SqliteConversationStore : IConversationStore
     private readonly BoundedLruCache<string, Conversation> _cache;
     private bool _initialized;
 
+    /// <summary>
+    /// The schema version this build of the conversation store writes and understands (#2835).
+    /// </summary>
+    public const int CurrentSchemaVersion = 1;
+
+    private static readonly SqliteSchemaMigration[] Migrations = [];
+
     // Read round-trip counter (issue #1626). Incremented once per database query issued by the
     // batched list path of THIS store instance, so the N+1 regression guard can assert that a
     // list of N conversations does not fan out per-row. Instance-scoped (not static) so parallel
@@ -1229,6 +1236,8 @@ public sealed class SqliteConversationStore : IConversationStore
             var archived = await archiveStaleMigration.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             if (archived > 0)
                 _logger.LogInformation("Archived {Count} stale signalr:connection-id conversations (pre-v0.1.3 cleanup)", archived);
+
+            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }

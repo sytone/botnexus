@@ -29,6 +29,13 @@ public sealed class SqliteCronStore(
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _initialized;
 
+    /// <summary>
+    /// The schema version this build of the cron store writes and understands (#2835).
+    /// </summary>
+    public const int CurrentSchemaVersion = 1;
+
+    private static readonly SqliteSchemaMigration[] Migrations = [];
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -304,6 +311,8 @@ public sealed class SqliteCronStore(
                 try { await migrateCost.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
                 catch (SqliteException) { /* column already exists */ }
             }
+
+            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }

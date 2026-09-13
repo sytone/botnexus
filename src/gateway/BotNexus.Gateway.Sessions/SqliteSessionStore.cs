@@ -104,6 +104,13 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     private readonly BoundedLruCache<SessionId, GatewaySession> _cache;
     private bool _initialized;
 
+    /// <summary>
+    /// The schema version this build of the session store writes and understands (#2835).
+    /// </summary>
+    public const int CurrentSchemaVersion = 1;
+
+    private static readonly SqliteSchemaMigration[] Migrations = [];
+
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -1202,6 +1209,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             {
                 await DropLegacyAgentIdColumnAsync(connection, cancellationToken).ConfigureAwait(false);
             }
+
+            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }
