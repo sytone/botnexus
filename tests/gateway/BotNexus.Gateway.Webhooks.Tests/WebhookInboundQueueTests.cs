@@ -199,6 +199,76 @@ public sealed class WebhookInboundQueueTests
     }
 
     [Fact]
+    public async Task AbandonedQueuedTicket_ReturnsCapacity_WithoutDispatching()
+    {
+        var queue = CreateQueue(depth: 1);
+        using var holder = await queue.Admit(Target, Conversation).WaitAsync(CancellationToken.None);
+        var abandoned = queue.Admit(Target, Conversation);
+
+        abandoned.Dispose();
+
+        queue.WaitingCount(Target).ShouldBe(0);
+        var replacement = queue.Admit(Target, Conversation);
+        replacement.IsImmediate.ShouldBeFalse();
+        replacement.Dispose();
+    }
+
+    [Fact]
+    public async Task Abandonment_IsIdempotent_AndCannotReleaseAnotherLease()
+    {
+        var queue = CreateQueue(depth: 1);
+        using var holder = await queue.Admit(Target, Conversation).WaitAsync(CancellationToken.None);
+        var abandoned = queue.Admit(Target, Conversation);
+
+        abandoned.Dispose();
+        abandoned.Dispose();
+
+        queue.WaitingCount(Target).ShouldBe(0);
+        var replacement = queue.Admit(Target, Conversation);
+        replacement.IsImmediate.ShouldBeFalse(
+            "abandoning a waiter must not release the current holder's semaphore lease");
+        replacement.Dispose();
+    }
+
+    [Fact]
+    public async Task CancellationRacingAbandonment_ReleasesReservationExactlyOnce()
+    {
+        var queue = CreateQueue(depth: 1);
+        using var holder = await queue.Admit(Target, Conversation).WaitAsync(CancellationToken.None);
+        var ticket = queue.Admit(Target, Conversation);
+        using var cts = new CancellationTokenSource();
+
+        var wait = Task.Run(async () =>
+        {
+            try { using var lease = await ticket.WaitAsync(cts.Token); }
+            catch (WebhookNotDispatchedException) { }
+            catch (InvalidOperationException) { }
+        });
+        await Task.WhenAll(Task.Run(ticket.Dispose), cts.CancelAsync()).WaitAsync(TestTimeout);
+        await wait.WaitAsync(TestTimeout);
+
+        queue.WaitingCount(Target).ShouldBe(0);
+        var replacement = queue.Admit(Target, Conversation);
+        replacement.IsImmediate.ShouldBeFalse(
+            "the abandonment race must not release the current holder's semaphore lease");
+        replacement.Dispose();
+    }
+
+    [Fact]
+    public async Task AbandonedImmediateTicket_ReleasesItsLeaseExactlyOnce()
+    {
+        var queue = CreateQueue();
+        var ticket = queue.Admit(Target, Conversation);
+
+        ticket.Dispose();
+        ticket.Dispose();
+
+        var replacement = queue.Admit(Target, Conversation);
+        replacement.IsImmediate.ShouldBeTrue();
+        using var lease = await replacement.WaitAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task Ticket_CannotBeConsumedTwice()
     {
         var queue = CreateQueue();
@@ -227,6 +297,9 @@ public sealed class WebhookInboundQueueTests
 
         var negative = new WebhookInboundQueueOptions { RunTimeout = TimeSpan.FromSeconds(-1) };
         negative.EffectiveRunTimeout.ShouldBe(WebhookInboundQueueOptions.DefaultRunTimeout);
+
+        var unsupported = new WebhookInboundQueueOptions { RunTimeout = TimeSpan.MaxValue };
+        unsupported.EffectiveRunTimeout.ShouldBe(WebhookInboundQueueOptions.DefaultRunTimeout);
     }
 
     [Fact]
