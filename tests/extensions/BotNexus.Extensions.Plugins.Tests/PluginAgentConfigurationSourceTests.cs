@@ -1,0 +1,324 @@
+using System.IO.Abstractions.TestingHelpers;
+using BotNexus.Extensions.Plugins.Agents;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Security;
+
+namespace BotNexus.Extensions.Plugins.Tests;
+
+/// <summary>
+/// Behaviour tests for the plugin-backed <see cref="IAgentConfigurationSource"/> (#2685 clause 1).
+/// </summary>
+public sealed class PluginAgentConfigurationSourceTests
+{
+    private const string PluginRoot = "/plugins";
+
+    [Fact]
+    public void Source_Implements_TheExistingConfigurationSourceInterface()
+    {
+        // Clause 1: this is a second IAgentConfigurationSource, reconciled by the hosted service
+        // that already exists - not new machinery.
+        typeof(IAgentConfigurationSource)
+            .IsAssignableFrom(typeof(PluginAgentConfigurationSource))
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task LoadAsync_Returns_Empty_WhenNoPluginRootExists()
+    {
+        var fs = new MockFileSystem();
+        var source = new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs);
+
+        (await source.LoadAsync()).ShouldBeEmpty(
+            "a machine with no plugins must behave exactly as it did before plugins existed.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_Returns_Empty_WhenPluginRootIsNull()
+    {
+        var source = new PluginAgentConfigurationSource(null, fileSystem: new MockFileSystem());
+        (await source.LoadAsync()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadAsync_Surfaces_ADescriptorFromAnInstalledPlugin()
+    {
+        var fs = Installed("hello", ("greeter.json", """
+            {
+              "id": "greeter",
+              "displayName": "Greeter",
+              "model": "gpt-5",
+              "provider": "github-copilot",
+              "systemPrompt": "Say hello.",
+              "toolIds": ["read"]
+            }
+            """));
+
+        var descriptors = await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync();
+
+        var descriptor = descriptors.ShouldHaveSingleItem();
+        descriptor.AgentId.Value.ShouldBe("greeter");
+        descriptor.DisplayName.ShouldBe("Greeter");
+        descriptor.ModelId.ShouldBe("gpt-5");
+        descriptor.ApiProvider.ShouldBe("github-copilot");
+        descriptor.ToolIds.ShouldBe(["read"]);
+        descriptor.Metadata["plugin"].ShouldBe("hello",
+            "provenance must survive so diagnostics can name the plugin an agent came from.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_Preserves_TheSupportedSerializedSubset()
+    {
+        var fs = Installed("complete", ("agent.json", """
+            {
+              "id": "complete-agent",
+              "displayName": "Complete Agent",
+              "emoji": "robot",
+              "description": "Exercises the serialized contract.",
+              "model": "gpt-5",
+              "provider": "github-copilot",
+              "systemPrompt": "Use the supplied prompt.",
+              "systemPromptFiles": ["SOUL.md", "IDENTITY.md"],
+              "toolIds": ["read", "grep"],
+              "allowedModels": ["gpt-5", "gpt-5-mini"],
+              "thinking": "high",
+              "contextWindow": 128000,
+              "maxConcurrentSessions": 3
+            }
+            """));
+
+        var descriptor = (await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync())
+            .ShouldHaveSingleItem();
+
+        descriptor.Emoji.ShouldBe("robot");
+        descriptor.Description.ShouldBe("Exercises the serialized contract.");
+        descriptor.SystemPrompt.ShouldBe("Use the supplied prompt.");
+        descriptor.SystemPromptFiles.ShouldBe(["SOUL.md", "IDENTITY.md"]);
+        descriptor.ToolIds.ShouldBe(["read", "grep"]);
+        descriptor.AllowedModelIds.ShouldBe(["gpt-5", "gpt-5-mini"]);
+        descriptor.Thinking.ShouldBe("high");
+        descriptor.ContextWindow.ShouldBe(128_000);
+        descriptor.MaxConcurrentSessions.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task LoadAsync_Ignores_BenignUnsupportedFields_AndPreservesHostOwnedMetadata()
+    {
+        var fs = Installed("owner", ("agent.json", """
+            {
+              "id": "benign-agent",
+              "model": "gpt-5",
+              "provider": "github-copilot",
+              "order": 1,
+              "cacheRetention": "long",
+              "memory": { "enabled": true },
+              "metadata": { "plugin": "forged", "owner": "plugin-author" }
+            }
+            """));
+
+        var descriptor = (await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync())
+            .ShouldHaveSingleItem();
+
+        descriptor.Order.ShouldBeNull();
+        descriptor.CacheRetentionMode.ShouldBeNull();
+        descriptor.Memory.ShouldBeNull();
+        descriptor.Metadata.Count.ShouldBe(1);
+        descriptor.Metadata["plugin"].ShouldBe("owner",
+            "plugin provenance is host-owned and serialized metadata must not overwrite it.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_Ignores_AgentsInAnUnrecordedDirectory()
+    {
+        // The installed record is the authority. A folder dropped next to real plugins has no
+        // provenance, and surfacing an agent out of one is a trivial smuggling path.
+        var fs = Installed("hello", ("greeter.json", Definition("greeter")));
+        fs.AddFile(
+            $"{PluginRoot}/smuggled/agents/evil.json",
+            new MockFileData(Definition("evil")));
+
+        var descriptors = await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync();
+
+        descriptors.Select(d => d.AgentId.Value).ShouldBe(["greeter"],
+            "only plugins present in installed-plugins.json may contribute agents.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_Rejects_ADescriptorDeclaringIsolationEscalation()
+    {
+        // The fence is applied by the SOURCE, not left to a downstream caller - clause 2 requires
+        // rejection at load.
+        var fs = Installed("hostile", ("evil.json", """
+            {
+              "id": "evil",
+              "model": "gpt-5",
+              "provider": "github-copilot",
+              "isolationStrategy": "container"
+            }
+            """));
+
+        var logger = new CapturingLogger<PluginAgentConfigurationSource>();
+        var descriptors = await new PluginAgentConfigurationSource(
+            PluginRoot,
+            logger: logger,
+            fileSystem: fs).LoadAsync();
+
+        descriptors.ShouldBeEmpty(
+            "a forbidden serialized field rejects the entire source document rather than being silently dropped.");
+        logger.Entries.ShouldContain(
+            entry => entry.Level == Microsoft.Extensions.Logging.LogLevel.Error
+                     && entry.Message.Contains("isolationStrategy", StringComparison.Ordinal),
+            "the load diagnostic must name the exact offending JSON field.");
+    }
+
+    [Theory]
+    [InlineData("hooks")]
+    [InlineData("mcpServers")]
+    public async Task LoadAsync_Rejects_PrivilegedPluginAliases(string field)
+    {
+        var fs = Installed("hostile", ("evil.json", $$"""
+            {
+              "id": "evil",
+              "model": "gpt-5",
+              "provider": "github-copilot",
+              "{{field}}": {}
+            }
+            """));
+
+        var logger = new CapturingLogger<PluginAgentConfigurationSource>();
+        var descriptors = await new PluginAgentConfigurationSource(
+            PluginRoot,
+            logger: logger,
+            fileSystem: fs).LoadAsync();
+
+        descriptors.ShouldBeEmpty();
+        logger.Entries.ShouldContain(entry => entry.Message.Contains(field, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LoadAsync_Narrows_FileAccessToTheInstallingUserCeiling()
+    {
+        // Fully qualified fixtures express the same absolute-grant intent on Windows and Linux.
+        var workspace = Path.GetFullPath("/home/user/workspace");
+        var fs = Installed("greedy", ("agent.json", System.Text.Json.JsonSerializer.Serialize(new
+        {
+            id = "greedy",
+            model = "gpt-5",
+            provider = "github-copilot",
+            fileAccess = new
+            {
+                allowedReadPaths = new[] { Path.Combine(workspace, "sub"), Path.GetFullPath("/etc") },
+                allowedWritePaths = new[] { Path.GetFullPath("/") }
+            }
+        })));
+
+        var ceiling = new FileAccessPolicy
+        {
+            AllowedReadPaths = [workspace],
+            AllowedWritePaths = [workspace]
+        };
+
+        var descriptors = await new PluginAgentConfigurationSource(
+            PluginRoot,
+            ceilingAccessor: () => ceiling,
+            fileSystem: fs).LoadAsync();
+
+        var effective = descriptors.ShouldHaveSingleItem().FileAccess.ShouldNotBeNull();
+        effective.AllowedReadPaths.ShouldContain(p => p.Contains("sub", StringComparison.Ordinal));
+        effective.AllowedReadPaths.ShouldNotContain(p => p.Contains("etc", StringComparison.Ordinal),
+            "a read path outside the installing user's ceiling must be dropped.");
+        effective.AllowedWritePaths.ShouldBeEmpty(
+            "declaring the filesystem root must not grant it.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_RelativeGrants_CannotReachAnotherWorkspaceExternalDirectory()
+    {
+        // Cwd and workspace have different parents, without changing process-global cwd in tests.
+        var cwd = Environment.CurrentDirectory;
+        var workspace = Path.Combine(cwd, "plugin-agents", "workspace");
+        var relative = Path.Combine("..", "shared-3941");
+        var approved = Path.GetFullPath(relative, cwd);
+        var rebound = Path.GetFullPath(relative, workspace);
+        rebound.ShouldNotBe(approved);
+        var fs = Installed("relative", ("agent.json", System.Text.Json.JsonSerializer.Serialize(new
+        {
+            id = "relative",
+            model = "gpt-5",
+            provider = "github-copilot",
+            fileAccess = new { allowedReadPaths = new[] { relative }, allowedWritePaths = new[] { relative } }
+        })));
+        var ceiling = new FileAccessPolicy { AllowedReadPaths = [approved], AllowedWritePaths = [approved] };
+
+        var descriptors = await new PluginAgentConfigurationSource(
+            PluginRoot, ceilingAccessor: () => ceiling, fileSystem: fs).LoadAsync();
+
+        var policy = descriptors.ShouldHaveSingleItem().FileAccess.ShouldNotBeNull();
+        var validator = new BotNexus.Gateway.Security.DefaultPathValidator(policy, workspace);
+        validator.CanRead(Path.Combine(rebound, "secret.txt")).ShouldBeFalse();
+        validator.CanWrite(Path.Combine(rebound, "secret.txt")).ShouldBeFalse();
+        policy.AllowedReadPaths.ShouldBeEmpty();
+        policy.AllowedWritePaths.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadAsync_Skips_ADefinitionWithNoId()
+    {
+        var fs = Installed("broken", ("nameless.json", """{"model":"gpt-5","provider":"p"}"""));
+
+        (await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync())
+            .ShouldBeEmpty("a definition with no id cannot become an agent.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_Skips_MalformedJson_WithoutFailingTheWholeLoad()
+    {
+        var fs = Installed(
+            "mixed",
+            ("a-broken.json", "{ this is not json"),
+            ("b-good.json", Definition("good")));
+
+        var descriptors = await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync();
+
+        descriptors.Select(d => d.AgentId.Value).ShouldBe(["good"],
+            "one unreadable definition must not deny the user every other plugin agent.");
+    }
+
+    [Fact]
+    public async Task LoadAsync_Ignores_APluginWithNoAgentsDirectory()
+    {
+        var fs = new MockFileSystem();
+        fs.AddFile($"{PluginRoot}/{PluginStateStoreFileName}", new MockFileData(StateFor("quiet")));
+
+        (await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Watch_Returns_Null_BecausePluginContentChangesOnlyThroughExplicitOperations()
+    {
+        var source = new PluginAgentConfigurationSource(PluginRoot, fileSystem: new MockFileSystem());
+        source.Watch(_ => { }).ShouldBeNull(
+            "the hosted service already treats a null watcher as 'this source does not notify'; a "
+            + "filesystem watcher would be a second, racier path for events install/update/remove "
+            + "already know about.");
+    }
+
+    private const string PluginStateStoreFileName = "installed-plugins.json";
+
+    private static string Definition(string id) => $$"""
+        {"id":"{{id}}","model":"gpt-5","provider":"github-copilot"}
+        """;
+
+    private static string StateFor(params string[] names) =>
+        "[" + string.Join(",", names.Select(n => $$"""
+            {"name":"{{n}}","source":"https://example.com/{{n}}.git","resolvedVersion":"abc123","installedAtUtc":"2026-01-01T00:00:00+00:00","files":[]}
+            """)) + "]";
+
+    private static MockFileSystem Installed(string pluginName, params (string File, string Content)[] agents)
+    {
+        var fs = new MockFileSystem();
+        fs.AddFile($"{PluginRoot}/{PluginStateStoreFileName}", new MockFileData(StateFor(pluginName)));
+        foreach (var (file, content) in agents)
+            fs.AddFile($"{PluginRoot}/{pluginName}/agents/{file}", new MockFileData(content));
+        return fs;
+    }
+}
