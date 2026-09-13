@@ -481,7 +481,11 @@ internal sealed class BuiltInCommandContributor(
     private string? ClassifyModelRejection(AgentId agentId, string requestedModel)
     {
         var registry = serviceProvider.GetService<ModelRegistry>();
-        var provider = agentRegistry.Get(agentId)?.ApiProvider;
+        var descriptor = agentRegistry.Get(agentId);
+        var provider = descriptor?.ApiProvider;
+
+        if (descriptor is not null && !AgentModelPermission.IsPermitted(descriptor, requestedModel))
+            return AgentModelPermission.FormatRejection(descriptor, requestedModel);
 
         // An unqualified id with no known provider still gets probed across every registered
         // provider rather than being waved through unchecked.

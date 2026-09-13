@@ -287,11 +287,11 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
             model = trimmed[(separator + 1)..];
         }
 
-        if (descriptor.AllowedModelIds.Count > 0
-            && !descriptor.AllowedModelIds.Contains(model, StringComparer.OrdinalIgnoreCase))
+        if (!AgentModelPermission.IsPermitted(descriptor, model))
         {
             throw new InvalidOperationException(
-                $"Session '{session.SessionId}' requested model '{model}', but it is not allowed for agent '{descriptor.AgentId}'.");
+                $"Session '{session.SessionId}' requested a forbidden model. " +
+                AgentModelPermission.FormatRejection(descriptor, model));
         }
 
         if (string.Equals(provider, descriptor.ApiProvider, StringComparison.OrdinalIgnoreCase)
