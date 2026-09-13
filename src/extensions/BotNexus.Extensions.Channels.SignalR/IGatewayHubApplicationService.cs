@@ -43,6 +43,12 @@ public interface IGatewayHubApplicationService
     Task<InboundDispatchResult> AcceptAsync(InboundMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Confirms non-blocking queue admission without awaiting the agent turn. Forwards to
+    /// <see cref="IInboundMessageOrchestrator.PostAsync"/>.
+    /// </summary>
+    Task<InboundDispatchStatus> PostAsync(InboundMessage message, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Returns the sessions currently available to the caller for UI initialisation at
     /// subscribe time. Forwards to <see cref="ISessionWarmupService.GetAvailableSessionsAsync(CancellationToken)"/>.
     /// </summary>

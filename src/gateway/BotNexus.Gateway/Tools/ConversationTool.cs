@@ -170,7 +170,7 @@ public sealed class ConversationTool(
         // GatewayHost derives the recorded role from it -- and from the agent-kind
         // sender when it is absent -- rather than re-deriving or hardcoding.
         var speakAs = ReadSpeakAs(arguments);
-        messageOrchestrator.Post(
+        var admission = await messageOrchestrator.PostAsync(
             new InboundMessage
             {
                 ChannelType = ChannelKey.From("internal"),
@@ -188,7 +188,13 @@ public sealed class ConversationTool(
                     ["messageType"] = "message",
                     ["source"] = "conversation-tool-message"
                 }
-            });
+            }, ct).ConfigureAwait(false);
+
+        if (admission is not (InboundDispatchStatus.Accepted or InboundDispatchStatus.Steered))
+        {
+            throw new InvalidOperationException(
+                $"Message could not be admitted to conversation '{conversation.ConversationId.Value}' ({admission}).");
+        }
 
         return TextResult(JsonSerializer.Serialize(new
         {
@@ -345,7 +351,12 @@ public sealed class ConversationTool(
             // the spawned agent turn to complete (fixes #728).
             if (messageOrchestrator is not null)
             {
-                messageOrchestrator.Post(inbound);
+                var admission = await messageOrchestrator.PostAsync(inbound, ct).ConfigureAwait(false);
+                if (admission is not (InboundDispatchStatus.Accepted or InboundDispatchStatus.Steered))
+                {
+                    throw new InvalidOperationException(
+                        $"Initial message could not be admitted to conversation '{created.ConversationId.Value}' ({admission}).");
+                }
             }
         }
 

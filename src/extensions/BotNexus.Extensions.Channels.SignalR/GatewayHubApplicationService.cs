@@ -85,6 +85,28 @@ internal sealed class GatewayHubApplicationService : IGatewayHubApplicationServi
     }
 
     /// <inheritdoc />
+    public async Task<InboundDispatchStatus> PostAsync(
+        InboundMessage message,
+        CancellationToken cancellationToken = default)
+    {
+        var isolationKey = InboundIsolationKey.ForMessage(message);
+        var status = await _orchestrator.PostAsync(message, cancellationToken).ConfigureAwait(false);
+        var level = status is InboundDispatchStatus.Accepted or InboundDispatchStatus.Steered
+            ? LogLevel.Debug
+            : LogLevel.Warning;
+
+        _logger.Log(level,
+            "Inbound admission for isolation unit '{IsolationKey}' (scope {IsolationScope}) on channel " +
+            "'{ChannelType}' resolved to status {Status}.",
+            isolationKey.Value,
+            isolationKey.Scope,
+            message.ChannelType,
+            status);
+
+        return status;
+    }
+
+    /// <inheritdoc />
     public Task<IReadOnlyList<SessionSummary>> GetAvailableSessionsAsync(CancellationToken cancellationToken = default)
         => _warmup.GetAvailableSessionsAsync(cancellationToken);
 

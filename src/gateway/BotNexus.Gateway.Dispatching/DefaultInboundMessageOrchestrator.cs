@@ -181,6 +181,37 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         return TryWriteToLiveQueue(queueKey, queueItem);
     }
 
+    /// <inheritdoc />
+    public async Task<InboundDispatchStatus> PostAsync(
+        InboundMessage message,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        if (!message.Sender.IsValid)
+        {
+            throw new ArgumentException(
+                $"InboundMessage.Sender must be a valid CitizenId; got default(CitizenId). " +
+                $"Channel '{message.ChannelType}' producer must populate it (see #526).",
+                nameof(message));
+        }
+
+        if (await TrySteerAsync(message, cancellationToken).ConfigureAwait(false))
+        {
+            return InboundDispatchStatus.Steered;
+        }
+
+        var queueKey = GetQueueKey(message);
+        var queueItem = new QueuedInboundMessage(message);
+        if (TryWriteToLiveQueue(queueKey, queueItem))
+        {
+            ObserveAbandonedCompletion(queueItem);
+            return InboundDispatchStatus.Accepted;
+        }
+
+        await SendBusyFeedbackAsync(message, cancellationToken).ConfigureAwait(false);
+        return InboundDispatchStatus.Busy;
+    }
+
     /// <summary>
     /// Writes an item onto the isolation unit's queue, replacing the queue first if the one in the
     /// dictionary is no longer being read (#3600).
