@@ -363,9 +363,12 @@ public sealed class ConversationAutoTitleService
                         model.Provider,
                         async (apiKey, _) =>
                         {
-                            var attemptOptions = string.IsNullOrWhiteSpace(apiKey) || streamOptions is null
-                                ? streamOptions
-                                : streamOptions with { ApiKey = apiKey };
+                            var attemptOptions = streamOptions is null
+                                ? null
+                                : streamOptions with
+                                {
+                                    ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey
+                                };
 
                             return await _llmClient
                                 .CompleteSimpleAsync(model, context, attemptOptions)
