@@ -191,8 +191,11 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
         if (conversationEvent is not ConversationAgentEvent agentEvent)
             return;
 
+        // Every SignalR binding for a conversation resolves to the same conversation group.
+        // Deliver through one representative target so multiple browser bindings do not broadcast
+        // the same source event to that shared group more than once (#2073/#2087).
         foreach (var target in ConversationEventStreamRouting.GetTargets(
-                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId).Take(1))
         {
             if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
             {
