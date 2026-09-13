@@ -522,8 +522,9 @@ to `unknown`, not to a first-party value.
 
 **Promotion is an authority transfer, not a copy.** Agents reading a shared store never saw the
 originating turn and cannot judge the content's origin for themselves, so `SharedMemoryPromoter`
-refuses non-first-party items outright. A promoted row keeps its contributing provenance and is
-never re-stamped as first-party on ingest.
+refuses non-first-party items outright. An accepted promoted row keeps the least-trusted scalar in
+its `provenance` column and the complete normalized contributing set in `metadata_json`, where it
+survives store reload for audit. It is never re-stamped as first-party on ingest.
 
 **Legacy rows stay reachable.** `NULL`-provenance rows resolve to `unknown`/`untrusted`:
 down-weighted, excluded from always-on injection, ineligible for promotion - but fully searchable

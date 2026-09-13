@@ -648,7 +648,7 @@ overrides the corresponding `agents.defaults` value. The `Inherits` column state
 | `description` | string | `null` | `LocalOnly` | Description of the agent's purpose. Human-owned - written once at registration and never rewritten by the agent |
 | `summary` | string | `null` | `LocalOnly` | Agent-maintained account of what the agent is *currently* doing. Written by the agent itself through `update_agent`, and only for its own id - a cross-agent summary write is refused with a policy denial. Length is bounded by `gateway.agentSummary.maxLength` (default 500); a longer summary is refused rather than truncated. When unset the field is omitted from every projection entirely |
 | `model` | string | `null` | `ScalarOverride` | Model identifier (for example `gpt-4.1`) |
-| `allowedModels` | array | `null` | `ReplaceAsUnit` | Model ids this agent may use. Null means unrestricted within the provider allowlist |
+| `allowedModels` | array | `null` | `ReplaceAsUnit` | Model ids this agent may use. Null or an empty list means unrestricted within the provider allowlist. A non-empty list also governs per-run and per-conversation overrides: `/model` and the conversation override API reject models outside it, and an older forbidden stored override is ignored at runtime in favor of the agent default |
 | `systemPromptFiles` | array | `null` | `ReplaceAsUnit` | Ordered list of files to load as the system prompt. Empty means the default order |
 | `systemPromptFile` | string | `null` | `ScalarOverride` | Single system prompt file path (legacy - prefer `systemPromptFiles`) |
 | `toolIds` | array | `null` | `ReplaceAsUnit` | Tool identifiers this agent has access to |

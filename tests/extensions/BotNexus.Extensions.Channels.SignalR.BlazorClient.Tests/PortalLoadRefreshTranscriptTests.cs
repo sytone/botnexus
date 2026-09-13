@@ -31,9 +31,10 @@ public sealed class PortalLoadRefreshTranscriptTests
     private static ConversationSummaryDto Conv(string id) =>
         new(id, "agent-1", "Chat", true, "Active", "s-1", 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
 
-    private static ConversationHistoryEntryDto Entry(string content, int minute, string role = "user") => new()
+    private static ConversationHistoryEntryDto Entry(string content, int minute, string role = "user", string? entryId = null) => new()
     {
         Kind = "message",
+        EntryId = entryId,
         SessionId = "s-1",
         Role = role,
         Content = content,
@@ -192,6 +193,61 @@ public sealed class PortalLoadRefreshTranscriptTests
         await _service.RefreshAsync();
 
         _store.GetConversation("conv-1")!.Messages.Select(m => m.Content).ShouldBe(["one", "two", "three"]);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_LiveMessageWithDifferentPersistedTimestamp_IsNotDuplicatedAndMissingRowIsInserted()
+    {
+        ArrangeRoster("conv-1");
+        await InitializeAsync("conv-1");
+
+        var conversation = _store.GetConversation("conv-1")!;
+        conversation.AppendMessage(new ChatMessage(
+            "Assistant",
+            "live response",
+            new DateTimeOffset(2026, 9, 4, 10, 10, 9, TimeSpan.Zero)));
+        conversation.LoadedHistoryRows = 1;
+
+        _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 2, 0, 200,
+            [
+                Entry("live response", 10, "assistant", "s-1#0"),
+                Entry("missing response", 11, "assistant", "s-1#1")
+            ]));
+
+        await _service.RefreshAsync();
+
+        conversation.Messages.Select(message => message.Content).ShouldBe(["live response", "missing response"]);
+        conversation.LoadedHistoryRows.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_CompactionProjection_RemainsOneFoldedCompactionRow()
+    {
+        ArrangeRoster("conv-1");
+
+        var compaction = new ConversationHistoryEntryDto
+        {
+            Kind = "compaction",
+            EntryId = "s-1#0",
+            SessionId = "s-1",
+            Role = "system",
+            Content = "summary",
+            Timestamp = new DateTimeOffset(2026, 9, 4, 10, 12, 0, TimeSpan.Zero),
+            IsFolded = true
+        };
+        var page = new ConversationHistoryResponseDto("conv-1", 1, 0, 200, [compaction]);
+        _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(page);
+
+        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
+        _store.SetActiveConversation("agent-1", "conv-1");
+        await _service.RefreshAsync();
+
+        var message = _store.GetConversation("conv-1")!.Messages.ShouldHaveSingleItem();
+        message.IsCompaction.ShouldBeTrue();
+        message.BoundarySessionId.ShouldBe("s-1");
+        message.ServerEntryId.ShouldBe("s-1#0");
+        message.IsFolded.ShouldBeTrue();
     }
 
     /// <summary>

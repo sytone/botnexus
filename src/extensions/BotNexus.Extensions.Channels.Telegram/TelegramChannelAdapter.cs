@@ -7,6 +7,7 @@ using BotNexus.Domain.Security;
 using BotNexus.Domain.World;
 using BotNexus.Domain.Gateway.Models;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Channels;
@@ -28,7 +29,7 @@ public sealed class TelegramChannelAdapter(
     IHttpClientFactory httpClientFactory,
     IConfiguration? configuration = null,
     IAskUserPromptResolver? promptResolver = null,
-    Func<TimeSpan, CancellationToken, Task>? retryDelay = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
+    Func<TimeSpan, CancellationToken, Task>? retryDelay = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter, IConversationEventSink
 {
     private const int StreamingFlushThresholdChars = 100;
 
@@ -1683,4 +1684,23 @@ public sealed class TelegramChannelAdapter(
             RichDraftDisabled = false;
         }
     }
+    /// <inheritdoc />
+    public async Task OnConversationEventAsync(
+        ConversationEvent conversationEvent,
+        CancellationToken cancellationToken = default)
+    {
+        if (conversationEvent is not ConversationAgentEvent agentEvent)
+            return;
+
+        foreach (var target in ConversationEventStreamRouting.GetTargets(
+                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        {
+            if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+            {
+                await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
 }

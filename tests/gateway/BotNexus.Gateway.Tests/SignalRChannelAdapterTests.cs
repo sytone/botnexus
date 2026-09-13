@@ -1,4 +1,6 @@
+using System.Collections.Immutable;
 using BotNexus.Extensions.Channels.SignalR;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.SignalR;
@@ -42,6 +44,59 @@ public sealed class SignalRChannelAdapterTests
                     ((AgentStreamEvent)arg).SessionId == SessionId.From("session-1") &&
                     ((AgentStreamEvent)arg).ConversationId == ConversationId.From("conv-1"))),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task OnConversationEventAsync_TwoBindingsForOneConversation_DeliversOnceToConversationGroup()
+    {
+        var clientProxy = new Mock<IGatewayHubClient>();
+        clientProxy.Setup(proxy => proxy.ContentDelta(It.IsAny<object>()))
+            .Returns(Task.CompletedTask);
+
+        var clients = new Mock<IHubClients<IGatewayHubClient>>();
+        clients.Setup(value => value.Group("conversation:conv-1")).Returns(clientProxy.Object);
+
+        var hubContext = new Mock<IHubContext<GatewayHub, IGatewayHubClient>>();
+        hubContext.SetupGet(value => value.Clients).Returns(clients.Object);
+
+        var adapter = new SignalRChannelAdapter(NullLogger<SignalRChannelAdapter>.Instance, hubContext.Object);
+        var conversationId = ConversationId.From("conv-1");
+        var sessionId = SessionId.From("session-1");
+        var streamEvent = new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.ContentDelta,
+            ContentDelta = "delta",
+            ConversationId = conversationId,
+            SessionId = sessionId,
+            AgentId = AgentId.From("agent-1")
+        };
+        var conversationEvent = new ConversationAgentEvent
+        {
+            AgentId = AgentId.From("agent-1"),
+            ConversationId = conversationId,
+            SessionId = sessionId,
+            Bindings = ImmutableArray.Create(
+                new ConversationBindingSnapshot(
+                    BindingId.From("binding-tab-1"),
+                    ChannelKey.From("signalr"),
+                    null,
+                    ChannelAddress.From("connection-1"),
+                    BindingMode.Interactive,
+                    ThreadingMode.Single),
+                new ConversationBindingSnapshot(
+                    BindingId.From("binding-tab-2"),
+                    ChannelKey.From("signalr"),
+                    null,
+                    ChannelAddress.From("connection-2"),
+                    BindingMode.Interactive,
+                    ThreadingMode.Single)),
+            StreamEvent = streamEvent
+        };
+
+        await adapter.OnConversationEventAsync(conversationEvent);
+
+        clients.Verify(value => value.Group("conversation:conv-1"), Times.Once);
+        clientProxy.Verify(proxy => proxy.ContentDelta(It.IsAny<object>()), Times.Once);
     }
 
     [Fact]

@@ -8,7 +8,7 @@ The OpenAI provider connects BotNexus to GPT models via both the Chat Completion
 
 ## Configuration
 
-Set the provider on your agent in `config.json`:
+Select the provider instance and a registered model on your agent in `config.json`:
 
 ```json
 {
@@ -21,19 +21,25 @@ Set the provider on your agent in `config.json`:
 }
 ```
 
+`provider` and `model` are platform-agent configuration keys. Tool and template contracts can separately use `apiProvider` and `modelId`; do not copy those names into an entry under `agents`.
+
 ### API Key
 
 BotNexus resolves the key from the `OPENAI_API_KEY` environment variable.
 
-Alternatively, set it directly in agent configuration:
+Alternatively, configure a literal key or an `auth:<entry>` reference on the provider instance. Keep credentials under `providers`, not under an agent, and do not commit real keys:
 
 ```json
 {
+  "providers": {
+    "openai": {
+      "apiKey": "auth:openai"
+    }
+  },
   "agents": {
     "my-agent": {
       "provider": "openai",
-      "model": "gpt-4o",
-      "apiKey": "sk-..."
+      "model": "gpt-4o"
     }
   }
 }
@@ -41,15 +47,17 @@ Alternatively, set it directly in agent configuration:
 
 ## Supported Models
 
-| Model | Identifier |
-|-------|-----------|
-| GPT-4o | `gpt-4o` |
-| GPT-4.1 | `gpt-4.1` |
-| GPT-4.1 mini | `gpt-4.1-mini` |
-| o3 | `o3` |
-| o4-mini | `o4-mini` |
+The following models are registered by `BuiltInModels.RegisterOpenAIModels`. The limits are built-in registry metadata, not a statement about every model available from OpenAI.
 
-Use the model identifier as published by OpenAI in your `modelId` field.
+| Model | Identifier | API path | Context Window | Max Output Tokens |
+|-------|------------|----------|---------------:|------------------:|
+| GPT-4.1 | `gpt-4.1` | Completions | 1,047,576 | 32,768 |
+| GPT-4.1 Mini | `gpt-4.1-mini` | Completions | 1,047,576 | 32,768 |
+| GPT-4o | `gpt-4o` | Completions | 128,000 | 16,384 |
+| o3 | `o3` | Responses | 200,000 | 100,000 |
+| o4-mini | `o4-mini` | Responses | 200,000 | 100,000 |
+
+Use an exact registered identifier in the agent's `model` field. An ID absent from this table requires custom or dynamically supplied registration before use; absence from the built-ins does not establish upstream unavailability.
 
 ## Features
 

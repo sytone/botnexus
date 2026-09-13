@@ -56,6 +56,24 @@ public sealed class CapturingInboundMessageOrchestrator : IInboundMessageOrchest
     }
 
     /// <summary>
+    /// Admission-only result returned from <see cref="PostAsync"/>. Defaults to accepted.
+    /// </summary>
+    public InboundDispatchStatus AdmissionStatus { get; set; } = InboundDispatchStatus.Accepted;
+
+    /// <summary>
+    /// Records an admission attempt without awaiting processing.
+    /// </summary>
+    public Task<InboundDispatchStatus> PostAsync(
+        InboundMessage message,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        cancellationToken.ThrowIfCancellationRequested();
+        _captured.Enqueue(message);
+        return Task.FromResult(AdmissionStatus);
+    }
+
+    /// <summary>
     /// Back-compat alias for <see cref="AcceptAsync"/>. Returns
     /// <see cref="Task.CompletedTask"/> once the message has been recorded so
     /// callers that still depend on <see cref="IChannelDispatcher"/> see the

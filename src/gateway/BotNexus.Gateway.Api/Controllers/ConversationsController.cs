@@ -972,12 +972,16 @@ public sealed class ConversationsController : ControllerBase
 
         var resolvedModel = ResolveModelForValidation(conversation.AgentId, effectiveModelId);
 
-        // Model override: only validate that the requested id is registered/known when we can.
-        if (NormalizeOverrideString(request.Model) is { } requestedModelId
-            && _modelRegistry is not null
-            && resolvedModel is null)
+        // Model override: enforce the agent's authority boundary before any persistence, then
+        // validate that the requested id is registered/known when the registry is available.
+        if (NormalizeOverrideString(request.Model) is { } requestedModelId)
         {
-            return BadRequest(new { error = $"Model '{requestedModelId}' is not registered for this agent's provider." });
+            var descriptor = _agentRegistry?.Get(conversation.AgentId);
+            if (descriptor is not null && !AgentModelPermission.IsPermitted(descriptor, requestedModelId))
+                return BadRequest(new { error = AgentModelPermission.FormatRejection(descriptor, requestedModelId) });
+
+            if (_modelRegistry is not null && resolvedModel is null)
+                return BadRequest(new { error = $"Model '{requestedModelId}' is not registered for this agent's provider." });
         }
 
         // Thinking override: parse the wire token and validate against model capabilities.

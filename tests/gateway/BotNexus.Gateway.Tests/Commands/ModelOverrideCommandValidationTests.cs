@@ -290,6 +290,80 @@ public sealed class ModelOverrideCommandValidationTests
             "Two callers of the same rule drifting apart is the root cause this issue records.");
     }
 
+    [Fact]
+    public async Task ModelCommand_RegisteredButForbiddenModel_ReturnsErrorAndLeavesOverrideUnchanged()
+    {
+        var agents = CreateAgentRegistry([RegisteredModel]);
+        var harness = await Harness.CreateAsync(
+            existingModelOverride: RegisteredModel,
+            agentRegistry: agents);
+
+        var result = await harness.ExecuteAsync("/model", "gpt-5");
+
+        result.IsError.ShouldBeTrue();
+        result.Body.ShouldContain("gpt-5");
+        result.Body.ShouldContain(RegisteredModel);
+        (await harness.ReadConversationAsync()).ModelOverride.ShouldBe(RegisteredModel);
+    }
+
+    [Fact]
+    public async Task RestOverride_RegisteredButForbiddenModel_Returns400AndLeavesOverrideUnchanged()
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(NewConversation(RestConversationId, RegisteredModel));
+        var controller = new ConversationsController(
+            store,
+            new InMemorySessionStore(),
+            modelRegistry: CreateRegistry(),
+            agentRegistry: CreateAgentRegistry([RegisteredModel]));
+
+        var result = await controller.SetOverride(
+            RestConversationId.Value,
+            new SetConversationOverrideRequest(Model: "gpt-5"),
+            CancellationToken.None);
+
+        var rejection = result.ShouldBeOfType<BadRequestObjectResult>();
+        var rejectionText = rejection.Value.ShouldNotBeNull().ToString();
+        rejectionText.ShouldNotBeNull().ShouldContain(RegisteredModel);
+        (await store.GetAsync(RestConversationId))!.ModelOverride.ShouldBe(RegisteredModel);
+    }
+
+    [Fact]
+    public async Task ModelCommand_Clear_RemainsAvailableForForbiddenStoredOverride()
+    {
+        var harness = await Harness.CreateAsync(
+            existingModelOverride: "gpt-5",
+            agentRegistry: CreateAgentRegistry([RegisteredModel]));
+
+        var result = await harness.ExecuteAsync("/model", "clear");
+
+        result.IsError.ShouldBeFalse();
+        (await harness.ReadConversationAsync()).ModelOverride.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task RestrictedWriters_AcceptPermittedModel()
+    {
+        var agents = CreateAgentRegistry([RegisteredModel, "gpt-5"]);
+        var harness = await Harness.CreateAsync(agentRegistry: agents);
+        var commandResult = await harness.ExecuteAsync("/model", "gpt-5");
+
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(NewConversation(RestConversationId, modelOverride: null));
+        var controller = new ConversationsController(
+            store,
+            new InMemorySessionStore(),
+            modelRegistry: CreateRegistry(),
+            agentRegistry: agents);
+        var restResult = await controller.SetOverride(
+            RestConversationId.Value,
+            new SetConversationOverrideRequest(Model: "gpt-5"),
+            CancellationToken.None);
+
+        commandResult.IsError.ShouldBeFalse();
+        restResult.ShouldBeOfType<OkObjectResult>();
+    }
+
     /// <summary>
     /// Guard against the guard: with no populated registry the command must still WORK. A host
     /// that has registered no models cannot distinguish a typo from a provider it has not loaded,
@@ -330,7 +404,7 @@ public sealed class ModelOverrideCommandValidationTests
         ContextWindow: 200_000,
         MaxTokens: 64_000);
 
-    private static IAgentRegistry CreateAgentRegistry()
+    private static IAgentRegistry CreateAgentRegistry(IReadOnlyList<string>? allowedModelIds = null)
     {
         var registry = new Mock<IAgentRegistry>();
         var descriptor = new AgentDescriptor
@@ -338,7 +412,8 @@ public sealed class ModelOverrideCommandValidationTests
             AgentId = AgentId.From(AgentIdValue),
             DisplayName = "Test Agent",
             ModelId = RegisteredModel,
-            ApiProvider = ProviderKey
+            ApiProvider = ProviderKey,
+            AllowedModelIds = allowedModelIds ?? []
         };
         registry.Setup(r => r.GetAll()).Returns([descriptor]);
         registry.Setup(r => r.Get(It.IsAny<AgentId>())).Returns(descriptor);

@@ -1095,53 +1095,55 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // and without SessionId the Copilot Responses builder's prompt_cache_key branch never fires,
         // so the one request that benefits most from prompt caching was the one request never
         // eligible for it. It also makes a misbehaving background call correlatable provider-side.
-        var baseOptions = new SimpleStreamOptions
-        {
-            CancellationToken = cancellationToken,
-            StreamSetupTimeoutMs = ResolveStreamSetupTimeoutMs(model, options),
-            SessionId = sessionId?.Value
-        };
-
-        var streamOptions = _authManager is not null
-            ? await _authManager
-                .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions, sessionId, cancellationToken)
-                .ConfigureAwait(false)
-            : baseOptions;
-
-        // Create a timeout-linked token so hung provider calls are cancelled after
-        // CompactionOptions.TimeoutSeconds. The linked token fires on whichever
-        // triggers first: the caller's cancellation or the configured timeout.
+        // One linked timeout budget belongs to this model candidate. It covers credential
+        // resolution and both structurally bounded auth attempts; a fallback model receives a fresh
+        // budget. Threading the same token through the provider options requests cancellation of the
+        // underlying operation, while WaitAsync still bounds this caller when a provider ignores it.
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.TimeoutSeconds));
+        var attemptToken = timeoutCts.Token;
 
         AssistantMessage completion;
         try
         {
+            var baseOptions = new SimpleStreamOptions
+            {
+                CancellationToken = attemptToken,
+                StreamSetupTimeoutMs = ResolveStreamSetupTimeoutMs(model, options),
+                SessionId = sessionId?.Value
+            };
+
+            var streamOptions = _authManager is not null
+                ? await _authManager
+                    .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions, sessionId, attemptToken)
+                    .ConfigureAwait(false)
+                : baseOptions;
+
             // #3833: a credential that rotates mid-flight would otherwise fail this call with an
             // opaque 403 that the fallback ladder cannot distinguish from a genuinely bad key.
             // Routing through the auth manager's bounded retry means the rotation costs one wasted
-            // round trip instead of a failed compaction. The retry is structural (exactly one), so
-            // the per-attempt timeout below still bounds the total wait at two attempts.
+            // round trip instead of a failed compaction. Both attempts share the candidate budget.
             completion = _authManager is not null
                 ? await _authManager
                     .InvokeWithAuthRetryAsync(
                         model.Provider,
                         async (apiKey, _) =>
                         {
-                            var attemptOptions = string.IsNullOrWhiteSpace(apiKey)
-                                ? streamOptions
-                                : streamOptions with { ApiKey = apiKey };
+                            var attemptOptions = streamOptions with
+                            {
+                                ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey
+                            };
 
                             return await _llmClient
                                 .CompleteSimpleAsync(model, context, attemptOptions)
-                                .WaitAsync(timeoutCts.Token)
+                                .WaitAsync(attemptToken)
                                 .ConfigureAwait(false);
                         },
-                        cancellationToken)
+                        attemptToken)
                     .ConfigureAwait(false)
                 : await _llmClient
                     .CompleteSimpleAsync(model, context, streamOptions)
-                    .WaitAsync(timeoutCts.Token)
+                    .WaitAsync(attemptToken)
                     .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

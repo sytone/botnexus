@@ -5,6 +5,7 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
@@ -167,6 +168,7 @@ public sealed class VirtualWorld : IAsyncDisposable
         // contract that ChannelManager scans for.
         services.AddSingleton(adapter);
         services.AddSingleton<IChannelAdapter>(adapter);
+        services.AddSingleton<IConversationEventSink>(adapter);
 
         // LLM stack — gateway does NOT auto-register these (Program.cs does in production).
         services.AddSingleton<ApiProviderRegistry>();

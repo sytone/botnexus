@@ -247,42 +247,12 @@ public sealed class PortalLoadService : IPortalLoadService
     private static string MapRole(string role) => MessageRole.Normalize(role);
 
     /// <summary>
-    /// Projects a conversation-history REST page onto the client timeline model. Extracted so the
-    /// initial load and the refresh re-fetch (#3846) share ONE mapping - a second copy would let the
-    /// two paths drift and would break the identity the reconciler keys on.
+    /// Projects a conversation-history REST page onto the same client timeline model used by the
+    /// initial and scroll-up loaders. A second projector previously lost compaction identity and
+    /// made refresh reconciliation disagree with the already displayed transcript.
     /// </summary>
-    private static List<ChatMessage> ToChatMessages(IReadOnlyList<ConversationHistoryEntryDto> entries)
-    {
-        var messages = new List<ChatMessage>(entries.Count);
-        foreach (var entry in entries)
-        {
-            if (entry.Kind == "boundary")
-            {
-                messages.Add(new ChatMessage("System", string.Empty, entry.Timestamp)
-                {
-                    Kind = "boundary",
-                    BoundaryLabel = $"Session · {entry.Timestamp.ToLocalTime():MMM d HH:mm} · {entry.SessionId}",
-                    BoundarySessionId = entry.SessionId
-                });
-            }
-            else
-            {
-                var isTool = entry.ToolName is not null;
-                messages.Add(new ChatMessage(MapRole(entry.Role ?? "system"), entry.Content ?? string.Empty, entry.Timestamp)
-                {
-                    ToolName = entry.ToolName,
-                    ToolCallId = entry.ToolCallId,
-                    ToolArgs = entry.ToolArgs,
-                    ToolIsError = entry.ToolIsError,
-                    ToolResult = isTool ? AnsiStripper.Strip(entry.Content) : null,
-                    IsToolCall = isTool,
-                    IsFolded = entry.IsFolded
-                });
-            }
-        }
-
-        return messages;
-    }
+    private static List<ChatMessage> ToChatMessages(IReadOnlyList<ConversationHistoryEntryDto> entries) =>
+        entries.Select(AgentInteractionService.ProjectConversationEntry).ToList();
 
     /// <summary>
     /// Re-fetches the ACTIVE conversation's transcript over REST and reconciles it into the
@@ -306,6 +276,7 @@ public sealed class PortalLoadService : IPortalLoadService
             var conversation = _store.GetConversation(conversationId);
             if (conversation is null || conversation.IsLocallySynthesised || !conversation.HistoryLoaded)
                 return;
+            var snapshot = conversation.Messages;
 
             var history = await _restClient.GetHistoryAsync(
                 conversationId,
@@ -317,15 +288,9 @@ public sealed class PortalLoadService : IPortalLoadService
                 return;
 
             var serverPage = ToChatMessages(entries);
-            var local = conversation.Messages;
-            var inserted = TranscriptReconciler.CountMissing(local, serverPage);
+            var inserted = conversation.ReconcileMessages(snapshot, serverPage);
             if (inserted == 0)
                 return;
-
-            var reconciled = TranscriptReconciler.Reconcile(local, serverPage);
-            conversation.ClearMessages();
-            foreach (var message in reconciled)
-                conversation.AppendMessage(message);
 
             // Repaired rows are real history rows, so the backwards-paging offset must advance by
             // exactly the number inserted or the next scroll-up would re-fetch a page it already has.

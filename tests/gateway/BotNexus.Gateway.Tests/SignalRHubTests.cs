@@ -150,6 +150,24 @@ public sealed class SignalRHubTests
         captured.Content.ShouldBe("hello");
     }
 
+    [Theory]
+    [InlineData(InboundDispatchStatus.Busy)]
+    [InlineData(InboundDispatchStatus.NoRoute)]
+    [InlineData(InboundDispatchStatus.Stalled)]
+    [InlineData(InboundDispatchStatus.Rejected)]
+    public async Task GatewayHub_SendMessage_WhenDispatchIsNotAccepted_ThrowsInsteadOfReturningSuccess(InboundDispatchStatus status)
+    {
+        var orchestrator = new CapturingInboundMessageOrchestrator
+        {
+            AdmissionStatus = status
+        };
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+
+        var act = () => hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "Do not lose this");
+
+        (await act.ShouldThrowAsync<HubException>()).Message.ShouldContain("not accepted", Case.Insensitive);
+    }
+
     [Fact]
     public async Task GatewayHub_SendMessage_NoVisibleSession_CreatesAndPersistsSession()
     {

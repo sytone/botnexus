@@ -100,12 +100,6 @@ public sealed class ChannelKnowledgeFenceArchitectureTests : ArchitectureTest
     [
         // ---- Rule 2: concrete channel key literals inside generic orchestration ----
 
-        // GatewayHost hard-codes "signalr" three times to decide whether the primary terminal
-        // channel is SignalR and to filter observer bindings down to SignalR ones (#332 legacy).
-        // Deleted when SignalR becomes an ordinary conversation event projection.
-        new("R2", Path.Combine("gateway", "BotNexus.Gateway", "GatewayHost.cs"),
-            "hard-coded \"signalr\" terminal-channel comparison and observer-binding filter", "#2089"),
-
         // WorkspaceContextBuilder stamps Channel = "signalr" onto the synthetic workspace context.
         // Deleted when SignalR context is projected from the generic event seam.
         new("R2", Path.Combine("gateway", "BotNexus.Gateway", "Agents", "WorkspaceContextBuilder.cs"),
@@ -129,11 +123,6 @@ public sealed class ChannelKnowledgeFenceArchitectureTests : ArchitectureTest
             "Aliases table maps \"web chat\"/\"web-chat\"/\"webchat\" onto the concrete key \"signalr\"", "#2089"),
 
         // ---- Rule 3: concrete channel resolved for observer/fan-out behaviour ----
-
-        // `signalRObservers` is literally the coupling epic #2084 exists to remove: generic
-        // orchestration resolving a SignalR-specific observer set for cross-channel live update.
-        new("R3", Path.Combine("gateway", "BotNexus.Gateway", "GatewayHost.cs"),
-            "resolves a `signalRObservers` set for stream fan-out (#332 legacy)", "#2089"),
 
         // ---- Rule 5: direct IChannelAdapter send calls outside channel extensions ----
 

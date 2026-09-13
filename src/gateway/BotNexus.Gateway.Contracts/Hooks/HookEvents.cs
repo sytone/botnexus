@@ -1,7 +1,188 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Abstractions.Hooks;
+
+// ── Diagnostic execution origin ─────────────────────────────────────
+
+/// <summary>Whether diagnostic provenance describes a real execution or a descriptor-only build.</summary>
+public enum DiagnosticOriginKind
+{
+    /// <summary>No runtime execution exists; execution-scoped identifiers are deliberately absent.</summary>
+    DescriptorOnly,
+
+    /// <summary>The origin was populated from authoritative runtime execution state.</summary>
+    Execution
+}
+
+/// <summary>The operation that caused a diagnostic-producing hook to run.</summary>
+public enum DiagnosticTrigger
+{
+    /// <summary>A prompt was being assembled; this does not imply a skill or tool invocation.</summary>
+    PromptConstruction,
+
+    /// <summary>An actual model-issued tool call reached the invocation hook.</summary>
+    ToolInvocation
+}
+
+/// <summary>
+/// Typed provenance carried by diagnostic-producing hooks. Nullable fields mean the producing
+/// runtime did not have authoritative evidence for that value; consumers must never fill gaps by
+/// temporal correlation or inference.
+/// </summary>
+/// <param name="Kind">Whether this came from a real execution or a descriptor-only build.</param>
+/// <param name="Trigger">The operation that caused the hook. Prompt construction is not invocation.</param>
+/// <param name="AgentId">Agent from the descriptor or invocation context; always authoritative.</param>
+/// <param name="ConversationId">Conversation resolved through the session/conversation stores, when available.</param>
+/// <param name="SessionId">Session supplied by <see cref="AgentExecutionContext"/>, when an execution exists.</param>
+/// <param name="RunId">Persisted execution/run identity, only when the caller supplies one.</param>
+/// <param name="ToolCallId">Actual model tool-call identity; present only for <see cref="DiagnosticTrigger.ToolInvocation"/>.</param>
+/// <param name="Channel">Channel supplied by the resolved execution/session metadata, when available.</param>
+/// <param name="SourceComponent">Component that captured the origin, supplied by that producer.</param>
+/// <param name="Category">Stable diagnostic category supplied by that producer.</param>
+/// <param name="TraceId">W3C trace id from <see cref="System.Diagnostics.Activity.Current"/>, when recording is active.</param>
+/// <param name="SpanId">W3C span id from <see cref="System.Diagnostics.Activity.Current"/>, when recording is active.</param>
+/// <param name="CorrelationId">Explicit activity correlation tag, falling back to the W3C trace id.</param>
+/// <param name="Timestamp">UTC instant at which the origin was captured.</param>
+/// <param name="Host">Host identity observed by the producing process.</param>
+/// <param name="InstanceId">Runtime instance identity, only when explicitly supplied.</param>
+/// <param name="InitiatorId">Conversation initiator from persisted conversation state, when available.</param>
+/// <param name="ParentAgentId">Authoritative parent agent identity for delegated execution, when supplied.</param>
+/// <param name="ParentSessionId">Authoritative parent session identity for delegated execution, when supplied.</param>
+public sealed record DiagnosticExecutionOrigin(
+    DiagnosticOriginKind Kind,
+    DiagnosticTrigger Trigger,
+    AgentId AgentId,
+    ConversationId? ConversationId = null,
+    SessionId? SessionId = null,
+    RunId? RunId = null,
+    string? ToolCallId = null,
+    string? Channel = null,
+    string? SourceComponent = null,
+    string? Category = null,
+    string? TraceId = null,
+    string? SpanId = null,
+    string? CorrelationId = null,
+    DateTimeOffset Timestamp = default,
+    string? Host = null,
+    string? InstanceId = null,
+    CitizenId? InitiatorId = null,
+    AgentId? ParentAgentId = null,
+    SessionId? ParentSessionId = null)
+{
+    /// <summary>Creates explicit non-execution provenance for descriptor-only prompt rendering.</summary>
+    public static DiagnosticExecutionOrigin ForDescriptor(AgentId agentId) =>
+        Capture(
+            DiagnosticOriginKind.DescriptorOnly,
+            DiagnosticTrigger.PromptConstruction,
+            agentId,
+            sourceComponent: "WorkspaceContextBuilder",
+            category: "prompt-hook");
+
+    /// <summary>Creates prompt-construction provenance from already-resolved runtime identities.</summary>
+    public static DiagnosticExecutionOrigin ForPromptConstruction(
+        AgentId agentId,
+        SessionId sessionId,
+        ConversationId? conversationId,
+        string? channel,
+        RunId? runId = null,
+        CitizenId? initiatorId = null,
+        AgentId? parentAgentId = null,
+        SessionId? parentSessionId = null,
+        string? instanceId = null,
+        string sourceComponent = "WorkspaceContextBuilder",
+        string category = "prompt-hook") =>
+        Capture(
+            DiagnosticOriginKind.Execution,
+            DiagnosticTrigger.PromptConstruction,
+            agentId,
+            conversationId,
+            sessionId,
+            runId,
+            toolCallId: null,
+            channel,
+            initiatorId,
+            parentAgentId,
+            parentSessionId,
+            instanceId,
+            sourceComponent,
+            category);
+
+    /// <summary>Creates invocation provenance and requires the actual model tool-call identity.</summary>
+    public static DiagnosticExecutionOrigin ForToolInvocation(
+        AgentId agentId,
+        SessionId? sessionId,
+        ConversationId? conversationId,
+        string toolCallId,
+        string? channel,
+        RunId? runId = null,
+        CitizenId? initiatorId = null,
+        AgentId? parentAgentId = null,
+        SessionId? parentSessionId = null,
+        string? instanceId = null,
+        string sourceComponent = "InProcessIsolationStrategy",
+        string category = "tool-hook")
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolCallId);
+        return Capture(
+            DiagnosticOriginKind.Execution,
+            DiagnosticTrigger.ToolInvocation,
+            agentId,
+            conversationId,
+            sessionId,
+            runId,
+            toolCallId,
+            channel,
+            initiatorId,
+            parentAgentId,
+            parentSessionId,
+            instanceId,
+            sourceComponent,
+            category);
+    }
+
+    private static DiagnosticExecutionOrigin Capture(
+        DiagnosticOriginKind kind,
+        DiagnosticTrigger trigger,
+        AgentId agentId,
+        ConversationId? conversationId = null,
+        SessionId? sessionId = null,
+        RunId? runId = null,
+        string? toolCallId = null,
+        string? channel = null,
+        CitizenId? initiatorId = null,
+        AgentId? parentAgentId = null,
+        SessionId? parentSessionId = null,
+        string? instanceId = null,
+        string? sourceComponent = null,
+        string? category = null)
+    {
+        var activity = System.Diagnostics.Activity.Current;
+        var traceId = activity is null ? null : activity.TraceId.ToString();
+        var correlationId = activity?.GetTagItem("botnexus.correlation.id")?.ToString() ?? traceId;
+        return new DiagnosticExecutionOrigin(
+            kind,
+            trigger,
+            agentId,
+            conversationId,
+            sessionId,
+            runId,
+            toolCallId,
+            string.IsNullOrWhiteSpace(channel) ? null : channel,
+            string.IsNullOrWhiteSpace(sourceComponent) ? null : sourceComponent,
+            string.IsNullOrWhiteSpace(category) ? null : category,
+            traceId,
+            activity is null ? null : activity.SpanId.ToString(),
+            correlationId,
+            DateTimeOffset.UtcNow,
+            Environment.MachineName,
+            instanceId,
+            initiatorId,
+            parentAgentId,
+            parentSessionId);
+    }
+}
 
 // ── Before prompt build ──────────────────────────────────────────────
 
@@ -13,11 +194,24 @@ namespace BotNexus.Gateway.Abstractions.Hooks;
 /// <param name="Descriptor">The agent descriptor for the invoked agent. Use this instead of resolving from IAgentRegistry — hook handlers may hold stale DI references.</param>
 /// <param name="CurrentPrompt">The current system prompt text before modifications.</param>
 /// <param name="Messages">The conversation history being sent to the LLM.</param>
+/// <param name="Origin">Authoritative execution provenance, or explicit descriptor-only provenance.</param>
 public sealed record BeforePromptBuildEvent(
     AgentId AgentId,
     AgentDescriptor Descriptor,
     string CurrentPrompt,
-    IReadOnlyList<object> Messages);
+    IReadOnlyList<object> Messages,
+    DiagnosticExecutionOrigin Origin)
+{
+    /// <summary>Compatibility constructor for direct callers that have no execution context.</summary>
+    public BeforePromptBuildEvent(
+        AgentId agentId,
+        AgentDescriptor descriptor,
+        string currentPrompt,
+        IReadOnlyList<object> messages)
+        : this(agentId, descriptor, currentPrompt, messages, DiagnosticExecutionOrigin.ForDescriptor(agentId))
+    {
+    }
+}
 
 /// <summary>
 /// Result returned by a gateway hook handler after inspecting <see cref="BeforePromptBuildEvent"/>.
@@ -93,7 +287,24 @@ public sealed record BeforeToolCallEvent(
     AgentId AgentId,
     string ToolName,
     string ToolCallId,
-    IReadOnlyDictionary<string, object?> Arguments);
+    IReadOnlyDictionary<string, object?> Arguments,
+    DiagnosticExecutionOrigin Origin)
+{
+    /// <summary>Compatibility constructor for direct tests and extension callers.</summary>
+    public BeforeToolCallEvent(
+        AgentId agentId,
+        string toolName,
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments)
+        : this(
+            agentId,
+            toolName,
+            toolCallId,
+            arguments,
+            DiagnosticExecutionOrigin.ForToolInvocation(agentId, null, null, toolCallId, null))
+    {
+    }
+}
 
 /// <summary>
 /// Result returned by a gateway hook handler after inspecting <see cref="BeforeToolCallEvent"/>.
@@ -136,7 +347,26 @@ public sealed record AfterToolCallEvent(
     string ToolName,
     string ToolCallId,
     string? Result,
-    bool IsError);
+    bool IsError,
+    DiagnosticExecutionOrigin Origin)
+{
+    /// <summary>Compatibility constructor for direct tests and extension callers.</summary>
+    public AfterToolCallEvent(
+        AgentId agentId,
+        string toolName,
+        string toolCallId,
+        string? result,
+        bool isError)
+        : this(
+            agentId,
+            toolName,
+            toolCallId,
+            result,
+            isError,
+            DiagnosticExecutionOrigin.ForToolInvocation(agentId, null, null, toolCallId, null))
+    {
+    }
+}
 
 /// <summary>
 /// Result returned by a gateway hook handler after inspecting <see cref="AfterToolCallEvent"/>.

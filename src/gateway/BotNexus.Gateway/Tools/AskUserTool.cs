@@ -141,13 +141,11 @@ public sealed class AskUserTool(
             // otherwise the conversation stays permanently pending and silently swallows every
             // subsequent user message (#1916). The broad try/finally below already clears the
             // durable copy on every exit path; extend it to own the registration lifetime too.
-            onUpdate?.Invoke(new AgentToolResult(Array.Empty<AgentToolContent>(), request));
-
-            // Persist the pending prompt as durable conversation-scoped state so a reloaded tab, a
-            // newly-opened window, mobile that missed the live UserInputRequired event, or a gateway
-            // restart can rehydrate it (ask_user durability, #1488). Best-effort: a persistence hiccup
-            // must never break the interactive prompt itself.
+            // Persist before exposing UserInputRequired. Once a channel can observe the event it
+            // must also be able to hydrate the same pending prompt from the durable store.
             await PersistPendingPromptAsync(request, cancellationToken).ConfigureAwait(false);
+
+            onUpdate?.Invoke(new AgentToolResult(Array.Empty<AgentToolContent>(), request));
 
             var response = await registration.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             reachedTerminalState = true;

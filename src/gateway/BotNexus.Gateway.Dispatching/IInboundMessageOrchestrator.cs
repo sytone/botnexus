@@ -59,4 +59,23 @@ public interface IInboundMessageOrchestrator
     /// surface a busy indication and ask the user to retry).
     /// </returns>
     bool Post(InboundMessage message);
+
+    /// <summary>
+    /// Confirms that a non-blocking inbound message was admitted without waiting for the agent turn
+    /// to complete. Unlike <see cref="Post"/>, this path honours steer/interrupt intent and returns
+    /// an explicit status that transports can validate before reporting success.
+    /// </summary>
+    /// <param name="message">Inbound message from the transport layer.</param>
+    /// <param name="cancellationToken">Cancels admission only; admitted processing remains detached.</param>
+    /// <returns>
+    /// <see cref="InboundDispatchStatus.Accepted"/> when queued,
+    /// <see cref="InboundDispatchStatus.Steered"/> when injected into a live turn, or
+    /// <see cref="InboundDispatchStatus.Busy"/> when admission was refused.
+    /// </returns>
+    Task<InboundDispatchStatus> PostAsync(
+        InboundMessage message,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult(Post(message)
+            ? InboundDispatchStatus.Accepted
+            : InboundDispatchStatus.Busy);
 }

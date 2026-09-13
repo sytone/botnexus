@@ -1,5 +1,6 @@
 using System.Reflection;
 using BotNexus.Agent.Providers.Core;
+using BotNexus.Gateway.Abstractions.Providers;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -163,6 +164,179 @@ public sealed class GatewayAuthManagerTests : IDisposable
         var apiKey = await manager.GetApiKeyAsync("openai");
 
         apiKey.ShouldBe("copilot-auth-access-key");
+    }
+
+    [Theory]
+    [InlineData("auth:")]
+    [InlineData("auth:   ")]
+    [InlineData("auth:missing-entry")]
+    public async Task GetApiKeyAsync_WhenDeclaredAuthReferenceCannotResolve_DoesNotAdmitAmbientCredential(
+        string declaredReference)
+    {
+        SetEnvironmentVariable("OPENAI_API_KEY", "ambient-openai-key");
+        var manager = CreateManager(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["openai"] = new()
+                {
+                    ApiKey = declaredReference
+                }
+            }
+        });
+
+        var apiKey = await manager.GetApiKeyAsync("openai");
+
+        apiKey.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public async Task GetApiKeyAsync_WhenDeclaredAuthReferenceHasEmptyAccess_DoesNotAdmitAmbientCredential()
+    {
+        SetEnvironmentVariable("OPENAI_API_KEY", "ambient-openai-key");
+        await _fileSystem.File.WriteAllTextAsync(_authFilePath, """
+                                             {
+                                               "declared-entry": {
+                                                 "type": "token",
+                                                 "refresh": "unused",
+                                                 "access": "",
+                                                 "expires": 4102444800000,
+                                                 "endpoint": "https://provider.test"
+                                               }
+                                             }
+                                             """);
+        var manager = CreateManager(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["openai"] = new()
+                {
+                    ApiKey = "auth:declared-entry"
+                }
+            }
+        });
+
+        var apiKey = await manager.GetApiKeyAsync("openai");
+
+        apiKey.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public async Task GetApiKeyAsync_WhenDeclaredAuthReferenceRefreshFails_ReportsFaultWithoutAmbientFallback()
+    {
+        SetEnvironmentVariable("OPENAI_API_KEY", "ambient-openai-key");
+        await _fileSystem.File.WriteAllTextAsync(_authFilePath, """
+                                             {
+                                               "declared-entry": {
+                                                 "type": "oauth",
+                                                 "refresh": "refresh-token",
+                                                 "access": "stale-access",
+                                                 "expires": 1,
+                                                 "endpoint": "https://provider.test"
+                                               }
+                                             }
+                                             """);
+        var observer = new CapturingObserver();
+        var manager = CreateManager(
+            new PlatformConfig
+            {
+                Providers = new Dictionary<string, ProviderConfig>
+                {
+                    ["openai"] = new()
+                    {
+                        ApiKey = "auth:declared-entry"
+                    }
+                }
+            },
+            healthObserver: observer,
+            refreshEntry: (_, _) => throw new HttpRequestException("refresh failed"));
+
+        var apiKey = await manager.GetApiKeyAsync("openai");
+
+        apiKey.ShouldBe(string.Empty);
+        var record = observer.Records.ShouldHaveSingleItem();
+        record.Provider.ShouldBe("declared-entry");
+        record.Outcome.Status.ShouldBe(ProviderCredentialStatus.RefreshFailed);
+    }
+
+    [Fact]
+    public async Task CreateAuthenticatedOptionsAsync_WhenDeclaredAuthReferenceCannotResolve_PreservesBlankSentinel()
+    {
+        SetEnvironmentVariable("OPENAI_API_KEY", "ambient-openai-key");
+        var manager = CreateManager(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["openai"] = new()
+                {
+                    ApiKey = "auth:missing-entry"
+                }
+            }
+        });
+
+        var options = await manager.CreateAuthenticatedOptionsAsync("openai");
+
+        options.ApiKey.ShouldBe(string.Empty);
+        ProviderCredentialResolver.Resolve("openai", options.ApiKey).Source.ShouldBe(CredentialSource.Declared);
+    }
+
+    [Fact]
+    public async Task GetApiKeyAsync_WhenDeclaredAuthReferenceRefreshIsCancelled_PropagatesCancellation()
+    {
+        await _fileSystem.File.WriteAllTextAsync(_authFilePath, """
+                                             {
+                                               "declared-entry": {
+                                                 "type": "oauth",
+                                                 "refresh": "refresh-token",
+                                                 "access": "stale-access",
+                                                 "expires": 1,
+                                                 "endpoint": "https://provider.test"
+                                               }
+                                             }
+                                             """);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var manager = CreateManager(
+            new PlatformConfig
+            {
+                Providers = new Dictionary<string, ProviderConfig>
+                {
+                    ["openai"] = new()
+                    {
+                        ApiKey = "auth:declared-entry"
+                    }
+                }
+            },
+            refreshEntry: (_, token) => Task.FromCanceled<GatewayAuthManager.AuthEntry>(token));
+
+        await Should.ThrowAsync<OperationCanceledException>(async () =>
+            await manager.GetApiKeyAsync("openai", cancellation.Token));
+    }
+
+    [Theory]
+    [InlineData("GH_TOKEN")]
+    [InlineData("GITHUB_TOKEN")]
+    public async Task GetApiKeyAsync_WhenCopilotAuthReferenceIsMissing_DoesNotAdmitGitHubAmbientCredential(
+        string ambientVariable)
+    {
+        SetEnvironmentVariable("COPILOT_GITHUB_TOKEN", null);
+        SetEnvironmentVariable("GH_TOKEN", null);
+        SetEnvironmentVariable("GITHUB_TOKEN", null);
+        SetEnvironmentVariable(ambientVariable, "ambient-github-key");
+        var manager = CreateManager(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["github-copilot"] = new()
+                {
+                    ApiKey = "auth:missing-entry"
+                }
+            }
+        });
+
+        var apiKey = await manager.GetApiKeyAsync("github-copilot");
+
+        apiKey.ShouldBe(string.Empty);
     }
 
     [Fact]
@@ -510,10 +684,25 @@ public sealed class GatewayAuthManagerTests : IDisposable
             _fileSystem.Directory.Delete(_rootPath, recursive: true);
     }
 
-    private GatewayAuthManager CreateManager(PlatformConfig platformConfig, bool usePrimaryAuthPath = true)
+    private GatewayAuthManager CreateManager(
+        PlatformConfig platformConfig,
+        bool usePrimaryAuthPath = true,
+        IProviderHealthObserver? healthObserver = null,
+        Func<GatewayAuthManager.AuthEntry, CancellationToken, Task<GatewayAuthManager.AuthEntry>>? refreshEntry = null)
     {
         var monitor = new StaticOptionsMonitor<PlatformConfig>(platformConfig);
-        var manager = new GatewayAuthManager(monitor, NullLogger<GatewayAuthManager>.Instance, _fileSystem);
+        var manager = refreshEntry is null
+            ? new GatewayAuthManager(
+                monitor,
+                NullLogger<GatewayAuthManager>.Instance,
+                _fileSystem,
+                healthObserver ?? NullProviderHealthObserver.Instance)
+            : new GatewayAuthManager(
+                monitor,
+                NullLogger<GatewayAuthManager>.Instance,
+                _fileSystem,
+                healthObserver ?? NullProviderHealthObserver.Instance,
+                refreshEntry);
         var authPathField = typeof(GatewayAuthManager).GetField("_authFilePath", BindingFlags.NonPublic | BindingFlags.Instance);
         var legacyAuthPathField = typeof(GatewayAuthManager).GetField("_legacyAuthFilePath", BindingFlags.NonPublic | BindingFlags.Instance);
         authPathField.ShouldNotBeNull();
@@ -521,6 +710,20 @@ public sealed class GatewayAuthManagerTests : IDisposable
         authPathField!.SetValue(manager, usePrimaryAuthPath ? _authFilePath : Path.Combine(_rootPath, "missing-auth.json"));
         legacyAuthPathField!.SetValue(manager, _legacyAuthFilePath);
         return manager;
+    }
+
+    private sealed class CapturingObserver : IProviderHealthObserver
+    {
+        public List<(string Provider, ProviderCredentialOutcome Outcome)> Records { get; } = [];
+
+        public Task RecordAsync(
+            string providerId,
+            ProviderCredentialOutcome outcome,
+            CancellationToken cancellationToken = default)
+        {
+            Records.Add((providerId, outcome));
+            return Task.CompletedTask;
+        }
     }
 
     private void SetEnvironmentVariable(string name, string? value)

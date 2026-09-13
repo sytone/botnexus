@@ -396,6 +396,59 @@ public class ToolExecutorTests
     }
 
     [Fact]
+    public void AssertMatchingToolEventOrder_EquivalentIdsInDifferentInsertionOrders_Passes()
+    {
+        AgentEvent[] events =
+        [
+            StartEvent("t1"),
+            StartEvent("t2"),
+            EndEvent("t2"),
+            EndEvent("t1")
+        ];
+
+        AssertMatchingToolEventOrder(events);
+    }
+
+    [Fact]
+    public void AssertMatchingToolEventOrder_MissingEnd_FailsWithToolId()
+    {
+        AgentEvent[] events = [StartEvent("t1"), StartEvent("missing"), EndEvent("t1")];
+
+        var exception = Should.Throw<Shouldly.ShouldAssertException>(() => AssertMatchingToolEventOrder(events));
+
+        exception.Message.ShouldContain("missing");
+    }
+
+    [Fact]
+    public void AssertMatchingToolEventOrder_UnexpectedEnd_FailsWithToolId()
+    {
+        AgentEvent[] events = [StartEvent("t1"), EndEvent("t1"), EndEvent("unexpected")];
+
+        var exception = Should.Throw<Shouldly.ShouldAssertException>(() => AssertMatchingToolEventOrder(events));
+
+        exception.Message.ShouldContain("unexpected");
+    }
+
+    [Fact]
+    public void AssertMatchingToolEventOrder_MismatchedIds_FailsWithToolIds()
+    {
+        AgentEvent[] events = [StartEvent("t1"), StartEvent("start-only"), EndEvent("t1"), EndEvent("end-only")];
+
+        var exception = Should.Throw<Shouldly.ShouldAssertException>(() => AssertMatchingToolEventOrder(events));
+
+        exception.Message.ShouldContain("start-only");
+        exception.Message.ShouldContain("end-only");
+    }
+
+    [Fact]
+    public void AssertMatchingToolEventOrder_EndBeforeMatchingStart_Fails()
+    {
+        AgentEvent[] events = [EndEvent("t1"), StartEvent("t1")];
+
+        Should.Throw<Shouldly.ShouldAssertException>(() => AssertMatchingToolEventOrder(events));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ParallelMode_ToolExecutionStartAlwaysPrecedesMatchingEnd()
     {
         var tool = new RecordingTool("echo", delayMs: 20);
@@ -410,15 +463,32 @@ public class ToolExecutorTests
             return Task.CompletedTask;
         }, CancellationToken.None);
 
-        var starts = events.OfType<ToolExecutionStartEvent>().ToDictionary(evt => evt.ToolCallId, evt => events.IndexOf(evt));
-        var ends = events.OfType<ToolExecutionEndEvent>().ToDictionary(evt => evt.ToolCallId, evt => events.IndexOf(evt));
+        AssertMatchingToolEventOrder(events);
+    }
 
-        starts.Keys.OrderBy(static key => key).ShouldBe(ends.Keys.OrderBy(static key => key));
+    private static void AssertMatchingToolEventOrder(IReadOnlyList<AgentEvent> events)
+    {
+        var indexedEvents = events.Select((evt, index) => (Event: evt, Index: index)).ToList();
+        var starts = indexedEvents
+            .Where(item => item.Event is ToolExecutionStartEvent)
+            .ToDictionary(item => ((ToolExecutionStartEvent)item.Event).ToolCallId, item => item.Index);
+        var ends = indexedEvents
+            .Where(item => item.Event is ToolExecutionEndEvent)
+            .ToDictionary(item => ((ToolExecutionEndEvent)item.Event).ToolCallId, item => item.Index);
+
+        starts.Keys.OrderBy(static key => key, StringComparer.Ordinal)
+            .ShouldBe(ends.Keys.OrderBy(static key => key, StringComparer.Ordinal));
         foreach (var toolCallId in starts.Keys)
         {
             starts[toolCallId].ShouldBeLessThan(ends[toolCallId]);
         }
     }
+
+    private static ToolExecutionStartEvent StartEvent(string toolCallId) =>
+        new(toolCallId, "echo", new Dictionary<string, object?>(), DateTimeOffset.UtcNow);
+
+    private static ToolExecutionEndEvent EndEvent(string toolCallId) =>
+        new(toolCallId, "echo", new AgentToolResult([]), false, DateTimeOffset.UtcNow);
 
     private static AssistantAgentMessage CreateAssistantMessage(params (string id, string name, string value)[] toolCalls)
     {
