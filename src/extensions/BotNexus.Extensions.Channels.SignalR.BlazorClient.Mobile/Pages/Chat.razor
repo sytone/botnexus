@@ -51,7 +51,7 @@ else
        grouping. Native <optgroup> keeps the OS touch picker rather than replacing it with a
        bottom-sheet. Empty groups are dropped by the helper, so no empty <optgroup> is emitted. *@
     var conversationGroups = PortalConversationGrouping.ForPicker(
-        activeAgent?.Conversations.Values.ToArray().Where(c => c.Status == "Active") ?? [],
+        activeAgent?.Conversations.Values.ToArray().Where(c => ConversationStatusParsing.IsActive(c.Status)) ?? [],
         Store.ActiveSelectionSource,
         _cronConversationIds);
     <div class="mobile-app">
@@ -660,7 +660,7 @@ else
         _menuOpen = false;
         var agent = Store.GetAgent(agentId);
         var firstConv = agent?.Conversations.Values
-            .Where(c => c.Status == "Active")
+            .Where(c => ConversationStatusParsing.IsActive(c.Status))
             .OrderForDisplay()
             .FirstOrDefault();
         if (firstConv is not null)
