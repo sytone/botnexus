@@ -1128,9 +1128,10 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                         model.Provider,
                         async (apiKey, _) =>
                         {
-                            var attemptOptions = string.IsNullOrWhiteSpace(apiKey)
-                                ? streamOptions
-                                : streamOptions with { ApiKey = apiKey };
+                            var attemptOptions = streamOptions with
+                            {
+                                ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey
+                            };
 
                             return await _llmClient
                                 .CompleteSimpleAsync(model, context, attemptOptions)
