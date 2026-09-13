@@ -67,7 +67,7 @@ Two JSON Schema files define the contract:
 
 `PluginManifestParser` **loads** these schemas (embedded from the same checked-in files) and
 validates against them. It contains no hand-written list of field names or required fields.
-This mirrors how `skills/botnexus-maintenance/reference/issue-schema.json` is the single
+This mirrors how the `botnexus-maintenance` skill's `reference/issue-schema.json` is the single
 source of truth for the issue linter, and it exists because every consumer that re-derives a
 shape eventually drifts from it - which is precisely what happened to the label taxonomy and
 the issue schema before they were centralised.
