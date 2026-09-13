@@ -418,7 +418,9 @@ public static class AgentLoopRunner
     {
         var options = CloneOptions(config.GenerationSettings, cancellationToken);
         var apiKey = await config.GetApiKey(config.Model.Provider, cancellationToken).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        // Null permits provider-level ambient resolution. A blank value can instead represent an
+        // explicit but unavailable declaration, so preserve it to prevent ambient substitution.
+        if (apiKey is not null)
         {
             options = options with { ApiKey = apiKey };
         }

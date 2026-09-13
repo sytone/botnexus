@@ -206,18 +206,18 @@ public sealed class GatewayAuthManager
             return authKey;
         }
 
-        // #2807: declared provider configuration must be consulted BEFORE the process environment.
-        // The previous order let an ambient variable win over an explicitly declared credential, and
-        // let a declared-but-blank credential fall through to whatever the environment happened to
-        // hold. Ambient admission is now gated on nothing having been declared at all.
-        var declaredKey = await ResolveProviderConfigApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
-        if (declaredKey is not null)
-        {
-            return declaredKey;
-        }
-
-        var credential = ProviderCredentialResolver.Resolve(provider, declaredApiKey: null, _logger);
-        return credential.HasValue ? credential.Value : null;
+        // #2807/#4043: ambient admission is gated on whether provider configuration declared a
+        // credential, not whether that declaration happened to resolve to a usable value. Keep the
+        // declaration bit when auth: lookup is empty, missing, unusable, or refresh-failed so those
+        // states cannot silently substitute an unrelated process credential.
+        var configuredCredential = await ResolveProviderConfigApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        var credential = ProviderCredentialResolver.Resolve(
+            provider,
+            configuredCredential.IsDeclared ? configuredCredential.ApiKey ?? string.Empty : null,
+            _logger);
+        return credential.Source == CredentialSource.Declared
+            ? credential.Value
+            : credential.HasValue ? credential.Value : null;
     }
 
     /// <summary>
@@ -248,9 +248,9 @@ public sealed class GatewayAuthManager
     /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>
-    /// Options with the resolved key applied. A null/blank resolved key leaves <c>ApiKey</c> null so
-    /// the provider falls back to environment keys - behaviour-preserving for callers that previously
-    /// passed no options at all.
+    /// Options with the resolved key applied. Null leaves <c>ApiKey</c> unset so a genuinely
+    /// undeclared provider may use its ambient fallback. Blank is preserved when configuration
+    /// declared a credential that could not resolve, preventing provider-level ambient substitution.
     /// </returns>
     public async Task<SimpleStreamOptions> CreateAuthenticatedOptionsAsync(
         string provider,
@@ -261,7 +261,10 @@ public sealed class GatewayAuthManager
         var apiKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
         var options = baseOptions ?? new SimpleStreamOptions();
 
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        // Null means no declaration was present, so provider-level ambient resolution remains
+        // permitted. An empty string means a declaration was present but unusable and must be
+        // carried through to suppress that fallback (#4043).
+        if (apiKey is not null)
         {
             options = options with { ApiKey = apiKey };
         }
@@ -322,25 +325,24 @@ public sealed class GatewayAuthManager
         return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
     }
 
-    private async Task<string?> ResolveProviderConfigApiKeyAsync(string provider, CancellationToken cancellationToken)
+    private async Task<ConfiguredCredentialResolution> ResolveProviderConfigApiKeyAsync(
+        string provider,
+        CancellationToken cancellationToken)
     {
-        if (_platformConfig.CurrentValue.Providers is null)
-        {
-            return null;
-        }
-
-        if (!TryGetProviderConfig(_platformConfig.CurrentValue.Providers, provider, out var providerConfig) ||
+        if (_platformConfig.CurrentValue.Providers is null ||
+            !TryGetProviderConfig(_platformConfig.CurrentValue.Providers, provider, out var providerConfig) ||
             providerConfig?.ApiKey is null)
         {
-            return null;
+            return ConfiguredCredentialResolution.Undeclared;
         }
 
-        // #2807: a declared-but-blank apiKey is still a declaration. Returning null here would let the
-        // caller widen into the ambient environment, which is exactly the substitution being prevented,
-        // so the blank value is returned as-is and fails the caller's own emptiness guard instead.
+        // Declaration presence is policy state independent of credential resolution. In particular,
+        // an auth: reference remains declared when its target is blank, absent, unusable, or cannot
+        // be refreshed; the caller must not reinterpret any of those outcomes as permission to use
+        // ambient credentials.
         if (string.IsNullOrWhiteSpace(providerConfig.ApiKey))
         {
-            return providerConfig.ApiKey;
+            return ConfiguredCredentialResolution.Declared(providerConfig.ApiKey);
         }
 
         const string AuthPrefix = "auth:";
@@ -349,13 +351,21 @@ public sealed class GatewayAuthManager
             var referenceProvider = providerConfig.ApiKey[AuthPrefix.Length..].Trim();
             if (string.IsNullOrWhiteSpace(referenceProvider))
             {
-                return null;
+                return ConfiguredCredentialResolution.Declared(apiKey: null);
             }
 
-            return await GetApiKeyFromAuthEntryAsync(referenceProvider, cancellationToken).ConfigureAwait(false);
+            var outcome = await ResolveAuthEntryCredentialAsync(referenceProvider, cancellationToken).ConfigureAwait(false);
+            return ConfiguredCredentialResolution.Declared(outcome.ApiKey);
         }
 
-        return providerConfig.ApiKey;
+        return ConfiguredCredentialResolution.Declared(providerConfig.ApiKey);
+    }
+
+    private readonly record struct ConfiguredCredentialResolution(bool IsDeclared, string? ApiKey)
+    {
+        public static ConfiguredCredentialResolution Undeclared => new(false, null);
+
+        public static ConfiguredCredentialResolution Declared(string? apiKey) => new(true, apiKey);
     }
 
     private async Task<string?> GetApiKeyFromAuthEntryAsync(string provider, CancellationToken cancellationToken)
