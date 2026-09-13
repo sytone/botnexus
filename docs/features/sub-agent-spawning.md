@@ -399,11 +399,17 @@ When a sub-agent finishes its work, results are automatically delivered to the p
 
 | Status | Trigger | Result Summary |
 |--------|---------|----------------|
-| `Completed` | Agent finishes naturally (no more tool calls) | Last assistant message |
+| `Completed` | Agent finishes naturally, including an audit-backed recovered tool attempt | Last assistant message; recovered runs include a `completed-with-recovered-errors` evidence header |
 | `TimedOut` | `timeout` seconds elapsed | Last assistant message before timeout |
-| `Failed` | Unrecoverable error during execution | Error description |
+| `Failed` | Terminal provider error or an unrecovered tool failure | Error description |
 | `Killed` | Parent called `manage_subagent` with `action: "kill"` | `null` |
 | `BudgetExhausted` | `maxTurns` reached before a final response | Last assistant message before the budget ran out |
+
+A tool failure is classified as recovered only when the ordered audit timeline shows that the
+immediately following invocation used the same tool and succeeded. The completion message names the
+tool and both call IDs, while the child transcript retains every failed and successful audit row.
+Final prose, a later unrelated success, or a non-adjacent invocation cannot convert an unresolved
+failure into success. Terminal provider errors remain failures even when tool retries recovered.
 
 ### First-Limit-Wins
 
