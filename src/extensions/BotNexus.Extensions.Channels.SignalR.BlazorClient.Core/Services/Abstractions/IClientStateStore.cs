@@ -470,8 +470,8 @@ public sealed class ConversationState
     /// <summary>Messages in this conversation's timeline. Returns an immutable point-in-time snapshot
     /// taken under the timeline lock (#2712), so a caller can enumerate, index or copy it without ever
     /// observing a torn state. Mutate via <see cref="AppendMessage"/>, <see cref="ReplaceMessageAt"/>,
-    /// <see cref="PrependMessages"/>, or <see cref="ClearMessages"/> so the id-&gt;index map stays
-    /// consistent (#1622).</summary>
+    /// <see cref="PrependMessages"/>, <see cref="ReconcileMessages"/>, or <see cref="ClearMessages"/>
+    /// so the id-&gt;index map stays consistent (#1622).</summary>
     public IReadOnlyList<ChatMessage> Messages
     {
         get { lock (_timelineGate) { return _messagesSnapshot ??= _messages.ToArray(); } }
@@ -543,6 +543,36 @@ public sealed class ConversationState
             _messages.InsertRange(0, messages);
             RebuildMessageIndex();
             InvalidateSnapshots();
+        }
+    }
+
+    /// <summary>
+    /// Atomically inserts rows missing from a freshly fetched server page while preserving timeline
+    /// mutations that landed after <paramref name="snapshot"/> was captured. Returns the exact number
+    /// of inserted server rows so history paging can advance without counting concurrent live rows.
+    /// </summary>
+    public int ReconcileMessages(
+        IReadOnlyList<ChatMessage> snapshot,
+        IReadOnlyList<ChatMessage> serverPage)
+    {
+        lock (_timelineGate)
+        {
+            // The caller's snapshot is optimistic identity only. If no mutation invalidated it, it is
+            // safe to reconcile directly; otherwise the current timeline must win so a concurrent
+            // append or terminal tool replacement cannot be overwritten by stale refresh state.
+            IReadOnlyList<ChatMessage> local = ReferenceEquals(snapshot, _messagesSnapshot)
+                ? snapshot
+                : _messages;
+            var inserted = TranscriptReconciler.CountMissing(local, serverPage);
+            if (inserted == 0)
+                return 0;
+
+            var reconciled = TranscriptReconciler.Reconcile(local, serverPage);
+            _messages.Clear();
+            _messages.AddRange(reconciled);
+            RebuildMessageIndex();
+            InvalidateSnapshots();
+            return inserted;
         }
     }
 
