@@ -121,12 +121,16 @@ fail when called - a tool the model can see but never use is a tax paid on every
 | --- | --- |
 | `github_issue_get` | Read one issue, optionally with its comments. |
 | `github_issue_list` | List issues with explicit pagination and an optional label filter. |
+| `github_issue_create` | Create an issue with an optional body and labels. |
 | `github_issue_comment` | Post a comment on an issue **or** a pull request. |
+| `github_issue_update` | Update or close an issue, including replacing its labels. |
+| `github_pr_create` | Create a pull request, optionally as a draft. |
 | `github_pr_get` | Read one pull request, including merge state and diff statistics. |
 | `github_pr_list` | List pull requests with explicit pagination. |
 | `github_pr_checks` | Read the CI check runs for a pull request, with a rollup summary. |
 | `github_pr_diff` | Read a pull request's changed files, optionally with unified patch hunks. |
 | `github_workflow_runs` | List GitHub Actions workflow runs, filterable by workflow, branch and status. |
+| `github_labels` | List repository labels with explicit pagination, or create a label. |
 | `github_api` | Escape hatch: any REST path with the managed credential. |
 
 ### No tool takes a credential

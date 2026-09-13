@@ -61,6 +61,17 @@ internal static class GitHubProjections
         ["url"] = Str(element, "html_url"),
     };
 
+    /// <summary>Projects a repository label.</summary>
+    internal static Dictionary<string, object?> Label(JsonElement element) => new(StringComparer.Ordinal)
+    {
+        ["id"] = Int(element, "id"),
+        ["name"] = Str(element, "name"),
+        ["color"] = Str(element, "color"),
+        ["description"] = Str(element, "description"),
+        ["default"] = Bool(element, "default"),
+        ["url"] = Str(element, "url"),
+    };
+
     /// <summary>Projects a single check run from the check-runs endpoint.</summary>
     /// <remarks>
     /// <c>conclusion</c> is null while a run is still in flight. Keeping it null rather than
