@@ -15,6 +15,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Plugins\BotNexus.Extensions.Plugins.csproj" />
+    <!-- #2685 AC1: load the production plugins extension and verify its service contributor. -->
+    <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Plugins.Api\BotNexus.Extensions.Plugins.Api.csproj" />
     <!-- #3941: exercise fenced policies through the real runtime path validator. -->
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
     <!-- #2683: the cron action tests construct a real CronExecutionContext and a real CronJob. -->

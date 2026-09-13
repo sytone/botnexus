@@ -1,4 +1,5 @@
 using System.IO.Abstractions;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Extensions.Plugins.Lifecycle;
@@ -59,6 +60,29 @@ public sealed class PluginAgentConfigurationSource : IAgentConfigurationSource
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
+
+    private static readonly IReadOnlySet<string> SerializedFields =
+        typeof(PluginAgentDefinition)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(static property => property.SetMethod is not null)
+            .Select(static property => property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name
+                ?? SerializerOptions.PropertyNamingPolicy?.ConvertName(property.Name)
+                ?? property.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly IReadOnlySet<string> ForbiddenSerializedFields =
+        PluginAgentDescriptorFence.FencedMembers
+            .Select(static member => SerializerOptions.PropertyNamingPolicy?.ConvertName(member) ?? member)
+            // Platform/plugin config uses these object/alias names rather than descriptor property names.
+            .Concat([
+                "subAgents",
+                "sessionAccess",
+                "conversationAccess",
+                "extensions",
+                "hooks",
+                "mcpServers"
+            ])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private readonly string? _pluginRoot;
     private readonly IFileSystem _fileSystem;
@@ -137,14 +161,39 @@ public sealed class PluginAgentConfigurationSource : IAgentConfigurationSource
         return descriptors;
     }
 
+    private static IReadOnlyList<string> FindForbiddenSerializedFields(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            return [];
+
+        return document.RootElement
+            .EnumerateObject()
+            .Select(static property => property.Name)
+            .Where(field => !SerializedFields.Contains(field) && ForbiddenSerializedFields.Contains(field))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static field => field, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     private AgentDescriptor? LoadOne(string pluginName, string file, FileAccessPolicy? ceiling)
     {
         PluginAgentDefinition? definition;
         try
         {
-            definition = JsonSerializer.Deserialize<PluginAgentDefinition>(
-                _fileSystem.File.ReadAllText(file),
-                SerializerOptions);
+            var json = _fileSystem.File.ReadAllText(file);
+            var forbiddenFields = FindForbiddenSerializedFields(json);
+            if (forbiddenFields.Count > 0)
+            {
+                _logger.LogError(
+                    "Rejecting agent definition '{File}' from plugin '{Plugin}': forbidden serialized field(s): {Fields}.",
+                    file,
+                    pluginName,
+                    string.Join(", ", forbiddenFields.Select(static field => $"'{field}'")));
+                return null;
+            }
+
+            definition = JsonSerializer.Deserialize<PluginAgentDefinition>(json, SerializerOptions);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {

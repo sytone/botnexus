@@ -163,12 +163,13 @@ public sealed class PluginAgentDescriptorFenceTests
         var fenced = PluginAgentDescriptorFence.FencedMembers;
         fenced.ShouldNotBeEmpty("a fence with no fenced members is vacuous.");
 
-        foreach (var member in fenced)
-        {
-            var candidate = MutateToNonDefault(Minimal(), member);
-            if (candidate is null)
-                continue;
+        IdentityOnlyFencedExemptions.ShouldBe(
+            fenced.Where(member => !MutationRecipes.ContainsKey(member)).ToArray(),
+            "every fenced member must have an explicit mutation recipe or the single justified identity exemption.");
 
+        foreach (var member in fenced.Except(IdentityOnlyFencedExemptions, StringComparer.Ordinal))
+        {
+            var candidate = MutationRecipes[member](Minimal());
             var result = PluginAgentDescriptorFence.Apply(candidate, ceiling: null);
             result.IsAccepted.ShouldBeFalse(
                 $"fenced member '{member}' was set to a non-default value and the fence accepted "
@@ -548,34 +549,39 @@ public sealed class PluginAgentDescriptorFenceTests
             + "plugin-declarable privilege surface the moment it exists.");
     }
 
-    private static AgentDescriptor? MutateToNonDefault(AgentDescriptor baseline, string member) =>
-        member switch
+    // AgentId is required to construct the candidate and the fence intentionally copies that same
+    // identity into its reference descriptor. It cannot be independently mutated into a declaration;
+    // every other live fenced member must have a concrete non-default mutation recipe below.
+    private static IReadOnlyList<string> IdentityOnlyFencedExemptions { get; } =
+    [
+        nameof(AgentDescriptor.AgentId),
+    ];
+
+    private static IReadOnlyDictionary<string, Func<AgentDescriptor, AgentDescriptor>> MutationRecipes { get; } =
+        new Dictionary<string, Func<AgentDescriptor, AgentDescriptor>>(StringComparer.Ordinal)
         {
-            nameof(AgentDescriptor.Kind) => baseline with { Kind = AgentKind.SubAgent },
-            nameof(AgentDescriptor.IsolationStrategy) => baseline with { IsolationStrategy = "container" },
-            nameof(AgentDescriptor.IsolationOptions) => baseline with
+            [nameof(AgentDescriptor.Kind)] = baseline => baseline with { Kind = AgentKind.SubAgent },
+            [nameof(AgentDescriptor.IsolationStrategy)] = baseline => baseline with { IsolationStrategy = "container" },
+            [nameof(AgentDescriptor.IsolationOptions)] = baseline => baseline with
             {
                 IsolationOptions = new Dictionary<string, object?> { ["privileged"] = true }
             },
-            nameof(AgentDescriptor.ExtensionConfig) => baseline with
+            [nameof(AgentDescriptor.ExtensionConfig)] = baseline => baseline with
             {
                 ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
                 {
                     ["x"] = System.Text.Json.JsonDocument.Parse("{}").RootElement
                 }
             },
-            nameof(AgentDescriptor.ShellCommand) => baseline with { ShellCommand = ["sh"] },
-            nameof(AgentDescriptor.SubAgentIds) => baseline with { SubAgentIds = ["other"] },
-            nameof(AgentDescriptor.SubAgentRoles) => baseline with { SubAgentRoles = ["admin"] },
-            nameof(AgentDescriptor.SessionAccessLevel) => baseline with { SessionAccessLevel = "all" },
-            nameof(AgentDescriptor.SessionAllowedAgents) => baseline with { SessionAllowedAgents = ["other"] },
-            nameof(AgentDescriptor.ConversationAccessLevel) => baseline with { ConversationAccessLevel = "all" },
-            nameof(AgentDescriptor.ConversationAllowedAgents) => baseline with
+            [nameof(AgentDescriptor.ShellCommand)] = baseline => baseline with { ShellCommand = ["sh"] },
+            [nameof(AgentDescriptor.SubAgentIds)] = baseline => baseline with { SubAgentIds = ["other"] },
+            [nameof(AgentDescriptor.SubAgentRoles)] = baseline => baseline with { SubAgentRoles = ["admin"] },
+            [nameof(AgentDescriptor.SessionAccessLevel)] = baseline => baseline with { SessionAccessLevel = "all" },
+            [nameof(AgentDescriptor.SessionAllowedAgents)] = baseline => baseline with { SessionAllowedAgents = ["other"] },
+            [nameof(AgentDescriptor.ConversationAccessLevel)] = baseline => baseline with { ConversationAccessLevel = "all" },
+            [nameof(AgentDescriptor.ConversationAllowedAgents)] = baseline => baseline with
             {
                 ConversationAllowedAgents = ["other"]
             },
-            // A newly fenced member with no mutation recipe here is skipped rather than silently
-            // asserted - the architecture fence is what guarantees it is fenced at all.
-            _ => null
         };
 }

@@ -311,15 +311,16 @@ A plugin arrives from a marketplace, so its agent descriptor is untrusted input.
 the Claude Code constraint directly: **a plugin-shipped agent may not declare hooks, MCP servers,
 isolation escalation, or file access beyond the installing user's own ceiling.**
 
-| Category | Members | Outcome |
+| Serialized JSON category | Fields | Handling |
 |---|---|---|
-| Identity and presentation | `displayName`, `emoji`, `description`, `order` | Declarable |
-| Model selection | `model`, `provider`, `allowedModels`, `thinking`, `contextWindow`, `cacheRetention` | Declarable |
-| Prompt content | `systemPrompt`, `systemPromptFiles` | Declarable |
-| Tool ids | `toolIds` | Declarable |
-| Behavioural config | `memory`, `soul`, `heartbeat`, `dateTimeInjection`, `conversationRetention`, `maxConcurrentSessions`, `metadata` | Declarable |
-| File access | `fileAccess` | **Narrowed** to the installing user's ceiling |
-| Everything else | `isolationStrategy`, `isolationOptions`, `kind`, `shellCommand`, `extensionConfig` (hooks, MCP servers), `subAgents`, `subAgentRoles`, session and conversation access | **Rejected at load** |
+| Identity and presentation | `id`, `displayName`, `emoji`, `description` | Bound and projected |
+| Model selection | `model`, `provider`, `allowedModels`, `thinking`, `contextWindow` | Bound and projected |
+| Prompt content | `systemPrompt`, `systemPromptFiles` | Bound and projected |
+| Tool ids and limits | `toolIds`, `maxConcurrentSessions` | Bound and projected |
+| File access | `fileAccess` | Bound, then **narrowed** to the installing user's ceiling |
+| Host provenance | `metadata` | Unsupported as plugin input; ignored. The host writes only `metadata.plugin`. |
+| Benign descriptor options outside the serialized subset | `order`, `cacheRetention`, `memory`, `soul`, `heartbeat`, `dateTimeInjection`, `conversationRetention`, and other unknown non-privileged fields | Unsupported and ignored for forward compatibility |
+| Privileged descriptor fields | `isolationStrategy`, `isolationOptions`, `kind`, `shellCommand`, `extensionConfig` (hooks, MCP servers), `subAgents`, `subAgentRoles`, session access, and conversation access | The **entire JSON document is rejected at load**, and the diagnostic names the exact JSON field |
 
 `toolIds` is declarable because a tool id names a tool the *host* has registered; an id the host
 does not know resolves to nothing. Declaring one cannot conjure a capability the user has not
@@ -371,10 +372,11 @@ fingerprint fence: widening the declarable set fails the architecture test until
 decision is mirrored in it. Growing the plugin privilege surface therefore cannot happen as a
 quiet one-line edit - it requires editing a test whose whole purpose is to be read.
 
-The on-disk `PluginAgentDefinition` shape is a second, cheaper layer: it declares only the
-permitted fields, so an `isolationStrategy` in a plugin's JSON has nowhere to bind and is
-discarded at parse time. That is a convenience, not the authority - it is a hand-maintained list,
-and the structural fence is what stops it drifting.
+The on-disk `PluginAgentDefinition` shape is a second, cheaper layer: it binds only the
+supported serialized subset above. Before binding, the source compares top-level JSON names against
+the structural descriptor classification. A privileged field such as `isolationStrategy` rejects
+that complete document and is named in the error. Unknown benign fields remain ignored, and
+serialized `metadata` never replaces host-owned plugin provenance.
 
 Runtime sandboxing of the resulting agent is out of scope: the fence governs what the descriptor
 may **declare**.
@@ -390,8 +392,8 @@ materialised (#2682).
   "version": 1,
   "generatedAt": "2026-09-04T12:00:00+00:00",
   "entries": [
-    { "path": ".botnexus-plugin/plugin.json", "sha256": "ΓÇª", "updatedAt": "ΓÇª" },
-    { "path": "skills/demo/scripts/run.ps1", "sha256": "ΓÇª", "updatedAt": "ΓÇª" }
+    { "path": ".botnexus-plugin/plugin.json", "sha256": "...", "updatedAt": "..." },
+    { "path": "skills/demo/scripts/run.ps1", "sha256": "...", "updatedAt": "..." }
   ]
 }
 ```

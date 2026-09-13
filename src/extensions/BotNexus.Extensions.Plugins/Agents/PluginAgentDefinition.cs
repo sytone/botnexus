@@ -11,9 +11,10 @@ namespace BotNexus.Extensions.Plugins.Agents;
 /// <remarks>
 /// <para>
 /// <b>This type is a second, independent fence - deliberately so.</b> It declares only the members
-/// <see cref="PluginAgentDescriptorFence.DeclarableMembers"/> permits, so a plugin cannot even
-/// express an isolation strategy or a shell command in JSON: the field has nowhere to bind and is
-/// discarded at parse time. That makes the common case cheap and the error message early.
+/// <see cref="PluginAgentDescriptorFence.DeclarableMembers"/> permits. Before deserialization, the
+/// source inspects top-level JSON names and rejects a document that names a structurally fenced
+/// descriptor member; benign unknown fields remain ignored for forward compatibility. This keeps
+/// forbidden declarations visible rather than silently dropping them.
 /// </para>
 /// <para>
 /// It is <b>not</b> a substitute for the runtime fence, and the runtime fence is not redundant

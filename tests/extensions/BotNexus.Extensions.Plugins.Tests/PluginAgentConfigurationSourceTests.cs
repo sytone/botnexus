@@ -66,6 +66,67 @@ public sealed class PluginAgentConfigurationSourceTests
     }
 
     [Fact]
+    public async Task LoadAsync_Preserves_TheSupportedSerializedSubset()
+    {
+        var fs = Installed("complete", ("agent.json", """
+            {
+              "id": "complete-agent",
+              "displayName": "Complete Agent",
+              "emoji": "robot",
+              "description": "Exercises the serialized contract.",
+              "model": "gpt-5",
+              "provider": "github-copilot",
+              "systemPrompt": "Use the supplied prompt.",
+              "systemPromptFiles": ["SOUL.md", "IDENTITY.md"],
+              "toolIds": ["read", "grep"],
+              "allowedModels": ["gpt-5", "gpt-5-mini"],
+              "thinking": "high",
+              "contextWindow": 128000,
+              "maxConcurrentSessions": 3
+            }
+            """));
+
+        var descriptor = (await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync())
+            .ShouldHaveSingleItem();
+
+        descriptor.Emoji.ShouldBe("robot");
+        descriptor.Description.ShouldBe("Exercises the serialized contract.");
+        descriptor.SystemPrompt.ShouldBe("Use the supplied prompt.");
+        descriptor.SystemPromptFiles.ShouldBe(["SOUL.md", "IDENTITY.md"]);
+        descriptor.ToolIds.ShouldBe(["read", "grep"]);
+        descriptor.AllowedModelIds.ShouldBe(["gpt-5", "gpt-5-mini"]);
+        descriptor.Thinking.ShouldBe("high");
+        descriptor.ContextWindow.ShouldBe(128_000);
+        descriptor.MaxConcurrentSessions.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task LoadAsync_Ignores_BenignUnsupportedFields_AndPreservesHostOwnedMetadata()
+    {
+        var fs = Installed("owner", ("agent.json", """
+            {
+              "id": "benign-agent",
+              "model": "gpt-5",
+              "provider": "github-copilot",
+              "order": 1,
+              "cacheRetention": "long",
+              "memory": { "enabled": true },
+              "metadata": { "plugin": "forged", "owner": "plugin-author" }
+            }
+            """));
+
+        var descriptor = (await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync())
+            .ShouldHaveSingleItem();
+
+        descriptor.Order.ShouldBeNull();
+        descriptor.CacheRetentionMode.ShouldBeNull();
+        descriptor.Memory.ShouldBeNull();
+        descriptor.Metadata.Count.ShouldBe(1);
+        descriptor.Metadata["plugin"].ShouldBe("owner",
+            "plugin provenance is host-owned and serialized metadata must not overwrite it.");
+    }
+
+    [Fact]
     public async Task LoadAsync_Ignores_AgentsInAnUnrecordedDirectory()
     {
         // The installed record is the authority. A folder dropped next to real plugins has no
@@ -95,14 +156,42 @@ public sealed class PluginAgentConfigurationSourceTests
             }
             """));
 
-        var descriptors = await new PluginAgentConfigurationSource(PluginRoot, fileSystem: fs).LoadAsync();
+        var logger = new CapturingLogger<PluginAgentConfigurationSource>();
+        var descriptors = await new PluginAgentConfigurationSource(
+            PluginRoot,
+            logger: logger,
+            fileSystem: fs).LoadAsync();
 
-        // isolationStrategy has no binding target on PluginAgentDefinition, so it is discarded at
-        // parse time and the descriptor loads WITHOUT the escalation. That is the whole point of
-        // the on-disk shape being a closed set: the escalation cannot even be expressed.
-        var descriptor = descriptors.ShouldHaveSingleItem();
-        descriptor.IsolationStrategy.ShouldBe("in-process",
-            "a plugin-declared isolation strategy must never reach the descriptor.");
+        descriptors.ShouldBeEmpty(
+            "a forbidden serialized field rejects the entire source document rather than being silently dropped.");
+        logger.Entries.ShouldContain(
+            entry => entry.Level == Microsoft.Extensions.Logging.LogLevel.Error
+                     && entry.Message.Contains("isolationStrategy", StringComparison.Ordinal),
+            "the load diagnostic must name the exact offending JSON field.");
+    }
+
+    [Theory]
+    [InlineData("hooks")]
+    [InlineData("mcpServers")]
+    public async Task LoadAsync_Rejects_PrivilegedPluginAliases(string field)
+    {
+        var fs = Installed("hostile", ("evil.json", $$"""
+            {
+              "id": "evil",
+              "model": "gpt-5",
+              "provider": "github-copilot",
+              "{{field}}": {}
+            }
+            """));
+
+        var logger = new CapturingLogger<PluginAgentConfigurationSource>();
+        var descriptors = await new PluginAgentConfigurationSource(
+            PluginRoot,
+            logger: logger,
+            fileSystem: fs).LoadAsync();
+
+        descriptors.ShouldBeEmpty();
+        logger.Entries.ShouldContain(entry => entry.Message.Contains(field, StringComparison.Ordinal));
     }
 
     [Fact]
