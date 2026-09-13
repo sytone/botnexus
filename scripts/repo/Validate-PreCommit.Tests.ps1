@@ -137,10 +137,15 @@ if ($azureRunnerSource -notmatch "(?s)Mode -ne 'strict'.+playwrightArtifact" -or
     $azureRunnerSource -notmatch 'result.exitCode -eq 0 -and\s+\$requiredArtifactsPresent') {
     $failures.Add('Strict Azure receipt creation must require a Playwright artifact.')
 }
+# Preserve the original cross-platform path-safety invariant with the replacement
+# transport: NUL-safe Git enumeration and ZIP entries replace tar list-file parsing.
+$snapshotSource = Get-Content (Join-Path $repoRoot 'scripts/repo/SourceSnapshot.psm1') -Raw
 if ($azureRunnerSource -match 'ls-files.+-z.+tar --null' -or
     $azureRunnerSource -notmatch 'SourceSnapshot\.psm1' -or
-    $azureRunnerSource -notmatch 'Assert-SourceSnapshot') {
-    $failures.Add('Azure snapshot creation must use and verify the exact-source snapshot module rather than the retired native tar pipeline.')
+    $azureRunnerSource -notmatch 'ZipFile\]::CreateFromDirectory' -or
+    $snapshotSource -notmatch "'--exclude-standard', '-z'" -or
+    $snapshotSource -notmatch 'Assert-SourceSnapshotPath \$entry.FullName') {
+    $failures.Add('Azure snapshots must use the exact-source module and preserve literal paths through NUL-safe enumeration, ZIP capture and validated reconstruction.')
 }
 $entrypointSource = Get-Content (Join-Path $repoRoot 'infra/buildtest/runner/entrypoint.ps1') -Raw
 if ($entrypointSource -notmatch "playwright\.log" -or
