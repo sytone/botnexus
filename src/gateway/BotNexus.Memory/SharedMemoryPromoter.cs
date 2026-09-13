@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Domain.Text;
 using BotNexus.Memory.Learning;
 using BotNexus.Memory.Models;
@@ -185,5 +186,19 @@ public sealed class SharedMemoryPromoter
         => TextTruncation.SafeTruncate(text, maxLength)!;
 
     private static string BuildMetadataJson(ExtractedKnowledge item)
-        => $"{{\"category\":\"{item.Category}\",\"confidence\":{item.Confidence:F2},\"sourceSession\":\"{item.SourceSessionId}\",\"sourceTurn\":{item.SourceTurnIndex}}}";
+    {
+        var contributingProvenances = item.ContributingProvenances
+            .Select(MemoryProvenance.Normalize)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return JsonSerializer.Serialize(new
+        {
+            category = item.Category.ToString(),
+            confidence = Math.Round(item.Confidence, 2),
+            sourceSession = item.SourceSessionId,
+            sourceTurn = item.SourceTurnIndex,
+            contributingProvenances,
+        });
+    }
 }

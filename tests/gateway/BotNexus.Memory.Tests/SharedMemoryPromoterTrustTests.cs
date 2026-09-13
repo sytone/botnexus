@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Memory.Learning;
 using BotNexus.Memory.Models;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -114,6 +115,46 @@ public sealed class SharedMemoryPromoterTrustTests
         inserted.ShouldNotBeNull();
         inserted!.NormalizedProvenance.ShouldBe(MemoryProvenance.Tool);
         inserted.TrustTier.ShouldBe(MemoryTrustTier.Derived);
+    }
+
+    [Fact]
+    public async Task PromoteAsync_PersistsTheCompleteNormalizedContributorSet_AcrossStoreReopen()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "botnexus-memory-tests", Guid.NewGuid().ToString("N"));
+        var dbPath = Path.Combine(tempDirectory, "shared.db");
+        var item = Item(MemoryProvenance.User, MemoryProvenance.Tool, MemoryProvenance.Agent, MemoryProvenance.User);
+
+        await using (var store = new SqliteMemoryStore(dbPath))
+        {
+            await store.InitializeAsync();
+            var registry = new Mock<ISharedMemoryStoreRegistry>();
+            registry.Setup(r => r.CanWrite("agent-1", "shared-store")).Returns(true);
+            registry.Setup(r => r.GetStore("shared-store")).Returns(store);
+            var promoter = new SharedMemoryPromoter(registry.Object, NullLogger.Instance);
+
+            (await promoter.PromoteAsync("agent-1", [item])).ShouldBe(1);
+        }
+
+        await using (var reopened = new SqliteMemoryStore(dbPath))
+        {
+            await reopened.InitializeAsync();
+            var rows = await reopened.GetBySessionAsync("s1");
+            var persisted = rows.ShouldHaveSingleItem();
+            persisted.NormalizedProvenance.ShouldBe(MemoryProvenance.Tool);
+
+            using var metadata = JsonDocument.Parse(persisted.MetadataJson!);
+            metadata.RootElement.GetProperty("contributingProvenances")
+                .EnumerateArray()
+                .Select(value => value.GetString())
+                .ShouldBe([
+                    MemoryProvenance.User,
+                    MemoryProvenance.Tool,
+                    MemoryProvenance.Agent,
+                ]);
+        }
+
+        SqlitePoolCleanup.ClearPoolFor(dbPath);
+        Directory.Delete(tempDirectory, recursive: true);
     }
 
     [Fact]
