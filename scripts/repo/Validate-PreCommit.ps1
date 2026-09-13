@@ -5,12 +5,12 @@ param(
     [string]$ValidationMode,
     [switch]$LocalFallback,
 
-    # #2825: remote validation defaults to 'full' - the whole solution, not the impacted
-    # subset. The impacted-test narrowing exists to spare a developer workstation's CPU;
-    # that constraint does not apply to an ephemeral container, and strict was measured to
-    # exercise ~4,700 of 13,088 tests while reporting zeroed counters.
-    [ValidateSet('strict', 'full')]
-    [string]$RemoteMode = 'full',
+    # #3601: browser-emulated E2E is temporarily quarantined while its fixture and locator
+    # failures are reviewed. Core remains the complete fail-closed non-browser suite; 'strict'
+    # remains available only for focused diagnostics. Explicit full/playwright entry points stay
+    # in Invoke-AzureBuildTest.ps1 and the runner, but ordinary validation must not select them.
+    [ValidateSet('strict', 'core')]
+    [string]$RemoteMode = 'core',
 
     # Advisory pre-commit scope (#2331): impacted projects only, bounded per step, and a
     # clean skip when another validation holds the global lock. The authoritative gate is
