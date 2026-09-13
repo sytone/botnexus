@@ -76,6 +76,23 @@ public sealed class EffectiveRuntimeContextTests
     }
 
     [Fact]
+    public async Task CreateAsync_WithForbiddenPersistedModelOverride_UsesAgentDefault()
+    {
+        var (strategy, sessionId) = await CreateSeamAsync(
+            modelOverride: ConversationOverrideModel,
+            thinkingOverride: null,
+            contextWindowOverride: null);
+
+        var handle = await strategy.CreateAsync(
+            CreateDescriptor() with { AllowedModelIds = [AgentDefaultModel] },
+            new AgentExecutionContext { SessionId = sessionId });
+        var prompt = handle.ShouldBeOfType<InProcessAgentHandle>().RenderedSystemPrompt.ShouldNotBeNull();
+
+        prompt.ShouldContain($"| model={AgentDefaultModel}");
+        prompt.ShouldNotContain($"| model={ConversationOverrideModel}");
+    }
+
+    [Fact]
     public async Task CreateAsync_WithConversationThinkingOverride_RuntimeBlockReportsEffectiveReasoning()
     {
         var (strategy, sessionId) = await CreateSeamAsync(
