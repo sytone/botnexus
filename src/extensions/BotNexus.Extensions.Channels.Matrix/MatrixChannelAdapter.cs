@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Channels.Startup;
@@ -29,7 +30,7 @@ namespace BotNexus.Extensions.Channels.Matrix;
 /// capability is a missing member rather than a silent no-op.
 /// </para>
 /// </remarks>
-public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter
+public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter, IConversationEventSink
 {
     /// <summary>
     /// Configuration section this adapter self-binds from when loaded as a dynamic extension after
@@ -838,4 +839,23 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
         EnsureAccountsInitialized();
         return _accounts.TryGetValue(accountName, out var runtime) ? runtime : null;
     }
+    /// <inheritdoc />
+    public async Task OnConversationEventAsync(
+        ConversationEvent conversationEvent,
+        CancellationToken cancellationToken = default)
+    {
+        if (conversationEvent is not ConversationAgentEvent agentEvent)
+            return;
+
+        foreach (var target in ConversationEventStreamRouting.GetTargets(
+                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        {
+            if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+            {
+                await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
 }

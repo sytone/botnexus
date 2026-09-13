@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Extensions.Channels.ServiceBus;
@@ -32,7 +33,9 @@ public static class ServiceBusServiceCollectionExtensions
         if (configure is not null)
             services.Configure(configure);
 
-        services.AddSingleton<IChannelAdapter, ServiceBusChannelAdapter>();
+        services.AddSingleton<ServiceBusChannelAdapter>();
+        services.AddSingleton<IChannelAdapter>(sp => sp.GetRequiredService<ServiceBusChannelAdapter>());
+        services.AddSingleton<IConversationEventSink>(sp => sp.GetRequiredService<ServiceBusChannelAdapter>());
         return services;
     }
 }

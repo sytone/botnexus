@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -101,6 +102,8 @@ public sealed class ExtensionLoaderTests : IDisposable
         }));
 
         var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddHttpClient();
         var loader = CreateLoader(services);
         var discovered = await loader.DiscoverAsync(_rootPath);
 
@@ -108,9 +111,15 @@ public sealed class ExtensionLoaderTests : IDisposable
 
         result.Success.ShouldBeTrue();
         result.RegisteredServices.ShouldContain(service => service.StartsWith("IChannelAdapter->", StringComparison.Ordinal));
-        var descriptor = services.Single(d => d.ServiceType == typeof(IChannelAdapter));
-        descriptor.ImplementationType.ShouldNotBeNull();
-        var implementationType = descriptor.ImplementationType ?? throw new InvalidOperationException("Expected implementation type.");
+        var adapterDescriptor = services.Single(d => d.ServiceType == typeof(IChannelAdapter));
+        adapterDescriptor.ImplementationFactory.ShouldNotBeNull(
+            "the channel contract should alias the concrete singleton shared by all implemented contracts");
+        var concreteDescriptor = services.Single(d =>
+            d.ServiceType != typeof(IChannelAdapter)
+            && d.ServiceType == d.ImplementationType
+            && typeof(IChannelAdapter).IsAssignableFrom(d.ServiceType));
+        var implementationType = concreteDescriptor.ImplementationType
+            ?? throw new InvalidOperationException("Expected concrete implementation type.");
         implementationType.FullName.ShouldNotBeNull();
         var fullName = implementationType.FullName ?? throw new InvalidOperationException("Expected implementation full name.");
         fullName.ShouldContain("TelegramChannelAdapter");
@@ -120,6 +129,14 @@ public sealed class ExtensionLoaderTests : IDisposable
         var context = loadContext ?? throw new InvalidOperationException("Expected load context.");
         context.IsCollectible.ShouldBeTrue();
         loadContext.ShouldNotBe(AssemblyLoadContext.Default);
+
+        using (var provider = services.BuildServiceProvider())
+        {
+            var channelAdapter = provider.GetRequiredService<IChannelAdapter>();
+            var eventSink = provider.GetRequiredService<IConversationEventSink>();
+            eventSink.ShouldBeSameAs(channelAdapter,
+                "multi-contract channel implementations must be one singleton, not one instance per contract");
+        }
 
         loader.GetLoaded().Where(x => x.ExtensionId == "telegram-extension").ShouldHaveSingleItem();
         await loader.UnloadAsync("telegram-extension");

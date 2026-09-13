@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
@@ -12,7 +13,7 @@ namespace BotNexus.Extensions.Channels.Tui;
 /// Terminal UI channel adapter for local console I/O.
 /// </summary>
 public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
-    : ChannelAdapterBase(logger), IStreamEventChannelAdapter
+    : ChannelAdapterBase(logger), IStreamEventChannelAdapter, IConversationEventSink
 {
     private readonly ILogger<TuiChannelAdapter> _logger = logger;
     private CancellationTokenSource? _inputLoopCancellation;
@@ -227,4 +228,23 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
             }, cancellationToken);
         }
     }
+    /// <inheritdoc />
+    public async Task OnConversationEventAsync(
+        ConversationEvent conversationEvent,
+        CancellationToken cancellationToken = default)
+    {
+        if (conversationEvent is not ConversationAgentEvent agentEvent)
+            return;
+
+        foreach (var target in ConversationEventStreamRouting.GetTargets(
+                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        {
+            if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+            {
+                await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
 }

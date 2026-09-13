@@ -11,9 +11,11 @@ using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Dispatching;
@@ -1873,6 +1875,18 @@ public sealed partial class GatewayHostTests
         }
     }
 
+    private sealed class LegacyObserverCapturingSink : IConversationEventSink
+    {
+        public List<ConversationAgentEvent> Events { get; } = [];
+
+        public Task OnConversationEventAsync(ConversationEvent conversationEvent, CancellationToken cancellationToken = default)
+        {
+            if (conversationEvent is ConversationAgentEvent agentEvent)
+                Events.Add(agentEvent);
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class RecordingActivityBroadcaster : IActivityBroadcaster
     {
         public List<GatewayActivity> Activities { get; } = [];
@@ -2094,210 +2108,142 @@ public sealed partial class GatewayHostTests
     }
 
     [Fact]
-    public async Task StreamEvents_FanOutToSignalRObserverBindings_WhenOriginatingChannelIsNotSignalR()
+    public async Task StreamEvents_PublishGenericConversationEvents_ForObserverBindings()
     {
-        // Arrange: telegram message with a SignalR observer binding on the conversation
+        var sink = new LegacyObserverCapturingSink();
+        await using var publisher = new ConversationEventPublisher([sink]);
+        var conversationId = ConversationId.From("conv-observer");
+        var binding = new ChannelBinding
+        {
+            BindingId = BindingId.From("signalr-observer"),
+            ChannelType = ChannelKey.From("signalr"),
+            ChannelAddress = ChannelAddress.From("signalr-session-abc"),
+            Mode = BindingMode.NotifyOnly
+        };
+        var conversationStore = new InMemoryConversationStore();
+        await conversationStore.CreateAsync(new Conversation
+        {
+            ConversationId = conversationId,
+            AgentId = AgentId.From("agent-a"),
+            ActiveSessionId = SessionId.From("session-1"),
+            ChannelBindings = [binding]
+        });
+
         var router = new Mock<IMessageRouter>();
-        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+        router.Setup(value => value.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
-        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
-        handle.Setup(h => h.IsRunning).Returns(false);
-        handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
-            .Returns(ToAsyncEnumerable([
-                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart },
-                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello" },
-                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }
-            ]));
+        handle.SetupGet(value => value.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(value => value.SessionId).Returns(SessionId.From("session-1"));
+        handle.SetupGet(value => value.IsRunning).Returns(false);
+        handle.Setup(value => value.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable([new AgentStreamEvent
+            {
+                Type = AgentStreamEventType.ContentDelta,
+                ContentDelta = "hello"
+            }]));
         var supervisor = new Mock<IAgentSupervisor>();
-        supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+        supervisor.Setup(value => value.GetOrCreateAsync(
+                AgentId.From("agent-a"), SessionId.From("session-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
-        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
-        var sessions = new Mock<ISessionStore>();
-        sessions.Setup(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(session);
-        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var sessions = new InMemorySessionStore();
+        var channel = CreateChannelAdapter("telegram", supportsStreaming: true);
+        var dispatcher = new Mock<IConversationDispatcher>();
+        dispatcher.Setup(value => value.DispatchAsync(It.IsAny<InboundMessageContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(conversationId, SessionId.From("session-1"), false, true)));
 
-        // Telegram is the originating (streaming) channel
-        var telegramChannel = new Mock<IChannelAdapter>();
-        telegramChannel.SetupGet(c => c.ChannelType).Returns(BotNexus.Domain.Primitives.ChannelKey.From("telegram"));
-        telegramChannel.SetupGet(c => c.DisplayName).Returns("Telegram");
-        telegramChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
-        telegramChannel.As<IStreamEventChannelAdapter>()
-            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        telegramChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        telegramChannel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        await using var host = new GatewayHost(
+            supervisor.Object,
+            router.Object,
+            sessions,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(channel.Object),
+            Mock.Of<ISessionCompactor>(),
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
+            NullLogger<GatewayHost>.Instance,
+            conversationDispatcher: dispatcher.Object,
+            conversationStore: conversationStore,
+            conversationEventPublisher: publisher);
 
-        // SignalR is an observer binding
-        var signalrChannel = new Mock<IChannelAdapter>();
-        signalrChannel.SetupGet(c => c.ChannelType).Returns(BotNexus.Domain.Primitives.ChannelKey.From("signalr"));
-        signalrChannel.SetupGet(c => c.DisplayName).Returns("SignalR");
-        signalrChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
-        signalrChannel.As<IStreamEventChannelAdapter>()
-            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        signalrChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1", conversationId: conversationId.Value, channelType: "telegram"));
+        await publisher.WaitForDrainAsync();
 
-        // Channel manager returns both adapters
-        var channelManager = new Mock<IChannelManager>();
-        channelManager.SetupGet(m => m.Adapters).Returns([telegramChannel.Object, signalrChannel.Object]);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "telegram")))
-            .Returns(telegramChannel.Object);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "telegram"), It.IsAny<string?>()))
-            .Returns(telegramChannel.Object);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr")))
-            .Returns(signalrChannel.Object);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr"), It.IsAny<string?>()))
-            .Returns(signalrChannel.Object);
-
-        // Conversation router returns a SignalR binding as a non-originating binding
-        var signalrBinding = new BotNexus.Gateway.Abstractions.Models.ChannelBinding
-        {
-            ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("signalr"),
-            ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress.From("signalr-session-abc"),
-            Mode = BotNexus.Gateway.Abstractions.Models.BindingMode.Interactive
-        };
-        var conversationRouter = new Mock<IConversationRouter>();
-        var routingConversation = new BotNexus.Gateway.Abstractions.Models.Conversation
-        {
-            ConversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-test-1"),
-            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
-        };
-        conversationRouter.Setup(r => r.ResolveInboundAsync(
-                It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
-                It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
-                It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<BotNexus.Domain.Primitives.ConversationId?>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<BotNexus.Domain.World.CitizenId?>()))
-            .ReturnsAsync(new ConversationRoutingResult(routingConversation, BotNexus.Domain.Primitives.SessionId.From("session-1"), false));
-        conversationRouter.Setup(r => r.GetOutboundBindingsAsync(
-                It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
-                It.IsAny<BotNexus.Domain.Primitives.BindingId?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([signalrBinding]);
-
-        await using var host = CreateHost(
-            supervisor.Object, router.Object, sessions.Object,
-            new RecordingActivityBroadcaster(), channelManager.Object,
-            conversationRouter: conversationRouter.Object);
-
-        // Act: dispatch a Telegram message
-        var message = CreateMessage("hello", sessionId: "session-1", channelType: "telegram");
-        await host.DispatchAsync(message);
-
-        // Assert: SignalR observer received stream events (3 events: MessageStart, ContentDelta, MessageEnd).
-        // The stream target is built from the resolved session ID and the observer binding's
-        // ChannelAddress + BindingId — not the originating Telegram address. This is the
-        // typed-target contract introduced with ChannelStreamTarget (#677).
-        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
-            c => c.SendStreamEventAsync(
-                It.Is<ChannelStreamTarget>(t =>
-                    t.SessionId == SessionId.From("session-1") &&
-                    t.ChannelAddress == ChannelAddress.From("signalr-session-abc")),
-                It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.MessageStart),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
-            c => c.SendStreamEventAsync(
-                It.Is<ChannelStreamTarget>(t =>
-                    t.SessionId == SessionId.From("session-1") &&
-                    t.ChannelAddress == ChannelAddress.From("signalr-session-abc")),
-                It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.ContentDelta),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
-            c => c.SendStreamEventAsync(
-                It.Is<ChannelStreamTarget>(t =>
-                    t.SessionId == SessionId.From("session-1") &&
-                    t.ChannelAddress == ChannelAddress.From("signalr-session-abc")),
-                It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.MessageEnd),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        var published = sink.Events.ShouldHaveSingleItem();
+        published.StreamEvent.Type.ShouldBe(AgentStreamEventType.ContentDelta);
+        published.Bindings.ShouldHaveSingleItem().BindingId.ShouldBe(binding.BindingId);
+        published.Bindings[0].ChannelType.ShouldBe(ChannelKey.From("signalr"));
     }
 
     [Fact]
-    public async Task StreamEvents_DoNotFanOutToSignalRObserver_WhenOriginatingChannelIsSignalR()
+    public async Task StreamEvents_PublishOnce_WhenOriginBindingIsAlsoAnObserverRecipient()
     {
-        // Arrange: SignalR is the originating channel -- no additional fan-out expected
+        var sink = new LegacyObserverCapturingSink();
+        await using var publisher = new ConversationEventPublisher([sink]);
+        var conversationId = ConversationId.From("conv-origin-observer");
+        var bindingId = BindingId.From("signalr-origin");
+        var conversationStore = new InMemoryConversationStore();
+        await conversationStore.CreateAsync(new Conversation
+        {
+            ConversationId = conversationId,
+            AgentId = AgentId.From("agent-a"),
+            ActiveSessionId = SessionId.From("session-1"),
+            ChannelBindings = [new ChannelBinding
+            {
+                BindingId = bindingId,
+                ChannelType = ChannelKey.From("signalr"),
+                ChannelAddress = ChannelAddress.From("signalr-session-abc"),
+                Mode = BindingMode.Interactive
+            }]
+        });
+
         var router = new Mock<IMessageRouter>();
-        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+        router.Setup(value => value.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
-        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
-        handle.Setup(h => h.IsRunning).Returns(false);
-        handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
-            .Returns(ToAsyncEnumerable([
-                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello" }
-            ]));
+        handle.SetupGet(value => value.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(value => value.SessionId).Returns(SessionId.From("session-1"));
+        handle.SetupGet(value => value.IsRunning).Returns(false);
+        handle.Setup(value => value.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable([new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello" }]));
         var supervisor = new Mock<IAgentSupervisor>();
-        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()))
+        supervisor.Setup(value => value.GetOrCreateAsync(
+                AgentId.From("agent-a"), SessionId.From("session-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
-        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
-        var sessions = new Mock<ISessionStore>();
-        sessions.Setup(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(session);
-        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var channel = CreateChannelAdapter("signalr", supportsStreaming: true);
+        var dispatcher = new Mock<IConversationDispatcher>();
+        dispatcher.Setup(value => value.DispatchAsync(It.IsAny<InboundMessageContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(conversationId, SessionId.From("session-1"), false, true, bindingId, null)));
 
-        var signalrChannel = new Mock<IChannelAdapter>();
-        signalrChannel.SetupGet(c => c.ChannelType).Returns(BotNexus.Domain.Primitives.ChannelKey.From("signalr"));
-        signalrChannel.SetupGet(c => c.DisplayName).Returns("SignalR");
-        signalrChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
-        signalrChannel.As<IStreamEventChannelAdapter>()
-            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        signalrChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        await using var host = new GatewayHost(
+            supervisor.Object,
+            router.Object,
+            new InMemorySessionStore(),
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(channel.Object),
+            Mock.Of<ISessionCompactor>(),
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
+            NullLogger<GatewayHost>.Instance,
+            conversationDispatcher: dispatcher.Object,
+            conversationStore: conversationStore,
+            conversationEventPublisher: publisher);
 
-        var channelManager = new Mock<IChannelManager>();
-        channelManager.SetupGet(m => m.Adapters).Returns([signalrChannel.Object]);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr")))
-            .Returns(signalrChannel.Object);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr"), It.IsAny<string?>()))
-            .Returns(signalrChannel.Object);
-
-        // Router should NOT be called for GetOutboundBindings when originating channel is signalr
-        var conversationRouter = new Mock<IConversationRouter>();
-        var routingConversation2 = new BotNexus.Gateway.Abstractions.Models.Conversation
+        var message = CreateMessage("hello", sessionId: "session-1", conversationId: conversationId.Value, channelType: "signalr") with
         {
-            ConversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-test-2"),
-            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+            BindingId = bindingId,
+            ChannelRequestId = "request-1"
         };
-        conversationRouter.Setup(r => r.ResolveInboundAsync(
-                It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
-                It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
-                It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<BotNexus.Domain.Primitives.ConversationId?>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<BotNexus.Domain.World.CitizenId?>()))
-            .ReturnsAsync(new ConversationRoutingResult(routingConversation2, BotNexus.Domain.Primitives.SessionId.From("session-1"), false));
-        conversationRouter.Setup(r => r.GetOutboundBindingsAsync(
-                It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
-                It.IsAny<BotNexus.Domain.Primitives.BindingId?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
-
-        await using var host = CreateHost(
-            supervisor.Object, router.Object, sessions.Object,
-            new RecordingActivityBroadcaster(), channelManager.Object,
-            conversationRouter: conversationRouter.Object);
-
-        var message = CreateMessage("hello", sessionId: "session-1", channelType: "signalr");
         await host.DispatchAsync(message);
+        await publisher.WaitForDrainAsync();
 
-        // When originating channel is signalr, the guard prevents the pre-streaming observer resolution.
-        // GetOutboundBindings may still be called once by FanOutResponseAsync at turn end -- that's fine.
-        // The key assertion: the signalr adapter receives stream events only as the PRIMARY channel,
-        // NOT as an observer (i.e. SendStreamEventAsync is called via the primary streaming path, not doubled).
-        // Since GetOutboundBindings returns [], no additional observer fan-out occurs.
-        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
-            c => c.SendStreamEventAsync(
-                It.IsAny<ChannelStreamTarget>(),
-                It.IsAny<AgentStreamEvent>(),
-                It.IsAny<CancellationToken>()),
-            Times.Once); // exactly once as the primary channel, not doubled via observer fan-out
+        var published = sink.Events.ShouldHaveSingleItem();
+        published.Origin.BindingId.ShouldBe(bindingId);
+        published.Origin.CorrelationId.ShouldBe("request-1");
     }
 
     // #2073 - deduplicate SignalR stream delivery for internal turns with observer bindings.
@@ -2434,109 +2380,57 @@ public sealed partial class GatewayHostTests
     }
 
     [Fact]
-    public async Task StreamEvents_NonSignalRPrimaryChannel_StillFansOutOnceToSignalRObservers()
+    public async Task StreamEvents_NonOriginBinding_RemainsInGenericSnapshotWithoutOriginCorrelation()
     {
-        // Arrange: a genuinely different (non-SignalR) primary channel - Telegram - with a SignalR
-        // observer binding. The fix must NOT over-suppress: the SignalR observer must still receive
-        // each event exactly once via fan-out (the cross-channel live-update path, #332).
-        var router = new Mock<IMessageRouter>();
-        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(["agent-a"]);
-        var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
-        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
-        handle.Setup(h => h.IsRunning).Returns(false);
-        handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
-            .Returns(ToAsyncEnumerable([
-                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello" }
-            ]));
-        var supervisor = new Mock<IAgentSupervisor>();
-        supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(handle.Object);
-        var session = new GatewaySession
+        var sink = new LegacyObserverCapturingSink();
+        await using var publisher = new ConversationEventPublisher([sink]);
+        var conversationId = ConversationId.From("conv-2073-b");
+        var sessionId = SessionId.From("session-1");
+        var originBindingId = BindingId.From("telegram-origin");
+        var observerBindingId = BindingId.From("signalr-observer");
+        var streamEvent = new AgentStreamEvent
         {
-            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
-            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
-            ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("telegram")
+            Type = AgentStreamEventType.ContentDelta,
+            ContentDelta = "hello",
+            AgentId = AgentId.From("agent-a"),
+            ConversationId = conversationId,
+            SessionId = sessionId
         };
-        var sessions = new Mock<ISessionStore>();
-        sessions.Setup(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(session);
-        sessions.Setup(s => s.GetAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(session);
-        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
-        var telegramChannel = new Mock<IChannelAdapter>();
-        telegramChannel.SetupGet(c => c.ChannelType).Returns(BotNexus.Domain.Primitives.ChannelKey.From("telegram"));
-        telegramChannel.SetupGet(c => c.DisplayName).Returns("Telegram");
-        telegramChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
-        telegramChannel.As<IStreamEventChannelAdapter>()
-            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        telegramChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        telegramChannel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        var signalrChannel = new Mock<IChannelAdapter>();
-        signalrChannel.SetupGet(c => c.ChannelType).Returns(BotNexus.Domain.Primitives.ChannelKey.From("signalr"));
-        signalrChannel.SetupGet(c => c.DisplayName).Returns("SignalR");
-        signalrChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
-        signalrChannel.As<IStreamEventChannelAdapter>()
-            .Setup(c => c.SendStreamEventAsync(It.IsAny<ChannelStreamTarget>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        signalrChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        var channelManager = new Mock<IChannelManager>();
-        channelManager.SetupGet(m => m.Adapters).Returns([telegramChannel.Object, signalrChannel.Object]);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "telegram")))
-            .Returns(telegramChannel.Object);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "telegram"), It.IsAny<string?>()))
-            .Returns(telegramChannel.Object);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr")))
-            .Returns(signalrChannel.Object);
-        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr"), It.IsAny<string?>()))
-            .Returns(signalrChannel.Object);
-
-        var signalrBinding = new BotNexus.Gateway.Abstractions.Models.ChannelBinding
+        var published = new ConversationAgentEvent
         {
-            ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("signalr"),
-            ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress.From("signalr-session-abc"),
-            Mode = BotNexus.Gateway.Abstractions.Models.BindingMode.Interactive
+            AgentId = AgentId.From("agent-a"),
+            ConversationId = conversationId,
+            SessionId = sessionId,
+            Origin = new ConversationEventOrigin(originBindingId, CorrelationId: "request-1"),
+            Bindings = System.Collections.Immutable.ImmutableArray.Create(
+                new ConversationBindingSnapshot(
+                    originBindingId,
+                    ChannelKey.From("telegram"),
+                    null,
+                    ChannelAddress.From("telegram-chat"),
+                    BindingMode.Interactive,
+                    ThreadingMode.Single),
+                new ConversationBindingSnapshot(
+                    observerBindingId,
+                    ChannelKey.From("signalr"),
+                    null,
+                    ChannelAddress.From("signalr-session-abc"),
+                    BindingMode.NotifyOnly,
+                    ThreadingMode.Single)),
+            StreamEvent = streamEvent
         };
-        var conversationRouter = new Mock<IConversationRouter>();
-        var routingConversation = new BotNexus.Gateway.Abstractions.Models.Conversation
-        {
-            ConversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-2073-b"),
-            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
-        };
-        conversationRouter.Setup(r => r.ResolveInboundAsync(
-                It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
-                It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
-                It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<BotNexus.Domain.Primitives.ConversationId?>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<BotNexus.Domain.World.CitizenId?>()))
-            .ReturnsAsync(new ConversationRoutingResult(routingConversation, BotNexus.Domain.Primitives.SessionId.From("session-1"), false));
-        conversationRouter.Setup(r => r.GetOutboundBindingsAsync(
-                It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
-                It.IsAny<BotNexus.Domain.Primitives.BindingId?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([signalrBinding]);
 
-        await using var host = CreateHost(
-            supervisor.Object, router.Object, sessions.Object,
-            new RecordingActivityBroadcaster(), channelManager.Object,
-            conversationRouter: conversationRouter.Object);
+        (await publisher.PublishAsync(published)).ShouldBeTrue();
+        await publisher.WaitForDrainAsync();
 
-        var message = CreateMessage("hello", sessionId: "session-1", channelType: "telegram");
-        await host.DispatchAsync(message);
-
-        // Assert: the SignalR observer still receives the ContentDelta exactly once via fan-out.
-        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
-            c => c.SendStreamEventAsync(
-                It.Is<ChannelStreamTarget>(t => t.ChannelAddress == ChannelAddress.From("signalr-session-abc")),
-                It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.ContentDelta),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        var observed = sink.Events.ShouldHaveSingleItem();
+        observed.StreamEvent.ShouldBeSameAs(streamEvent);
+        var observerTarget = ConversationEventStreamRouting.GetTargets(
+            observed, ChannelKey.From("signalr"), null).ShouldHaveSingleItem();
+        observerTarget.ChannelAddress.ShouldBe(ChannelAddress.From("signalr-session-abc"));
+        observerTarget.ChannelRequestId.ShouldBeNull(
+            "request correlation belongs only to the originating Telegram binding");
     }
 
     // #756 — transcript mirror isolation: SaveAsync failures after a successful channel send

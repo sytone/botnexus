@@ -195,6 +195,46 @@ public sealed class AskUserToolTests
     // ── ask_user durability (#1488): persist while pending, clear on resolve ──
 
     [Fact]
+    public async Task ExecuteAsync_UserInputRequiredCallback_CanReadPersistedPendingPrompt()
+    {
+        var registry = new AskUserResponseRegistry();
+        var store = new InMemoryConversationStore();
+        var conversationId = ConversationId.From("conversation-1");
+        await SeedConversationAsync(store, conversationId.Value);
+        var tool = CreateTool(registry, conversationId.Value, store);
+        var arguments = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["prompt"] = "Which environment should I deploy to?"
+        });
+        string? pendingJsonObservedByCallback = null;
+        AskUserRequest? emittedRequest = null;
+
+        var executionTask = tool.ExecuteAsync(
+            "call-ask-user",
+            arguments,
+            onUpdate: update =>
+            {
+                emittedRequest = update.Details as AskUserRequest;
+                pendingJsonObservedByCallback = store.GetAsync(conversationId).GetAwaiter().GetResult()?.PendingAskUserJson;
+            });
+
+        emittedRequest.ShouldNotBeNull();
+        pendingJsonObservedByCallback.ShouldNotBeNull(
+            "the pending checkpoint must be readable before UserInputRequired becomes observable");
+        using (var document = JsonDocument.Parse(pendingJsonObservedByCallback))
+        {
+            document.RootElement.GetProperty("requestId").GetString().ShouldBe(emittedRequest.RequestId);
+            document.RootElement.GetProperty("prompt").GetString().ShouldBe(emittedRequest.Prompt);
+        }
+
+        registry.TryComplete(
+            conversationId,
+            emittedRequest.RequestId,
+            CreateResponse(emittedRequest.RequestId, freeFormText: "staging")).ShouldBeTrue();
+        await executionTask;
+    }
+
+    [Fact]
     public async Task ExecuteAsync_PersistsPendingPrompt_WhileWaiting()
     {
         var registry = new AskUserResponseRegistry();
