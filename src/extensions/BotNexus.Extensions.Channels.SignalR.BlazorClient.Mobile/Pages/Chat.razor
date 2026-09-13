@@ -234,9 +234,17 @@ else
                 @onkeydown="OnKeyDown"
                 disabled="@_isSending">
             </textarea>
-            <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
-                &#x21A6;
-            </button>
+            @if (streamState?.IsTurnActive == true)
+            {
+                <button class="send-btn" data-testid="chat-steer-btn" @onclick="SteerMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Steer</button>
+                <button class="send-btn" data-testid="chat-redirect-btn" @onclick="RedirectMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Redirect</button>
+            }
+            else
+            {
+                <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
+                    &#x21A6;
+                </button>
+            }
         </div>
         @* #1491: when the agent is blocked on an ask_user prompt for the active
            conversation, render the shared AskUserPrompt component as a bottom-sheet
@@ -684,7 +692,13 @@ else
         await ForceScrollToBottomAsync();
     }
 
-    private async Task SendMessage()
+    private Task SendMessage() => DeliverMessage(InboundDeliveryMode.Auto);
+
+    private Task SteerMessage() => DeliverMessage(InboundDeliveryMode.Steer);
+
+    private Task RedirectMessage() => DeliverMessage(InboundDeliveryMode.Interrupt);
+
+    private async Task DeliverMessage(InboundDeliveryMode deliveryMode)
     {
         if (string.IsNullOrWhiteSpace(_inputText) || Store.ActiveAgentId is null) return;
         // #3063: the send path takes the conversation explicitly; mobile uses the same conversation
@@ -696,7 +710,7 @@ else
         _isSending = true;
         try
         {
-            await Interaction.SendMessageAsync(Store.ActiveAgentId, convId, content);
+            await Interaction.DeliverMessageAsync(Store.ActiveAgentId, convId, content, deliveryMode);
         }
         catch (Exception ex)
         {

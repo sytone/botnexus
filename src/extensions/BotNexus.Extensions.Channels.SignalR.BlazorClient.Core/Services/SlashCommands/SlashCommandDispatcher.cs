@@ -69,7 +69,7 @@ public sealed class SlashCommandDispatcher(
         SlashCommandKind.ResetSession => _interaction.ResetSessionAsync(agentId, conversationId),
         SlashCommandKind.CompactSession => _interaction.CompactSessionAsync(agentId, conversationId),
         SlashCommandKind.ClearLocalMessages => ClearLocal(agentId, conversationId),
-        SlashCommandKind.SendToAgent => _interaction.SendMessageAsync(agentId, conversationId, command.Name),
+        SlashCommandKind.SendToAgent => _interaction.DeliverMessageAsync(agentId, conversationId, command.Name),
         SlashCommandKind.GatewayCommand => _interaction.ExecuteGatewayCommandAsync(agentId, conversationId, command.Name),
         _ => Task.CompletedTask
     };
