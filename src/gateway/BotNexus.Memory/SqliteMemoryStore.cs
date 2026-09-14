@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using BotNexus.Domain.Text;
 using BotNexus.Memory.Embeddings;
 using BotNexus.Memory.Models;
 using Microsoft.Data.Sqlite;
@@ -742,9 +743,7 @@ public sealed class SqliteMemoryStore(
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         ArgumentException.ThrowIfNullOrWhiteSpace(memoryId);
         var normalizedError = error ?? string.Empty;
-        var boundedError = normalizedError.Length <= MaxReembeddingErrorLength
-            ? normalizedError
-            : normalizedError[..MaxReembeddingErrorLength];
+        var boundedError = normalizedError.SafeTruncate(MaxReembeddingErrorLength) ?? string.Empty;
         await InitializeAsync(ct).ConfigureAwait(false);
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
