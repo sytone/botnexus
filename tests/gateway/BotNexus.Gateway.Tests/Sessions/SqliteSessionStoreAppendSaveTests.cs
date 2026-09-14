@@ -221,6 +221,101 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_AfterNarrowAppend_DoesNotCacheStaleAggregate()
+    {
+        var store = CreateStore();
+        var stale = await CreateSavedSessionAsync(store, "stale-cache");
+
+        (await store.AppendEntriesAsync(stale.SessionId,
+            [new SessionEntry { Role = MessageRole.Assistant, Content = "narrow" }]))
+            .Outcome.ShouldBe(SessionMutationOutcome.Applied);
+
+        await store.SaveAsync(stale);
+
+        store.LastHistoryRowsMutated.ShouldBe(0, "a stale aggregate with no local delta must not rewrite history");
+        var warm = await store.GetAsync(stale.SessionId);
+        warm.ShouldNotBeNull();
+        warm.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(["entry-0", "narrow"]);
+        var cold = await CreateStore().GetAsync(stale.SessionId);
+        cold.ShouldNotBeNull();
+        cold.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(["entry-0", "narrow"]);
+    }
+
+    [Fact]
+    public async Task SaveAsync_AfterNarrowAppend_PreservesConcurrentAndPendingEntriesExactlyOnce()
+    {
+        var store = CreateStore();
+        var stale = await CreateSavedSessionAsync(store, "stale-cache-pending");
+
+        (await store.AppendEntriesAsync(stale.SessionId,
+            [new SessionEntry { Role = MessageRole.Assistant, Content = "narrow" }]))
+            .Outcome.ShouldBe(SessionMutationOutcome.Applied);
+        stale.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "pending" });
+
+        await store.SaveAsync(stale);
+
+        store.LastHistoryRowsMutated.ShouldBe(1, "ordinary save must remain proportional to its local delta");
+        var expected = new[] { "entry-0", "narrow", "pending" };
+        var warm = await store.GetAsync(stale.SessionId);
+        warm.ShouldNotBeNull();
+        warm.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(expected);
+        var cold = await CreateStore().GetAsync(stale.SessionId);
+        cold.ShouldNotBeNull();
+        cold.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task FencedSave_AfterNarrowAppend_DoesNotCacheStaleAggregate()
+    {
+        var store = CreateStore();
+        var stale = await CreateSavedSessionAsync(store, "stale-cache-fenced");
+        var fence = SessionWriteFence.Capture(stale);
+
+        (await store.AppendEntriesAsync(stale.SessionId,
+            [new SessionEntry { Role = MessageRole.Assistant, Content = "narrow" }]))
+            .Outcome.ShouldBe(SessionMutationOutcome.Applied);
+        stale.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "pending" });
+
+        (await store.SaveAsync(stale, fence)).ShouldBe(SessionSaveOutcome.Persisted);
+
+        store.LastHistoryRowsMutated.ShouldBe(1, "fenced save must remain proportional to its local delta");
+        var expected = new[] { "entry-0", "narrow", "pending" };
+        var warm = await store.GetAsync(stale.SessionId);
+        warm.ShouldNotBeNull();
+        warm.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(expected);
+        var cold = await CreateStore().GetAsync(stale.SessionId);
+        cold.ShouldNotBeNull();
+        cold.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task SaveAsync_DestructiveMutationAfterNarrowAppend_PreservesUnknownRowAndLocalChanges()
+    {
+        var store = CreateStore();
+        var stale = await CreateSavedSessionAsync(store, "stale-cache-destructive", entryCount: 2);
+
+        (await store.AppendEntriesAsync(stale.SessionId,
+            [new SessionEntry { Role = MessageRole.Assistant, Content = "narrow" }]))
+            .Outcome.ShouldBe(SessionMutationOutcome.Applied);
+        stale.ReplaceHistory(stale.GetHistorySnapshot()
+            .Where(entry => entry.Content != "entry-0")
+            .Append(new SessionEntry { Role = MessageRole.Assistant, Content = "pending" })
+            .ToArray());
+
+        await store.SaveAsync(stale);
+
+        store.LastHistoryWriteReconciled.ShouldBeTrue();
+        store.LastHistoryRowsMutated.ShouldBe(2, "only the explicit removal and local addition may mutate rows");
+        var expected = new[] { "entry-1", "narrow", "pending" };
+        var warm = await store.GetAsync(stale.SessionId);
+        warm.ShouldNotBeNull();
+        warm.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(expected);
+        var cold = await CreateStore().GetAsync(stale.SessionId);
+        cold.ShouldNotBeNull();
+        cold.GetHistorySnapshot().Select(entry => entry.Content).ShouldBe(expected);
+    }
+
+    [Fact]
     public async Task SaveAsync_ConcurrentDestructiveChangeAfterSnapshot_ReconcilesWithoutLossOrDuplicates()
     {
         var store = CreateStore();
