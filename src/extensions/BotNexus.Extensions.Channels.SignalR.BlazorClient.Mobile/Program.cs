@@ -1,5 +1,6 @@
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.Abstractions;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -31,6 +32,7 @@ builder.Services.AddScoped<IPortalLoadService, PortalLoadService>();
 // #1615: the schema-driven mobile Settings page reads/writes platform config through this service
 // (GET /api/config/schema + PUT /api/config/{section}) -- the same client service the desktop uses.
 builder.Services.AddScoped<PlatformConfigService>();
+builder.Services.AddScoped<IPortalPreferencesService, PortalPreferencesService>();
 
 // #3073: the mobile conversation picker needs the authoritative cron-job -> conversation-id map to
 // classify a channel-created conversation later adopted by a cron job (its write-once Source stays

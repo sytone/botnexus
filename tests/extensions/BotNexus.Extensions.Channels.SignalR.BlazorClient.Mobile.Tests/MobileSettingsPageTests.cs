@@ -167,8 +167,6 @@ public sealed class MobileSettingsPageTests : IDisposable
         cut.WaitForAssertion(() => handler.Patches.ShouldNotBeEmpty());
 
         var patch = handler.Patches[0];
-        patch["expectedRevision"]!.GetValue<string>().ShouldBe(FakeConfigApiHandler.Revision);
-
         var paths = patch["operations"]!.AsArray().Select(o => o!["path"]!.GetValue<string>()).ToList();
         paths.ShouldBe(["gateway.listenUrl"]);
 

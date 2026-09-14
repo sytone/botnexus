@@ -386,6 +386,9 @@ else
     private IReadOnlySet<string> _cronConversationIds = PortalConversationGrouping.CronConversationIds(null);
 
     private CronApiClient? CronApi => Services.GetService(typeof(CronApiClient)) as CronApiClient;
+    private PortalPreferences Preferences =>
+        (Services.GetService(typeof(IPortalPreferencesService)) as IPortalPreferencesService)?.Current
+        ?? new PortalPreferences();
 
     // Route application guard -- prevents re-applying the same route key twice.
     private string? _appliedRouteKey;
@@ -970,10 +973,19 @@ else
     private static bool IsUnattended(ConversationState conversation) =>
         conversation.Project(SelectionSource.UserClick).IsUnattended;
 
-    private void Archive(ConversationState conversation)
+    private async Task Archive(ConversationState conversation)
     {
-        _archiveTarget = conversation;
         _menuOpen = false;
+        if (Preferences.ArchiveConfirmEnabled)
+        {
+            _archiveTarget = conversation;
+            return;
+        }
+
+        if (Store.ActiveAgentId is not { } agentId)
+            return;
+
+        await Interaction.ArchiveConversationAsync(agentId, conversation.ConversationId);
     }
 
     private async Task DoArchive()
