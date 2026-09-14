@@ -196,7 +196,12 @@ public static class ExportHtmlRenderer
                 break;
 
             case "assistant":
-                AppendSimple(sb, "assistant", "Assistant", time, content);
+                sb.AppendLine("<article class=\"assistant\">");
+                sb.AppendLine($"<p class=\"role\">Assistant<span class=\"time\">{time}</span></p>");
+                if (!string.IsNullOrWhiteSpace(entry.ThinkingContent))
+                    sb.AppendLine($"<details><summary>Thinking</summary><pre>{Encode(Scrub(entry.ThinkingContent, redact))}</pre></details>");
+                sb.AppendLine($"<div class=\"content\">{Encode(content)}</div>");
+                sb.AppendLine("</article>");
                 break;
 
             case "tool":

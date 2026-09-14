@@ -1,6 +1,7 @@
 @inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
+@inject IGatewayRestClient Rest
 @inject IPortalPreferencesService Prefs
 @inject ISlashCommandDispatcher CommandDispatcher
 @implements IDisposable
@@ -61,6 +62,16 @@
                     @onclick="ToggleTools" title="Toggle tool visibility">
                 <Icon Name="tools" Size="16" />
             </button>
+            @if (HasActiveConversation)
+            {
+                <button class="conversation-header-action"
+                        data-testid="chat-export-btn"
+                        title="Export conversation"
+                        aria-label="Export conversation"
+                        @onclick="OpenExportDialog">
+                    Export
+                </button>
+            }
             @if (CanManageActiveConversation)
             {
                 <button class="conversation-header-action @(ActiveConversation?.IsPinned == true ? "pinned" : "")"
@@ -147,6 +158,38 @@
             <SessionControls AgentId="@AgentId" />
         }
     </header>
+
+    @if (_showExportDialog)
+    {
+        <div class="reset-confirm-overlay" @onclick="CloseExportDialog">
+            <div class="reset-confirm-dialog export-dialog" role="dialog" aria-modal="true" aria-label="Export conversation"
+                 data-testid="export-dialog" @onclick:stopPropagation="true">
+                <h3>Export conversation</h3>
+                <p><strong>Scope:</strong> Whole conversation</p>
+                <label>Format
+                    <select @bind="_exportFormat" data-testid="export-format">
+                        <option value="markdown">Markdown</option>
+                        <option value="html">HTML</option>
+                    </select>
+                </label>
+                <label><input type="checkbox" @bind="_exportIncludeTools" data-testid="export-include-tools" /> Include tool calls and results</label>
+                <label><input type="checkbox" @bind="_exportIncludeThinking" data-testid="export-include-thinking" /> Include thinking</label>
+                <label><input type="checkbox" @bind="_exportIncludeSystem" data-testid="export-include-system" /> Include system messages and conversation instructions</label>
+                <label><input type="checkbox" @bind="_exportRedactSecrets" data-testid="export-redact-secrets" /> Redact recognised secrets (privacy control)</label>
+                <p class="text-muted">Whole conversation in @_exportFormat format. Sensitive instructions, tools, and reasoning are included only when selected.</p>
+                @if (_exportError is not null)
+                {
+                    <p role="alert" data-testid="export-error">@_exportError</p>
+                }
+                <div class="reset-confirm-actions">
+                    <button class="cancel-btn" @onclick="CloseExportDialog">Cancel</button>
+                    <button class="confirm-btn" data-testid="export-download-btn" @onclick="DownloadExportAsync" disabled="@_exportBusy">
+                        @(_exportBusy ? "Exporting…" : "Download")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
 
     @if (_showNewSessionConfirm)
     {
@@ -797,12 +840,69 @@ private bool IsStreaming =>
     private int _lastRenderedMessageCount;
     private bool _showNewSessionConfirm;
     private bool _showMobileActionsMenu;
+    private bool _showExportDialog;
+    private bool _exportBusy;
+    private bool _exportIncludeTools = true;
+    private bool _exportIncludeThinking;
+    private bool _exportIncludeSystem;
+    private bool _exportRedactSecrets = true;
+    private string _exportFormat = "markdown";
+    private string? _exportError;
     private string? _copiedMessageId;
     private string? _copiedSectionId;
     private string? _askUserError;
     private static readonly TimeSpan s_copyFeedbackDuration = TimeSpan.FromSeconds(2);
     private const string CopySectionArgs = "args";
     private const string CopySectionResult = "result";
+
+    private void OpenExportDialog()
+    {
+        _exportError = null;
+        _showExportDialog = true;
+    }
+
+    private void CloseExportDialog()
+    {
+        if (_exportBusy)
+            return;
+        _showExportDialog = false;
+        _exportError = null;
+    }
+
+    private async Task DownloadExportAsync()
+    {
+        if (ActiveConversationId is not { } conversationId || _exportBusy)
+            return;
+
+        _exportBusy = true;
+        _exportError = null;
+        try
+        {
+            var request = new ConversationExportRequest(
+                _exportFormat,
+                _exportIncludeTools,
+                _exportIncludeThinking,
+                _exportIncludeSystem,
+                _exportRedactSecrets);
+            var download = await Rest.ExportConversationAsync(conversationId, request);
+            if (download is null)
+            {
+                _exportError = "The export could not be downloaded. Try again.";
+                return;
+            }
+
+            await JS.InvokeVoidAsync(
+                "BotNexus.downloadFile",
+                download.FileName,
+                download.ContentType,
+                Convert.ToBase64String(download.Content));
+            _showExportDialog = false;
+        }
+        finally
+        {
+            _exportBusy = false;
+        }
+    }
 
     // ── Tool pop-out modal state ────────────────────────────────────────
     private bool _toolModalOpen;

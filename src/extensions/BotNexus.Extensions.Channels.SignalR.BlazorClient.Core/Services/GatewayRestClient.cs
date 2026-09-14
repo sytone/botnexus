@@ -131,6 +131,38 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     }
 
     /// <inheritdoc />
+    public async Task<ExportDownload?> ExportConversationAsync(
+        string conversationId,
+        ConversationExportRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var query = string.Join("&",
+            $"includeTools={request.IncludeTools.ToString().ToLowerInvariant()}",
+            $"includeThinking={request.IncludeThinking.ToString().ToLowerInvariant()}",
+            $"includeSystemMessages={request.IncludeSystemMessages.ToString().ToLowerInvariant()}",
+            $"redactSecrets={request.RedactSecrets.ToString().ToLowerInvariant()}");
+        try
+        {
+            using var response = await _http.GetAsync(
+                $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}/export/{Uri.EscapeDataString(request.Format)}?{query}",
+                cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            var disposition = response.Content.Headers.ContentDisposition;
+            var fileName = disposition?.FileNameStar ?? disposition?.FileName?.Trim('"') ?? $"conversation.{request.Format}";
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            var content = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            return new ExportDownload(fileName, contentType, content);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<ConversationResponseDto?> GetConversationAsync(
         string conversationId,
         CancellationToken cancellationToken = default)
