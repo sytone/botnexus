@@ -338,7 +338,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             cancellationToken).ConfigureAwait(false);
 
         var hookDispatcher = _serviceProvider.GetService<IHookDispatcher>();
+        BeforeToolAuditDelegate? beforeToolAudit = null;
         BeforeToolCallDelegate? beforeToolCall = null;
+        ToolCallDispositionDelegate? onToolCallDisposition = null;
         AfterToolCallDelegate? afterToolCall = null;
         // #2615: the fail-closed tool-audit write-ahead. Pre-#2615 this existed only for sub-agents
         // (#2113), so a top-level agent's tool call was never written ahead and a crash mid-tool left
@@ -349,23 +351,25 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             sessionStore,
             _serviceProvider.GetService<IToolAuditSink>() ?? DefaultToolAuditSink.Instance,
             _serviceProvider.GetService<ISecretRedactor>() ?? new SecretRedactor(),
+            descriptor.AgentId,
             context.SessionId,
             _logger);
 
         {
             var agentId = descriptor.AgentId;
 
-            beforeToolCall = async (ctx, ct) =>
+            beforeToolAudit = async (ctx, ct) =>
             {
-                // Write ahead FIRST, then consult policy. The record must be durable before any
-                // decision that can lead to execution, and a blocked call still throws out of here
-                // before the tool is reached (#2615 AC2).
                 await toolWriteAhead.PersistStartAsync(
                     ctx.ToolCallRequest.Id,
                     ctx.ToolCallRequest.Name,
                     ctx.ValidatedArgs,
                     ct).ConfigureAwait(false);
+                return null;
+            };
 
+            beforeToolCall = async (ctx, ct) =>
+            {
                 if (hookDispatcher is null)
                     return null;
 
@@ -375,6 +379,13 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     await GetConversationIdForOriginAsync().ConfigureAwait(false),
                     ctx.ToolCallRequest.Id,
                     ResolveExecutionChannel(context));
+
+                using var policyDispatch = GatewayDiagnostics.Source.StartActivity("policy.dispatch", ActivityKind.Internal);
+                policyDispatch?.SetTag("botnexus.agent.id", agentId.Value);
+                policyDispatch?.SetTag("botnexus.session.id", context.SessionId.Value);
+                policyDispatch?.SetTag("botnexus.tool.name", ctx.ToolCallRequest.Name);
+                policyDispatch?.SetTag("botnexus.tool.call_id", ctx.ToolCallRequest.Id);
+
                 var hookEvent = new BeforeToolCallEvent(
                     agentId,
                     ctx.ToolCallRequest.Name,
@@ -382,9 +393,28 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     ctx.ValidatedArgs,
                     hookOrigin);
 
-                var results = await hookDispatcher
-                    .DispatchAsync<BeforeToolCallEvent, GatewayBeforeToolCallResult>(hookEvent, ct)
-                    .ConfigureAwait(false);
+                IReadOnlyList<GatewayBeforeToolCallResult> results;
+                try
+                {
+                    results = await hookDispatcher
+                        .DispatchAsync<BeforeToolCallEvent, GatewayBeforeToolCallResult>(hookEvent, ct)
+                        .ConfigureAwait(false);
+                    ct.ThrowIfCancellationRequested();
+                    policyDispatch?.SetTag("botnexus.policy.outcome", "success");
+                    policyDispatch?.SetStatus(ActivityStatusCode.Ok);
+                }
+                catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
+                {
+                    policyDispatch?.SetTag("botnexus.policy.outcome", "deadline");
+                    policyDispatch?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    policyDispatch?.SetTag("botnexus.policy.outcome", "error");
+                    policyDispatch?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    throw;
+                }
 
                 var denied = results.FirstOrDefault(r => r.Denied);
                 if (denied is not null)
@@ -395,6 +425,12 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 }
 
                 return null;
+            };
+
+            onToolCallDisposition = (toolCallId, willExecute) =>
+            {
+                if (!willExecute)
+                    toolWriteAhead.RecordCompleted(toolCallId);
             };
 
             afterToolCall = async (ctx, ct) =>
@@ -619,7 +655,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // #3162: the central tool-output backstop. Reads gateway:toolOutputBudget and defaults
             // ON (256 KiB) when the section is absent; disabled (0) only when Enabled=false or
             // MaxBytes<=0, matching the toolResultPersistence convention.
-            MaxToolOutputBytes: ResolveMaxToolOutputBytes(platformConfig?.Value.Gateway?.ToolOutputBudget));
+            MaxToolOutputBytes: ResolveMaxToolOutputBytes(platformConfig?.Value.Gateway?.ToolOutputBudget),
+            BeforeToolAudit: beforeToolAudit,
+            OnToolCallDisposition: onToolCallDisposition);
 
         var agent = new BotNexus.Agent.Core.Agent(options);
 

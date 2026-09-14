@@ -63,11 +63,13 @@ public sealed class ToolAuditWriteAheadTests
         var saveStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var session = Session("s1");
         var store = StoreFor(session);
-        store.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
-            .Returns(async () =>
+        store.Setup(s => s.AppendEntriesAsync(session.SessionId, It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (SessionId _, IReadOnlyList<SessionEntry> entries, CancellationToken _) =>
             {
                 saveStarted.SetResult();
                 await releaseSave.Task;
+                session.AddEntries(entries);
+                return new SessionAppendMutationResult(SessionMutationOutcome.Applied, entries.Count);
             });
 
         var persistence = Create(store.Object, "s1").PersistStartAsync("call-1", "exec", Args("command", "git status"), default);
@@ -114,7 +116,7 @@ public sealed class ToolAuditWriteAheadTests
     {
         var session = Session("s1");
         var store = StoreFor(session);
-        store.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+        store.Setup(s => s.AppendEntriesAsync(session.SessionId, It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException("disk full"));
 
         var error = await Should.ThrowAsync<InvalidOperationException>(
@@ -144,7 +146,7 @@ public sealed class ToolAuditWriteAheadTests
         // side-effecting case, and widening it silently would be a different, unreviewed decision.
         var session = Session("s1");
         var store = StoreFor(session);
-        store.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+        store.Setup(s => s.AppendEntriesAsync(session.SessionId, It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException("disk full"));
 
         await Should.NotThrowAsync(
@@ -306,9 +308,12 @@ public sealed class ToolAuditWriteAheadTests
         var other = Session("other");
         var mine = Session("s1");
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.GetAsync(SessionId.From("s1"), It.IsAny<CancellationToken>())).ReturnsAsync(mine);
-        store.Setup(s => s.GetAsync(SessionId.From("other"), It.IsAny<CancellationToken>())).ReturnsAsync(other);
-        store.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        store.Setup(s => s.AppendEntriesAsync(SessionId.From("s1"), It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionId _, IReadOnlyList<SessionEntry> entries, CancellationToken _) =>
+            {
+                mine.AddEntries(entries);
+                return new SessionAppendMutationResult(SessionMutationOutcome.Applied, entries.Count);
+            });
 
         await Create(store.Object, "s1").PersistStartAsync("call-mine", "exec", Args("command", "mine"), default);
 
@@ -317,13 +322,19 @@ public sealed class ToolAuditWriteAheadTests
     }
 
     private static ToolAuditWriteAhead Create(ISessionStore? store, string sessionId) =>
-        new(store, DefaultToolAuditSink.Instance, new SecretRedactor(), SessionId.From(sessionId), NullLogger.Instance);
+        new(store, DefaultToolAuditSink.Instance, new SecretRedactor(), AgentId.From("test-agent"), SessionId.From(sessionId), NullLogger.Instance);
 
     private static Mock<ISessionStore> StoreFor(GatewaySession session)
     {
         var store = new Mock<ISessionStore>();
         store.Setup(s => s.GetAsync(session.SessionId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
         store.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        store.Setup(s => s.AppendEntriesAsync(session.SessionId, It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionId _, IReadOnlyList<SessionEntry> entries, CancellationToken _) =>
+            {
+                session.AddEntries(entries);
+                return new SessionAppendMutationResult(SessionMutationOutcome.Applied, entries.Count);
+            });
         return store;
     }
 

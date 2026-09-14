@@ -642,7 +642,9 @@ public sealed class Agent
             _options.SuspensionRegistry,
             _options.AuthProfile,
             RetryRandomSource: null,
-            MaxToolOutputBytes: _options.MaxToolOutputBytes);
+            MaxToolOutputBytes: _options.MaxToolOutputBytes,
+            BeforeToolAudit: _options.BeforeToolAudit,
+            OnToolCallDisposition: _options.OnToolCallDisposition);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildMaybeCompactDelegate()

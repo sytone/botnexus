@@ -34,13 +34,13 @@ public sealed class ToolAuditWriteAheadFailClosedTests
     {
         var session = Session();
         var store = StoreFor(session);
-        store.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+        store.Setup(s => s.AppendEntriesAsync(session.SessionId, It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException("disk full"));
         var writeAhead = new ToolAuditWriteAhead(
-            store.Object, DefaultToolAuditSink.Instance, new SecretRedactor(), session.SessionId, NullLogger.Instance);
+            store.Object, DefaultToolAuditSink.Instance, new SecretRedactor(), session.AgentId, session.SessionId, NullLogger.Instance);
         var tool = new SpyTool("exec");
 
-        // The gateway wires the write-ahead as the pre-tool-call hook; drive that same delegate.
+        // The gateway wires the write-ahead as the dedicated pre-policy audit hook; drive that same delegate.
         var hook = BuildHook(writeAhead);
 
         await Should.ThrowAsync<InvalidOperationException>(
@@ -60,7 +60,7 @@ public sealed class ToolAuditWriteAheadFailClosedTests
         var session = Session();
         var store = StoreFor(session);
         var writeAhead = new ToolAuditWriteAhead(
-            store.Object, DefaultToolAuditSink.Instance, new SecretRedactor(), session.SessionId, NullLogger.Instance);
+            store.Object, DefaultToolAuditSink.Instance, new SecretRedactor(), session.AgentId, session.SessionId, NullLogger.Instance);
         var tool = new SpyTool("exec");
         var hook = BuildHook(writeAhead);
 
@@ -87,7 +87,7 @@ public sealed class ToolAuditWriteAheadFailClosedTests
     {
         var source = File.ReadAllText(Path.Combine(SourceRoot(), "gateway", "BotNexus.Gateway", "Isolation", "InProcessIsolationStrategy.cs"));
 
-        var before = ExtractDelegateBody(source, "beforeToolCall = async (ctx, ct) =>");
+        var before = ExtractDelegateBody(source, "beforeToolAudit = async (ctx, ct) =>");
         var after = ExtractDelegateBody(source, "afterToolCall = async (ctx, ct) =>");
 
         before.ShouldContain("PersistStartAsync",
@@ -163,6 +163,12 @@ public sealed class ToolAuditWriteAheadFailClosedTests
         var store = new Mock<ISessionStore>();
         store.Setup(s => s.GetAsync(session.SessionId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
         store.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        store.Setup(s => s.AppendEntriesAsync(session.SessionId, It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionId _, IReadOnlyList<SessionEntry> entries, CancellationToken _) =>
+            {
+                session.AddEntries(entries);
+                return new SessionAppendMutationResult(SessionMutationOutcome.Applied, entries.Count);
+            });
         return store;
     }
 
