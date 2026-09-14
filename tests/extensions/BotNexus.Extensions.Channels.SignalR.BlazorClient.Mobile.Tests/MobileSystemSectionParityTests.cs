@@ -190,7 +190,7 @@ public sealed class MobileSystemSectionParityTests : IDisposable
             select.QuerySelectorAll("optgroup").Select(g => g.GetAttribute("label")));
 
         Assert.Equal(
-            ["Pinned One", "Normal", "Nightly", "Inbound Hook"],
+            ["Pinned One", "Normal", "Cron · Nightly", "Webhook · Inbound Hook"],
             select.QuerySelectorAll("option").Select(o => o.TextContent.Trim()));
     }
 
