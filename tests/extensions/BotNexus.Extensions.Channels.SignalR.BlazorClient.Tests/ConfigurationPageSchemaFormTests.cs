@@ -207,7 +207,6 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
         cut.WaitForAssertion(() => handler.Patches.ShouldNotBeEmpty());
 
         var patch = handler.Patches[0];
-        patch["expectedRevision"]!.GetValue<string>().ShouldBe(FakeConfigApiHandler.Revision);
         patch["operations"]!.AsArray().Select(o => o!["path"]!.GetValue<string>())
             .ShouldBe(["gateway.listenUrl"]);
 

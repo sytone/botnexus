@@ -75,7 +75,9 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         var sendBtn = cut.Find(".send-btn");
         await cut.InvokeAsync(() => sendBtn.Click());
 
-        await _interaction.Received(1).SendMessageAsync("agent-1", "conv-1", "Hello from test!");
+        await _interaction.Received(1).DeliverMessageAsync(
+            "agent-1", "conv-1", "Hello from test!", InboundDeliveryMode.Auto,
+            Arg.Any<IReadOnlyList<DraftAttachment>>());
     }
 
     // ── ChatPanel: Follow Up button queues via IAgentInteractionService.FollowUpAsync ──

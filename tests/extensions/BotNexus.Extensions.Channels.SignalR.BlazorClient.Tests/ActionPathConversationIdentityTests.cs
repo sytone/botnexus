@@ -148,11 +148,9 @@ public sealed class ActionPathConversationIdentityTests
     {
         string[] actionMethods =
         [
-            nameof(IAgentInteractionService.SendMessageAsync),
-            nameof(IAgentInteractionService.SteerAsync),
+            nameof(IAgentInteractionService.DeliverMessageAsync),
             nameof(IAgentInteractionService.FollowUpAsync),
             nameof(IAgentInteractionService.AbortAsync),
-            nameof(IAgentInteractionService.InterruptAndSteerAsync),
             nameof(IAgentInteractionService.ResetSessionAsync),
             nameof(IAgentInteractionService.CompactSessionAsync),
             nameof(IAgentInteractionService.ExecuteGatewayCommandAsync),

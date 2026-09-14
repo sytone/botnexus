@@ -77,6 +77,13 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
     // is no longer registered and abort IEnumerable<IHostedService> resolution at host start.
     private readonly Dictionary<Type, List<ServiceDescriptor>> _channelHostedServiceDescriptors = [];
 
+    // Multi-contract implementations use factory aliases that resolve one shared concrete
+    // singleton. ServiceDescriptor does not expose the implementation captured by a factory, so
+    // pruning retains the exact aliases created for each contract/implementation pair. Matching
+    // every factory for the same contract removes unrelated adapters (#4196).
+    private readonly Dictionary<(Type Contract, Type Implementation), List<ServiceDescriptor>>
+        _extensionFactoryDescriptors = [];
+
     public AssemblyLoadContextExtensionLoader(
         IServiceCollection services,
         IHookDispatcher hookDispatcher,
@@ -478,8 +485,11 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
 
                 if (contractsToRegister.Length > 1)
                 {
-                    _services.AddSingleton(contract, serviceProvider =>
-                        serviceProvider.GetRequiredService(implementation));
+                    var factoryDescriptor = ServiceDescriptor.Singleton(
+                        contract,
+                        serviceProvider => serviceProvider.GetRequiredService(implementation));
+                    _services.Add(factoryDescriptor);
+                    TrackExtensionFactoryDescriptor(contract, implementation, factoryDescriptor);
                 }
                 else if (enumerableContract)
                 {
@@ -539,9 +549,12 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             for (var i = _services.Count - 1; i >= 0; i--)
             {
                 var descriptor = _services[i];
+                _extensionFactoryDescriptors.TryGetValue(
+                    (contract, implementation),
+                    out var factoryDescriptors);
                 if ((descriptor.ServiceType == contract && descriptor.ImplementationType == implementation) ||
-                    descriptor.ServiceType == implementation ||
-                    (descriptor.ServiceType == contract && descriptor.ImplementationFactory is not null) ||
+                    (descriptor.ServiceType == implementation && descriptor.ImplementationType == implementation) ||
+                    factoryDescriptors?.Contains(descriptor) is true ||
                     channelDescriptors?.Contains(descriptor) is true)
                 {
                     _services.RemoveAt(i);
@@ -563,6 +576,21 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         }
 
         return pruned;
+    }
+
+    private void TrackExtensionFactoryDescriptor(
+        Type contract,
+        Type implementation,
+        ServiceDescriptor descriptor)
+    {
+        var key = (contract, implementation);
+        if (!_extensionFactoryDescriptors.TryGetValue(key, out var descriptors))
+        {
+            descriptors = [];
+            _extensionFactoryDescriptors[key] = descriptors;
+        }
+
+        descriptors.Add(descriptor);
     }
 
     /// <summary>

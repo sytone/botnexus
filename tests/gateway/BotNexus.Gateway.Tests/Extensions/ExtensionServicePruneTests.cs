@@ -1,6 +1,10 @@
+using System.IO.Abstractions;
+using System.Reflection;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Extensions;
+using BotNexus.Gateway.Hooks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Gateway.Tests.Extensions;
 
@@ -115,5 +119,77 @@ public sealed class ExtensionServicePruneTests
         var probe = BuildProbe();
 
         AssemblyLoadContextExtensionLoader.HasContainerSatisfiableConstructor(implementation, probe).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void PruneUnconstructableExtensionServices_PreservesUnrelatedFactoryRegistration_ForSameContract()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IAgentToolContributor>(_ => new ParameterlessContributor());
+        services.AddSingleton<IAgentToolContributor, StringCtorContributor>();
+        var loader = new AssemblyLoadContextExtensionLoader(
+            services,
+            new HookDispatcher(),
+            NullLogger<AssemblyLoadContextExtensionLoader>.Instance,
+            new FileSystem());
+        var registrationField = typeof(AssemblyLoadContextExtensionLoader).GetField(
+            "_registeredExtensionServices",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Expected extension registration tracking field.");
+        var registrations = registrationField.GetValue(loader) as List<(Type Contract, Type Implementation)>
+            ?? throw new InvalidOperationException("Expected extension registration tracking list.");
+        registrations.Add((typeof(IAgentToolContributor), typeof(StringCtorContributor)));
+
+        var pruned = loader.PruneUnconstructableExtensionServices();
+
+        pruned.ShouldHaveSingleItem();
+        services.Any(descriptor =>
+            descriptor.ServiceType == typeof(IAgentToolContributor) &&
+            descriptor.ImplementationFactory is not null).ShouldBeTrue();
+        services.Any(descriptor =>
+            descriptor.ServiceType == typeof(IAgentToolContributor) &&
+            descriptor.ImplementationType == typeof(StringCtorContributor)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void PruneUnconstructableExtensionServices_RemovesTrackedFactoryRegistration_ForRejectedImplementation()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IAgentToolContributor>(_ => new ParameterlessContributor());
+        services.AddSingleton<StringCtorContributor>();
+        var rejectedFactory = ServiceDescriptor.Singleton(
+            typeof(IAgentToolContributor),
+            serviceProvider => serviceProvider.GetRequiredService<StringCtorContributor>());
+        ((IServiceCollection)services).Add(rejectedFactory);
+        var loader = new AssemblyLoadContextExtensionLoader(
+            services,
+            new HookDispatcher(),
+            NullLogger<AssemblyLoadContextExtensionLoader>.Instance,
+            new FileSystem());
+        var registrationField = typeof(AssemblyLoadContextExtensionLoader).GetField(
+            "_registeredExtensionServices",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Expected extension registration tracking field.");
+        var registrations = registrationField.GetValue(loader) as List<(Type Contract, Type Implementation)>
+            ?? throw new InvalidOperationException("Expected extension registration tracking list.");
+        registrations.Add((typeof(IAgentToolContributor), typeof(StringCtorContributor)));
+        var factoryField = typeof(AssemblyLoadContextExtensionLoader).GetField(
+            "_extensionFactoryDescriptors",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Expected extension factory descriptor tracking field.");
+        var factoryDescriptors = factoryField.GetValue(loader)
+            as Dictionary<(Type Contract, Type Implementation), List<ServiceDescriptor>>
+            ?? throw new InvalidOperationException("Expected extension factory descriptor tracking dictionary.");
+        factoryDescriptors[(typeof(IAgentToolContributor), typeof(StringCtorContributor))] = [rejectedFactory];
+
+        var pruned = loader.PruneUnconstructableExtensionServices();
+
+        pruned.ShouldHaveSingleItem();
+        services.Contains(rejectedFactory).ShouldBeFalse();
+        services.Any(descriptor =>
+            descriptor.ServiceType == typeof(IAgentToolContributor) &&
+            descriptor.ImplementationFactory is not null).ShouldBeTrue();
+        services.Any(descriptor =>
+            descriptor.ServiceType == typeof(StringCtorContributor)).ShouldBeFalse();
     }
 }

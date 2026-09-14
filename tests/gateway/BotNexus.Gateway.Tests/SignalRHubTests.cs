@@ -130,6 +130,26 @@ public sealed class SignalRHubTests
         Assert.Equal("farnsworth", result[0].AgentId.Value);
     }
 
+    [Theory]
+    [InlineData(InboundDeliveryMode.Auto)]
+    [InlineData(InboundDeliveryMode.Steer)]
+    [InlineData(InboundDeliveryMode.Interrupt)]
+    public async Task GatewayHub_DeliverMessage_PreservesTheClientsDeliveryIntent(InboundDeliveryMode deliveryMode)
+    {
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+
+        await hub.DeliverMessage(
+            AgentId.From("agent-a"),
+            ChannelKey.From("signalr"),
+            "same message",
+            "conversation-1",
+            deliveryMode);
+
+        orchestrator.Captured.ShouldHaveSingleItem()
+            .RoutingHints!.DeliveryMode.ShouldBe(deliveryMode);
+    }
+
     [Fact]
     public async Task GatewayHub_SendMessage_UsesVisibleSessionForAgentChannel()
     {
