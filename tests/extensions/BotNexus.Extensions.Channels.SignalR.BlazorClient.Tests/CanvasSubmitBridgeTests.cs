@@ -127,15 +127,10 @@ public sealed class CanvasSubmitBridgeTests : IDisposable
             return Task.FromResult(CanvasSubmitResult.Ok());
         }
 
-        public Task SendMessageAsync(string agentId, string conversationId, string content) => throw new NotSupportedException();
-        public Task SendMessageAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
-        public Task SteerAsync(string agentId, string conversationId, string content) => throw new NotSupportedException();
-        public Task SteerAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
+        public Task DeliverMessageAsync(string agentId, string conversationId, string content, InboundDeliveryMode deliveryMode = InboundDeliveryMode.Auto, IReadOnlyList<DraftAttachment>? attachments = null) => throw new NotSupportedException();
         public Task FollowUpAsync(string agentId, string conversationId, string content) => throw new NotSupportedException();
         public Task FollowUpAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
         public Task AbortAsync(string agentId, string conversationId) => throw new NotSupportedException();
-        public Task InterruptAndSteerAsync(string agentId, string conversationId, string message) => throw new NotSupportedException();
-        public Task InterruptAndSteerAsync(string agentId, string conversationId, string message, IReadOnlyList<DraftAttachment> attachments) => throw new NotSupportedException();
         public Task ResetSessionAsync(string agentId, string conversationId) => throw new NotSupportedException();
         public Task<bool> ExecuteGatewayCommandAsync(string agentId, string conversationId, string commandText) => throw new NotSupportedException();
         public Task<CompactSessionResult?> CompactSessionAsync(string agentId, string conversationId) => throw new NotSupportedException();

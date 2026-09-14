@@ -18,7 +18,7 @@ public enum SlashCommandKind
 
     /// <summary>
     /// Send the command text to the agent as an ordinary user message. Maps to
-    /// <see cref="IAgentInteractionService.SendMessageAsync"/>.
+    /// <see cref="IAgentInteractionService.DeliverMessageAsync"/>.
     /// </summary>
     /// <remarks>
     /// This kind does NOT invoke the gateway command pipeline (#2873). It is retained for

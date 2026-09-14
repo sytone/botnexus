@@ -22,6 +22,7 @@
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationSource" Alias="ConversationSource" />
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationKind" Alias="ConversationKind" />
     <Using Include="BotNexus.Gateway.Abstractions.Models.ConversationVisibility" Alias="ConversationVisibility" />
+    <Using Include="BotNexus.Gateway.Abstractions.Models.InboundDeliveryMode" Alias="InboundDeliveryMode" />
   </ItemGroup>
 
   <ItemGroup>

@@ -122,10 +122,8 @@ public sealed class DraftAttachmentSendFamilyTests : IDisposable
     {
         string[] sendFamily =
         [
-            nameof(IAgentInteractionService.SendMessageAsync),
-            nameof(IAgentInteractionService.SteerAsync),
+            nameof(IAgentInteractionService.DeliverMessageAsync),
             nameof(IAgentInteractionService.FollowUpAsync),
-            nameof(IAgentInteractionService.InterruptAndSteerAsync),
         ];
 
         var missing = sendFamily

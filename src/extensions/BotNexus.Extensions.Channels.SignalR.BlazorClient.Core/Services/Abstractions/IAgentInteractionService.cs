@@ -15,10 +15,12 @@ public interface IAgentInteractionService
     /// and misrouted steers. Sending never creates a conversation as a side effect - a caller that
     /// needs one calls <see cref="CreateConversationAsync"/> first and passes the id it gets back.
     /// </summary>
-    Task SendMessageAsync(string agentId, string conversationId, string content);
-
-    /// <summary>Sends optional text plus validated generic attachments through the existing content-parts seam.</summary>
-    Task SendMessageAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments);
+    Task DeliverMessageAsync(
+        string agentId,
+        string conversationId,
+        string content,
+        InboundDeliveryMode deliveryMode = InboundDeliveryMode.Auto,
+        IReadOnlyList<DraftAttachment>? attachments = null);
     /// <summary>
     /// Injects a canvas-authored prompt into the conversation that owns the canvas as a genuine
     /// USER turn (#2449). This is the server-side half of the <c>canvasState.submitToAgent</c>
@@ -33,17 +35,6 @@ public interface IAgentInteractionService
     /// <param name="prompt">Agent-authored prompt text supplied by the canvas.</param>
     /// <param name="instructions">Optional retrieval hint appended after the prompt.</param>
     Task<CanvasSubmitResult> SubmitCanvasPromptAsync(string agentId, string conversationId, string? prompt, string? instructions);
-    /// <summary>
-    /// Steers <paramref name="conversationId"/> (#3211). Like the send path (#3063) the conversation
-    /// is a REQUIRED parameter: this layer no longer re-derives the target from ambient
-    /// <c>AgentState.ActiveConversationId</c>, so a steer issued while a deep-linked, non-most-recent
-    /// conversation is displayed can never land on a different conversation.
-    /// </summary>
-    Task SteerAsync(string agentId, string conversationId, string content);
-
-    /// <summary>Steers with optional draft attachments, matching the send media overload (#2484).</summary>
-    Task SteerAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments);
-
     /// <summary>Queues a follow-up turn on <paramref name="conversationId"/> (#3211).</summary>
     Task FollowUpAsync(string agentId, string conversationId, string content);
 
@@ -52,12 +43,6 @@ public interface IAgentInteractionService
 
     /// <summary>Aborts the run owned by <paramref name="conversationId"/> (#3211).</summary>
     Task AbortAsync(string agentId, string conversationId);
-
-    /// <summary>Interrupts and redirects the run owned by <paramref name="conversationId"/> (#3211).</summary>
-    Task InterruptAndSteerAsync(string agentId, string conversationId, string message);
-
-    /// <summary>Redirects with optional draft attachments, matching the send media overload (#2484).</summary>
-    Task InterruptAndSteerAsync(string agentId, string conversationId, string message, IReadOnlyList<DraftAttachment> attachments);
 
     /// <summary>Starts a fresh session for <paramref name="conversationId"/> (#3211).</summary>
     Task ResetSessionAsync(string agentId, string conversationId);
